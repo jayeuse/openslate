@@ -7,6 +7,12 @@
 
 # testing
 /coverage
+/.pytest_cache
+**/.pytest_cache
+**/.coverage
+**/htmlcov
+**/playwright-report
+**/test-results
 
 # next.js
 /.next/
@@ -14,6 +20,13 @@
 
 # production
 /build
+
+# python
+**/__pycache__
+**/*.py[cod]
+**/.venv
+.mypy_cache
+.ruff_cache
 
 # misc
 .DS_Store
@@ -34,3 +47,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local storage (keep the mount point)
+/storage/*
+!/storage/.gitkeep

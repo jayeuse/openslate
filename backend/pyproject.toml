@@ -1,0 +1,51 @@
+[project]
+name = "openslate-backend"
+version = "0.1.0"
+description = "OpenSlate FastAPI backend"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "alembic>=1.16.5",
+    "fastapi>=0.116.1",
+    "psycopg[binary]>=3.2.10",
+    "pydantic-settings>=2.10.1",
+    "pyjwt>=2.10.1",
+    "pwdlib[argon2]>=0.2.1",
+    "python-multipart>=0.0.20",
+    "sqlalchemy>=2.0.43",
+    "uvicorn[standard]>=0.35.0",
+    "uuid6>=2024.7.10",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "mypy>=1.17.1",
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
+    "ruff>=0.12.11",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+addopts = "--cov=app --cov-report=term-missing --cov-fail-under=80"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["integration: requires a PostgreSQL test database"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["alembic.*"]
+ignore_missing_imports = true
