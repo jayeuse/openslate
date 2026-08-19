@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import ClassVar
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, String, func, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, func, text
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
@@ -45,4 +45,8 @@ class BaseModel(Base):
         server_default=func.now(),
         nullable=False,
     )
-    performed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    performed_by: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+    )

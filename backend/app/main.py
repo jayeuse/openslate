@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
 from app.core.config import get_settings
+from app.core.database import model_registry  # noqa: F401
 from app.core.middleware.request_context import RequestContext
 from app.systems.audit.router import router as audit_router
 from app.systems.auth.router import router as auth_router

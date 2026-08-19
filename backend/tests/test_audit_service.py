@@ -28,9 +28,9 @@ def make_log(created_at: datetime) -> AuditLog:
     return AuditLog(
         id=uuid7(),
         action=AuditAction.CREATE,
-        table_name="users",
-        record_id=uuid7(),
-        snapshot={"after": {}},
+        entity_type="users",
+        entity_id=uuid7(),
+        after={},
         created_at=created_at,
     )
 
@@ -39,10 +39,10 @@ def test_cursor_round_trip() -> None:
     log = make_log(datetime.now(UTC))
 
     cursor = encode_cursor(log)
-    created_at, record_id = decode_cursor(cursor)
+    created_at, audit_id = decode_cursor(cursor)
 
     assert created_at == log.created_at
-    assert record_id == log.id
+    assert audit_id == log.id
 
 
 def test_invalid_cursor_returns_validation_error() -> None:
@@ -61,9 +61,9 @@ def test_list_audit_logs_returns_next_cursor_and_applies_filters() -> None:
     items, next_cursor = list_audit_logs(
         database,
         action=AuditAction.CREATE,
-        table_name="users",
-        record_id=first.record_id,
-        performed_by="user:admin",
+        entity_type="users",
+        entity_id=first.entity_id,
+        performed_by=uuid7(),
         request_id=uuid7(),
         created_after=now - timedelta(days=1),
         created_before=now + timedelta(days=1),

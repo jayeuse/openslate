@@ -17,7 +17,7 @@ from app.systems.users.models import User
 
 class FakeSession:
     def __init__(self) -> None:
-        self.info: dict[str, object] = {"audit_context": AuditContext(performed_by="anonymous")}
+        self.info: dict[str, object] = {"audit_context": AuditContext()}
         self.new: list[object] = []
         self.dirty: list[object] = []
         self.deleted: list[object] = []
@@ -29,7 +29,7 @@ class FakeSession:
 
 def test_create_listener_stages_and_writes_create_log() -> None:
     session = FakeSession()
-    user = User(username="alice", password_hash="hash")
+    user = User(username="alice", password_hash="hash", role_id=uuid7())
     user.id = uuid7()
     session.new = [user]
 
@@ -40,9 +40,11 @@ def test_create_listener_stages_and_writes_create_log() -> None:
     audit_log = session.added[0]
     assert isinstance(audit_log, AuditLog)
     assert audit_log.action is AuditAction.CREATE
-    assert audit_log.record_id == user.id
-    assert audit_log.performed_by == "anonymous"
-    assert audit_log.snapshot["after"]["password_hash"] == "[REDACTED]"
+    assert audit_log.entity_type == "users"
+    assert audit_log.entity_id == user.id
+    assert audit_log.performed_by is None
+    assert audit_log.before is None
+    assert audit_log.after["password_hash"] == "[REDACTED]"
 
 
 def test_rollback_clears_staged_changes() -> None:
@@ -63,9 +65,9 @@ def test_audit_logs_are_immutable() -> None:
     session = FakeSession()
     log = AuditLog(
         action=AuditAction.CREATE,
-        table_name="users",
-        record_id=uuid7(),
-        snapshot={"after": {}},
+        entity_type="users",
+        entity_id=uuid7(),
+        after={},
     )
     session.dirty = [log]
 

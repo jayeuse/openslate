@@ -8,7 +8,7 @@ OpenSlate is a self-hosted foundation for configurable business operations. This
 - Backend: Python 3.12+, FastAPI, Pydantic, SQLAlchemy, Alembic
 - Data: PostgreSQL with JSONB support, local filesystem storage
 - Security: local username/password authentication with Argon2, JWT bearer tokens, RBAC foundations
-- Auditing: transactional ORM CRUD audit logs with minimal JSONB snapshots and sensitive-value redaction
+- Auditing: transactional ORM CRUD audit logs with minimal before/after JSONB diffs and sensitive-value redaction
 - Operations: Docker Compose and Caddy
 - Tests: Pytest and Playwright
 
@@ -61,9 +61,9 @@ Next.js proxies browser requests under `/api/*` to `BACKEND_URL`, which defaults
 
 ## Audit Logs
 
-Application ORM creates, updates, hard deletes, and soft deletes are recorded in PostgreSQL `audit_logs` rows in the same transaction as the business change. Update snapshots contain only changed fields; nested JSON objects are diffed recursively. Passwords, tokens, secrets, credentials, and private keys are always represented as `[REDACTED]`.
+Application ORM creates, updates, hard deletes, and soft deletes are recorded in PostgreSQL `audit_logs` rows in the same transaction as the business change. Update `before` and `after` values contain only changed fields; nested JSON objects are diffed recursively. Passwords, tokens, secrets, credentials, and private keys are always represented as `[REDACTED]`.
 
-Audit logs are queryable by administrators through `GET /api/audit-logs` and `GET /api/audit-logs/{id}`. The list endpoint supports action, table, record, actor, request, date, and cursor filters.
+Audit logs are queryable by administrators through `GET /api/audit-logs` and `GET /api/audit-logs/{id}`. The list endpoint supports action, entity type, entity ID, actor UUID, request, date, and cursor filters. `performed_by` is a nullable foreign key to `users.id`; it becomes null when the actor is deleted so historical audit rows remain available.
 
 The selected boundary is application ORM writes only. Adminer, direct SQL, Alembic, and external database clients are not audited. Bulk and raw ORM mutation statements are rejected because they cannot produce reliable per-record before/after snapshots.
 
@@ -99,9 +99,9 @@ Run one backend test with `uv run pytest tests/test_health.py`. Run one browser 
 
 - `backend/app/core/` owns configuration, database wiring, security primitives, and middleware.
 - `backend/app/common/` contains shared dependencies, exceptions, and utilities.
-- `backend/app/systems/` is organized by business capability. Only `auth` and `users` are wired in this initial scaffold; the other packages mark intended boundaries.
+- `backend/app/systems/` is organized by business capability. `auth`, `users`, `departments`, `modules`, `fields`, and `records` provide the persistence layer; CRUD routers for the configurable-data entities are intentionally deferred.
 - `backend/migrations/` is the only supported path for schema changes.
-- All SQLAlchemy models inherit `backend/app/core/base_model.py`, which provides UUIDv7 IDs and shared lifecycle/audit columns.
-- `backend/app/systems/audit/` owns transactional ORM listeners, JSONB snapshot diffing/redaction, and admin-only audit-log queries. `AuditLog` is append-only and excluded from its own audit stream.
+- Domain SQLAlchemy models inherit `backend/app/core/base_model.py`, which provides UUIDv7 IDs and shared lifecycle/audit columns. `AuditLog` is the immutable exception because its schema is exact and has no mutable lifecycle columns.
+- `backend/app/systems/audit/` owns transactional ORM listeners, JSONB before/after diffing/redaction, and admin-only audit-log queries. `AuditLog` is append-only and excluded from its own audit stream.
 - `frontend/src/app/` contains App Router routes; reusable shadcn-style primitives live under `frontend/src/components/ui/`.
 - `infra/` owns deploy images and Caddy/PostgreSQL configuration. Root `docker-compose.yml` is the local deployment entrypoint.

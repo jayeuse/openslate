@@ -15,7 +15,7 @@ class RequestContext:
         self.request_id = request_id or uuid7()
         self.method = method
         self.path = path
-        self.performed_by = "anonymous"
+        self.performed_by: UUID | None = None
 
 
 def get_request_context(request: Request) -> RequestContext:

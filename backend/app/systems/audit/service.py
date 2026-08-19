@@ -32,9 +32,9 @@ def list_audit_logs(
     db: Session,
     *,
     action: AuditAction | None = None,
-    table_name: str | None = None,
-    record_id: UUID | None = None,
-    performed_by: str | None = None,
+    entity_type: str | None = None,
+    entity_id: UUID | None = None,
+    performed_by: UUID | None = None,
     request_id: UUID | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
@@ -44,10 +44,10 @@ def list_audit_logs(
     conditions = []
     if action is not None:
         conditions.append(AuditLog.action == action)
-    if table_name is not None:
-        conditions.append(AuditLog.table_name == table_name)
-    if record_id is not None:
-        conditions.append(AuditLog.record_id == record_id)
+    if entity_type is not None:
+        conditions.append(AuditLog.entity_type == entity_type)
+    if entity_id is not None:
+        conditions.append(AuditLog.entity_id == entity_id)
     if performed_by is not None:
         conditions.append(AuditLog.performed_by == performed_by)
     if request_id is not None:

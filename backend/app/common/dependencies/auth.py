@@ -24,19 +24,20 @@ def get_current_user(
     except ValueError:
         user_id = None
     user = db.get(User, user_id) if user_id else None
-    if user is None or not user.is_active or user.is_deleted:
+    if user is None or user.is_deleted:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    set_audit_actor(db, f"user:{user.id}")
+    set_audit_actor(db, user.id)
     return user
 
 
-def require_roles(*roles: UserRole) -> Callable[[User], User]:
+def require_roles(*roles: UserRole | str) -> Callable[[User], User]:
     def check_role(user: Annotated[User, Depends(get_current_user)]) -> User:
-        if user.role not in roles:
+        allowed_roles = {role.value if isinstance(role, UserRole) else role for role in roles}
+        if user.role.role not in allowed_roles:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         return user
 

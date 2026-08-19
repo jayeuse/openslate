@@ -31,9 +31,7 @@ def test_serialize_record_omits_metadata_and_redacts_passwords() -> None:
     user = User(
         username="alice",
         password_hash="password-hash",
-        role="member",
-        is_active=True,
-        preferences={"theme": "dark"},
+        role_id=uuid7(),
     )
 
     snapshot = serialize_record(user)
@@ -41,9 +39,7 @@ def test_serialize_record_omits_metadata_and_redacts_passwords() -> None:
     assert snapshot == {
         "username": "alice",
         "password_hash": REDACTED,
-        "role": "member",
-        "is_active": True,
-        "preferences": {"theme": "dark"},
+        "role_id": str(user.role_id),
     }
     assert "id" not in snapshot
     assert "created_at" not in snapshot
@@ -54,23 +50,25 @@ def test_update_snapshot_contains_only_changed_nested_values() -> None:
     snapshot = build_update_snapshot(
         {
             "role": ("member", "admin"),
-            "preferences": (
+            "config": (
                 {"theme": "light", "timezone": "UTC"},
                 {"theme": "dark", "timezone": "UTC", "density": "compact"},
             ),
-            "is_active": (True, True),
+            "required": (False, True),
         }
     )
 
     assert snapshot == {
-        "before": {
-            "role": "member",
-            "preferences": {"theme": "light"},
-        },
-        "after": {
-            "role": "admin",
-            "preferences": {"theme": "dark", "density": "compact"},
-        },
+            "before": {
+                "role": "member",
+                "config": {"theme": "light"},
+                "required": False,
+            },
+            "after": {
+                "role": "admin",
+                "config": {"theme": "dark", "density": "compact"},
+                "required": True,
+            },
     }
 
 
@@ -86,13 +84,13 @@ def test_update_snapshot_redacts_sensitive_changes() -> None:
 def test_audit_log_is_not_included_in_its_own_record_snapshot() -> None:
     log = AuditLog(
         action="create",
-        table_name="users",
-        record_id=uuid7(),
-        snapshot={"after": {"username": "alice"}},
+        entity_type="users",
+        entity_id=uuid7(),
+        after={"username": "alice"},
     )
 
     snapshot = serialize_record(log)
 
-    assert "snapshot" in snapshot
+    assert "after" in snapshot
     assert "id" not in snapshot
     assert "created_at" not in snapshot

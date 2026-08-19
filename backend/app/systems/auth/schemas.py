@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class RegistrationRequest(BaseModel):
-    username: Annotated[str, Field(min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_-]+$")]
+    username: Annotated[str, Field(min_length=3, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")]
     password: Annotated[str, Field(min_length=12, max_length=128)]
 
     @field_validator("username")

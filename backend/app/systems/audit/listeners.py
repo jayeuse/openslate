@@ -94,27 +94,27 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
 
     context = get_audit_context(session)
     for change in pending:
+        before: dict[str, Any] | None = None
+        after: dict[str, Any] | None = None
         if change.action is AuditAction.CREATE:
-            snapshot = {"after": serialize_record(change.instance)}
+            after = serialize_record(change.instance)
         elif change.action is AuditAction.DELETE and change.changes is None:
-            snapshot = {
-                "before": serialize_record(
-                    change.instance,
-                    include_default_deletion_state=True,
-                )
-            }
+            before = serialize_record(change.instance, include_default_deletion_state=True)
         else:
             snapshot = build_update_snapshot(
                 change.changes or {},
                 getattr(type(change.instance), "__audit_redacted_fields__", frozenset()),
             )
+            before = snapshot["before"]
+            after = snapshot["after"]
 
-        table_name = inspect(change.instance).mapper.local_table.name
+        entity_type = inspect(change.instance).mapper.local_table.name
         audit_log = AuditLog(
             action=change.action,
-            table_name=table_name,
-            record_id=change.instance.id,
-            snapshot=snapshot,
+            entity_type=entity_type,
+            entity_id=getattr(change.instance, "id", None),
+            before=before,
+            after=after,
             request_id=context.request_id,
             request_method=context.request_method,
             request_path=context.request_path,
