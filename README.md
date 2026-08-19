@@ -67,6 +67,12 @@ Audit logs are queryable by administrators through `GET /api/audit-logs` and `GE
 
 The selected boundary is application ORM writes only. Adminer, direct SQL, Alembic, and external database clients are not audited. Bulk and raw ORM mutation statements are rejected because they cannot produce reliable per-record before/after snapshots.
 
+## Standard List Contract
+
+Future list endpoints should use the shared helpers under `backend/app/common/listing/`. The request contract is `limit` (default 25, range 1-100), `offset` (default 0), endpoint-defined `sort_by`, `sort_order` (`asc` or `desc`), optional literal substring `search`, and `deleted` (`exclude`, `include`, or `only`). Responses contain `items` and `pagination` with `limit`, `offset`, `count`, `total`, and `has_more`.
+
+Each endpoint must define its trusted sort fields and searchable fields. Search is case-insensitive substring matching with wildcard characters escaped. Deleted-record visibility is authorized by the endpoint; unsupported search or deleted modes return `422`. The existing audit endpoint intentionally retains its cursor-based pagination contract and is not converted by this shared helper.
+
 To run the PostgreSQL audit integration tests:
 
 ```bash

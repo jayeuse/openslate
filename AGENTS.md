@@ -12,6 +12,7 @@
 
 - Backend setup: `cd backend && uv sync`; required local settings load from the root `.env`.
 - Backend verification: `uv run ruff check . && uv run mypy app && uv run pytest`. Pytest enforces 80% coverage.
+- Standard future list endpoints use `app/common/listing/`; define endpoint-specific sort/search specs and do not retrofit the existing audit cursor endpoint without an explicit API decision.
 - Focused backend test: `uv run pytest tests/test_health.py` or append `-k <name>`.
 - PostgreSQL audit integration test: `TEST_DATABASE_URL=... uv run pytest tests/test_audit_integration.py`.
 - Frontend setup: `cd frontend && npm ci`.
