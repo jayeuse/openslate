@@ -1,0 +1,179 @@
+from unittest.mock import Mock
+
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+from uuid6 import uuid7
+
+from app.common.listing import DeletedFilter, StandardListRequest
+from app.systems.departments.models import Department
+from app.systems.departments.router import (
+    DepartmentSortField,
+    create_department,
+    delete_department,
+    list_departments,
+    restore_department,
+    update_department,
+)
+from app.systems.departments.router import router as departments_router
+from app.systems.departments.schemas import DepartmentCreate, DepartmentUpdate
+from app.systems.modules.models import Module
+from app.systems.modules.router import (
+    ModuleSortField,
+    create_module,
+    delete_module,
+    list_modules,
+    restore_module,
+    update_module,
+)
+from app.systems.modules.router import router as modules_router
+from app.systems.modules.schemas import ModuleCreate, ModuleUpdate
+
+
+def test_crud_routers_expose_standard_contract() -> None:
+    app = FastAPI()
+    app.include_router(departments_router, prefix="/api")
+    app.include_router(modules_router, prefix="/api")
+    client = TestClient(app)
+
+    paths = client.get("/openapi.json").json()["paths"]
+    assert set(paths["/api/departments"]) == {"get", "post"}
+    assert set(paths["/api/departments/{department_id}"]) == {"get", "patch", "delete"}
+    assert set(paths["/api/departments/{department_id}/restore"]) == {"post"}
+    assert set(paths["/api/modules"]) == {"get", "post"}
+    assert set(paths["/api/modules/{module_id}"]) == {"get", "patch", "delete"}
+    assert set(paths["/api/modules/{module_id}/restore"]) == {"post"}
+
+
+def test_names_are_trimmed_and_blank_names_are_rejected() -> None:
+    assert DepartmentCreate(department_name="  Operations  ").department_name == "Operations"
+    assert ModuleCreate(department_id=uuid7(), module_name="  Assets  ").module_name == "Assets"
+
+    with pytest.raises(ValueError):
+        DepartmentCreate(department_name="   ")
+    with pytest.raises(ValueError):
+        ModuleUpdate(module_name="   ")
+
+
+def test_list_endpoints_use_standard_search_and_deleted_filters() -> None:
+    db = Mock(spec=Session)
+    db.scalar.return_value = 0
+    db.scalars.return_value.all.return_value = []
+
+    department_result = list_departments(
+        None,
+        db,
+        StandardListRequest[DepartmentSortField](
+            search="Operations",
+            deleted=DeletedFilter.ONLY,
+        ),
+    )
+    module_result = list_modules(
+        None,
+        db,
+        StandardListRequest[ModuleSortField](
+            search="Assets",
+            deleted=DeletedFilter.INCLUDE,
+        ),
+    )
+
+    assert department_result.pagination.total == 0
+    assert module_result.pagination.total == 0
+    assert db.scalar.call_count == 2
+    assert db.scalars.call_count == 2
+
+
+def test_department_lifecycle_and_active_module_dependency() -> None:
+    department = Department(department_name="Operations", is_deleted=False)
+    department.id = uuid7()
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [None, 0]
+
+    created = create_department(DepartmentCreate(department_name="  Operations  "), None, db)
+    assert created.department_name == "Operations"
+    assert db.commit.call_count == 1
+
+    db.get.return_value = department
+    db.scalar.side_effect = None
+    db.scalar.return_value = None
+    update_department(department.id, DepartmentUpdate(department_name="  Support  "), None, db)
+    assert department.department_name == "Support"
+
+    db.scalar.return_value = 1
+    with pytest.raises(HTTPException) as error:
+        delete_department(department.id, None, db)
+    assert error.value.status_code == 409
+    assert department.is_deleted is False
+
+    db.scalar.side_effect = [None]
+    deleted = Department(department_name="Retired", is_deleted=True)
+    deleted.id = uuid7()
+    db.get.return_value = deleted
+    restored = restore_department(deleted.id, None, db)
+    assert restored is deleted
+    assert deleted.is_deleted is False
+    assert deleted.deleted_at is None
+
+
+def test_module_requires_active_parent_and_keeps_department_immutable() -> None:
+    department = Department(department_name="Operations")
+    department.id = uuid7()
+    module = Module(department_id=department.id, module_name="Assets")
+    module.id = uuid7()
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [department, None]
+
+    created = create_module(
+        ModuleCreate(department_id=department.id, module_name="  Assets  "),
+        None,
+        db,
+    )
+    assert created.module_name == "Assets"
+
+    db.get.return_value = module
+    db.commit.reset_mock()
+    with pytest.raises(HTTPException) as error:
+        update_module(
+            module.id,
+            ModuleUpdate(department_id=uuid7()),
+            None,
+            db,
+        )
+    assert error.value.status_code == 409
+    db.commit.assert_not_called()
+
+
+def test_module_delete_checks_active_fields_and_records() -> None:
+    module = Module(department_id=uuid7(), module_name="Assets", is_deleted=False)
+    module.id = uuid7()
+    db = Mock(spec=Session)
+    db.get.return_value = module
+    db.scalar.return_value = 1
+
+    with pytest.raises(HTTPException) as error:
+        delete_module(module.id, None, db)
+
+    assert error.value.status_code == 409
+    assert module.is_deleted is False
+
+
+def test_module_restore_requires_active_parent_and_duplicate_preflight() -> None:
+    module = Module(department_id=uuid7(), module_name="Assets", is_deleted=True)
+    module.id = uuid7()
+    db = Mock(spec=Session)
+    db.get.return_value = module
+    db.scalar.return_value = None
+
+    with pytest.raises(HTTPException) as error:
+        restore_module(module.id, None, db)
+    assert error.value.status_code == 409
+    assert module.is_deleted is True
+
+    parent = Department(department_name="Operations")
+    parent.id = module.department_id
+    db.scalar.side_effect = [parent, uuid7()]
+    with pytest.raises(HTTPException) as error:
+        restore_module(module.id, None, db)
+    assert error.value.status_code == 409
+    assert module.is_deleted is True

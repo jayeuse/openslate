@@ -1,35 +1,47 @@
-import base64
-import json
 from datetime import datetime
+from enum import StrEnum
+from typing import Any, cast
 from uuid import UUID
 
-from fastapi import HTTPException, status
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
+from app.common.listing import (
+    ListQueryResult,
+    ListQuerySpec,
+    StandardListRequest,
+    execute_standard_list,
+)
 from app.systems.audit.models import AuditAction, AuditLog
 
 
-def encode_cursor(log: AuditLog) -> str:
-    payload = {"created_at": log.created_at.isoformat(), "id": str(log.id)}
-    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    return encoded.rstrip("=")
+class AuditLogSortField(StrEnum):
+    ACTION = "action"
+    CREATED_AT = "created_at"
+    ENTITY_TYPE = "entity_type"
+    REQUEST_PATH = "request_path"
 
 
-def decode_cursor(cursor: str) -> tuple[datetime, UUID]:
-    try:
-        padding = "=" * (-len(cursor) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(f"{cursor}{padding}"))
-        return datetime.fromisoformat(payload["created_at"]), UUID(payload["id"])
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Invalid audit log cursor",
-        ) from error
+AUDIT_LOG_LIST_SPEC = ListQuerySpec(
+    sort_fields={
+        AuditLogSortField.ACTION: cast(ColumnElement[Any], AuditLog.action),
+        AuditLogSortField.CREATED_AT: cast(ColumnElement[Any], AuditLog.created_at),
+        AuditLogSortField.ENTITY_TYPE: cast(ColumnElement[Any], AuditLog.entity_type),
+        AuditLogSortField.REQUEST_PATH: cast(ColumnElement[Any], AuditLog.request_path),
+    },
+    default_sort=AuditLogSortField.CREATED_AT,
+    tie_breaker=cast(ColumnElement[Any], AuditLog.id),
+    search_fields=(
+        cast(ColumnElement[str], AuditLog.entity_type),
+        cast(ColumnElement[str], AuditLog.request_path),
+    ),
+)
 
 
 def list_audit_logs(
     db: Session,
+    params: StandardListRequest[AuditLogSortField],
     *,
     action: AuditAction | None = None,
     entity_type: str | None = None,
@@ -38,10 +50,8 @@ def list_audit_logs(
     request_id: UUID | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
-    cursor: str | None = None,
-    limit: int = 50,
-) -> tuple[list[AuditLog], str | None]:
-    conditions = []
+) -> ListQueryResult[AuditLog]:
+    conditions: list[ColumnElement[bool]] = []
     if action is not None:
         conditions.append(AuditLog.action == action)
     if entity_type is not None:
@@ -56,23 +66,6 @@ def list_audit_logs(
         conditions.append(AuditLog.created_at >= created_after)
     if created_before is not None:
         conditions.append(AuditLog.created_at <= created_before)
-    if cursor is not None:
-        cursor_created_at, cursor_id = decode_cursor(cursor)
-        conditions.append(
-            or_(
-                AuditLog.created_at < cursor_created_at,
-                and_(AuditLog.created_at == cursor_created_at, AuditLog.id < cursor_id),
-            )
-        )
 
-    query = (
-        select(AuditLog)
-        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
-        .limit(limit + 1)
-    )
-    if conditions:
-        query = query.where(*conditions)
-    logs = list(db.scalars(query).all())
-    has_next = len(logs) > limit
-    items = logs[:limit]
-    return items, encode_cursor(items[-1]) if has_next and items else None
+    statement = select(AuditLog).where(*conditions)
+    return execute_standard_list(db, statement, params, AUDIT_LOG_LIST_SPEC)

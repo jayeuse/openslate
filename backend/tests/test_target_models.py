@@ -7,19 +7,18 @@ from app.systems.audit.models import AuditLog
 from app.systems.departments.models import Department
 from app.systems.departments.schemas import DepartmentCreate, DepartmentResponse
 from app.systems.fields.models import Field
-from app.systems.fields.schemas import FieldCreate, FieldUpdate
+from app.systems.fields.schemas import FieldCreate, FieldResponse, FieldUpdate
 from app.systems.modules.models import Module
-from app.systems.modules.schemas import ModuleCreate, ModuleUpdate
+from app.systems.modules.schemas import ModuleCreate, ModuleResponse, ModuleUpdate
 from app.systems.records.models import Record
-from app.systems.records.schemas import RecordCreate, RecordUpdate
+from app.systems.records.schemas import RecordCreate, RecordResponse, RecordUpdate
 from app.systems.users.models import Role, User
 from app.systems.users.schemas import RoleCreate, RoleResponse, RoleUpdate, UserResponse
 
 
 def test_domain_models_inherit_base_model() -> None:
     assert all(
-        issubclass(model, BaseModel)
-        for model in (Role, User, Department, Module, Field, Record)
+        issubclass(model, BaseModel) for model in (Role, User, Department, Module, Field, Record)
     )
     assert not issubclass(AuditLog, BaseModel)
 
@@ -86,7 +85,18 @@ def test_target_schemas_validate_lengths_and_defaults() -> None:
     assert RoleCreate(role="member").permissions == {}
     assert RoleUpdate().model_dump(exclude_unset=True) == {}
     assert RoleResponse.model_fields["permissions"].is_required()
-    assert UserResponse.model_fields["role"].is_required()
+    assert UserResponse.model_fields["role_id"].is_required()
+    assert all(
+        response.model_fields["performed_by"].is_required()
+        for response in (
+            RoleResponse,
+            UserResponse,
+            DepartmentResponse,
+            ModuleResponse,
+            FieldResponse,
+            RecordResponse,
+        )
+    )
 
 
 def test_models_have_expected_relationships() -> None:

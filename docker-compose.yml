@@ -38,9 +38,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      ADMIN_BOOTSTRAP_USERNAME: ${ADMIN_BOOTSTRAP_USERNAME:-}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
       CORS_ORIGINS: '["http://localhost:${APP_PORT:-8080}"]'
       STORAGE_PATH: /app/storage
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    command: sh -c "alembic upgrade head && if [ -n \"$$ADMIN_BOOTSTRAP_USERNAME\" ] || [ -n \"$$ADMIN_BOOTSTRAP_PASSWORD\" ]; then python -m scripts.bootstrap_admin --from-env; fi && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     depends_on:
       postgres:
         condition: service_healthy

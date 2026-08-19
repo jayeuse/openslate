@@ -1,8 +1,9 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
+from app.common.listing import StandardListResponse
 from app.systems.audit.models import AuditAction
 
 
@@ -22,6 +23,5 @@ class AuditLogResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class AuditLogListResponse(BaseModel):
-    items: list[AuditLogResponse]
-    next_cursor: str | None = Field(default=None)
+class AuditLogListResponse(StandardListResponse[AuditLogResponse]):
+    pass

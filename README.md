@@ -63,15 +63,27 @@ Next.js proxies browser requests under `/api/*` to `BACKEND_URL`, which defaults
 
 Application ORM creates, updates, hard deletes, and soft deletes are recorded in PostgreSQL `audit_logs` rows in the same transaction as the business change. Update `before` and `after` values contain only changed fields; nested JSON objects are diffed recursively. Passwords, tokens, secrets, credentials, and private keys are always represented as `[REDACTED]`.
 
-Audit logs are queryable by administrators through `GET /api/audit-logs` and `GET /api/audit-logs/{id}`. The list endpoint supports action, entity type, entity ID, actor UUID, request, date, and cursor filters. `performed_by` is a nullable foreign key to `users.id`; it becomes null when the actor is deleted so historical audit rows remain available.
+Audit logs are queryable by administrators through `GET /api/audit-logs` and `GET /api/audit-logs/{id}`. The list endpoint uses the standard offset response and supports action, entity type, entity ID, actor UUID, request, date, sort, and literal search filters. `performed_by` is a nullable foreign key to `users.id`; it becomes null when the actor is deleted so historical audit rows remain available.
 
 The selected boundary is application ORM writes only. Adminer, direct SQL, Alembic, and external database clients are not audited. Bulk and raw ORM mutation statements are rejected because they cannot produce reliable per-record before/after snapshots.
 
 ## Standard List Contract
 
-Future list endpoints should use the shared helpers under `backend/app/common/listing/`. The request contract is `limit` (default 25, range 1-100), `offset` (default 0), endpoint-defined `sort_by`, `sort_order` (`asc` or `desc`), optional literal substring `search`, and `deleted` (`exclude`, `include`, or `only`). Responses contain `items` and `pagination` with `limit`, `offset`, `count`, `total`, and `has_more`.
+List endpoints use the shared helpers under `backend/app/common/listing/`. The request contract is `limit` (default 25, range 1-100), `offset` (default 0), endpoint-defined `sort_by`, `sort_order` (`asc` or `desc`), optional literal substring `search`, and `deleted` (`exclude`, `include`, or `only`). Responses contain `items` and `pagination` with `limit`, `offset`, `count`, `total`, and `has_more`.
 
-Each endpoint must define its trusted sort fields and searchable fields. Search is case-insensitive substring matching with wildcard characters escaped. Deleted-record visibility is authorized by the endpoint; unsupported search or deleted modes return `422`. The existing audit endpoint intentionally retains its cursor-based pagination contract and is not converted by this shared helper.
+Each endpoint must define its trusted sort fields and searchable fields. Search is case-insensitive substring matching with wildcard characters escaped. Deleted-record visibility is authorized by the endpoint; unsupported search or deleted modes return `422`. Audit reads are the intentional exception to soft-delete filtering because audit rows are immutable.
+
+## Domain API
+
+Roles, users, departments, modules, fields, records, and audit reads are administrator-only. Domain collections use the standard list contract and expose `POST`, `GET`, `PATCH`, soft `DELETE`, and `POST /{id}/restore` where applicable. Parent deletion returns `409` while active dependents exist; delete children before parents and restore parents before children.
+
+Records use field UUID strings as JSON keys. The initial field types are `text`, `number`, `boolean`, `date`, `datetime`, and `select`. Record writes validate active fields, required values, nullability, configured select options, and JSON value types. Field type/config changes are rejected when they would invalidate active records.
+
+Authentication provides `/api/auth/register`, form-compatible `/api/auth/token`, JSON `/api/auth/login`, `/api/auth/me`, `/api/auth/refresh`, and `/api/auth/logout`. Tokens are stateless JWTs: logout tells the client to discard tokens but cannot revoke an already-issued token before expiration. Run `uv run python scripts/bootstrap_admin.py --username <name>` from `backend/` to create the first administrator interactively.
+
+User responses return `role_id` only. Retrieve role details through the roles collection rather than receiving a duplicated nested role object on every user response.
+
+Development data scripts are available from `backend/`. With the API running, `uv run python -m scripts.seed_sample_data` creates generated UUIDs through the API endpoints for the sample roles, users, departments, modules, fields, records, and one audit entry. Set `API_BASE_URL` to override the default `http://localhost:8000`. It uses `SAMPLE_USER_PASSWORD`, falling back to `ADMIN_BOOTSTRAP_PASSWORD`, for the sample users. `uv run python -m scripts.clear_database` removes application data and audit logs while preserving the account named by `ADMIN_BOOTSTRAP_USERNAME`. The seed script uses audited API mutations; the clear script is the intentionally destructive maintenance exception.
 
 To run the PostgreSQL audit integration tests:
 
@@ -105,7 +117,7 @@ Run one backend test with `uv run pytest tests/test_health.py`. Run one browser 
 
 - `backend/app/core/` owns configuration, database wiring, security primitives, and middleware.
 - `backend/app/common/` contains shared dependencies, exceptions, and utilities.
-- `backend/app/systems/` is organized by business capability. `auth`, `users`, `departments`, `modules`, `fields`, and `records` provide the persistence layer; CRUD routers for the configurable-data entities are intentionally deferred.
+- `backend/app/systems/` is organized by business capability. `auth`, `users`, `departments`, `modules`, `fields`, and `records` own their CRUD routers, schemas, validation, and persistence behavior.
 - `backend/migrations/` is the only supported path for schema changes.
 - Domain SQLAlchemy models inherit `backend/app/core/base_model.py`, which provides UUIDv7 IDs and shared lifecycle/audit columns. `AuditLog` is the immutable exception because its schema is exact and has no mutable lifecycle columns.
 - `backend/app/systems/audit/` owns transactional ORM listeners, JSONB before/after diffing/redaction, and admin-only audit-log queries. `AuditLog` is append-only and excluded from its own audit stream.

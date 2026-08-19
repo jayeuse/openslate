@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,7 +10,11 @@ class Settings(BaseSettings):
     environment: str = "development"
     database_url: str
     secret_key: SecretStr
-    access_token_expire_minutes: int = 30
+    admin_bootstrap_username: str | None = None
+    admin_bootstrap_password: SecretStr | None = None
+    sample_user_password: SecretStr | None = None
+    access_token_expire_minutes: int = Field(default=30, gt=0)
+    refresh_token_expire_days: int = Field(default=7, gt=0)
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
     storage_path: Path = Path("storage")
 

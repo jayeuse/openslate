@@ -15,8 +15,13 @@ class RecordUpdate(BaseModel):
     data: dict[str, Any] | None = None
 
 
+
 class RecordResponse(RecordCreate):
     id: UUID
     created_at: datetime
+    updated_at: datetime
+    deleted_at: datetime | None
+    is_deleted: bool
+    performed_by: UUID | None
 
     model_config = ConfigDict(from_attributes=True)

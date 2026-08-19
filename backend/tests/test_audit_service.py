@@ -1,11 +1,11 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid7
 
-import pytest
-from fastapi import HTTPException
+from sqlalchemy.dialects import postgresql
 
+from app.common.listing import StandardListRequest
 from app.systems.audit.models import AuditAction, AuditLog
-from app.systems.audit.service import decode_cursor, encode_cursor, list_audit_logs
+from app.systems.audit.service import AuditLogSortField, list_audit_logs
 
 
 class ScalarResult:
@@ -17,10 +17,18 @@ class ScalarResult:
 
 
 class FakeDatabase:
-    def __init__(self, logs: list[AuditLog]) -> None:
+    def __init__(self, logs: list[AuditLog], total: int | None = None) -> None:
         self.logs = logs
+        self.total = len(logs) if total is None else total
+        self.count_statement = None
+        self.items_statement = None
+
+    def scalar(self, query) -> int:
+        self.count_statement = query
+        return self.total
 
     def scalars(self, query) -> ScalarResult:
+        self.items_statement = query
         return ScalarResult(self.logs)
 
 
@@ -35,31 +43,15 @@ def make_log(created_at: datetime) -> AuditLog:
     )
 
 
-def test_cursor_round_trip() -> None:
-    log = make_log(datetime.now(UTC))
-
-    cursor = encode_cursor(log)
-    created_at, audit_id = decode_cursor(cursor)
-
-    assert created_at == log.created_at
-    assert audit_id == log.id
-
-
-def test_invalid_cursor_returns_validation_error() -> None:
-    with pytest.raises(HTTPException) as error:
-        decode_cursor("invalid")
-
-    assert error.value.status_code == 422
-
-
-def test_list_audit_logs_returns_next_cursor_and_applies_filters() -> None:
+def test_list_audit_logs_returns_offset_pagination_and_applies_filters() -> None:
     now = datetime.now(UTC)
     logs = [make_log(now), make_log(now - timedelta(minutes=1))]
     first = logs[0]
-    database = FakeDatabase(logs)
+    database = FakeDatabase([first], total=3)
 
-    items, next_cursor = list_audit_logs(
+    result = list_audit_logs(
         database,
+        StandardListRequest[AuditLogSortField](limit=1, offset=2),
         action=AuditAction.CREATE,
         entity_type="users",
         entity_id=first.entity_id,
@@ -67,22 +59,40 @@ def test_list_audit_logs_returns_next_cursor_and_applies_filters() -> None:
         request_id=uuid7(),
         created_after=now - timedelta(days=1),
         created_before=now + timedelta(days=1),
-        limit=1,
     )
 
-    assert items == [first]
-    assert next_cursor is not None
+    assert result.items == [first]
+    assert result.pagination.limit == 1
+    assert result.pagination.offset == 2
+    assert result.pagination.total == 3
+    assert result.pagination.has_more is False
+
+    sql = str(database.items_statement.compile(dialect=postgresql.dialect()))
+    assert "audit_logs.action =" in sql
+    assert "audit_logs.entity_type =" in sql
+    assert "audit_logs.entity_id =" in sql
+    assert "audit_logs.performed_by =" in sql
+    assert "audit_logs.request_id =" in sql
+    assert "audit_logs.created_at >=" in sql
+    assert "audit_logs.created_at <=" in sql
+    assert "LIMIT" in sql
+    assert "OFFSET" in sql
 
 
-def test_list_audit_logs_handles_cursor_without_next_page() -> None:
-    log = make_log(datetime.now(UTC))
-    database = FakeDatabase([log])
+def test_list_audit_logs_searches_and_sorts_without_joining() -> None:
+    database = FakeDatabase([])
 
-    items, next_cursor = list_audit_logs(
+    list_audit_logs(
         database,
-        cursor=encode_cursor(log),
-        limit=50,
+        StandardListRequest[AuditLogSortField](
+            search="users",
+            sort_by=AuditLogSortField.REQUEST_PATH,
+            sort_order="desc",
+        ),
     )
 
-    assert items == [log]
-    assert next_cursor is None
+    sql = str(database.items_statement.compile(dialect=postgresql.dialect()))
+    assert "audit_logs.entity_type ILIKE" in sql
+    assert "audit_logs.request_path ILIKE" in sql
+    assert "JOIN" not in sql
+    assert "ORDER BY audit_logs.request_path DESC" in sql
