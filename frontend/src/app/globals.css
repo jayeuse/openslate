@@ -1,14 +1,119 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0c0a09;
-  --foreground: #f5f5f4;
-  --radius: 0.5rem;
+  --background: #f6f8fb;
+  --foreground: #152238;
+  --card: #ffffff;
+  --card-foreground: #152238;
+  --popover: #ffffff;
+  --popover-foreground: #152238;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --secondary: #e9eef6;
+  --secondary-foreground: #24344d;
+  --muted: #eef2f7;
+  --muted-foreground: #65738a;
+  --accent: #e8f0ff;
+  --accent-foreground: #1d4ed8;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --success: #15803d;
+  --warning: #b45309;
+  --border: #dce3ed;
+  --input: #d3dce9;
+  --ring: #60a5fa;
+  --sidebar: #17243a;
+  --sidebar-foreground: #dbe5f3;
+  --sidebar-muted: #91a2bb;
+  --sidebar-accent: #243758;
+  --radius: 0.65rem;
+}
+
+.dark {
+  --background: #101722;
+  --foreground: #e8eef7;
+  --card: #172231;
+  --card-foreground: #e8eef7;
+  --popover: #1b293a;
+  --popover-foreground: #e8eef7;
+  --primary: #69a2ff;
+  --primary-foreground: #0c1a2c;
+  --secondary: #253449;
+  --secondary-foreground: #dbe5f3;
+  --muted: #1c2939;
+  --muted-foreground: #9eacc0;
+  --accent: #20375b;
+  --accent-foreground: #a9c9ff;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --border: #2a3a50;
+  --input: #34465d;
+  --ring: #93c5fd;
+  --sidebar: #0b1320;
+  --sidebar-foreground: #dbe5f3;
+  --sidebar-muted: #8495ad;
+  --sidebar-accent: #182a45;
+}
+
+[data-accent="indigo"] {
+  --primary: #4f46e5;
+  --accent: #eef2ff;
+  --accent-foreground: #4338ca;
+}
+[data-accent="emerald"] {
+  --primary: #059669;
+  --accent: #ecfdf5;
+  --accent-foreground: #047857;
+}
+[data-accent="neutral"] {
+  --primary: #334155;
+  --accent: #f1f5f9;
+  --accent-foreground: #334155;
+}
+[data-density="compact"] {
+  --density-space: 0.75rem;
+}
+[data-density="comfortable"] {
+  --density-space: 1rem;
+}
+[data-radius="square"] {
+  --radius: 0.2rem;
+}
+[data-radius="subtle"] {
+  --radius: 0.45rem;
+}
+[data-radius="rounded"] {
+  --radius: 0.8rem;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --radius-sm: calc(var(--radius) - 4px);
@@ -17,11 +122,17 @@
 }
 
 * {
-  border-color: color-mix(in srgb, currentColor 15%, transparent);
+  border-color: var(--border);
+  box-sizing: border-box;
 }
 
 html {
   background: var(--background);
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
 }
 
 body {
@@ -30,7 +141,29 @@ body {
   font-family: var(--font-geist-sans), sans-serif;
 }
 
+button,
+a,
+input,
+select,
+textarea {
+  outline-color: var(--ring);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.8;
+}
+
 ::selection {
-  background: #bef264;
-  color: #0c0a09;
+  background: var(--accent);
+  color: var(--accent-foreground);
 }

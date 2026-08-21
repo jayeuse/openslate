@@ -5,17 +5,24 @@ import type { ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-300 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4",
+  "inline-flex items-center justify-center gap-2 rounded-[var(--radius)] text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4",
   {
     variants: {
       variant: {
-        default: "bg-lime-300 text-stone-950 hover:bg-lime-200",
-        outline:
-          "border border-white/15 bg-transparent text-stone-100 hover:bg-white/10",
+        default:
+          "bg-primary text-primary-foreground shadow-sm hover:opacity-90",
+        secondary:
+          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        ghost: "text-foreground hover:bg-muted",
+        destructive:
+          "bg-destructive text-destructive-foreground shadow-sm hover:opacity-90",
+        outline: "border border-border bg-card text-foreground hover:bg-muted",
       },
       size: {
         default: "h-9 px-4 py-2",
+        sm: "h-8 px-3 text-xs",
         lg: "h-11 px-5",
+        icon: "size-9",
       },
     },
     defaultVariants: {

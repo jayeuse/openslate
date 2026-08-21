@@ -1,0 +1,176 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { KeyRound, Plus, UserRound } from "lucide-react";
+import { AppPage } from "@/components/app-page";
+import { PageHeader } from "@/components/page-header";
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  apiFetch,
+  listQuery,
+  type ListResponse,
+  type Role,
+  type User,
+} from "@/lib/api";
+
+export default function UsersPage() {
+  const [users, setUsers] = useState<User[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [roleId, setRoleId] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  async function load() {
+    try {
+      const [userResult, roleResult] = await Promise.all([
+        apiFetch<ListResponse<User>>(
+          `/users?${listQuery({ limit: 100, deleted: "include", sort_by: "username", sort_order: "asc" })}`,
+        ),
+        apiFetch<ListResponse<Role>>(
+          `/roles?${listQuery({ limit: 100, deleted: "exclude", sort_by: "role", sort_order: "asc" })}`,
+        ),
+      ]);
+      setUsers(userResult.items);
+      setRoles(roleResult.items);
+      if (!roleId && roleResult.items[0]) setRoleId(roleResult.items[0].id);
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Users could not be loaded",
+      );
+    }
+  }
+  useEffect(() => {
+    void load();
+  }, []);
+  async function create(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await apiFetch<User>("/users", {
+        method: "POST",
+        body: JSON.stringify({ username, password, role_id: roleId }),
+      });
+      setUsername("");
+      setPassword("");
+      await load();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "User could not be created",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <AppPage>
+      <PageHeader
+        eyebrow="Administration"
+        title="People"
+        description="Create staff accounts and assign an active role. Accounts are ready to sign in, but business endpoints currently require admin."
+      />
+      <Alert variant="warning" className="mb-5">
+        Staff accounts can authenticate, but the current backend authorizes
+        departments, modules, fields, and records for the exact{" "}
+        <strong>admin</strong> role only.
+      </Alert>
+      <div className="grid gap-5 lg:grid-cols-[1fr_0.44fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle>Users</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {users.map((user) => (
+              <div
+                className="border-border flex items-center gap-4 border-b p-5 last:border-b-0"
+                key={user.id}
+              >
+                <div className="bg-accent text-accent-foreground grid size-9 place-items-center rounded-full">
+                  <UserRound size={17} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">{user.username}</p>
+                  <p className="text-muted-foreground mt-1 font-mono text-[11px]">
+                    Role ID · {user.role_id.slice(0, 8)}…
+                  </p>
+                </div>
+                <Badge variant={user.is_deleted ? "warning" : "success"}>
+                  {user.is_deleted ? "Archived" : "Active"}
+                </Badge>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Create staff user</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form className="space-y-4" onSubmit={create}>
+              <div className="space-y-2">
+                <Label htmlFor="staff-username">Username</Label>
+                <Input
+                  id="staff-username"
+                  required
+                  pattern="[A-Za-z0-9_-]+"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="staff-password">Temporary password</Label>
+                <Input
+                  id="staff-password"
+                  type="password"
+                  minLength={12}
+                  required
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+                <p className="text-muted-foreground text-xs">
+                  At least 12 characters.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="staff-role">Role</Label>
+                <select
+                  id="staff-role"
+                  className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
+                  value={roleId}
+                  onChange={(event) => setRoleId(event.target.value)}
+                >
+                  {roles.map((role) => (
+                    <option value={role.id} key={role.id}>
+                      {role.role}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <Button className="w-full" disabled={saving || !roleId}>
+                <KeyRound size={16} />
+                {saving ? (
+                  "Creating…"
+                ) : (
+                  <>
+                    <Plus size={16} /> Create user
+                  </>
+                )}
+              </Button>
+            </form>
+            {error && (
+              <Alert variant="destructive" className="mt-4">
+                {error}
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </AppPage>
+  );
+}

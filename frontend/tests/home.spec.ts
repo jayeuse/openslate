@@ -1,78 +1,48 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-async function openHome(page: Page) {
-  await page.route("**/api/health", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ status: "ok", service: "openslate-api" }),
-    }),
-  );
-
+test("shows the operational entry point", async ({ page }) => {
   await page.goto("/");
-}
-
-test("shows the product foundation and API status", async ({ page }) => {
-  await openHome(page);
-
   await expect(page.getByRole("heading", { level: 1 })).toContainText(
-    "Your business,",
+    "Make the next action obvious",
   );
-  await expect(page.getByRole("status")).toHaveText(/API online/);
   await expect(
-    page.getByRole("link", { name: /Explore the API/ }),
-  ).toBeVisible();
+    page.getByRole("link", { name: /Open workspace/ }),
+  ).toHaveAttribute("href", "/login");
   await expect(
-    page.getByRole("link", { name: /Explore the API/ }),
-  ).toHaveAttribute("href", "/docs");
-  await expect(
-    page.getByRole("link", { name: /View OpenSlate repository/ }),
-  ).toHaveAttribute("href", "https://github.com/jayeuse/openslate");
+    page.getByRole("link", { name: /First deployment/ }),
+  ).toHaveAttribute("href", "/setup");
 });
 
 test("has no serious accessibility violations", async ({ page }) => {
-  await openHome(page);
-
+  await page.goto("/");
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
 });
 
-test("shows offline when the API returns an error", async ({ page }) => {
-  await page.route("**/api/health", (route) => route.fulfill({ status: 503 }));
-  await page.goto("/");
-
-  await expect(page.getByRole("status")).toHaveText(/API offline/);
-});
-
-test("shows offline when the API response is invalid", async ({ page }) => {
-  await page.route("**/api/health", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ status: "healthy" }),
-    }),
+test("explains the external first administrator prerequisite", async ({
+  page,
+}) => {
+  await page.goto("/setup");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText(
+    "Provision the administrator",
   );
-  await page.goto("/");
-
-  await expect(page.getByRole("status")).toHaveText(/API offline/);
+  await expect(
+    page.getByText("This is a deployment prerequisite"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /Continue to sign in/ }),
+  ).toHaveAttribute("href", "/login");
 });
 
-test("shows checking while the health request is pending", async ({ page }) => {
-  await page.route("**/api/health", async () => {
-    await new Promise(() => undefined);
-  });
-  await page.goto("/");
-
-  await expect(page.getByRole("status")).toHaveText(/Checking API/);
-});
-
-test("sets baseline security headers", async ({ page }) => {
-  const response = await page.request.get("/");
-
-  expect(response.ok()).toBe(true);
-  expect(response.headers()["x-content-type-options"]).toBe("nosniff");
-  expect(response.headers()["x-frame-options"]).toBe("DENY");
-  expect(response.headers()["permissions-policy"]).toContain("camera=()");
-  expect(response.headers()["content-security-policy-report-only"]).toContain(
-    "default-src 'self'",
+test("renders the login form with deployment guidance", async ({ page }) => {
+  await page.goto("/login");
+  await expect(page.getByRole("heading", { level: 2 })).toContainText(
+    "Welcome back",
   );
+  await expect(page.getByLabel("Username")).toBeVisible();
+  await expect(page.getByLabel("Password")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /Read the setup guide/ }),
+  ).toBeVisible();
 });

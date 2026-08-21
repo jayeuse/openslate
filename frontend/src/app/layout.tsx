@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,8 +14,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OpenSlate",
-  description: "Flexible business operations, built on an open foundation.",
+  title: {
+    default: "OpenSlate Operations",
+    template: "%s | OpenSlate",
+  },
+  description: "A focused workspace for departments, modules, and records.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -23,7 +27,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col">{children}</body>
+      <body className="flex min-h-full flex-col">
+        <ThemeProvider />
+        {children}
+      </body>
     </html>
   );
 }
