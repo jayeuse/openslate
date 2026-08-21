@@ -10,7 +10,8 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-lime-300 text-stone-950 hover:bg-lime-200",
-        outline: "border border-white/15 bg-transparent text-stone-100 hover:bg-white/10",
+        outline:
+          "border border-white/15 bg-transparent text-stone-100 hover:bg-white/10",
       },
       size: {
         default: "h-9 px-4 py-2",
@@ -25,13 +26,25 @@ const buttonVariants = cva(
 );
 
 export interface ButtonProps
-  extends ButtonHTMLAttributes<HTMLButtonElement>,
+  extends
+    ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean;
 }
 
-export function Button({ className, variant, size, asChild = false, ...props }: ButtonProps) {
+export function Button({
+  className,
+  variant,
+  size,
+  asChild = false,
+  ...props
+}: ButtonProps) {
   const Component = asChild ? Slot : "button";
 
-  return <Component className={cn(buttonVariants({ variant, size, className }))} {...props} />;
+  return (
+    <Component
+      className={cn(buttonVariants({ variant, size, className }))}
+      {...props}
+    />
+  );
 }

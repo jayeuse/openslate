@@ -105,6 +105,8 @@ uv run pytest
 Frontend, from `frontend/`:
 
 ```bash
+npm ci
+npm run format:check
 npm run lint
 npm run typecheck
 npm run build
@@ -112,6 +114,8 @@ npm run test:e2e
 ```
 
 Run one backend test with `uv run pytest tests/test_health.py`. Run one browser test with `npm run test:e2e -- tests/home.spec.ts --project=chromium`.
+
+The frontend's `npm run verify` command runs formatting, linting, type checking, a production build, and Playwright against the built application.
 
 ## Architecture
 
