@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+import app.systems.users.router as users_router
 from app.systems.users.models import Role, User, UserRole
 from app.systems.users.router import (
     _active_role,
@@ -25,13 +26,14 @@ def make_role(name: str, *, deleted: bool = False) -> Role:
 
 def make_user(username: str, role: Role, *, deleted: bool = False) -> User:
     user = User(
+        id=uuid7(),
+        email=f"{username}@example.com",
         username=username,
-        password_hash="digest",
+        status="active",
         role_id=role.id,
         role=role,
         is_deleted=deleted,
     )
-    user.id = uuid7()
     return user
 
 
@@ -110,12 +112,15 @@ def test_last_active_admin_cannot_be_deleted() -> None:
     assert target.is_deleted is False
 
 
-def test_deleted_user_can_be_restored_only_with_an_active_role() -> None:
+def test_deleted_user_can_be_restored_only_with_an_active_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     role = make_role("editor")
     user = make_user("deleted-user", role, deleted=True)
     user.deleted_at = datetime.now(UTC)
     db = Mock(spec=Session)
     db.scalar.side_effect = [user, role, user]
+    monkeypatch.setattr(users_router, "_enable_auth_user", lambda _: None)
 
     restored = restore_user(user.id, user, db)
 

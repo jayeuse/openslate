@@ -8,11 +8,10 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { setSession } from "@/lib/session";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -24,7 +23,7 @@ export default function LoginPage() {
       const response = await fetch("/session/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ email, password }),
       });
       if (!response.ok) {
         const body: unknown = await response.json().catch(() => null);
@@ -37,7 +36,6 @@ export default function LoginPage() {
             : "Sign in failed";
         throw new Error(detail);
       }
-      setSession({ accessToken: "", refreshToken: "", username });
       router.push("/workspace");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Sign in failed");
@@ -101,13 +99,14 @@ export default function LoginPage() {
           )}
           <form className="space-y-5" onSubmit={submit}>
             <div className="space-y-2">
-              <Label htmlFor="username">Username</Label>
+              <Label htmlFor="email">Email</Label>
               <Input
-                id="username"
-                autoComplete="username"
+                id="email"
+                type="email"
+                autoComplete="email"
                 required
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
               />
             </div>
             <div className="space-y-2">

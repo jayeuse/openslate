@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { KeyRound, Plus, UserRound } from "lucide-react";
+import { Mail, Plus, UserRound } from "lucide-react";
 import { AppPage } from "@/components/app-page";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
@@ -21,8 +21,8 @@ import {
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
   const [roleId, setRoleId] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -55,10 +55,10 @@ export default function UsersPage() {
     try {
       await apiFetch<User>("/users", {
         method: "POST",
-        body: JSON.stringify({ username, password, role_id: roleId }),
+        body: JSON.stringify({ email, username, role_id: roleId }),
       });
+      setEmail("");
       setUsername("");
-      setPassword("");
       await load();
     } catch (reason) {
       setError(
@@ -73,7 +73,7 @@ export default function UsersPage() {
       <PageHeader
         eyebrow="Administration"
         title="People"
-        description="Create staff accounts and assign an active role. Accounts are ready to sign in, but business endpoints currently require admin."
+        description="Invite staff accounts and assign an active role. Invited users finish setup from the secure email link."
       />
       <Alert variant="warning" className="mb-5">
         Staff accounts can authenticate, but the current backend authorizes
@@ -100,8 +100,22 @@ export default function UsersPage() {
                     Role ID · {user.role_id.slice(0, 8)}…
                   </p>
                 </div>
-                <Badge variant={user.is_deleted ? "warning" : "success"}>
-                  {user.is_deleted ? "Archived" : "Active"}
+                <Badge
+                  variant={
+                    user.is_deleted || user.status === "disabled"
+                      ? "warning"
+                      : user.status === "active"
+                        ? "success"
+                        : "default"
+                  }
+                >
+                  {user.is_deleted
+                    ? "Archived"
+                    : user.status === "pending"
+                      ? "Invitation pending"
+                      : user.status === "disabled"
+                        ? "Disabled"
+                        : "Active"}
                 </Badge>
               </div>
             ))}
@@ -109,10 +123,21 @@ export default function UsersPage() {
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>Create staff user</CardTitle>
+            <CardTitle>Invite staff user</CardTitle>
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={create}>
+              <div className="space-y-2">
+                <Label htmlFor="staff-email">Email</Label>
+                <Input
+                  id="staff-email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="staff-username">Username</Label>
                 <Input
@@ -122,20 +147,6 @@ export default function UsersPage() {
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="staff-password">Temporary password</Label>
-                <Input
-                  id="staff-password"
-                  type="password"
-                  minLength={12}
-                  required
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                />
-                <p className="text-muted-foreground text-xs">
-                  At least 12 characters.
-                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="staff-role">Role</Label>
@@ -153,12 +164,12 @@ export default function UsersPage() {
                 </select>
               </div>
               <Button className="w-full" disabled={saving || !roleId}>
-                <KeyRound size={16} />
+                <Mail size={16} />
                 {saving ? (
-                  "Creating…"
+                  "Sending…"
                 ) : (
                   <>
-                    <Plus size={16} /> Create user
+                    <Plus size={16} /> Send invitation
                   </>
                 )}
               </Button>

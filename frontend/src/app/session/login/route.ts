@@ -1,42 +1,47 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 
-const backend = process.env.BACKEND_URL ?? "http://localhost:8000";
+import { setAuthCookies } from "@/lib/auth-cookies";
+import { isSameOriginRequest } from "@/lib/request-security";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+
+const LoginSchema = z
+  .object({
+    email: z.string().trim().email().max(320),
+    password: z.string().min(1).max(1024),
+  })
+  .strict();
 
 export async function POST(request: Request) {
-  const response = await fetch(`${backend}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: await request.text(),
-  });
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) return NextResponse.json(body, { status: response.status });
-  if (
-    typeof body !== "object" ||
-    body === null ||
-    !("access_token" in body) ||
-    !("refresh_token" in body)
-  )
+  if (!isSameOriginRequest(request))
+    return NextResponse.json({ detail: "Forbidden" }, { status: 403 });
+  const input = LoginSchema.safeParse(await request.json().catch(() => null));
+  if (!input.success)
     return NextResponse.json(
-      { detail: "Invalid authentication response" },
-      { status: 502 },
+      { detail: "Invalid sign-in request" },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
-  const token = body as { access_token: string; refresh_token: string };
-  const store = await cookies();
-  const secure = process.env.NODE_ENV === "production";
-  store.set("openslate_access", token.access_token, {
-    httpOnly: true,
-    secure,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 30,
-  });
-  store.set("openslate_refresh", token.refresh_token, {
-    httpOnly: true,
-    secure,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7,
-  });
-  return NextResponse.json({ authenticated: true });
+
+  try {
+    const supabase = createSupabaseServerClient();
+    const { data, error } = await supabase.auth.signInWithPassword(input.data);
+    if (error || !data.session) {
+      return NextResponse.json(
+        { detail: "Invalid email or password" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
+    const response = NextResponse.json(
+      { authenticated: true },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+    setAuthCookies(response, data.session);
+    return response;
+  } catch {
+    return NextResponse.json(
+      { detail: "Unable to sign in" },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
 }

@@ -1,7 +1,6 @@
 from functools import lru_cache
-from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,14 +8,17 @@ class Settings(BaseSettings):
     app_name: str = "OpenSlate API"
     environment: str = "development"
     database_url: str
-    secret_key: SecretStr
-    admin_bootstrap_username: str | None = None
-    admin_bootstrap_password: SecretStr | None = None
-    sample_user_password: SecretStr | None = None
-    access_token_expire_minutes: int = Field(default=30, gt=0)
-    refresh_token_expire_days: int = Field(default=7, gt=0)
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
-    storage_path: Path = Path("storage")
+    migration_database_url: str | None = None
+    supabase_url: str | None = None
+    supabase_secret_key: SecretStr | None = None
+    supabase_auth_redirect_url: str | None = None
+    supabase_jwt_issuer: str | None = None
+    supabase_jwks_url: str | None = None
+    supabase_jwt_audience: str = Field(
+        default="authenticated",
+        validation_alias=AliasChoices("SUPABASE_JWT_AUDIENCE", "SUPABASE_AUDIENCE"),
+    )
+    cors_origins: list[str] = ["http://localhost:3000"]
 
     model_config = SettingsConfigDict(
         env_file=("../.env", ".env"),

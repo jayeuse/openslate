@@ -49,8 +49,11 @@ def test_admin_can_list_and_retrieve_audit_logs() -> None:
     log = make_log()
     database = FakeDatabase([log])
     admin = User(
+        id=uuid7(),
+        email="admin@example.com",
         username="admin",
-        password_hash="hash",
+        status="active",
+        role_id=uuid7(),
         role=Role(role=UserRole.ADMIN, permissions={}),
     )
 
@@ -66,8 +69,11 @@ def test_admin_can_list_and_retrieve_audit_logs() -> None:
 @pytest.mark.parametrize("deleted", [DeletedFilter.INCLUDE, DeletedFilter.ONLY])
 def test_audit_list_rejects_deleted_filters(deleted: DeletedFilter) -> None:
     admin = User(
+        id=uuid7(),
+        email="admin@example.com",
         username="admin",
-        password_hash="hash",
+        status="active",
+        role_id=uuid7(),
         role=Role(role=UserRole.ADMIN, permissions={}),
     )
 
@@ -83,8 +89,11 @@ def test_audit_list_rejects_deleted_filters(deleted: DeletedFilter) -> None:
 
 def test_missing_audit_log_returns_not_found() -> None:
     admin = User(
+        id=uuid7(),
+        email="admin@example.com",
         username="admin",
-        password_hash="hash",
+        status="active",
+        role_id=uuid7(),
         role=Role(role=UserRole.ADMIN, permissions={}),
     )
 

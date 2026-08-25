@@ -1,129 +1,218 @@
 # OpenSlate
 
-OpenSlate is a self-hosted foundation for configurable business operations. This repository is a full-stack scaffold with a Next.js frontend, FastAPI API, PostgreSQL persistence, local file storage, and a Caddy edge proxy.
+OpenSlate is a self-hosted foundation for configurable business operations. It
+uses a host-run FastAPI backend and Next.js frontend with the Supabase CLI as
+the local platform for PostgreSQL, Auth, Realtime, Storage, Studio, and
+Mailpit.
 
-## Stack
+## Stack and boundaries
 
-- Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS 4, shadcn/ui foundations, Zod
-- Backend: Python 3.12+, FastAPI, Pydantic, SQLAlchemy, Alembic
-- Data: PostgreSQL with JSONB support, local filesystem storage
-- Security: local username/password authentication with Argon2, JWT bearer tokens, RBAC foundations
-- Auditing: transactional ORM CRUD audit logs with minimal before/after JSONB diffs and sensitive-value redaction
-- Operations: Docker Compose and Caddy
-- Tests: Pytest and Playwright
+- Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS 4, and Playwright
+- Backend: Python 3.12+, FastAPI, Pydantic, SQLAlchemy, and Alembic
+- Local platform: Supabase CLI with PostgreSQL 17
+- Authentication: Supabase Auth; global public signup and anonymous sign-in
+  are disabled. The email/password provider remains enabled only so invited
+  users can accept invitations and sign in.
+- Auditing: application ORM mutations only, with transactional minimal diffs
+  and sensitive-value redaction
+- Realtime: private Supabase Broadcast invalidation events only; event payloads
+  do not contain row snapshots
+- Storage: Supabase Storage only; the local filesystem is not an application
+  storage backend
 
-## Quick Start
+The FastAPI API owns application reads and writes. Alembic owns the application
+schema. Supabase's Data API intentionally exposes only the managed
+`graphql_public` surface, not the application schema. Do not write application
+data through PostgREST/Data API, Studio, direct SQL, or external database
+clients.
 
-1. Create local configuration:
+Audit logs cover normal application ORM entity mutations in the same
+transaction as the business change. Supabase Auth, Studio, direct SQL, Alembic,
+Data API operations, and external clients are outside the application audit
+boundary. Bulk and raw ORM mutation statements remain unsupported because they
+cannot produce reliable per-record snapshots.
+
+## Local setup
+
+Run these commands from the repository root unless a `cd` is shown.
+
+1. Start the Supabase local platform:
+
+   ```bash
+   supabase start
+   ```
+
+2. Create the local environment file:
 
    ```bash
    cp .env.example .env
    ```
 
-2. Replace `POSTGRES_PASSWORD` and `SECRET_KEY` in `.env`. Generate a secret with `openssl rand -hex 32`.
-
-3. Build and start the stack:
+3. Retrieve local connection values without committing them:
 
    ```bash
-   docker compose up --build
+   supabase status -o env
    ```
 
-4. Open the application at <http://localhost:8080>, API documentation at <http://localhost:8080/docs>, and Adminer at <http://localhost:8081>.
+   Fill `.env` using only these mappings from that output:
 
-The backend applies Alembic migrations before starting. PostgreSQL data uses a named volume; uploaded files belong under the host `storage/` directory.
+   | `.env` setting | Supabase CLI value |
+   | --- | --- |
+   | `MIGRATION_DATABASE_URL` | `DB_URL`, with the SQLAlchemy `postgresql+psycopg://` scheme |
+   | `SUPABASE_URL` | `API_URL` |
+   | `SUPABASE_PUBLISHABLE_KEY` | `ANON_KEY` |
+   | `SUPABASE_SECRET_KEY` | `SERVICE_ROLE_KEY` (backend only) |
 
-For Adminer, select `PostgreSQL`, use `postgres` as the server, and enter the `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` values from `.env`. Adminer is bound to the local machine only and is not routed through Caddy.
+   `SUPABASE_JWT_ISSUER` is the local API URL plus `/auth/v1`, and
+   `SUPABASE_JWKS_URL` is that issuer plus
+   `/.well-known/jwks.json`. Keep all values from `supabase status -o env`
+   private; do not paste the complete command output into the repository.
 
-## Local Development
+4. Apply the application schema with Alembic. Supabase migrations and seeds
+   are disabled in `supabase/config.toml`:
 
-Start PostgreSQL and Adminer only:
+   ```bash
+   cd backend
+   uv sync
+   uv run alembic upgrade head
+   ```
+
+5. Generate a separate application-database password, set
+   `OPENSLATE_DATABASE_PASSWORD`, URL-encode it in `DATABASE_URL`, and provision
+   the least-privilege runtime login:
+
+   ```bash
+   uv run python scripts/provision_database_role.py
+   ```
+
+6. Create the first administrator through the Supabase invitation flow. Open
+   the invitation in local Mailpit and set the account password in the app:
+
+   ```bash
+   uv run python scripts/bootstrap_admin.py --email <email> --username <username>
+   ```
+
+7. Run the host services in separate terminals. Export the root environment
+   first so Next.js receives its `NEXT_PUBLIC_*` aliases:
+
+   ```bash
+   # terminal: backend/
+   uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+   # terminal: frontend/
+   set -a; source ../.env; set +a
+   npm ci
+   npm run dev -- --hostname 127.0.0.1
+   ```
+
+The app is at <http://localhost:3000> and the FastAPI docs are at
+<http://localhost:8000/docs>. Supabase Studio is at
+<http://127.0.0.1:54323>; Mailpit is at
+<http://127.0.0.1:54324>. The Supabase API and database use the ports shown by
+`supabase status` (normally `54321` and `54322`).
+
+Supabase CLI manages the local service bindings. Verify that the URLs in
+`supabase status` and the published ports are loopback-only before using the
+stack. Do not add PostgreSQL network restrictions to achieve this: Supabase
+service-to-service connections need the local Docker network.
+
+## Stop and reset
+
+Stop the local platform while preserving its data:
 
 ```bash
-docker compose up -d postgres adminer
+supabase stop
 ```
 
-Run the backend from `backend/`:
+For a destructive local database reset, run the platform reset and then apply
+the application schema again:
 
 ```bash
-uv sync
+supabase start
+supabase db reset
+cd backend
 uv run alembic upgrade head
-uv run uvicorn app.main:app --reload
 ```
 
-Run the frontend from `frontend/` in another terminal:
-
-```bash
-npm ci
-npm run dev
-```
-
-Next.js proxies browser requests under `/api/*` to `BACKEND_URL`, which defaults to `http://localhost:8000`.
-
-## Audit Logs
-
-Application ORM creates, updates, hard deletes, and soft deletes are recorded in PostgreSQL `audit_logs` rows in the same transaction as the business change. Update `before` and `after` values contain only changed fields; nested JSON objects are diffed recursively. Passwords, tokens, secrets, credentials, and private keys are always represented as `[REDACTED]`.
-
-Audit logs are queryable by administrators through `GET /api/audit-logs` and `GET /api/audit-logs/{id}`. The list endpoint uses the standard offset response and supports action, entity type, entity ID, actor UUID, request, date, sort, and literal search filters. `performed_by` is a nullable foreign key to `users.id`; it becomes null when the actor is deleted so historical audit rows remain available.
-
-The selected boundary is application ORM writes only. Adminer, direct SQL, Alembic, and external database clients are not audited. Bulk and raw ORM mutation statements are rejected because they cannot produce reliable per-record before/after snapshots.
-
-## Standard List Contract
-
-List endpoints use the shared helpers under `backend/app/common/listing/`. The request contract is `limit` (default 25, range 1-100), `offset` (default 0), endpoint-defined `sort_by`, `sort_order` (`asc` or `desc`), optional literal substring `search`, and `deleted` (`exclude`, `include`, or `only`). Responses contain `items` and `pagination` with `limit`, `offset`, `count`, `total`, and `has_more`.
-
-Each endpoint must define its trusted sort fields and searchable fields. Search is case-insensitive substring matching with wildcard characters escaped. Deleted-record visibility is authorized by the endpoint; unsupported search or deleted modes return `422`. Audit reads are the intentional exception to soft-delete filtering because audit rows are immutable.
+Never add application SQL files under `supabase/migrations` or use Supabase
+seed files. Schema changes go through `backend/migrations/` and are checked
+with Alembic.
 
 ## Domain API
 
-Roles, users, departments, modules, fields, records, and audit reads are administrator-only. Domain collections use the standard list contract and expose `POST`, `GET`, `PATCH`, soft `DELETE`, and `POST /{id}/restore` where applicable. Parent deletion returns `409` while active dependents exist; delete children before parents and restore parents before children.
+Roles, users, departments, modules, fields, records, and audit reads are
+administrator-only. Domain collections use the standard list contract and
+expose `POST`, `GET`, `PATCH`, soft `DELETE`, and restore where applicable.
+Records validate active field definitions, required values, select options, and
+JSON value types.
 
-Records use field UUID strings as JSON keys. The initial field types are `text`, `number`, `boolean`, `date`, `datetime`, and `select`. Record writes validate active fields, required values, nullability, configured select options, and JSON value types. Field type/config changes are rejected when they would invalidate active records.
-
-Authentication provides `/api/auth/register`, form-compatible `/api/auth/token`, JSON `/api/auth/login`, `/api/auth/me`, `/api/auth/refresh`, and `/api/auth/logout`. Tokens are stateless JWTs: logout tells the client to discard tokens but cannot revoke an already-issued token before expiration. Run `uv run python scripts/bootstrap_admin.py --username <name>` from `backend/` to create the first administrator interactively.
-
-User responses return `role_id` only. Retrieve role details through the roles collection rather than receiving a duplicated nested role object on every user response.
-
-Development data scripts are available from `backend/`. With the API running, `uv run python -m scripts.seed_sample_data` creates generated UUIDs through the API endpoints for the sample roles, users, departments, modules, fields, records, and one audit entry. Set `API_BASE_URL` to override the default `http://localhost:8000`. It uses `SAMPLE_USER_PASSWORD`, falling back to `ADMIN_BOOTSTRAP_PASSWORD`, for the sample users. `uv run python -m scripts.clear_database` removes application data and audit logs while preserving the account named by `ADMIN_BOOTSTRAP_USERNAME`. The seed script uses audited API mutations; the clear script is the intentionally destructive maintenance exception.
-
-To run the PostgreSQL audit integration tests:
-
-```bash
-TEST_DATABASE_URL=postgresql+psycopg://openslate:password@localhost:5432/openslate \
-  uv run pytest tests/test_audit_integration.py
-```
+The authentication integration uses Supabase Auth JWTs. Admin invitations are
+sent through the server-only Supabase secret key and delivered to local
+Mailpit. The browser uses only the publishable key. Realtime is a private
+Broadcast channel used to invalidate client data; it is not a second data API.
+Files belong in Supabase Storage and must not be mounted from a root `storage/`
+directory.
 
 ## Verification
 
-Backend, from `backend/`:
+After the platform is running and Alembic has applied the schema:
 
 ```bash
+# root
+supabase status
+
+# backend/
+uv run alembic check
 uv run ruff check .
 uv run mypy app
 uv run pytest
-```
 
-Frontend, from `frontend/`:
-
-```bash
-npm ci
-npm run format:check
+# frontend/
 npm run lint
 npm run typecheck
 npm run build
 npm run test:e2e
 ```
 
-Run one backend test with `uv run pytest tests/test_health.py`. Run one browser test with `npm run test:e2e -- tests/home.spec.ts --project=chromium`.
+Run one backend test with `uv run pytest tests/test_health.py`. Run one browser
+test with `npm run test:e2e -- tests/home.spec.ts --project=chromium`.
 
-The frontend's `npm run verify` command runs formatting, linting, type checking, a production build, and Playwright against the built application.
+PostgreSQL integration tests can use the local database URL without exposing
+it in source control:
 
-## Architecture
+```bash
+TEST_DATABASE_URL="$DATABASE_URL" uv run pytest tests/test_audit_integration.py
+```
 
-- `backend/app/core/` owns configuration, database wiring, security primitives, and middleware.
-- `backend/app/common/` contains shared dependencies, exceptions, and utilities.
-- `backend/app/systems/` is organized by business capability. `auth`, `users`, `departments`, `modules`, `fields`, and `records` own their CRUD routers, schemas, validation, and persistence behavior.
-- `backend/migrations/` is the only supported path for schema changes.
-- Domain SQLAlchemy models inherit `backend/app/core/base_model.py`, which provides UUIDv7 IDs and shared lifecycle/audit columns. `AuditLog` is the immutable exception because its schema is exact and has no mutable lifecycle columns.
-- `backend/app/systems/audit/` owns transactional ORM listeners, JSONB before/after diffing/redaction, and admin-only audit-log queries. `AuditLog` is append-only and excluded from its own audit stream.
-- `frontend/src/app/` contains App Router routes; reusable shadcn-style primitives live under `frontend/src/components/ui/`.
-- `infra/` owns deploy images and Caddy/PostgreSQL configuration. Root `docker-compose.yml` is the local deployment entrypoint.
+## Future hosted deployment
+
+The checked-in Supabase configuration is for local CLI development only. A
+hosted cutover must separately review database ownership, Auth redirect URLs,
+RLS/private-channel policies, Storage buckets, service-role secret handling,
+and production CORS before enabling any hosted Data API surface. Do not treat
+local keys, local ports, or local Mailpit as production configuration.
+
+Migration `0010` requires an owner-capable path for policy DDL on
+`realtime.messages` and permission to provision the application database
+roles. Local Supabase supplies that path through a tightly scoped CLI-only
+fallback. Before a hosted cutover, verify the hosted migration principal can
+perform those operations or apply the Realtime policy through a separately
+approved owner-capable deployment step; the migration intentionally fails
+closed otherwise.
+
+## Repository architecture
+
+- `backend/app/core/` owns configuration, database wiring, security, and
+  integrations.
+- `backend/app/common/` contains shared dependencies, exceptions, and
+  utilities.
+- `backend/app/systems/` is organized by business capability. Domain systems
+  own their CRUD routers, schemas, validation, and persistence behavior.
+- `backend/migrations/` is the only supported path for application schema
+  changes.
+- `backend/app/systems/audit/` owns transactional ORM listeners,
+  before/after diffing, redaction, and administrator-only audit reads.
+- `frontend/src/app/` contains App Router routes; reusable primitives live
+  under `frontend/src/components/ui/`.
+- `infra/docker/` retains standalone backend and frontend deployment images;
+  local orchestration is Supabase CLI plus host-run services.

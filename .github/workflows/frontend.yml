@@ -5,12 +5,28 @@ on:
     paths:
       - "frontend/**"
       - "infra/docker/frontend.Dockerfile"
+      - ".env.example"
+      - "supabase/**"
+      - "backend/app/common/dependencies/**"
+      - "backend/app/core/config/**"
+      - "backend/app/core/integrations/**"
+      - "backend/app/core/security/**"
+      - "backend/app/systems/auth/**"
+      - "backend/migrations/**"
       - ".github/workflows/frontend.yml"
   push:
     branches: [main]
     paths:
       - "frontend/**"
       - "infra/docker/frontend.Dockerfile"
+      - ".env.example"
+      - "supabase/**"
+      - "backend/app/common/dependencies/**"
+      - "backend/app/core/config/**"
+      - "backend/app/core/integrations/**"
+      - "backend/app/core/security/**"
+      - "backend/app/systems/auth/**"
+      - "backend/migrations/**"
       - ".github/workflows/frontend.yml"
 
 concurrency:

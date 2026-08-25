@@ -29,8 +29,13 @@ class FakeSession:
 
 def test_create_listener_stages_and_writes_create_log() -> None:
     session = FakeSession()
-    user = User(username="alice", password_hash="hash", role_id=uuid7())
-    user.id = uuid7()
+    user = User(
+        id=uuid7(),
+        email="alice@example.com",
+        username="alice",
+        status="active",
+        role_id=uuid7(),
+    )
     session.new = [user]
 
     capture_changes(session, None, None)
@@ -44,7 +49,13 @@ def test_create_listener_stages_and_writes_create_log() -> None:
     assert audit_log.entity_id == user.id
     assert audit_log.performed_by is None
     assert audit_log.before is None
-    assert audit_log.after["password_hash"] == "[REDACTED]"
+    assert audit_log.after == {
+        "email": "alice@example.com",
+        "username": "alice",
+        "status": "active",
+        "role_id": str(user.role_id),
+    }
+    assert "password_hash" not in audit_log.after
 
 
 def test_rollback_clears_staged_changes() -> None:

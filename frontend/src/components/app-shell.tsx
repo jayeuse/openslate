@@ -16,8 +16,8 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { useRealtime } from "@/components/realtime-provider";
 import { cn } from "@/lib/utils";
-import { clearSession } from "@/lib/session";
 
 const primaryLinks = [
   { href: "/workspace", label: "Workspace", icon: LayoutDashboard },
@@ -36,6 +36,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const { invalidate } = useRealtime();
   const title =
     pathname === "/workspace"
       ? "Workspace"
@@ -50,9 +51,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     router.push(href as Route);
   }
   async function logout() {
-    await fetch("/session/logout", { method: "POST" });
-    clearSession();
-    router.push("/login");
+    try {
+      await fetch("/session/logout", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+    } finally {
+      invalidate();
+      router.replace("/login");
+    }
   }
 
   return (

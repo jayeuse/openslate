@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -5,74 +7,111 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies import get_current_user, require_roles
-from app.core.security.tokens import (
-    create_access_token,
-    create_refresh_token,
-    decode_access_token,
-    decode_refresh_token,
-)
+import app.common.dependencies.auth as auth_dependencies
 from app.systems.users.models import Role, User, UserRole
-
-
-def test_access_token_round_trip() -> None:
-    subject = str(uuid7())
-    token = create_access_token(subject)
-
-    assert decode_access_token(token) == subject
-
-
-def test_decode_access_token_rejects_invalid_token() -> None:
-    assert decode_access_token("not-a-token") is None
-
-
-def test_access_and_refresh_tokens_have_distinct_types() -> None:
-    subject = str(uuid7())
-    access_token = create_access_token(subject)
-    refresh_token = create_refresh_token(subject)
-
-    assert decode_access_token(access_token) == subject
-    assert decode_refresh_token(refresh_token) == subject
-    assert decode_refresh_token(access_token) is None
-    assert decode_access_token(refresh_token) is None
 
 
 def test_role_dependency_accepts_allowed_role() -> None:
     admin = User(
+        id=uuid7(),
+        email="admin@example.com",
         username="admin",
-        password_hash="digest",
+        status="active",
+        role_id=uuid7(),
         role=Role(role=UserRole.ADMIN, permissions={}),
     )
 
-    assert require_roles(UserRole.ADMIN)(admin) is admin
+    assert auth_dependencies.require_roles(UserRole.ADMIN)(admin) is admin
 
 
 def test_role_dependency_rejects_other_role() -> None:
     member = User(
+        id=uuid7(),
+        email="member@example.com",
         username="member",
-        password_hash="digest",
+        status="active",
+        role_id=uuid7(),
         role=Role(role=UserRole.MEMBER, permissions={}),
     )
 
     with pytest.raises(HTTPException) as error:
-        require_roles(UserRole.ADMIN)(member)
+        auth_dependencies.require_roles(UserRole.ADMIN)(member)
 
     assert error.value.status_code == 403
 
 
-def test_current_user_rejects_deleted_role() -> None:
-    role = Role(role=UserRole.MEMBER, permissions={}, is_deleted=True)
-    user = User(
-        username="deleted-role-user",
-        password_hash="digest",
-        role=role,
-        is_deleted=False,
+def _use_verified_claims(monkeypatch: pytest.MonkeyPatch, claims: dict[str, Any]) -> None:
+    verifier = getattr(auth_dependencies, "verify_supabase_jwt", None)
+    assert callable(verifier), "get_current_user is not wired to Supabase JWT verification"
+    monkeypatch.setattr(
+        auth_dependencies,
+        "verify_supabase_jwt",
+        lambda _: claims,
+        raising=False,
     )
-    user.id = uuid7()
+
+
+def _profile(user_id: Any, *, status: str = "active", deleted: bool = False) -> Any:
+    return SimpleNamespace(
+        id=user_id,
+        username="member",
+        status=status,
+        is_deleted=deleted,
+        role=SimpleNamespace(role=UserRole.MEMBER, is_deleted=False),
+    )
+
+
+def test_current_user_loads_same_id_active_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id = uuid7()
+    profile = _profile(user_id)
     db = Mock(spec=Session)
-    db.scalar.return_value = user
+    db.scalar.return_value = profile
+    _use_verified_claims(monkeypatch, {"sub": str(user_id)})
+
+    current_user = auth_dependencies.get_current_user("supabase-token", db)
+
+    assert current_user is profile
+
+
+@pytest.mark.parametrize(
+    ("status", "deleted"),
+    [("pending", False), ("active", True)],
+)
+def test_current_user_rejects_pending_or_deleted_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    deleted: bool,
+) -> None:
+    user_id = uuid7()
+    db = Mock(spec=Session)
+    db.scalar.return_value = _profile(user_id, status=status, deleted=deleted)
+    _use_verified_claims(monkeypatch, {"sub": str(user_id)})
 
     with pytest.raises(HTTPException) as error:
-        get_current_user(create_access_token(str(user.id)), db)
+        auth_dependencies.get_current_user("supabase-token", db)
+
+    assert error.value.status_code == 401
+
+
+def test_current_user_rejects_missing_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id = uuid7()
+    db = Mock(spec=Session)
+    db.scalar.return_value = None
+    _use_verified_claims(monkeypatch, {"sub": str(user_id)})
+
+    with pytest.raises(HTTPException) as error:
+        auth_dependencies.get_current_user("supabase-token", db)
+
+    assert error.value.status_code == 401
+
+
+def test_current_user_rejects_profile_with_different_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    token_user_id = uuid7()
+    db = Mock(spec=Session)
+    db.scalar.return_value = _profile(uuid7())
+    _use_verified_claims(monkeypatch, {"sub": str(token_user_id)})
+
+    with pytest.raises(HTTPException) as error:
+        auth_dependencies.get_current_user("supabase-token", db)
 
     assert error.value.status_code == 401

@@ -1,16 +1,3 @@
-from app.core.security.passwords import hash_password, verify_password
-from app.core.security.tokens import (
-    create_access_token,
-    create_refresh_token,
-    decode_access_token,
-    decode_refresh_token,
-)
+from app.core.security.supabase import verify_supabase_jwt
 
-__all__ = [
-    "create_access_token",
-    "create_refresh_token",
-    "decode_access_token",
-    "decode_refresh_token",
-    "hash_password",
-    "verify_password",
-]
+__all__ = ["verify_supabase_jwt"]

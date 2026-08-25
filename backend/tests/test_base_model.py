@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from app.core.base_model import BaseModel
 from app.systems.users.models import User
 
@@ -16,12 +14,9 @@ def test_user_inherits_universal_columns() -> None:
     assert columns.performed_by.nullable
 
 
-def test_base_model_generates_uuidv7_ids_and_audit_defaults() -> None:
-    id_default = User.__table__.c.id.default
-    generated_id = id_default.arg(None)
-
-    assert isinstance(generated_id, UUID)
-    assert generated_id.version == 7
+def test_supabase_profile_requires_an_externally_supplied_id() -> None:
+    assert User.__table__.c.id.default is None
+    assert User.__table__.c.id.server_default is None
     assert User.__table__.c.created_at.default is not None
     assert User.__table__.c.updated_at.default is not None
     assert User.__table__.c.is_deleted.default.arg is False

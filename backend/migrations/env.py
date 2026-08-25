@@ -7,12 +7,29 @@ from app.core.config import get_settings
 from app.core.database import Base, model_registry  # noqa: F401
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+settings = get_settings()
+config.set_main_option(
+    "sqlalchemy.url", settings.migration_database_url or settings.database_url
+)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+
+
+def include_object(
+    object_: object,
+    _name: str | None,
+    type_: str,
+    _reflected: bool,
+    _compare_to: object | None,
+) -> bool:
+    """Keep Supabase-managed metadata placeholders out of app migrations."""
+
+    if type_ == "table" and bool(getattr(object_, "info", {}).get("external")):
+        return False
+    return True
 
 
 def run_migrations_offline() -> None:
@@ -22,6 +39,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -34,7 +52,12 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+            include_object=include_object,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

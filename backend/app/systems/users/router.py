@@ -17,7 +17,8 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
-from app.core.security import hash_password
+from app.core.integrations.supabase import SupabaseAdminClient, SupabaseAdminError
+from app.systems.auth.schemas import InvitationCreate
 from app.systems.users.models import Role, User, UserRole
 from app.systems.users.schemas import (
     RoleCreate,
@@ -27,6 +28,7 @@ from app.systems.users.schemas import (
     UserResponse,
     UserUpdate,
 )
+from app.systems.users.service import InvitationConflict, InvitationError, invite_user
 
 router = APIRouter(prefix="/users", tags=["users"])
 roles_router = APIRouter(prefix="/roles", tags=["roles"])
@@ -42,6 +44,7 @@ class RoleSortField(StrEnum):
 
 
 class UserSortField(StrEnum):
+    EMAIL = "email"
     USERNAME = "username"
     CREATED_AT = "created_at"
     UPDATED_AT = "updated_at"
@@ -72,13 +75,17 @@ ROLE_LIST_SPEC = ListQuerySpec(
 )
 USER_LIST_SPEC = ListQuerySpec(
     sort_fields={
+        UserSortField.EMAIL: cast(ColumnElement[Any], User.email),
         UserSortField.USERNAME: cast(ColumnElement[Any], User.username),
         UserSortField.CREATED_AT: cast(ColumnElement[Any], User.created_at),
         UserSortField.UPDATED_AT: cast(ColumnElement[Any], User.updated_at),
     },
     default_sort=UserSortField.USERNAME,
     tie_breaker=cast(ColumnElement[Any], User.id),
-    search_fields=(cast(ColumnElement[str], User.username),),
+    search_fields=(
+        cast(ColumnElement[str], User.email),
+        cast(ColumnElement[str], User.username),
+    ),
     deleted_field=cast(ColumnElement[bool], User.is_deleted),
 )
 
@@ -135,7 +142,11 @@ def _active_user_count(db: Session, role_id: UUID) -> int:
         db.scalar(
             select(func.count())
             .select_from(User)
-            .where(User.role_id == role_id, User.is_deleted.is_(False))
+            .where(
+                User.role_id == role_id,
+                User.is_deleted.is_(False),
+                User.status == "active",
+            )
         )
         or 0
     )
@@ -149,6 +160,7 @@ def _active_admin_count(db: Session) -> int:
             .join(Role, User.role_id == Role.id)
             .where(
                 User.is_deleted.is_(False),
+                User.status == "active",
                 Role.is_deleted.is_(False),
                 Role.role == UserRole.ADMIN,
             )
@@ -163,6 +175,26 @@ def _commit(db: Session, message: str) -> None:
     except IntegrityError as error:
         db.rollback()
         raise _conflict(message) from error
+
+
+def _disable_auth_user(user_id: UUID) -> None:
+    try:
+        SupabaseAdminClient().disable_user(user_id)
+    except SupabaseAdminError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to disable user authentication",
+        ) from error
+
+
+def _enable_auth_user(user_id: UUID) -> None:
+    try:
+        SupabaseAdminClient().enable_user(user_id)
+    except SupabaseAdminError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to restore user authentication",
+        ) from error
 
 
 @roles_router.get("", response_model=RoleListResponse)
@@ -297,23 +329,32 @@ def create_user(
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> User:
-    role = _active_role(db, payload.role_id)
-    user = User(
-        username=payload.username,
-        password_hash=hash_password(payload.password),
-        role_id=role.id,
-        role=role,
-    )
-    db.add(user)
-    _commit(db, "Username unavailable")
-    return _user(db, user.id)
+    try:
+        return invite_user(
+            db,
+            InvitationCreate(
+                email=payload.email,
+                username=payload.username,
+                role_id=payload.role_id,
+            ),
+        )
+    except InvitationConflict as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email or username is already in use",
+        ) from error
+    except InvitationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Unable to send invitation",
+        ) from error
 
 
 @router.patch("/{user_id}", response_model=UserResponse)
 def update_user(
     user_id: UUID,
     payload: UserUpdate,
-    admin: AdminUser,
+    _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> User:
     _require_patch(payload.model_fields_set, payload)
@@ -329,9 +370,18 @@ def update_user(
         user.role = role
     if payload.username is not None:
         user.username = payload.username
-    if payload.password is not None:
-        user.password_hash = hash_password(payload.password)
+    if payload.status is not None:
+        if payload.status == "disabled" and user.role and user.role.role == UserRole.ADMIN:
+            if _active_admin_count(db) <= 1:
+                raise _conflict("Cannot disable the last active admin")
+        if payload.status == "active":
+            _enable_auth_user(user.id)
+        user.status = payload.status.value
     _commit(db, "Username unavailable")
+    if payload.status == "disabled":
+        # The local profile is committed first so an Auth outage fails closed:
+        # existing JWTs are rejected even if remote revocation is unavailable.
+        _disable_auth_user(user.id)
     return _user(db, user.id)
 
 
@@ -350,7 +400,9 @@ def delete_user(
         raise _conflict("Cannot delete the last active admin")
     user.is_deleted = True
     user.deleted_at = datetime.now(UTC)
+    user.status = "disabled"
     _commit(db, "Unable to delete user")
+    _disable_auth_user(user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -364,7 +416,9 @@ def restore_user(
     if not user.is_deleted:
         raise _conflict("User is not deleted")
     _active_role(db, user.role_id)
+    _enable_auth_user(user.id)
     user.is_deleted = False
     user.deleted_at = None
+    user.status = "active"
     _commit(db, "Unable to restore user")
     return _user(db, user.id)

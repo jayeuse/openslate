@@ -12,7 +12,7 @@ from app.systems.modules.models import Module
 from app.systems.modules.schemas import ModuleCreate, ModuleResponse, ModuleUpdate
 from app.systems.records.models import Record
 from app.systems.records.schemas import RecordCreate, RecordResponse, RecordUpdate
-from app.systems.users.models import Role, User
+from app.systems.users.models import Role, User, auth_users
 from app.systems.users.schemas import RoleCreate, RoleResponse, RoleUpdate, UserResponse
 
 
@@ -24,8 +24,17 @@ def test_domain_models_inherit_base_model() -> None:
 
 
 def test_domain_columns_and_foreign_keys_match_target_schema() -> None:
+    assert set(User.__table__.c) >= {
+        User.__table__.c.id,
+        User.__table__.c.email,
+        User.__table__.c.username,
+        User.__table__.c.status,
+    }
+    assert "password_hash" not in User.__table__.c
+    assert User.__table__.c.id.default is None
     assert User.__table__.c.username.type.length == 100
-    assert User.__table__.c.password_hash.type.__class__.__name__ == "Text"
+    assert User.__table__.c.email.type.length == 320
+    assert User.__table__.c.status.type.length == 20
     assert User.__table__.c.role_id.nullable is False
     assert Department.__table__.c.department_name.type.length == 150
     assert Module.__table__.c.module_name.type.length == 150
@@ -34,11 +43,24 @@ def test_domain_columns_and_foreign_keys_match_target_schema() -> None:
     assert Record.__table__.c.data.nullable is False
 
     role_fk = next(iter(User.__table__.c.role_id.foreign_keys))
+    auth_user_fk = next(iter(User.__table__.c.id.foreign_keys))
     module_fk = next(iter(Record.__table__.c.module_id.foreign_keys))
     assert isinstance(role_fk, ForeignKey)
     assert role_fk.target_fullname == "roles.id"
     assert role_fk.ondelete == "RESTRICT"
+    assert isinstance(auth_user_fk, ForeignKey)
+    assert auth_user_fk.target_fullname == "auth.users.id"
+    assert auth_user_fk.ondelete == "CASCADE"
     assert module_fk.target_fullname == "modules.id"
+
+
+def test_auth_users_metadata_is_an_external_placeholder() -> None:
+    assert auth_users.schema == "auth"
+    assert auth_users.name == "users"
+    assert auth_users.info == {"external": True}
+    assert auth_users not in {
+        table for table in User.metadata.tables.values() if not table.info.get("external")
+    }
 
 
 def test_audit_log_matches_exact_immutable_shape() -> None:

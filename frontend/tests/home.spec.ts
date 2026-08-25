@@ -40,9 +40,47 @@ test("renders the login form with deployment guidance", async ({ page }) => {
   await expect(page.getByRole("heading", { level: 2 })).toContainText(
     "Welcome back",
   );
-  await expect(page.getByLabel("Username")).toBeVisible();
+  await expect(page.getByLabel("Email")).toBeVisible();
   await expect(page.getByLabel("Password")).toBeVisible();
   await expect(
     page.getByRole("link", { name: /Read the setup guide/ }),
+  ).toBeVisible();
+});
+
+test("shows a safe error when sign in is rejected", async ({ page }) => {
+  await page.route("**/*session/login*", async (route) => {
+    await route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "Invalid email or password" }),
+    });
+  });
+
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("person@example.com");
+  await page.getByLabel("Password").fill("a-password-long-enough");
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  await expect(page.getByRole("status")).toContainText(
+    "Invalid email or password",
+  );
+  await expect(page).not.toHaveURL(/workspace/);
+});
+
+test("renders the invited-account password setup form", async ({ page }) => {
+  await page.goto("/auth/setup");
+
+  await expect(page.getByRole("heading", { level: 1 })).toContainText(
+    "Set your password",
+  );
+  await expect(
+    page.getByRole("textbox", { name: "Password", exact: true }),
+  ).toHaveAttribute("minlength", "12");
+  await expect(page.getByLabel("Confirm password")).toHaveAttribute(
+    "minlength",
+    "12",
+  );
+  await expect(
+    page.getByText("Finish setting up your invited OpenSlate account."),
   ).toBeVisible();
 });

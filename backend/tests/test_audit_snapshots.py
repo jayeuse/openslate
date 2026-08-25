@@ -27,20 +27,24 @@ def test_serialize_value_handles_common_database_values() -> None:
     assert serialize_value(b"secret") == REDACTED
 
 
-def test_serialize_record_omits_metadata_and_redacts_passwords() -> None:
+def test_serialize_record_contains_only_supabase_profile_fields() -> None:
     user = User(
+        id=uuid7(),
+        email="alice@example.com",
         username="alice",
-        password_hash="password-hash",
+        status="active",
         role_id=uuid7(),
     )
 
     snapshot = serialize_record(user)
 
     assert snapshot == {
+        "email": "alice@example.com",
         "username": "alice",
-        "password_hash": REDACTED,
+        "status": "active",
         "role_id": str(user.role_id),
     }
+    assert "password_hash" not in snapshot
     assert "id" not in snapshot
     assert "created_at" not in snapshot
     assert "is_deleted" not in snapshot

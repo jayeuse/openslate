@@ -1,5 +1,3 @@
-import { clearSession, getSession } from "@/lib/session";
-
 export type Pagination = {
   limit: number;
   offset: number;
@@ -46,13 +44,12 @@ export type Role = BaseEntity & {
   role: string;
   permissions: Record<string, unknown>;
 };
-export type User = BaseEntity & { username: string; role_id: string };
-export type TokenResponse = {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
+export type User = BaseEntity & {
+  email: string;
+  username: string;
+  status: "pending" | "active" | "disabled";
+  role_id: string;
 };
-
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -83,17 +80,18 @@ async function parseResponse(response: Response): Promise<unknown> {
 export async function apiFetch<T>(
   path: string,
   init: RequestInit = {},
-  retry = true,
 ): Promise<T> {
-  const session = getSession();
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
-  const response = await fetch(`/bff${path}`, { ...init, headers });
+  const response = await fetch(`/bff${path}`, {
+    ...init,
+    credentials: "same-origin",
+    headers,
+  });
   try {
     return (await parseResponse(response)) as T;
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401 && session && retry) {
-      clearSession();
+    if (error instanceof ApiError && error.status === 401) {
       // This utility has no router instance; hard navigation clears the expired shell.
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination
       if (typeof window !== "undefined") window.location.href = "/login";

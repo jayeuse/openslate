@@ -2,17 +2,42 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    ForeignKey,
+    String,
+    Table,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.ext.mutable import MutableDict
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
+from app.common.normalization import normalize_email, normalize_username
 from app.core.base_model import BaseModel
+from app.core.database.base import Base
+
+auth_users = Table(
+    "users",
+    Base.metadata,
+    Column("id", PostgreSQLUUID(as_uuid=True), primary_key=True),
+    schema="auth",
+    info={"external": True},
+)
 
 
 class UserRole(StrEnum):
     ADMIN = "admin"
     MEMBER = "member"
+
+
+class UserStatus(StrEnum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    DISABLED = "disabled"
 
 
 class Role(BaseModel):
@@ -34,14 +59,42 @@ class Role(BaseModel):
 
 class User(BaseModel):
     __tablename__ = "users"
-    __audit_redacted_fields__ = frozenset({"password_hash"})
-    __table_args__ = (UniqueConstraint("username", name="uq_users_username"),)
+    __table_args__ = (
+        UniqueConstraint("email", name="uq_users_email"),
+        UniqueConstraint("username", name="uq_users_username"),
+        CheckConstraint(
+            "email = lower(btrim(email)) AND length(email) > 0",
+            name="ck_users_email_normalized",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'active', 'disabled')",
+            name="ck_users_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(auth_users.c.id, ondelete="CASCADE", use_alter=True),
+        primary_key=True,
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
 
     username: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=UserStatus.PENDING.value,
+        server_default=text("'pending'"),
+    )
     role_id: Mapped[UUID] = mapped_column(
         ForeignKey("roles.id", ondelete="RESTRICT", use_alter=True),
         nullable=False,
         index=True,
     )
     role: Mapped[Role] = relationship(back_populates="users", foreign_keys=[role_id])
+
+    @validates("email", "username")
+    def normalize_profile_field(self, key: str, value: Any) -> Any:
+        if key == "email":
+            return normalize_email(value)
+        return normalize_username(value)

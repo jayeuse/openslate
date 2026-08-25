@@ -48,6 +48,4 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local storage (keep the mount point)
-/storage/*
-!/storage/.gitkeep
+.opencode/

@@ -40,11 +40,6 @@ const nextConfig: NextConfig = {
             key: "Permissions-Policy",
             value: "camera=(), geolocation=(), microphone=(), payment=()",
           },
-          {
-            key: "Content-Security-Policy-Report-Only",
-            value:
-              "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
-          },
         ],
       },
     ];

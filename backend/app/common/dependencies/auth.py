@@ -3,23 +3,25 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
-from app.core.security.tokens import decode_access_token
+from app.core.security.supabase import verify_supabase_jwt
 from app.systems.audit.context import set_audit_actor
 from app.systems.users.models import User, UserRole
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+oauth2_scheme = HTTPBearer(auto_error=True)
 
 
 def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
+    token: Annotated[str | HTTPAuthorizationCredentials, Depends(oauth2_scheme)],
     db: Annotated[Session, Depends(get_db)],
 ) -> User:
-    subject = decode_access_token(token)
+    raw_token = token.credentials if isinstance(token, HTTPAuthorizationCredentials) else token
+    claims = verify_supabase_jwt(raw_token)
+    subject = claims.get("sub") if claims else None
     try:
         user_id = UUID(subject) if subject else None
     except ValueError:
@@ -29,13 +31,24 @@ def get_current_user(
         if user_id
         else None
     )
-    if user is None or user.is_deleted or user.role is None or user.role.is_deleted:
+    if (
+        user is None
+        or user.id != user_id
+        or user.is_deleted
+        or getattr(user, "status", None) != "active"
+        or user.role is None
+        or user.role.is_deleted
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    set_audit_actor(db, user.id)
+    # SQLAlchemy sessions expose a mutable ``info`` dict. The guard keeps the
+    # dependency usable with lightweight session doubles while preserving the
+    # actor assignment for every real request session.
+    if isinstance(db.info, dict):
+        set_audit_actor(db, user.id)
     return user
 
 

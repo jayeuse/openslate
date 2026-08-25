@@ -1,53 +1,39 @@
+import importlib
+from typing import Any, cast
+
 import pytest
-from pydantic import ValidationError
-from uuid6 import uuid7
-
-from app.systems.auth.schemas import LoginRequest, RefreshRequest, RegistrationRequest
-from app.systems.users.schemas import RoleCreate, UserCreate, UserUpdate
+from pydantic import BaseModel, ValidationError
 
 
-def test_registration_normalizes_username() -> None:
-    request = RegistrationRequest(username="Test_User", password="long-enough-password")
-
-    assert request.username == "test_user"
-
-
-def test_registration_rejects_short_password() -> None:
-    with pytest.raises(ValidationError):
-        RegistrationRequest(username="test-user", password="short")
+def _invitation_schema() -> type[BaseModel]:
+    schemas = importlib.import_module("app.systems.auth.schemas")
+    schema = getattr(schemas, "InvitationCreate", None)
+    assert isinstance(schema, type), "InvitationCreate is not implemented"
+    return cast(type[BaseModel], schema)
 
 
-def test_registration_accepts_100_character_username() -> None:
-    request = RegistrationRequest(username="a" * 100, password="long-enough-password")
-
-    assert len(request.username) == 100
-
-
-def test_login_normalizes_username() -> None:
-    request = LoginRequest(username="Test_User", password="long-enough-password")
-
-    assert request.username == "test_user"
-
-
-def test_refresh_request_requires_a_token() -> None:
-    request = RefreshRequest(refresh_token="refresh-token")
-
-    assert request.refresh_token == "refresh-token"
-
-
-def test_user_payloads_validate_password_and_role() -> None:
-    role_id = uuid7()
-    create = UserCreate(
-        username="New_User",
-        password="long-enough-password",
-        role_id=role_id,
+def test_invitation_normalizes_email_and_username() -> None:
+    invitation = _invitation_schema()(
+        email=" ADMIN@Example.COM ",
+        username=" Test_User ",
     )
-    update = UserUpdate(password="another-long-password", role_id=role_id)
 
-    assert create.username == "new_user"
-    assert update.role_id == role_id
+    assert invitation.email == "admin@example.com"
+    assert invitation.username == "test_user"
 
 
-def test_role_payload_rejects_empty_role() -> None:
+@pytest.mark.parametrize("missing_field", ["email", "username"])
+def test_invitation_requires_email_and_username(missing_field: str) -> None:
+    values: dict[str, Any] = {
+        "email": "admin@example.com",
+        "username": "admin",
+    }
+    values.pop(missing_field)
+
     with pytest.raises(ValidationError):
-        RoleCreate(role="")
+        _invitation_schema()(**values)
+
+
+def test_invitation_rejects_invalid_email() -> None:
+    with pytest.raises(ValidationError):
+        _invitation_schema()(email="not-an-email", username="admin")

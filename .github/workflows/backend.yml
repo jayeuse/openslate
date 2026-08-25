@@ -1,0 +1,99 @@
+name: Backend
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "supabase/**"
+      - ".env.example"
+      - ".github/workflows/backend.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "supabase/**"
+      - ".env.example"
+      - ".github/workflows/backend.yml"
+
+concurrency:
+  group: backend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Install backend dependencies
+        run: uv sync --locked
+
+      - name: Start local Supabase
+        working-directory: .
+        run: supabase start > /tmp/openslate-supabase-start.log 2>&1
+
+      - name: Configure disposable database URL
+        working-directory: .
+        run: |
+          status_env="$(supabase status -o env)"
+          db_url="$(STATUS_ENV="$status_env" python -c 'import os, shlex; value=next((shlex.split(line)[0].split("=", 1)[1] for line in os.environ["STATUS_ENV"].splitlines() if line.startswith("DB_URL=")), ""); print(value.replace("postgresql://", "postgresql+psycopg://", 1))')"
+          publishable_key="$(STATUS_ENV="$status_env" python -c 'import os, shlex; print(next((shlex.split(line)[0].split("=", 1)[1] for line in os.environ["STATUS_ENV"].splitlines() if line.startswith("PUBLISHABLE_KEY=")), ""))')"
+          test -n "$db_url"
+          test -n "$publishable_key"
+          printf 'MIGRATION_DATABASE_URL=%s\nDATABASE_URL=%s\n' "$db_url" "$db_url" >> "$GITHUB_ENV"
+          PUBLISHABLE_KEY_VALUE="$publishable_key" python -c 'import json, os, urllib.error, urllib.request; request=urllib.request.Request("http://127.0.0.1:54321/auth/v1/signup", data=json.dumps({"email":"ci-public-signup@example.com","password":"Blocked-Signup-Password-42!"}).encode(), headers={"apikey":os.environ["PUBLISHABLE_KEY_VALUE"],"Content-Type":"application/json"}, method="POST");
+          try: urllib.request.urlopen(request); raise SystemExit("public signup unexpectedly succeeded")
+          except urllib.error.HTTPError as error: assert error.code == 422 and json.loads(error.read()).get("error_code") == "signup_disabled"'
+          unset status_env db_url publishable_key
+
+      - name: Apply Alembic migrations
+        run: uv run alembic upgrade head
+
+      - name: Check Alembic drift
+        run: uv run alembic check
+
+      - name: Provision least-privilege runtime database role
+        run: |
+          runtime_password="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          OPENSLATE_DATABASE_PASSWORD="$runtime_password" uv run python scripts/provision_database_role.py
+          runtime_url="postgresql+psycopg://openslate_runtime:${runtime_password}@127.0.0.1:54322/postgres"
+          printf 'DATABASE_URL=%s\nTEST_DATABASE_URL=%s\n' "$runtime_url" "$runtime_url" >> "$GITHUB_ENV"
+          unset runtime_password runtime_url
+
+      - name: Run Ruff
+        run: uv run ruff check .
+
+      - name: Run mypy
+        run: uv run mypy app scripts
+
+      - name: Run backend tests, including PostgreSQL integration tests
+        run: uv run pytest
+
+      - name: Stop local Supabase
+        if: always()
+        working-directory: .
+        run: supabase stop --no-backup > /tmp/openslate-supabase-stop.log 2>&1 || true

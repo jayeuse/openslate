@@ -5,6 +5,11 @@ from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
 from app.core.database.session import AuditSession
+from app.core.integrations.supabase import (
+    InvalidationEvent,
+    SupabaseAdminError,
+    broadcast_invalidation,
+)
 from app.systems.audit.context import get_audit_context
 from app.systems.audit.models import AuditAction, AuditLog
 from app.systems.audit.snapshots import (
@@ -14,6 +19,7 @@ from app.systems.audit.snapshots import (
 )
 
 PENDING_CHANGES_KEY = "audit_pending_changes"
+REALTIME_INVALIDATION_KEY = "realtime_invalidation_pending"
 
 
 @dataclass
@@ -93,6 +99,7 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
         return
 
     context = get_audit_context(session)
+    session.info[REALTIME_INVALIDATION_KEY] = True
     for change in pending:
         before: dict[str, Any] | None = None
         after: dict[str, Any] | None = None
@@ -127,6 +134,20 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
 @event.listens_for(AuditSession, "after_rollback")
 def clear_pending_changes(session: AuditSession) -> None:
     session.info.pop(PENDING_CHANGES_KEY, None)
+    session.info.pop(REALTIME_INVALIDATION_KEY, None)
+
+
+@event.listens_for(AuditSession, "after_commit")
+def broadcast_committed_changes(session: AuditSession) -> None:
+    """Best-effort cache invalidation after the audited transaction commits."""
+
+    if not session.info.pop(REALTIME_INVALIDATION_KEY, False):
+        return
+    try:
+        broadcast_invalidation(InvalidationEvent(entity="data"))
+    except SupabaseAdminError:
+        # Realtime is an optional invalidation path; FastAPI remains canonical.
+        pass
 
 
 @event.listens_for(AuditSession, "do_orm_execute")

@@ -4,6 +4,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.common.normalization import normalize_email, normalize_username
+from app.systems.users.models import UserStatus
+
 
 class RoleCreate(BaseModel):
     role: str = Field(min_length=1, max_length=100)
@@ -41,7 +44,9 @@ class RoleResponse(BaseModel):
 
 class UserResponse(BaseModel):
     id: UUID
+    email: str
     username: str
+    status: UserStatus
     role_id: UUID
     created_at: datetime
     updated_at: datetime
@@ -53,14 +58,19 @@ class UserResponse(BaseModel):
 
 
 class UserCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
     username: str = Field(min_length=3, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
-    password: str = Field(min_length=12, max_length=128)
-    role_id: UUID
+    role_id: UUID | None = None
 
-    @field_validator("username")
+    @field_validator("email", mode="before")
     @classmethod
-    def normalize_username(cls, value: str) -> str:
-        return value.lower()
+    def normalize_email(cls, value: Any) -> Any:
+        return normalize_email(value)
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def normalize_username(cls, value: Any) -> Any:
+        return normalize_username(value)
 
 
 class UserUpdate(BaseModel):
@@ -70,10 +80,10 @@ class UserUpdate(BaseModel):
         max_length=100,
         pattern=r"^[a-zA-Z0-9_-]+$",
     )
-    password: str | None = Field(default=None, min_length=12, max_length=128)
     role_id: UUID | None = None
+    status: UserStatus | None = None
 
-    @field_validator("username")
+    @field_validator("username", mode="before")
     @classmethod
-    def normalize_username(cls, value: str | None) -> str | None:
-        return value.lower() if value is not None else None
+    def normalize_username(cls, value: Any) -> Any:
+        return normalize_username(value)

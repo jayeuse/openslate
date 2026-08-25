@@ -1,27 +1,22 @@
-from typing import Annotated
+from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.common.normalization import normalize_email, normalize_username
 
-class RegistrationRequest(BaseModel):
-    username: Annotated[str, Field(min_length=3, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")]
-    password: Annotated[str, Field(min_length=12, max_length=128)]
 
-    @field_validator("username")
+class InvitationCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    username: str = Field(min_length=3, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    role_id: UUID | None = None
+
+    @field_validator("email", mode="before")
     @classmethod
-    def normalize_username(cls, value: str) -> str:
-        return value.lower()
+    def normalize_email(cls, value: Any) -> Any:
+        return normalize_email(value)
 
-
-class LoginRequest(RegistrationRequest):
-    pass
-
-
-class RefreshRequest(BaseModel):
-    refresh_token: str = Field(min_length=1)
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
+    @field_validator("username", mode="before")
+    @classmethod
+    def normalize_username(cls, value: Any) -> Any:
+        return normalize_username(value)

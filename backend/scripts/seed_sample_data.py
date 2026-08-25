@@ -1,14 +1,20 @@
-"""Populate a development database with the sample OpenSlate domain data."""
+"""Populate development domain data through the authenticated FastAPI API.
 
+The access token must belong to an existing administrator and is read from the
+``--access-token`` option or the protected ``SUPABASE_ACCESS_TOKEN`` environment
+variable.  It is never printed.  Domain/reference data is seeded by default;
+sample users are optional invitations because invitees do not have local
+credentials.
+"""
+
+import argparse
 import json
 import os
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-
-from app.core.config import get_settings
 
 ROLE_SPECS = {
     "admin": {"admin": True},
@@ -348,29 +354,32 @@ RECORD_SPECS = [
     ),
 ]
 
+SAMPLE_USER_SPECS = (
+    ("sample-admin@example.com", "sample-admin", "admin"),
+    ("maria@example.com", "maria", "manager"),
+    ("jose@example.com", "jose", "staff"),
+)
 
-def sample_password() -> str:
-    settings = get_settings()
-    password = (
-        os.environ.get("SAMPLE_USER_PASSWORD")
-        or os.environ.get("ADMIN_BOOTSTRAP_PASSWORD")
-        or (
-            settings.sample_user_password.get_secret_value()
-            if settings.sample_user_password is not None
-            else None
-        )
-        or (
-            settings.admin_bootstrap_password.get_secret_value()
-            if settings.admin_bootstrap_password is not None
-            else None
-        )
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--access-token",
+        help="Supabase access token for an existing administrator (prefer SUPABASE_ACCESS_TOKEN)",
     )
-    if not password or len(password) < 12:
-        raise SystemExit(
-            "Set SAMPLE_USER_PASSWORD or ADMIN_BOOTSTRAP_PASSWORD to a password of at least "
-            "12 characters"
-        )
-    return password
+    parser.add_argument(
+        "--with-sample-users",
+        action="store_true",
+        help="send invitations for the optional sample users after creating roles",
+    )
+    return parser
+
+
+def _access_token(option_value: str | None) -> str:
+    token = option_value or os.environ.get("SUPABASE_ACCESS_TOKEN")
+    if not token or not token.strip():
+        raise SystemExit("Provide --access-token or SUPABASE_ACCESS_TOKEN")
+    return token
 
 
 class ApiClient:
@@ -400,44 +409,18 @@ class ApiClient:
             with urlopen(request) as response:
                 body = response.read()
         except HTTPError as error:
-            detail = error.read().decode(errors="replace")
-            raise RuntimeError(f"{method} {path} failed ({error.code}): {detail}") from error
+            raise RuntimeError(f"{method} {path} failed ({error.code})") from error
         except URLError as error:
             raise RuntimeError(f"Unable to reach API at {self.base_url}: {error.reason}") from error
         return json.loads(body) if body else None
 
-    def login(self, username: str, password: str) -> str:
-        response = self.request(
-            "POST", "/api/auth/login", {"username": username, "password": password}
-        )
-        if response is None or "access_token" not in response:
-            raise RuntimeError("Login response did not contain an access token")
-        return str(response["access_token"])
 
-
-def admin_credentials() -> tuple[str, str]:
-    settings = get_settings()
-    username = settings.admin_bootstrap_username
-    password = (
-        settings.admin_bootstrap_password.get_secret_value()
-        if settings.admin_bootstrap_password is not None
-        else None
+def main(argv: Sequence[str] | None = None) -> None:
+    args = _parser().parse_args(argv)
+    client = ApiClient(
+        os.environ.get("API_BASE_URL", "http://localhost:8000"),
+        token=_access_token(args.access_token),
     )
-    if not username or not password:
-        raise SystemExit("ADMIN_BOOTSTRAP_USERNAME and ADMIN_BOOTSTRAP_PASSWORD must be configured")
-    return username, password
-
-
-def main() -> None:
-    password = sample_password()
-    admin_username, admin_password = admin_credentials()
-    client = ApiClient(os.environ.get("API_BASE_URL", "http://localhost:8000"))
-    client.token = client.login(admin_username, admin_password)
-
-    existing_users = client.request("GET", "/api/users", query={"limit": 100}) or {}
-    existing_names = {item["username"] for item in existing_users.get("items", [])}
-    if existing_names.intersection({"admin", "maria", "jose"}):
-        raise SystemExit("Sample users already exist; run clear_database before reseeding")
 
     roles_response = client.request("GET", "/api/roles", query={"limit": 100}) or {}
     role_ids = {item["role"].lower(): item["id"] for item in roles_response.get("items", [])}
@@ -459,19 +442,15 @@ def main() -> None:
                 raise RuntimeError(f"Role creation returned no response: {role_name}")
             role_ids[role_name] = role["id"]
 
-    user_ids: dict[str, str] = {}
-    for username, role_name in (("admin", "admin"), ("maria", "manager"), ("jose", "staff")):
-        user = client.request(
-            "POST",
-            "/api/users",
-            {"username": username, "password": password, "role_id": role_ids[role_name]},
-        )
-        if user is None:
-            raise RuntimeError(f"User creation returned no response: {username}")
-        user_ids[username] = user["id"]
-
-    # Use the generated sample admin as the actor for the remaining API writes.
-    client.token = client.login("admin", password)
+    if args.with_sample_users:
+        for email, username, role_name in SAMPLE_USER_SPECS:
+            invitation = client.request(
+                "POST",
+                "/api/users",
+                {"email": email, "username": username, "role_id": role_ids[role_name]},
+            )
+            if invitation is None:
+                raise RuntimeError(f"Invitation returned no response: {username}")
 
     department_ids: dict[str, str] = {}
     for logical_id, name in DEPARTMENT_SPECS.items():
@@ -512,12 +491,13 @@ def main() -> None:
     record_ids: dict[str, str] = {}
     record_responses: dict[str, dict[str, Any]] = {}
     for logical_id, module_id, data in RECORD_SPECS:
+        record_data = cast(Mapping[str, Any], data)
         record = client.request(
             "POST",
             "/api/records",
             {
                 "module_id": module_ids[module_id],
-                "data": {field_ids[key]: value for key, value in data.items()},
+                "data": {field_ids[key]: value for key, value in record_data.items()},
             },
         )
         if record is None:
@@ -530,7 +510,7 @@ def main() -> None:
     updated_data = dict(sample_record["data"])
     updated_data[field_ids["field-prod-stock"]] = 18
     client.request("PATCH", f"/api/records/{record_ids['rec-001']}", {"data": updated_data})
-    print("Sample data seeded through the API with generated UUIDs")
+    print("Sample domain data seeded through the API with generated UUIDs")
 
 
 if __name__ == "__main__":
