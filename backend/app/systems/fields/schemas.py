@@ -23,6 +23,9 @@ class FieldCreate(BaseModel):
     required: bool = False
     position: int = Field(ge=0)
     config: dict[str, Any] = Field(default_factory=dict)
+    relationship_target_module_id: UUID | None = None
+    relationship_multiple_targets: bool | None = None
+    relationship_multiple_sources: bool | None = None
 
     @field_validator("name", mode="before")
     @classmethod
@@ -31,6 +34,20 @@ class FieldCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_config(self) -> "FieldCreate":
+        metadata = (
+            self.relationship_target_module_id,
+            self.relationship_multiple_targets,
+            self.relationship_multiple_sources,
+        )
+        if self.type is FieldType.RELATIONSHIP:
+            if any(value is None for value in metadata):
+                raise ValueError("Relationship fields require complete relationship metadata")
+            if self.required:
+                raise ValueError("Relationship fields cannot be required")
+            if self.config:
+                raise ValueError("Relationship fields cannot have configuration")
+        elif any(value is not None for value in metadata):
+            raise ValueError("Primitive fields cannot have relationship metadata")
         validate_field_config(self.type, self.config)
         return self
 
@@ -42,6 +59,9 @@ class FieldUpdate(BaseModel):
     required: bool | None = None
     position: int | None = Field(default=None, ge=0)
     config: dict[str, Any] | None = None
+    relationship_target_module_id: UUID | None = None
+    relationship_multiple_targets: bool | None = None
+    relationship_multiple_sources: bool | None = None
 
     @field_validator("name", mode="before")
     @classmethod
@@ -50,10 +70,23 @@ class FieldUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_config_when_type_is_present(self) -> "FieldUpdate":
-        if self.type is not None and self.config is not None:
-            validate_field_config(self.type, self.config)
-        elif self.type is not None and self.config is None:
-            validate_field_config(self.type, {})
+        metadata = (
+            self.relationship_target_module_id,
+            self.relationship_multiple_targets,
+            self.relationship_multiple_sources,
+        )
+        if self.type is FieldType.RELATIONSHIP:
+            if self.required is True:
+                raise ValueError("Relationship fields cannot be required")
+            if self.config:
+                raise ValueError("Relationship fields cannot have configuration")
+        elif self.type is not None:
+            if any(value is not None for value in metadata):
+                raise ValueError("Primitive fields cannot have relationship metadata")
+            if self.config is not None:
+                validate_field_config(self.type, self.config)
+            else:
+                validate_field_config(self.type, {})
         return self
 
 

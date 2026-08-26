@@ -70,12 +70,15 @@ export default function NewRecordPage() {
     }
     void load();
   }, [moduleId]);
+  const primitiveFields = fields.filter(
+    (field) => field.type !== "relationship",
+  );
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
     setError("");
     const data = Object.fromEntries(
-      fields.map((field) => [
+      primitiveFields.map((field) => [
         field.id,
         inputValue(field, values[field.id] ?? initialValue(field)),
       ]),
@@ -101,7 +104,7 @@ export default function NewRecordPage() {
       <PageHeader
         eyebrow={`Module / ${module?.module_name ?? "Records"}`}
         title="Add a record"
-        description="Complete the fields below. The backend validates required values, types, ranges, and select options."
+        description="Complete the primitive fields below. Links are managed after creating the record on its edit page."
         actions={
           <Button asChild variant="ghost">
             <a href={`${modulePath}/records`}>
@@ -118,7 +121,7 @@ export default function NewRecordPage() {
       <Card className="max-w-3xl">
         <CardContent className="p-6">
           <form className="space-y-6" onSubmit={submit}>
-            {fields.map((field) => (
+            {primitiveFields.map((field) => (
               <div className="space-y-2" key={field.id}>
                 <Label htmlFor={field.id}>
                   {field.name}{" "}
@@ -198,6 +201,12 @@ export default function NewRecordPage() {
               <p className="text-muted-foreground text-sm">
                 This module has no active fields. Add fields before creating a
                 record.
+              </p>
+            )}
+            {fields.length > 0 && primitiveFields.length === 0 && (
+              <p className="text-muted-foreground text-sm">
+                This module has no primitive fields. Links are managed after the
+                record is created.
               </p>
             )}
             <div className="border-border flex justify-end border-t pt-5">

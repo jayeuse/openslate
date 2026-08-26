@@ -10,6 +10,7 @@ from app.core.base_model import BaseModel
 
 if TYPE_CHECKING:
     from app.systems.modules.models import Module
+    from app.systems.relationships.models import RelationshipEdge
 
 
 class Record(BaseModel):
@@ -27,3 +28,11 @@ class Record(BaseModel):
         nullable=False,
     )
     module: Mapped["Module"] = relationship(back_populates="records")
+    source_relationship_edges: Mapped[list["RelationshipEdge"]] = relationship(
+        foreign_keys="RelationshipEdge.source_record_id",
+        back_populates="source_record",
+    )
+    target_relationship_edges: Mapped[list["RelationshipEdge"]] = relationship(
+        foreign_keys="RelationshipEdge.target_record_id",
+        back_populates="target_record",
+    )

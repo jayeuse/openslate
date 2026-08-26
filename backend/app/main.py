@@ -14,6 +14,7 @@ from app.systems.fields.router import module_fields_router
 from app.systems.fields.router import router as fields_router
 from app.systems.modules.router import router as modules_router
 from app.systems.records.router import router as records_router
+from app.systems.relationships.router import router as relationships_router
 
 
 def create_app() -> FastAPI:
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(fields_router, prefix="/api")
     app.include_router(module_fields_router, prefix="/api")
     app.include_router(records_router, prefix="/api")
+    app.include_router(relationships_router, prefix="/api")
     app.include_router(audit_router, prefix="/api")
 
     @app.get("/api/health", tags=["system"])

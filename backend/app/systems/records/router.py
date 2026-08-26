@@ -22,6 +22,7 @@ from app.systems.fields.validation import parse_field_key, validate_record_data
 from app.systems.modules.models import Module
 from app.systems.records.models import Record
 from app.systems.records.schemas import RecordCreate, RecordResponse, RecordUpdate
+from app.systems.relationships.service import RelationshipError, lock_row
 from app.systems.users.models import User, UserRole
 
 router = APIRouter(prefix="/records", tags=["records"])
@@ -87,6 +88,33 @@ def _active_module(db: Session, module_id: UUID) -> Module:
     return module
 
 
+def _lock_module(db: Session, module_id: UUID) -> Module:
+    try:
+        module = lock_row(db, Module, module_id)
+    except RelationshipError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    if module is None:
+        raise _conflict("Module is not active")
+    return module
+
+
+def _lock_active_module(db: Session, module_id: UUID) -> Module:
+    module = _lock_module(db, module_id)
+    if module.is_deleted is True:
+        raise _conflict("Module is not active")
+    return module
+
+
+def _lock_record(db: Session, record: Record) -> Record:
+    try:
+        locked = lock_row(db, Record, record.id)
+    except RelationshipError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    if locked is None:
+        raise _not_found()
+    return locked
+
+
 def _active_fields(db: Session, module_id: UUID) -> list[Field]:
     return list(
         db.scalars(
@@ -148,6 +176,7 @@ def create_record(
     db: Annotated[Session, Depends(get_db)],
 ) -> Record:
     _active_module(db, payload.module_id)
+    _lock_active_module(db, payload.module_id)
     _validate_data(db, payload.module_id, payload.data)
     record = Record(module_id=payload.module_id, data=payload.data)
     db.add(record)
@@ -170,6 +199,10 @@ def update_record(
     if payload.module_id is not None and payload.module_id != record.module_id:
         raise _conflict("Record module cannot be changed")
     _active_module(db, record.module_id)
+    _lock_active_module(db, record.module_id)
+    record = _lock_record(db, record)
+    if record.is_deleted:
+        raise _conflict("Record is deleted")
     if payload.data is not None:
         _validate_data(db, record.module_id, payload.data)
         record.data = payload.data
@@ -184,6 +217,11 @@ def delete_record(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     record = _record(db, record_id)
+    if record.is_deleted:
+        raise _conflict("Record is already deleted")
+    _active_module(db, record.module_id)
+    _lock_active_module(db, record.module_id)
+    record = _lock_record(db, record)
     if record.is_deleted:
         raise _conflict("Record is already deleted")
     record.is_deleted = True
@@ -202,6 +240,10 @@ def restore_record(
     if not record.is_deleted:
         raise _conflict("Record is not deleted")
     _active_module(db, record.module_id)
+    _lock_active_module(db, record.module_id)
+    record = _lock_record(db, record)
+    if not record.is_deleted:
+        raise _conflict("Record is not deleted")
     _validate_data(db, record.module_id, record.data)
     record.is_deleted = False
     record.deleted_at = None

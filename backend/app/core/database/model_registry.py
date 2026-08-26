@@ -5,4 +5,5 @@ from app.systems.departments.models import Department  # noqa: F401
 from app.systems.fields.models import Field  # noqa: F401
 from app.systems.modules.models import Module  # noqa: F401
 from app.systems.records.models import Record  # noqa: F401
+from app.systems.relationships.models import RelationshipEdge  # noqa: F401
 from app.systems.users.models import Role, User  # noqa: F401

@@ -23,6 +23,12 @@ def test_domain_models_inherit_base_model() -> None:
     assert not issubclass(AuditLog, BaseModel)
 
 
+def test_relationship_edge_inherits_base_model() -> None:
+    from app.systems.relationships.models import RelationshipEdge
+
+    assert issubclass(RelationshipEdge, BaseModel)
+
+
 def test_domain_columns_and_foreign_keys_match_target_schema() -> None:
     assert set(User.__table__.c) >= {
         User.__table__.c.id,
@@ -42,6 +48,10 @@ def test_domain_columns_and_foreign_keys_match_target_schema() -> None:
     assert Field.__table__.c.position.type.python_type is int
     assert Record.__table__.c.data.nullable is False
 
+    assert Field.__table__.c.relationship_target_module_id.nullable is True
+    assert Field.__table__.c.relationship_multiple_targets.nullable is True
+    assert Field.__table__.c.relationship_multiple_sources.nullable is True
+
     role_fk = next(iter(User.__table__.c.role_id.foreign_keys))
     auth_user_fk = next(iter(User.__table__.c.id.foreign_keys))
     module_fk = next(iter(Record.__table__.c.module_id.foreign_keys))
@@ -52,6 +62,20 @@ def test_domain_columns_and_foreign_keys_match_target_schema() -> None:
     assert auth_user_fk.target_fullname == "auth.users.id"
     assert auth_user_fk.ondelete == "CASCADE"
     assert module_fk.target_fullname == "modules.id"
+
+
+def test_relationship_edge_columns_reference_fields_and_records() -> None:
+    from app.systems.relationships.models import RelationshipEdge
+
+    assert set(RelationshipEdge.__table__.columns.keys()) >= {
+        "field_id",
+        "source_record_id",
+        "target_record_id",
+    }
+    for column_name in ("field_id", "source_record_id", "target_record_id"):
+        column = RelationshipEdge.__table__.c[column_name]
+        foreign_key = next(iter(column.foreign_keys))
+        assert foreign_key.ondelete == "RESTRICT"
 
 
 def test_auth_users_metadata_is_an_external_placeholder() -> None:

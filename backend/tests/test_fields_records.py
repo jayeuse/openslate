@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from uuid import UUID
 
 import pytest
@@ -34,6 +34,7 @@ from app.systems.records.router import (
 )
 from app.systems.records.router import router as records_router
 from app.systems.records.schemas import RecordCreate, RecordUpdate
+from app.systems.relationships.service import RelationshipConflict, RelationshipUnavailable
 
 
 def make_module(*, deleted: bool = False) -> Module:
@@ -142,6 +143,39 @@ def test_field_create_requires_active_module_and_checks_name_and_position() -> N
     db.commit.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    ("lock_error", "status_code"),
+    [(RelationshipConflict("A relationship module is unavailable"), 409),
+     (RelationshipUnavailable("Relationship operation is temporarily unavailable"), 503)],
+)
+def test_relationship_field_create_translates_target_lock_failures(
+    lock_error: Exception, status_code: int
+) -> None:
+    source_module = make_module()
+    db = Mock(spec=Session)
+    db.scalar.return_value = source_module
+    payload = FieldCreate(
+        module_id=source_module.id,
+        name="Related asset",
+        type=FieldType.RELATIONSHIP,
+        position=0,
+        relationship_target_module_id=uuid7(),
+        relationship_multiple_targets=False,
+        relationship_multiple_sources=False,
+    )
+
+    with patch(
+        "app.systems.fields.router.lock_modules",
+        side_effect=lock_error,
+    ):
+        with pytest.raises(HTTPException) as error:
+            create_field(payload, Mock(), db)
+
+    assert error.value.status_code == status_code
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
 def test_field_update_keeps_module_immutable_and_checks_existing_records() -> None:
     module = make_module()
     field = make_field(module.id)
@@ -221,7 +255,9 @@ def test_record_delete_soft_deletes() -> None:
     record = Record(module_id=module.id, data={})
     record.id = uuid7()
     db = Mock(spec=Session)
-    db.get.return_value = record
+    db.get.side_effect = lambda model, *_args, **_kwargs: (
+        module if model is Module else record
+    )
 
     delete_record(record.id, Mock(), db)
 
@@ -279,7 +315,9 @@ def test_record_create_replaces_data_on_patch_and_restore_revalidates() -> None:
     )
     assert created.data == {str(field.id): "New"}
 
-    db.get.return_value = record
+    db.get.side_effect = lambda model, *_args, **_kwargs: (
+        module if model is Module else record
+    )
     update_record(
         record.id,
         RecordUpdate(data={str(field.id): "Replacement"}),

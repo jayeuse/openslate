@@ -22,6 +22,7 @@ from app.systems.fields.models import Field
 from app.systems.modules.models import Module
 from app.systems.modules.schemas import ModuleCreate, ModuleResponse, ModuleUpdate
 from app.systems.records.models import Record
+from app.systems.relationships.service import RelationshipError, lock_row
 from app.systems.users.models import User, UserRole
 
 router = APIRouter(prefix="/modules", tags=["modules"])
@@ -89,6 +90,26 @@ def _active_department(db: Session, department_id: UUID) -> Department:
     )
     if department is None:
         raise _conflict("Department is not active")
+    return department
+
+
+def _lock_module(db: Session, module: Module) -> Module:
+    try:
+        locked = lock_row(db, Module, module.id)
+    except RelationshipError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    if locked is None:
+        raise _conflict("Module is unavailable")
+    return locked
+
+
+def _lock_department(db: Session, department_id: UUID) -> Department:
+    try:
+        department = lock_row(db, Department, department_id)
+    except RelationshipError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    if department is None:
+        raise _conflict("Department is unavailable")
     return department
 
 
@@ -164,6 +185,8 @@ def create_module(
     db: Annotated[Session, Depends(get_db)],
 ) -> Module:
     _active_department(db, payload.department_id)
+    if _lock_department(db, payload.department_id).is_deleted is True:
+        raise _conflict("Department is not active")
     if _name_conflict(db, payload.department_id, payload.module_name):
         raise _conflict("Module name unavailable")
     module = Module(
@@ -190,6 +213,10 @@ def update_module(
     if payload.department_id is not None and payload.department_id != module.department_id:
         raise _conflict("Module department cannot be changed")
     _active_department(db, module.department_id)
+    _lock_department(db, module.department_id)
+    module = _lock_module(db, module)
+    if module.is_deleted:
+        raise _conflict("Module is deleted")
     if payload.module_name is not None:
         if _name_conflict(db, module.department_id, payload.module_name, module.id):
             raise _conflict("Module name unavailable")
@@ -205,6 +232,11 @@ def delete_module(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     module = _module(db, module_id)
+    if module.is_deleted:
+        raise _conflict("Module is already deleted")
+    _active_department(db, module.department_id)
+    _lock_department(db, module.department_id)
+    module = _lock_module(db, module)
     if module.is_deleted:
         raise _conflict("Module is already deleted")
     if _active_dependency_count(db, Field, module.id):
@@ -227,6 +259,10 @@ def restore_module(
     if not module.is_deleted:
         raise _conflict("Module is not deleted")
     _active_department(db, module.department_id)
+    _lock_department(db, module.department_id)
+    module = _lock_module(db, module)
+    if not module.is_deleted:
+        raise _conflict("Module is not deleted")
     if _name_conflict(db, module.department_id, module.module_name, module.id):
         raise _conflict("Module name unavailable")
     module.is_deleted = False

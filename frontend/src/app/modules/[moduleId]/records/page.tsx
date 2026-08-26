@@ -238,7 +238,9 @@ export default function RecordsPage() {
                         className="text-muted-foreground px-5 py-4"
                         key={field.id}
                       >
-                        {displayValue(record.data[field.id])}
+                        {field.type === "relationship"
+                          ? "Links are managed from Edit"
+                          : displayValue(record.data[field.id])}
                       </td>
                     ))}
                     <td className="px-5 py-4">

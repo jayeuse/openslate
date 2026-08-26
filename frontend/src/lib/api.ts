@@ -27,7 +27,8 @@ export type FieldType =
   | "boolean"
   | "date"
   | "datetime"
-  | "select";
+  | "select"
+  | "relationship";
 export type Field = BaseEntity & {
   module_id: string;
   name: string;
@@ -35,10 +36,28 @@ export type Field = BaseEntity & {
   required: boolean;
   position: number;
   config: Record<string, unknown>;
+  relationship_target_module_id: string | null;
+  relationship_multiple_targets: boolean | null;
+  relationship_multiple_sources: boolean | null;
 };
 export type RecordEntity = BaseEntity & {
   module_id: string;
   data: Record<string, unknown>;
+};
+export type RelationshipVisibility = "available" | "hidden";
+export type RelationshipAvailability = "available" | "hidden" | "all";
+export type RelationshipHiddenReason =
+  | "field_archived"
+  | "source_record_archived"
+  | "target_record_archived"
+  | "source_module_archived"
+  | "target_module_archived";
+export type Relationship = BaseEntity & {
+  field_id: string;
+  source_record_id: string;
+  target_record_id: string;
+  visibility: RelationshipVisibility;
+  hidden_reasons: RelationshipHiddenReason[];
 };
 export type Role = BaseEntity & {
   role: string;

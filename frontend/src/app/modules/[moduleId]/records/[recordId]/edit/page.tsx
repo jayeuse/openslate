@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import type { Route } from "next";
 import { AppPage } from "@/components/app-page";
 import { PageHeader } from "@/components/page-header";
+import { RelationshipManager } from "@/components/relationship-manager";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -78,12 +79,18 @@ export default function EditRecordPage() {
     }
     void load();
   }, [moduleId, recordId]);
+  const primitiveFields = fields.filter(
+    (field) => field.type !== "relationship",
+  );
+  const relationshipFields = fields.filter(
+    (field) => field.type === "relationship",
+  );
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
     setError("");
     const data = Object.fromEntries(
-      fields.map((field) => [
+      primitiveFields.map((field) => [
         field.id,
         apiValue(field, values[field.id] ?? ""),
       ]),
@@ -107,7 +114,7 @@ export default function EditRecordPage() {
       <PageHeader
         eyebrow={`Record / ${module?.module_name ?? "Edit"}`}
         title="Edit record"
-        description="This saves the complete data object, so every current field is retained when you submit."
+        description="Update primitive fields here. Relationship links are managed separately below."
         actions={
           <Button asChild variant="ghost">
             <a href={`${modulePath}/records`}>
@@ -124,7 +131,7 @@ export default function EditRecordPage() {
       <Card className="max-w-3xl">
         <CardContent className="p-6">
           <form className="space-y-6" onSubmit={submit}>
-            {fields.map((field) => (
+            {primitiveFields.map((field) => (
               <div className="space-y-2" key={field.id}>
                 <Label htmlFor={field.id}>
                   {field.name}{" "}
@@ -195,6 +202,15 @@ export default function EditRecordPage() {
               </Button>
             </div>
           </form>
+        </CardContent>
+      </Card>
+      <Card className="mt-5 max-w-3xl">
+        <CardContent className="p-6">
+          <RelationshipManager
+            moduleId={moduleId}
+            recordId={recordId}
+            fields={relationshipFields}
+          />
         </CardContent>
       </Card>
     </AppPage>

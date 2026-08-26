@@ -92,6 +92,10 @@ def validate_record_data(data: dict[str, Any], fields: list[Field]) -> None:
 
     for field in fields:
         key = str(field.id)
+        if FieldType(field.type) is FieldType.RELATIONSHIP:
+            if key in data:
+                raise ValueError(f"Relationship field {field.id} is managed separately")
+            continue
         if field.required and (key not in data or data[key] is None):
             raise ValueError(f"Field {field.id} is required")
         if key in data:

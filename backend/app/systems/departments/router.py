@@ -24,6 +24,7 @@ from app.systems.departments.schemas import (
     DepartmentUpdate,
 )
 from app.systems.modules.models import Module
+from app.systems.relationships.service import RelationshipError, lock_row
 from app.systems.users.models import User, UserRole
 
 router = APIRouter(prefix="/departments", tags=["departments"])
@@ -76,6 +77,16 @@ def _department(db: Session, department_id: UUID) -> Department:
     if department is None:
         raise _not_found()
     return department
+
+
+def _lock_department(db: Session, department: Department) -> Department:
+    try:
+        locked = lock_row(db, Department, department.id)
+    except RelationshipError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    if locked is None:
+        raise _conflict("Department is unavailable")
+    return locked
 
 
 def _name_conflict(db: Session, name: str, exclude_id: UUID | None = None) -> bool:
@@ -172,6 +183,7 @@ def delete_department(
     department = _department(db, department_id)
     if department.is_deleted:
         raise _conflict("Department is already deleted")
+    department = _lock_department(db, department)
     if _active_module_count(db, department.id):
         raise _conflict("Department has active modules")
     department.is_deleted = True
@@ -189,6 +201,7 @@ def restore_department(
     department = _department(db, department_id)
     if not department.is_deleted:
         raise _conflict("Department is not deleted")
+    department = _lock_department(db, department)
     if _name_conflict(db, department.department_name, department.id):
         raise _conflict("Department name unavailable")
     department.is_deleted = False

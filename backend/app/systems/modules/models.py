@@ -31,5 +31,12 @@ class Module(BaseModel):
     )
     module_name: Mapped[str] = mapped_column(String(150), nullable=False)
     department: Mapped["Department"] = relationship(back_populates="modules")
-    fields: Mapped[list["Field"]] = relationship(back_populates="module")
+    fields: Mapped[list["Field"]] = relationship(
+        foreign_keys="Field.module_id",
+        back_populates="module",
+    )
     records: Mapped[list["Record"]] = relationship(back_populates="module")
+    relationship_target_fields: Mapped[list["Field"]] = relationship(
+        foreign_keys="Field.relationship_target_module_id",
+        back_populates="relationship_target_module",
+    )

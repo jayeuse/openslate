@@ -11,6 +11,7 @@ from app.core.base_model import BaseModel
 
 if TYPE_CHECKING:
     from app.systems.modules.models import Module
+    from app.systems.relationships.models import RelationshipEdge
 
 
 class FieldType(StrEnum):
@@ -22,6 +23,7 @@ class FieldType(StrEnum):
     DATE = "date"
     DATETIME = "datetime"
     SELECT = "select"
+    RELATIONSHIP = "relationship"
 
 
 class Field(BaseModel):
@@ -29,8 +31,19 @@ class Field(BaseModel):
     __table_args__ = (
         CheckConstraint("position >= 0", name="ck_fields_position_nonnegative"),
         CheckConstraint(
-            "type IN ('text', 'number', 'decimal', 'int', 'boolean', 'date', 'datetime', 'select')",
+            "type IN ('text', 'number', 'decimal', 'int', 'boolean', 'date', 'datetime', "
+            "'select', 'relationship')",
             name="ck_fields_type",
+        ),
+        CheckConstraint(
+            "(type = 'relationship' AND relationship_target_module_id IS NOT NULL "
+            "AND relationship_multiple_targets IS NOT NULL "
+            "AND relationship_multiple_sources IS NOT NULL AND required = false "
+            "AND config = '{}'::jsonb) OR (type <> 'relationship' "
+            "AND relationship_target_module_id IS NULL "
+            "AND relationship_multiple_targets IS NULL "
+            "AND relationship_multiple_sources IS NULL)",
+            name="ck_fields_relationship_metadata",
         ),
         Index(
             "uq_fields_module_name_active",
@@ -39,6 +52,7 @@ class Field(BaseModel):
             unique=True,
             postgresql_where=text("is_deleted = false"),
         ),
+        Index("ix_fields_relationship_target_module_id", "relationship_target_module_id"),
         Index(
             "uq_fields_module_position_active",
             "module_id",
@@ -63,4 +77,20 @@ class Field(BaseModel):
         server_default=text("'{}'::jsonb"),
         nullable=False,
     )
-    module: Mapped["Module"] = relationship(back_populates="fields")
+    relationship_target_module_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("modules.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    relationship_multiple_targets: Mapped[bool | None] = mapped_column(nullable=True)
+    relationship_multiple_sources: Mapped[bool | None] = mapped_column(nullable=True)
+    module: Mapped["Module"] = relationship(
+        foreign_keys=[module_id],
+        back_populates="fields",
+    )
+    relationship_target_module: Mapped["Module | None"] = relationship(
+        foreign_keys=[relationship_target_module_id],
+        back_populates="relationship_target_fields",
+    )
+    relationship_edges: Mapped[list["RelationshipEdge"]] = relationship(
+        back_populates="field",
+    )

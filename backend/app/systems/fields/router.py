@@ -27,6 +27,13 @@ from app.systems.fields.schemas import (
 from app.systems.fields.validation import field_config, validate_field_value
 from app.systems.modules.models import Module
 from app.systems.records.models import Record
+from app.systems.relationships.service import (
+    RelationshipError,
+    lock_modules,
+    lock_row,
+    validate_cardinality_change,
+    validate_relationship_modules,
+)
 from app.systems.users.models import User, UserRole
 
 router = APIRouter(prefix="/fields", tags=["fields"])
@@ -98,6 +105,33 @@ def _active_module(db: Session, module_id: UUID) -> Module:
     if module is None:
         raise _conflict("Module is not active")
     return module
+
+
+def _lock_module(db: Session, module_id: UUID) -> Module:
+    try:
+        module = lock_row(db, Module, module_id)
+    except RelationshipError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    if module is None:
+        raise _conflict("Module is not active")
+    return module
+
+
+def _lock_active_module(db: Session, module_id: UUID) -> Module:
+    module = _lock_module(db, module_id)
+    if module.is_deleted is True:
+        raise _conflict("Module is not active")
+    return module
+
+
+def _lock_field(db: Session, field: Field) -> Field:
+    try:
+        locked = lock_row(db, Field, field.id)
+    except RelationshipError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    if locked is None:
+        raise _not_found()
+    return locked
 
 
 def _name_conflict(
@@ -228,7 +262,26 @@ def create_field(
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Field:
-    _active_module(db, payload.module_id)
+    source_module = _active_module(db, payload.module_id)
+    if payload.type is FieldType.RELATIONSHIP:
+        # FieldCreate guarantees these values are present for relationship fields.
+        target_module_id = payload.relationship_target_module_id
+        if target_module_id is None:
+            raise _invalid("Relationship fields require a target module")
+        try:
+            locked_modules = lock_modules(db, [payload.module_id, target_module_id])
+        except RelationshipError as error:
+            raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+        target_module = locked_modules.get(target_module_id)
+        if target_module is None:
+            target_module = _active_module(db, target_module_id)
+        locked_source_module = locked_modules.get(payload.module_id, source_module)
+        try:
+            validate_relationship_modules(locked_source_module, target_module)
+        except RelationshipError as error:
+            raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    else:
+        _lock_active_module(db, payload.module_id)
     if _name_conflict(db, payload.module_id, payload.name):
         raise _conflict("Field name unavailable")
     if _position_conflict(db, payload.module_id, payload.position):
@@ -240,6 +293,9 @@ def create_field(
         required=payload.required,
         position=payload.position,
         config=payload.config,
+        relationship_target_module_id=payload.relationship_target_module_id,
+        relationship_multiple_targets=payload.relationship_multiple_targets,
+        relationship_multiple_sources=payload.relationship_multiple_sources,
     )
     db.add(field)
     _commit(db, "Field name or position unavailable")
@@ -261,6 +317,40 @@ def update_field(
     if payload.module_id is not None and payload.module_id != field.module_id:
         raise _conflict("Field module cannot be changed")
     _active_module(db, field.module_id)
+    _lock_active_module(db, field.module_id)
+    field = _lock_field(db, field)
+    if field.is_deleted:
+        raise _conflict("Field is deleted")
+
+    current_type = FieldType(field.type)
+    if payload.type is not None and payload.type is not current_type:
+        raise _conflict("Field type cannot be changed")
+    relationship_metadata = (
+        payload.relationship_target_module_id,
+        payload.relationship_multiple_targets,
+        payload.relationship_multiple_sources,
+    )
+    if current_type is FieldType.RELATIONSHIP:
+        if (
+            payload.relationship_target_module_id is not None
+            and payload.relationship_target_module_id != field.relationship_target_module_id
+        ):
+            raise _conflict("Relationship target module cannot be changed")
+        if payload.required is True:
+            raise _conflict("Relationship fields cannot be required")
+        if payload.config is not None and payload.config:
+            raise _invalid("Relationship fields cannot have configuration")
+        try:
+            validate_cardinality_change(
+                db,
+                field,
+                payload.relationship_multiple_targets,
+                payload.relationship_multiple_sources,
+            )
+        except RelationshipError as error:
+            raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    elif any(value is not None for value in relationship_metadata):
+        raise _conflict("Primitive fields cannot have relationship metadata")
 
     if payload.name is not None and _name_conflict(db, field.module_id, payload.name, field.id):
         raise _conflict("Field name unavailable")
@@ -270,21 +360,24 @@ def update_field(
     ):
         raise _conflict("Field position unavailable")
 
-    field_type = payload.type or FieldType(field.type)
+    field_type = current_type
     required = field.required if payload.required is None else payload.required
     config = field.config if payload.config is None else payload.config
     _validate_change_impact(db, field, field_type, required, config)
 
     if payload.name is not None:
         field.name = payload.name
-    if payload.type is not None:
-        field.type = payload.type
     if payload.required is not None:
         field.required = payload.required
     if payload.position is not None:
         field.position = payload.position
     if payload.config is not None:
         field.config = payload.config
+    if current_type is FieldType.RELATIONSHIP:
+        if payload.relationship_multiple_targets is not None:
+            field.relationship_multiple_targets = payload.relationship_multiple_targets
+        if payload.relationship_multiple_sources is not None:
+            field.relationship_multiple_sources = payload.relationship_multiple_sources
     _commit(db, "Field name or position unavailable")
     return field
 
@@ -296,6 +389,11 @@ def delete_field(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     field = _field(db, field_id)
+    if field.is_deleted:
+        raise _conflict("Field is already deleted")
+    _active_module(db, field.module_id)
+    _lock_active_module(db, field.module_id)
+    field = _lock_field(db, field)
     if field.is_deleted:
         raise _conflict("Field is already deleted")
     has_data = db.scalar(
@@ -325,6 +423,10 @@ def restore_field(
     if not field.is_deleted:
         raise _conflict("Field is not deleted")
     _active_module(db, field.module_id)
+    _lock_active_module(db, field.module_id)
+    field = _lock_field(db, field)
+    if not field.is_deleted:
+        raise _conflict("Field is not deleted")
     if _name_conflict(db, field.module_id, field.name, field.id):
         raise _conflict("Field name unavailable")
     if _position_conflict(db, field.module_id, field.position, field.id):
@@ -346,7 +448,7 @@ def reorder_module_fields(
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> list[Field]:
-    _active_module(db, module_id)
+    _lock_active_module(db, module_id)
     fields = list(
         db.scalars(
             select(Field)

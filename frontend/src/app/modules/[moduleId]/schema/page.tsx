@@ -24,6 +24,7 @@ import {
   type Field,
   type FieldType,
   type ListResponse,
+  type Module,
 } from "@/lib/api";
 
 const fieldTypes: FieldType[] = [
@@ -35,6 +36,7 @@ const fieldTypes: FieldType[] = [
   "date",
   "datetime",
   "select",
+  "relationship",
 ];
 export default function SchemaPage() {
   const { moduleId, departmentId } = useParams<{
@@ -45,18 +47,29 @@ export default function SchemaPage() {
     ? `/departments/${departmentId}/modules/${moduleId}`
     : `/modules/${moduleId}`;
   const [fields, setFields] = useState<Field[]>([]);
+  const [modules, setModules] = useState<Module[]>([]);
   const [name, setName] = useState("");
   const [type, setType] = useState<FieldType>("text");
   const [required, setRequired] = useState(false);
   const [options, setOptions] = useState("");
+  const [targetModuleId, setTargetModuleId] = useState("");
+  const [multipleTargets, setMultipleTargets] = useState(false);
+  const [multipleSources, setMultipleSources] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   async function load() {
     try {
-      const result = await apiFetch<ListResponse<Field>>(
-        `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "exclude", sort_by: "position", sort_order: "asc" })}`,
-      );
+      const current = await apiFetch<Module>(`/modules/${moduleId}`);
+      const [result, moduleResult] = await Promise.all([
+        apiFetch<ListResponse<Field>>(
+          `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "exclude", sort_by: "position", sort_order: "asc" })}`,
+        ),
+        apiFetch<ListResponse<Module>>(
+          `/modules?${listQuery({ department_id: current.department_id, limit: 100, deleted: "exclude", sort_by: "created_at", sort_order: "asc" })}`,
+        ),
+      ]);
       setFields(result.items);
+      setModules(moduleResult.items);
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Fields could not be loaded",
@@ -89,10 +102,20 @@ export default function SchemaPage() {
           required,
           position: fields.length,
           config,
+          ...(type === "relationship"
+            ? {
+                relationship_target_module_id: targetModuleId,
+                relationship_multiple_targets: multipleTargets,
+                relationship_multiple_sources: multipleSources,
+              }
+            : {}),
         }),
       });
       setName("");
       setOptions("");
+      setTargetModuleId("");
+      setMultipleTargets(false);
+      setMultipleSources(false);
       await load();
     } catch (reason) {
       setError(
@@ -202,9 +225,33 @@ export default function SchemaPage() {
                   <p className="text-muted-foreground mt-1 text-xs">
                     {field.type}
                     {field.type === "select" &&
-                    Array.isArray(field.config.options)
-                      ? ` · ${field.config.options.length} options`
-                      : ""}
+                    Array.isArray(field.config.options) ? (
+                      ` · ${field.config.options.length} options`
+                    ) : field.type === "relationship" ? (
+                      <>
+                        {" · "}
+                        <span>
+                          {modules.find(
+                            (item) =>
+                              item.id === field.relationship_target_module_id,
+                          )?.module_name ?? "Target module unavailable"}
+                        </span>
+                        {" · "}
+                        <span>
+                          {field.relationship_multiple_targets
+                            ? "Multiple targets"
+                            : "Single target"}
+                        </span>
+                        {" · "}
+                        <span>
+                          {field.relationship_multiple_sources
+                            ? "Multiple sources"
+                            : "Single source"}
+                        </span>
+                      </>
+                    ) : (
+                      ""
+                    )}
                   </p>
                 </div>
                 <div className="flex gap-1">
@@ -261,7 +308,11 @@ export default function SchemaPage() {
                   id="field-type"
                   className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
                   value={type}
-                  onChange={(event) => setType(event.target.value as FieldType)}
+                  onChange={(event) => {
+                    const nextType = event.target.value as FieldType;
+                    setType(nextType);
+                    if (nextType === "relationship") setRequired(false);
+                  }}
                 >
                   {fieldTypes.map((item) => (
                     <option key={item} value={item}>
@@ -285,10 +336,82 @@ export default function SchemaPage() {
                   </p>
                 </div>
               )}
+              {type === "relationship" && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="target-module">Target module</Label>
+                    <select
+                      id="target-module"
+                      required
+                      className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
+                      value={targetModuleId}
+                      onChange={(event) =>
+                        setTargetModuleId(event.target.value)
+                      }
+                    >
+                      <option value="">Select a module</option>
+                      {modules.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.module_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <fieldset
+                    className="space-y-2"
+                    aria-label="Targets per source"
+                  >
+                    <legend className="text-sm font-medium">
+                      Targets per source
+                    </legend>
+                    <div className="flex gap-4 text-sm">
+                      {[false, true].map((multiple) => (
+                        <label
+                          className="flex items-center gap-2"
+                          key={String(multiple)}
+                        >
+                          <input
+                            type="radio"
+                            name="multiple-targets"
+                            checked={multipleTargets === multiple}
+                            onChange={() => setMultipleTargets(multiple)}
+                          />
+                          {multiple ? "Multiple" : "Single"}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <fieldset
+                    className="space-y-2"
+                    aria-label="Sources per target"
+                  >
+                    <legend className="text-sm font-medium">
+                      Sources per target
+                    </legend>
+                    <div className="flex gap-4 text-sm">
+                      {[false, true].map((multiple) => (
+                        <label
+                          className="flex items-center gap-2"
+                          key={String(multiple)}
+                        >
+                          <input
+                            type="radio"
+                            name="multiple-sources"
+                            checked={multipleSources === multiple}
+                            onChange={() => setMultipleSources(multiple)}
+                          />
+                          {multiple ? "Multiple" : "Single"}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                </>
+              )}
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
                   checked={required}
+                  disabled={type === "relationship"}
                   onChange={(event) => setRequired(event.target.checked)}
                 />{" "}
                 Required field
