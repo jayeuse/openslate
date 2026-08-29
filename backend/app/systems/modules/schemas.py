@@ -33,5 +33,6 @@ class ModuleResponse(ModuleCreate):
     deleted_at: datetime | None
     is_deleted: bool
     performed_by: UUID | None
+    is_schema_accepted: bool = Field(default=False, json_schema_extra={"readOnly": True})
 
     model_config = ConfigDict(from_attributes=True)

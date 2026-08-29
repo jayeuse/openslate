@@ -115,11 +115,17 @@ export default function RecordsPage() {
                 <ArrowLeft size={16} /> Module
               </a>
             </Button>
-            <Button asChild disabled={!fields.length}>
-              <a href={`${modulePath}/records/new`}>
+            {module?.is_schema_accepted === true && fields.length > 0 ? (
+              <Button asChild>
+                <a href={`${modulePath}/records/new`}>
+                  <Plus size={16} /> Add record
+                </a>
+              </Button>
+            ) : (
+              <Button disabled>
                 <Plus size={16} /> Add record
-              </a>
-            </Button>
+              </Button>
+            )}
           </>
         }
       />
@@ -165,9 +171,11 @@ export default function RecordsPage() {
           )}
         </Button>
       </div>
-      {!fields.length && !loading && (
+      {module && !module.is_schema_accepted && !loading && (
         <Alert variant="warning" className="mb-5">
-          Add fields to this module before creating a record.{" "}
+          {fields.length
+            ? "Accept the schema before creating a record."
+            : "Add fields and accept the schema before creating a record."}{" "}
           <a className="font-medium underline" href={`${modulePath}/schema`}>
             Open schema builder
           </a>

@@ -176,7 +176,9 @@ def create_record(
     db: Annotated[Session, Depends(get_db)],
 ) -> Record:
     _active_module(db, payload.module_id)
-    _lock_active_module(db, payload.module_id)
+    module = _lock_active_module(db, payload.module_id)
+    if not module.is_schema_accepted:
+        raise _conflict("Module schema is not accepted")
     _validate_data(db, payload.module_id, payload.data)
     record = Record(module_id=payload.module_id, data=payload.data)
     db.add(record)

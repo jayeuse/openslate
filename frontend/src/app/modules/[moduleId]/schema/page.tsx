@@ -46,6 +46,7 @@ export default function SchemaPage() {
   const modulePath = departmentId
     ? `/departments/${departmentId}/modules/${moduleId}`
     : `/modules/${moduleId}`;
+  const [module, setModule] = useState<Module | null>(null);
   const [fields, setFields] = useState<Field[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
   const [name, setName] = useState("");
@@ -57,6 +58,7 @@ export default function SchemaPage() {
   const [multipleSources, setMultipleSources] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [accepting, setAccepting] = useState(false);
   async function load() {
     try {
       const current = await apiFetch<Module>(`/modules/${moduleId}`);
@@ -68,6 +70,7 @@ export default function SchemaPage() {
           `/modules?${listQuery({ department_id: current.department_id, limit: 100, deleted: "exclude", sort_by: "created_at", sort_order: "asc" })}`,
         ),
       ]);
+      setModule(current);
       setFields(result.items);
       setModules(moduleResult.items);
     } catch (reason) {
@@ -136,6 +139,7 @@ export default function SchemaPage() {
         method: "POST",
         body: JSON.stringify({ field_ids: next.map((field) => field.id) }),
       });
+      await load();
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -143,6 +147,25 @@ export default function SchemaPage() {
           : "Fields could not be reordered",
       );
       await load();
+    }
+  }
+  async function acceptSchema() {
+    setAccepting(true);
+    setError("");
+    try {
+      const current = await apiFetch<Module>(
+        `/modules/${moduleId}/schema/accept`,
+        { method: "POST" },
+      );
+      setModule(current);
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Schema could not be accepted",
+      );
+    } finally {
+      setAccepting(false);
     }
   }
   async function removeField(field: Field) {
@@ -179,11 +202,25 @@ export default function SchemaPage() {
         title="Field builder"
         description="Add the fields your records need. Changes that would invalidate active records are rejected by the API."
         actions={
-          <Button asChild variant="ghost">
-            <a href={modulePath}>
-              <ArrowLeft size={16} /> Back to module
-            </a>
-          </Button>
+          <>
+            <Button
+              disabled={
+                saving ||
+                accepting ||
+                fields.length === 0 ||
+                module?.is_schema_accepted === true
+              }
+              onClick={() => void acceptSchema()}
+            >
+              <CheckCircle2 size={16} />
+              {accepting ? "Accepting…" : "Accept Schema"}
+            </Button>
+            <Button asChild variant="ghost">
+              <a href={modulePath}>
+                <ArrowLeft size={16} /> Back to module
+              </a>
+            </Button>
+          </>
         }
       />
       {error && (
@@ -196,8 +233,14 @@ export default function SchemaPage() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle>Active fields</CardTitle>
-              <Badge variant={readiness ? "success" : "warning"}>
-                {readiness ? "Ready for review" : "Needs attention"}
+              <Badge
+                variant={module?.is_schema_accepted ? "success" : "warning"}
+              >
+                {module
+                  ? module.is_schema_accepted
+                    ? "Schema accepted"
+                    : "Schema unaccepted"
+                  : "Loading schema"}
               </Badge>
             </div>
           </CardHeader>
@@ -425,19 +468,22 @@ export default function SchemaPage() {
         </Card>
       </div>
       <Alert
-        variant={readiness ? "success" : "warning"}
+        variant={module?.is_schema_accepted ? "success" : "warning"}
         className="mt-5 flex items-start gap-3"
       >
         <CheckCircle2 size={17} className="mt-0.5 shrink-0" />
         <div>
           <p className="font-semibold">
-            {readiness
-              ? "Schema is ready for a first record"
-              : "Complete the schema before adding records"}
+            {module?.is_schema_accepted
+              ? "Schema is accepted"
+              : "Schema is unaccepted"}
           </p>
           <p className="mt-1">
-            The readiness review is computed in the frontend. The backend still
-            validates every record against active fields.
+            {module?.is_schema_accepted
+              ? "The backend has accepted this schema. Records can be created until a schema change invalidates it."
+              : readiness
+                ? "Preflight hint: the active fields look complete. Accept the schema to enable records."
+                : "Preflight hint: complete the active fields, then accept the schema to enable records."}
           </p>
         </div>
       </Alert>

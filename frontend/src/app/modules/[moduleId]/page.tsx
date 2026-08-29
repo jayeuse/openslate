@@ -76,8 +76,14 @@ export default function ModulePage() {
               <div className="bg-accent text-accent-foreground grid size-10 place-items-center rounded-md">
                 <Settings2 />
               </div>
-              <Badge variant={fields.length ? "success" : "warning"}>
-                {fields.length ? `${fields.length} fields` : "Needs fields"}
+              <Badge
+                variant={module?.is_schema_accepted ? "success" : "warning"}
+              >
+                {module
+                  ? module.is_schema_accepted
+                    ? "Schema accepted"
+                    : "Schema unaccepted"
+                  : "Loading schema"}
               </Badge>
             </div>
             <h2 className="mt-5 font-semibold">Module schema</h2>
@@ -96,8 +102,12 @@ export default function ModulePage() {
               <div className="bg-accent text-accent-foreground grid size-10 place-items-center rounded-md">
                 <Table2 />
               </div>
-              <Badge variant={fields.length ? "default" : "warning"}>
-                {fields.length ? "Ready to review" : "Blocked"}
+              <Badge
+                variant={module?.is_schema_accepted ? "default" : "warning"}
+              >
+                {module?.is_schema_accepted
+                  ? "Ready for records"
+                  : "Records blocked"}
               </Badge>
             </div>
             <h2 className="mt-5 font-semibold">Module records</h2>
@@ -115,11 +125,13 @@ export default function ModulePage() {
         <CardContent className="flex items-start gap-4 p-5">
           <Database className="text-primary mt-0.5" size={18} />
           <div>
-            <h2 className="font-medium">Readiness review</h2>
+            <h2 className="font-medium">Schema status</h2>
             <p className="text-muted-foreground mt-1 text-sm leading-6">
-              {fields.length
-                ? "This module has fields. Open the schema builder to run the complete frontend readiness review before adding a first record."
-                : "Add at least one field before the module can produce a valid record form."}
+              {module?.is_schema_accepted
+                ? "The backend has accepted this schema. Records can be created until a schema change invalidates it."
+                : fields.length
+                  ? "Accept the schema before adding records."
+                  : "Add at least one field, then accept the schema before adding records."}
             </p>
           </div>
         </CardContent>

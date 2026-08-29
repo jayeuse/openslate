@@ -21,7 +21,11 @@ from app.systems.fields.router import (
 )
 from app.systems.fields.router import router as fields_router
 from app.systems.fields.schemas import FieldCreate, FieldReorder, FieldUpdate
-from app.systems.fields.validation import validate_field_value, validate_record_data
+from app.systems.fields.validation import (
+    validate_field_value,
+    validate_module_schema,
+    validate_record_data,
+)
 from app.systems.modules.models import Module
 from app.systems.records.models import Record
 from app.systems.records.router import (
@@ -38,7 +42,12 @@ from app.systems.relationships.service import RelationshipConflict, Relationship
 
 
 def make_module(*, deleted: bool = False) -> Module:
-    module = Module(department_id=uuid7(), module_name="Assets", is_deleted=deleted)
+    module = Module(
+        department_id=uuid7(),
+        module_name="Assets",
+        is_deleted=deleted,
+        is_schema_accepted=True,
+    )
     module.id = uuid7()
     return module
 
@@ -127,6 +136,50 @@ def test_field_schema_rejects_invalid_configuration() -> None:
         )
 
 
+def test_module_schema_validator_checks_active_field_structure() -> None:
+    module_id = uuid7()
+    first = make_field(module_id)
+    second = make_field(module_id)
+    second.name = "Summary"
+    second.position = 1
+
+    validate_module_schema([first, second])
+
+    second.position = 3
+    with pytest.raises(ValueError):
+        validate_module_schema([first, second])
+
+    second.position = 1
+    second.name = "  "
+    with pytest.raises(ValueError):
+        validate_module_schema([first, second])
+
+    second.name = first.name
+    with pytest.raises(ValueError):
+        validate_module_schema([first, second])
+
+    with pytest.raises(ValueError):
+        validate_module_schema([])
+
+
+def test_module_schema_validator_reuses_field_config_and_relationship_metadata() -> None:
+    module_id = uuid7()
+    field = make_field(module_id, FieldType.SELECT, config={"options": ["open"]})
+    validate_module_schema([field])
+
+    field.config = {"options": []}
+    with pytest.raises(ValueError):
+        validate_module_schema([field])
+
+    field = make_field(module_id, FieldType.RELATIONSHIP)
+    with pytest.raises(ValueError):
+        validate_module_schema([field])
+    field.relationship_target_module_id = uuid7()
+    field.relationship_multiple_targets = False
+    field.relationship_multiple_sources = True
+    validate_module_schema([field])
+
+
 def test_field_create_requires_active_module_and_checks_name_and_position() -> None:
     module = make_module()
     db = Mock(spec=Session)
@@ -141,6 +194,60 @@ def test_field_create_requires_active_module_and_checks_name_and_position() -> N
     assert field.name == "Title"
     assert field.module_id == module.id
     db.commit.assert_called_once()
+
+
+def test_effective_field_lifecycle_changes_clear_schema_acceptance() -> None:
+    module = make_module()
+    field = make_field(module.id)
+
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [module, None, None]
+    db.get.return_value = module
+    create_field(
+        FieldCreate(module_id=module.id, name="Summary", type="text", position=1),
+        Mock(),
+        db,
+    )
+    assert module.is_schema_accepted is False
+
+    module.is_schema_accepted = True
+    db.reset_mock()
+    db.scalar.side_effect = [module, None]
+    db.get.side_effect = [field, module, field]
+    update_field(field.id, FieldUpdate(name="Summary"), Mock(), db)
+    assert module.is_schema_accepted is False
+
+    module.is_schema_accepted = True
+    field.is_deleted = False
+    db.reset_mock()
+    db.scalar.side_effect = [module, 0]
+    db.get.side_effect = [field, module, field]
+    delete_field(field.id, Mock(), db)
+    assert module.is_schema_accepted is False
+
+    module.is_schema_accepted = True
+    field.is_deleted = True
+    db.reset_mock()
+    db.scalar.side_effect = [module, None, None]
+    db.get.side_effect = [field, module, field]
+    restore_field(field.id, Mock(), db)
+    assert module.is_schema_accepted is False
+
+    module.is_schema_accepted = True
+    other = make_field(module.id)
+    other.name = "Other"
+    other.position = 1
+    db.reset_mock()
+    db.get.side_effect = None
+    db.get.return_value = module
+    db.scalars.return_value.all.return_value = [field, other]
+    reorder_module_fields(
+        module.id,
+        FieldReorder(field_ids=[other.id, field.id]),
+        Mock(),
+        db,
+    )
+    assert module.is_schema_accepted is False
 
 
 @pytest.mark.parametrize(
@@ -306,6 +413,7 @@ def test_record_create_replaces_data_on_patch_and_restore_revalidates() -> None:
     record.id = uuid7()
     db = Mock(spec=Session)
     db.scalar.return_value = module
+    db.get.return_value = module
     db.scalars.return_value.all.return_value = [field]
 
     created = create_record(
@@ -332,3 +440,18 @@ def test_record_create_replaces_data_on_patch_and_restore_revalidates() -> None:
     with pytest.raises(HTTPException) as error:
         restore_record(record.id, Mock(), db)
     assert error.value.status_code == 422
+
+
+def test_record_create_requires_an_accepted_schema_after_module_lock() -> None:
+    module = make_module()
+    module.is_schema_accepted = False
+    db = Mock(spec=Session)
+    db.scalar.return_value = module
+    db.get.return_value = module
+
+    with pytest.raises(HTTPException) as error:
+        create_record(RecordCreate(module_id=module.id, data={}), Mock(), db)
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "Module schema is not accepted"
+    db.add.assert_not_called()

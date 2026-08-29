@@ -18,9 +18,11 @@ from app.systems.departments.router import (
 )
 from app.systems.departments.router import router as departments_router
 from app.systems.departments.schemas import DepartmentCreate, DepartmentUpdate
+from app.systems.fields.models import Field
 from app.systems.modules.models import Module
 from app.systems.modules.router import (
     ModuleSortField,
+    accept_module_schema,
     create_module,
     delete_module,
     list_modules,
@@ -28,7 +30,7 @@ from app.systems.modules.router import (
     update_module,
 )
 from app.systems.modules.router import router as modules_router
-from app.systems.modules.schemas import ModuleCreate, ModuleUpdate
+from app.systems.modules.schemas import ModuleCreate, ModuleResponse, ModuleUpdate
 
 
 def test_crud_routers_expose_standard_contract() -> None:
@@ -44,6 +46,15 @@ def test_crud_routers_expose_standard_contract() -> None:
     assert set(paths["/api/modules"]) == {"get", "post"}
     assert set(paths["/api/modules/{module_id}"]) == {"get", "patch", "delete"}
     assert set(paths["/api/modules/{module_id}/restore"]) == {"post"}
+    assert set(paths["/api/modules/{module_id}/schema/accept"]) == {"post"}
+
+
+def test_schema_acceptance_is_output_only() -> None:
+    assert "is_schema_accepted" not in ModuleCreate.model_fields
+    assert "is_schema_accepted" not in ModuleUpdate.model_fields
+    assert ModuleResponse.model_fields["is_schema_accepted"].json_schema_extra == {
+        "readOnly": True
+    }
 
 
 def test_names_are_trimmed_and_blank_names_are_rejected() -> None:
@@ -177,3 +188,52 @@ def test_module_restore_requires_active_parent_and_duplicate_preflight() -> None
         restore_module(module.id, None, db)
     assert error.value.status_code == 409
     assert module.is_deleted is True
+
+
+def test_module_schema_acceptance_is_idempotent_and_commits_the_transition() -> None:
+    module = Module(department_id=uuid7(), module_name="Assets", is_schema_accepted=False)
+    module.id = uuid7()
+    field = Field(
+        module_id=module.id,
+        name="Title",
+        type="text",
+        position=0,
+        config={},
+    )
+    db = Mock(spec=Session)
+    db.get.return_value = module
+    db.scalars.return_value.all.return_value = [field]
+
+    accepted = accept_module_schema(module.id, None, db)
+
+    assert accepted is module
+    assert module.is_schema_accepted is True
+    db.commit.assert_called_once()
+
+    db.reset_mock()
+    accepted_again = accept_module_schema(module.id, None, db)
+
+    assert accepted_again is module
+    db.commit.assert_not_called()
+
+
+def test_module_schema_acceptance_returns_safe_conflict_for_invalid_schema() -> None:
+    module = Module(department_id=uuid7(), module_name="Assets")
+    module.id = uuid7()
+    field = Field(
+        module_id=module.id,
+        name="   ",
+        type="text",
+        position=0,
+        config={},
+    )
+    db = Mock(spec=Session)
+    db.get.return_value = module
+    db.scalars.return_value.all.return_value = [field]
+
+    with pytest.raises(HTTPException) as error:
+        accept_module_schema(module.id, None, db)
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "Module schema is invalid: Field names must be non-blank"
+    db.commit.assert_not_called()

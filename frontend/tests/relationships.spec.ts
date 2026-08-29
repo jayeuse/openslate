@@ -45,6 +45,7 @@ type BaseEntityFixture = {
 type ModuleFixture = BaseEntityFixture & {
   department_id: string;
   module_name: string;
+  is_schema_accepted: boolean;
 };
 
 type FieldFixture = BaseEntityFixture & {
@@ -77,6 +78,7 @@ type FixtureState = {
   fields: FieldFixture[];
   records: RecordFixture[];
   relationships: RelationshipFixture[];
+  acceptanceError?: string;
 };
 
 type CapturedRequest = {
@@ -103,11 +105,13 @@ function moduleFixture(
   id: string,
   departmentId: string,
   moduleName: string,
+  isSchemaAccepted = true,
 ): ModuleFixture {
   return {
     ...baseEntity(id),
     department_id: departmentId,
     module_name: moduleName,
+    is_schema_accepted: isSchemaAccepted,
   };
 }
 
@@ -348,6 +352,23 @@ async function installMocks(
       await fulfill(route, 200, listResponse(modules));
       return;
     }
+    if (method === "GET" && /^\/departments\/[^/]+$/.test(path)) {
+      const departmentId = path.split("/").pop();
+      const department = state.modules.find(
+        (item) => item.department_id === departmentId,
+      );
+      await fulfill(
+        route,
+        department ? 200 : 404,
+        department
+          ? {
+              ...baseEntity(department.department_id),
+              department_name: "Operations",
+            }
+          : { detail: "Not found" },
+      );
+      return;
+    }
     if (method === "GET" && /^\/modules\/[^/]+$/.test(path)) {
       const moduleItem = state.modules.find((item) => path.endsWith(item.id));
       await fulfill(
@@ -355,6 +376,22 @@ async function installMocks(
         moduleItem ? 200 : 404,
         moduleItem ?? { detail: "Not found" },
       );
+      return;
+    }
+    if (method === "POST" && /^\/modules\/[^/]+\/schema\/accept$/.test(path)) {
+      const moduleItem = state.modules.find((item) =>
+        path.includes(`/modules/${item.id}/`),
+      );
+      if (!moduleItem) {
+        await fulfill(route, 404, { detail: "Not found" });
+        return;
+      }
+      if (state.acceptanceError) {
+        await fulfill(route, 409, { detail: state.acceptanceError });
+        return;
+      }
+      moduleItem.is_schema_accepted = true;
+      await fulfill(route, 200, moduleItem);
       return;
     }
     if (method === "GET" && path === "/fields") {
@@ -391,6 +428,10 @@ async function installMocks(
             : null,
       };
       state.fields.push(field);
+      const moduleItem = state.modules.find(
+        (item) => item.id === field.module_id,
+      );
+      if (moduleItem) moduleItem.is_schema_accepted = false;
       await fulfill(route, 201, field);
       return;
     }
@@ -544,6 +585,136 @@ function lastRequestMatching(
 }
 
 test.describe("relationship UI", () => {
+  test("accepts a valid schema and reflects the accepted status", async ({
+    page,
+  }) => {
+    const state = makeState();
+    const moduleItem = state.modules.find(
+      (item) => item.id === SOURCE_MODULE_ID,
+    );
+    if (!moduleItem) throw new Error("Source module fixture is missing");
+    moduleItem.is_schema_accepted = false;
+    const requests = await installMocks(page, state);
+
+    await page.goto(`/modules/${SOURCE_MODULE_ID}/schema`);
+    const acceptButton = page.getByRole("button", { name: "Accept Schema" });
+    await expect(acceptButton).toBeEnabled();
+
+    const acceptRequest = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        pathFor(response.request()) ===
+          `/modules/${SOURCE_MODULE_ID}/schema/accept`,
+    );
+    await acceptButton.click();
+    await acceptRequest;
+
+    expect(
+      requestMatching(
+        requests,
+        "POST",
+        `/modules/${SOURCE_MODULE_ID}/schema/accept`,
+      ).body,
+    ).toEqual({});
+    await expect(
+      page.getByText("Schema accepted", { exact: true }),
+    ).toBeVisible();
+    await expect(acceptButton).toBeDisabled();
+  });
+
+  test("shows the backend validation error when schema acceptance is rejected", async ({
+    page,
+  }) => {
+    const state = makeState();
+    const moduleItem = state.modules.find(
+      (item) => item.id === SOURCE_MODULE_ID,
+    );
+    if (!moduleItem) throw new Error("Source module fixture is missing");
+    moduleItem.is_schema_accepted = false;
+    state.acceptanceError = "Schema contains an invalid field definition";
+    await installMocks(page, state);
+
+    await page.goto(`/modules/${SOURCE_MODULE_ID}/schema`);
+    await page.getByRole("button", { name: "Accept Schema" }).click();
+
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: "Schema contains an invalid field definition" }),
+    ).toContainText("Schema contains an invalid field definition");
+    await expect(
+      page.getByRole("button", { name: "Accept Schema" }),
+    ).toBeEnabled();
+  });
+
+  test("reflects schema invalidation after a field is added", async ({
+    page,
+  }) => {
+    const state = makeState();
+    await installMocks(page, state);
+
+    await page.goto(`/modules/${SOURCE_MODULE_ID}/schema`);
+    await expect(
+      page.getByText("Schema accepted", { exact: true }),
+    ).toBeVisible();
+
+    await page.getByLabel("Field name").fill("Asset status");
+    const addRequest = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        pathFor(response.request()) === "/fields",
+    );
+    await page.getByRole("button", { name: /Add field/i }).click();
+    await addRequest;
+
+    await expect(
+      page.getByText("Schema unaccepted", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Accept Schema" }),
+    ).toBeEnabled();
+  });
+
+  test("shows the unaccepted status on the module page", async ({ page }) => {
+    const state = makeState();
+    const moduleItem = state.modules.find(
+      (item) => item.id === SOURCE_MODULE_ID,
+    );
+    if (!moduleItem) throw new Error("Source module fixture is missing");
+    moduleItem.is_schema_accepted = false;
+    await installMocks(page, state);
+
+    await page.goto(`/modules/${SOURCE_MODULE_ID}`);
+
+    await expect(
+      page.getByText("Schema unaccepted", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/Accept the schema before adding records/i),
+    ).toBeVisible();
+  });
+
+  test("gates record creation until the schema is accepted", async ({
+    page,
+  }) => {
+    const state = makeState();
+    const moduleItem = state.modules.find(
+      (item) => item.id === SOURCE_MODULE_ID,
+    );
+    if (!moduleItem) throw new Error("Source module fixture is missing");
+    moduleItem.is_schema_accepted = false;
+    await installMocks(page, state);
+
+    await page.goto(`/modules/${SOURCE_MODULE_ID}/records`);
+
+    await expect(
+      page.getByRole("button", { name: "Add record" }),
+    ).toBeDisabled();
+    await expect(
+      page.getByText(/Accept the schema before creating a record/i),
+    ).toBeVisible();
+  });
+
   test("configures relationship fields and summarizes existing cardinality", async ({
     page,
   }) => {

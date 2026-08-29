@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import date, datetime
 from math import isfinite
 from typing import Any
@@ -32,6 +33,63 @@ def field_config(field_type: FieldType, config: dict[str, Any]) -> dict[str, Any
     elif config:
         raise ValueError("Only select fields may have configuration")
     return config
+
+
+def validate_relationship_metadata(field: Field) -> None:
+    field_type = FieldType(field.type)
+    metadata = (
+        field.relationship_target_module_id,
+        field.relationship_multiple_targets,
+        field.relationship_multiple_sources,
+    )
+    if field_type is FieldType.RELATIONSHIP:
+        if (
+            field.relationship_target_module_id is None
+            or not isinstance(field.relationship_multiple_targets, bool)
+            or not isinstance(field.relationship_multiple_sources, bool)
+            or field.required
+            or field.config != {}
+        ):
+            raise ValueError("Relationship fields have invalid relationship metadata")
+    elif any(value is not None for value in metadata):
+        raise ValueError("Primitive fields have invalid relationship metadata")
+
+
+def validate_module_schema(fields: Sequence[Field]) -> None:
+    """Validate the persisted active fields that make up a module schema."""
+
+    if not fields:
+        raise ValueError("Module schemas require at least one active field")
+
+    names: set[str] = set()
+    positions: list[int] = []
+    for field in fields:
+        if not isinstance(field.name, str) or not field.name.strip():
+            raise ValueError("Field names must be non-blank")
+        if field.name in names:
+            raise ValueError("Field names must be unique")
+        names.add(field.name)
+
+        if not isinstance(field.position, int) or isinstance(field.position, bool):
+            raise ValueError("Field positions must be nonnegative integers")
+        if field.position < 0:
+            raise ValueError("Field positions must be nonnegative integers")
+        positions.append(field.position)
+
+        try:
+            field_type = FieldType(field.type)
+        except ValueError as error:
+            raise ValueError("Field types are unsupported") from error
+        if not isinstance(field.config, dict):
+            raise ValueError("Field configuration must be an object")
+        try:
+            field_config(field_type, field.config)
+            validate_relationship_metadata(field)
+        except (TypeError, ValueError) as error:
+            raise ValueError(str(error)) from error
+
+    if sorted(positions) != list(range(len(fields))):
+        raise ValueError("Field positions must be contiguous and zero-based")
 
 
 def validate_field_value(field: Field, value: Any) -> None:

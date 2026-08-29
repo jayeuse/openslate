@@ -18,6 +18,7 @@ export type Department = BaseEntity & { department_name: string };
 export type Module = BaseEntity & {
   department_id: string;
   module_name: string;
+  is_schema_accepted: boolean;
 };
 export type FieldType =
   | "text"

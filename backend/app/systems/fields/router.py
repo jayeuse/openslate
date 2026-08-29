@@ -124,6 +124,10 @@ def _lock_active_module(db: Session, module_id: UUID) -> Module:
     return module
 
 
+def _invalidate_module_schema(module: Module) -> None:
+    module.is_schema_accepted = False
+
+
 def _lock_field(db: Session, field: Field) -> Field:
     try:
         locked = lock_row(db, Field, field.id)
@@ -263,6 +267,7 @@ def create_field(
     db: Annotated[Session, Depends(get_db)],
 ) -> Field:
     source_module = _active_module(db, payload.module_id)
+    locked_source_module: Module
     if payload.type is FieldType.RELATIONSHIP:
         # FieldCreate guarantees these values are present for relationship fields.
         target_module_id = payload.relationship_target_module_id
@@ -281,7 +286,7 @@ def create_field(
         except RelationshipError as error:
             raise HTTPException(status_code=error.status_code, detail=error.detail) from error
     else:
-        _lock_active_module(db, payload.module_id)
+        locked_source_module = _lock_active_module(db, payload.module_id)
     if _name_conflict(db, payload.module_id, payload.name):
         raise _conflict("Field name unavailable")
     if _position_conflict(db, payload.module_id, payload.position):
@@ -297,6 +302,7 @@ def create_field(
         relationship_multiple_targets=payload.relationship_multiple_targets,
         relationship_multiple_sources=payload.relationship_multiple_sources,
     )
+    _invalidate_module_schema(locked_source_module)
     db.add(field)
     _commit(db, "Field name or position unavailable")
     db.refresh(field)
@@ -317,7 +323,7 @@ def update_field(
     if payload.module_id is not None and payload.module_id != field.module_id:
         raise _conflict("Field module cannot be changed")
     _active_module(db, field.module_id)
-    _lock_active_module(db, field.module_id)
+    module = _lock_active_module(db, field.module_id)
     field = _lock_field(db, field)
     if field.is_deleted:
         raise _conflict("Field is deleted")
@@ -365,6 +371,21 @@ def update_field(
     config = field.config if payload.config is None else payload.config
     _validate_change_impact(db, field, field_type, required, config)
 
+    effective = any(
+        (
+            payload.name is not None and payload.name != field.name,
+            payload.required is not None and payload.required != field.required,
+            payload.position is not None and payload.position != field.position,
+            payload.config is not None and payload.config != field.config,
+            current_type is FieldType.RELATIONSHIP
+            and payload.relationship_multiple_targets is not None
+            and payload.relationship_multiple_targets != field.relationship_multiple_targets,
+            current_type is FieldType.RELATIONSHIP
+            and payload.relationship_multiple_sources is not None
+            and payload.relationship_multiple_sources != field.relationship_multiple_sources,
+        )
+    )
+
     if payload.name is not None:
         field.name = payload.name
     if payload.required is not None:
@@ -378,6 +399,8 @@ def update_field(
             field.relationship_multiple_targets = payload.relationship_multiple_targets
         if payload.relationship_multiple_sources is not None:
             field.relationship_multiple_sources = payload.relationship_multiple_sources
+    if effective:
+        _invalidate_module_schema(module)
     _commit(db, "Field name or position unavailable")
     return field
 
@@ -392,7 +415,7 @@ def delete_field(
     if field.is_deleted:
         raise _conflict("Field is already deleted")
     _active_module(db, field.module_id)
-    _lock_active_module(db, field.module_id)
+    module = _lock_active_module(db, field.module_id)
     field = _lock_field(db, field)
     if field.is_deleted:
         raise _conflict("Field is already deleted")
@@ -409,6 +432,7 @@ def delete_field(
         raise _conflict("Field is present in active records")
     field.is_deleted = True
     field.deleted_at = datetime.now(UTC)
+    _invalidate_module_schema(module)
     _commit(db, "Unable to delete field")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -423,7 +447,7 @@ def restore_field(
     if not field.is_deleted:
         raise _conflict("Field is not deleted")
     _active_module(db, field.module_id)
-    _lock_active_module(db, field.module_id)
+    module = _lock_active_module(db, field.module_id)
     field = _lock_field(db, field)
     if not field.is_deleted:
         raise _conflict("Field is not deleted")
@@ -434,6 +458,7 @@ def restore_field(
     _validate_change_impact(db, field, FieldType(field.type), field.required, field.config)
     field.is_deleted = False
     field.deleted_at = None
+    _invalidate_module_schema(module)
     _commit(db, "Field name or position unavailable")
     return field
 
@@ -448,7 +473,7 @@ def reorder_module_fields(
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> list[Field]:
-    _lock_active_module(db, module_id)
+    module = _lock_active_module(db, module_id)
     fields = list(
         db.scalars(
             select(Field)
@@ -462,11 +487,17 @@ def reorder_module_fields(
         raise _conflict("Reorder must include every active module field exactly once")
 
     fields_by_id = {field.id: field for field in fields}
+    original_positions = {field.id: field.position for field in fields}
     temporary_start = max(field.position for field in fields) + len(fields) + 1
     for position, field_id in enumerate(payload.field_ids):
         fields_by_id[field_id].position = temporary_start + position
     db.flush()
     for position, field_id in enumerate(payload.field_ids):
         fields_by_id[field_id].position = position
+    if any(
+        fields_by_id[field_id].position != original_positions[field_id]
+        for field_id in payload.field_ids
+    ):
+        _invalidate_module_schema(module)
     _commit(db, "Field position unavailable")
     return [fields_by_id[field_id] for field_id in payload.field_ids]

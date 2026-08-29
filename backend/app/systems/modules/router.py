@@ -19,6 +19,7 @@ from app.common.listing import (
 from app.core.database import get_db
 from app.systems.departments.models import Department
 from app.systems.fields.models import Field
+from app.systems.fields.validation import validate_module_schema
 from app.systems.modules.models import Module
 from app.systems.modules.schemas import ModuleCreate, ModuleResponse, ModuleUpdate
 from app.systems.records.models import Record
@@ -144,6 +145,16 @@ def _active_dependency_count(
     )
 
 
+def _active_fields(db: Session, module_id: UUID) -> list[Field]:
+    return list(
+        db.scalars(
+            select(Field)
+            .where(Field.module_id == module_id, Field.is_deleted.is_(False))
+            .order_by(Field.position, Field.id)
+        ).all()
+    )
+
+
 def _commit(db: Session, message: str) -> None:
     try:
         db.commit()
@@ -176,6 +187,29 @@ def get_module(
     db: Annotated[Session, Depends(get_db)],
 ) -> Module:
     return _module(db, module_id)
+
+
+@router.post("/{module_id}/schema/accept", response_model=ModuleResponse)
+def accept_module_schema(
+    module_id: UUID,
+    _: AdminUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> Module:
+    module = _module(db, module_id)
+    if module.is_deleted:
+        raise _conflict("Module is deleted")
+    module = _lock_module(db, module)
+    if module.is_deleted:
+        raise _conflict("Module is deleted")
+    try:
+        validate_module_schema(_active_fields(db, module.id))
+    except ValueError as error:
+        raise _conflict(f"Module schema is invalid: {error}") from error
+    if module.is_schema_accepted:
+        return module
+    module.is_schema_accepted = True
+    _commit(db, "Unable to accept module schema")
+    return module
 
 
 @router.post("", response_model=ModuleResponse, status_code=status.HTTP_201_CREATED)

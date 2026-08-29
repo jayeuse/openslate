@@ -1,4 +1,5 @@
 from app.core.base_model import BaseModel
+from app.systems.modules.models import Module
 from app.systems.users.models import User
 
 
@@ -26,3 +27,11 @@ def test_base_model_uses_timezone_aware_timestamps() -> None:
     assert isinstance(User.__table__.c.created_at.type, type(User.__table__.c.updated_at.type))
     assert User.__table__.c.created_at.type.timezone
     assert User.__table__.c.updated_at.type.timezone
+
+
+def test_module_schema_acceptance_defaults_to_false() -> None:
+    column = Module.__table__.c.is_schema_accepted
+
+    assert not column.nullable
+    assert column.default is not None and column.default.arg is False
+    assert column.server_default is not None
