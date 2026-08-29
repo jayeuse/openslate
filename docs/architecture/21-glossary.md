@@ -1,0 +1,42 @@
+# Glossary
+
+> **Scope:** Canonical domain, lifecycle, authorization, data, and infrastructure terms used across the architecture set.
+> **Audience:** Anyone reading or editing OpenSlate architecture documentation.
+> **Related documents:** [System overview](01-system-overview.md), [Domain architecture](03-domain-architecture.md), [Lifecycle](09-lifecycle-and-state-management.md)
+
+| Term                  | Canonical meaning in OpenSlate                                                                                                                        |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Active user           | Local user with `status = active`, not soft-deleted, and assigned an active role.                                                                     |
+| Administrator         | Active local user whose role name is exactly `admin`.                                                                                                 |
+| Alembic               | Sole application-schema migration system.                                                                                                             |
+| Application data API  | FastAPI routes under `/api`; not the Supabase Data API.                                                                                               |
+| Audit boundary        | Normal application ORM mutations through `AuditSession`; excludes direct SQL, Auth, Studio, Alembic, Data API, and external clients.                  |
+| Audit log             | Immutable-at-application-layer row containing action, entity, minimal before/after data, actor, and request metadata.                                 |
+| BFF                   | Next.js backend-for-frontend route `/bff/[...path]` that converts HttpOnly cookie session state into authenticated FastAPI requests.                  |
+| Blocker               | Lifecycle preflight condition that prevents a transition, such as a naming conflict or invalid reopened schema.                                       |
+| Challenge             | Short-lived, hashed, actor/operation/target/digest-bound lifecycle confirmation record.                                                               |
+| Close                 | Soft lifecycle transition to `is_deleted = true` with a deletion timestamp. Use “close,” not “archive,” as the canonical action.                      |
+| Closed field value    | Record JSON value belonging to a closed field; retained and immutable during active record updates.                                                   |
+| Department            | Top-level organizational container for modules.                                                                                                       |
+| Field                 | Ordered typed schema definition owned by a module.                                                                                                    |
+| Impact digest         | Canonical hash of a lifecycle plan, used to detect drift between preview and execution.                                                               |
+| Invalidation          | Opaque Realtime Broadcast event telling clients to refetch; contains no row snapshot.                                                                 |
+| Local profile         | Application `public.users` row keyed to a Supabase Auth identity.                                                                                     |
+| Member                | Seeded role name that currently has no domain API authority.                                                                                          |
+| Module                | Configurable record type within a department.                                                                                                         |
+| Open                  | Canonical usable state where `is_deleted = false`; opposite of closed.                                                                                |
+| Permissions           | JSON metadata stored on a role; currently not evaluated for authorization.                                                                            |
+| Purge                 | Irreversible physical deletion after gated lifecycle planning; disabled by default.                                                                   |
+| Record                | Module instance with primitive/select values stored as JSONB keyed by field UUID.                                                                     |
+| Relationship edge     | Directed stored link from a source record to a target record under a relationship field.                                                              |
+| Relationship field    | Field that defines target module and source/target cardinality; its values are stored as edges, not record JSON.                                      |
+| Reopen                | Lifecycle transition from closed to open after conflict and validity preflight.                                                                       |
+| Restore               | Compatibility route/action for reopening directly soft-deleted entities such as records/users; prefer “reopen” for hierarchical lifecycle operations. |
+| Role                  | Local named authorization category. Current effective authorization checks role name only.                                                            |
+| Runtime role          | PostgreSQL login `openslate_runtime`, provisioned for FastAPI and inheriting `openslate_app`.                                                         |
+| Schema acceptance     | Module flag indicating the backend has validated the current active field schema for record creation.                                                 |
+| Soft delete           | Persistence mechanism behind close: retain row while setting deletion state.                                                                          |
+| Supabase Auth         | External identity, password, invitation, and token authority.                                                                                         |
+| Supabase CLI platform | Local PostgreSQL/Auth/Realtime/Storage/Studio/Mailpit services managed from `supabase/config.toml`.                                                   |
+| Tenant                | Independent trust domain. No tenant key/isolation is implemented; tenancy intent is unknown.                                                          |
+| UUIDv7                | Time-ordered UUID generated for most application-owned rows.                                                                                          |

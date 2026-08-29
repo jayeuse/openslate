@@ -1,0 +1,100 @@
+# Backend Architecture
+
+> **Scope:** The implemented Python backend runtime, capability packages, persistence-facing code, and outbound Supabase integration.
+> **Audience:** Backend engineers, reviewers, and operators tracing an API request through the application.
+> **Related documents:** [API architecture](07-api-architecture.md), [Authentication and authorization](08-authentication-authorization.md), [Audit and history](10-audit-and-history.md), [Error handling and recovery](15-error-handling-and-recovery.md)
+
+## Status summary
+
+| Area                              | Status                    | Evidence-based state                                                                                                                                                           |
+| --------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| FastAPI application assembly      | **Implemented**           | `backend/app/main.py:create_app` creates the application, middleware, routers, and health endpoint.                                                                            |
+| Domain capability packages        | **Implemented**           | `auth`, `users`, `departments`, `modules`, `fields`, `records`, `relationships`, `lifecycle`, and `audit` have registered runtime behavior.                                    |
+| Placeholder capability packages   | **Partially Implemented** | `files`, `reports`, `views`, `businesses`, and `admin` exist as package paths but are not included as routers by `create_app`; no runtime endpoint is evidenced for them here. |
+| ORM transaction and audit session | **Implemented**           | `backend/app/core/database/session.py:AuditSession` and `get_db` provide the request-scoped SQLAlchemy session used by the routers and audit listeners.                        |
+| Background processing             | **Unknown**               | No worker, scheduler, queue, or asynchronous job entry point appears in the reviewed backend application paths.                                                                |
+
+## Runtime assembly
+
+The backend is a host-run FastAPI application. The module-level `app` in `backend/app/main.py` is created by `create_app()` and is the Uvicorn import target. `create_app()`:
+
+1. Loads `Settings` through `app.core.config:get_settings`.
+2. Creates a FastAPI application titled from `settings.app_name` and versioned as `0.1.0`.
+3. Installs permissive method/header CORS configuration for the configured origins, with credentials enabled.
+4. Installs HTTP middleware that creates a `RequestContext` containing a UUIDv7 request ID, method, and path, then adds `X-Request-ID` to a response that returns normally.
+5. Registers the application routers under `/api`.
+6. Registers `GET /api/health`, which returns `{"status": "ok", "service": "openslate-api"}`.
+
+There is no lifespan/startup/shutdown hook, global exception handler, or structured logging configuration in `backend/app/main.py:create_app`. The application therefore does not run migrations, provision a database role, or bootstrap an administrator as part of import or startup in the reviewed code.
+
+```mermaid
+flowchart LR
+    BFF[Next BFF or API client] --> M[FastAPI middleware\nRequestContext + CORS]
+    M --> D[Auth dependency]
+    D --> R[Capability router]
+    R --> S[AuditSession / SQLAlchemy]
+    S --> DB[(PostgreSQL)]
+    S --> AL[ORM audit listeners]
+    AL --> RT[Supabase Realtime\npost-commit invalidation]
+```
+
+The diagram represents the application path evidenced by `backend/app/main.py:create_app`, `backend/app/core/middleware/request_context.py:RequestContext`, `backend/app/common/dependencies/auth.py:get_current_user`, `backend/app/core/database/session.py:get_db`, and `backend/app/systems/audit/listeners.py`.
+
+## Capability-oriented package layout
+
+The application keeps cross-cutting concerns in `app/core`, shared request/listing concerns in `app/common`, and domain behavior in `app/systems/<capability>`. The following are the runtime ownership boundaries visible from router registration and imports:
+
+| Capability      | Application responsibility                                                                                                    | Main symbols                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `auth`          | Current-user response and administrator invitation entry points; includes the users and roles routers in the exported router. | `backend/app/systems/auth/router.py:router`, `auth_router`, `invite`, `me`                   |
+| `users`         | Local profiles, roles, role assignment, user lifecycle, and Supabase Auth invitation/enable/disable coordination.             | `backend/app/systems/users/router.py`, `service.py:invite_user`, `models.py:User` and `Role` |
+| `departments`   | Department CRUD-shaped routes, soft-delete compatibility route, and lifecycle restore delegation.                             | `backend/app/systems/departments/router.py`                                                  |
+| `modules`       | Module routes, schema acceptance, module deletion compatibility route, and restore delegation.                                | `backend/app/systems/modules/router.py:accept_module_schema`                                 |
+| `fields`        | Field definition, validation, ordering, relationship metadata, schema invalidation, and restore delegation.                   | `backend/app/systems/fields/router.py`, `validation.py`                                      |
+| `records`       | JSONB record data validation, replacement-like update behavior, soft delete, and restore.                                     | `backend/app/systems/records/router.py`                                                      |
+| `relationships` | Directed record-edge creation, assignment, unlinking, cardinality checks, visibility, and locking.                            | `backend/app/systems/relationships/service.py`, `router.py`                                  |
+| `lifecycle`     | Close, reopen, purge planning, confirmation challenges, step-up password verification, locking, and execution.                | `backend/app/systems/lifecycle/planner.py`, `service.py`, `router.py`                        |
+| `audit`         | ORM mutation capture, redacted snapshots, immutable log reads, and post-commit invalidation.                                  | `backend/app/systems/audit/listeners.py`, `snapshots.py`, `router.py`                        |
+
+Routers commonly query and mutate SQLAlchemy models directly. `relationships` and `lifecycle` additionally use service/planner modules for lock ordering, validation, and multi-row operations. No repository abstraction is present in the reviewed backend source.
+
+## Persistence and state conventions
+
+`backend/app/core/base_model.py:BaseModel` supplies the common columns for the principal domain entities:
+
+- UUIDv7 primary key `id`.
+- UTC lifecycle timestamps `created_at` and `updated_at`.
+- Soft-delete state `is_deleted` and nullable `deleted_at`.
+- Nullable `performed_by`, referencing the local user identity with `SET NULL` behavior.
+
+`Department`, `Module`, `Field`, `Record`, `RelationshipEdge`, `Role`, and `User` inherit `BaseModel`. `AuditLog` and lifecycle confirmation/rate-limit models inherit the SQLAlchemy `Base` directly and have narrower, purpose-specific schemas. JSONB-backed state is used for role permissions, field configuration, record data, and audit snapshots (`backend/app/systems/*/models.py`).
+
+The standard list implementation in `backend/app/common/listing/query.py:execute_standard_list` builds a count query and an ordered item query. `StandardListRequest` in `backend/app/common/listing/schemas.py` supplies bounded `limit`/`offset`, enum-backed sorting, optional search, and deleted-row selection. Resource-specific routers provide the allowed sort fields and filters. The default deleted filter is exclusion where the model supports it.
+
+Application-level state rules include the following implemented behavior:
+
+- Active department names, module names within a department, and field names/positions within a module are checked before mutation and constrained for active rows by the model definitions.
+- A module must have an accepted schema before a record can be created. Field changes and field reordering invalidate schema acceptance.
+- Record updates validate active field keys and retain closed-field values; a changed value for a closed field is rejected.
+- Relationship edges are directed by field/source/target IDs. `relationships.service` checks active dependencies, same-department modules, field/module alignment, distinct source and target records, and configured cardinality.
+- Direct department/module/field `DELETE` discovery routes return a `close_required` conflict. Lifecycle close/reopen/purge is the intended multi-row state path, while records, roles, users, and relationship edges expose direct soft-delete or restore behavior where their routers define it.
+
+The state rules are enforced in application code and ORM operations in the cited modules. This document does not classify database migration or database-policy behavior.
+
+## Session, commit, and outbound integration
+
+`backend/app/core/database/session.py:get_db` constructs an `AuditSession`, places an `AuditContext` in `session.info`, yields the session, and closes it through the context manager. It does not commit on behalf of a route. Domain routers and services call `db.commit()` explicitly; common commit helpers catch `IntegrityError`, call `db.rollback()`, and translate the failure into a domain conflict. Relationship and lifecycle services additionally translate selected `OperationalError` paths into temporary-unavailability errors.
+
+The audit listeners are imported when `AuditSession` is initialized. A normal audited mutation therefore shares the business mutation and its `AuditLog` insert in one transaction. After commit, the listener may publish an opaque invalidation through `backend/app/core/integrations/supabase.py:broadcast_invalidation`; failure of that optional notification is swallowed by `backend/app/systems/audit/listeners.py:broadcast_committed_changes`.
+
+`backend/app/core/integrations/supabase.py:SupabaseAdminClient` uses the server-only Supabase secret for invitations, Auth-user deletion/disable/enable, and Realtime broadcast. Lifecycle password verification is separate: `backend/app/systems/lifecycle/password.py:SupabasePasswordGrantClient` uses the publishable key for a short-lived password grant and revokes the temporary session before returning. No background retry or job queue is present in these integration paths.
+
+## Source grounding
+
+- `backend/app/main.py:create_app`, `app`, and the registered router list.
+- `backend/app/core/config/settings.py:Settings` and `get_settings`.
+- `backend/app/core/middleware/request_context.py:RequestContext` and `get_request_context`.
+- `backend/app/core/database/session.py:AuditSession`, `get_engine`, and `get_db`.
+- `backend/app/core/base_model.py:BaseModel`.
+- `backend/app/common/listing/query.py:execute_standard_list` and `backend/app/common/listing/schemas.py:StandardListRequest`.
+- Capability routers and services listed in the package table above.

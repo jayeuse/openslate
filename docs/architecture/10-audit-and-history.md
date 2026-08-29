@@ -1,0 +1,116 @@
+# Audit and History
+
+> **Scope:** ORM audit capture, transactions, snapshots/redaction, immutability, audit reads, and post-commit Realtime invalidation.
+> **Audience:** Backend engineers, security reviewers, compliance reviewers, and operators tracing a recorded mutation.
+> **Related documents:** [Backend architecture](04-backend-architecture.md), [Data architecture](06-data-architecture.md), [Runtime flows](13-runtime-flows.md), [Security architecture](14-security-architecture.md)
+
+## Status summary
+
+| Area                        | Status                                                 | Evidence-based state                                                                                                           |
+| --------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| Normal ORM mutation capture | **Implemented**                                        | `AuditSession` SQLAlchemy listeners capture new, dirty, and deleted audited instances.                                         |
+| Same-transaction audit rows | **Implemented**                                        | Audit rows are added after flush and commit with the business mutation.                                                        |
+| Minimal redacted snapshots  | **Implemented**                                        | `backend/app/systems/audit/snapshots.py` omits metadata and records changed values/diffs with sensitive-key redaction.         |
+| AuditLog immutability       | **Implemented**                                        | The model is not a `BaseModel`; listeners reject dirty/deleted logs and non-internal inserts.                                  |
+| Application audit boundary  | **Implemented for `AuditSession`; Unknown outside it** | The listener is attached to the application session class; no capture claim is made for clients or systems outside that class. |
+| Post-commit invalidation    | **Implemented, best effort**                           | The backend publishes an opaque private Broadcast invalidation after commit and swallows notification failure.                 |
+
+## Audit model and read API
+
+`backend/app/systems/audit/models.py:AuditLog` is the immutable `audit_logs` model. It records:
+
+- `id` and `created_at`.
+- `performed_by` for the local actor, nullable if the actor is unavailable or later removed.
+- `action`, constrained to `create`, `update`, or `delete`.
+- `entity_type` and nullable `entity_id`.
+- Nullable JSONB `before` and `after` snapshots.
+- `request_id`, `request_method`, and `request_path` from the request-scoped `AuditContext`.
+- Nullable `actor_label` and `note` metadata fields.
+
+`AuditLog` has `__audit_enabled__ = False`, does not inherit `BaseModel`, and has no soft-delete/update lifecycle fields. It is read through the administrator-only `GET /api/audit-logs` and `GET /api/audit-logs/{audit_log_id}` routes in `backend/app/systems/audit/router.py`. `backend/app/systems/audit/service.py:list_audit_logs` supports filtering by action, entity, actor, request, and creation time, plus the standard list envelope and sorting.
+
+The ordinary listener populates request/actor columns but does not populate `actor_label` or `note`; no application mutation route in the reviewed source supplies those fields.
+
+## Transaction and listener sequence
+
+`backend/app/core/database/session.py:AuditSession` imports the listener module when a session is constructed. `get_db` places an `AuditContext` in `session.info` using the `RequestContext` request ID/method/path. `get_current_user` later sets `performed_by` after local AuthN succeeds.
+
+The listener lifecycle is:
+
+1. `before_flush` (`capture_changes`) rejects attempts to dirty/delete an `AuditLog` and rejects direct non-internal `AuditLog` creation.
+2. For each new audited instance, it sets `performed_by` and records a pending `CREATE`.
+3. For each dirty audited instance with column history, it records `UPDATE`, or `DELETE` when the change is the `is_deleted: false -> true` soft-delete transition.
+4. For explicitly deleted audited instances, it records `DELETE`.
+5. `after_flush_postexec` (`create_audit_logs`) turns pending changes into `AuditLog` rows and adds them to the same session. A realtime-pending flag is set in `session.info`.
+6. `after_rollback` clears both pending state and the realtime-pending flag.
+7. `after_commit` (`broadcast_committed_changes`) publishes one opaque data invalidation if the flag was set.
+
+```mermaid
+sequenceDiagram
+    participant R as Domain route/service
+    participant S as AuditSession
+    participant L as SQLAlchemy listeners
+    participant DB as PostgreSQL
+    participant RT as Supabase Realtime
+    R->>S: assign audited ORM entity
+    R->>S: db.commit()
+    S->>L: before_flush
+    L-->>S: pending entity change + actor
+    S->>DB: flush domain mutation
+    S->>L: after_flush_postexec
+    L->>S: add AuditLog in same transaction
+    S->>DB: commit domain row + audit row
+    S->>L: after_commit
+    L->>RT: private Broadcast invalidation
+    RT-->>L: success or handled failure
+```
+
+If the domain commit or audit insert fails, the transaction does not produce a committed pair. The individual domain commit helpers translate selected `IntegrityError`/`OperationalError` failures after rollback; listener `RuntimeError` guards are not replaced by a global handler.
+
+## Snapshot and redaction behavior
+
+`backend/app/systems/audit/snapshots.py` applies these rules:
+
+- `id`, `created_at`, `updated_at`, and `performed_by` are metadata and are excluded from serialized entity snapshots.
+- A create stores an `after` snapshot. An explicit delete stores a `before` snapshot with default deletion state included.
+- An update stores only fields whose SQLAlchemy history changed. `build_update_snapshot` recursively diffs mapping values, so JSONB updates can contain nested before/after deltas rather than a complete record copy.
+- The soft-delete transition is represented as an audited delete with the changed deletion fields in the update-style snapshot.
+- A key is sensitive when it is in the model’s `__audit_redacted_fields__` set or its normalized name contains `password`, `token`, `secret`, `api_key`, `credential`, or `private_key`.
+- Sensitive values and unsupported binary/object values serialize as `[REDACTED]`. UUIDs, dates, datetimes, enums, mappings, and lists receive JSON-compatible serialization.
+- Model-specific redacted fields are read from the entity type by `serialize_record` and `build_update_snapshot`.
+
+The snapshot contract intentionally records a minimal before/after diff, not a full historical version of every row at every timestamp.
+
+## Immutability and mutation boundary
+
+The capture boundary is the `AuditSession` ORM event set:
+
+- `AuditLog` is excluded from normal capture and cannot recursively generate audit rows.
+- `before_flush` raises `RuntimeError("Audit logs are immutable")` if an audit row is dirty or deleted.
+- A new `AuditLog` is accepted only when the audit system marks it internal with `_audit_internal`.
+- `do_orm_execute` rejects every non-`SELECT` ORM execution, preventing bulk/raw ORM mutation paths from bypassing per-instance listener capture. Normal application writes therefore use individual audited model mutations.
+- A rollback clears pending audit and invalidation state so a failed transaction does not leave a later commit with stale pending changes.
+
+The listener does not establish capture for Supabase Auth, Supabase Studio, Alembic, direct SQL, Data API operations, or external database clients. Those are outside the `AuditSession` event boundary; their audit status is **Unknown** from this application listener.
+
+## Realtime invalidation
+
+After a successful audited commit, `backend/app/systems/audit/listeners.py:broadcast_committed_changes` calls `broadcast_invalidation(InvalidationEvent(entity="data"))`. `backend/app/core/integrations/supabase.py:SupabaseAdminClient.broadcast` sends:
+
+- Topic: `openslate:invalidation`.
+- Event: `invalidate`.
+- Private broadcast request.
+- Payload: `{ "type": "data" }` for the listener path; no row snapshot is included.
+
+The backend catches `SupabaseAdminError` from this post-commit call and does not turn it into a failed domain response or roll back the already committed transaction. The database and audit log remain canonical. The frontend `frontend/src/components/realtime-provider.tsx` subscribes to this topic and dispatches a browser invalidation event; `frontend/src/components/app-page.tsx:AppPage` increments an invalidation generation so the `AppShell` subtree remounts. That consumer behavior is included only to explain the end-to-end invalidation path.
+
+## Source grounding
+
+- `backend/app/core/database/session.py:AuditSession` and `get_db`.
+- `backend/app/core/middleware/request_context.py:RequestContext`.
+- `backend/app/systems/audit/context.py:AuditContext`, `get_audit_context`, and `set_audit_actor`.
+- `backend/app/systems/audit/listeners.py:capture_changes`, `create_audit_logs`, `clear_pending_changes`, `broadcast_committed_changes`, and `reject_bulk_mutations`.
+- `backend/app/systems/audit/snapshots.py:serialize_record`, `build_update_snapshot`, and `serialize_value`.
+- `backend/app/systems/audit/models.py:AuditLog` and `AuditAction`.
+- `backend/app/systems/audit/router.py` and `service.py:list_audit_logs`.
+- `backend/app/core/integrations/supabase.py:InvalidationEvent`, `SupabaseAdminClient.broadcast`, and `broadcast_invalidation`.
