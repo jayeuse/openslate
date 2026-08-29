@@ -8,6 +8,7 @@ import { AppPage } from "@/components/app-page";
 import { PageHeader } from "@/components/page-header";
 import { RelationshipManager } from "@/components/relationship-manager";
 import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,7 @@ import {
   apiFetch,
   listQuery,
   type Field,
+  type Department,
   type ListResponse,
   type Module,
   type RecordEntity,
@@ -42,7 +44,9 @@ export default function EditRecordPage() {
   }>();
   const router = useRouter();
   const [module, setModule] = useState<Module | null>(null);
+  const [department, setDepartment] = useState<Department | null>(null);
   const [fields, setFields] = useState<Field[]>([]);
+  const [record, setRecord] = useState<RecordEntity | null>(null);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -52,20 +56,24 @@ export default function EditRecordPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [current, fieldResult, record] = await Promise.all([
+        const [current, fieldResult, currentRecord] = await Promise.all([
           apiFetch<Module>(`/modules/${moduleId}`),
           apiFetch<ListResponse<Field>>(
-            `/fields?${listQuery({ module_id: moduleId, limit: 100, sort_by: "position", sort_order: "asc" })}`,
+            `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "include", sort_by: "position", sort_order: "asc" })}`,
           ),
           apiFetch<RecordEntity>(`/records/${recordId}`),
         ]);
         setModule(current);
+        setDepartment(
+          await apiFetch<Department>(`/departments/${current.department_id}`),
+        );
         setFields(fieldResult.items);
+        setRecord(currentRecord);
         setValues(
           Object.fromEntries(
             fieldResult.items.map((field) => [
               field.id,
-              editValue(field, record.data[field.id]),
+              editValue(field, currentRecord.data[field.id]),
             ]),
           ),
         );
@@ -85,6 +93,10 @@ export default function EditRecordPage() {
   const relationshipFields = fields.filter(
     (field) => field.type === "relationship",
   );
+  const sourceClosed =
+    module?.is_deleted === true ||
+    department?.is_deleted === true ||
+    record?.is_deleted === true;
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
@@ -123,6 +135,16 @@ export default function EditRecordPage() {
           </Button>
         }
       />
+      {record?.is_deleted && (
+        <Badge variant="warning" className="mb-5">
+          Archived
+        </Badge>
+      )}
+      {module?.is_deleted && (
+        <Badge variant="warning" className="mb-5">
+          Module closed
+        </Badge>
+      )}
       {error && (
         <Alert variant="destructive" className="mb-5">
           {error}
@@ -145,6 +167,7 @@ export default function EditRecordPage() {
                       id={field.id}
                       type="checkbox"
                       checked={Boolean(values[field.id])}
+                      disabled={sourceClosed || field.is_deleted}
                       onChange={(event) =>
                         setValues({
                           ...values,
@@ -158,6 +181,7 @@ export default function EditRecordPage() {
                   <select
                     id={field.id}
                     required={field.required}
+                    disabled={sourceClosed || field.is_deleted}
                     className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
                     value={String(values[field.id] ?? "")}
                     onChange={(event) =>
@@ -188,6 +212,7 @@ export default function EditRecordPage() {
                             : "text"
                     }
                     value={String(values[field.id] ?? "")}
+                    disabled={sourceClosed || field.is_deleted}
                     onChange={(event) =>
                       setValues({ ...values, [field.id]: event.target.value })
                     }
@@ -196,7 +221,7 @@ export default function EditRecordPage() {
               </div>
             ))}
             <div className="border-border flex justify-end border-t pt-5">
-              <Button disabled={pending}>
+              <Button disabled={pending || sourceClosed}>
                 <Save size={16} />
                 {pending ? "Saving…" : "Save changes"}
               </Button>
@@ -210,6 +235,7 @@ export default function EditRecordPage() {
             moduleId={moduleId}
             recordId={recordId}
             fields={relationshipFields}
+            sourceReadOnly={sourceClosed}
           />
         </CardContent>
       </Card>

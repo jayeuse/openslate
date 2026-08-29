@@ -19,6 +19,8 @@ class AuditLogResponse(BaseModel):
     request_id: UUID | None
     request_method: str | None
     request_path: str | None
+    actor_label: str | None
+    note: str | None
 
     model_config = ConfigDict(from_attributes=True)
 

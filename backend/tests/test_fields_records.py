@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import UUID
 
@@ -26,6 +27,8 @@ from app.systems.fields.validation import (
     validate_module_schema,
     validate_record_data,
 )
+from app.systems.lifecycle.exceptions import LifecycleClosedAncestorError
+from app.systems.lifecycle.schemas import LifecycleTargetType
 from app.systems.modules.models import Module
 from app.systems.records.models import Record
 from app.systems.records.router import (
@@ -230,7 +233,11 @@ def test_effective_field_lifecycle_changes_clear_schema_acceptance() -> None:
     db.reset_mock()
     db.scalar.side_effect = [module, None, None]
     db.get.side_effect = [field, module, field]
-    restore_field(field.id, Mock(), db)
+    with patch(
+        "app.systems.fields.router.reopen_lifecycle",
+        side_effect=lambda *_args: setattr(module, "is_schema_accepted", False),
+    ):
+        restore_field(field.id, SimpleNamespace(id=uuid7()), db)
     assert module.is_schema_accepted is False
 
     module.is_schema_accepted = True
@@ -318,10 +325,31 @@ def test_field_delete_rejects_active_records_and_restore_checks_parent() -> None
     deleted = make_field(module.id, deleted=True)
     db.get.return_value = deleted
     db.scalar.return_value = None
-    with pytest.raises(HTTPException) as error:
-        restore_field(deleted.id, Mock(), db)
+    with patch(
+        "app.systems.fields.router.reopen_lifecycle",
+        side_effect=LifecycleClosedAncestorError("closed ancestor"),
+    ):
+        with pytest.raises(Exception) as error:
+            restore_field(deleted.id, SimpleNamespace(id=uuid7()), db)
     assert error.value.status_code == 409
     assert deleted.is_deleted is True
+
+
+def test_field_restore_delegates_to_lifecycle_reopen_for_authenticated_actor() -> None:
+    module = make_module()
+    field = make_field(module.id, deleted=True)
+    user = SimpleNamespace(id=uuid7())
+    db = Mock(spec=Session)
+    db.get.return_value = field
+
+    with patch(
+        "app.systems.fields.router.reopen_lifecycle",
+        return_value=Mock(),
+    ) as reopen:
+        restored = restore_field(field.id, user, db)
+
+    reopen.assert_called_once_with(db, LifecycleTargetType.FIELD, field.id, user.id)
+    assert restored is field
 
 
 def test_reorder_uses_temporary_positions_for_sparse_existing_positions() -> None:
@@ -455,3 +483,37 @@ def test_record_create_requires_an_accepted_schema_after_module_lock() -> None:
     assert error.value.status_code == 409
     assert error.value.detail == "Module schema is not accepted"
     db.add.assert_not_called()
+
+
+def test_record_patch_preserves_closed_field_values_and_rejects_changes() -> None:
+    module = make_module()
+    active = make_field(module.id)
+    closed = make_field(module.id, deleted=True)
+    closed.name = "Legacy title"
+    record = Record(
+        module_id=module.id,
+        data={str(active.id): "old", str(closed.id): "legacy"},
+    )
+    record.id = uuid7()
+    db = Mock(spec=Session)
+    db.get.side_effect = lambda model, *_args, **_kwargs: (
+        module if model is Module else record
+    )
+    db.scalar.return_value = module
+    db.scalars.return_value.all.return_value = [active, closed]
+
+    update_record(
+        record.id,
+        RecordUpdate(data={str(active.id): "new", str(closed.id): "legacy"}),
+        Mock(),
+        db,
+    )
+    assert record.data == {str(active.id): "new", str(closed.id): "legacy"}
+
+    with pytest.raises(HTTPException, match="Closed field values cannot be changed"):
+        update_record(
+            record.id,
+            RecordUpdate(data={str(active.id): "newer", str(closed.id): "changed"}),
+            Mock(),
+            db,
+        )

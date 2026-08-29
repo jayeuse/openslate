@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { AppPage } from "@/components/app-page";
+import { LifecycleAction } from "@/components/lifecycle-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +22,7 @@ import {
   apiFetch,
   listQuery,
   type Field,
+  type Department,
   type ListResponse,
   type Module,
   type RecordEntity,
@@ -34,9 +36,10 @@ function displayValue(value: unknown) {
 export default function RecordsPage() {
   const { moduleId } = useParams<{ moduleId: string }>();
   const [module, setModule] = useState<Module | null>(null);
+  const [department, setDepartment] = useState<Department | null>(null);
   const [fields, setFields] = useState<Field[]>([]);
   const [records, setRecords] = useState<RecordEntity[]>([]);
-  const [deleted, setDeleted] = useState("exclude");
+  const [deleted, setDeleted] = useState("include");
   const [recordId, setRecordId] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -48,15 +51,17 @@ export default function RecordsPage() {
     setError("");
     try {
       const current = await apiFetch<Module>(`/modules/${moduleId}`);
-      const [fieldResult, recordResult] = await Promise.all([
+      const [parent, fieldResult, recordResult] = await Promise.all([
+        apiFetch<Department>(`/departments/${current.department_id}`),
         apiFetch<ListResponse<Field>>(
-          `/fields?${listQuery({ module_id: moduleId, limit: 100, sort_by: "position", sort_order: "asc" })}`,
+          `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "include", sort_by: "position", sort_order: "asc" })}`,
         ),
         apiFetch<ListResponse<RecordEntity>>(
           `/records?${listQuery({ module_id: moduleId, limit: 100, deleted, sort_by: "created_at", sort_order: "desc" })}`,
         ),
       ]);
       setModule(current);
+      setDepartment(parent);
       setFields(fieldResult.items);
       setRecords(recordResult.items);
     } catch (reason) {
@@ -115,7 +120,10 @@ export default function RecordsPage() {
                 <ArrowLeft size={16} /> Module
               </a>
             </Button>
-            {module?.is_schema_accepted === true && fields.length > 0 ? (
+            {module?.is_deleted !== true &&
+            department?.is_deleted !== true &&
+            module?.is_schema_accepted === true &&
+            fields.some((field) => !field.is_deleted) ? (
               <Button asChild>
                 <a href={`${modulePath}/records/new`}>
                   <Plus size={16} /> Add record
@@ -129,6 +137,11 @@ export default function RecordsPage() {
           </>
         }
       />
+      {module?.is_deleted && (
+        <Badge variant="warning" className="mb-5">
+          Closed
+        </Badge>
+      )}
       {error && (
         <Alert variant="destructive" className="mb-5">
           {error}{" "}
@@ -263,6 +276,10 @@ export default function RecordsPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={
+                            module?.is_deleted === true ||
+                            department?.is_deleted === true
+                          }
                           onClick={() => void restore(record)}
                         >
                           <RotateCcw size={14} /> Restore
@@ -271,10 +288,25 @@ export default function RecordsPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={
+                            module?.is_deleted === true ||
+                            department?.is_deleted === true
+                          }
                           onClick={() => void archive(record)}
                         >
                           Archive <ArrowRight size={14} />
                         </Button>
+                      )}
+                      {record.is_deleted && (
+                        <LifecycleAction
+                          targetType="record"
+                          targetId={record.id}
+                          targetName={record.id}
+                          isClosed
+                          allowClose={false}
+                          allowReopen={false}
+                          onComplete={load}
+                        />
                       )}
                     </td>
                   </tr>

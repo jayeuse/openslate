@@ -25,6 +25,9 @@ from app.systems.fields.schemas import (
     FieldUpdate,
 )
 from app.systems.fields.validation import field_config, validate_field_value
+from app.systems.lifecycle.exceptions import LifecycleError
+from app.systems.lifecycle.schemas import LifecycleTargetType
+from app.systems.lifecycle.service import reopen_lifecycle
 from app.systems.modules.models import Module
 from app.systems.records.models import Record
 from app.systems.relationships.service import (
@@ -405,7 +408,6 @@ def update_field(
     return field
 
 
-@router.delete("/{field_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_field(
     field_id: UUID,
     _: AdminUser,
@@ -437,30 +439,33 @@ def delete_field(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.delete("/{field_id}", status_code=status.HTTP_204_NO_CONTENT)
+def legacy_delete_field(
+    field_id: UUID,
+    _: AdminUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    _field(db, field_id)
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": "close_required", "message": "Use Close to close this field"},
+    )
+
+
 @router.post("/{field_id}/restore", response_model=FieldResponse)
 def restore_field(
     field_id: UUID,
-    _: AdminUser,
+    user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Field:
     field = _field(db, field_id)
     if not field.is_deleted:
         raise _conflict("Field is not deleted")
-    _active_module(db, field.module_id)
-    module = _lock_active_module(db, field.module_id)
-    field = _lock_field(db, field)
-    if not field.is_deleted:
-        raise _conflict("Field is not deleted")
-    if _name_conflict(db, field.module_id, field.name, field.id):
-        raise _conflict("Field name unavailable")
-    if _position_conflict(db, field.module_id, field.position, field.id):
-        raise _conflict("Field position unavailable")
-    _validate_change_impact(db, field, FieldType(field.type), field.required, field.config)
-    field.is_deleted = False
-    field.deleted_at = None
-    _invalidate_module_schema(module)
-    _commit(db, "Field name or position unavailable")
-    return field
+    try:
+        reopen_lifecycle(db, LifecycleTargetType.FIELD, field_id, user.id)
+    except LifecycleError as error:
+        raise HTTPException(status_code=int(error.status_code), detail=error.detail) from error
+    return _field(db, field_id)
 
 
 @module_fields_router.post(

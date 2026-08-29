@@ -7,10 +7,10 @@ import {
   ArrowUp,
   CheckCircle2,
   Plus,
-  Trash2,
 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { AppPage } from "@/components/app-page";
+import { LifecycleAction } from "@/components/lifecycle-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,7 @@ import {
   listQuery,
   type Field,
   type FieldType,
+  type Department,
   type ListResponse,
   type Module,
 } from "@/lib/api";
@@ -47,6 +48,7 @@ export default function SchemaPage() {
     ? `/departments/${departmentId}/modules/${moduleId}`
     : `/modules/${moduleId}`;
   const [module, setModule] = useState<Module | null>(null);
+  const [department, setDepartment] = useState<Department | null>(null);
   const [fields, setFields] = useState<Field[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
   const [name, setName] = useState("");
@@ -62,15 +64,17 @@ export default function SchemaPage() {
   async function load() {
     try {
       const current = await apiFetch<Module>(`/modules/${moduleId}`);
-      const [result, moduleResult] = await Promise.all([
+      const [parent, result, moduleResult] = await Promise.all([
+        apiFetch<Department>(`/departments/${current.department_id}`),
         apiFetch<ListResponse<Field>>(
-          `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "exclude", sort_by: "position", sort_order: "asc" })}`,
+          `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "include", sort_by: "position", sort_order: "asc" })}`,
         ),
         apiFetch<ListResponse<Module>>(
           `/modules?${listQuery({ department_id: current.department_id, limit: 100, deleted: "exclude", sort_by: "created_at", sort_order: "asc" })}`,
         ),
       ]);
       setModule(current);
+      setDepartment(parent);
       setFields(result.items);
       setModules(moduleResult.items);
     } catch (reason) {
@@ -103,7 +107,7 @@ export default function SchemaPage() {
           name,
           type,
           required,
-          position: fields.length,
+          position: fields.filter((field) => !field.is_deleted).length,
           config,
           ...(type === "relationship"
             ? {
@@ -128,18 +132,39 @@ export default function SchemaPage() {
       setSaving(false);
     }
   }
-  async function reorder(index: number, direction: -1 | 1) {
-    const next = [...fields];
+  async function reorder(fieldId: string, direction: -1 | 1) {
+    const activeFields = fields.filter((field) => !field.is_deleted);
+    const index = activeFields.findIndex((field) => field.id === fieldId);
     const target = index + direction;
-    if (target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target], next[index]];
+    if (index < 0 || target < 0 || target >= activeFields.length) return;
+    const nextActiveFields = [...activeFields];
+    [nextActiveFields[index], nextActiveFields[target]] = [
+      nextActiveFields[target],
+      nextActiveFields[index],
+    ];
+    let activeIndex = 0;
+    const next = fields.map((field) =>
+      field.is_deleted ? field : nextActiveFields[activeIndex++],
+    );
     setFields(next);
     try {
-      await apiFetch(`/modules/${moduleId}/fields/reorder`, {
-        method: "POST",
-        body: JSON.stringify({ field_ids: next.map((field) => field.id) }),
-      });
-      await load();
+      const reorderedFields = await apiFetch<Field[]>(
+        `/modules/${moduleId}/fields/reorder`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            field_ids: nextActiveFields.map((field) => field.id),
+          }),
+        },
+      );
+      const fieldsById = new Map(
+        reorderedFields.map((field) => [field.id, field]),
+      );
+      setFields((current) =>
+        current.map((field) =>
+          field.is_deleted ? field : (fieldsById.get(field.id) ?? field),
+        ),
+      );
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -168,33 +193,18 @@ export default function SchemaPage() {
       setAccepting(false);
     }
   }
-  async function removeField(field: Field) {
-    if (
-      !window.confirm(
-        `Archive the ${field.name} field? Active records using it will block this action.`,
-      )
-    )
-      return;
-    try {
-      await apiFetch(`/fields/${field.id}`, { method: "DELETE" });
-      await load();
-    } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "Field could not be archived",
-      );
-    }
-  }
+  const activeFields = fields.filter((field) => !field.is_deleted);
   const readiness =
-    fields.length > 0 &&
-    fields.every(
+    activeFields.length > 0 &&
+    activeFields.every(
       (field, index) =>
         field.position === index &&
         (field.type !== "select" ||
           (Array.isArray(field.config.options) &&
             field.config.options.length > 0)),
     );
+  const mutationsDisabled =
+    module?.is_deleted === true || department?.is_deleted === true;
   return (
     <AppPage>
       <PageHeader
@@ -205,9 +215,10 @@ export default function SchemaPage() {
           <>
             <Button
               disabled={
+                mutationsDisabled ||
                 saving ||
                 accepting ||
-                fields.length === 0 ||
+                activeFields.length === 0 ||
                 module?.is_schema_accepted === true
               }
               onClick={() => void acceptSchema()}
@@ -234,13 +245,21 @@ export default function SchemaPage() {
             <div className="flex items-center justify-between">
               <CardTitle>Active fields</CardTitle>
               <Badge
-                variant={module?.is_schema_accepted ? "success" : "warning"}
+                variant={
+                  module?.is_deleted
+                    ? "warning"
+                    : module?.is_schema_accepted
+                      ? "success"
+                      : "warning"
+                }
               >
-                {module
-                  ? module.is_schema_accepted
-                    ? "Schema accepted"
-                    : "Schema unaccepted"
-                  : "Loading schema"}
+                {module?.is_deleted
+                  ? "Closed"
+                  : module
+                    ? module.is_schema_accepted
+                      ? "Schema accepted"
+                      : "Schema unaccepted"
+                    : "Loading schema"}
               </Badge>
             </div>
           </CardHeader>
@@ -253,6 +272,7 @@ export default function SchemaPage() {
             {fields.map((field, index) => (
               <div
                 className="border-border flex items-center gap-3 border-b p-4 last:border-b-0"
+                data-schema-field-id={field.id}
                 key={field.id}
               >
                 <span className="text-muted-foreground w-5 text-center font-mono text-xs">
@@ -297,13 +317,19 @@ export default function SchemaPage() {
                     )}
                   </p>
                 </div>
+                {field.is_deleted && <Badge variant="warning">Closed</Badge>}
                 <div className="flex gap-1">
                   <Button
                     variant="ghost"
                     size="icon"
                     aria-label={`Move ${field.name} up`}
-                    disabled={index === 0}
-                    onClick={() => void reorder(index, -1)}
+                    disabled={
+                      mutationsDisabled ||
+                      field.is_deleted ||
+                      activeFields.findIndex((item) => item.id === field.id) ===
+                        0
+                    }
+                    onClick={() => void reorder(field.id, -1)}
                   >
                     <ArrowUp size={15} />
                   </Button>
@@ -311,19 +337,33 @@ export default function SchemaPage() {
                     variant="ghost"
                     size="icon"
                     aria-label={`Move ${field.name} down`}
-                    disabled={index === fields.length - 1}
-                    onClick={() => void reorder(index, 1)}
+                    disabled={
+                      mutationsDisabled ||
+                      field.is_deleted ||
+                      activeFields.findIndex((item) => item.id === field.id) ===
+                        activeFields.length - 1
+                    }
+                    onClick={() => void reorder(field.id, 1)}
                   >
                     <ArrowDown size={15} />
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Archive ${field.name}`}
-                    onClick={() => void removeField(field)}
+                  <details
+                    className="border-destructive/30 bg-destructive/5 rounded-[var(--radius)] border"
+                    data-testid={`field-lifecycle-${field.id}`}
                   >
-                    <Trash2 size={15} className="text-destructive" />
-                  </Button>
+                    <summary className="text-destructive cursor-pointer px-2 py-1 text-xs font-medium">
+                      Danger zone
+                    </summary>
+                    <div className="border-destructive/20 flex flex-wrap gap-2 border-t p-2">
+                      <LifecycleAction
+                        targetType="field"
+                        targetId={field.id}
+                        targetName={field.name}
+                        isClosed={field.is_deleted}
+                        onComplete={load}
+                      />
+                    </div>
+                  </details>
                 </div>
               </div>
             ))}
@@ -341,6 +381,7 @@ export default function SchemaPage() {
                   id="field-name"
                   required
                   value={name}
+                  disabled={mutationsDisabled}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="e.g. Account owner"
                 />
@@ -349,6 +390,7 @@ export default function SchemaPage() {
                 <Label htmlFor="field-type">Type</Label>
                 <select
                   id="field-type"
+                  disabled={mutationsDisabled}
                   className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
                   value={type}
                   onChange={(event) => {
@@ -370,6 +412,7 @@ export default function SchemaPage() {
                   <Input
                     id="field-options"
                     required
+                    disabled={mutationsDisabled}
                     placeholder="New, Active, Closed"
                     value={options}
                     onChange={(event) => setOptions(event.target.value)}
@@ -386,6 +429,7 @@ export default function SchemaPage() {
                     <select
                       id="target-module"
                       required
+                      disabled={mutationsDisabled}
                       className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
                       value={targetModuleId}
                       onChange={(event) =>
@@ -417,6 +461,7 @@ export default function SchemaPage() {
                             type="radio"
                             name="multiple-targets"
                             checked={multipleTargets === multiple}
+                            disabled={mutationsDisabled}
                             onChange={() => setMultipleTargets(multiple)}
                           />
                           {multiple ? "Multiple" : "Single"}
@@ -441,6 +486,7 @@ export default function SchemaPage() {
                             type="radio"
                             name="multiple-sources"
                             checked={multipleSources === multiple}
+                            disabled={mutationsDisabled}
                             onChange={() => setMultipleSources(multiple)}
                           />
                           {multiple ? "Multiple" : "Single"}
@@ -454,12 +500,12 @@ export default function SchemaPage() {
                 <input
                   type="checkbox"
                   checked={required}
-                  disabled={type === "relationship"}
+                  disabled={mutationsDisabled || type === "relationship"}
                   onChange={(event) => setRequired(event.target.checked)}
                 />{" "}
                 Required field
               </label>
-              <Button className="w-full" disabled={saving}>
+              <Button className="w-full" disabled={saving || mutationsDisabled}>
                 <Plus size={16} />
                 {saving ? "Adding…" : "Add field"}
               </Button>

@@ -1,4 +1,5 @@
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -19,6 +20,8 @@ from app.systems.departments.router import (
 from app.systems.departments.router import router as departments_router
 from app.systems.departments.schemas import DepartmentCreate, DepartmentUpdate
 from app.systems.fields.models import Field
+from app.systems.lifecycle.exceptions import LifecycleClosedAncestorError
+from app.systems.lifecycle.schemas import LifecycleTargetType
 from app.systems.modules.models import Module
 from app.systems.modules.router import (
     ModuleSortField,
@@ -121,7 +124,12 @@ def test_department_lifecycle_and_active_module_dependency() -> None:
     deleted = Department(department_name="Retired", is_deleted=True)
     deleted.id = uuid7()
     db.get.return_value = deleted
-    restored = restore_department(deleted.id, None, db)
+    actor = SimpleNamespace(id=uuid7())
+    with patch(
+        "app.systems.departments.router.reopen_lifecycle",
+        side_effect=lambda *_args: setattr(deleted, "is_deleted", False),
+    ):
+        restored = restore_department(deleted.id, actor, db)
     assert restored is deleted
     assert deleted.is_deleted is False
     assert deleted.deleted_at is None
@@ -176,19 +184,58 @@ def test_module_restore_requires_active_parent_and_duplicate_preflight() -> None
     db.get.return_value = module
     db.scalar.return_value = None
 
-    with pytest.raises(HTTPException) as error:
-        restore_module(module.id, None, db)
+    with patch(
+        "app.systems.modules.router.reopen_lifecycle",
+        side_effect=LifecycleClosedAncestorError("closed ancestor"),
+    ):
+        with pytest.raises(HTTPException) as error:
+            restore_module(module.id, SimpleNamespace(id=uuid7()), db)
     assert error.value.status_code == 409
     assert module.is_deleted is True
 
     parent = Department(department_name="Operations")
     parent.id = module.department_id
-    db.scalar.side_effect = [parent, uuid7()]
-    with pytest.raises(HTTPException) as error:
-        restore_module(module.id, None, db)
-    assert error.value.status_code == 409
-    assert module.is_deleted is True
+    assert parent.id == module.department_id
 
+
+def test_department_restore_delegates_to_lifecycle_reopen_for_authenticated_actor() -> None:
+    department = Department(department_name="Operations", is_deleted=True)
+    department.id = uuid7()
+    user = SimpleNamespace(id=uuid7())
+    db = Mock(spec=Session)
+    db.get.return_value = department
+
+    with patch(
+        "app.systems.departments.router.reopen_lifecycle",
+        return_value=Mock(),
+    ) as reopen:
+        restored = restore_department(department.id, user, db)
+
+    reopen.assert_called_once_with(db, LifecycleTargetType.DEPARTMENT, department.id, user.id)
+    assert restored is department
+
+
+def test_module_restore_delegates_to_lifecycle_reopen_for_authenticated_actor() -> None:
+    department = Department(department_name="Operations")
+    department.id = uuid7()
+    module = Module(
+        department_id=department.id,
+        module_name="Assets",
+        is_deleted=True,
+    )
+    module.id = uuid7()
+    user = SimpleNamespace(id=uuid7())
+    db = Mock(spec=Session)
+    db.get.return_value = module
+
+    with patch(
+        "app.systems.modules.router.reopen_lifecycle",
+        return_value=Mock(),
+    ) as reopen:
+        restored = restore_module(module.id, user, db)
+
+    reopen.assert_called_once_with(db, LifecycleTargetType.MODULE, module.id, user.id)
+    assert restored is module
 
 def test_module_schema_acceptance_is_idempotent_and_commits_the_transition() -> None:
     module = Module(department_id=uuid7(), module_name="Assets", is_schema_accepted=False)

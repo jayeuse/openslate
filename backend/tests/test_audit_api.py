@@ -42,6 +42,8 @@ def make_log() -> AuditLog:
         after={"role_id": "admin"},
         performed_by=uuid7(),
         created_at=datetime.now(UTC),
+        actor_label="system_migration",
+        note="migration note",
     )
 
 
@@ -64,6 +66,8 @@ def test_admin_can_list_and_retrieve_audit_logs() -> None:
     assert listing.pagination.total == 1
     assert detail.before == log.before
     assert detail.after == log.after
+    assert detail.actor_label == log.actor_label
+    assert detail.note == log.note
 
 
 @pytest.mark.parametrize("deleted", [DeletedFilter.INCLUDE, DeletedFilter.ONLY])

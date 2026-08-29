@@ -4,6 +4,7 @@ from sqlalchemy import ForeignKey, inspect
 
 from app.core.base_model import BaseModel
 from app.systems.audit.models import AuditLog
+from app.systems.audit.schemas import AuditLogResponse
 from app.systems.departments.models import Department
 from app.systems.departments.schemas import DepartmentCreate, DepartmentResponse
 from app.systems.fields.models import Field
@@ -100,11 +101,91 @@ def test_audit_log_matches_exact_immutable_shape() -> None:
         "request_id",
         "request_method",
         "request_path",
+        "actor_label",
+        "note",
     }
     assert AuditLog.__table__.c.performed_by.nullable
     assert AuditLog.__table__.c.entity_id.nullable
     assert AuditLog.__table__.c.before.nullable
     assert AuditLog.__table__.c.after.nullable
+    assert AuditLog.__table__.c.actor_label.nullable
+    assert AuditLog.__table__.c.note.nullable
+
+
+def test_audit_log_response_exposes_migration_actor_metadata() -> None:
+    assert AuditLogResponse.model_fields["actor_label"].is_required()
+    assert AuditLogResponse.model_fields["note"].is_required()
+
+
+def test_lifecycle_models_are_immutable_foundation_models() -> None:
+    from app.systems.lifecycle.models import (
+        LifecycleChallengeStatus,
+        LifecycleConfirmationChallenge,
+        LifecycleOperation,
+        LifecycleRateLimitBucket,
+        LifecycleRateLimitFailure,
+    )
+
+    assert not issubclass(LifecycleConfirmationChallenge, BaseModel)
+    assert not issubclass(LifecycleRateLimitBucket, BaseModel)
+    assert LifecycleConfirmationChallenge.__audit_enabled__ is False
+    assert LifecycleRateLimitBucket.__audit_enabled__ is False
+    assert set(LifecycleConfirmationChallenge.__table__.columns.keys()) >= {
+        "id",
+        "actor_id",
+        "operation",
+        "target_type",
+        "target_id",
+        "impact_digest",
+        "token_hash",
+        "failed_attempts",
+        "status",
+        "created_at",
+        "updated_at",
+        "expires_at",
+        "consumed_at",
+    }
+    assert "account_id" not in LifecycleConfirmationChallenge.__table__.columns
+    assert set(LifecycleRateLimitBucket.__table__.columns.keys()) >= {
+        "id",
+        "actor_id",
+        "attempt_count",
+        "window_started_at",
+        "window_expires_at",
+        "blocked_until",
+        "created_at",
+        "updated_at",
+    }
+    assert LifecycleConfirmationChallenge.__table__.c.actor_id.nullable is False
+    assert LifecycleConfirmationChallenge.__table__.c.token_hash.unique is True
+    assert LifecycleConfirmationChallenge.__table__.c.expires_at.nullable is False
+    assert LifecycleRateLimitBucket.__table__.c.actor_id.nullable is False
+    assert LifecycleRateLimitBucket.__table__.c.actor_id.unique is True
+    assert LifecycleRateLimitBucket.__table__.c.blocked_until.nullable is True
+    assert not issubclass(LifecycleRateLimitFailure, BaseModel)
+    assert LifecycleRateLimitFailure.__audit_enabled__ is False
+    assert set(LifecycleRateLimitFailure.__table__.columns.keys()) >= {
+        "id",
+        "actor_id",
+        "occurred_at",
+    }
+    assert [operation.value for operation in LifecycleOperation] == ["close", "purge"]
+    assert [status.value for status in LifecycleChallengeStatus] == [
+        "pending",
+        "verifying",
+        "consumed",
+        "expired",
+        "invalidated",
+        "exhausted",
+    ]
+    for model in (
+        LifecycleConfirmationChallenge,
+        LifecycleRateLimitBucket,
+        LifecycleRateLimitFailure,
+    ):
+        actor_foreign_key = next(iter(model.__table__.c.actor_id.foreign_keys))
+        assert actor_foreign_key.target_fullname == "users.id"
+        assert actor_foreign_key.ondelete == "RESTRICT"
 
 
 def test_target_schemas_validate_lengths_and_defaults() -> None:

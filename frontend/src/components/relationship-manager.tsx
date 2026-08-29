@@ -16,6 +16,7 @@ type RelationshipManagerProps = {
   moduleId: string;
   recordId: string;
   fields: Field[];
+  sourceReadOnly?: boolean;
 };
 
 function compactRecordId(recordId: string) {
@@ -33,6 +34,7 @@ export function RelationshipManager({
   moduleId,
   recordId,
   fields,
+  sourceReadOnly = false,
 }: RelationshipManagerProps) {
   const relationshipFields = fields.filter(
     (field) => field.type === "relationship",
@@ -224,6 +226,7 @@ export function RelationshipManager({
                     !edges.some((edge) => edge.target_record_id === option.id),
                 )
               : options;
+            const fieldReadOnly = sourceReadOnly || field.is_deleted;
             return (
               <fieldset
                 className="border-border rounded-[var(--radius)] border p-4"
@@ -245,7 +248,7 @@ export function RelationshipManager({
                           aria-label={`${field.name} target`}
                           className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
                           value={selectedTargets[field.id] ?? ""}
-                          disabled={pending !== null}
+                          disabled={fieldReadOnly || pending !== null}
                           onChange={(event) =>
                             setSelectedTargets({
                               ...selectedTargets,
@@ -265,7 +268,9 @@ export function RelationshipManager({
                         type="button"
                         variant="outline"
                         disabled={
-                          !selectedTargets[field.id] || pending !== null
+                          !selectedTargets[field.id] ||
+                          fieldReadOnly ||
+                          pending !== null
                         }
                         onClick={() => void addMultiple(field)}
                       >
@@ -300,7 +305,7 @@ export function RelationshipManager({
                             type="button"
                             variant="ghost"
                             size="sm"
-                            disabled={pending !== null}
+                            disabled={sourceReadOnly || pending !== null}
                             onClick={() => void unlink(edge)}
                           >
                             Unlink
@@ -322,7 +327,7 @@ export function RelationshipManager({
                       aria-label={`${field.name} target`}
                       className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
                       value={current}
-                      disabled={pending !== null}
+                      disabled={fieldReadOnly || pending !== null}
                       onChange={(event) =>
                         void assignSingle(field, event.target.value)
                       }
@@ -352,7 +357,7 @@ export function RelationshipManager({
                             type="button"
                             variant="outline"
                             size="sm"
-                            disabled={pending !== null}
+                            disabled={sourceReadOnly || pending !== null}
                             onClick={() => void unlink(edges[0])}
                           >
                             Unlink hidden target
@@ -388,7 +393,7 @@ export function RelationshipManager({
                       type="button"
                       variant="ghost"
                       size="sm"
-                      disabled={pending !== null}
+                      disabled={sourceReadOnly || pending !== null}
                       onClick={() => void unlink(edge)}
                     >
                       Unlink

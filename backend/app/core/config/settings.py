@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     database_url: str
     migration_database_url: str | None = None
     supabase_url: str | None = None
+    supabase_publishable_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_ANON_KEY"
+        ),
+    )
     supabase_secret_key: SecretStr | None = None
     supabase_auth_redirect_url: str | None = None
     supabase_jwt_issuer: str | None = None
@@ -18,6 +24,7 @@ class Settings(BaseSettings):
         default="authenticated",
         validation_alias=AliasChoices("SUPABASE_JWT_AUDIENCE", "SUPABASE_AUDIENCE"),
     )
+    lifecycle_purge_enabled: bool = False
     cors_origins: list[str] = ["http://localhost:3000"]
 
     model_config = SettingsConfigDict(

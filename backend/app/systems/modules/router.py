@@ -20,6 +20,9 @@ from app.core.database import get_db
 from app.systems.departments.models import Department
 from app.systems.fields.models import Field
 from app.systems.fields.validation import validate_module_schema
+from app.systems.lifecycle.exceptions import LifecycleError
+from app.systems.lifecycle.schemas import LifecycleTargetType
+from app.systems.lifecycle.service import reopen_lifecycle
 from app.systems.modules.models import Module
 from app.systems.modules.schemas import ModuleCreate, ModuleResponse, ModuleUpdate
 from app.systems.records.models import Record
@@ -259,7 +262,6 @@ def update_module(
     return module
 
 
-@router.delete("/{module_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_module(
     module_id: UUID,
     _: AdminUser,
@@ -283,23 +285,30 @@ def delete_module(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.delete("/{module_id}", status_code=status.HTTP_204_NO_CONTENT)
+def legacy_delete_module(
+    module_id: UUID,
+    _: AdminUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    _module(db, module_id)
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": "close_required", "message": "Use Close to close this module"},
+    )
+
+
 @router.post("/{module_id}/restore", response_model=ModuleResponse)
 def restore_module(
     module_id: UUID,
-    _: AdminUser,
+    user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Module:
     module = _module(db, module_id)
     if not module.is_deleted:
         raise _conflict("Module is not deleted")
-    _active_department(db, module.department_id)
-    _lock_department(db, module.department_id)
-    module = _lock_module(db, module)
-    if not module.is_deleted:
-        raise _conflict("Module is not deleted")
-    if _name_conflict(db, module.department_id, module.module_name, module.id):
-        raise _conflict("Module name unavailable")
-    module.is_deleted = False
-    module.deleted_at = None
-    _commit(db, "Module name unavailable")
-    return module
+    try:
+        reopen_lifecycle(db, LifecycleTargetType.MODULE, module_id, user.id)
+    except LifecycleError as error:
+        raise HTTPException(status_code=int(error.status_code), detail=error.detail) from error
+    return _module(db, module_id)

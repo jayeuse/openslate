@@ -115,24 +115,57 @@ def _lock_record(db: Session, record: Record) -> Record:
     return locked
 
 
-def _active_fields(db: Session, module_id: UUID) -> list[Field]:
+def _module_fields(db: Session, module_id: UUID) -> list[Field]:
     return list(
         db.scalars(
-            select(Field).where(
-                Field.module_id == module_id,
-                Field.is_deleted.is_(False),
-            )
+            select(Field).where(Field.module_id == module_id)
         ).all()
     )
 
 
-def _validate_data(db: Session, module_id: UUID, data: dict[str, Any]) -> None:
+def _active_fields(db: Session, module_id: UUID) -> list[Field]:
+    return [field for field in _module_fields(db, module_id) if not field.is_deleted]
+
+
+def _validate_data(
+    db: Session,
+    module_id: UUID,
+    data: dict[str, Any],
+    fields: list[Field] | None = None,
+) -> None:
     try:
         for key in data:
             parse_field_key(key)
-        validate_record_data(data, _active_fields(db, module_id))
+        validate_record_data(data, fields if fields is not None else _active_fields(db, module_id))
     except ValueError as error:
         raise _invalid(str(error)) from error
+
+
+def _merge_patch_data(
+    db: Session,
+    module_id: UUID,
+    existing: dict[str, Any],
+    requested: dict[str, Any],
+) -> dict[str, Any]:
+    fields = _module_fields(db, module_id)
+    active_fields = [field for field in fields if not field.is_deleted]
+    closed_keys = {str(field.id) for field in fields if field.is_deleted}
+    for key, value in requested.items():
+        if key in closed_keys and (key not in existing or existing[key] != value):
+            raise _conflict("Closed field values cannot be changed")
+    _validate_data(
+        db,
+        module_id,
+        {key: value for key, value in requested.items() if key not in closed_keys},
+        active_fields,
+    )
+    merged = {
+        key: value
+        for key, value in existing.items()
+        if key in closed_keys
+    }
+    merged.update({key: value for key, value in requested.items() if key not in closed_keys})
+    return merged
 
 
 def _commit(db: Session, message: str) -> None:
@@ -206,8 +239,7 @@ def update_record(
     if record.is_deleted:
         raise _conflict("Record is deleted")
     if payload.data is not None:
-        _validate_data(db, record.module_id, payload.data)
-        record.data = payload.data
+        record.data = _merge_patch_data(db, record.module_id, record.data, payload.data)
     _commit(db, "Unable to update record")
     return record
 
@@ -246,7 +278,10 @@ def restore_record(
     record = _lock_record(db, record)
     if not record.is_deleted:
         raise _conflict("Record is not deleted")
-    _validate_data(db, record.module_id, record.data)
+    # A record keeps values for primitive fields that were closed after it was
+    # created.  Restore validates those values against the complete module
+    # field set; create and update continue to validate against active fields.
+    _validate_data(db, record.module_id, record.data, _module_fields(db, record.module_id))
     record.is_deleted = False
     record.deleted_at = None
     _commit(db, "Unable to restore record")

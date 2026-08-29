@@ -51,3 +51,5 @@ class AuditLog(Base):
     request_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)
     request_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
     request_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actor_label: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, Boxes, Plus, Trash2 } from "lucide-react";
-import { useParams, useRouter } from "next/navigation";
+import { ArrowLeft, ArrowRight, Boxes, Plus } from "lucide-react";
+import { useParams } from "next/navigation";
 import { AppPage } from "@/components/app-page";
+import { LifecycleAction } from "@/components/lifecycle-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +22,6 @@ import {
 
 export default function DepartmentDetailPage() {
   const { departmentId } = useParams<{ departmentId: string }>();
-  const router = useRouter();
   const [department, setDepartment] = useState<Department | null>(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [name, setName] = useState("");
@@ -72,24 +72,7 @@ export default function DepartmentDetailPage() {
       setCreating(false);
     }
   }
-  async function archive() {
-    if (
-      !window.confirm(
-        "Archive this department? Active modules must be archived first.",
-      )
-    )
-      return;
-    try {
-      await apiFetch(`/departments/${departmentId}`, { method: "DELETE" });
-      router.push("/departments");
-    } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "Department could not be archived",
-      );
-    }
-  }
+  const departmentClosed = department?.is_deleted === true;
   return (
     <AppPage>
       <PageHeader
@@ -97,18 +80,18 @@ export default function DepartmentDetailPage() {
         title={department?.department_name ?? "Department"}
         description="Modules belong to this department and cannot be moved after creation."
         actions={
-          <>
-            <Button asChild variant="ghost">
-              <a href="/departments">
-                <ArrowLeft size={16} /> Departments
-              </a>
-            </Button>
-            <Button variant="outline" onClick={() => void archive()}>
-              <Trash2 size={16} /> Archive
-            </Button>
-          </>
+          <Button asChild variant="ghost">
+            <a href="/departments">
+              <ArrowLeft size={16} /> Departments
+            </a>
+          </Button>
         }
       />
+      {department?.is_deleted && (
+        <Badge variant="warning" className="mb-5">
+          Closed
+        </Badge>
+      )}
       {error && (
         <Alert variant="destructive" className="mb-5">
           {error}{" "}
@@ -153,11 +136,11 @@ export default function DepartmentDetailPage() {
                 <div className="min-w-0 flex-1">
                   <h3 className="font-medium">{module.module_name}</h3>
                   <p className="text-muted-foreground mt-1 text-xs">
-                    {module.is_deleted ? "Archived" : "Active module"}
+                    {module.is_deleted ? "Closed module" : "Active module"}
                   </p>
                 </div>
                 <Badge variant={module.is_deleted ? "warning" : "success"}>
-                  {module.is_deleted ? "Archived" : "Active"}
+                  {module.is_deleted ? "Closed" : "Active"}
                 </Badge>
                 <Button
                   asChild
@@ -187,21 +170,49 @@ export default function DepartmentDetailPage() {
                   maxLength={150}
                   placeholder="e.g. Customers"
                   value={name}
+                  disabled={departmentClosed}
                   onChange={(event) => setName(event.target.value)}
                 />
               </div>
-              <Button className="w-full" disabled={creating}>
+              <Button
+                className="w-full"
+                disabled={creating || departmentClosed}
+              >
                 <Plus size={16} />
                 {creating ? "Creating…" : "Create module"}
               </Button>
             </form>
             <p className="text-muted-foreground mt-4 text-xs leading-5">
-              After creating a module, add fields before attempting your first
-              record.
+              {departmentClosed
+                ? "This department is closed. Reopen it before creating modules."
+                : "After creating a module, add fields before attempting your first record."}
             </p>
           </CardContent>
         </Card>
       </div>
+      {department && (
+        <Card
+          className="border-destructive/40 mt-5"
+          data-testid="department-danger-zone"
+        >
+          <CardHeader>
+            <CardTitle>Danger zone</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-muted-foreground max-w-2xl text-sm leading-6">
+              Closing this department also closes its modules. Closed data
+              remains available for review and can be reopened here.
+            </p>
+            <LifecycleAction
+              targetType="department"
+              targetId={department.id}
+              targetName={department.department_name}
+              isClosed={department.is_deleted}
+              onComplete={load}
+            />
+          </CardContent>
+        </Card>
+      )}
     </AppPage>
   );
 }

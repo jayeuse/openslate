@@ -1,6 +1,7 @@
 import os
 from collections.abc import Generator
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import UUID
 
@@ -61,6 +62,10 @@ def owned_ids(integration_db: Session) -> Generator[set[UUID], None, None]:
         yield ids
     finally:
         integration_db.rollback()
+        # The shared integration fixture uses a savepoint so lifecycle
+        # services can exercise commit/rollback behavior. Release its outer
+        # transaction before owner-level cleanup opens another connection.
+        integration_db.connection().rollback()
         database_url = os.getenv("TEST_DATABASE_URL")
         if ids and database_url is not None:
             _guard_integration_database(database_url)
@@ -279,7 +284,7 @@ def test_field_lifecycle_fails_nowait_behind_parent_module_lock(
                     elif operation == "delete":
                         delete_field(field.id, None, integration_db)
                     else:
-                        restore_field(field.id, None, integration_db)
+                        restore_field(field.id, SimpleNamespace(id=None), integration_db)
             finally:
                 holder.rollback()
                 holder.close()
@@ -601,7 +606,7 @@ def test_relationship_migration_security_contract_matches_catalog(
         "can_select": True,
         "can_insert": True,
         "can_update": True,
-        "can_delete": False,
+        "can_delete": True,
     }
 
     for role in ("anon", "authenticated", "service_role"):
@@ -630,6 +635,7 @@ def test_relationship_migration_security_contract_matches_catalog(
         ("openslate_app_relationship_edges_select", "SELECT", "{openslate_app}"),
         ("openslate_app_relationship_edges_insert", "INSERT", "{openslate_app}"),
         ("openslate_app_relationship_edges_update", "UPDATE", "{openslate_app}"),
+        ("openslate_app_relationship_edges_delete", "DELETE", "{openslate_app}"),
     }
 
     indexes = {

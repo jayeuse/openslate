@@ -15,6 +15,7 @@ import {
   apiFetch,
   listQuery,
   type Field,
+  type Department,
   type ListResponse,
   type Module,
   type RecordEntity,
@@ -37,6 +38,7 @@ export default function NewRecordPage() {
   }>();
   const router = useRouter();
   const [module, setModule] = useState<Module | null>(null);
+  const [department, setDepartment] = useState<Department | null>(null);
   const [fields, setFields] = useState<Field[]>([]);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
   const [error, setError] = useState("");
@@ -47,13 +49,15 @@ export default function NewRecordPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [current, result] = await Promise.all([
-          apiFetch<Module>(`/modules/${moduleId}`),
+        const current = await apiFetch<Module>(`/modules/${moduleId}`);
+        const [parent, result] = await Promise.all([
+          apiFetch<Department>(`/departments/${current.department_id}`),
           apiFetch<ListResponse<Field>>(
-            `/fields?${listQuery({ module_id: moduleId, limit: 100, sort_by: "position", sort_order: "asc" })}`,
+            `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "include", sort_by: "position", sort_order: "asc" })}`,
           ),
         ]);
         setModule(current);
+        setDepartment(parent);
         setFields(result.items);
         setValues(
           Object.fromEntries(
@@ -73,6 +77,8 @@ export default function NewRecordPage() {
   const primitiveFields = fields.filter(
     (field) => field.type !== "relationship",
   );
+  const sourceReadOnly =
+    module?.is_deleted === true || department?.is_deleted === true;
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
@@ -135,6 +141,7 @@ export default function NewRecordPage() {
                       id={field.id}
                       type="checkbox"
                       checked={Boolean(values[field.id])}
+                      disabled={sourceReadOnly || field.is_deleted}
                       onChange={(event) =>
                         setValues({
                           ...values,
@@ -148,6 +155,7 @@ export default function NewRecordPage() {
                   <select
                     id={field.id}
                     required={field.required}
+                    disabled={sourceReadOnly || field.is_deleted}
                     className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
                     value={String(values[field.id] ?? "")}
                     onChange={(event) =>
@@ -185,6 +193,7 @@ export default function NewRecordPage() {
                           : undefined
                     }
                     value={String(values[field.id] ?? "")}
+                    disabled={sourceReadOnly || field.is_deleted}
                     onChange={(event) =>
                       setValues({ ...values, [field.id]: event.target.value })
                     }
@@ -210,7 +219,9 @@ export default function NewRecordPage() {
               </p>
             )}
             <div className="border-border flex justify-end border-t pt-5">
-              <Button disabled={pending || fields.length === 0}>
+              <Button
+                disabled={pending || fields.length === 0 || sourceReadOnly}
+              >
                 <Save size={16} />
                 {pending ? "Saving…" : "Create record"}
               </Button>

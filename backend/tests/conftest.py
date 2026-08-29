@@ -55,7 +55,7 @@ def integration_db() -> Generator[Session, None, None]:
     _assert_alembic_head(connection)
     connection.rollback()
     transaction = connection.begin()
-    session = AuditSession(bind=connection)
+    session = AuditSession(bind=connection, join_transaction_mode="create_savepoint")
     session.info[AUDIT_CONTEXT_KEY] = AuditContext(
         request_id=uuid7(),
         request_method="POST",

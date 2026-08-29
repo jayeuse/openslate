@@ -23,6 +23,9 @@ from app.systems.departments.schemas import (
     DepartmentResponse,
     DepartmentUpdate,
 )
+from app.systems.lifecycle.exceptions import LifecycleError
+from app.systems.lifecycle.schemas import LifecycleTargetType
+from app.systems.lifecycle.service import reopen_lifecycle
 from app.systems.modules.models import Module
 from app.systems.relationships.service import RelationshipError, lock_row
 from app.systems.users.models import User, UserRole
@@ -174,7 +177,6 @@ def update_department(
     return department
 
 
-@router.delete("/{department_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_department(
     department_id: UUID,
     _: AdminUser,
@@ -192,19 +194,32 @@ def delete_department(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.delete("/{department_id}", status_code=status.HTTP_204_NO_CONTENT)
+def legacy_delete_department(
+    department_id: UUID,
+    _: AdminUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    # Keep the endpoint for clients that still discover DELETE, but do not
+    # permit it to bypass the close preview and confirmation flow.
+    _department(db, department_id)
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": "close_required", "message": "Use Close to close this department"},
+    )
+
+
 @router.post("/{department_id}/restore", response_model=DepartmentResponse)
 def restore_department(
     department_id: UUID,
-    _: AdminUser,
+    user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Department:
     department = _department(db, department_id)
     if not department.is_deleted:
         raise _conflict("Department is not deleted")
-    department = _lock_department(db, department)
-    if _name_conflict(db, department.department_name, department.id):
-        raise _conflict("Department name unavailable")
-    department.is_deleted = False
-    department.deleted_at = None
-    _commit(db, "Department name unavailable")
-    return department
+    try:
+        reopen_lifecycle(db, LifecycleTargetType.DEPARTMENT, department_id, user.id)
+    except LifecycleError as error:
+        raise HTTPException(status_code=int(error.status_code), detail=error.detail) from error
+    return _department(db, department_id)

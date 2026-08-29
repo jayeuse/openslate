@@ -42,13 +42,19 @@ def response_with_json(payload: object) -> Mock:
 
 def test_client_requires_url_and_secret_configuration() -> None:
     with pytest.raises(SupabaseAdminError, match="not configured"):
-        SupabaseAdminClient(settings=Settings(database_url="postgresql://localhost/test"))
+        SupabaseAdminClient(
+            settings=Settings(
+                database_url="postgresql://localhost/test",
+                _env_file=None,
+            )
+        )
 
     with pytest.raises(SupabaseAdminError, match="not configured"):
         SupabaseAdminClient(
             settings=Settings(
                 database_url="postgresql://localhost/test",
                 supabase_secret_key=SecretStr(SECRET),
+                _env_file=None,
             )
         )
 

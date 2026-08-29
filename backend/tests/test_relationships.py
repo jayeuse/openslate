@@ -362,10 +362,12 @@ def test_visibility_reports_all_reasons_together() -> None:
     }
 
 
-def test_unlink_soft_deletes_an_archived_dependency_edge() -> None:
-    module = make_module(deleted=True)
-    field = make_relationship_field(module, module, deleted=True)
-    source, target = make_record(module, deleted=True), make_record(module, deleted=True)
+def test_unlink_allows_closed_target_but_requires_live_source_side() -> None:
+    department_id = uuid7()
+    module = make_module(department_id=department_id)
+    target_module = make_module(department_id=department_id, deleted=True)
+    field = make_relationship_field(module, target_module)
+    source, target = make_record(module), make_record(target_module, deleted=True)
     edge = make_edge(field, source, target)
     db = Mock(spec=Session)
     db.get.return_value = edge
@@ -373,6 +375,19 @@ def test_unlink_soft_deletes_an_archived_dependency_edge() -> None:
     assert edge.is_deleted is True
     assert edge.deleted_at is not None
     db.commit.assert_called_once()
+
+
+def test_unlink_rejects_closed_field_or_source_side() -> None:
+    module = make_module()
+    field = make_relationship_field(module, module, deleted=True)
+    source, target = make_record(module), make_record(module)
+    edge = make_edge(field, source, target)
+    db = Mock(spec=Session)
+    db.get.return_value = edge
+
+    with pytest.raises(RelationshipConflict, match="Relationship field is not active"):
+        unlink_relationship(db, edge.id)
+    db.commit.assert_not_called()
 
 
 def test_assignment_replaces_atomically_and_clear_soft_deletes_old_edge() -> None:

@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Database, Settings2, Table2 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { AppPage } from "@/components/app-page";
+import { LifecycleAction } from "@/components/lifecycle-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   apiFetch,
   listQuery,
@@ -34,7 +35,7 @@ export default function ModulePage() {
         const [parent, fieldList] = await Promise.all([
           apiFetch<Department>(`/departments/${current.department_id}`),
           apiFetch<ListResponse<Field>>(
-            `/fields?${listQuery({ module_id: moduleId, limit: 100, sort_by: "position", sort_order: "asc" })}`,
+            `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "include", sort_by: "position", sort_order: "asc" })}`,
           ),
         ]);
         setModule(current);
@@ -76,24 +77,33 @@ export default function ModulePage() {
               <div className="bg-accent text-accent-foreground grid size-10 place-items-center rounded-md">
                 <Settings2 />
               </div>
-              <Badge
-                variant={module?.is_schema_accepted ? "success" : "warning"}
-              >
-                {module
-                  ? module.is_schema_accepted
-                    ? "Schema accepted"
-                    : "Schema unaccepted"
-                  : "Loading schema"}
-              </Badge>
+              <div className="flex flex-wrap justify-end gap-2">
+                {module?.is_deleted && <Badge variant="warning">Closed</Badge>}
+                <Badge
+                  variant={module?.is_schema_accepted ? "success" : "warning"}
+                >
+                  {module
+                    ? module.is_schema_accepted
+                      ? "Schema accepted"
+                      : "Schema unaccepted"
+                    : "Loading schema"}
+                </Badge>
+              </div>
             </div>
             <h2 className="mt-5 font-semibold">Module schema</h2>
             <p className="text-muted-foreground mt-2 text-sm leading-6">
               Define names, types, required values, and validation
               configuration.
             </p>
-            <Button asChild className="mt-5">
-              <a href={`${modulePath}/schema`}>Open schema builder</a>
-            </Button>
+            {module?.is_deleted || department?.is_deleted ? (
+              <Button className="mt-5" disabled>
+                Schema changes disabled while closed
+              </Button>
+            ) : (
+              <Button asChild className="mt-5">
+                <a href={`${modulePath}/schema`}>Open schema builder</a>
+              </Button>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -136,6 +146,29 @@ export default function ModulePage() {
           </div>
         </CardContent>
       </Card>
+      {module && (
+        <Card
+          className="border-destructive/40 mt-5"
+          data-testid="module-danger-zone"
+        >
+          <CardHeader>
+            <CardTitle>Danger zone</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-muted-foreground max-w-2xl text-sm leading-6">
+              Closing this module makes its schema and records read-only while
+              keeping closed data available for review and reopening here.
+            </p>
+            <LifecycleAction
+              targetType="module"
+              targetId={module.id}
+              targetName={module.module_name}
+              isClosed={module.is_deleted}
+              onComplete={() => window.location.reload()}
+            />
+          </CardContent>
+        </Card>
+      )}
     </AppPage>
   );
 }

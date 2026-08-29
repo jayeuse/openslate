@@ -25,7 +25,7 @@ import {
 export default function DepartmentsPage() {
   const [items, setItems] = useState<Department[]>([]);
   const [search, setSearch] = useState("");
-  const [deleted, setDeleted] = useState("exclude");
+  const [deleted, setDeleted] = useState("include");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   async function load() {
@@ -142,7 +142,7 @@ export default function DepartmentsPage() {
                   <Badge
                     variant={department.is_deleted ? "warning" : "success"}
                   >
-                    {department.is_deleted ? "Archived" : "Active"}
+                    {department.is_deleted ? "Closed" : "Active"}
                   </Badge>
                 </div>
                 <h2 className="mt-5 text-lg font-semibold">
@@ -151,12 +151,14 @@ export default function DepartmentsPage() {
                 <p className="text-muted-foreground mt-1 text-xs">
                   Created {new Date(department.created_at).toLocaleDateString()}
                 </p>
-                <a
-                  href={`/departments/${department.id}`}
-                  className="text-primary mt-5 inline-flex items-center gap-2 text-sm font-medium"
-                >
-                  Open department <ArrowRight size={15} />
-                </a>
+                <div className="mt-5 flex flex-wrap items-center gap-3">
+                  <a
+                    href={`/departments/${department.id}`}
+                    className="text-primary inline-flex items-center gap-2 text-sm font-medium"
+                  >
+                    Open department <ArrowRight size={15} />
+                  </a>
+                </div>
               </CardContent>
             </Card>
           ))}

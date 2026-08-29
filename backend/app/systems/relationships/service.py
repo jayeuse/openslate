@@ -447,14 +447,17 @@ def unlink_relationship(db: Session, relationship_id: UUID) -> None:
     source = edge.source_record
     target = edge.target_record
     if field is not None and source is not None and target is not None:
-        _lock_relationship_rows(
+        locked_field, locked_source, _ = _lock_relationship_rows(
             db,
             field,
             source,
             target,
-            active_source_module=False,
+            # Clearing an existing link remains possible when its target has
+            # been closed, but the field and source side must still be live.
             active_target_module=False,
         )
+        _active_entity(locked_field, "Relationship field")
+        _active_entity(locked_source, "Source record")
     edge = _locked_edge(db, relationship_id)
     if edge.is_deleted:
         raise RelationshipConflict("Relationship is already deleted")

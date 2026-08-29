@@ -60,6 +60,96 @@ export type Relationship = BaseEntity & {
   visibility: RelationshipVisibility;
   hidden_reasons: RelationshipHiddenReason[];
 };
+export type LifecycleTargetType = "department" | "module" | "field" | "record";
+export type LifecycleOperation = "close" | "purge" | "reopen";
+export type LifecycleBlockerCode =
+  | "closed_ancestor"
+  | "module_name_conflict"
+  | "field_name_conflict"
+  | "field_position_conflict"
+  | "schema_invalid"
+  | "record_data_invalid"
+  | "record_close_unsupported"
+  | "purge_external_schema_dependency";
+export type LifecycleErrorCode =
+  | LifecycleBlockerCode
+  | "already_closed"
+  | "already_open"
+  | "confirmation_required"
+  | "confirmation_name_mismatch"
+  | "challenge_not_found"
+  | "challenge_binding_mismatch"
+  | "challenge_expired"
+  | "challenge_exhausted"
+  | "verification_in_progress"
+  | "invalid_credentials"
+  | "password_rate_limited"
+  | "password_service_unavailable"
+  | "purge_disabled"
+  | "purge_requires_closed"
+  | "impact_changed"
+  | (string & {});
+export type LifecycleRowState = {
+  entity_type: string;
+  entity_id: string;
+  is_deleted: boolean;
+  deleted_at: string | null;
+  updated_at: string;
+  state_fingerprint: string;
+};
+export type LifecycleExternalImpact = {
+  edge_id: string;
+  field_id: string;
+  external_record_id: string;
+  external_module_id: string;
+  external_module_name: string;
+  external_module_label?: string;
+  external_department_id: string;
+  external_department_name: string;
+  external_department_label?: string;
+};
+export type LifecycleKeyStrip = {
+  record_id: string;
+  module_id: string;
+  field_id: string;
+  key: string;
+};
+export type LifecycleBlocker = {
+  code: LifecycleBlockerCode;
+  entity_type: string;
+  entity_id: string;
+  detail: string;
+  conflicting_entity_type: string | null;
+  conflicting_entity_id: string | null;
+  field_id: string | null;
+  field_name: string | null;
+  module_id: string | null;
+  module_name: string | null;
+  department_id: string | null;
+  department_name: string | null;
+};
+export type LifecycleImpact = {
+  target_type: LifecycleTargetType;
+  target_id: string;
+  operation: LifecycleOperation;
+  actor_id: string | null;
+  rows: LifecycleRowState[];
+  external_impacts: LifecycleExternalImpact[];
+  key_strips: LifecycleKeyStrip[];
+  blockers: LifecycleBlocker[];
+  impact_digest: string;
+};
+export type LifecyclePreviewResponse = {
+  impact: LifecycleImpact;
+  token: string;
+  expires_at: string;
+  confirmation_name: string;
+};
+export type LifecycleMutationResponse = {
+  impact: LifecycleImpact;
+  operation_id: string | null;
+};
+export type LifecycleReopenRequest = { confirmed: true };
 export type Role = BaseEntity & {
   role: string;
   permissions: Record<string, unknown>;
@@ -75,9 +165,16 @@ export class ApiError extends Error {
     public status: number,
     message: string,
     public details?: unknown,
+    public code?: LifecycleErrorCode,
   ) {
     super(message);
   }
+}
+
+function isErrorDetail(
+  value: unknown,
+): value is { code?: unknown; message?: unknown; blockers?: unknown } {
+  return typeof value === "object" && value !== null;
 }
 
 async function parseResponse(response: Response): Promise<unknown> {
@@ -88,10 +185,16 @@ async function parseResponse(response: Response): Promise<unknown> {
       typeof body === "object" && body !== null && "detail" in body
         ? body.detail
         : "Request could not be completed";
+    const errorDetail = isErrorDetail(detail) ? detail : undefined;
     throw new ApiError(
       response.status,
-      typeof detail === "string" ? detail : "Request could not be completed",
+      typeof detail === "string"
+        ? detail
+        : typeof errorDetail?.message === "string"
+          ? errorDetail.message
+          : "Request could not be completed",
       detail,
+      typeof errorDetail?.code === "string" ? errorDetail.code : undefined,
     );
   }
   return body;
