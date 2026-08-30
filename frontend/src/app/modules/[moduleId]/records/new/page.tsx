@@ -47,6 +47,7 @@ export default function NewRecordPage() {
     ? `/departments/${departmentId}/modules/${moduleId}`
     : `/modules/${moduleId}`;
   useEffect(() => {
+    let active = true;
     async function load() {
       try {
         const current = await apiFetch<Module>(`/modules/${moduleId}`);
@@ -56,6 +57,7 @@ export default function NewRecordPage() {
             `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "include", sort_by: "position", sort_order: "asc" })}`,
           ),
         ]);
+        if (!active) return;
         setModule(current);
         setDepartment(parent);
         setFields(result.items);
@@ -65,6 +67,7 @@ export default function NewRecordPage() {
           ),
         );
       } catch (reason) {
+        if (!active) return;
         setError(
           reason instanceof Error
             ? reason.message
@@ -73,6 +76,9 @@ export default function NewRecordPage() {
       }
     }
     void load();
+    return () => {
+      active = false;
+    };
   }, [moduleId]);
   const primitiveFields = fields.filter(
     (field) => field.type !== "relationship",
@@ -106,7 +112,7 @@ export default function NewRecordPage() {
     }
   }
   return (
-    <AppPage>
+    <AppPage preserveStateOnInvalidation>
       <PageHeader
         eyebrow={`Module / ${module?.module_name ?? "Records"}`}
         title="Add a record"
@@ -143,10 +149,10 @@ export default function NewRecordPage() {
                       checked={Boolean(values[field.id])}
                       disabled={sourceReadOnly || field.is_deleted}
                       onChange={(event) =>
-                        setValues({
-                          ...values,
+                        setValues((current) => ({
+                          ...current,
                           [field.id]: event.target.checked,
-                        })
+                        }))
                       }
                     />{" "}
                     Yes
@@ -159,7 +165,10 @@ export default function NewRecordPage() {
                     className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
                     value={String(values[field.id] ?? "")}
                     onChange={(event) =>
-                      setValues({ ...values, [field.id]: event.target.value })
+                      setValues((current) => ({
+                        ...current,
+                        [field.id]: event.target.value,
+                      }))
                     }
                   >
                     <option value="">Select an option</option>
@@ -195,7 +204,10 @@ export default function NewRecordPage() {
                     value={String(values[field.id] ?? "")}
                     disabled={sourceReadOnly || field.is_deleted}
                     onChange={(event) =>
-                      setValues({ ...values, [field.id]: event.target.value })
+                      setValues((current) => ({
+                        ...current,
+                        [field.id]: event.target.value,
+                      }))
                     }
                   />
                 )}

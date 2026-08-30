@@ -134,6 +134,36 @@ cd backend
 uv run alembic upgrade head
 ```
 
+To clear only Alembic-owned application data while keeping the existing sample
+administrator usable, stop the FastAPI and frontend processes, keep the local
+Supabase stack running, and run the guarded reset utility from `backend/`:
+
+```bash
+set -a
+source ../.env
+set +a
+
+# Read-only plan: review the preserved administrator and per-table counts.
+uv run python scripts/reset_application_data.py
+
+# Rebuild the plan, then enter its impact digest exactly when prompted.
+uv run python scripts/reset_application_data.py --execute
+```
+
+The utility accepts only the loopback Supabase database at
+`127.0.0.1:54322/postgres`, requires `MIGRATION_DATABASE_URL` and
+`SAMPLE_EMAIL`, verifies the running Supabase project and Alembic head, and
+fails closed on schema drift. Every application profile except `SAMPLE_EMAIL`'s
+matching profile is deleted, along with all domain, relationship, audit, and
+lifecycle rows and every custom role. The utility refuses to run when another
+effective administrator exists; pending, disabled, and soft-deleted
+admin-shaped profiles are reset. It preserves the matching active administrator
+profile and the required `admin` and `member` roles. Supabase-managed schemas
+and all Auth identities remain unchanged. Because deleted profiles are removed,
+retained `performed_by` references to them are intentionally cleared by the
+database's `ON DELETE SET NULL` behavior; retained non-admin Auth identities
+cannot access FastAPI after their application profiles are removed.
+
 Never add application SQL files under `supabase/migrations` or use Supabase
 seed files. Schema changes go through `backend/migrations/` and are checked
 with Alembic.

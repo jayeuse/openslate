@@ -11,6 +11,7 @@ import {
   type RecordEntity,
   type Relationship,
 } from "@/lib/api";
+import { compactId } from "@/lib/utils";
 
 type RelationshipManagerProps = {
   moduleId: string;
@@ -18,10 +19,6 @@ type RelationshipManagerProps = {
   fields: Field[];
   sourceReadOnly?: boolean;
 };
-
-function compactRecordId(recordId: string) {
-  return `${recordId.slice(0, 8)}…`;
-}
 
 function humanizeHiddenReason(reason: string) {
   return reason
@@ -172,13 +169,13 @@ export function RelationshipManager({
     return [
       ...records.map((record) => ({
         id: record.id,
-        label: compactRecordId(record.id),
+        label: compactId(record.id),
       })),
       ...linkedIds
         .filter((targetRecordId) => !knownIds.has(targetRecordId))
         .map((targetRecordId) => ({
           id: targetRecordId,
-          label: compactRecordId(targetRecordId),
+          label: compactId(targetRecordId),
         })),
     ];
   }
@@ -291,7 +288,7 @@ export function RelationshipManager({
                           className="flex items-center justify-between gap-3 text-sm"
                           key={edge.id}
                         >
-                          <span>{compactRecordId(edge.target_record_id)}</span>
+                          <span>{compactId(edge.target_record_id)}</span>
                           {edge.visibility === "hidden" && (
                             <span className="text-muted-foreground mr-auto ml-2">
                               (
@@ -386,8 +383,8 @@ export function RelationshipManager({
                     key={edge.id}
                   >
                     <span>
-                      {compactRecordId(edge.target_record_id)} · field{" "}
-                      {compactRecordId(edge.field_id)}
+                      {compactId(edge.target_record_id)} · field{" "}
+                      {compactId(edge.field_id)}
                     </span>
                     <Button
                       type="button"
@@ -421,7 +418,7 @@ export function RelationshipManager({
           <ul className="mt-3 space-y-2 text-sm">
             {incoming.map((edge) => (
               <li key={edge.id}>
-                {compactRecordId(edge.source_record_id)}
+                {compactId(edge.source_record_id)}
                 {edge.visibility === "hidden" && (
                   <span className="text-muted-foreground ml-2">
                     ({edge.hidden_reasons.map(humanizeHiddenReason).join(", ")})

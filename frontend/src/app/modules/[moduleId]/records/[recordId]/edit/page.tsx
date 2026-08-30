@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { formatDateTimeLocal } from "@/lib/date-time";
 import {
   apiFetch,
   listQuery,
@@ -25,8 +26,7 @@ import {
 
 function editValue(field: Field, value: unknown): string | boolean {
   if (field.type === "boolean") return value === true;
-  if (field.type === "datetime" && typeof value === "string")
-    return value.slice(0, 16);
+  if (field.type === "datetime") return formatDateTimeLocal(value);
   return value === null || value === undefined ? "" : String(value);
 }
 function apiValue(field: Field, value: string | boolean): unknown {
@@ -54,6 +54,7 @@ export default function EditRecordPage() {
     ? `/departments/${departmentId}/modules/${moduleId}`
     : `/modules/${moduleId}`;
   useEffect(() => {
+    let active = true;
     async function load() {
       try {
         const [current, fieldResult, currentRecord] = await Promise.all([
@@ -63,10 +64,12 @@ export default function EditRecordPage() {
           ),
           apiFetch<RecordEntity>(`/records/${recordId}`),
         ]);
-        setModule(current);
-        setDepartment(
-          await apiFetch<Department>(`/departments/${current.department_id}`),
+        const parent = await apiFetch<Department>(
+          `/departments/${current.department_id}`,
         );
+        if (!active) return;
+        setModule(current);
+        setDepartment(parent);
         setFields(fieldResult.items);
         setRecord(currentRecord);
         setValues(
@@ -78,6 +81,7 @@ export default function EditRecordPage() {
           ),
         );
       } catch (reason) {
+        if (!active) return;
         setError(
           reason instanceof Error
             ? reason.message
@@ -86,6 +90,9 @@ export default function EditRecordPage() {
       }
     }
     void load();
+    return () => {
+      active = false;
+    };
   }, [moduleId, recordId]);
   const primitiveFields = fields.filter(
     (field) => field.type !== "relationship",
@@ -122,7 +129,7 @@ export default function EditRecordPage() {
     }
   }
   return (
-    <AppPage>
+    <AppPage preserveStateOnInvalidation>
       <PageHeader
         eyebrow={`Record / ${module?.module_name ?? "Edit"}`}
         title="Edit record"
@@ -169,10 +176,10 @@ export default function EditRecordPage() {
                       checked={Boolean(values[field.id])}
                       disabled={sourceClosed || field.is_deleted}
                       onChange={(event) =>
-                        setValues({
-                          ...values,
+                        setValues((current) => ({
+                          ...current,
                           [field.id]: event.target.checked,
-                        })
+                        }))
                       }
                     />{" "}
                     Yes
@@ -185,7 +192,10 @@ export default function EditRecordPage() {
                     className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
                     value={String(values[field.id] ?? "")}
                     onChange={(event) =>
-                      setValues({ ...values, [field.id]: event.target.value })
+                      setValues((current) => ({
+                        ...current,
+                        [field.id]: event.target.value,
+                      }))
                     }
                   >
                     <option value="">Select an option</option>
@@ -214,7 +224,10 @@ export default function EditRecordPage() {
                     value={String(values[field.id] ?? "")}
                     disabled={sourceClosed || field.is_deleted}
                     onChange={(event) =>
-                      setValues({ ...values, [field.id]: event.target.value })
+                      setValues((current) => ({
+                        ...current,
+                        [field.id]: event.target.value,
+                      }))
                     }
                   />
                 )}

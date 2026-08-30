@@ -33,6 +33,10 @@ const CONTACT_NAME_FIELD_ID = "24242424-2424-4242-8242-242424242424";
 
 type JsonObject = { [key: string]: unknown };
 
+function compactId(id: string): string {
+  return `${id.slice(0, 8)}…${id.slice(-8)}`;
+}
+
 type BaseEntityFixture = {
   id: string;
   created_at: string;
@@ -844,7 +848,7 @@ test.describe("relationship UI", () => {
           `/relationships/fields/${OWNER_FIELD_ID}/sources/${SOURCE_RECORD_ID}`,
     );
     await ownerTarget.selectOption({
-      label: `${NEW_OWNER_RECORD_ID.slice(0, 8)}…`,
+      label: compactId(NEW_OWNER_RECORD_ID),
     });
     await ownerPut;
     expect(
@@ -876,7 +880,7 @@ test.describe("relationship UI", () => {
       name: /Related contacts/,
     });
     await contactsTarget.selectOption({
-      label: `${NEW_TARGET_RECORD_ID.slice(0, 8)}…`,
+      label: compactId(NEW_TARGET_RECORD_ID),
     });
     const addRelationship = page.waitForRequest(
       (request) =>
@@ -891,7 +895,7 @@ test.describe("relationship UI", () => {
     });
 
     const visibleRelationship = page
-      .getByText(`${SECOND_TARGET_RECORD_ID.slice(0, 8)}…`)
+      .getByText(compactId(SECOND_TARGET_RECORD_ID), { exact: true })
       .locator("..");
     const visibleUnlink = visibleRelationship.getByRole("button", {
       name: /Unlink/i,
@@ -922,7 +926,7 @@ test.describe("relationship UI", () => {
     await hiddenDelete;
 
     const incoming = page.getByRole("region", { name: /Incoming links/i });
-    await expect(incoming).toContainText(INCOMING_SOURCE_RECORD_ID.slice(0, 8));
+    await expect(incoming).toContainText(compactId(INCOMING_SOURCE_RECORD_ID));
     const incomingRequest = requests.find(
       (request) =>
         request.method === "GET" &&
@@ -967,8 +971,11 @@ test.describe("relationship UI", () => {
     const sourceRow = page.getByRole("row").filter({ hasText: "Asset Alpha" });
     await expect(sourceRow).toContainText(/links are managed from edit/i);
     await expect(sourceRow).not.toContainText(CONTACTS_FIELD_ID);
-    await expect(
-      sourceRow.getByRole("link", { name: /[0-9a-f]{8}…/i }),
-    ).toHaveAttribute("href", /\/edit$/);
+    const sourceRecordLink = sourceRow.locator(
+      `a[href$="/records/${SOURCE_RECORD_ID}/edit"]`,
+    );
+    await expect(sourceRecordLink).toHaveAccessibleName(
+      compactId(SOURCE_RECORD_ID),
+    );
   });
 });

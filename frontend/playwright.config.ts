@@ -6,6 +6,10 @@ const useProductionServer =
 
 export default defineConfig({
   testDir: "./tests",
+  testIgnore: ["**/live/**"],
+  // Keep ordinary Playwright cleanup away from persistent live-run manifests
+  // stored under test-results/live/<run-id>.
+  outputDir: "test-results/playwright",
   fullyParallel: true,
   forbidOnly: isCI,
   retries: isCI ? 2 : 0,

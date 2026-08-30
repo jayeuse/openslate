@@ -27,6 +27,7 @@ import {
   type Module,
   type RecordEntity,
 } from "@/lib/api";
+import { compactId } from "@/lib/utils";
 
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "—";
@@ -248,7 +249,7 @@ export default function RecordsPage() {
                         href={`${modulePath}/records/${record.id}/edit`}
                         className="text-primary font-mono text-xs hover:underline"
                       >
-                        {record.id.slice(0, 8)}…
+                        {compactId(record.id)}
                       </a>
                       <p className="text-muted-foreground mt-1 text-xs">
                         {new Date(record.created_at).toLocaleDateString()}

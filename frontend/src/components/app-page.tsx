@@ -9,7 +9,15 @@ import {
   RealtimeProvider,
 } from "@/components/realtime-provider";
 
-export function AppPage({ children }: { children: ReactNode }) {
+type AppPageProps = {
+  children: ReactNode;
+  preserveStateOnInvalidation?: boolean;
+};
+
+export function AppPage({
+  children,
+  preserveStateOnInvalidation = false,
+}: AppPageProps) {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
   const [invalidationGeneration, setInvalidationGeneration] = useState(0);
@@ -37,12 +45,15 @@ export function AppPage({ children }: { children: ReactNode }) {
   }, [router]);
 
   useEffect(() => {
-    const invalidate = () =>
-      setInvalidationGeneration((current) => current + 1);
+    const invalidate = () => {
+      if (!preserveStateOnInvalidation) {
+        setInvalidationGeneration((current) => current + 1);
+      }
+    };
     window.addEventListener(OPENSLADE_INVALIDATION_EVENT, invalidate);
     return () =>
       window.removeEventListener(OPENSLADE_INVALIDATION_EVENT, invalidate);
-  }, []);
+  }, [preserveStateOnInvalidation]);
 
   if (checking) {
     return (
