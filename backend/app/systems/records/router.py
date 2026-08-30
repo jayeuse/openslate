@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, cast
@@ -17,8 +18,12 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
-from app.systems.fields.models import Field
-from app.systems.fields.validation import parse_field_key, validate_record_data
+from app.systems.fields.models import Field, FieldType
+from app.systems.fields.validation import (
+    parse_field_key,
+    validate_field_value,
+    validate_record_data,
+)
 from app.systems.modules.models import Module
 from app.systems.records.models import Record
 from app.systems.records.schemas import RecordCreate, RecordResponse, RecordUpdate
@@ -53,6 +58,184 @@ RECORD_LIST_SPEC = ListQuerySpec(
 )
 
 
+@dataclass(frozen=True)
+class RecordValidationIssue:
+    code: str
+    field_id: UUID | None
+    message: str
+    closed_field_mutation: bool = False
+
+
+class RecordValidationError(ValueError):
+    def __init__(
+        self,
+        issues: list[RecordValidationIssue],
+        truncated: bool,
+        has_closed_field_mutation: bool = False,
+    ) -> None:
+        super().__init__("Record data is invalid")
+        self.issues = tuple(issues)
+        self.truncated = truncated
+        self._has_closed_field_mutation = has_closed_field_mutation
+
+    @property
+    def has_closed_field_mutation(self) -> bool:
+        return self._has_closed_field_mutation or any(
+            issue.closed_field_mutation for issue in self.issues
+        )
+
+
+def validate_record_mutation(
+    new_data: dict[str, Any],
+    current_data: dict[str, Any],
+    fields: list[Field],
+) -> dict[str, Any]:
+    """Validate a create or active-value replacement and return normalized data."""
+
+    fields_by_id = {str(field.id): field for field in fields}
+    closed_keys = {
+        str(field.id)
+        for field in fields
+        if field.is_deleted
+    }
+    issues: list[RecordValidationIssue] = []
+    truncated = False
+    has_closed_field_mutation = False
+
+    def add_issue(
+        code: str,
+        field_id: UUID | None,
+        message: str,
+        *,
+        closed_field_mutation: bool = False,
+    ) -> None:
+        nonlocal truncated, has_closed_field_mutation
+        if closed_field_mutation:
+            has_closed_field_mutation = True
+        if len(issues) < 20:
+            issues.append(
+                RecordValidationIssue(
+                    code=code,
+                    field_id=field_id,
+                    message=message,
+                    closed_field_mutation=closed_field_mutation,
+                )
+            )
+        else:
+            truncated = True
+
+    normalized_active: dict[str, Any] = {}
+    submitted_active_keys: set[str] = set()
+    submitted_items = sorted(new_data.items(), key=lambda item: str(item[0]))
+
+    # Phase 1: closed values are retained verbatim; only changed or new values
+    # are conflicts. Relationship values are never accepted, but a changed
+    # closed relationship is represented by one closed mutation issue.
+    for key, raw_value in submitted_items:
+        if not isinstance(key, str):
+            continue
+
+        field = fields_by_id.get(key)
+        if field is None or not field.is_deleted:
+            continue
+
+        field_type = FieldType(field.type)
+        if field_type is FieldType.RELATIONSHIP:
+            closed_value_changed = (
+                key not in current_data
+                or type(current_data[key]) is not type(raw_value)
+                or current_data[key] != raw_value
+            )
+            if closed_value_changed:
+                add_issue(
+                    "closed_field_mutation",
+                    field.id,
+                    "Closed field values cannot be changed",
+                    closed_field_mutation=True,
+                )
+            else:
+                add_issue(
+                    "relationship_field",
+                    field.id,
+                    "Relationship fields are managed separately",
+                )
+            continue
+        if (
+            key not in current_data
+            or type(current_data[key]) is not type(raw_value)
+            or current_data[key] != raw_value
+        ):
+            add_issue(
+                "closed_field_mutation",
+                field.id,
+                "Closed field values cannot be changed",
+                closed_field_mutation=True,
+            )
+
+    # Phase 2: known active values are validated and normalized. Relationship
+    # values are rejected before the type registry is consulted.
+    for key, raw_value in submitted_items:
+        if not isinstance(key, str):
+            continue
+        field = fields_by_id.get(key)
+        if field is None or field.is_deleted:
+            continue
+
+        submitted_active_keys.add(key)
+        field_type = FieldType(field.type)
+        if field_type is FieldType.RELATIONSHIP:
+            add_issue(
+                "relationship_field",
+                field.id,
+                "Relationship fields are managed separately",
+            )
+            continue
+
+        try:
+            normalized_active[key] = validate_field_value(field, raw_value)
+        except ValueError as error:
+            code = (
+                "required_field"
+                if field.required and (raw_value is None or raw_value == "")
+                else "invalid_field_value"
+            )
+            message = "Field is required" if code == "required_field" else str(error)
+            add_issue(code, field.id, message)
+
+    # Phase 3: malformed and unknown keys are reported after known values.
+    for key, _raw_value in submitted_items:
+        if not isinstance(key, str):
+            add_issue("invalid_field_key", None, "Field key is invalid")
+            continue
+        if key in fields_by_id:
+            continue
+        try:
+            parsed_key = parse_field_key(key)
+        except ValueError:
+            add_issue("invalid_field_key", None, "Field key is invalid")
+        else:
+            add_issue("unknown_field", parsed_key, "Unknown or inactive field")
+
+    # Phase 4: active required fields must be submitted for every replacement.
+    for field in sorted(fields, key=lambda candidate: (candidate.position, str(candidate.id))):
+        field_type = FieldType(field.type)
+        key = str(field.id)
+        if not field.is_deleted and field_type is not FieldType.RELATIONSHIP:
+            if field.required and key not in submitted_active_keys:
+                add_issue("required_field", field.id, "Field is required")
+
+    if issues or has_closed_field_mutation:
+        raise RecordValidationError(issues, truncated, has_closed_field_mutation)
+
+    merged = {
+        key: value
+        for key, value in current_data.items()
+        if key in closed_keys
+    }
+    merged.update(normalized_active)
+    return merged
+
+
 def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
 
@@ -63,6 +246,28 @@ def _conflict(message: str) -> HTTPException:
 
 def _invalid(message: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=message)
+
+
+def _record_validation_http_error(error: RecordValidationError) -> HTTPException:
+    detail = {
+        "code": "record_validation_failed",
+        "message": "Record data is invalid",
+        "errors": [
+            {
+                "code": issue.code,
+                "field_id": str(issue.field_id) if issue.field_id is not None else None,
+                "message": issue.message,
+            }
+            for issue in error.issues
+        ],
+        "truncated": error.truncated,
+    }
+    code = (
+        status.HTTP_409_CONFLICT
+        if error.has_closed_field_mutation
+        else status.HTTP_422_UNPROCESSABLE_CONTENT
+    )
+    return HTTPException(status_code=code, detail=detail)
 
 
 def _require_patch(payload: RecordUpdate) -> None:
@@ -148,24 +353,7 @@ def _merge_patch_data(
     requested: dict[str, Any],
 ) -> dict[str, Any]:
     fields = _module_fields(db, module_id)
-    active_fields = [field for field in fields if not field.is_deleted]
-    closed_keys = {str(field.id) for field in fields if field.is_deleted}
-    for key, value in requested.items():
-        if key in closed_keys and (key not in existing or existing[key] != value):
-            raise _conflict("Closed field values cannot be changed")
-    _validate_data(
-        db,
-        module_id,
-        {key: value for key, value in requested.items() if key not in closed_keys},
-        active_fields,
-    )
-    merged = {
-        key: value
-        for key, value in existing.items()
-        if key in closed_keys
-    }
-    merged.update({key: value for key, value in requested.items() if key not in closed_keys})
-    return merged
+    return validate_record_mutation(requested, existing, fields)
 
 
 def _commit(db: Session, message: str) -> None:
@@ -212,8 +400,15 @@ def create_record(
     module = _lock_active_module(db, payload.module_id)
     if not module.is_schema_accepted:
         raise _conflict("Module schema is not accepted")
-    _validate_data(db, payload.module_id, payload.data)
-    record = Record(module_id=payload.module_id, data=payload.data)
+    try:
+        normalized_data = validate_record_mutation(
+            payload.data,
+            {},
+            _module_fields(db, payload.module_id),
+        )
+    except RecordValidationError as error:
+        raise _record_validation_http_error(error) from error
+    record = Record(module_id=payload.module_id, data=normalized_data)
     db.add(record)
     _commit(db, "Unable to create record")
     db.refresh(record)
@@ -239,7 +434,10 @@ def update_record(
     if record.is_deleted:
         raise _conflict("Record is deleted")
     if payload.data is not None:
-        record.data = _merge_patch_data(db, record.module_id, record.data, payload.data)
+        try:
+            record.data = _merge_patch_data(db, record.module_id, record.data, payload.data)
+        except RecordValidationError as error:
+            raise _record_validation_http_error(error) from error
     _commit(db, "Unable to update record")
     return record
 

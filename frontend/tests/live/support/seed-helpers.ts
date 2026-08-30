@@ -196,8 +196,10 @@ export function recordPayloadFromFormValues(
       payload[field.id] = null;
     } else if (field.type === "int") {
       payload[field.id] = Number.parseInt(value, 10);
-    } else if (field.type === "number" || field.type === "decimal") {
+    } else if (field.type === "number") {
       payload[field.id] = Number(value);
+    } else if (field.type === "decimal") {
+      payload[field.id] = value;
     } else if (field.type === "datetime") {
       payload[field.id] = new Date(value).toISOString();
     } else {
@@ -214,7 +216,7 @@ export function relationshipTargetAccessibleName(name: string): string {
 export function controlRoleForField(type: LiveFieldType): FieldControlRole {
   if (type === "boolean") return "checkbox";
   if (type === "select") return "combobox";
-  if (type === "int" || type === "number" || type === "decimal") {
+  if (type === "int" || type === "number") {
     return "spinbutton";
   }
   return "textbox";

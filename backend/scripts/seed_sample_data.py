@@ -42,7 +42,7 @@ MODULE_SPECS = {
 
 FIELD_SPECS = [
     ("field-prod-name", "mod-products", "Product Name", "text", True, 1, {}),
-    ("field-prod-price", "mod-products", "Price", "decimal", True, 2, {"minimum": 0}),
+    ("field-prod-price", "mod-products", "Price", "decimal", True, 2, {"minimum": "0"}),
     ("field-prod-stock", "mod-products", "Stock", "int", True, 3, {"minimum": 0}),
     (
         "field-prod-cat",
@@ -100,7 +100,7 @@ FIELD_SPECS = [
     ),
     ("field-trans-date", "mod-trans", "Date", "datetime", True, 4, {}),
     ("field-exp-name", "mod-exp", "Expense", "text", True, 1, {}),
-    ("field-exp-cost", "mod-exp", "Cost", "decimal", True, 2, {"minimum": 0}),
+    ("field-exp-cost", "mod-exp", "Cost", "decimal", True, 2, {"minimum": "0"}),
     (
         "field-exp-category",
         "mod-exp",
@@ -126,7 +126,7 @@ FIELD_SPECS = [
     ),
     ("field-order-number", "mod-orders", "Order Number", "text", True, 1, {}),
     ("field-order-customer", "mod-orders", "Customer", "text", True, 2, {}),
-    ("field-order-total", "mod-orders", "Total", "decimal", True, 3, {"minimum": 0}),
+    ("field-order-total", "mod-orders", "Total", "decimal", True, 3, {"minimum": "0"}),
     ("field-order-date", "mod-orders", "Order Date", "datetime", True, 4, {}),
     (
         "field-order-status",
@@ -145,7 +145,7 @@ RECORD_SPECS = [
         "mod-products",
         {
             "field-prod-name": "Coca-Cola 1.5L",
-            "field-prod-price": 75.0,
+            "field-prod-price": "75",
             "field-prod-stock": 20,
             "field-prod-cat": "Drink",
             "field-prod-status": "Available",
@@ -156,7 +156,7 @@ RECORD_SPECS = [
         "mod-products",
         {
             "field-prod-name": "Potato Chips",
-            "field-prod-price": 35.5,
+            "field-prod-price": "35.5",
             "field-prod-stock": 4,
             "field-prod-cat": "Food",
             "field-prod-status": "Low Stock",
@@ -167,7 +167,7 @@ RECORD_SPECS = [
         "mod-products",
         {
             "field-prod-name": "Bottled Water",
-            "field-prod-price": 20.0,
+            "field-prod-price": "20",
             "field-prod-stock": 0,
             "field-prod-cat": "Drink",
             "field-prod-status": "Out of Stock",
@@ -231,7 +231,7 @@ RECORD_SPECS = [
         "mod-trans",
         {
             "field-trans-name": "Daily Sales",
-            "field-trans-amount": 12450.0,
+            "field-trans-amount": "12450",
             "field-trans-type": "Income",
             "field-trans-date": "2026-08-19T17:00:00+08:00",
         },
@@ -241,7 +241,7 @@ RECORD_SPECS = [
         "mod-trans",
         {
             "field-trans-name": "Supplier Payment",
-            "field-trans-amount": 4000.0,
+            "field-trans-amount": "4000",
             "field-trans-type": "Expense",
             "field-trans-date": "2026-08-19T15:00:00+08:00",
         },
@@ -251,7 +251,7 @@ RECORD_SPECS = [
         "mod-trans",
         {
             "field-trans-name": "Delivery Fee",
-            "field-trans-amount": 500.0,
+            "field-trans-amount": "500",
             "field-trans-type": "Expense",
             "field-trans-date": "2026-08-19T16:00:00+08:00",
         },
@@ -261,7 +261,7 @@ RECORD_SPECS = [
         "mod-exp",
         {
             "field-exp-name": "Electricity",
-            "field-exp-cost": 4500.0,
+            "field-exp-cost": "4500",
             "field-exp-category": "Utilities",
             "field-exp-due": "2026-08-30T23:59:59+08:00",
             "field-exp-paid": False,
@@ -272,7 +272,7 @@ RECORD_SPECS = [
         "mod-exp",
         {
             "field-exp-name": "Internet",
-            "field-exp-cost": 1699.0,
+            "field-exp-cost": "1699",
             "field-exp-category": "Utilities",
             "field-exp-due": "2026-08-25T23:59:59+08:00",
             "field-exp-paid": True,
@@ -283,7 +283,7 @@ RECORD_SPECS = [
         "mod-exp",
         {
             "field-exp-name": "Store Rent",
-            "field-exp-cost": 12000.0,
+            "field-exp-cost": "12000",
             "field-exp-category": "Rent",
             "field-exp-due": "2026-09-01T23:59:59+08:00",
             "field-exp-paid": False,
@@ -325,7 +325,7 @@ RECORD_SPECS = [
         {
             "field-order-number": "SO-1001",
             "field-order-customer": "Juan Dela Cruz",
-            "field-order-total": 1250.0,
+            "field-order-total": "1250",
             "field-order-date": "2026-08-19T10:00:00+08:00",
             "field-order-status": "Completed",
         },
@@ -336,7 +336,7 @@ RECORD_SPECS = [
         {
             "field-order-number": "SO-1002",
             "field-order-customer": "Maria Santos",
-            "field-order-total": 850.0,
+            "field-order-total": "850",
             "field-order-date": "2026-08-19T12:00:00+08:00",
             "field-order-status": "Pending",
         },
@@ -347,7 +347,7 @@ RECORD_SPECS = [
         {
             "field-order-number": "SO-1003",
             "field-order-customer": "Juan Dela Cruz",
-            "field-order-total": 2100.0,
+            "field-order-total": "2100",
             "field-order-date": "2026-08-19T14:00:00+08:00",
             "field-order-status": "Completed",
         },

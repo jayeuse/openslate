@@ -190,18 +190,18 @@ def _validate_change_impact(
     field_type: FieldType,
     required: bool,
     config: dict[str, Any],
-) -> None:
+) -> dict[str, Any]:
     try:
-        field_config(field_type, config)
+        normalized_config = field_config(field_type, config)
     except ValueError as error:
         raise _invalid(str(error)) from error
 
     if (
         field_type == FieldType(field.type)
         and required == field.required
-        and config == field.config
+        and normalized_config == field.config
     ):
-        return
+        return normalized_config
 
     candidate = Field(
         module_id=field.module_id,
@@ -209,7 +209,7 @@ def _validate_change_impact(
         type=field_type,
         required=required,
         position=field.position,
-        config=config,
+        config=normalized_config,
     )
     candidate.id = field.id
     for record in _active_records(db, field.module_id):
@@ -221,6 +221,7 @@ def _validate_change_impact(
                 validate_field_value(candidate, record.data[key])
             except ValueError as error:
                 raise _conflict("Field change would invalidate active records") from error
+    return normalized_config
 
 
 def _commit(db: Session, message: str) -> None:
@@ -372,14 +373,14 @@ def update_field(
     field_type = current_type
     required = field.required if payload.required is None else payload.required
     config = field.config if payload.config is None else payload.config
-    _validate_change_impact(db, field, field_type, required, config)
+    config = _validate_change_impact(db, field, field_type, required, config)
 
     effective = any(
         (
             payload.name is not None and payload.name != field.name,
             payload.required is not None and payload.required != field.required,
             payload.position is not None and payload.position != field.position,
-            payload.config is not None and payload.config != field.config,
+            payload.config is not None and config != field.config,
             current_type is FieldType.RELATIONSHIP
             and payload.relationship_multiple_targets is not None
             and payload.relationship_multiple_targets != field.relationship_multiple_targets,
@@ -396,7 +397,7 @@ def update_field(
     if payload.position is not None:
         field.position = payload.position
     if payload.config is not None:
-        field.config = payload.config
+        field.config = config
     if current_type is FieldType.RELATIONSHIP:
         if payload.relationship_multiple_targets is not None:
             field.relationship_multiple_targets = payload.relationship_multiple_targets

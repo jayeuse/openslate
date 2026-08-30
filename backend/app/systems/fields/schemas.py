@@ -48,7 +48,7 @@ class FieldCreate(BaseModel):
                 raise ValueError("Relationship fields cannot have configuration")
         elif any(value is not None for value in metadata):
             raise ValueError("Primitive fields cannot have relationship metadata")
-        validate_field_config(self.type, self.config)
+        self.config = validate_field_config(self.type, self.config)
         return self
 
 
@@ -84,7 +84,7 @@ class FieldUpdate(BaseModel):
             if any(value is not None for value in metadata):
                 raise ValueError("Primitive fields cannot have relationship metadata")
             if self.config is not None:
-                validate_field_config(self.type, self.config)
+                self.config = validate_field_config(self.type, self.config)
             else:
                 validate_field_config(self.type, {})
         return self

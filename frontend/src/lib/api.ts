@@ -171,10 +171,53 @@ export class ApiError extends Error {
   }
 }
 
+export type ApiFieldErrors = Record<string, string[]>;
+
 function isErrorDetail(
   value: unknown,
 ): value is { code?: unknown; message?: unknown; blockers?: unknown } {
   return typeof value === "object" && value !== null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function errorMessages(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item === "string") return [item];
+    if (isRecord(item) && typeof item.message === "string") {
+      return [item.message];
+    }
+    return [];
+  });
+}
+
+export function getApiFieldErrors(error: unknown): ApiFieldErrors {
+  if (!(error instanceof ApiError) || !isRecord(error.details)) return {};
+  const rawErrors = error.details.errors;
+  if (Array.isArray(rawErrors)) {
+    const fieldErrors: ApiFieldErrors = {};
+    for (const item of rawErrors) {
+      if (
+        !isRecord(item) ||
+        typeof item.field_id !== "string" ||
+        typeof item.message !== "string"
+      ) {
+        continue;
+      }
+      (fieldErrors[item.field_id] ??= []).push(item.message);
+    }
+    return fieldErrors;
+  }
+  if (!isRecord(rawErrors)) return {};
+  return Object.fromEntries(
+    Object.entries(rawErrors)
+      .map(([fieldId, messages]) => [fieldId, errorMessages(messages)] as const)
+      .filter(([, messages]) => messages.length > 0),
+  );
 }
 
 async function parseResponse(response: Response): Promise<unknown> {
@@ -229,4 +272,18 @@ export function listQuery(params: Record<string, string | number | undefined>) {
   for (const [key, value] of Object.entries(params))
     if (value !== undefined && value !== "") query.set(key, String(value));
   return query.toString();
+}
+
+export async function listAllModuleFields(moduleId: string): Promise<Field[]> {
+  const fields: Field[] = [];
+  const limit = 100;
+  let offset = 0;
+  do {
+    const result = await apiFetch<ListResponse<Field>>(
+      `/fields?${listQuery({ module_id: moduleId, limit, offset, deleted: "include", sort_by: "position", sort_order: "asc" })}`,
+    );
+    fields.push(...result.items);
+    if (!result.pagination.has_more) return fields;
+    offset += result.items.length;
+  } while (true);
 }

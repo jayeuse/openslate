@@ -12,6 +12,8 @@ const RECORD_ID = "33333333-3333-4333-8333-333333333333";
 const NAME_FIELD_ID = "44444444-4444-4444-8444-444444444444";
 const NOTES_FIELD_ID = "55555555-5555-4555-8555-555555555555";
 const DATETIME_FIELD_ID = "66666666-6666-4666-8666-666666666666";
+const CLOSED_FIELD_ID = "77777777-7777-4777-8777-777777777777";
+const RELATIONSHIP_FIELD_ID = "88888888-8888-4888-8888-888888888888";
 const DATETIME_VALUE = "2026-01-01T00:30:00.000Z";
 
 type JsonObject = Record<string, unknown>;
@@ -70,7 +72,7 @@ const fields = [
     module_id: MODULE_ID,
     name: "Notes",
     type: "text",
-    required: false,
+    required: true,
     position: 1,
     config: {},
     relationship_target_module_id: null,
@@ -89,6 +91,32 @@ const fields = [
     relationship_multiple_targets: null,
     relationship_multiple_sources: null,
   },
+  {
+    ...baseEntity(CLOSED_FIELD_ID),
+    module_id: MODULE_ID,
+    name: "Legacy label",
+    type: "text",
+    required: false,
+    position: 3,
+    config: {},
+    deleted_at: "2026-01-02T00:00:00.000Z",
+    is_deleted: true,
+    relationship_target_module_id: null,
+    relationship_multiple_targets: null,
+    relationship_multiple_sources: null,
+  },
+  {
+    ...baseEntity(RELATIONSHIP_FIELD_ID),
+    module_id: MODULE_ID,
+    name: "Related asset",
+    type: "relationship",
+    required: false,
+    position: 3,
+    config: {},
+    relationship_target_module_id: MODULE_ID,
+    relationship_multiple_targets: false,
+    relationship_multiple_sources: false,
+  },
 ];
 
 const record = {
@@ -98,6 +126,7 @@ const record = {
     [NAME_FIELD_ID]: "Asset Alpha",
     [NOTES_FIELD_ID]: "Initial notes",
     [DATETIME_FIELD_ID]: DATETIME_VALUE,
+    [CLOSED_FIELD_ID]: "Retained for display",
   },
 };
 
@@ -118,6 +147,7 @@ async function fulfill(route: Route, status: number, body: unknown) {
 async function installMocks(
   page: Page,
   mutationBodies: unknown[] = [],
+  patchResponse: { status: number; body: unknown } = { status: 200, body: {} },
 ): Promise<string[]> {
   const mutations: string[] = [];
 
@@ -135,7 +165,7 @@ async function installMocks(
       mutations.push(`${request.method()} ${path}`);
       if (request.method() === "PATCH") {
         mutationBodies.push(request.postDataJSON());
-        await fulfill(route, 200, {});
+        await fulfill(route, patchResponse.status, patchResponse.body);
         return;
       }
       await fulfill(route, 405, { detail: "Mutation not expected" });
@@ -159,6 +189,10 @@ async function installMocks(
       return;
     }
     if (path === "/relationships") {
+      await fulfill(route, 200, listResponse([]));
+      return;
+    }
+    if (path === "/records") {
       await fulfill(route, 200, listResponse([]));
       return;
     }
@@ -193,6 +227,36 @@ test.describe("record form invalidation", () => {
     expect(mutations).toEqual([]);
   });
 
+  test("renders only active primitive fields on a new record", async ({
+    page,
+  }) => {
+    const mutations = await installMocks(page);
+
+    await page.goto(
+      `/departments/${DEPARTMENT_ID}/modules/${MODULE_ID}/records/new`,
+    );
+
+    await expect(page.getByLabel("Name")).toBeVisible();
+    await expect(page.getByLabel("Legacy label")).toHaveCount(0);
+    await expect(page.getByLabel("Related asset")).toHaveCount(0);
+    expect(mutations).toEqual([]);
+  });
+
+  test("collects client errors and does not request an invalid new record", async ({
+    page,
+  }) => {
+    const mutations = await installMocks(page);
+
+    await page.goto(
+      `/departments/${DEPARTMENT_ID}/modules/${MODULE_ID}/records/new`,
+    );
+    await page.getByRole("button", { name: "Create record" }).click();
+
+    await expect(page.getByText("Name is required")).toBeVisible();
+    await expect(page.getByText("Notes is required")).toBeVisible();
+    expect(mutations).toEqual([]);
+  });
+
   test("keeps an edited required value after invalidation", async ({
     page,
   }) => {
@@ -207,6 +271,7 @@ test.describe("record form invalidation", () => {
     ).toBeVisible();
     await expect(nameField).toHaveValue("Asset Alpha");
     await expect(nameField).toHaveAttribute("required", "");
+    await expect(page.getByLabel("Legacy label")).toBeDisabled();
 
     await nameField.fill("Asset Beta");
     await page.evaluate(() =>
@@ -249,5 +314,47 @@ test.describe("record form invalidation", () => {
         },
       },
     ]);
+  });
+
+  test("displays every structured backend field error", async ({ page }) => {
+    await installMocks(page, [], {
+      status: 422,
+      body: {
+        detail: {
+          code: "record_data_invalid",
+          message: "Record data is invalid",
+          errors: [
+            {
+              code: "invalid_field_value",
+              field_id: NAME_FIELD_ID,
+              message: "Name is already used",
+            },
+            {
+              code: "invalid_field_value",
+              field_id: NOTES_FIELD_ID,
+              message: "Notes are too long",
+            },
+            {
+              code: "invalid_field_value",
+              field_id: NOTES_FIELD_ID,
+              message: "Notes contain a banned term",
+            },
+          ],
+          truncated: false,
+        },
+      },
+    });
+
+    await page.goto(
+      `/departments/${DEPARTMENT_ID}/modules/${MODULE_ID}/records/${RECORD_ID}/edit`,
+    );
+    await page.getByLabel("Name").fill("Asset Beta");
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+
+    await expect(page.getByText("Name is already used")).toBeVisible();
+    await expect(page.getByText("Notes are too long")).toBeVisible();
+    await expect(page.getByText("Notes contain a banned term")).toBeVisible();
   });
 });

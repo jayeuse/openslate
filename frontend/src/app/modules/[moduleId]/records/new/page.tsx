@@ -13,24 +13,24 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   apiFetch,
-  listQuery,
+  getApiFieldErrors,
+  listAllModuleFields,
   type Field,
   type Department,
-  type ListResponse,
   type Module,
   type RecordEntity,
 } from "@/lib/api";
+import {
+  buildModuleSchema,
+  collectZodFieldErrors,
+  serializeFormValues,
+  type FieldErrorMap,
+} from "@/lib/field-schema";
 
 function initialValue(field: Field): string | boolean {
   return field.type === "boolean" ? false : "";
 }
-function inputValue(field: Field, value: string | boolean): unknown {
-  if (field.type === "boolean") return value;
-  if (typeof value !== "string" || value === "") return null;
-  if (field.type === "number" || field.type === "decimal") return Number(value);
-  if (field.type === "int") return Number.parseInt(value, 10);
-  return field.type === "datetime" ? new Date(value).toISOString() : value;
-}
+
 export default function NewRecordPage() {
   const { moduleId, departmentId } = useParams<{
     moduleId: string;
@@ -41,6 +41,7 @@ export default function NewRecordPage() {
   const [department, setDepartment] = useState<Department | null>(null);
   const [fields, setFields] = useState<Field[]>([]);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
+  const [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({});
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const modulePath = departmentId
@@ -53,17 +54,19 @@ export default function NewRecordPage() {
         const current = await apiFetch<Module>(`/modules/${moduleId}`);
         const [parent, result] = await Promise.all([
           apiFetch<Department>(`/departments/${current.department_id}`),
-          apiFetch<ListResponse<Field>>(
-            `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "include", sort_by: "position", sort_order: "asc" })}`,
-          ),
+          listAllModuleFields(moduleId),
         ]);
         if (!active) return;
         setModule(current);
         setDepartment(parent);
-        setFields(result.items);
+        setFields(result);
         setValues(
           Object.fromEntries(
-            result.items.map((field) => [field.id, initialValue(field)]),
+            result
+              .filter(
+                (field) => !field.is_deleted && field.type !== "relationship",
+              )
+              .map((field) => [field.id, initialValue(field)]),
           ),
         );
       } catch (reason) {
@@ -81,27 +84,40 @@ export default function NewRecordPage() {
     };
   }, [moduleId]);
   const primitiveFields = fields.filter(
-    (field) => field.type !== "relationship",
+    (field) => !field.is_deleted && field.type !== "relationship",
   );
   const sourceReadOnly =
     module?.is_deleted === true || department?.is_deleted === true;
+  const unassignedErrors = Object.entries(fieldErrors)
+    .filter(
+      ([fieldId]) => !primitiveFields.some((field) => field.id === fieldId),
+    )
+    .flatMap(([, messages]) => messages);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
     setError("");
-    const data = Object.fromEntries(
-      primitiveFields.map((field) => [
-        field.id,
-        inputValue(field, values[field.id] ?? initialValue(field)),
-      ]),
-    );
+    setFieldErrors({});
     try {
+      const data = serializeFormValues(primitiveFields, values);
+      const validation = buildModuleSchema(primitiveFields).safeParse(data);
+      if (!validation.success) {
+        const validationErrors = collectZodFieldErrors(validation.error);
+        setFieldErrors(validationErrors.fieldErrors);
+        setError(
+          validationErrors.formErrors.length > 0
+            ? validationErrors.formErrors.join(" ")
+            : "Please correct the highlighted fields.",
+        );
+        return;
+      }
       const record = await apiFetch<RecordEntity>("/records", {
         method: "POST",
-        body: JSON.stringify({ module_id: moduleId, data }),
+        body: JSON.stringify({ module_id: moduleId, data: validation.data }),
       });
       router.push(`${modulePath}/records/${record.id}/edit` as Route);
     } catch (reason) {
+      setFieldErrors(getApiFieldErrors(reason));
       setError(
         reason instanceof Error
           ? reason.message
@@ -125,14 +141,17 @@ export default function NewRecordPage() {
           </Button>
         }
       />
-      {error && (
+      {(error || unassignedErrors.length > 0) && (
         <Alert variant="destructive" className="mb-5">
-          {error}
+          {error && <p>{error}</p>}
+          {unassignedErrors.map((message, index) => (
+            <p key={`${message}-${index}`}>{message}</p>
+          ))}
         </Alert>
       )}
       <Card className="max-w-3xl">
         <CardContent className="p-6">
-          <form className="space-y-6" onSubmit={submit}>
+          <form className="space-y-6" noValidate onSubmit={submit}>
             {primitiveFields.map((field) => (
               <div className="space-y-2" key={field.id}>
                 <Label htmlFor={field.id}>
@@ -188,16 +207,18 @@ export default function NewRecordPage() {
                         ? "date"
                         : field.type === "datetime"
                           ? "datetime-local"
-                          : field.type === "number" ||
-                              field.type === "decimal" ||
-                              field.type === "int"
+                          : field.type === "number" || field.type === "int"
                             ? "number"
-                            : "text"
+                            : field.type === "decimal"
+                              ? "text"
+                              : "text"
                     }
+                    inputMode={field.type === "decimal" ? "decimal" : undefined}
+                    maxLength={field.type === "decimal" ? 58 : undefined}
                     step={
                       field.type === "int"
                         ? "1"
-                        : field.type === "number" || field.type === "decimal"
+                        : field.type === "number"
                           ? "any"
                           : undefined
                     }
@@ -211,6 +232,15 @@ export default function NewRecordPage() {
                     }
                   />
                 )}
+                {fieldErrors[field.id]?.map((message, index) => (
+                  <p
+                    className="text-destructive text-xs"
+                    key={`${message}-${index}`}
+                    role="alert"
+                  >
+                    {message}
+                  </p>
+                ))}
                 {field.type === "datetime" && (
                   <p className="text-muted-foreground text-xs">
                     Your timezone will be included as an ISO datetime.

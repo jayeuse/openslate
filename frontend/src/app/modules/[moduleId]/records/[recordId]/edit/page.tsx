@@ -16,25 +16,24 @@ import { Label } from "@/components/ui/label";
 import { formatDateTimeLocal } from "@/lib/date-time";
 import {
   apiFetch,
-  listQuery,
+  getApiFieldErrors,
+  listAllModuleFields,
   type Field,
   type Department,
-  type ListResponse,
   type Module,
   type RecordEntity,
 } from "@/lib/api";
+import {
+  buildModuleSchema,
+  collectZodFieldErrors,
+  serializeFormValues,
+  type FieldErrorMap,
+} from "@/lib/field-schema";
 
 function editValue(field: Field, value: unknown): string | boolean {
   if (field.type === "boolean") return value === true;
   if (field.type === "datetime") return formatDateTimeLocal(value);
   return value === null || value === undefined ? "" : String(value);
-}
-function apiValue(field: Field, value: string | boolean): unknown {
-  if (field.type === "boolean") return value;
-  if (typeof value !== "string" || value === "") return null;
-  if (field.type === "number" || field.type === "decimal") return Number(value);
-  if (field.type === "int") return Number.parseInt(value, 10);
-  return field.type === "datetime" ? new Date(value).toISOString() : value;
 }
 export default function EditRecordPage() {
   const { moduleId, recordId, departmentId } = useParams<{
@@ -48,6 +47,7 @@ export default function EditRecordPage() {
   const [fields, setFields] = useState<Field[]>([]);
   const [record, setRecord] = useState<RecordEntity | null>(null);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
+  const [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({});
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const modulePath = departmentId
@@ -59,9 +59,7 @@ export default function EditRecordPage() {
       try {
         const [current, fieldResult, currentRecord] = await Promise.all([
           apiFetch<Module>(`/modules/${moduleId}`),
-          apiFetch<ListResponse<Field>>(
-            `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "include", sort_by: "position", sort_order: "asc" })}`,
-          ),
+          listAllModuleFields(moduleId),
           apiFetch<RecordEntity>(`/records/${recordId}`),
         ]);
         const parent = await apiFetch<Department>(
@@ -70,14 +68,16 @@ export default function EditRecordPage() {
         if (!active) return;
         setModule(current);
         setDepartment(parent);
-        setFields(fieldResult.items);
+        setFields(fieldResult);
         setRecord(currentRecord);
         setValues(
           Object.fromEntries(
-            fieldResult.items.map((field) => [
-              field.id,
-              editValue(field, currentRecord.data[field.id]),
-            ]),
+            fieldResult
+              .filter((field) => field.type !== "relationship")
+              .map((field) => [
+                field.id,
+                editValue(field, currentRecord.data[field.id]),
+              ]),
           ),
         );
       } catch (reason) {
@@ -97,6 +97,9 @@ export default function EditRecordPage() {
   const primitiveFields = fields.filter(
     (field) => field.type !== "relationship",
   );
+  const activePrimitiveFields = primitiveFields.filter(
+    (field) => !field.is_deleted,
+  );
   const relationshipFields = fields.filter(
     (field) => field.type === "relationship",
   );
@@ -104,23 +107,38 @@ export default function EditRecordPage() {
     module?.is_deleted === true ||
     department?.is_deleted === true ||
     record?.is_deleted === true;
+  const unassignedErrors = Object.entries(fieldErrors)
+    .filter(
+      ([fieldId]) => !primitiveFields.some((field) => field.id === fieldId),
+    )
+    .flatMap(([, messages]) => messages);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
     setError("");
-    const data = Object.fromEntries(
-      primitiveFields.map((field) => [
-        field.id,
-        apiValue(field, values[field.id] ?? ""),
-      ]),
-    );
+    setFieldErrors({});
     try {
+      const data = serializeFormValues(activePrimitiveFields, values);
+      const validation = buildModuleSchema(activePrimitiveFields).safeParse(
+        data,
+      );
+      if (!validation.success) {
+        const validationErrors = collectZodFieldErrors(validation.error);
+        setFieldErrors(validationErrors.fieldErrors);
+        setError(
+          validationErrors.formErrors.length > 0
+            ? validationErrors.formErrors.join(" ")
+            : "Please correct the highlighted fields.",
+        );
+        return;
+      }
       await apiFetch(`/records/${recordId}`, {
         method: "PATCH",
-        body: JSON.stringify({ data }),
+        body: JSON.stringify({ data: validation.data }),
       });
       router.push(`${modulePath}/records` as Route);
     } catch (reason) {
+      setFieldErrors(getApiFieldErrors(reason));
       setError(
         reason instanceof Error ? reason.message : "Record could not be saved",
       );
@@ -152,14 +170,17 @@ export default function EditRecordPage() {
           Module closed
         </Badge>
       )}
-      {error && (
+      {(error || unassignedErrors.length > 0) && (
         <Alert variant="destructive" className="mb-5">
-          {error}
+          {error && <p>{error}</p>}
+          {unassignedErrors.map((message, index) => (
+            <p key={`${message}-${index}`}>{message}</p>
+          ))}
         </Alert>
       )}
       <Card className="max-w-3xl">
         <CardContent className="p-6">
-          <form className="space-y-6" onSubmit={submit}>
+          <form className="space-y-6" noValidate onSubmit={submit}>
             {primitiveFields.map((field) => (
               <div className="space-y-2" key={field.id}>
                 <Label htmlFor={field.id}>
@@ -215,12 +236,14 @@ export default function EditRecordPage() {
                         ? "date"
                         : field.type === "datetime"
                           ? "datetime-local"
-                          : field.type === "number" ||
-                              field.type === "decimal" ||
-                              field.type === "int"
+                          : field.type === "number" || field.type === "int"
                             ? "number"
-                            : "text"
+                            : field.type === "decimal"
+                              ? "text"
+                              : "text"
                     }
+                    inputMode={field.type === "decimal" ? "decimal" : undefined}
+                    maxLength={field.type === "decimal" ? 58 : undefined}
                     value={String(values[field.id] ?? "")}
                     disabled={sourceClosed || field.is_deleted}
                     onChange={(event) =>
@@ -231,6 +254,15 @@ export default function EditRecordPage() {
                     }
                   />
                 )}
+                {fieldErrors[field.id]?.map((message, index) => (
+                  <p
+                    className="text-destructive text-xs"
+                    key={`${message}-${index}`}
+                    role="alert"
+                  >
+                    {message}
+                  </p>
+                ))}
               </div>
             ))}
             <div className="border-border flex justify-end border-t pt-5">

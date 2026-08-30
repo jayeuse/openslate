@@ -814,7 +814,7 @@ test.describe("relationship UI", () => {
     const body = requestMatching(requests, "POST", "/records").body;
     expect(body).toEqual({
       module_id: SOURCE_MODULE_ID,
-      data: { [NAME_FIELD_ID]: "Asset Beta", [NOTES_FIELD_ID]: null },
+      data: { [NAME_FIELD_ID]: "Asset Beta" },
     });
     expect(
       isJsonObject(body) && isJsonObject(body.data) ? body.data : {},

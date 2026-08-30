@@ -50,7 +50,7 @@ test.describe("live seed helpers", () => {
     expect(recordPayloadFromFormValues(fields, formValues)).toEqual({
       "field-0": `${RUN_ID}:employees:record-2`,
       "field-1": 2,
-      "field-2": 20.25,
+      "field-2": "20.25",
       "field-3": false,
       "field-4": new Date("2026-08-03T09:00").toISOString(),
       "field-5": "active",
@@ -63,7 +63,7 @@ test.describe("live seed helpers", () => {
     expect(controlRoleForField("select")).toBe("combobox");
     expect(controlRoleForField("int")).toBe("spinbutton");
     expect(controlRoleForField("number")).toBe("spinbutton");
-    expect(controlRoleForField("decimal")).toBe("spinbutton");
+    expect(controlRoleForField("decimal")).toBe("textbox");
     expect(controlRoleForField("datetime")).toBe("textbox");
     expect(relationshipTargetAccessibleName("run Manager")).toBe(
       "run Manager target",

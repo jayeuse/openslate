@@ -1,0 +1,76 @@
+{
+  "cases": [
+    {
+      "type": "text",
+      "config": { "minLength": 2, "maxLength": 4 },
+      "valid": "okay",
+      "normalized": "okay",
+      "invalid": 1,
+      "validAccepted": true
+    },
+    {
+      "type": "number",
+      "config": { "minimum": 1, "maximum": 3 },
+      "valid": 2.5,
+      "normalized": 2.5,
+      "invalid": true,
+      "validAccepted": true
+    },
+    {
+      "type": "decimal",
+      "config": { "minimum": "1", "maximum": "3" },
+      "valid": "2.500",
+      "normalized": "2.5",
+      "invalid": 2.5,
+      "validAccepted": true
+    },
+    {
+      "type": "int",
+      "config": { "minimum": 1, "maximum": 3 },
+      "valid": 2,
+      "normalized": 2,
+      "invalid": 2.5,
+      "validAccepted": true
+    },
+    {
+      "type": "boolean",
+      "config": {},
+      "valid": false,
+      "normalized": false,
+      "invalid": "false",
+      "validAccepted": true
+    },
+    {
+      "type": "date",
+      "config": {},
+      "valid": "2026-08-31",
+      "normalized": "2026-08-31",
+      "invalid": "2026-8-31",
+      "validAccepted": true
+    },
+    {
+      "type": "datetime",
+      "config": {},
+      "valid": "2026-08-31T12:34:56.123456+05:30",
+      "normalized": "2026-08-31T12:34:56.123456+05:30",
+      "invalid": "2026-08-31T12:34:56",
+      "validAccepted": true
+    },
+    {
+      "type": "select",
+      "config": { "options": ["open", "closed"] },
+      "valid": "open",
+      "normalized": "open",
+      "invalid": "unknown",
+      "validAccepted": true
+    },
+    {
+      "type": "relationship",
+      "config": {},
+      "valid": null,
+      "normalized": null,
+      "invalid": "relationship-id",
+      "validAccepted": false
+    }
+  ]
+}
