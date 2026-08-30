@@ -21,6 +21,91 @@
 - Alembic exclusively owns application schema changes. Never add application
   migrations or seeds under `supabase/`.
 
+## Scope Guard
+
+Complete each task with the minimum sufficient change. The latest user
+instruction is authoritative; do not widen its scope without approval.
+
+### Frame the Task First
+
+- Before using tools, identify the exact target, requested behavior or failure
+  direction, and requested access path. Apply the user's latest correction
+  immediately rather than carrying forward an earlier assumption.
+- Use the requested SSH, CLI, API, or other access path. Do not substitute UI
+  automation, screen control, or synthetic input unless the user explicitly
+  requests UI operation for this task or the requested path is unavailable. An
+  open or authenticated desktop application is not authorization to operate it.
+- Diagnose the named system before adjacent systems. For troubleshooting,
+  gather evidence, make one minimal change, recheck the original symptom, and
+  stop when the requested behavior works. Ask one short question before
+  operating an external system only when the target or direction is ambiguous.
+
+### Read and Plan
+
+- Read the relevant implementation, tests, and configuration directly and in
+  sufficient context; do not build from search excerpts, summaries, guesses, or
+  unverified premises when the source is available.
+- Before editing, state one minimal path with its exact **Outcome**,
+  **Non-goals**, smallest expected **Files** set, and narrowest **Proof**. Split
+  work only when it has genuinely independent parts.
+
+### Prefer the Simple Design
+
+- Implement only the current requirement. Treat “perfect” and “long-term” as
+  quality goals, not permission for a platform redesign. Mention possible
+  extensions briefly at the end rather than implementing them now.
+- Do not add compatibility shims, legacy fallbacks, data backfills, future
+  schemas, tiers, modes, options, or configuration surfaces unless explicitly
+  requested. Breaking compatibility is acceptable by default, but public API,
+  schema, storage, and wire-format changes still require approval when the task
+  does not already authorize them.
+- Do not mechanize review judgment with hardcoded validators, closed error-code
+  sets, alias tables, or rule engines. Validate once at the trusted boundary;
+  avoid duplicate checks, double probes, and parallel bookkeeping.
+- Stop before coding if the path introduces a new abstraction layer or config
+  surface, roughly more than five new files, or any speculative option. Present
+  the minimal design separately from the larger alternative and default to the
+  minimal one.
+- VibeGuard U-17/U-29 error strictness applies only to real error paths within
+  the requested change; it does not justify new validators, compatibility
+  layers, or checks. If the user calls a design over-engineered, remove the
+  excess rather than defending it.
+
+### Edit Narrowly
+
+- Reuse existing helpers, patterns, and test setup. Fix the root cause rather
+  than stacking workarounds on an incorrect premise.
+- Add an abstraction, adapter, or configuration layer only for a stated
+  requirement or a second real caller in this task. Preserve unrelated behavior
+  and do not design for unrequested rare or future cases.
+- Remove replaced code unless compatibility was explicitly requested. Every
+  touched file must serve the requested outcome; do not mix in cleanup.
+
+### Approval Boundaries
+
+- Read-only discovery is allowed. Unless already authorized, obtain approval
+  before expanding scope, touching unrelated files, adding a dependency,
+  framework, service, or test infrastructure, changing a public API/schema/
+  storage/wire format, or keeping two implementations active.
+- Also obtain approval before deleting or overwriting user data, dropping data,
+  discarding uncommitted work, or rewriting history.
+
+### Verify and Finish
+
+- Run the narrowest existing check that exercises the change, using the command
+  locations and caveats below. Extend the closest test before creating a test
+  file; add tests only for uncovered changed behavior, an identified regression
+  risk, or an explicit request. Do not backfill unrelated coverage or create
+  task-specific test infrastructure.
+- If work begins accumulating future-use layers, compatibility paths,
+  workarounds, speculative options, unrelated cleanup, or tests for unstated
+  behavior, stop, rewrite a smaller plan, and confirm it before continuing.
+- Done means the requested behavior and acceptance criteria are met, relevant
+  checks pass, and the diff contains only necessary files. Inspect it for debug
+  code, backups, dead paths, scratch files, and unrelated changes. Report exact
+  commands and results plus assumptions, limitations, and unverified runtime
+  behavior; passing tests never justify extra scope.
+
 ## Setup and Commands
 
 - Required runtimes: Python `>=3.12,<3.15` and Node `>=24`; use `backend/uv.lock`
