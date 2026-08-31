@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { AppPage } from "@/components/app-page";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
@@ -83,21 +83,22 @@ export default function RolesPage() {
       <PageHeader
         eyebrow="Administration"
         title="Roles"
-        description="Define role metadata for your organization. The current backend stores permissions but only the literal admin role can access domain APIs."
-        actions={<Badge variant="warning">Authorization limitation</Badge>}
+        description="Define the domain capabilities granted to each role in this deployment."
+        actions={<Badge variant="default">Backend enforced</Badge>}
       />
       {error && (
         <Alert variant="destructive" className="mb-5">
           {error}
         </Alert>
       )}
-      <Alert variant="warning" className="mb-5 flex gap-3">
-        <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+      <Alert className="mb-5 flex gap-3">
+        <ShieldCheck size={17} className="mt-0.5 shrink-0" />
         <div>
-          <p className="font-semibold">Permissions are not enforced yet</p>
+          <p className="font-semibold">Domain capabilities are enforced</p>
           <p className="mt-1">
-            Creating a permission entry documents intent, but staff and member
-            roles will still receive a 403 from business-data endpoints.
+            Use flat boolean capability entries such as{" "}
+            <code>records.read</code>. User, role, invitation, audit, and purge
+            operations remain administrator-only.
           </p>
         </div>
       </Alert>

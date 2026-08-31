@@ -41,40 +41,37 @@ export default function SetupPage() {
             </p>
           </div>
         </Alert>
-        <div className="mt-8 grid gap-5 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Terminal size={17} className="text-primary" /> Docker Compose
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground text-sm leading-6">
-                Set both bootstrap variables in your root environment file
-                before starting the stack.
-              </p>
-              <pre className="mt-4 overflow-x-auto rounded-md bg-slate-950 p-4 text-xs leading-6 text-slate-200">
-                ADMIN_BOOTSTRAP_USERNAME=admin{`\n`}
-                ADMIN_BOOTSTRAP_PASSWORD=your-12-character-password
-              </pre>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Local command</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground text-sm leading-6">
-                Run the existing one-time bootstrap script from the backend
-                directory.
-              </p>
-              <pre className="mt-4 overflow-x-auto rounded-md bg-slate-950 p-4 text-xs leading-6 text-slate-200">
-                uv run python -m scripts.bootstrap_admin \{`\n`} --username
-                admin
-              </pre>
-            </CardContent>
-          </Card>
-        </div>
+        <Card className="mt-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Terminal size={17} className="text-primary" /> Supported local
+              path
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-muted-foreground text-sm leading-6">
+              Follow the root README for environment setup, then run these
+              commands from the repository root and backend directory. Supabase
+              starts the local platform; Alembic applies the schema; the
+              provisioning script creates the runtime login; and the bootstrap
+              script sends the invitation.
+            </p>
+            <pre className="mt-4 overflow-x-auto rounded-md bg-slate-950 p-4 text-xs leading-6 text-slate-200">
+              supabase start{`\n`}
+              cd backend{`\n`}
+              uv sync --locked{`\n`}
+              uv run alembic upgrade head{`\n`}
+              uv run python scripts/provision_database_role.py{`\n`}
+              uv run python scripts/bootstrap_admin.py \{`\n`} --email
+              &lt;email&gt; \{`\n`} --username &lt;username&gt;
+            </pre>
+            <p className="text-muted-foreground mt-4 text-sm leading-6">
+              Open the invitation in local Mailpit to set the password, then
+              return to sign in. The required bootstrap inputs are an email and
+              username; there is no browser-side password bootstrap variable.
+            </p>
+          </CardContent>
+        </Card>
         <div className="mt-9">
           <Button asChild size="lg">
             <a href="/login">

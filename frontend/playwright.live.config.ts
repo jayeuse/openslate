@@ -30,7 +30,42 @@ const { uiOrigin, apiOrigin } = getLiveHarnessOrigins();
 const uiUrl = new URL(uiOrigin);
 const uiHostname = uiUrl.hostname;
 const uiPort = uiUrl.port;
-const serverCommand = `npm run dev -- --hostname ${uiHostname} --port ${uiPort}`;
+const frontendEnvironment: Record<string, string> = {
+  BACKEND_URL: apiOrigin,
+};
+const supabaseUrl =
+  process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
+const supabasePublishableKey =
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+  process.env.SUPABASE_PUBLISHABLE_KEY;
+if (supabaseUrl !== undefined) {
+  frontendEnvironment.NEXT_PUBLIC_SUPABASE_URL = supabaseUrl;
+}
+if (supabasePublishableKey !== undefined) {
+  frontendEnvironment.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY =
+    supabasePublishableKey;
+}
+if (process.env.NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED !== undefined) {
+  frontendEnvironment.NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED =
+    process.env.NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function isolatedCommand(command: string): string {
+  const path = process.env.PATH;
+  const pathAssignment = path === undefined ? [] : [`PATH=${shellQuote(path)}`];
+  const environment = Object.entries(frontendEnvironment).map(
+    ([name, value]) => `${name}=${shellQuote(value)}`,
+  );
+  return ["env", "-i", ...pathAssignment, ...environment, command].join(" ");
+}
+
+const serverCommand = isolatedCommand(
+  `npm run dev -- --hostname ${shellQuote(uiHostname)} --port ${shellQuote(uiPort)}`,
+);
 
 export default defineConfig({
   testDir: "./tests/live",
@@ -57,12 +92,7 @@ export default defineConfig({
   webServer: {
     command: serverCommand,
     url: uiOrigin,
-    env: {
-      ...process.env,
-      BACKEND_URL: apiOrigin,
-      HOSTNAME: uiHostname,
-      PORT: uiPort,
-    },
+    env: frontendEnvironment,
     reuseExistingServer: false,
     timeout: 120_000,
   },

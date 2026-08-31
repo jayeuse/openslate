@@ -131,9 +131,9 @@ instruction is authoritative; do not widen its scope without approval.
   the password is set from the Supabase invitation delivered to local Mailpit.
 - Run the backend from `backend/` with
   `uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`.
-- Run the frontend from `frontend/` after sourcing `../.env` with
-  `npm ci && npm run dev -- --hostname 127.0.0.1`; Next does not automatically
-  load the root environment.
+- Run the frontend from `frontend/` with a frontend-only `.env.local` copied
+  from `frontend/.env.example`; never source the root `.env` into npm or Next.
+  Then run `npm ci && npm run dev -- --hostname 127.0.0.1`.
 - Destructive reset order is `supabase start`, `supabase db reset`, then
   `cd backend && uv run alembic upgrade head`. Supabase reset does not restore
   the Alembic-owned application schema.
@@ -165,8 +165,10 @@ instruction is authoritative; do not widen its scope without approval.
 - Supabase Auth owns identities, passwords, and invitations. Browser code uses
   only the publishable key; the Supabase secret stays backend-only. Public and
   anonymous signup are disabled; passwords require at least 12 characters.
-- Current authorization checks the literal role name `admin`; stored role
-  permission JSON is not evaluated.
+- Domain authorization evaluates ten flat read/write capabilities stored in
+  role permission JSON; malformed documents fail closed. The literal `admin`
+  role implicitly has all capabilities, while users/roles/invitations/audit and
+  purge remain administrator-only.
 - Domain models inherit `BaseModel` (UUIDv7, timestamps, soft-delete state,
   nullable actor). `AuditLog` and lifecycle support tables are exceptions.
 - Keep mutations as individual ORM changes through `AuditSession`; bulk/raw ORM

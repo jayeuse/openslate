@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_roles
+from app.common.dependencies import require_capability
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -28,10 +28,12 @@ from app.systems.lifecycle.schemas import LifecycleTargetType
 from app.systems.lifecycle.service import reopen_lifecycle
 from app.systems.modules.models import Module
 from app.systems.relationships.service import RelationshipError, lock_row
-from app.systems.users.models import User, UserRole
+from app.systems.users.models import User
+from app.systems.users.permissions import Capability
 
 router = APIRouter(prefix="/departments", tags=["departments"])
-AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+DepartmentReadUser = Annotated[User, Depends(require_capability(Capability.DEPARTMENTS_READ))]
+DepartmentWriteUser = Annotated[User, Depends(require_capability(Capability.DEPARTMENTS_WRITE))]
 
 
 class DepartmentSortField(StrEnum):
@@ -123,7 +125,7 @@ def _commit(db: Session, message: str) -> None:
 
 @router.get("", response_model=DepartmentListResponse)
 def list_departments(
-    _: AdminUser,
+    _: DepartmentReadUser,
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[StandardListRequest[DepartmentSortField], Query()],
 ) -> DepartmentListResponse:
@@ -137,7 +139,7 @@ def list_departments(
 @router.get("/{department_id}", response_model=DepartmentResponse)
 def get_department(
     department_id: UUID,
-    _: AdminUser,
+    _: DepartmentReadUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Department:
     return _department(db, department_id)
@@ -146,7 +148,7 @@ def get_department(
 @router.post("", response_model=DepartmentResponse, status_code=status.HTTP_201_CREATED)
 def create_department(
     payload: DepartmentCreate,
-    _: AdminUser,
+    _: DepartmentWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Department:
     if _name_conflict(db, payload.department_name):
@@ -162,7 +164,7 @@ def create_department(
 def update_department(
     department_id: UUID,
     payload: DepartmentUpdate,
-    _: AdminUser,
+    _: DepartmentWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Department:
     _require_patch(payload)
@@ -179,7 +181,7 @@ def update_department(
 
 def delete_department(
     department_id: UUID,
-    _: AdminUser,
+    _: DepartmentWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     department = _department(db, department_id)
@@ -197,7 +199,7 @@ def delete_department(
 @router.delete("/{department_id}", status_code=status.HTTP_204_NO_CONTENT)
 def legacy_delete_department(
     department_id: UUID,
-    _: AdminUser,
+    _: DepartmentWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     # Keep the endpoint for clients that still discover DELETE, but do not
@@ -212,7 +214,7 @@ def legacy_delete_department(
 @router.post("/{department_id}/restore", response_model=DepartmentResponse)
 def restore_department(
     department_id: UUID,
-    user: AdminUser,
+    user: DepartmentWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Department:
     department = _department(db, department_id)

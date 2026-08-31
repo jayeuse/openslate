@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_roles
+from app.common.dependencies import require_capability
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -28,10 +28,12 @@ from app.systems.modules.models import Module
 from app.systems.records.models import Record
 from app.systems.records.schemas import RecordCreate, RecordResponse, RecordUpdate
 from app.systems.relationships.service import RelationshipError, lock_row
-from app.systems.users.models import User, UserRole
+from app.systems.users.models import User
+from app.systems.users.permissions import Capability
 
 router = APIRouter(prefix="/records", tags=["records"])
-AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+RecordReadUser = Annotated[User, Depends(require_capability(Capability.RECORDS_READ))]
+RecordWriteUser = Annotated[User, Depends(require_capability(Capability.RECORDS_WRITE))]
 
 
 class RecordSortField(StrEnum):
@@ -93,11 +95,7 @@ def validate_record_mutation(
     """Validate a create or active-value replacement and return normalized data."""
 
     fields_by_id = {str(field.id): field for field in fields}
-    closed_keys = {
-        str(field.id)
-        for field in fields
-        if field.is_deleted
-    }
+    closed_keys = {str(field.id) for field in fields if field.is_deleted}
     issues: list[RecordValidationIssue] = []
     truncated = False
     has_closed_field_mutation = False
@@ -227,11 +225,7 @@ def validate_record_mutation(
     if issues or has_closed_field_mutation:
         raise RecordValidationError(issues, truncated, has_closed_field_mutation)
 
-    merged = {
-        key: value
-        for key, value in current_data.items()
-        if key in closed_keys
-    }
+    merged = {key: value for key, value in current_data.items() if key in closed_keys}
     merged.update(normalized_active)
     return merged
 
@@ -285,9 +279,7 @@ def _record(db: Session, record_id: UUID) -> Record:
 
 
 def _active_module(db: Session, module_id: UUID) -> Module:
-    module = db.scalar(
-        select(Module).where(Module.id == module_id, Module.is_deleted.is_(False))
-    )
+    module = db.scalar(select(Module).where(Module.id == module_id, Module.is_deleted.is_(False)))
     if module is None:
         raise _conflict("Module is not active")
     return module
@@ -321,11 +313,7 @@ def _lock_record(db: Session, record: Record) -> Record:
 
 
 def _module_fields(db: Session, module_id: UUID) -> list[Field]:
-    return list(
-        db.scalars(
-            select(Field).where(Field.module_id == module_id)
-        ).all()
-    )
+    return list(db.scalars(select(Field).where(Field.module_id == module_id)).all())
 
 
 def _active_fields(db: Session, module_id: UUID) -> list[Field]:
@@ -366,7 +354,7 @@ def _commit(db: Session, message: str) -> None:
 
 @router.get("", response_model=RecordListResponse)
 def list_records(
-    _: AdminUser,
+    _: RecordReadUser,
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[RecordListRequest, Query()],
 ) -> RecordListResponse:
@@ -384,7 +372,7 @@ def list_records(
 @router.get("/{record_id}", response_model=RecordResponse)
 def get_record(
     record_id: UUID,
-    _: AdminUser,
+    _: RecordReadUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Record:
     return _record(db, record_id)
@@ -393,7 +381,7 @@ def get_record(
 @router.post("", response_model=RecordResponse, status_code=status.HTTP_201_CREATED)
 def create_record(
     payload: RecordCreate,
-    _: AdminUser,
+    _: RecordWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Record:
     _active_module(db, payload.module_id)
@@ -419,7 +407,7 @@ def create_record(
 def update_record(
     record_id: UUID,
     payload: RecordUpdate,
-    _: AdminUser,
+    _: RecordWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Record:
     _require_patch(payload)
@@ -445,7 +433,7 @@ def update_record(
 @router.delete("/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_record(
     record_id: UUID,
-    _: AdminUser,
+    _: RecordWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     record = _record(db, record_id)
@@ -465,7 +453,7 @@ def delete_record(
 @router.post("/{record_id}/restore", response_model=RecordResponse)
 def restore_record(
     record_id: UUID,
-    _: AdminUser,
+    _: RecordWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Record:
     record = _record(db, record_id)

@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_roles
+from app.common.dependencies import require_capability
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -37,11 +37,13 @@ from app.systems.relationships.service import (
     validate_cardinality_change,
     validate_relationship_modules,
 )
-from app.systems.users.models import User, UserRole
+from app.systems.users.models import User
+from app.systems.users.permissions import Capability
 
 router = APIRouter(prefix="/fields", tags=["fields"])
 module_fields_router = APIRouter(prefix="/modules", tags=["fields"])
-AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+FieldReadUser = Annotated[User, Depends(require_capability(Capability.FIELDS_READ))]
+FieldWriteUser = Annotated[User, Depends(require_capability(Capability.FIELDS_WRITE))]
 
 
 class FieldSortField(StrEnum):
@@ -102,9 +104,7 @@ def _field(db: Session, field_id: UUID) -> Field:
 
 
 def _active_module(db: Session, module_id: UUID) -> Module:
-    module = db.scalar(
-        select(Module).where(Module.id == module_id, Module.is_deleted.is_(False))
-    )
+    module = db.scalar(select(Module).where(Module.id == module_id, Module.is_deleted.is_(False)))
     if module is None:
         raise _conflict("Module is not active")
     return module
@@ -234,7 +234,7 @@ def _commit(db: Session, message: str) -> None:
 
 @router.get("", response_model=FieldListResponse)
 def list_fields(
-    _: AdminUser,
+    _: FieldReadUser,
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[FieldListRequest, Query()],
 ) -> FieldListResponse:
@@ -258,7 +258,7 @@ def list_fields(
 @router.get("/{field_id}", response_model=FieldResponse)
 def get_field(
     field_id: UUID,
-    _: AdminUser,
+    _: FieldReadUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Field:
     return _field(db, field_id)
@@ -267,7 +267,7 @@ def get_field(
 @router.post("", response_model=FieldResponse, status_code=status.HTTP_201_CREATED)
 def create_field(
     payload: FieldCreate,
-    _: AdminUser,
+    _: FieldWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Field:
     source_module = _active_module(db, payload.module_id)
@@ -317,7 +317,7 @@ def create_field(
 def update_field(
     field_id: UUID,
     payload: FieldUpdate,
-    _: AdminUser,
+    _: FieldWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Field:
     _require_patch(payload)
@@ -364,9 +364,8 @@ def update_field(
 
     if payload.name is not None and _name_conflict(db, field.module_id, payload.name, field.id):
         raise _conflict("Field name unavailable")
-    if (
-        payload.position is not None
-        and _position_conflict(db, field.module_id, payload.position, field.id)
+    if payload.position is not None and _position_conflict(
+        db, field.module_id, payload.position, field.id
     ):
         raise _conflict("Field position unavailable")
 
@@ -411,7 +410,7 @@ def update_field(
 
 def delete_field(
     field_id: UUID,
-    _: AdminUser,
+    _: FieldWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     field = _field(db, field_id)
@@ -443,7 +442,7 @@ def delete_field(
 @router.delete("/{field_id}", status_code=status.HTTP_204_NO_CONTENT)
 def legacy_delete_field(
     field_id: UUID,
-    _: AdminUser,
+    _: FieldWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     _field(db, field_id)
@@ -456,7 +455,7 @@ def legacy_delete_field(
 @router.post("/{field_id}/restore", response_model=FieldResponse)
 def restore_field(
     field_id: UUID,
-    user: AdminUser,
+    user: FieldWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Field:
     field = _field(db, field_id)
@@ -476,7 +475,7 @@ def restore_field(
 def reorder_module_fields(
     module_id: UUID,
     payload: FieldReorder,
-    _: AdminUser,
+    _: FieldWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> list[Field]:
     module = _lock_active_module(db, module_id)

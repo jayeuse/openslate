@@ -29,7 +29,9 @@ sequenceDiagram
 ```
 
 1. `supabase start` reads `supabase/config.toml` and starts PostgreSQL, Auth, Realtime, Storage, Studio, and Mailpit. Supabase migrations and seeds are disabled.
-2. The operator maps named values from `supabase status -o env` to the ignored root environment file.
+2. The operator maps backend/migration values from `supabase status -o env` to
+   the ignored root environment file, then configures `frontend/.env.local`
+   separately with only `BACKEND_URL` and public Supabase values.
 3. `backend/migrations/env.py` uses the owner-capable migration URL, imports the model registry, excludes external `auth.users`, and applies the linear chain through `20260831_0015` (`canonical_decimal_strings`).
 4. `scripts/provision_database_role.py` creates or alters the constrained `openslate_runtime` login and grants `openslate_app` membership.
 5. `scripts/bootstrap_admin.py` invites through Supabase Auth, relies on the Auth profile trigger, finalizes the local profile, and commits an audited promotion to `admin`.
@@ -56,19 +58,19 @@ sequenceDiagram
     User->>Web: GET /bff/departments
     Web->>API: GET /api/departments + access token
     API->>DB: load local profile and role
-    alt valid active admin
+    alt valid active user with required capability
         API-->>Web: list response
     else backend 401
         Web->>Auth: refreshSession once
         Web->>API: retry once
-    else authenticated non-admin
+    else authenticated user without required capability
         API-->>Web: 403 without refresh
     end
 ```
 
 `login/page.tsx` posts to the same-origin session handler. Zod validates the request, Supabase authenticates, and `auth-cookies.ts` writes HttpOnly, SameSite=Lax cookies. `AppPage` later calls `/session/status`; only a valid Supabase session mounts protected content.
 
-Domain pages call `apiFetch`, which targets the BFF. The BFF buffers the request, forwards selected headers plus the access token, and preserves query parameters. FastAPI validates JWT signature, issuer, audience, expiry, and UUID subject, then reloads an active local user and role. The exact `admin` role is required.
+Domain pages call `apiFetch`, which targets the BFF. The BFF buffers the request, forwards selected headers plus the access token, and preserves query parameters. FastAPI validates JWT signature, issuer, audience, expiry, and UUID subject, then reloads an active local user and role. The selected domain read or write capability is required; the exact `admin` role is implicitly granted all capabilities. Users, roles, invitations, audit, and purge remain literal-admin-only.
 
 On backend `401`, the BFF refreshes once and retries the identical request. Failure or a second `401` clears cookies; `apiFetch` navigates to login. A `403` is not refreshed.
 
@@ -111,10 +113,10 @@ The frontend new-record page may request fields including deleted rows, but it f
 
 The complete close sequence is documented in [Lifecycle and state management](09-lifecycle-and-state-management.md). At runtime:
 
-1. Admin requests close preview.
+1. A user with the target resource's write capability requests close preview.
 2. Planner loads department, descendant modules/fields/records, and touching edges; returns impact/blockers/digest.
 3. Service commits a hashed, actor/target/digest-bound challenge.
-4. Admin submits token, exact name, and password.
+4. The authorized target writer submits token, exact name, and password.
 5. Password verification reserves and commits a lease, uses a temporary Supabase password grant, revokes it, and consumes the challenge.
 6. Planner recomputes; execution locks complete scope in stable order, replans, rejects drift/blockers, applies one closed timestamp, and commits domain plus audit rows.
 7. Edges remain but become hidden through dependency visibility.

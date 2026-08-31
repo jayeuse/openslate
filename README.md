@@ -42,7 +42,7 @@ Run these commands from the repository root unless a `cd` is shown.
    supabase start
    ```
 
-2. Create the local environment file:
+2. Create the local backend and migration environment file:
 
    ```bash
    cp .env.example .env
@@ -54,7 +54,9 @@ Run these commands from the repository root unless a `cd` is shown.
    supabase status -o env
    ```
 
-   Fill `.env` using only these mappings from that output:
+    Fill the root `.env` using only these mappings from that output. This file is
+    for the backend and migration/operations commands; do not source it into the
+    frontend process:
 
    | `.env` setting | Supabase CLI value |
    | --- | --- |
@@ -92,17 +94,20 @@ Run these commands from the repository root unless a `cd` is shown.
    uv run python scripts/bootstrap_admin.py --email <email> --username <username>
    ```
 
-7. Run the host services in separate terminals. Export the root environment
-   first so Next.js receives its `NEXT_PUBLIC_*` aliases:
+7. Configure and run the host services in separate terminals. The frontend has
+   its own environment file. From `frontend/`, copy `.env.example` to
+   `.env.local` and fill only `BACKEND_URL`, the two public Supabase values, and,
+   if explicitly needed, `NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED`. Do not source the
+   root `.env`; `npm ci` does not need backend secrets:
 
    ```bash
    # terminal: backend/
    uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
-   # terminal: frontend/
-   set -a; source ../.env; set +a
-   npm ci
-   npm run dev -- --hostname 127.0.0.1
+    # terminal: frontend/
+    cp .env.example .env.local
+    npm ci
+    npm run dev -- --hostname 127.0.0.1
    ```
 
 The app is at <http://localhost:3000> and the FastAPI docs are at
@@ -164,6 +169,9 @@ retained `performed_by` references to them are intentionally cleared by the
 database's `ON DELETE SET NULL` behavior; retained non-admin Auth identities
 cannot access FastAPI after their application profiles are removed.
 
+This utility is local-only. It is not a release rollback or a hosted recovery
+mechanism; recovery requires the separately selected backup and restore process.
+
 Never add application SQL files under `supabase/migrations` or use Supabase
 seed files. Schema changes go through `backend/migrations/` and are checked
 with Alembic.
@@ -216,11 +224,23 @@ TEST_DATABASE_URL="$DATABASE_URL" uv run pytest tests/test_audit_integration.py
 
 ## Future hosted deployment
 
-The checked-in Supabase configuration is for local CLI development only. A
-hosted cutover must separately review database ownership, Auth redirect URLs,
-RLS/private-channel policies, Storage buckets, service-role secret handling,
-and production CORS before enabling any hosted Data API surface. Do not treat
-local keys, local ports, or local Mailpit as production configuration.
+Hosted deployment is not implemented or production-ready. The approved contract
+and release order are in [Deployment architecture](docs/architecture/12-deployment-architecture.md):
+one trust domain per deployment with isolated Auth, PostgreSQL, Storage, secrets,
+backups, and administrator population; shared tenancy is deferred. FastAPI is
+private in the hosted topology. Only the required Supabase Auth, JWKS, and
+Realtime surfaces remain public, under controlled provider policy. The frontend
+uses `/bff/*`; direct Next `/api` and API documentation rewrites are not part of
+the contract.
+
+CI verifies both standalone images but does not publish or deploy them. The
+frontend image requires public Supabase build arguments and receives
+`BACKEND_URL` only at runtime; neither image migrates, provisions, bootstraps,
+or starts Supabase.
+
+Provider, registry, secret manager, SMTP, RPO/RTO, retention, actual backup
+implementation, and hosted topology remain selections/blockers. No
+provider-neutral infrastructure is checked in.
 
 Migration `0010` requires an owner-capable path for policy DDL on
 `realtime.messages` and permission to provision the application database

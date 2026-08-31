@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.core.security.supabase import verify_supabase_jwt
 from app.systems.audit.context import set_audit_actor
 from app.systems.users.models import User, UserRole
+from app.systems.users.permissions import Capability, has_capability
 
 oauth2_scheme = HTTPBearer(auto_error=True)
 
@@ -60,3 +61,14 @@ def require_roles(*roles: UserRole | str) -> Callable[[User], User]:
         return user
 
     return check_role
+
+
+def require_capability(capability: Capability | str) -> Callable[[User], User]:
+    required_capability = Capability(capability)
+
+    def check_capability(user: Annotated[User, Depends(get_current_user)]) -> User:
+        if not has_capability(user.role, required_capability):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        return user
+
+    return check_capability

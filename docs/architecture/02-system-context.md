@@ -6,7 +6,7 @@
 
 ## Context summary
 
-OpenSlate consists of a browser-facing Next.js process and a FastAPI process backed by a Supabase local platform. The human application actor is currently an administrator. Supabase is external to the application processes but, in local development, is created by the repository's CLI configuration.
+OpenSlate consists of a browser-facing Next.js process and a FastAPI process backed by a Supabase local platform. Human application actors may be administrators or active users with role capabilities; users, roles, invitations, audit, and purge remain administrator-only. Supabase is external to the application processes but, in local development, is created by the repository's CLI configuration.
 
 ```mermaid
 flowchart TB
@@ -25,13 +25,13 @@ The line to Storage denotes a **Partially Implemented** foundation: the migratio
 
 ## Actors
 
-| Actor                    | State                     | Access and responsibility                                                                                     |
-| ------------------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Administrator            | **Implemented**           | Invited Supabase identity with an active local profile and active `admin` role; can use all domain routes.    |
-| Member/custom-role user  | **Partially Implemented** | Can possess a valid session and local role, but domain authorization rejects non-admin roles.                 |
-| Anonymous visitor        | **Implemented**           | Can view public frontend pages and health/API documentation surfaces; cannot use domain APIs.                 |
-| Developer/operator       | **Implemented locally**   | Starts Supabase, applies Alembic, provisions the runtime role, bootstraps the first admin, and runs services. |
-| Hosted platform operator | **Unknown**               | No provider, deployment procedure, or production trust model is checked in.                                   |
+| Actor                    | State                   | Access and responsibility                                                                                                                            |
+| ------------------------ | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Administrator            | **Implemented**         | Invited Supabase identity with an active local profile and active `admin` role; can use all domain routes.                                           |
+| Member/custom-role user  | **Implemented**         | Can possess a valid session and use domain routes covered by explicitly granted capabilities; management and purge routes remain administrator-only. |
+| Anonymous visitor        | **Implemented**         | Can view public frontend pages and health/API documentation surfaces; cannot use domain APIs.                                                        |
+| Developer/operator       | **Implemented locally** | Starts Supabase, applies Alembic, provisions the runtime role, bootstraps the first admin, and runs services.                                        |
+| Hosted platform operator | **Unknown**             | No provider, deployment procedure, or production trust model is checked in.                                                                          |
 
 ## External systems and relationships
 
@@ -77,7 +77,7 @@ flowchart LR
         BFF[BFF]
     end
     subgraph API[FastAPI boundary]
-        JWT[JWT + local role guard]
+        JWT[JWT + local capability/admin guard]
         Domain[Domain operations]
     end
     subgraph Data[Privileged service boundary]
@@ -99,7 +99,7 @@ flowchart LR
 
 ## Explicitly outside the current system
 
-- A shared-tenant business boundary is **Unknown**. No tenant key exists on users or domain rows; the safe observed model is one trust domain per deployment.
+- Each deployment is one trust domain. No tenant key or tenant/RLS isolation exists on users or domain rows; a shared-tenant deployment is not supported by the current architecture.
 - Hosted ingress, TLS, DNS, network policy, secret delivery, and backup systems are **Unknown**.
 - Workers, queues, schedulers, caches, analytics, and external business APIs are **Absent**.
 - Files, reports, and views are **Planned / Documented Only** package scaffolds, not external integrations.

@@ -4,30 +4,6 @@ const nextConfig: NextConfig = {
   output: "standalone",
   reactStrictMode: true,
   typedRoutes: true,
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${process.env.BACKEND_URL ?? "http://localhost:8000"}/api/:path*`,
-      },
-      {
-        source: "/docs",
-        destination: `${process.env.BACKEND_URL ?? "http://localhost:8000"}/docs`,
-      },
-      {
-        source: "/docs/:path*",
-        destination: `${process.env.BACKEND_URL ?? "http://localhost:8000"}/docs/:path*`,
-      },
-      {
-        source: "/redoc",
-        destination: `${process.env.BACKEND_URL ?? "http://localhost:8000"}/redoc`,
-      },
-      {
-        source: "/openapi.json",
-        destination: `${process.env.BACKEND_URL ?? "http://localhost:8000"}/openapi.json`,
-      },
-    ];
-  },
   async headers() {
     return [
       {

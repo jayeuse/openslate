@@ -1,7 +1,6 @@
-"""Contract tests for the planned local application-data reset utility.
+"""Contract tests for the local application-data reset utility.
 
-The implementation is intentionally absent while these tests are introduced.  The
-small contract exercised here is:
+The small contract exercised here is:
 
 * ``_parser()`` exposes ``--execute`` only, and defaults to dry-run.
 * ``required_environment(mapping)`` returns ``(migration_url, sample_email)``.
@@ -233,7 +232,7 @@ class FakeConnection:
     def __init__(
         self,
         *,
-        head: str = "20260830_0014",
+        head: str = "20260831_0015",
         public_tables: set[str] | None = None,
         auth_users: list[dict[str, object]] | None = None,
         profile: dict[str, object] | None = None,
@@ -1425,7 +1424,7 @@ def test_execute_uses_locks_parameterized_static_deletes_and_preserves_auth_stat
     assert database.committed is True
     assert database.rolled_back is False
     assert database.auth_users == auth_before
-    assert database.head == "20260830_0014"
+    assert database.head == "20260831_0015"
     assert all(database.counts[table] == 0 for table in NON_PRESERVED_TABLES)
     assert database.counts["users"] == 1
     assert database.counts["roles"] == 2

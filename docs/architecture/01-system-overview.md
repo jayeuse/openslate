@@ -6,7 +6,7 @@
 
 ## What OpenSlate is
 
-OpenSlate is a self-hosted foundation for configurable business operations. An administrator defines departments, modules, typed fields, records, and record relationships, then manages those entities through a Next.js workspace and a FastAPI API. The current application is effectively administrator-operated: an authenticated local profile must have the literal `admin` role for every domain route.
+OpenSlate is a self-hosted foundation for configurable business operations. An administrator defines departments, modules, typed fields, records, and record relationships, then manages those entities through a Next.js workspace and a FastAPI API. Domain reads and writes use flat resource capabilities; the literal `admin` role is implicitly granted all of them, while users with other roles receive only explicitly granted capabilities.
 
 The repository is a multi-component application rather than a package monorepo. The root coordinates a Python backend, a TypeScript frontend, Alembic migrations, local Supabase services, standalone image recipes, and verification workflows.
 
@@ -74,10 +74,10 @@ The repository shows these designs, but it does not contain the original histori
 ## Boundaries and constraints
 
 - The supported local topology is Supabase CLI plus host-run frontend and backend processes. There is no root Compose stack.
-- All current domain APIs require `admin`; stored role permissions are not evaluated.
+- Domain APIs use matching `.read` and `.write` capabilities for departments, modules, fields, records, and relationships. Users, roles, invitations, audit, and lifecycle purge remain literal-`admin` operations; FastAPI is authoritative and direct database access bypasses RBAC.
 - Direct SQL, Studio, Auth operations, Alembic, and external clients are outside application audit capture.
 - PostgreSQL-specific JSONB, RLS, checks, and migrations are part of the architecture; SQLite is not an equivalent verification target.
-- The checked-in Supabase configuration is local-only. Production topology and tenancy intent are not defined.
+- The checked-in Supabase configuration is local-only. Each deployment is one trust domain; no tenant key or tenant/RLS isolation is implemented.
 - Background workers, queues, scheduled jobs, caches, and a reverse proxy are absent.
 
 ## Where to start changing behavior

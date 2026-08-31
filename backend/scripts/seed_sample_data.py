@@ -17,9 +17,20 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 ROLE_SPECS = {
-    "admin": {"admin": True},
-    "manager": {"records": {"read": True, "create": True, "update": True}},
-    "staff": {"records": {"read": True, "create": True}},
+    "admin": {
+        "departments.read": True,
+        "departments.write": True,
+        "modules.read": True,
+        "modules.write": True,
+        "fields.read": True,
+        "fields.write": True,
+        "records.read": True,
+        "records.write": True,
+        "relationships.read": True,
+        "relationships.write": True,
+    },
+    "manager": {"records.read": True, "records.write": True},
+    "staff": {"records.read": True},
 }
 
 DEPARTMENT_SPECS = {

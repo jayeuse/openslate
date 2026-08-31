@@ -63,9 +63,10 @@ The route entry files and their current protection shape are:
 | Framework fallbacks         | `frontend/src/app/not-found.tsx`, `frontend/src/app/error.tsx`                                                                                                       | Root not-found UI and a root client error boundary. There is no `loading.tsx` or `global-error.tsx`.                                                    |
 
 The empty `frontend/src/app/api/proxy/[...path]` and `frontend/src/app/api/session/*`
-directories do not define Route Handlers. `/api/*`, `/docs`, `/redoc`, and
-`/openapi.json` are handled by rewrites in `next.config.ts`; application pages
-use `/bff/*` instead.
+directories do not define Route Handlers. Application data uses `/bff/*`.
+Direct Next `/api/*`, `/docs`, `/redoc`, and `/openapi.json` rewrites are not
+configured; FastAPI's own API and documentation paths are local/private
+operator surfaces.
 
 ## Public, auth, and protected page boundaries
 
@@ -173,10 +174,9 @@ type parameter is an unchecked cast, not runtime response validation. The
 offset query convention. Pages commonly request `limit=100` and currently do
 not use `pagination.has_more`.
 
-The direct `/api` rewrite remains reachable for health and domain endpoints and
-also exposes FastAPI documentation paths. Application pages do not use it for
-domain data because it does not convert HttpOnly cookies into backend authorization;
-they use the BFF. Backend API semantics and error contracts
+There is no direct Next `/api` or API documentation rewrite. Application pages
+use the BFF so HttpOnly cookies are converted into backend authorization;
+FastAPI remains the upstream application API. Backend API semantics and error contracts
 belong in [API architecture](07-api-architecture.md).
 
 ## Browser state, theme, and realtime
@@ -309,11 +309,10 @@ or frontend design-token service.
 
 `frontend/package.json` pins Next.js 16.3.1, React 19.2.8, TypeScript, Tailwind
 CSS 4, Supabase JS, Zod, and Playwright. `next.config.ts` enables
-`output: "standalone"`, `reactStrictMode`, and `typedRoutes`. Its rewrites use
-`BACKEND_URL` (defaulting to `http://localhost:8000`) for `/api/*`, FastAPI
-docs, ReDoc, and OpenAPI. Its response headers add `nosniff`, frame, referrer,
-and permissions policies. Build-time and runtime configuration details belong
-in [configuration](17-configuration.md).
+`output: "standalone"`, `reactStrictMode`, and `typedRoutes`; it has no backend
+or API-documentation rewrites. Its response headers add `nosniff`, frame,
+referrer, and permissions policies. Build-time and runtime configuration details
+belong in [configuration](17-configuration.md).
 
 `frontend/src/proxy.ts:proxy` is Next.js 16's renamed Proxy convention, not an
 authentication middleware. For matched page requests it generates a nonce,
@@ -325,16 +324,18 @@ requests. Session and authorization decisions therefore remain in Route
 Handlers, `AppPage`, and especially the backend.
 
 `infra/docker/frontend.Dockerfile` builds with Node 24 in a dependency/build
-stage and runs `.next/standalone/server.js` as a non-root user on port 3000.
-This is a standalone image recipe, not deployment orchestration; the supported
-local path is host-run Next.js plus the Supabase CLI platform.
+stage, requires public Supabase build arguments, and runs
+`.next/standalone/server.js` as a non-root user on port 3000. `BACKEND_URL` is
+runtime-only for the BFF. This is a standalone image recipe, not deployment
+orchestration; the supported local path is host-run Next.js plus the Supabase
+CLI platform.
 
 `frontend/src/components/lifecycle-dialog.tsx` reads
 `NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED` at build time to expose the purge action.
-That frontend flag is not declared in `.env.example` and is independent from
-the backend purge flag; configuration ownership and cutover implications are
-tracked in [configuration](17-configuration.md) and [risks and
-limitations](20-architecture-risks.md).
+The optional frontend flag is commented out in `.env.example` and remains off in
+the supported deployment contract; it is independent from the backend purge
+flag. Configuration ownership and cutover implications are tracked in
+[configuration](17-configuration.md) and [risks and limitations](20-architecture-risks.md).
 
 ## Verified capability classification
 
@@ -349,7 +350,7 @@ limitations](20-architecture-risks.md).
 | Schema and record workflows                                   | **Partial**                               | Creation, acceptance, record editing, relationship management, and lifecycle UI exist. New-record loading may fetch deleted/closed field rows, but closed primitive fields are filtered from rendering and serialization. Edit may display retained closed primitive values read-only, while it submits active primitive values only. |
 | Appearance preferences                                        | **Partial**                               | Theme/accent/density/radius persist in local storage and CSS attributes, with hydration/default overwrite risks and no server profile persistence.                                                          |
 | Realtime invalidation                                         | **Partial**                               | Private Broadcast invalidation and broad remount/refetch work; no polling fallback, row payload handling, or surfaced subscription failure exists.                                                          |
-| Setup guidance                                                | **Stale**                                 | `/setup` still labels a Docker Compose path and shows legacy variables, and its bootstrap command omits the required `--email`; the supported flow is documented in the root README and backend script.     |
+| Setup guidance                                                | **Implemented**                           | `/setup` points to the supported Supabase/Alembic/runtime-role/administrator bootstrap commands; the root README remains the canonical environment and operations guide.     |
 | Files, reports, views, and application storage UI             | **Absent**                                | No frontend routes or client API for these capabilities; Storage is only a platform foundation at present.                                                                                                  |
 | Loading and error system                                      | **Partial**                               | Local text/alerts and root error/not-found UI exist; route loading files, global error handling, and consistent recovery are absent.                                                                        |
 | Frontend automated verification                               | **Partial**                               | Playwright covers public pages plus mocked lifecycle/relationship flows and one home-page axe scan; there is no unit/component test framework, and session/BFF/JWT/database/realtime integration is mocked. |

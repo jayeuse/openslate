@@ -6,9 +6,9 @@
 
 This document is intentionally editorial. Descriptive documents state current behavior and link here rather than embedding recommendations.
 
-## R1 — Tenancy intent is undefined
+## R1 — No tenant isolation; one trust domain per deployment
 
-**Current design:** Users and all domain/audit rows have no tenant key; authorization is a global `admin` role; RLS has no tenant predicate.
+**Current design:** Users and all domain/audit rows have no tenant key; authorization is global capability/role RBAC within a deployment; RLS has no tenant predicate. Each deployment must remain one trust domain.
 
 **Problem:** If mutually untrusted businesses share one deployment, an administrator can access all application data through normal APIs.
 
@@ -16,19 +16,18 @@ This document is intentionally editorial. Descriptive documents state current be
 
 **Affected:** Users, all domain routers/models, audit, relationships, lifecycle, RLS.
 
-**Recommended direction:** Explicitly declare one trust domain per deployment, or add end-to-end tenant identifiers, constraints, authorization context, RLS, and cross-tenant tests.
+**Recommended direction:** Keep mutually untrusted businesses in separate deployments, or add end-to-end tenant identifiers, constraints, authorization context, RLS, and cross-tenant tests before supporting shared tenancy.
 
-## R2 — Frontend process receives backend-only local secrets
+## R2 — Frontend environment isolation (resolved)
 
-**Current design:** Root setup exports the complete `.env` before frontend dependency installation/start. That environment includes owner/runtime database and Supabase server credentials.
+**Current design:** The supported local path uses `frontend/.env.local` based on
+`frontend/.env.example`, containing only `BACKEND_URL`, public Supabase values,
+and the optional purge flag. The root `.env` is not sourced into npm or Next.js,
+and `npm ci` runs without backend secrets.
 
-**Problem:** npm lifecycle code or a compromised Next server can read credentials it does not need.
-
-**Consequence:** Direct database/Auth compromise and unaudited mutation if that process is compromised.
-
-**Affected:** Root README, frontend process, database and Supabase credentials.
-
-**Recommended direction:** Install dependencies before runtime configuration and pass an explicit frontend allowlist: backend URL plus public Supabase values only. Keep migration credentials short-lived and isolated.
+The previous root-environment export was the identified risk. Keep the explicit
+frontend allowlist and isolated migration credentials in future operational
+changes.
 
 ## R3 — Runtime DB access bypasses application authorization and audit
 
@@ -44,7 +43,11 @@ This document is intentionally editorial. Descriptive documents state current be
 
 ## R4 — Hosted deployment security and recovery are unspecified
 
-**Current design:** Images exist but ingress, TLS/HSTS, trusted proxy/Host handling, network policy, secret delivery, backup/PITR, restore, and monitoring do not.
+**Current design:** Images exist and the approved contract requires one trust
+domain per deployment, isolated Auth/PostgreSQL/Storage/secrets/backups/admin
+population, and private FastAPI access. Provider/topology selection, ingress,
+TLS/HSTS, trusted proxy/Host handling, network policy, secret delivery,
+backup/PITR, restore, and monitoring do not.
 
 **Problem:** Operators can publish a topology that exposes tokens, passwords, server keys, DB, Studio, or backend ports and has no tested recovery.
 
@@ -94,7 +97,7 @@ This document is intentionally editorial. Descriptive documents state current be
 
 **Current design:** The Realtime-token endpoint returns a general Supabase access token to browser JavaScript; FastAPI validates signed JWT state but not session revocation.
 
-**Problem:** Same-origin script compromise can exfiltrate a token usable until expiry, including through the direct API rewrite.
+**Problem:** Same-origin script compromise can exfiltrate a token usable until expiry.
 
 **Consequence:** Temporary API access after browser logout.
 
@@ -126,17 +129,14 @@ This document is intentionally editorial. Descriptive documents state current be
 
 **Recommended direction:** Generate or runtime-validate contracts, implement pagination, and scope/cache invalidation.
 
-## R11 — Setup UI conflicts with the supported path
+## R11 — Setup guidance (resolved)
 
-**Current design:** `/setup` describes Docker Compose and legacy bootstrap values, while the repository supports Supabase CLI and requires both bootstrap email and username.
+**Current design:** `/setup` points to the supported Supabase, Alembic,
+runtime-role provisioning, and administrator bootstrap commands, while the root
+README remains the canonical environment and operations guide. The bootstrap
+command requires both email and username.
 
-**Problem:** New operators can follow a nonexistent or incomplete procedure.
-
-**Consequence:** Failed onboarding and insecure ad hoc workarounds.
-
-**Affected:** Frontend setup page, root README, scripts.
-
-**Recommended direction:** Make one canonical setup source and test/document links and commands against scripts.
+Keep the page concise and aligned with the README and scripts.
 
 ## R12 — Verification gaps hide cross-system failures
 

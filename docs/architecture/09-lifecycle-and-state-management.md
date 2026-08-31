@@ -43,24 +43,24 @@ Sources: capability routers, `backend/app/systems/lifecycle/router.py`, `planner
 
 ## Close preview and confirmation
 
-Close is a two-request operation for departments, modules, and fields.
+Close is a two-request operation for departments, modules, and fields. Close and reopen require the target resource's write capability (`departments.write`, `modules.write`, or `fields.write`); purge preview and purge remain literal-`admin` operations.
 
 ```mermaid
 sequenceDiagram
-    actor Admin
+    actor Target writer
     participant API as Lifecycle router
     participant Plan as Planner
     participant DB as PostgreSQL
     participant Auth as Supabase Auth
-    Admin->>API: POST close/preview
+    Target writer->>API: POST close/preview
     API->>Plan: load scope and compute digest
     API->>DB: store hashed challenge
-    API-->>Admin: impact, token, expiry, name
-    Admin->>API: POST close + name + password + token
+    API-->>Target writer: impact, token, expiry, name
+    Target writer->>API: POST close + name + password + token
     API->>Auth: verify password grant
     API->>Plan: recompute and lock scope
     API->>DB: close rows + audit, commit
-    API-->>Admin: mutation impact
+    API-->>Target writer: mutation impact
 ```
 
 ### Preview
@@ -116,7 +116,7 @@ Purge uses the preview/challenge/password pattern and additionally requires:
 
 The service physically deletes in dependency order: relationship edges, records, fields, modules, then departments. Database FKs are mostly `RESTRICT`; there is no ORM cascade that replaces this ordering. Physical deletion is still captured by the application audit listener before commit, but earlier audit records remain.
 
-Purge exposure is controlled independently in the UI by `NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED`. This frontend flag is absent from `.env.example`; showing the UI does not enable the backend operation.
+Purge exposure is controlled independently in the UI by `NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED`. The flag is commented out in `frontend/.env.example` and remains off in the supported deployment contract; showing the UI does not enable the backend operation.
 
 ## Relationship visibility through lifecycle
 

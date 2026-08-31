@@ -34,17 +34,17 @@ classDiagram
 
 ## Entity catalog
 
-| Concept                        | Meaning and key state                                                              | Mutation owner                                | State                                                     |
-| ------------------------------ | ---------------------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------- |
-| Role                           | Named local authorization category plus JSON permissions metadata                  | `users` router/service                        | **Implemented**, but permissions evaluation is **Absent** |
-| User                           | Local profile keyed by the Supabase Auth UUID; email, username, status, role       | `users` service plus Supabase Auth            | **Implemented**                                           |
-| Department                     | Top-level organizational container identified by active-unique name                | departments router and lifecycle              | **Implemented**                                           |
-| Module                         | Configurable record type inside a department; has schema acceptance state          | modules/fields routers and lifecycle          | **Implemented**                                           |
-| Field                          | Ordered typed module definition; primitive/select/relationship behavior            | fields router/validation and lifecycle        | **Implemented**                                           |
-| Record                         | Module instance whose primitive values are JSONB keyed by field UUID               | records router/validation and lifecycle purge | **Implemented**                                           |
-| Relationship edge              | Directed link from source record to target record governed by a relationship field | relationships service/router                  | **Implemented**                                           |
-| Audit log                      | Immutable application record of one ORM entity mutation                            | audit listeners only                          | **Implemented**                                           |
-| Lifecycle challenge/rate state | Short-lived confirmation and password-failure state for close/purge                | lifecycle service                             | **Implemented**                                           |
+| Concept                        | Meaning and key state                                                              | Mutation owner                                | State                                            |
+| ------------------------------ | ---------------------------------------------------------------------------------- | --------------------------------------------- | ------------------------------------------------ |
+| Role                           | Named local authorization category plus JSON permissions metadata                  | `users` router/service                        | **Implemented**, with flat capability evaluation |
+| User                           | Local profile keyed by the Supabase Auth UUID; email, username, status, role       | `users` service plus Supabase Auth            | **Implemented**                                  |
+| Department                     | Top-level organizational container identified by active-unique name                | departments router and lifecycle              | **Implemented**                                  |
+| Module                         | Configurable record type inside a department; has schema acceptance state          | modules/fields routers and lifecycle          | **Implemented**                                  |
+| Field                          | Ordered typed module definition; primitive/select/relationship behavior            | fields router/validation and lifecycle        | **Implemented**                                  |
+| Record                         | Module instance whose primitive values are JSONB keyed by field UUID               | records router/validation and lifecycle purge | **Implemented**                                  |
+| Relationship edge              | Directed link from source record to target record governed by a relationship field | relationships service/router                  | **Implemented**                                  |
+| Audit log                      | Immutable application record of one ORM entity mutation                            | audit listeners only                          | **Implemented**                                  |
+| Lifecycle challenge/rate state | Short-lived confirmation and password-failure state for close/purge                | lifecycle service                             | **Implemented**                                  |
 
 Persistence definitions: `backend/app/systems/*/models.py`. API schemas and mutation rules live beside each capability.
 
@@ -118,7 +118,7 @@ Evidence: `relationships/models.py`, `relationships/service.py`, `relationships/
 
 ## User and role rules
 
-Supabase Auth owns the identity and password. The local `User` must be active, not soft-deleted, and assigned an active role. All domain routers currently require role name `admin`. `Role.permissions` is persisted and editable but has no effect on authorization; member/custom roles therefore fail closed for domain work.
+Supabase Auth owns the identity and password. The local `User` must be active, not soft-deleted, and assigned an active role. Domain reads and writes use the matching flat capabilities for departments, modules, fields, records, and relationships. The exact `admin` role is implicitly granted all ten capabilities; other roles must have an explicitly true capability in a valid flat boolean document, with omitted capabilities denied and no capability implication. Lifecycle close/reopen uses the target resource's write capability. Users, roles, invitations, audit, and purge remain literal-admin-only.
 
 User invitation is a cross-system operation: Auth creates an identity, a database trigger creates a pending member profile, and the users service finalizes the requested profile. Disable/enable ordering is designed to fail closed, but an external failure can temporarily leave Auth and local state divergent.
 
@@ -150,6 +150,6 @@ Direct database writers can bypass application-only invariants and audit capture
 
 ## Domain capabilities not present
 
-- A tenant/business ownership key is **Absent** from current entities; shared-tenancy intent is **Unknown**.
+- A tenant/business ownership key is **Absent** from current entities; each deployment is one trust domain, with no tenant/RLS isolation.
 - Reports, saved views, and files have package placeholders but no domain model or operational behavior.
-- Fine-grained permissions and resource ownership checks are **Absent**; authorization is global role-name based.
+- Resource ownership checks are **Absent**; authorization is global capability/role based within the deployment, and direct database writers bypass FastAPI RBAC.

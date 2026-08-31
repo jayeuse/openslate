@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_roles
+from app.common.dependencies import require_capability
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -27,10 +27,12 @@ from app.systems.modules.models import Module
 from app.systems.modules.schemas import ModuleCreate, ModuleResponse, ModuleUpdate
 from app.systems.records.models import Record
 from app.systems.relationships.service import RelationshipError, lock_row
-from app.systems.users.models import User, UserRole
+from app.systems.users.models import User
+from app.systems.users.permissions import Capability
 
 router = APIRouter(prefix="/modules", tags=["modules"])
-AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+ModuleReadUser = Annotated[User, Depends(require_capability(Capability.MODULES_READ))]
+ModuleWriteUser = Annotated[User, Depends(require_capability(Capability.MODULES_WRITE))]
 
 
 class ModuleSortField(StrEnum):
@@ -168,7 +170,7 @@ def _commit(db: Session, message: str) -> None:
 
 @router.get("", response_model=ModuleListResponse)
 def list_modules(
-    _: AdminUser,
+    _: ModuleReadUser,
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[ModuleListRequest, Query()],
 ) -> ModuleListResponse:
@@ -186,7 +188,7 @@ def list_modules(
 @router.get("/{module_id}", response_model=ModuleResponse)
 def get_module(
     module_id: UUID,
-    _: AdminUser,
+    _: ModuleReadUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Module:
     return _module(db, module_id)
@@ -195,7 +197,7 @@ def get_module(
 @router.post("/{module_id}/schema/accept", response_model=ModuleResponse)
 def accept_module_schema(
     module_id: UUID,
-    _: AdminUser,
+    _: ModuleWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Module:
     module = _module(db, module_id)
@@ -218,7 +220,7 @@ def accept_module_schema(
 @router.post("", response_model=ModuleResponse, status_code=status.HTTP_201_CREATED)
 def create_module(
     payload: ModuleCreate,
-    _: AdminUser,
+    _: ModuleWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Module:
     _active_department(db, payload.department_id)
@@ -240,7 +242,7 @@ def create_module(
 def update_module(
     module_id: UUID,
     payload: ModuleUpdate,
-    _: AdminUser,
+    _: ModuleWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Module:
     _require_patch(payload)
@@ -264,7 +266,7 @@ def update_module(
 
 def delete_module(
     module_id: UUID,
-    _: AdminUser,
+    _: ModuleWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     module = _module(db, module_id)
@@ -288,7 +290,7 @@ def delete_module(
 @router.delete("/{module_id}", status_code=status.HTTP_204_NO_CONTENT)
 def legacy_delete_module(
     module_id: UUID,
-    _: AdminUser,
+    _: ModuleWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     _module(db, module_id)
@@ -301,7 +303,7 @@ def legacy_delete_module(
 @router.post("/{module_id}/restore", response_model=ModuleResponse)
 def restore_module(
     module_id: UUID,
-    user: AdminUser,
+    user: ModuleWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Module:
     module = _module(db, module_id)

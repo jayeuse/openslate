@@ -20,7 +20,7 @@ from uuid import UUID
 from psycopg import connect
 from sqlalchemy.engine import make_url
 
-EXPECTED_ALEMBIC_HEAD = "20260830_0014"
+EXPECTED_ALEMBIC_HEAD = "20260831_0015"
 EXPECTED_PROJECT_ID = "openslate"
 EXPECTED_DATABASE_PORT = 54322
 EXPECTED_DATABASE_HOST = "127.0.0.1"

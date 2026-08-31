@@ -60,11 +60,11 @@ No application table publication exists. The backend broadcasts an opaque event 
 
 The root has no Compose/reverse-proxy stack. Supabase CLI owns local platform containers; Uvicorn and Next.js run on the host. Dockerfiles are standalone artifacts, not the supported local orchestration path.
 
-## AD-10 — Authorization is literal role-name based
+## AD-10 — Authorization is capability- and role-guarded
 
-**State:** Implemented; fine-grained authorization absent.
+**State:** Implemented.
 
-Domain routes require `admin`. Permissions JSON is persisted but ignored. The technical effect is fail-closed behavior for all other roles, not a permission system.
+FastAPI enforces exactly ten flat read/write capabilities for department, module, field, record, and relationship domain routes. The exact `admin` role is implicitly granted all capabilities; non-admin roles require explicit true values in valid permission documents, with omitted values denied and no capability implication. Lifecycle close/reopen uses the target resource's write capability. Users, roles, invitations, audit, and purge remain literal-admin-only. This RBAC is global within one trust domain per deployment; direct database access bypasses it.
 
 ## AD-11 — PostgreSQL-specific behavior is part of the contract
 

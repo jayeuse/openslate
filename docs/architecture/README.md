@@ -4,7 +4,7 @@
 > **Audience:** Developers and operators who need to become productive in this repository.
 > **Related documents:** [System overview](01-system-overview.md), [Runtime flows](13-runtime-flows.md), [Glossary](21-glossary.md)
 
-OpenSlate is a self-hosted foundation for configurable business operations. Administrators define departments, modules, fields, records, and relationships through a Next.js frontend backed by a FastAPI API and a Supabase PostgreSQL/Auth/Realtime/Storage local platform. The implemented system is administrator-operated and uses application-level validation, authorization, lifecycle planning, and ORM audit capture.
+OpenSlate is a self-hosted foundation for configurable business operations. Authorized users work with departments, modules, fields, records, and relationships through a Next.js frontend backed by a FastAPI API and a Supabase PostgreSQL/Auth/Realtime/Storage local platform. The implemented system uses deployment-global capability authorization, administrator-only management controls, application-level validation, lifecycle planning, and ORM audit capture.
 
 ## Purpose and accuracy
 
@@ -28,7 +28,7 @@ flowchart LR
     Storage["Private Storage bucket<br/>foundation only"] --- API
 ```
 
-The browser does not write application data through Supabase's Data API. Next.js keeps session tokens in HttpOnly cookies and forwards the access token through its BFF. FastAPI verifies identity and the local administrator role, then performs SQLAlchemy operations against PostgreSQL. Audit rows share the domain transaction; Realtime only signals clients to refetch.
+The browser does not write application data through Supabase's Data API. Next.js keeps session tokens in HttpOnly cookies and forwards the access token through its BFF. FastAPI verifies identity and applies either a domain capability guard or a literal-administrator guard before performing SQLAlchemy operations against PostgreSQL. Audit rows share the domain transaction; Realtime only signals clients to refetch.
 
 ## Recommended reading order
 

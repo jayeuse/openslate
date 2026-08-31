@@ -5,28 +5,14 @@ on:
     paths:
       - "frontend/**"
       - "infra/docker/frontend.Dockerfile"
-      - ".env.example"
-      - "supabase/**"
-      - "backend/app/common/dependencies/**"
-      - "backend/app/core/config/**"
-      - "backend/app/core/integrations/**"
-      - "backend/app/core/security/**"
-      - "backend/app/systems/auth/**"
-      - "backend/migrations/**"
+      - ".dockerignore"
       - ".github/workflows/frontend.yml"
   push:
     branches: [main]
     paths:
       - "frontend/**"
       - "infra/docker/frontend.Dockerfile"
-      - ".env.example"
-      - "supabase/**"
-      - "backend/app/common/dependencies/**"
-      - "backend/app/core/config/**"
-      - "backend/app/core/integrations/**"
-      - "backend/app/core/security/**"
-      - "backend/app/systems/auth/**"
-      - "backend/migrations/**"
+      - ".dockerignore"
       - ".github/workflows/frontend.yml"
 
 concurrency:
@@ -70,6 +56,27 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Build frontend Docker image
+        working-directory: ${{ github.workspace }}
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.invalid
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci
+        run: >-
+          docker build
+          --build-arg NEXT_PUBLIC_SUPABASE_URL="$NEXT_PUBLIC_SUPABASE_URL"
+          --build-arg NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"
+          --file infra/docker/frontend.Dockerfile
+          --tag openslate-frontend:ci
+          .
+
+      - name: Assert frontend image environment boundary
+        working-directory: ${{ github.workspace }}
+        run: >-
+          docker run --rm --entrypoint /bin/sh openslate-frontend:ci -c
+          'test "$NEXT_PUBLIC_SUPABASE_URL" = "https://example.invalid" &&
+          test "$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" = "sb_publishable_ci" &&
+          test -z "${BACKEND_URL+x}"'
 
       - name: Run end-to-end tests
         run: npm run test:e2e

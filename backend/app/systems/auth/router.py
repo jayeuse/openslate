@@ -7,9 +7,10 @@ from app.common.dependencies import get_current_user, require_roles
 from app.core.database import get_db
 from app.systems.auth.schemas import InvitationCreate
 from app.systems.users.models import User, UserRole
+from app.systems.users.permissions import effective_permissions
 from app.systems.users.router import roles_router
 from app.systems.users.router import router as users_router
-from app.systems.users.schemas import UserResponse
+from app.systems.users.schemas import AuthMeResponse, UserResponse
 from app.systems.users.service import InvitationConflict, InvitationError, invite_user
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
@@ -36,9 +37,15 @@ def invite(
         ) from error
 
 
-@auth_router.get("/me", response_model=UserResponse)
-def me(user: Annotated[User, Depends(get_current_user)]) -> User:
-    return user
+@auth_router.get("/me", response_model=AuthMeResponse)
+def me(user: Annotated[User, Depends(get_current_user)]) -> AuthMeResponse:
+    return AuthMeResponse.model_validate(
+        {
+            **UserResponse.model_validate(user).model_dump(),
+            "role": user.role.role,
+            "permissions": effective_permissions(user.role),
+        }
+    )
 
 
 # The current application registration includes only this exported router.

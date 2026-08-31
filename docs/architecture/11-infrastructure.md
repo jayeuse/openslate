@@ -20,7 +20,7 @@ there is no checked-in application Compose file or container orchestration layer
 ```mermaid
 flowchart LR
     browser["Browser"] -->|HTTP :3000| frontend["Next.js frontend\n127.0.0.1:3000"]
-    frontend -->|BFF and rewrites\nBACKEND_URL| backend["FastAPI backend\n127.0.0.1:8000"]
+    frontend -->|BFF\nBACKEND_URL| backend["FastAPI backend\n127.0.0.1:8000"]
     backend -->|DATABASE_URL\nopenslate_runtime| postgres["PostgreSQL 17\n127.0.0.1:54322"]
     backend -->|SUPABASE_URL + server credential| supabase["Supabase local API\n:54321"]
     browser -->|publishable key\nprivate Broadcast| supabase
@@ -37,7 +37,7 @@ not a report of a currently running process.
 
 | Service or surface                       | Local binding                                                               | State                            | Concrete source and boundary                                                                                                                                                                     |
 | ---------------------------------------- | --------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Next.js development server               | `127.0.0.1:3000`                                                            | Implemented                      | Root `README.md` starts `npm run dev -- --hostname 127.0.0.1`; `frontend/next.config.ts` supplies backend rewrites.                                                                              |
+| Next.js development server               | `127.0.0.1:3000`                                                            | Implemented                      | Root `README.md` starts `npm run dev -- --hostname 127.0.0.1`; application data uses the `/bff/*` Route Handler.                                                                                 |
 | FastAPI/Uvicorn                          | `127.0.0.1:8000` in the host workflow                                       | Implemented                      | `backend/app/main.py:app`; root `README.md` starts Uvicorn on port 8000.                                                                                                                         |
 | Supabase API gateway, including Auth API | `127.0.0.1:54321`                                                           | Implemented                      | `[api].port` and `[auth].enabled` in `supabase/config.toml`; `SUPABASE_URL` is consumed by `backend/app/core/integrations/supabase.py`.                                                          |
 | PostgreSQL 17                            | `127.0.0.1:54322`                                                           | Implemented                      | `[db].major_version` and `[db].port`; backend runtime and migration URLs use this local database.                                                                                                |
@@ -60,15 +60,17 @@ not define container names, host volume mappings, or a second database service.
    `frontend/src/app/bff/[...path]/route.ts` reads the access cookie, forwards
    selected headers and the access token to `BACKEND_URL`, retries one backend
    `401` with a Supabase refresh, and clears cookies on failed refresh. The
-   Next.js rewrites in `frontend/next.config.ts` also map `/api/*` and backend
-   documentation paths to the backend URL.
+   frontend has no direct Next.js `/api/*` or backend documentation rewrites.
 3. **Backend to database.** FastAPI creates its SQLAlchemy engine from
    `DATABASE_URL` (`backend/app/core/database/session.py:get_engine`). The
    runtime login is the provisioned `openslate_runtime` role, which inherits
    `openslate_app`; migrations use the owner-capable
    `MIGRATION_DATABASE_URL` path instead.
 
-   Provisioning verifies unsafe direct role attributes and grants `openslate_app`, but it does not enumerate or remove unexpected pre-existing role memberships.
+    Provisioning verifies the constrained runtime and `openslate_app` role
+    attributes, creates a non-delegable direct membership edge with
+    `INHERIT TRUE`/`SET FALSE` when the catalog supports those options, and
+    fails on any unexpected recursive membership without revoking drift.
 
 4. **Backend to Supabase control surfaces.**
    `backend/app/core/integrations/supabase.py:SupabaseAdminClient` uses the
@@ -112,15 +114,17 @@ the checked-in local platform:
 The documented sequence in `README.md` and `AGENTS.md` is:
 
 1. From the repository root, run `supabase start`.
-2. Run `supabase status -o env` and map the non-secret names to the ignored
-   root `.env`; do not commit the status output.
+2. Run `supabase status -o env` and map the values to the ignored root `.env`
+   for backend and migration commands; do not commit the status output.
 3. From `backend/`, run `uv sync` and `uv run alembic upgrade head`.
 4. Run `uv run python scripts/provision_database_role.py`, then point
    `DATABASE_URL` at the provisioned runtime login.
 5. Run `uv run python scripts/bootstrap_admin.py --email <email> --username
 <username>` and retrieve the invitation in Mailpit.
 6. Start FastAPI/Uvicorn in `backend/`.
-7. Export the root environment in `frontend/` and start Next.js.
+7. In `frontend/`, copy `.env.example` to `.env.local`, keep only the backend
+   URL, public Supabase values, and optional purge flag there, then run `npm ci`
+   and start Next.js without sourcing the root `.env`.
 
 Uvicorn import does not run migrations, database-role provisioning, or admin
 bootstrap: `backend/app/main.py` has no lifespan or startup hook. To stop the

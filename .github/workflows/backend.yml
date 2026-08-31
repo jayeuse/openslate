@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "infra/docker/backend.Dockerfile"
+      - ".dockerignore"
       - "supabase/**"
       - ".env.example"
       - ".github/workflows/backend.yml"
@@ -11,6 +13,8 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "infra/docker/backend.Dockerfile"
+      - ".dockerignore"
       - "supabase/**"
       - ".env.example"
       - ".github/workflows/backend.yml"
@@ -92,6 +96,10 @@ jobs:
 
       - name: Run backend tests, including PostgreSQL integration tests
         run: uv run pytest
+
+      - name: Build backend Docker image
+        working-directory: ${{ github.workspace }}
+        run: docker build --file infra/docker/backend.Dockerfile --tag openslate-backend:ci .
 
       - name: Stop local Supabase
         if: always()

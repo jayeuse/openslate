@@ -23,9 +23,8 @@ response:
 The handler is an in-process constant response and does not check PostgreSQL,
 Supabase Auth, Realtime, Storage, migrations, or the runtime role. The direct
 backend URL is `http://localhost:8000/api/health` in the documented local
-workflow. `frontend/next.config.ts` also has a general `/api/:path*` rewrite to
-the backend URL, but the application health implementation belongs to
-FastAPI.
+workflow. No Next.js `/api` rewrite exposes it; the application health
+implementation belongs to FastAPI, whose hosted service remains private.
 
 There is no separate readiness endpoint, dependency check, health probe route,
 or Docker `HEALTHCHECK` instruction in either image:

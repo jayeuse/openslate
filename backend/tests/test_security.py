@@ -75,9 +75,9 @@ def test_current_user_loads_same_id_active_profile(monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.parametrize(
     ("status", "deleted"),
-    [("pending", False), ("active", True)],
+    [("pending", False), ("disabled", False), ("active", True)],
 )
-def test_current_user_rejects_pending_or_deleted_profile(
+def test_current_user_rejects_inactive_or_deleted_profile(
     monkeypatch: pytest.MonkeyPatch,
     status: str,
     deleted: bool,

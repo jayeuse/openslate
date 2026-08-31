@@ -13,9 +13,13 @@
 - **Sensitive** values below are named only; this document contains no real key,
   password, token, or connection-string value.
 
-The root `.env` is ignored by Git. `.env.example` contains placeholders only.
-`supabase status -o env` is the local source for generated connection and key
-names; its output is not a configuration file to commit. Backend
+The root `.env` is ignored by Git. `.env.example` contains placeholders only
+and is for backend and migration/operations commands. The frontend must not
+source the root `.env`: copy `frontend/.env.example` to `frontend/.env.local`
+and keep only `BACKEND_URL`, public Supabase values, and the optional purge flag
+there. `npm ci` runs without backend secrets. `supabase status -o env` is the
+local source for generated connection and key names; its output is not a
+configuration file to commit. Backend
 `SettingsConfigDict` reads `../.env` and `.env` from the backend working
 directory and ignores extra variables (`backend/app/core/config/settings.py`).
 The role-provisioning script reads required values directly from its process
@@ -35,7 +39,7 @@ required by a specific integration path.
 | `MIGRATION_DATABASE_URL`      | Optional in `Settings`; falls back to `DATABASE_URL` for Alembic; required by role provisioning         | Yes: owner connection URL                 | `backend/migrations/env.py`; `provision_database_role.py:_required_environment`.                                                       |
 | `OPENSLATE_DATABASE_PASSWORD` | Required by `provision_database_role.py`; no default                                                    | Yes                                       | `backend/scripts/provision_database_role.py`; used to create or alter `openslate_runtime`, never printed.                              |
 | `SUPABASE_URL`                | Optional in `Settings`; required for configured Supabase Auth/Admin/Realtime operation                  | No                                        | `Settings.supabase_url`; `SupabaseAdminClient`; JWT JWKS fallback; local `.env.example` maps it from CLI `API_URL`.                    |
-| `SUPABASE_PUBLISHABLE_KEY`    | Optional backend field; required by frontend public-key client through its alias                        | No: publishable by design                 | Backend compatibility/config field; root `.env.example` maps CLI `ANON_KEY`; frontend receives `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. |
+| `SUPABASE_PUBLISHABLE_KEY`    | Optional backend field; required by frontend public-key client through its alias                        | No: publishable by design                 | Backend compatibility/config field; root `.env.example` maps CLI `ANON_KEY`; `frontend/.env.local` receives the corresponding public value as `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. |
 | `SUPABASE_ANON_KEY`           | Optional compatibility alias for `SUPABASE_PUBLISHABLE_KEY`                                             | No                                        | `Settings.supabase_publishable_key` via `AliasChoices`; not the preferred example name.                                                |
 | `SUPABASE_SECRET_KEY`         | Optional in `Settings`; required for server-side invitation, Auth administration, and backend Broadcast | Yes: server-only service key              | `backend/app/core/integrations/supabase.py:SupabaseAdminClient`; never passed to browser code.                                         |
 | `SUPABASE_AUTH_REDIRECT_URL`  | Optional in `Settings`; required by `SupabaseAdminClient.invite_user`                                   | No                                        | Invitation `redirect_to` in `backend/app/core/integrations/supabase.py`; local example points to `/auth/callback`.                     |
@@ -69,16 +73,18 @@ following names without recording their values:
 
 | Setting                                | Required/default                                                                                 | Sensitive                               | Read site and effect                                                                                                                                                                    |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BACKEND_URL`                          | Optional; default `http://localhost:8000`                                                        | No: internal endpoint, not a credential | `frontend/next.config.ts` rewrites and `frontend/src/app/bff/[...path]/route.ts`; the rewrite destination is evaluated by Next configuration and the BFF reads the process environment. |
+| `BACKEND_URL`                          | Optional; default `http://localhost:8000`                                                        | No: internal endpoint, not a credential | `frontend/src/app/bff/[...path]/route.ts`; runtime-only upstream for browser application data under `/bff/*`.                                                                           |
 | `NEXT_PUBLIC_SUPABASE_URL`             | Required by `requiredPublicEnv`; no default                                                      | No                                      | `frontend/src/lib/supabase/server.ts`, `frontend/src/proxy.ts`, and `frontend/src/components/realtime-provider.tsx`; public client endpoint.                                            |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Required by `requiredPublicEnv`; no default                                                      | No: publishable by design               | Same frontend Supabase client and Realtime provider sites; root `.env.example` derives it from `SUPABASE_PUBLISHABLE_KEY`.                                                              |
-| `NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED`  | Optional; effective default false because code checks equality with `"true"`                     | No                                      | `frontend/src/components/lifecycle-dialog.tsx`; controls the visible purge option independently of the backend flag. It is absent from `.env.example`.                                  |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Required by `requiredPublicEnv`; no default                                                      | No: publishable by design               | Same frontend Supabase client and Realtime provider sites; supplied by `frontend/.env.local` from the frontend example.                                                                  |
+| `NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED`  | Optional; effective default false because code checks equality with `"true"`                     | No                                      | `frontend/src/components/lifecycle-dialog.tsx`; optional UI visibility flag supplied only in the frontend environment. It remains off in the supported deployment contract.             |
 | `NODE_ENV`                             | Framework-controlled; development/production behavior, no application default in this repository | No                                      | `frontend/src/lib/auth-cookies.ts` sets `Secure` in production; `frontend/src/proxy.ts` permits development CSP behavior. The image sets `NODE_ENV=production`.                         |
 | `BASE_URL`                             | Optional; default `http://localhost:3000`                                                        | No                                      | `frontend/playwright.config.ts`; Playwright base URL and web-server URL.                                                                                                                |
 | `CI`                                   | Optional; absent behaves as false                                                                | No                                      | `frontend/playwright.config.ts`; enables CI retries, multi-browser projects, list plus HTML reporting, and production server selection.                                                 |
 | `PLAYWRIGHT_USE_PRODUCTION`            | Optional; effective false outside CI, true when exactly `1`                                      | No                                      | `frontend/playwright.config.ts`; selects `npm run start` instead of `npm run dev`.                                                                                                      |
 
-The public aliases do not make the Supabase secret available to the browser.
+The public aliases do not make the Supabase secret available to the browser. No
+direct Next `/api` or API documentation rewrites are configured; FastAPI is the
+upstream application API behind the BFF.
 The browser-facing code contains no `SUPABASE_SECRET_KEY` read.
 
 ## Supabase CLI configuration inventory — Configured
@@ -161,9 +167,12 @@ These are not secrets and are not environment substitutions:
 - `backend/alembic.ini` sends logs to stderr with root and SQLAlchemy level
   `WARN`, Alembic level `INFO`, and format `%(levelname)-5.5s [%(name)s] %(message)s`.
 - `frontend/next.config.ts` sets standalone output, React strict mode, typed
-  routes, backend/docs rewrites, and fixed response security headers.
-- `infra/docker/frontend.Dockerfile` sets `NEXT_TELEMETRY_DISABLED=1`, `NODE_ENV=production`,
-  `HOSTNAME=0.0.0.0`, and `PORT=3000` in its build/runtime stages.
+  routes, and fixed response security headers; it has no backend or API-docs
+  rewrites.
+- `infra/docker/frontend.Dockerfile` requires public Supabase build arguments,
+  keeps `BACKEND_URL` runtime-only, and sets `NEXT_TELEMETRY_DISABLED=1`,
+  `NODE_ENV=production`, `HOSTNAME=0.0.0.0`, and `PORT=3000` in its build/runtime
+  stages.
 - `infra/docker/backend.Dockerfile` sets `PYTHONDONTWRITEBYTECODE=1`, `PYTHONUNBUFFERED=1`,
   `UV_COMPILE_BYTECODE=1`, `UV_LINK_MODE=copy`, and the virtualenv `PATH`.
 - `frontend/package.json` requires Node `>=24.0.0`; the frontend workflow and

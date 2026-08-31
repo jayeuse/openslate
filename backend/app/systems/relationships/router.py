@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_roles
+from app.common.dependencies import require_capability
 from app.core.database import get_db
 from app.systems.relationships.schemas import (
     RelationshipAssignment,
@@ -32,10 +32,12 @@ from app.systems.relationships.service import (
 from app.systems.relationships.service import (
     unlink_relationship as unlink_relationship_service,
 )
-from app.systems.users.models import User, UserRole
+from app.systems.users.models import User
+from app.systems.users.permissions import Capability
 
 router = APIRouter(prefix="/relationships", tags=["relationships"])
-AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+RelationshipReadUser = Annotated[User, Depends(require_capability(Capability.RELATIONSHIPS_READ))]
+RelationshipWriteUser = Annotated[User, Depends(require_capability(Capability.RELATIONSHIPS_WRITE))]
 
 
 def _raise_service_error(error: RelationshipError) -> HTTPException:
@@ -44,7 +46,7 @@ def _raise_service_error(error: RelationshipError) -> HTTPException:
 
 @router.get("", response_model=RelationshipListResponse)
 def list_relationships(
-    _: AdminUser,
+    _: RelationshipReadUser,
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[RelationshipListRequest, Query()],
 ) -> RelationshipListResponse:
@@ -58,7 +60,7 @@ def list_relationships(
 @router.get("/{relationship_id}", response_model=RelationshipResponse)
 def get_relationship(
     relationship_id: UUID,
-    _: AdminUser,
+    _: RelationshipReadUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> RelationshipResponse:
     try:
@@ -70,7 +72,7 @@ def get_relationship(
 @router.post("", response_model=RelationshipResponse, status_code=status.HTTP_201_CREATED)
 def create_relationship(
     payload: RelationshipCreate,
-    _: AdminUser,
+    _: RelationshipWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> RelationshipResponse:
     try:
@@ -89,7 +91,7 @@ def create_relationship(
 @router.delete("/{relationship_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_relationship(
     relationship_id: UUID,
-    _: AdminUser,
+    _: RelationshipWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     try:
@@ -107,7 +109,7 @@ def assign_relationship(
     field_id: UUID,
     source_record_id: UUID,
     payload: RelationshipAssignment,
-    _: AdminUser,
+    _: RelationshipWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> RelationshipResponse | None:
     try:

@@ -8,13 +8,11 @@ export default function AccessRestrictedPage() {
         <div className="bg-accent text-accent-foreground mx-auto grid size-14 place-items-center rounded-full">
           <LockKeyhole />
         </div>
-        <h1 className="mt-6 text-2xl font-semibold">
-          Administrator access required
-        </h1>
+        <h1 className="mt-6 text-2xl font-semibold">Access restricted</h1>
         <p className="text-muted-foreground mt-3 text-sm leading-6">
-          Your account is authenticated, but the current API authorizes
-          operational data for the exact admin role only. Ask an administrator
-          to update the backend authorization model.
+          Your account is authenticated, but your role does not grant the
+          capability required for this area. Ask an administrator to review your
+          role permissions.
         </p>
         <Button asChild className="mt-6">
           <a href="/login">Return to sign in</a>

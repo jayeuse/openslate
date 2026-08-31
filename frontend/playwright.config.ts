@@ -3,6 +3,29 @@ import { defineConfig, devices } from "@playwright/test";
 const isCI = Boolean(process.env.CI);
 const useProductionServer =
   isCI || process.env.PLAYWRIGHT_USE_PRODUCTION === "1";
+const frontendEnvironment: Record<string, string> = {};
+for (const name of [
+  "BACKEND_URL",
+  "NEXT_PUBLIC_SUPABASE_URL",
+  "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+  "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED",
+] as const) {
+  const value = process.env[name];
+  if (value !== undefined) frontendEnvironment[name] = value;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function isolatedCommand(command: string): string {
+  const path = process.env.PATH;
+  const pathAssignment = path === undefined ? [] : [`PATH=${shellQuote(path)}`];
+  const environment = Object.entries(frontendEnvironment).map(
+    ([name, value]) => `${name}=${shellQuote(value)}`,
+  );
+  return ["env", "-i", ...pathAssignment, ...environment, command].join(" ");
+}
 
 export default defineConfig({
   testDir: "./tests",
@@ -31,8 +54,11 @@ export default defineConfig({
       : []),
   ],
   webServer: {
-    command: useProductionServer ? "npm run start" : "npm run dev",
+    command: isolatedCommand(
+      useProductionServer ? "npm run start" : "npm run dev",
+    ),
     url: process.env.BASE_URL ?? "http://localhost:3000",
+    env: frontendEnvironment,
     reuseExistingServer: !isCI,
     timeout: 120_000,
   },

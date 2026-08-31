@@ -64,10 +64,10 @@ def test_built_in_role_permissions_can_be_updated() -> None:
     db = Mock(spec=Session)
     db.get.return_value = role
 
-    updated = update_role(role.id, RoleUpdate(permissions={"admin": True}), role, db)
+    updated = update_role(role.id, RoleUpdate(permissions={"records.read": True}), role, db)
 
     assert updated is role
-    assert role.permissions == {"admin": True}
+    assert role.permissions == {"records.read": True}
     db.commit.assert_called_once()
 
 

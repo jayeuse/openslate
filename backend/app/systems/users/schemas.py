@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.common.normalization import normalize_email, normalize_username
 from app.systems.users.models import UserStatus
+from app.systems.users.permissions import validate_permissions
 
 
 class RoleCreate(BaseModel):
@@ -17,6 +18,11 @@ class RoleCreate(BaseModel):
     def trim_role(cls, value: Any) -> Any:
         return value.strip() if isinstance(value, str) else value
 
+    @field_validator("permissions")
+    @classmethod
+    def validate_permission_document(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_permissions(value)
+
 
 class RoleUpdate(BaseModel):
     role: str | None = Field(default=None, min_length=1, max_length=100)
@@ -27,6 +33,10 @@ class RoleUpdate(BaseModel):
     def trim_role(cls, value: Any) -> Any:
         return value.strip() if isinstance(value, str) else value
 
+    @field_validator("permissions")
+    @classmethod
+    def validate_permission_document(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_permissions(value)
 
 
 class RoleResponse(BaseModel):
@@ -55,6 +65,11 @@ class UserResponse(BaseModel):
     performed_by: UUID | None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AuthMeResponse(UserResponse):
+    role: str
+    permissions: list[str]
 
 
 class UserCreate(BaseModel):
