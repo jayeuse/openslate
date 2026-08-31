@@ -282,6 +282,23 @@ test.describe("record form invalidation", () => {
     expect(mutations).toEqual([]);
   });
 
+  test("shows client errors and does not request an invalid record edit", async ({
+    page,
+  }) => {
+    const mutations = await installMocks(page);
+
+    await page.goto(
+      `/departments/${DEPARTMENT_ID}/modules/${MODULE_ID}/records/${RECORD_ID}/edit`,
+    );
+    await page.getByLabel("Name").fill("");
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+
+    await expect(page.getByText("Name is required")).toBeVisible();
+    expect(mutations).toEqual([]);
+  });
+
   test("preserves the instant when editing an unrelated text field", async ({
     page,
   }) => {

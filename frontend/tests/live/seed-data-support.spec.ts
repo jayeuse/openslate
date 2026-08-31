@@ -5,10 +5,19 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { LIVE_CATALOG, createRuntimeCatalog } from "./support/catalog";
-import { createLiveApiClient } from "./support/api";
+import {
+  LIVE_CATALOG,
+  createRuntimeCatalog,
+  type RelationshipDefinition,
+} from "./support/catalog";
+import {
+  createLiveApiClient,
+  type LiveApiClient,
+  type LiveRelationship,
+} from "./support/api";
 import {
   createManifest,
+  readManifest,
   updateManifest,
   type LiveOperation,
 } from "./support/manifest";
@@ -17,7 +26,14 @@ import {
   relationshipAssignments,
 } from "./support/seed-helpers";
 import { LIVE_BEARER_TOKEN_SENTINEL } from "./support/sanitize";
-import { reconstructSeedMaps, targetRecordCount } from "./seed-data";
+import {
+  reconstructSeedMaps,
+  seedRecordsForDepartment,
+  seedRelationshipsForDepartment,
+  targetRecordCount,
+  type DepartmentSeedContext,
+  type ReconstructedSeedMaps,
+} from "./seed-data";
 import { writeLiveReport, type LiveIntegritySummary } from "./support/report";
 import { runtimeNamespaceForRunId } from "./support/preflight";
 
@@ -25,6 +41,10 @@ const RUN_ID = "run-20260830-001-00000000000000000000000000000001";
 const MAPS_RUN_ID = "run-20260830-011-00000000000000000000000000000011";
 const REPORT_RUN_ID = "run-20260830-012-00000000000000000000000000000012";
 const STATE_RUN_ID = "run-20260830-013-00000000000000000000000000000013";
+const DEPARTMENT_RECORD_RUN_ID =
+  "run-20260830-014-00000000000000000000000000000014";
+const DEPARTMENT_RELATIONSHIP_RUN_ID =
+  "run-20260830-015-00000000000000000000000000000015";
 const NAMESPACE = "live-seed-support";
 
 function canonicalTestId(label: string): string {
@@ -126,6 +146,159 @@ async function makeSchemaManifest(resultsRoot: string, runId: string) {
     (manifest) => ({ ...manifest, operations }),
     resultsRoot,
   );
+}
+
+type CapturedRequest = Readonly<{
+  url: string;
+  init?: RequestInit;
+}>;
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requestBody(init?: RequestInit): Record<string, unknown> {
+  if (typeof init?.body !== "string") throw new Error("JSON body is missing");
+  const body: unknown = JSON.parse(init.body);
+  if (!isObjectRecord(body)) throw new Error("JSON body is not an object");
+  return body;
+}
+
+function responseBase(id: string) {
+  return {
+    id,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    deleted_at: null,
+    is_deleted: false,
+    performed_by: null,
+  } as const;
+}
+
+function relationshipResponse(
+  id: string,
+  fieldId: string,
+  sourceRecordId: string,
+  targetRecordId: string,
+): LiveRelationship {
+  return {
+    ...responseBase(id),
+    field_id: fieldId,
+    source_record_id: sourceRecordId,
+    target_record_id: targetRecordId,
+    visibility: "available",
+    hidden_reasons: [],
+  };
+}
+
+function jsonResponse(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), { status });
+}
+
+function stringValue(body: Record<string, unknown>, key: string): string {
+  const value = body[key];
+  if (typeof value !== "string")
+    throw new Error(`Missing string body field: ${key}`);
+  return value;
+}
+
+function createSeedApi(
+  requests: CapturedRequest[],
+  existingByField: ReadonlyMap<string, readonly LiveRelationship[]> = new Map(),
+): LiveApiClient {
+  let created = 0;
+  return createLiveApiClient(
+    "http://127.0.0.1:8000",
+    undefined,
+    async (url, init) => {
+      requests.push({ url, init });
+      const requestUrl = new URL(url);
+      const method = init?.method ?? "GET";
+      if (method === "GET") {
+        const fieldId = requestUrl.searchParams.get("field_id");
+        if (!fieldId) throw new Error("Relationship field ID is missing");
+        const items = existingByField.get(fieldId) ?? [];
+        return new Response(
+          JSON.stringify({
+            items,
+            pagination: {
+              limit: 100,
+              offset: 0,
+              count: items.length,
+              total: items.length,
+              has_more: false,
+            },
+          }),
+        );
+      }
+
+      const body = requestBody(init);
+      if (method === "POST" && requestUrl.pathname === "/api/records") {
+        return new Response(
+          JSON.stringify({
+            ...responseBase(canonicalTestId(`seed-response:${created++}`)),
+            module_id: stringValue(body, "module_id"),
+            data: body.data,
+          }),
+          { status: 201 },
+        );
+      }
+
+      if (method === "POST" && requestUrl.pathname === "/api/relationships") {
+        return jsonResponse(
+          relationshipResponse(
+            canonicalTestId(`seed-response:${created++}`),
+            stringValue(body, "field_id"),
+            stringValue(body, "source_record_id"),
+            stringValue(body, "target_record_id"),
+          ),
+          201,
+        );
+      }
+
+      const pathParts = requestUrl.pathname.split("/");
+      if (method === "PUT" && pathParts[4] && pathParts[6]) {
+        return jsonResponse(
+          relationshipResponse(
+            canonicalTestId(`seed-response:${created++}`),
+            pathParts[4],
+            pathParts[6],
+            stringValue(body, "target_record_id"),
+          ),
+        );
+      }
+
+      throw new Error("Unexpected seed request");
+    },
+  );
+}
+
+function departmentContext(
+  api: LiveApiClient,
+  runId: string,
+  resultsRoot: string,
+  moduleIds: ReadonlyMap<string, string>,
+  primitiveFieldIdsByModule: ReadonlyMap<string, ReadonlyMap<string, string>>,
+  relationshipFieldIds: ReadonlyMap<string, string>,
+  uiRecordIdsByModule: ReadonlyMap<string, readonly string[]>,
+  relationships: readonly RelationshipDefinition[],
+): DepartmentSeedContext {
+  return {
+    api,
+    runId,
+    resultsRoot,
+    moduleIds,
+    primitiveFieldIdsByModule,
+    relationshipFieldIds,
+    uiRecordIdsByModule,
+    relationships,
+  };
+}
+
+function departmentFor(maps: ReconstructedSeedMaps, key: string) {
+  const department = maps.runtime.departments.find((item) => item.key === key);
+  if (!department) throw new Error(`Runtime department is missing: ${key}`);
+  return department;
 }
 
 test.describe("bulk seed pure and mocked support", () => {
@@ -279,6 +452,219 @@ test.describe("bulk seed pure and mocked support", () => {
     await expect(errorClient.post("/records", {})).rejects.not.toThrow(
       "do-not-leak",
     );
+  });
+
+  test("seeds records for one catalog department without replacing UI records", async () => {
+    const resultsRoot = await mkdtemp(
+      join(tmpdir(), "openslate-department-records-"),
+    );
+    const runId = DEPARTMENT_RECORD_RUN_ID;
+    try {
+      await makeSchemaManifest(resultsRoot, runId);
+      const maps = await reconstructSeedMaps(runId, resultsRoot);
+      const department = departmentFor(maps, "operations");
+      const requests: CapturedRequest[] = [];
+      const recordIds = await seedRecordsForDepartment(
+        department,
+        departmentContext(
+          createSeedApi(requests),
+          runId,
+          resultsRoot,
+          maps.moduleIds,
+          maps.primitiveFieldIdsByModule,
+          maps.relationshipFieldIds,
+          maps.uiRecordIdsByModule,
+          maps.runtime.relationships,
+        ),
+        "standard",
+      );
+
+      expect([...recordIds.keys()]).toEqual(department.moduleKeys);
+      const moduleIds = new Set<string>();
+      let expectedRequestCount = 0;
+      for (const catalogModule of department.modules) {
+        const moduleId = maps.moduleIds.get(catalogModule.key);
+        const uiRecordIds = maps.uiRecordIdsByModule.get(catalogModule.key);
+        if (!moduleId || !uiRecordIds) {
+          throw new Error(
+            `Record seed prerequisites are missing: ${catalogModule.key}`,
+          );
+        }
+        const target = targetRecordCount("standard", catalogModule.order);
+        expect(recordIds.get(catalogModule.key)).toHaveLength(target);
+        expect(recordIds.get(catalogModule.key)?.slice(0, 2)).toEqual(
+          uiRecordIds,
+        );
+        moduleIds.add(moduleId);
+        expectedRequestCount += target - 2;
+      }
+      expect(requests).toHaveLength(expectedRequestCount);
+      expect(
+        requests.every((request) =>
+          moduleIds.has(stringValue(requestBody(request.init), "module_id")),
+        ),
+      ).toBe(true);
+
+      const manifest = await readManifest(runId, resultsRoot);
+      const bulkOperations = manifest.operations.filter((operation) =>
+        operation.id.startsWith("bulk-record:"),
+      );
+      const expectedOperationIds = department.modules.flatMap((catalogModule) =>
+        Array.from(
+          {
+            length: targetRecordCount("standard", catalogModule.order) - 2,
+          },
+          (_, index) => `bulk-record:${catalogModule.key}:${index + 3}`,
+        ),
+      );
+      expect(bulkOperations.map((operation) => operation.id)).toEqual(
+        expectedOperationIds,
+      );
+      expect(
+        bulkOperations.every(
+          (operation) =>
+            operation.operation === "create_record" &&
+            operation.entity_type === "record" &&
+            operation.parent_id ===
+              `module:${operation.id
+                .slice("bulk-record:".length)
+                .replace(/:\d+$/, "")}`,
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(resultsRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("seeds only same-department relationships and skips an existing assignment", async () => {
+    const resultsRoot = await mkdtemp(
+      join(tmpdir(), "openslate-department-relationships-"),
+    );
+    const runId = DEPARTMENT_RELATIONSHIP_RUN_ID;
+    try {
+      await makeSchemaManifest(resultsRoot, runId);
+      const maps = await reconstructSeedMaps(runId, resultsRoot);
+      const department = departmentFor(maps, "human-resources");
+      const departmentModuleKeys = new Set(department.moduleKeys);
+      const relationships = maps.runtime.relationships.filter(
+        (relationship) =>
+          departmentModuleKeys.has(relationship.sourceModuleKey) &&
+          departmentModuleKeys.has(relationship.targetModuleKey),
+      );
+      expect(relationships).toHaveLength(5);
+
+      const recordIds = new Map<string, readonly string[]>();
+      for (const catalogModule of department.modules) {
+        const ids = maps.uiRecordIdsByModule.get(catalogModule.key);
+        if (!ids)
+          throw new Error(`UI record IDs are missing: ${catalogModule.key}`);
+        recordIds.set(catalogModule.key, ids);
+      }
+
+      const duplicateFieldId = maps.relationshipFieldIds.get(
+        "employee-training-programs",
+      );
+      const duplicateSourceIds = recordIds.get("employees");
+      const duplicateTargetIds = recordIds.get("training-programs");
+      const duplicateSourceId = duplicateSourceIds?.[0];
+      const duplicateTargetId = duplicateTargetIds?.[0];
+      if (!duplicateFieldId || !duplicateSourceId || !duplicateTargetId) {
+        throw new Error("Duplicate relationship records are missing");
+      }
+      const existing = relationshipResponse(
+        canonicalTestId("existing-employee-training-programs"),
+        duplicateFieldId,
+        duplicateSourceId,
+        duplicateTargetId,
+      );
+      const existingByField = new Map<string, readonly LiveRelationship[]>([
+        [duplicateFieldId, [existing]],
+      ]);
+      const requests: CapturedRequest[] = [];
+      const created = await seedRelationshipsForDepartment(
+        department,
+        recordIds,
+        departmentContext(
+          createSeedApi(requests, existingByField),
+          runId,
+          resultsRoot,
+          maps.moduleIds,
+          maps.primitiveFieldIdsByModule,
+          maps.relationshipFieldIds,
+          maps.uiRecordIdsByModule,
+          maps.runtime.relationships,
+        ),
+      );
+
+      const expectedOperationIds = [
+        "bulk-relationship:employee-primary-payroll-record:0",
+        "bulk-relationship:employee-primary-payroll-record:1",
+        "bulk-relationship:employee-job-position:0",
+        "bulk-relationship:employee-job-position:1",
+        "bulk-relationship:employee-manager:0",
+        "bulk-relationship:employee-manager:1",
+        "bulk-relationship:department-directory-employees:0",
+        "bulk-relationship:department-directory-employees:1",
+        "bulk-relationship:employee-training-programs:0",
+        "bulk-relationship:employee-training-programs:1",
+        "bulk-relationship:employee-training-programs:2",
+      ];
+      expect(created).toBe(expectedOperationIds.length);
+
+      const discoveryFieldIds = requests
+        .filter((request) => request.init?.method === "GET")
+        .map((request) => new URL(request.url).searchParams.get("field_id"));
+      expect(discoveryFieldIds).toEqual(
+        relationships.map((relationship) =>
+          maps.relationshipFieldIds.get(relationship.key),
+        ),
+      );
+      const relationshipFieldIds = new Set(discoveryFieldIds);
+      expect(
+        requests.filter(
+          (request) =>
+            request.init?.method === "POST" || request.init?.method === "PUT",
+        ),
+      ).toHaveLength(created);
+      expect(
+        requests
+          .filter(
+            (request) =>
+              request.init?.method === "POST" || request.init?.method === "PUT",
+          )
+          .every((request) => {
+            const url = new URL(request.url);
+            const fieldId =
+              request.init?.method === "POST"
+                ? requestBody(request.init).field_id
+                : url.pathname.split("/")[4];
+            return (
+              typeof fieldId === "string" && relationshipFieldIds.has(fieldId)
+            );
+          }),
+      ).toBe(true);
+
+      const manifest = await readManifest(runId, resultsRoot);
+      const bulkOperations = manifest.operations.filter((operation) =>
+        operation.id.startsWith("bulk-relationship:"),
+      );
+      expect(bulkOperations.map((operation) => operation.id)).toEqual(
+        expectedOperationIds,
+      );
+      expect(
+        bulkOperations.every(
+          (operation) =>
+            operation.operation === "create_relationship_edge" &&
+            operation.entity_type === "relationship" &&
+            operation.parent_id ===
+              `field:${operation.id
+                .slice("bulk-relationship:".length)
+                .replace(/:\d+$/, "")}`,
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(resultsRoot, { recursive: true, force: true });
+    }
   });
 
   test("reconstructs exact schema, UI record, and relationship maps from operation IDs", async () => {

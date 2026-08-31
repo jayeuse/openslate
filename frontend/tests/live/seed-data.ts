@@ -1,5 +1,4 @@
 import {
-  assertActorMatchesManifest,
   beginOperation,
   finalizeOperation,
   liveResultsDirectory,
@@ -8,6 +7,7 @@ import {
 } from "./support/manifest";
 import {
   createRuntimeCatalog,
+  type CatalogDepartment,
   type CatalogModule,
   type RelationshipDefinition,
   type RuntimeCatalog,
@@ -15,17 +15,10 @@ import {
 import {
   isLiveRecord,
   isLiveRelationship,
-  isLiveUser,
   type LiveApiClient,
   type LiveRecord,
   type LiveRelationship,
 } from "./support/api";
-import {
-  getLiveSeedEnvironment,
-  acquireLiveLock,
-  validateRunId,
-  type LiveSeedEnvironment,
-} from "./support/preflight";
 import {
   mapSanityFormValuesToFields,
   recordPayloadFromFormValues,
@@ -33,8 +26,7 @@ import {
   type SeedFieldDescriptor,
 } from "./support/seed-helpers";
 import { assertCanonicalUuid } from "./support/manifest";
-import { withLiveAdminToken } from "./support/auth";
-import { writeLiveReport } from "./support/report";
+import { validateRunId } from "./support/preflight";
 
 export type LiveScale = "standard" | "extended";
 
@@ -55,18 +47,15 @@ export type ReconstructedSeedMaps = Readonly<{
   uiRelationshipIds: ReadonlyMap<string, string>;
 }>;
 
-export type SeedDataResult = Readonly<{
+export type DepartmentSeedContext = Readonly<{
+  api: LiveApiClient;
   runId: string;
-  scale: LiveScale;
-  targetRecordsPerModule: number;
-  createdRecords: number;
-  createdRelationships: number;
-  maps: ReconstructedSeedMaps;
-}>;
-
-export type SeedDataOptions = Readonly<{
-  scale?: LiveScale;
-  resultsRoot?: string;
+  resultsRoot: string;
+  moduleIds: ReadonlyMap<string, string>;
+  primitiveFieldIdsByModule: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  relationshipFieldIds: ReadonlyMap<string, string>;
+  uiRecordIdsByModule: ReadonlyMap<string, readonly string[]>;
+  relationships: readonly RelationshipDefinition[];
 }>;
 
 function isLiveScale(value: string | undefined): value is LiveScale {
@@ -231,9 +220,9 @@ export async function reconstructSeedMaps(
 
 function primitiveDescriptors(
   catalogModule: CatalogModule,
-  maps: ReconstructedSeedMaps,
+  context: DepartmentSeedContext,
 ): readonly SeedFieldDescriptor[] {
-  const ids = maps.primitiveFieldIdsByModule.get(catalogModule.key);
+  const ids = context.primitiveFieldIdsByModule.get(catalogModule.key);
   if (!ids)
     throw new Error(`Live primitive fields are missing: ${catalogModule.key}`);
   return catalogModule.primitiveFields.map((field) => {
@@ -264,21 +253,19 @@ function exactId(value: string, operation: string): string {
   return assertCanonicalUuid(value, `Live ${operation} response ID`);
 }
 
-async function createRecords(
-  api: LiveApiClient,
-  maps: ReconstructedSeedMaps,
-  environment: LiveSeedEnvironment,
+export async function seedRecordsForDepartment(
+  department: CatalogDepartment,
+  context: DepartmentSeedContext,
   scale: LiveScale,
-  resultsRoot: string,
 ): Promise<ReadonlyMap<string, readonly string[]>> {
   const recordIds = new Map<string, readonly string[]>();
-  for (const catalogModule of maps.runtime.modules) {
+  for (const catalogModule of department.modules) {
     const targetCount = targetRecordCount(scale, catalogModule.order);
-    const moduleId = maps.moduleIds.get(catalogModule.key);
+    const moduleId = context.moduleIds.get(catalogModule.key);
     if (!moduleId)
       throw new Error(`Live module ID is missing: ${catalogModule.key}`);
-    const descriptors = primitiveDescriptors(catalogModule, maps);
-    const existing = maps.uiRecordIdsByModule.get(catalogModule.key);
+    const descriptors = primitiveDescriptors(catalogModule, context);
+    const existing = context.uiRecordIdsByModule.get(catalogModule.key);
     if (!existing || existing.length !== 2) {
       throw new Error(
         `Live UI sanity records are missing: ${catalogModule.key}`,
@@ -290,12 +277,12 @@ async function createRecords(
         catalogModule,
         descriptors,
         recordNumber,
-        environment.runId,
+        context.runId,
       );
       const data = recordPayloadFromFormValues(descriptors, formValues);
       const operationId = `bulk-record:${catalogModule.key}:${recordNumber}`;
       await beginOperation(
-        environment.runId,
+        context.runId,
         {
           id: operationId,
           parent_id: `module:${catalogModule.key}`,
@@ -303,9 +290,9 @@ async function createRecords(
           entity_type: "record",
           evidence: [],
         },
-        resultsRoot,
+        context.resultsRoot,
       );
-      const body: LiveRecord = await api.post<LiveRecord>(
+      const body: LiveRecord = await context.api.post<LiveRecord>(
         "/records",
         { module_id: moduleId, data },
         isLiveRecord,
@@ -318,10 +305,10 @@ async function createRecords(
       const recordId = exactId(body.id, "record creation");
       ids.push(recordId);
       await finishBulkMutation(
-        environment.runId,
+        context.runId,
         operationId,
         recordId,
-        resultsRoot,
+        context.resultsRoot,
         201,
         "POST",
       );
@@ -373,16 +360,20 @@ function shouldSkipAssignment(
   );
 }
 
-async function createRelationships(
-  api: LiveApiClient,
-  maps: ReconstructedSeedMaps,
+export async function seedRelationshipsForDepartment(
+  department: CatalogDepartment,
   recordIds: ReadonlyMap<string, readonly string[]>,
-  environment: LiveSeedEnvironment,
-  resultsRoot: string,
+  context: DepartmentSeedContext,
 ): Promise<number> {
   let created = 0;
-  for (const relationship of maps.runtime.relationships) {
-    const fieldId = maps.relationshipFieldIds.get(relationship.key);
+  const departmentModuleKeys = new Set(department.moduleKeys);
+  const departmentRelationships = context.relationships.filter(
+    (relationship) =>
+      departmentModuleKeys.has(relationship.sourceModuleKey) &&
+      departmentModuleKeys.has(relationship.targetModuleKey),
+  );
+  for (const relationship of departmentRelationships) {
+    const fieldId = context.relationshipFieldIds.get(relationship.key);
     const sourceIds = recordIds.get(relationship.sourceModuleKey);
     const targetIds = recordIds.get(relationship.targetModuleKey);
     if (!fieldId || !sourceIds || !targetIds) {
@@ -390,7 +381,7 @@ async function createRelationships(
         `Live relationship seed prerequisites are missing: ${relationship.key}`,
       );
     }
-    const existing = [...(await discoverRelationships(api, fieldId))];
+    const existing = [...(await discoverRelationships(context.api, fieldId))];
     const sameModule =
       relationship.sourceModuleKey === relationship.targetModuleKey;
     const assignments = relationshipAssignments(
@@ -419,7 +410,7 @@ async function createRelationships(
       sequence += 1;
       let edge: LiveRelationship;
       await beginOperation(
-        environment.runId,
+        context.runId,
         {
           id: mutationId,
           parent_id: `field:${relationship.key}`,
@@ -427,16 +418,16 @@ async function createRelationships(
           entity_type: "relationship",
           evidence: [],
         },
-        resultsRoot,
+        context.resultsRoot,
       );
       if (relationship.multipleTargets === false) {
-        edge = await api.put(
+        edge = await context.api.put(
           `/relationships/fields/${fieldId}/sources/${sourceRecordId}`,
           { target_record_id: targetRecordId },
           isLiveRelationship,
         );
       } else {
-        edge = await api.post(
+        edge = await context.api.post(
           "/relationships",
           {
             field_id: fieldId,
@@ -457,10 +448,10 @@ async function createRelationships(
       }
       existing.push(edge);
       await finishBulkMutation(
-        environment.runId,
+        context.runId,
         mutationId,
         exactId(edge.id, "relationship creation"),
-        resultsRoot,
+        context.resultsRoot,
         relationship.multipleTargets === false ? 200 : 201,
         relationship.multipleTargets === false ? "PUT" : "POST",
       );
@@ -469,74 +460,3 @@ async function createRelationships(
   }
   return created;
 }
-
-export async function seedLiveData(
-  environment: LiveSeedEnvironment = getLiveSeedEnvironment(),
-  options: SeedDataOptions = {},
-): Promise<SeedDataResult> {
-  const resultsRoot = options.resultsRoot ?? liveResultsDirectory();
-  const scale = options.scale ?? liveScaleFromEnvironment();
-  const lock = await acquireLiveLock(environment.runId, resultsRoot);
-  try {
-    const maps = await reconstructSeedMaps(environment.runId, resultsRoot);
-    const bulkOperations = maps.manifest.operations.filter(
-      (operation) =>
-        operation.id.startsWith("bulk-record:") ||
-        operation.id.startsWith("bulk-relationship:"),
-    );
-    if (bulkOperations.length > 0) {
-      throw new Error(
-        "Live run already contains bulk seed operations; refusing to retry",
-      );
-    }
-    const result = await withLiveAdminToken(environment, async ({ api }) => {
-      const currentActor = await api.get("/auth/me", undefined, isLiveUser);
-      assertActorMatchesManifest(maps.manifest, currentActor);
-      const recordIds = await createRecords(
-        api,
-        maps,
-        environment,
-        scale,
-        resultsRoot,
-      );
-      const createdRelationships = await createRelationships(
-        api,
-        maps,
-        recordIds,
-        environment,
-        resultsRoot,
-      );
-      const createdRecords = [...recordIds.values()].reduce(
-        (total, ids) => total + ids.length - 2,
-        0,
-      );
-      return { createdRecords, createdRelationships };
-    });
-    await writeLiveReport(
-      environment.runId,
-      {
-        recordTargetIncludesUiSanityRecords: true,
-        assertions: [
-          {
-            id: "bulk-api-seed",
-            name: "Bulk API seed",
-            status: "Pass",
-            detail: `${result.createdRecords} records and ${result.createdRelationships} relationship edges confirmed.`,
-          },
-        ],
-      },
-      resultsRoot,
-    );
-    return {
-      runId: environment.runId,
-      scale,
-      targetRecordsPerModule: targetRecordCount(scale),
-      ...result,
-      maps,
-    };
-  } finally {
-    await lock.release();
-  }
-}
-
-export const seedData = seedLiveData;

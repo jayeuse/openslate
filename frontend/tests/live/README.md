@@ -35,8 +35,8 @@ service-role keys are rejected.
 
 ## Execute
 
-Run schema creation, API volume seeding, integrity checks, and support tests
-without purge:
+Run the department-first seed, integrity checks, and support tests without
+purge:
 
 ```sh
 unset LIVE_TEARDOWN
@@ -45,10 +45,17 @@ npm run test:e2e:live
 
 The mutation phases are serialized by their numbered spec names:
 
-1. `01-seed-schema.spec.ts` — UI schema and two UI records per module
-2. `02-seed-data.spec.ts` — direct authenticated API volume
-3. `03-relationship-integrity.spec.ts` — UI/API integrity and audit checks
-4. `04-teardown.spec.ts` — skipped unless purge is explicitly enabled below
+1. `01-seed-schema.spec.ts` — one department-first pass for schema, UI/API
+   records, and relationship edges
+2. `03-relationship-integrity.spec.ts` — UI/API integrity and audit checks
+3. `04-teardown.spec.ts` — skipped unless purge is explicitly enabled below
+
+Within the seed phase, each department is completed before the next starts:
+create the department, all modules, primitive and relationship fields, accept
+the module schemas, create UI records 1–2, create API volume records 3..target,
+create representative UI relationship edges, create remaining API relationship
+edges, then continue to the next department. Departments without relationship
+definitions skip relationship-field creation and both relationship-edge steps.
 
 To perform manifest-exact domain teardown after a successful run:
 

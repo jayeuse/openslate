@@ -748,20 +748,28 @@ test.describe("live relationship integrity audit", () => {
                   (element as HTMLFormElement).checkValidity(),
                 ),
               ).toBe(false);
-              await form.evaluate((element) => {
-                element.setAttribute("data-live-submit", "false");
-                element.addEventListener(
-                  "submit",
-                  () => element.setAttribute("data-live-submit", "true"),
-                  {
-                    once: true,
-                  },
-                );
-              });
+              const invalidRecordWrites: string[] = [];
+              const observeInvalidRecordWrite = (request: Request) => {
+                const url = new URL(request.url());
+                if (
+                  request.method() === "PATCH" &&
+                  url.origin === environment.uiOrigin &&
+                  url.pathname === `/bff/records/${recordId}`
+                ) {
+                  invalidRecordWrites.push(url.pathname);
+                }
+              };
+              page.on("request", observeInvalidRecordWrite);
               await page
                 .getByRole("button", { name: "Save changes", exact: true })
                 .click();
-              expect(await form.getAttribute("data-live-submit")).toBe("false");
+              await expect(
+                page.getByText(`${runMarker.name} is required`, {
+                  exact: true,
+                }),
+              ).toBeVisible();
+              expect(invalidRecordWrites).toEqual([]);
+              page.off("request", observeInvalidRecordWrite);
               await runMarkerControl.fill(originalRunMarker);
 
               const selectField = primitiveFields.find(
