@@ -105,6 +105,15 @@ instruction is authoritative; do not widen its scope without approval.
   code, backups, dead paths, scratch files, and unrelated changes. Report exact
   commands and results plus assumptions, limitations, and unverified runtime
   behavior; passing tests never justify extra scope.
+  - After the implementation and verification are complete, check whether the task
+  changed documented core behavior. This includes architecture, setup, commands,
+  data flow, security boundaries, lifecycle rules, public interfaces, or other
+  behavior that developers rely on. If it did, update the smallest set of
+  existing related documents so they describe the implemented system accurately.
+  Do not create new documentation files when an existing document has the correct
+  scope. Do not update documentation for internal refactors that leave documented
+  behavior unchanged. Treat documentation updates as part of the task only when
+  the implementation makes the existing documentation inaccurate.
 
 ## Setup and Commands
 
