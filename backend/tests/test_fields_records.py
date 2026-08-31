@@ -12,8 +12,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.common.dependencies.auth import get_current_user
 from app.common.listing import StandardListRequest
-from app.core.database import model_registry  # noqa: F401
+from app.core.database import get_db, model_registry  # noqa: F401
 from app.systems.fields.models import Field, FieldType
 from app.systems.fields.router import (
     create_field,
@@ -49,6 +50,7 @@ from app.systems.records.router import (
 from app.systems.records.router import router as records_router
 from app.systems.records.schemas import RecordCreate, RecordUpdate
 from app.systems.relationships.service import RelationshipConflict, RelationshipUnavailable
+from app.systems.users.models import UserRole
 
 
 def _load_record_field_validation_cases() -> list[dict[str, Any]]:
@@ -94,6 +96,20 @@ def make_field(
     return field
 
 
+def _make_validation_client(
+    *, role: UserRole = UserRole.ADMIN, db: Session | None = None
+) -> TestClient:
+    app = FastAPI()
+    app.include_router(fields_router, prefix="/api")
+    app.include_router(records_router, prefix="/api")
+    database = db or Mock(spec=Session)
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        role=SimpleNamespace(role=role)
+    )
+    app.dependency_overrides[get_db] = lambda: database
+    return TestClient(app)
+
+
 def test_routers_expose_crud_restore_and_reorder_contract() -> None:
     app = FastAPI()
     app.include_router(fields_router, prefix="/api")
@@ -116,13 +132,15 @@ def test_routers_expose_crud_restore_and_reorder_contract() -> None:
     [
         (FieldType.TEXT, {}),
         (FieldType.NUMBER, {}),
+        (FieldType.DECIMAL, {}),
+        (FieldType.INTEGER, {}),
         (FieldType.BOOLEAN, {}),
         (FieldType.DATE, {}),
         (FieldType.DATETIME, {}),
         (FieldType.SELECT, {"options": ["open", "closed"]}),
     ],
 )
-def test_field_schema_accepts_the_six_types(
+def test_field_schema_accepts_primitive_types(
     field_type: FieldType, config: dict[str, object]
 ) -> None:
     payload = FieldCreate(
@@ -136,6 +154,32 @@ def test_field_schema_accepts_the_six_types(
     assert payload.type is field_type
 
 
+def test_field_schema_trims_name_and_enforces_one_to_150_character_boundaries() -> None:
+    for length in (1, 150):
+        raw_name = f" {'x' * length} "
+        assert (
+            FieldCreate(
+                module_id=uuid7(),
+                name=raw_name,
+                type=FieldType.TEXT,
+                position=0,
+            ).name
+            == "x" * length
+        )
+        assert FieldUpdate(name=raw_name).name == "x" * length
+
+    for invalid_name in ("", "  ", "x" * 151):
+        with pytest.raises(ValueError):
+            FieldCreate(
+                module_id=uuid7(),
+                name=invalid_name,
+                type=FieldType.TEXT,
+                position=0,
+            )
+        with pytest.raises(ValueError):
+            FieldUpdate(name=invalid_name)
+
+
 def test_field_schema_rejects_invalid_configuration() -> None:
     with pytest.raises(ValueError):
         FieldCreate(module_id=uuid7(), name="Status", type=FieldType.SELECT, position=0)
@@ -147,14 +191,131 @@ def test_field_schema_rejects_invalid_configuration() -> None:
             position=0,
             config={"options": ["open", "open"]},
         )
+
+
+@pytest.mark.parametrize(
+    ("field_type", "config"),
+    [
+        (FieldType.TEXT, {"options": ["open"]}),
+        (FieldType.NUMBER, {"minLength": 1}),
+        (FieldType.DECIMAL, {"options": ["open"]}),
+        (FieldType.INTEGER, {"minLength": 1}),
+        (FieldType.BOOLEAN, {"minimum": 0}),
+        (FieldType.DATE, {"minLength": 1}),
+        (FieldType.DATETIME, {"options": ["open"]}),
+        (FieldType.SELECT, {"minimum": 0}),
+        (FieldType.RELATIONSHIP, {"options": ["open"]}),
+    ],
+)
+def test_field_config_rejects_cross_type_configuration(
+    field_type: FieldType, config: dict[str, object]
+) -> None:
     with pytest.raises(ValueError):
-        FieldCreate(
-            module_id=uuid7(),
-            name="Status",
-            type=FieldType.TEXT,
-            position=0,
-            config={"options": ["open"]},
-        )
+        field_config(field_type, config)
+
+
+def test_select_config_preserves_embedded_strings_and_requires_exact_values() -> None:
+    config = {"options": ["  in progress  ", "comma,value", 'quoted"value', "é"]}
+
+    assert field_config(FieldType.SELECT, config) == config
+    field = make_field(uuid7(), FieldType.SELECT, config=config)
+    for option in config["options"]:
+        assert validate_field_value(field, option) == option
+
+    with pytest.raises(ValueError):
+        field_config(FieldType.SELECT, {"options": [" \t"]})
+    with pytest.raises(ValueError):
+        validate_field_value(field, "in progress")
+
+
+@pytest.mark.parametrize(
+    ("request_path", "payload"),
+    [
+        (
+            "/api/fields",
+            {
+                "module_id": str(uuid7()),
+                "name": "Status",
+                "type": "text",
+                "position": 0,
+            },
+        ),
+        (
+            "/api/records",
+            {"module_id": str(uuid7()), "data": {}},
+        ),
+    ],
+)
+def test_field_and_record_routes_reject_non_admin_users(
+    request_path: str, payload: dict[str, object]
+) -> None:
+    client = _make_validation_client(role=UserRole.MEMBER)
+
+    response = client.post(request_path, json=payload)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Forbidden"
+
+
+def test_field_route_returns_clean_422_for_unsupported_type() -> None:
+    client = _make_validation_client()
+
+    response = client.post(
+        "/api/fields",
+        json={
+            "module_id": str(uuid7()),
+            "name": "Status",
+            "type": "unsupported",
+            "position": 0,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"][-1] == "type"
+
+
+def test_top_level_extra_keys_are_ignored_by_field_and_record_schemas() -> None:
+    field = FieldCreate.model_validate(
+        {
+            "module_id": str(uuid7()),
+            "name": "Status",
+            "type": "text",
+            "position": 0,
+            "unexpected": "ignored",
+        }
+    )
+    record = RecordCreate.model_validate(
+        {
+            "module_id": str(uuid7()),
+            "data": {},
+            "unexpected": "ignored",
+        }
+    )
+
+    assert "unexpected" not in field.model_dump()
+    assert "unexpected" not in record.model_dump()
+
+
+def test_record_route_rejects_numeric_json_for_decimal_field() -> None:
+    module = make_module()
+    field = make_field(module.id, FieldType.DECIMAL)
+    db = Mock(spec=Session)
+    db.scalar.return_value = module
+    db.get.return_value = module
+    db.scalars.return_value.all.return_value = [field]
+    client = _make_validation_client(db=db)
+
+    response = client.post(
+        "/api/records",
+        json={
+            "module_id": str(module.id),
+            "data": {str(field.id): 1.25},
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["errors"][0]["code"] == "invalid_field_value"
+    db.add.assert_not_called()
 
 
 def test_module_schema_validator_checks_active_field_structure() -> None:
@@ -230,6 +391,13 @@ def test_effective_field_lifecycle_changes_clear_schema_acceptance() -> None:
         db,
     )
     assert module.is_schema_accepted is False
+
+    module.is_schema_accepted = True
+    db.reset_mock()
+    db.scalar.side_effect = [module, None]
+    db.get.side_effect = [field, module, field]
+    update_field(field.id, FieldUpdate(name="Title"), Mock(), db)
+    assert module.is_schema_accepted is True
 
     module.is_schema_accepted = True
     db.reset_mock()
@@ -488,6 +656,77 @@ def test_record_create_replaces_data_on_patch_and_restore_revalidates() -> None:
     assert error.value.status_code == 422
 
 
+def test_record_update_replaces_active_values_instead_of_merging_them() -> None:
+    module = make_module()
+    first = make_field(module.id)
+    second = make_field(module.id, FieldType.INTEGER)
+    record = Record(
+        module_id=module.id,
+        data={str(first.id): "old", str(second.id): 1},
+    )
+    record.id = uuid7()
+    db = Mock(spec=Session)
+    db.get.side_effect = lambda model, *_args, **_kwargs: (
+        module if model is Module else record
+    )
+    db.scalar.return_value = module
+    db.scalars.return_value.all.return_value = [first, second]
+
+    update_record(
+        record.id,
+        RecordUpdate(data={str(second.id): 2}),
+        Mock(),
+        db,
+    )
+
+    assert record.data == {str(second.id): 2}
+
+
+def test_relationship_values_are_rejected_on_record_create_and_update() -> None:
+    module = make_module()
+    relationship = make_field(module.id, FieldType.RELATIONSHIP)
+    relationship.relationship_target_module_id = uuid7()
+    relationship.relationship_multiple_targets = False
+    relationship.relationship_multiple_sources = False
+    relationship_key = str(relationship.id)
+
+    create_db = Mock(spec=Session)
+    create_db.scalar.return_value = module
+    create_db.get.return_value = module
+    create_db.scalars.return_value.all.return_value = [relationship]
+    with pytest.raises(HTTPException) as create_error:
+        create_record(
+            RecordCreate(module_id=module.id, data={relationship_key: "record-id"}),
+            Mock(),
+            create_db,
+        )
+
+    assert create_error.value.status_code == 422
+    assert create_error.value.detail["errors"][0]["code"] == "relationship_field"
+    create_db.add.assert_not_called()
+
+    record = Record(module_id=module.id, data={})
+    record.id = uuid7()
+    update_db = Mock(spec=Session)
+    update_db.get.side_effect = lambda model, *_args, **_kwargs: (
+        module if model is Module else record
+    )
+    update_db.scalar.return_value = module
+    update_db.scalars.return_value.all.return_value = [relationship]
+    with pytest.raises(HTTPException) as update_error:
+        update_record(
+            record.id,
+            RecordUpdate(data={relationship_key: "record-id"}),
+            Mock(),
+            update_db,
+        )
+
+    assert update_error.value.status_code == 422
+    assert update_error.value.detail["errors"][0]["code"] == "relationship_field"
+    assert record.data == {}
+    update_db.commit.assert_not_called()
+
+
 def test_record_create_requires_an_accepted_schema_after_module_lock() -> None:
     module = make_module()
     module.is_schema_accepted = False
@@ -596,6 +835,52 @@ def test_field_validators_cover_every_type_and_return_clean_values() -> None:
             validate_field_value(fields[field_type], invalid_value)
 
 
+@pytest.mark.parametrize(
+    ("field_type", "config"),
+    [
+        (FieldType.TEXT, {}),
+        (FieldType.NUMBER, {}),
+        (FieldType.DECIMAL, {}),
+        (FieldType.INTEGER, {}),
+        (FieldType.BOOLEAN, {}),
+        (FieldType.DATE, {}),
+        (FieldType.DATETIME, {}),
+        (FieldType.SELECT, {"options": ["open"]}),
+    ],
+)
+def test_optional_primitive_record_values_accept_null(
+    field_type: FieldType, config: dict[str, object]
+) -> None:
+    field = make_field(uuid7(), field_type, config=config)
+
+    assert validate_record_mutation({str(field.id): None}, {}, [field]) == {
+        str(field.id): None
+    }
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_required_text_record_values_reject_null_and_empty(value: object) -> None:
+    field = make_field(uuid7(), required=True)
+
+    with pytest.raises(RecordValidationError) as raised:
+        validate_record_mutation({str(field.id): value}, {}, [field])
+
+    assert [issue.code for issue in raised.value.issues] == ["required_field"]
+
+
+def test_text_validation_preserves_whitespace_and_counts_unicode_codepoints() -> None:
+    field = make_field(
+        uuid7(),
+        required=True,
+        config={"minLength": 2, "maxLength": 2},
+    )
+
+    assert validate_field_value(field, " \t") == " \t"
+    assert validate_field_value(field, "e\u0301") == "e\u0301"
+    with pytest.raises(ValueError):
+        validate_field_value(field, "é")
+
+
 def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
     assert field_config(FieldType.TEXT, {"minLength": 1, "maxLength": 4}) == {
         "minLength": 1,
@@ -610,6 +895,16 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         FieldType.DECIMAL,
         {"minimum": "-0.1000", "maximum": "12.3400"},
     ) == {"minimum": "-0.1", "maximum": "12.34"}
+    maximum_decimal = f"{'9' * 38}.{'9' * 18}"
+    minimum_decimal = f"-{'9' * 38}.{'9' * 18}"
+    assert field_config(
+        FieldType.DECIMAL,
+        {"minimum": minimum_decimal, "maximum": maximum_decimal},
+    ) == {"minimum": minimum_decimal, "maximum": maximum_decimal}
+    with pytest.raises(ValueError):
+        field_config(FieldType.DECIMAL, {"maximum": "1" * 39})
+    with pytest.raises(ValueError):
+        field_config(FieldType.DECIMAL, {"maximum": "1." + "1" * 19})
     assert FieldCreate(
         module_id=uuid7(),
         name="Amount",
@@ -647,6 +942,17 @@ def test_decimal_validation_enforces_lexical_limits_and_exact_bounds() -> None:
         config={"minimum": "-1.5", "maximum": "1.5"},
     )
     assert validate_field_value(field, "-0.5000") == "-0.5"
+    assert validate_field_value(field, "-1.5000") == "-1.5"
+    assert validate_field_value(field, "1.5000") == "1.5"
+    assert validate_field_value(make_field(module_id, FieldType.DECIMAL), "-0.000") == "0"
+
+    maximum_precision_value = "9" * 38 + "." + "123456789012345678"
+    assert (
+        validate_field_value(
+            make_field(module_id, FieldType.DECIMAL), maximum_precision_value
+        )
+        == maximum_precision_value
+    )
     with pytest.raises(ValueError):
         validate_field_value(field, "1e0")
     with pytest.raises(ValueError):
@@ -657,6 +963,42 @@ def test_decimal_validation_enforces_lexical_limits_and_exact_bounds() -> None:
         validate_field_value(field, "2")
     with pytest.raises(ValueError):
         validate_field_value(field, "-0.0000000000000000001")
+    with pytest.raises(ValueError):
+        validate_field_value(field, "1" * 39)
+    with pytest.raises(ValueError):
+        validate_field_value(field, "1." + "1" * 19)
+    with pytest.raises(ValueError):
+        validate_field_value(field, "+1")
+    with pytest.raises(ValueError):
+        validate_field_value(field, "01")
+
+
+def test_date_validation_accepts_calendar_boundaries_and_rejects_invalid_dates() -> None:
+    field = make_field(uuid7(), FieldType.DATE)
+
+    assert validate_field_value(field, "0001-01-01") == "0001-01-01"
+    assert validate_field_value(field, "9999-12-31") == "9999-12-31"
+    for value in ("0000-01-01", "9999-02-29", "2026-02-29", "2026-13-01"):
+        with pytest.raises(ValueError):
+            validate_field_value(field, value)
+
+
+def test_datetime_validation_accepts_datetime_boundaries_and_rejects_invalid_dates() -> None:
+    field = make_field(uuid7(), FieldType.DATETIME)
+
+    assert validate_field_value(field, "0001-01-01T00:00:00Z") == "0001-01-01T00:00:00Z"
+    assert (
+        validate_field_value(field, "9999-12-31T23:59:59.999999+14:00")
+        == "9999-12-31T23:59:59.999999+14:00"
+    )
+    for value in (
+        "0000-01-01T00:00:00Z",
+        "2026-02-29T00:00:00Z",
+        "2026-01-01T00:00:00+24:00",
+        "2026-01-01T00:00:00.1234567Z",
+    ):
+        with pytest.raises(ValueError):
+            validate_field_value(field, value)
 
 
 def test_datetime_validation_requires_strict_timezone_aware_profile() -> None:
@@ -804,12 +1146,19 @@ def test_record_create_and_update_persist_normalized_decimal_values() -> None:
 
 def test_record_mutation_caps_deterministic_errors() -> None:
     errors = {str(uuid7()): index for index in range(21)}
-    with pytest.raises(RecordValidationError) as raised:
+
+    with pytest.raises(RecordValidationError) as first:
         validate_record_mutation(errors, {}, [])
+    reversed_errors = dict(reversed(list(errors.items())))
+    with pytest.raises(RecordValidationError) as raised:
+        validate_record_mutation(reversed_errors, {}, [])
 
     assert len(raised.value.issues) == 20
     assert raised.value.truncated is True
     assert all(issue.code == "unknown_field" for issue in raised.value.issues)
+    assert [str(issue.field_id) for issue in first.value.issues] == [
+        str(issue.field_id) for issue in raised.value.issues
+    ]
 
 
 @pytest.mark.parametrize(
@@ -853,6 +1202,14 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
     )
     db.scalar.return_value = module
     db.scalars.return_value.all.return_value = [closed]
+
+    update_record(
+        record.id,
+        RecordUpdate(data={str(closed.id): 1}),
+        Mock(),
+        db,
+    )
+    assert record.data == {str(closed.id): 1}
 
     with pytest.raises(HTTPException) as raised:
         update_record(

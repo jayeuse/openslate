@@ -118,6 +118,8 @@ The lifecycle service therefore deletes relationship edges first, then records, 
 
 There is deliberately no database check coupling `is_deleted` and `deleted_at`, no database JSON schema for `config` or `data`, and no database check for active parents, same-department relationships, schema acceptance, cardinality, or protected roles.
 
+PostgreSQL structurally constrains `fields` rows through columns, foreign keys, checks, and uniqueness, but it does not interpret UUID-keyed `Record.data`. FastAPI owns dynamic field semantics, including types, requiredness, ranges, options, and relationship meaning. Non-null decimal configuration bounds and record values are canonical JSON strings so their exact decimal text is preserved; optional record values may be JSON `null`, and migration `0015` also preserves legacy explicit-null bound keys that current runtime schema validation rejects. The boundary is covered by the [dynamic field validation test plan](../dynamic-field-validation-test-plan.md).
+
 ### Current indexes
 
 `[DB-enforced]` The declared non-primary indexes are:
@@ -140,7 +142,7 @@ There are no current GIN indexes on JSONB. The legacy users preferences GIN inde
 
 - `roles.permissions` — mutable permissions metadata. It is stored, but current authorization uses the exact role name and does not evaluate this JSON.
 - `fields.config` — mutable field configuration; relationship fields must have `{}` by a database check.
-- `records.data` — mutable record payload; field-key/type/required/range/option validation is application-owned.
+- `records.data` — mutable JSONB record payload keyed by field UUID; PostgreSQL stores the JSON but does not interpret its keys or dynamic values, so FastAPI owns field-key/type/required/range/option semantics. Non-null decimal values use canonical JSON strings to preserve exactness; optional values may be JSON `null`.
 - `audit_logs.before` and `audit_logs.after` — minimal redacted snapshots/diffs.
 
 `[Implemented]` Python `StrEnum` values are persisted as bounded `varchar`/`String` columns, not PostgreSQL native enum types. Database checks back the following values: `UserStatus` (`pending`, `active`, `disabled`), `FieldType` (the nine field values above), `AuditAction` (`create`, `update`, `delete`), `LifecycleOperation` (`close`, `purge`), and `LifecycleChallengeStatus` (the six challenge states above). `UserRole` (`admin`, `member`) is a Python/application classification only; `roles.role` has no matching DB check. Lifecycle `target_type` is also polymorphic application data, only constrained to non-empty text.
@@ -223,7 +225,7 @@ Sources: [`0010_supabase_cutover.py`](../../backend/migrations/versions/20260819
 
 ### Current linear chain
 
-`[Implemented]` The chain is linear and currently ends at `20260830_0014`:
+`[Implemented]` The chain is linear, contains 15 revisions, and currently ends at `20260831_0015`:
 
 | Revision        | Schema responsibility                                                                                                   |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -241,6 +243,7 @@ Sources: [`0010_supabase_cutover.py`](../../backend/migrations/versions/20260819
 | `20260819_0012` | `modules.is_schema_accepted`.                                                                                           |
 | `20260829_0013` | Lifecycle challenge/rate-limit tables, audit metadata, RLS/grants, and rollout audit reclassification.                  |
 | `20260830_0014` | Runtime `DELETE` grant and RLS policy for relationship-edge purge.                                                      |
+| `20260831_0015` | Converts decimal field config bounds and UUID-keyed record values to canonical JSON strings across active and closed rows; preserves explicit JSON `null` bounds. |
 
 ### Alembic behavior and drift strategy
 
@@ -254,7 +257,7 @@ supabase start
   -> alembic check detects model/database drift
 ```
 
-The verified local database was at head `20260830_0014`, and `uv run alembic check` reported no upgrade operations during this documentation audit. Re-run that check against the intended PostgreSQL database after migrations and before deployment; do not use SQLite or treat a model-only change as delivered schema. Preserve revision order and add a new forward migration for schema changes.
+The local database was verified at head `20260831_0015`, and `uv run alembic check` reported no new upgrade operations during the dynamic-field validation audit. Re-run that check against the intended PostgreSQL database after migrations and before deployment; do not use SQLite or treat a model-only change as delivered schema. Preserve revision order and add a new forward migration for schema changes.
 
 ### Deployment prerequisites and compatibility
 
@@ -267,7 +270,7 @@ Before a new environment is usable:
 5. Bootstrap an invited administrator through the application script only after Auth triggers, roles, and runtime access are ready; this is separate from schema deployment.
 6. Verify `alembic current`, `alembic check`, role privileges/RLS, and a disposable PostgreSQL integration path. Purge remains disabled unless retention approval and an operational recovery plan exist.
 
-Revisions `0002`, `0004`, `0005`, `0006`, and `0010` are intentionally forward-only or raise `NotImplementedError` on downgrade; several later revisions are also operationally dependent on the cutover. Revision `0014` can revoke its edge-delete grant/policy on downgrade, but physical purges, Auth identity changes, and old-schema restoration are not reversible by ordinary Alembic downgrade. Use a verified database backup/restore or a new forward migration for rollback. The compatibility boundary is therefore the current head plus its required Supabase/Auth objects, not an independently deployable SQLAlchemy model snapshot.
+Revisions `0002`, `0004`, `0005`, `0006`, and `0010` are intentionally forward-only or raise `NotImplementedError` on downgrade; several later revisions are also operationally dependent on the cutover. Revision `0014` can revoke its edge-delete grant/policy on downgrade. Revision `0015` can convert canonical decimal strings back to JSON numbers after its preflight succeeds; explicit JSON `null` bounds remain null, and invalid intervening values fail before mutation. Physical purges, Auth identity changes, and old-schema restoration are not reversible by ordinary Alembic downgrade. Use a verified database backup/restore or a new forward migration for rollback. The compatibility boundary is therefore the current head plus its required Supabase/Auth objects, not an independently deployable SQLAlchemy model snapshot.
 
 Sources: all files under [`backend/migrations/versions`](../../backend/migrations/versions), [`migrations/env.py`](../../backend/migrations/env.py), [`provision_database_role.py`](../../backend/scripts/provision_database_role.py), and [`supabase/config.toml`](../../supabase/config.toml).
 

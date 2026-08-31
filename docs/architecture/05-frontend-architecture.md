@@ -218,8 +218,10 @@ an invalidation enhancement, not a second data API.
 Forms are controlled React forms with manual submit functions. Native browser
 constraints are the normal client validation layer: `required`, `type`,
 `minLength`, `maxLength`, `pattern`, `step`, and disabled states. The only
-frontend Zod schemas are server Route Handler schemas for login and password
-setup. Domain page responses are not runtime-validated.
+Route Handler Zod schemas cover login and password setup, while record forms
+also use the client-side domain boundary in
+`frontend/src/lib/field-schema.ts`. Domain page responses are not
+runtime-validated.
 
 Important current form patterns include:
 
@@ -229,10 +231,16 @@ Important current form patterns include:
   comma-separated input, configures relationship target/cardinality fields,
   reorders active fields, and sends an acceptance request. Its UI keeps closed
   fields visible but excludes them from active reordering.
-- New and edit record pages coerce number, decimal, integer, boolean, and
-  datetime values before sending JSON; date values remain date strings. Relationship fields are deliberately
-  excluded from record JSON and are managed afterward by
-  `RelationshipManager`.
+- New and edit record pages serialize number and integer inputs to JavaScript
+  numbers, keep decimals as strings while canonicalizing them through the
+  schema, and convert `datetime-local` values to timezone-aware ISO strings;
+  date values remain date strings. Blank optional values are omitted, as are
+  closed and relationship fields. Relationship fields are deliberately
+  excluded from record JSON and are managed afterward by `RelationshipManager`.
+- For active primitive fields, `buildModuleSchema` creates a strict Zod object
+  keyed by field UUID. Both record forms run this schema before submission and
+  render field-specific and unassigned validation errors; API errors are mapped
+  into the same field-error state. Backend validation remains authoritative.
 - `RelationshipManager` loads outgoing and incoming links separately, supports
   single replacement or multiple links, shows hidden-link reasons, and leaves
   incoming links read-only.
@@ -244,9 +252,12 @@ Important current form patterns include:
   displayed as configured but is not an effective frontend authorization
   mechanism.
 
-There is no React Hook Form, Formik, server action, generated form schema, or
-domain Zod boundary. Backend validation remains the source of truth; the
-[API architecture](07-api-architecture.md) defines those response and validation details rather than this document duplicating them.
+There is no React Hook Form, Formik, server action, or generated form schema.
+The [dynamic field validation test plan and results](../dynamic-field-validation-test-plan.md)
+documents detailed frontend/backend parity and verification; the backend
+remains the source of truth. The [API architecture](07-api-architecture.md)
+defines the response and validation details rather than this document
+duplicating them.
 
 ## Loading, errors, and recovery
 
@@ -335,7 +346,7 @@ limitations](20-architecture-risks.md).
 | Cookie session and refresh path                               | **Implemented**                           | Session handlers set, refresh, and clear HttpOnly cookies; selected session responses set no-store headers. The BFF disables caching on its upstream fetch and forwards selected backend cache headers.     |
 | Domain BFF and backend calls                                  | **Implemented / partial client contract** | BFF forwarding and one-refresh retry are real; `apiFetch<T>` casts unchecked DTOs and lists commonly cap at 100.                                                                                            |
 | Workspace metrics and onboarding progress                     | **Static**                                | `frontend/src/app/workspace/page.tsx` renders zero counts and fixed “0 of 5 complete” content; `frontend/src/app/onboarding/page.tsx` has one fixed completed step.                                         |
-| Schema and record workflows                                   | **Partial**                               | Creation, acceptance, record editing, relationship management, and lifecycle UI exist, but new-record rendering includes deleted primitive fields and can submit inactive keys rejected by the backend.     |
+| Schema and record workflows                                   | **Partial**                               | Creation, acceptance, record editing, relationship management, and lifecycle UI exist. New-record loading may fetch deleted/closed field rows, but closed primitive fields are filtered from rendering and serialization. Edit may display retained closed primitive values read-only, while it submits active primitive values only. |
 | Appearance preferences                                        | **Partial**                               | Theme/accent/density/radius persist in local storage and CSS attributes, with hydration/default overwrite risks and no server profile persistence.                                                          |
 | Realtime invalidation                                         | **Partial**                               | Private Broadcast invalidation and broad remount/refetch work; no polling fallback, row payload handling, or surfaced subscription failure exists.                                                          |
 | Setup guidance                                                | **Stale**                                 | `/setup` still labels a Docker Compose path and shows legacy variables, and its bootstrap command omits the required `--email`; the supported flow is documented in the root README and backend script.     |

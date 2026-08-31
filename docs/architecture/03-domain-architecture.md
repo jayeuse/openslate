@@ -2,7 +2,7 @@
 
 > **Scope:** OpenSlate's implemented domain concepts, relationships, invariants, and mutation ownership.
 > **Audience:** Developers changing business behavior or tracing an entity from UI to persistence.
-> **Related documents:** [Data architecture](06-data-architecture.md), [Lifecycle and state management](09-lifecycle-and-state-management.md), [API architecture](07-api-architecture.md), [Glossary](21-glossary.md)
+> **Related documents:** [Data architecture](06-data-architecture.md), [Lifecycle and state management](09-lifecycle-and-state-management.md), [API architecture](07-api-architecture.md), [Glossary](21-glossary.md), [Dynamic-field validation test plan](../dynamic-field-validation-test-plan.md)
 
 ## Domain model
 
@@ -64,7 +64,23 @@ Evidence: `departments/router.py`, `modules/router.py`, lifecycle planner/servic
 
 Supported field types are `text`, `number`, `decimal`, `int`, `boolean`, `date`, `datetime`, `select`, and `relationship`. Active field names and positions are unique within a module, and positions form a zero-based contiguous sequence when a schema is accepted.
 
-Field creation, update, close, restore, or reorder can invalidate `Module.is_schema_accepted`. Acceptance is backend-authoritative and validates the effective active schema. A module requires at least one active valid field.
+Only field creation, an effective API field update, or a reorder that changes positions invalidates `Module.is_schema_accepted`. Lifecycle close and reopen do not themselves invalidate acceptance. Acceptance is backend-authoritative and validates the effective active schema. A module requires at least one active valid field.
+
+Type-specific value behavior is:
+
+| Type           | Validation and storage behavior                                                                                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `text`         | String; required values cannot be empty; optional `minLength`/`maxLength` bounds count code points.                                              |
+| `number`       | Finite JSON number; booleans are rejected; optional inclusive numeric bounds apply.                                                               |
+| `decimal`      | Non-null values and bounds are canonical decimal strings with no exponent, plus sign, or leading-zero syntax; at most 58 characters, 38 integer and 18 fractional digits; trailing zeros normalize; bounds are inclusive. |
+| `int`          | Integer JSON number; booleans are rejected; optional inclusive numeric bounds apply.                                                             |
+| `boolean`      | JSON boolean only.                                                                                                                                |
+| `date`         | String exactly matching `YYYY-MM-DD` and a valid calendar date; the string is stored as supplied.                                                 |
+| `datetime`     | String matching `YYYY-MM-DDTHH:MM:SS`, an optional 1–6 digit fraction, and a required `Z` or `±HH:MM` offset; valid and stored as supplied.       |
+| `select`       | String exactly equal to one configured option; options are non-empty, unique strings and are not trimmed for matching.                            |
+| `relationship` | No record-data value; it requires same-department target/cardinality metadata, is never required, and uses an empty config. Edges are separate.   |
+
+Optional primitive values may be `null`; required nulls are rejected, and required text also rejects the empty string. Migration `0015` preserves legacy explicit JSON-null decimal bound keys, but current runtime schema acceptance rejects those keys; this compatibility mismatch remains documented rather than treated as valid runtime configuration.
 
 Relationship fields differ from primitive fields:
 
@@ -77,11 +93,13 @@ Evidence: `fields/models.py`, `fields/schemas.py`, `fields/validation.py`, `fiel
 
 ### Record data
 
-Record JSON uses field UUID strings as keys. Creation requires an active module with an accepted schema. Validation enforces active/known keys, required fields, type-specific values and bounds, select options, and exclusion of relationship fields.
+Record JSON uses field UUID strings as keys. Creation requires an active module with an accepted schema; update does not use schema acceptance as a gate. Validation enforces active/known keys, required fields, type-specific values and bounds, select options, and exclusion of relationship fields.
 
-Update behavior is replacement-like for active fields rather than a deep merge. Values belonging to closed fields are retained; clients cannot change them. This preserves historical data across field closure while allowing the active schema to evolve.
+Update behavior replaces active field data rather than deep-merging it. Values belonging to closed fields are retained; clients cannot change them. This preserves historical data across field closure while allowing the active schema to evolve.
 
-Evidence: `records/router.py:_validate_data`, record schemas, `fields/validation.py`.
+Known unresolved behavior: closing the last active field leaves `is_schema_accepted = true`, so record creation can still pass the stale acceptance flag and persist an empty `{}` record. This is current behavior, not a fixed invariant.
+
+Evidence: `records/router.py:validate_record_mutation`, record schemas, `fields/validation.py`.
 
 ### Relationships
 

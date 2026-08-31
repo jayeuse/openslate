@@ -130,7 +130,8 @@ Physical purge differs: edges that would violate FK restrictions are deleted fir
 - Record updates preserve closed-field values and reject attempts to alter them.
 - Reopening a field checks field identity/position conflicts and validates the resulting schema and records.
 - Purging a field may strip its UUID key from record JSON as a planned mutation.
-- Field creation, effective field update, or reorder can invalidate module schema acceptance. Lifecycle close/reopen does not itself flip `is_schema_accepted`; reopen preflight validates the effective schema and records.
+- Field creation, an effective API field update, or a changed reorder can invalidate module schema acceptance. Lifecycle close/reopen does not itself flip `is_schema_accepted`; reopen preflight validates the effective schema and records.
+- Known unresolved behavior: closing the last active field leaves acceptance true, so record creation can still succeed with an empty `{}` record. This stale-acceptance consequence is current behavior, not a fixed lifecycle invariant.
 
 ## Failure and recovery behavior
 

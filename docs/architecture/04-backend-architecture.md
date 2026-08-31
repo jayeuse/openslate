@@ -74,12 +74,15 @@ The standard list implementation in `backend/app/common/listing/query.py:execute
 Application-level state rules include the following implemented behavior:
 
 - Active department names, module names within a department, and field names/positions within a module are checked before mutation and constrained for active rows by the model definitions.
-- A module must have an accepted schema before a record can be created. Field changes and field reordering invalidate schema acceptance.
-- Record updates validate active field keys and retain closed-field values; a changed value for a closed field is rejected.
+- A module must have an accepted schema before a record can be created; record updates do not use schema acceptance as a gate. Only field creation, an effective API field update, or a changed field reorder invalidates schema acceptance; lifecycle close/reopen does not.
+- Record updates replace active field data, retain closed-field values, and reject changed values for closed fields.
+- Record mutation validation returns deterministic structured errors, capped at 20 entries with a `truncated` flag; ordinary validation is `422`, while a closed-field mutation is `409`.
 - Relationship edges are directed by field/source/target IDs. `relationships.service` checks active dependencies, same-department modules, field/module alignment, distinct source and target records, and configured cardinality.
 - Direct department/module/field `DELETE` discovery routes return a `close_required` conflict. Lifecycle close/reopen/purge is the intended multi-row state path, while records, roles, users, and relationship edges expose direct soft-delete or restore behavior where their routers define it.
 
 The state rules are enforced in application code and ORM operations in the cited modules. This document does not classify database migration or database-policy behavior.
+
+Detailed dynamic-field validation evidence is maintained in the [dynamic-field validation test plan](../dynamic-field-validation-test-plan.md).
 
 ## Session, commit, and outbound integration
 

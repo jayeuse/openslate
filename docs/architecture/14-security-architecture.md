@@ -8,7 +8,7 @@
 
 The checked-in local system has strong application-level identity verification, an explicit FastAPI data boundary, same-origin mutation checks, private Realtime invalidation, constrained runtime database role attributes, and transactional audit capture. It is not evidence of production readiness: hosted network exposure, TLS, secret delivery, tenancy, backup, monitoring, and ingress controls are **Unknown**.
 
-No unconditional critical vulnerability is established from repository evidence alone. Shared-tenancy or a publicly reachable database would materially change that conclusion.
+No unconditional critical vulnerability is established from repository evidence alone. Direct SQL access is an operational trust boundary, not a vulnerability through normal HTTP; shared-tenancy or a publicly reachable database would materially change that conclusion.
 
 ## Trust boundaries
 
@@ -54,6 +54,8 @@ All current domain routers require exact role name `admin`; `/api/auth/me` is th
 Migration `0010` begins the application-role/RLS/grant boundary, with later revisions extending it. `supabase/config.toml` excludes the application schema from the local Data API. Provisioning creates `openslate_runtime` without superuser, create-db, create-role, replication, or bypass-RLS attributes, but does not remove unexpected pre-existing memberships.
 
 This is not row-level tenant isolation: runtime policies use true predicates and the role has broad application CRUD. FastAPI is the effective authorization and audit boundary.
+
+The confirmed boundary is that a provisioned `openslate_runtime` connection can issue direct SQL within its granted tables. PostgreSQL structural constraints still apply, but direct SQL bypasses FastAPI dynamic validation and `AuditSession` audit capture. The Data API exclusion and browser-facing role revocations remain protected, so runtime and owner database credentials and network access to PostgreSQL must stay private. This does not imply a vulnerability through normal HTTP: browser requests still traverse FastAPI. See the [dynamic field validation test plan](../dynamic-field-validation-test-plan.md) for the application-owned validation boundary.
 
 ### Audit and lifecycle controls
 

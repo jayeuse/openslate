@@ -140,15 +140,15 @@ This document is intentionally editorial. Descriptive documents state current be
 
 ## R12 — Verification gaps hide cross-system failures
 
-**Current design:** Frontend domain Playwright tests mock sessions/BFF/backend; backend integration tests depend on PostgreSQL environment; the sampled local pytest run failed its coverage threshold.
+**Current design:** Default frontend domain Playwright tests mock sessions/BFF/backend, while an opt-in local live suite exercises real Auth, BFF, FastAPI, and PostgreSQL outside CI. Backend PostgreSQL integration now covers dynamic-field persistence, selected field/relationship races, and runtime-role trust boundaries when the guarded database environment is available.
 
-**Problem:** Cookie refresh, real JWT/local-role authorization, Realtime, concurrency, and hosted controls can regress across boundaries.
+**Problem:** The live suite is not a CI gate and does not verify Realtime delivery or hosted ingress, network, secret, backup, and recovery controls. Concurrent last-administrator mutations and broader multi-worker/load scenarios also remain uncovered.
 
-**Consequence:** CI may pass individual layers while the integrated workflow fails.
+**Consequence:** CI may pass individual layers while selected integrated, hosted, or operational workflows still regress.
 
-**Affected:** Test suites, CI, auth, BFF, lifecycle, Realtime.
+**Affected:** Test suites, CI, auth, BFF, lifecycle, Realtime, and hosted operations.
 
-**Recommended direction:** Preserve unit/integration layers and add a small live full-stack acceptance suite plus targeted concurrency/security tests.
+**Recommended direction:** Preserve the unit/integration and opt-in live layers; add a controlled CI or staging live smoke gate where operationally feasible, plus Realtime-delivery, remaining concurrency, and hosted-control verification.
 
 ## R13 — Placeholder capabilities can be mistaken for working features
 

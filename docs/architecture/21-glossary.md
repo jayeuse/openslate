@@ -14,6 +14,7 @@
 | Audit log             | Immutable-at-application-layer row containing action, entity, minimal before/after data, actor, and request metadata.                                 |
 | BFF                   | Next.js backend-for-frontend route `/bff/[...path]` that converts HttpOnly cookie session state into authenticated FastAPI requests.                  |
 | Blocker               | Lifecycle preflight condition that prevents a transition, such as a naming conflict or invalid reopened schema.                                       |
+| Canonical decimal string | Decimal wire value with no exponent, plus sign, or leading-zero syntax; trailing fractional zeroes and negative zero are normalized, within 38 integer and 18 fractional digits. |
 | Challenge             | Short-lived, hashed, actor/operation/target/digest-bound lifecycle confirmation record.                                                               |
 | Close                 | Soft lifecycle transition to `is_deleted = true` with a deletion timestamp. Use “close,” not “archive,” as the canonical action.                      |
 | Closed field value    | Record JSON value belonging to a closed field; retained and immutable during active record updates.                                                   |
@@ -34,7 +35,7 @@
 | Restore               | Compatibility route/action for reopening directly soft-deleted entities such as records/users; prefer “reopen” for hierarchical lifecycle operations. |
 | Role                  | Local named authorization category. Current effective authorization checks role name only.                                                            |
 | Runtime role          | PostgreSQL login `openslate_runtime`, provisioned for FastAPI and inheriting `openslate_app`.                                                         |
-| Schema acceptance     | Module flag indicating the backend has validated the current active field schema for record creation.                                                 |
+| Schema acceptance     | Module flag set when the backend validates the active field schema for record creation; it is not continuously synchronized with later lifecycle close/reopen state. |
 | Soft delete           | Persistence mechanism behind close: retain row while setting deletion state.                                                                          |
 | Supabase Auth         | External identity, password, invitation, and token authority.                                                                                         |
 | Supabase CLI platform | Local PostgreSQL/Auth/Realtime/Storage/Studio/Mailpit services managed from `supabase/config.toml`.                                                   |

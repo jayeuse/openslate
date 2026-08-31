@@ -17,7 +17,7 @@ sequenceDiagram
     participant Web as Next.js
     Operator->>CLI: supabase start
     Operator->>Mig: alembic upgrade head
-    Mig->>DB: apply revisions 0001..0014
+    Mig->>DB: apply revisions 0001..0015
     Operator->>Mig: provision runtime role
     Mig->>DB: create/grant openslate_runtime
     Operator->>Mig: bootstrap administrator
@@ -30,7 +30,7 @@ sequenceDiagram
 
 1. `supabase start` reads `supabase/config.toml` and starts PostgreSQL, Auth, Realtime, Storage, Studio, and Mailpit. Supabase migrations and seeds are disabled.
 2. The operator maps named values from `supabase status -o env` to the ignored root environment file.
-3. `backend/migrations/env.py` uses the owner-capable migration URL, imports the model registry, excludes external `auth.users`, and applies the linear chain through `20260830_0014`.
+3. `backend/migrations/env.py` uses the owner-capable migration URL, imports the model registry, excludes external `auth.users`, and applies the linear chain through `20260831_0015` (`canonical_decimal_strings`).
 4. `scripts/provision_database_role.py` creates or alters the constrained `openslate_runtime` login and grants `openslate_app` membership.
 5. `scripts/bootstrap_admin.py` invites through Supabase Auth, relies on the Auth profile trigger, finalizes the local profile, and commits an audited promotion to `admin`.
 6. Uvicorn imports `app.main:app`; Next.js starts separately with its public/backend settings. Neither process performs migration or provisioning automatically.
@@ -99,13 +99,13 @@ flowchart LR
     RecordDB --> Audit[(AuditLog)]
 ```
 
-Field creation validates name, type, position, configuration, and relationship metadata. Relationship fields lock and validate source/target modules in the same department. Creating or reordering fields invalidates schema acceptance, and each mutation is audited.
+Field creation validates name, type, position, configuration, and relationship metadata. Relationship fields lock and validate source/target modules in the same department. Field creation, effective API field updates, and changed reorders invalidate schema acceptance; lifecycle close/reopen does not. Each mutation is audited.
 
 Acceptance validates at least one active field, unique names, contiguous positions, supported types/configuration, and relationship metadata. Invalid schemas return `409`; accepted modules allow record creation.
 
-Record creation locks the active module, requires acceptance, parses field UUID keys, rejects inactive/unknown/relationship keys, enforces required and type-specific values, then stores primitive data in JSONB. Record update locks module and record, validates replacement-like active data, preserves closed-field values, and rejects changes to those values.
+Record creation locks the active module, requires acceptance, parses field UUID keys, rejects inactive/unknown/relationship keys, enforces required and type-specific values, then stores primitive data in JSONB. Record update does not require acceptance: it locks module and record, replaces active data, preserves closed-field values, and rejects changes to those values. Validation errors are deterministic and structured, capped at 20; ordinary failures are `422`, while closed-field mutations are `409`.
 
-The frontend new-record page has a verified discrepancy: it requests fields including deleted rows and may submit closed primitive-field keys, which the backend correctly rejects with `422`.
+The frontend new-record page may request fields including deleted rows, but it filters closed fields from rendering and serialization and submits active primitive fields only. Relationship fields are excluded and managed after creation.
 
 ## 5. Department close and reopen
 

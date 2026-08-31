@@ -38,7 +38,7 @@ The detailed handlers are in `backend/app/systems/auth/router.py`, `users/router
 ### Paths, payloads, and responses
 
 - Resource IDs are parsed as UUID path parameters by FastAPI and the route functions.
-- Request bodies are Pydantic models. Several models set `extra="forbid"`; field validators normalize usernames/emails or validate field metadata and data types before route logic.
+- Request bodies are Pydantic models. Several models set `extra="forbid"`; field validators normalize usernames/emails or validate field metadata before route logic. Field/module/record request models currently use Pydantic's default handling and ignore unknown top-level properties, while type-specific field `config` keys are validated strictly. Dynamic UUID-keyed record values are validated after the router loads authoritative field rows.
 - Successful collection responses use `{ "items": [...], "pagination": { "limit", "offset", "count", "total", "has_more" } }`, implemented by `StandardListResponse` and `execute_standard_list`.
 - The shared list request defaults to `limit=25`, `offset=0`, ascending order, and `deleted=exclude`; `limit` is bounded to 1–100. Supported sort fields and search columns are defined per endpoint.
 - Standard list search trims whitespace and is escaped before an `ILIKE` condition. Unsupported search/deleted filtering is returned as a `422` application validation error.
@@ -61,6 +61,8 @@ Resource-specific list filters are implemented as follows:
 ### Error response convention
 
 Most route errors are `HTTPException` instances whose body is FastAPI’s `{ "detail": ... }` shape. Lifecycle errors use `{ "detail": { "code": ..., "message": ..., "blockers": [...] } }` where applicable. There is no application-wide exception handler in `create_app`; the status and detail are selected by each dependency, router, or service adapter. The complete origin/status/rollback mapping is in [Error handling and recovery](15-error-handling-and-recovery.md).
+
+Record create/update validation returns a structured `detail` with `code: "record_validation_failed"`, a message, an ordered `errors` array of `{code, field_id, message}`, and a `truncated` flag. The backend collects findings in deterministic phases and returns at most 20 errors. Ordinary validation returns `422`; any changed or new value for a closed field returns the same structured detail with `409`. Creation requires an accepted module schema, while update does not use acceptance as a gate. Detailed evidence is in the [dynamic-field validation test plan](../dynamic-field-validation-test-plan.md).
 
 ## Traced request sequences
 

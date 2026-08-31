@@ -53,9 +53,41 @@ def _guard_integration_database(database_url: str) -> None:
     guard(database_url)
 
 
+def _owner_cleanup_database_url() -> str:
+    """Select a guarded connection that owns relationship_edges for cleanup."""
+
+    for variable in ("MIGRATION_DATABASE_URL", "TEST_DATABASE_URL"):
+        database_url = os.getenv(variable)
+        if database_url is None:
+            continue
+        _guard_integration_database(database_url)
+        engine = create_engine(database_url)
+        try:
+            with engine.connect() as connection:
+                is_owner = connection.scalar(
+                    text(
+                        """
+                        SELECT current_user = pg_get_userbyid(c.relowner)
+                        FROM pg_class AS c
+                        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                        WHERE n.nspname = 'public' AND c.relname = 'relationship_edges'
+                        """
+                    )
+                )
+                if is_owner is True:
+                    return database_url
+        finally:
+            engine.dispose()
+
+    raise RuntimeError(
+        "No owner-capable relationship cleanup URL exists; set "
+        "MIGRATION_DATABASE_URL or use an owner-capable TEST_DATABASE_URL"
+    )
+
+
 @pytest.fixture  # type: ignore[untyped-decorator]
 def owned_ids(integration_db: Session) -> Generator[set[UUID], None, None]:
-    """Clean rows committed by service calls with the disposable DB owner."""
+    """Clean only rows committed by service calls with an owner connection."""
 
     ids: set[UUID] = set()
     try:
@@ -66,25 +98,11 @@ def owned_ids(integration_db: Session) -> Generator[set[UUID], None, None]:
         # services can exercise commit/rollback behavior. Release its outer
         # transaction before owner-level cleanup opens another connection.
         integration_db.connection().rollback()
-        database_url = os.getenv("TEST_DATABASE_URL")
-        if ids and database_url is not None:
-            _guard_integration_database(database_url)
+        if ids:
+            database_url = _owner_cleanup_database_url()
             engine = create_engine(database_url)
             try:
                 with engine.begin() as connection:
-                    is_owner = connection.scalar(
-                        text(
-                            """
-                            SELECT current_user = pg_get_userbyid(c.relowner)
-                            FROM pg_class AS c
-                            JOIN pg_namespace AS n ON n.oid = c.relnamespace
-                            WHERE n.nspname = 'public' AND c.relname = 'relationship_edges'
-                            """
-                        )
-                    )
-                    if is_owner is not True:
-                        raise RuntimeError("Relationship integration cleanup requires table owner")
-
                     for table in (
                         "relationship_edges",
                         "fields",
@@ -570,6 +588,96 @@ def test_relationship_operation_fails_nowait_behind_held_dependency_lock(
                 if row.request_id == request_id]
 
 
+def test_single_target_race_returns_unavailable_then_committed_conflict(
+    integration_db: AuditSession, owned_ids: set[UUID]
+) -> None:
+    field, _, _, sources, targets, _ = _seed_committed_graph(
+        owned_ids, record_count=2
+    )
+    assert field.relationship_multiple_targets is False
+    source = sources[0]
+    holder_target = targets[0]
+    competing_target = targets[1]
+    competing_request_id = uuid7()
+    _set_request(integration_db, competing_request_id)
+
+    database_url = os.environ["TEST_DATABASE_URL"]
+    _guard_integration_database(database_url)
+    holder_engine = create_engine(database_url)
+    try:
+        with holder_engine.connect() as holder_connection:
+            holder = AuditSession(bind=holder_connection, expire_on_commit=False)
+            _set_request(holder, uuid7())
+            try:
+                held_source = holder.scalar(
+                    select(Record)
+                    .where(Record.id == source.id)
+                    .with_for_update()
+                )
+                assert held_source is not None
+
+                holder_edge = RelationshipEdge(
+                    field_id=field.id,
+                    source_record_id=source.id,
+                    target_record_id=holder_target.id,
+                )
+                holder.add(holder_edge)
+                holder.flush()
+                owned_ids.add(holder_edge.id)
+
+                with pytest.raises(RelationshipUnavailable) as unavailable:
+                    create_relationship(
+                        integration_db,
+                        field.id,
+                        source.id,
+                        competing_target.id,
+                    )
+                assert unavailable.value.status_code == 503
+                assert integration_db.scalar(
+                    select(RelationshipEdge.id).where(
+                        RelationshipEdge.field_id == field.id,
+                        RelationshipEdge.source_record_id == source.id,
+                        RelationshipEdge.target_record_id == competing_target.id,
+                    )
+                ) is None
+                assert not integration_db.scalar(
+                    select(AuditLog.id).where(
+                        AuditLog.request_id == competing_request_id
+                    )
+                )
+
+                holder.commit()
+            finally:
+                holder.rollback()
+                holder.close()
+    finally:
+        holder_engine.dispose()
+
+    with pytest.raises(RelationshipConflict) as conflict:
+        create_relationship(
+            integration_db,
+            field.id,
+            source.id,
+            competing_target.id,
+        )
+    assert conflict.value.status_code == 409
+
+    integration_db.expire_all()
+    active_edges = list(
+        integration_db.scalars(
+            select(RelationshipEdge).where(
+                RelationshipEdge.field_id == field.id,
+                RelationshipEdge.is_deleted.is_(False),
+            )
+        ).all()
+    )
+    assert len(active_edges) <= 1
+    assert [edge.id for edge in active_edges] == [holder_edge.id]
+    assert not integration_db.scalar(
+        select(AuditLog.id).where(AuditLog.request_id == competing_request_id)
+    )
+
+
 def test_relationship_migration_security_contract_matches_catalog(
     integration_db: Session, owned_ids: set[UUID]
 ) -> None:
@@ -577,8 +685,11 @@ def test_relationship_migration_security_contract_matches_catalog(
     relation = connection.execute(
         text(
             """
-            SELECT c.relrowsecurity AS rls_enabled,
-                   current_user = pg_get_userbyid(c.relowner) AS is_owner
+            SELECT current_user AS database_role,
+                   pg_get_userbyid(c.relowner) AS owner_role,
+                   c.relrowsecurity AS rls_enabled,
+                   current_user = pg_get_userbyid(c.relowner) AS is_owner,
+                   'openslate_runtime' = pg_get_userbyid(c.relowner) AS runtime_is_owner
             FROM pg_class AS c
             JOIN pg_namespace AS n ON n.oid = c.relnamespace
             WHERE n.nspname = 'public' AND c.relname = 'relationship_edges'
@@ -586,7 +697,31 @@ def test_relationship_migration_security_contract_matches_catalog(
         )
     ).mappings().one()
     assert relation["rls_enabled"] is True
-    assert relation["is_owner"] is True
+    assert relation["runtime_is_owner"] is False
+    assert relation["database_role"] in {relation["owner_role"], "openslate_runtime"}
+    assert relation["is_owner"] is (relation["database_role"] == relation["owner_role"])
+
+    if relation["database_role"] == "openslate_runtime":
+        runtime_privileges = connection.execute(
+            text(
+                """
+                SELECT has_table_privilege('openslate_runtime',
+                           'public.relationship_edges', 'SELECT') AS can_select,
+                       has_table_privilege('openslate_runtime',
+                           'public.relationship_edges', 'INSERT') AS can_insert,
+                       has_table_privilege('openslate_runtime',
+                           'public.relationship_edges', 'UPDATE') AS can_update,
+                       has_table_privilege('openslate_runtime',
+                           'public.relationship_edges', 'DELETE') AS can_delete
+                """
+            )
+        ).mappings().one()
+        assert dict(runtime_privileges) == {
+            "can_select": True,
+            "can_insert": True,
+            "can_update": True,
+            "can_delete": True,
+        }
 
     privileges = connection.execute(
         text(
