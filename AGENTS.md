@@ -2,6 +2,9 @@
 
 ## Boundaries
 
+- Read subdirectory AGENTS.md files before doing anything within those
+  subdirectories — for example `backend/migrations/AGENTS.md` before any
+  migration work. Their rules take precedence within their scope.
 - The root is orchestration/documentation, not a package. Run Supabase commands
   at root, Python/uv/Alembic commands in `backend/`, and npm/Playwright commands
   in `frontend/`.
