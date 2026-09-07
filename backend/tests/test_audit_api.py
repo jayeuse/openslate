@@ -6,7 +6,13 @@ from fastapi import HTTPException
 
 from app.common.listing import DeletedFilter
 from app.systems.audit.models import AuditAction, AuditLog
-from app.systems.audit.router import AuditLogListRequest, get_audit_log, get_audit_logs
+from app.systems.audit.router import (
+    AuditLogExportRequest,
+    AuditLogListRequest,
+    export_audit_logs,
+    get_audit_log,
+    get_audit_logs,
+)
 from app.systems.users.models import Role, User, UserRole
 
 
@@ -70,6 +76,27 @@ def test_admin_can_list_and_retrieve_audit_logs() -> None:
     assert detail.note == log.note
 
 
+def test_admin_can_export_audit_logs_with_a_bounded_bare_list() -> None:
+    logs = [make_log(), make_log()]
+    database = FakeDatabase(logs)
+    admin = User(
+        id=uuid7(),
+        email="admin@example.com",
+        username="admin",
+        status="active",
+        role_id=uuid7(),
+        role=Role(role=UserRole.ADMIN, permissions={}),
+    )
+
+    exported = export_audit_logs(admin, database, AuditLogExportRequest(limit=1))
+
+    assert len(exported) == 1
+    assert exported[0].id == logs[0].id
+    assert AuditLogExportRequest().limit == 100
+    with pytest.raises(ValueError):
+        AuditLogExportRequest(limit=101)
+
+
 @pytest.mark.parametrize("deleted", [DeletedFilter.INCLUDE, DeletedFilter.ONLY])
 def test_audit_list_rejects_deleted_filters(deleted: DeletedFilter) -> None:
     admin = User(
@@ -116,3 +143,10 @@ def test_audit_list_uses_flat_standard_query_parameters() -> None:
     assert "params" not in parameter_names
     assert {"limit", "offset", "sort_by", "sort_order", "search", "deleted"} <= parameter_names
     assert "cursor" not in parameter_names
+
+    export_operation = app.openapi()["paths"]["/api/audit-logs/export"]["get"]
+    export_parameter_names = {parameter["name"] for parameter in export_operation["parameters"]}
+    assert {"limit", "offset", "sort_by", "sort_order", "search", "deleted"} <= (
+        export_parameter_names
+    )
+    assert "audit_log_id" not in export_parameter_names

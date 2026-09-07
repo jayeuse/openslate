@@ -1,6 +1,6 @@
 from uuid import uuid7
 
-from sqlalchemy import ForeignKey, inspect
+from sqlalchemy import Boolean, ForeignKey, inspect
 
 from app.core.base_model import BaseModel
 from app.systems.audit.models import AuditLog
@@ -43,10 +43,27 @@ def test_domain_columns_and_foreign_keys_match_target_schema() -> None:
     assert User.__table__.c.email.type.length == 320
     assert User.__table__.c.status.type.length == 20
     assert User.__table__.c.role_id.nullable is False
+    invitation_columns = {
+        "invitation_sent_at",
+        "invitation_accepted_at",
+        "tokens_valid_after",
+    }
+    assert invitation_columns <= set(User.__table__.columns.keys()), (
+        "invitation lifecycle columns missing"
+    )
+    for column_name in invitation_columns:
+        assert User.__table__.c[column_name].nullable is True
     assert Department.__table__.c.department_name.type.length == 150
     assert Module.__table__.c.module_name.type.length == 150
     assert Field.__table__.c.type.type.length == 20
     assert Field.__table__.c.position.type.python_type is int
+    audit_redacted = Field.__table__.c.audit_redacted
+    assert isinstance(audit_redacted.type, Boolean)
+    assert audit_redacted.nullable is False
+    assert audit_redacted.default is not None
+    assert audit_redacted.default.arg is False
+    assert audit_redacted.server_default is not None
+    assert str(audit_redacted.server_default.arg) == "false"
     assert Record.__table__.c.data.nullable is False
 
     assert Field.__table__.c.relationship_target_module_id.nullable is True

@@ -12,6 +12,9 @@ from app.systems.audit.listeners import (
     reject_bulk_mutations,
 )
 from app.systems.audit.models import AuditAction, AuditLog
+from app.systems.audit.snapshots import REDACTED
+from app.systems.fields.models import Field, FieldType
+from app.systems.records.models import Record
 from app.systems.users.models import User
 
 
@@ -22,9 +25,15 @@ class FakeSession:
         self.dirty: list[object] = []
         self.deleted: list[object] = []
         self.added: list[object] = []
+        self.scalar_rows: list[object] = []
+        self.scalars_calls = 0
 
     def add(self, instance: object) -> None:
         self.added.append(instance)
+
+    def scalars(self, query) -> object:
+        self.scalars_calls += 1
+        return SimpleNamespace(all=lambda: self.scalar_rows)
 
 
 def test_create_listener_stages_and_writes_create_log() -> None:
@@ -56,6 +65,46 @@ def test_create_listener_stages_and_writes_create_log() -> None:
         "role_id": str(user.role_id),
     }
     assert "password_hash" not in audit_log.after
+
+
+def test_record_create_snapshots_redact_current_dynamic_fields_in_one_query() -> None:
+    module_id = uuid7()
+    redacted_field = Field(
+        module_id=module_id,
+        name="Renamed secret",
+        type=FieldType.TEXT,
+        position=0,
+        audit_redacted=True,
+        is_deleted=True,
+    )
+    redacted_field.id = uuid7()
+    redacted_key = str(redacted_field.id)
+    record_one = Record(
+        module_id=module_id,
+        data={redacted_key: "secret", "clear": "visible"},
+    )
+    record_one.id = uuid7()
+    record_two = Record(module_id=module_id, data={redacted_key: "another secret"})
+    record_two.id = uuid7()
+    session = FakeSession()
+    session.new = [record_one, record_two]
+    session.scalar_rows = [redacted_field]
+
+    capture_changes(session, None, None)
+    create_audit_logs(session, None)
+
+    assert session.scalars_calls == 1
+    logs = [entry for entry in session.added if isinstance(entry, AuditLog)]
+    assert len(logs) == 2
+    assert logs[0].after == {
+        "module_id": str(module_id),
+        "data": {redacted_key: REDACTED, "clear": "visible"},
+    }
+    assert logs[1].after == {
+        "module_id": str(module_id),
+        "data": {redacted_key: REDACTED},
+    }
+    assert record_one.data == {redacted_key: "secret", "clear": "visible"}
 
 
 def test_rollback_clears_staged_changes() -> None:

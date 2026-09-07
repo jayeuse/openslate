@@ -301,6 +301,7 @@ def create_field(
         type=payload.type,
         required=payload.required,
         position=payload.position,
+        audit_redacted=payload.audit_redacted,
         config=payload.config,
         relationship_target_module_id=payload.relationship_target_module_id,
         relationship_multiple_targets=payload.relationship_multiple_targets,
@@ -395,6 +396,8 @@ def update_field(
         field.required = payload.required
     if payload.position is not None:
         field.position = payload.position
+    if payload.audit_redacted is not None:
+        field.audit_redacted = payload.audit_redacted
     if payload.config is not None:
         field.config = config
     if current_type is FieldType.RELATIONSHIP:

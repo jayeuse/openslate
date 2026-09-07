@@ -122,7 +122,11 @@ The session Route Handlers are:
   browser cookies even if Auth is unavailable.
 - `frontend/src/app/session/password/route.ts:POST` checks same-origin, validates two
   matching passwords of at least 12 characters, establishes the cookie session,
-  calls `auth.updateUser`, and reissues or clears cookies on failure.
+  calls `auth.updateUser`, then directly calls private `POST /api/auth/invitations/accept`
+  with the fresh access token after a successful password update; it is the only
+  browser-facing invitation-acceptance path. Acceptance failures return `400`;
+  cookies are cleared when no session can be established, otherwise the established
+  session cookies are preserved.
 - `frontend/src/app/session/realtime-token/route.ts:GET` checks same-origin, establishes
   or refreshes the cookie session, returns a short-lived `access_token` for the
   browser realtime client, and uses no-store responses.
@@ -155,7 +159,9 @@ sequenceDiagram
 
 `frontend/src/app/bff/[...path]/route.ts:handle` is the canonical application data boundary used by pages. It exports `GET`, `POST`, `PATCH`, `PUT`, and `DELETE`, maps the
 catch-all path to `${BACKEND_URL}/api/{path}`, preserves the query string, and
-uses `cache: "no-store"` on its upstream fetch. It forwards a small allowlist of request headers
+uses `cache: "no-store"` on its upstream fetch. The generic BFF denies
+`auth/invitations/accept` with `403`; browsers cannot reach acceptance through
+`/bff/*`. It forwards a small allowlist of request headers
 (`accept`, language, content type, conditional headers) and places the access
 cookie value in an `Authorization: Bearer` header. Unsafe methods require the
 same-origin check from `frontend/src/lib/request-security.ts:isSameOriginRequest`.

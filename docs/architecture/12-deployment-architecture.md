@@ -50,8 +50,10 @@ The corresponding commands are documented in `README.md`:
   and `OPENSLATE_DATABASE_PASSWORD` to create or update the constrained
   `openslate_runtime` login and grant membership in `openslate_app`.
 - `uv run python scripts/bootstrap_admin.py --email <email> --username
-<username>` uses Supabase Auth invitation delivery, the Auth-created pending
-  profile, and an audited role promotion. Outside local environments it also
+<username>` reserves a pending single-use administrator assignment through
+  Supabase Auth invitation delivery and leaves the Auth-created profile `pending`
+  until verified post-password acceptance via `/session/password` to private
+  `POST /api/auth/invitations/accept`. Outside local environments it also
   requires `--confirm` or `BOOTSTRAP_ADMIN_CONFIRM`.
 - `uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000` and
   `npm run dev -- --hostname 127.0.0.1` start the application processes.
@@ -122,7 +124,7 @@ evidence that hosted infrastructure exists or is production-ready.
 - Use one trust domain per deployment. Isolate Supabase Auth, PostgreSQL,
   Storage, secrets, backups, and administrator population; shared tenancy is
   deferred.
-- Keep FastAPI private. The browser-facing Next.js service uses `/bff/*`; direct
+- Keep FastAPI private because direct exposure would bypass the BFF acceptance guard (`auth/invitations/accept` is denied in the BFF and only reachable via `/session/password`). The browser-facing Next.js service uses `/bff/*`; direct
   Next `/api` and API documentation rewrites are removed. Only the required
   Supabase Auth, JWKS, and Realtime surfaces remain public, with controlled
   provider policy.
@@ -145,7 +147,7 @@ selections/blockers. No provider-neutral infrastructure is specified here.
 | Application migrations | Alembic owns `backend/migrations/`; the 15-revision linear chain is applied explicitly with `uv run alembic upgrade head`.                                                                                                                 | Unknown. Migration 0010 needs owner-capable access to Supabase-managed Realtime metadata and role DDL; its hosted branch fails closed unless that capability exists or is handled by a separately approved owner-capable step. |
 | Drift check            | `uv run alembic check` is run locally and in backend CI.                                                                                                                                                                                   | Unknown. No hosted drift job is defined.                                                                                                                                                                                       |
 | Runtime database role  | `provision_database_role.py` requires `MIGRATION_DATABASE_URL` and `OPENSLATE_DATABASE_PASSWORD`, rejects unsafe attributes, creates/updates `openslate_runtime`, verifies the `openslate_app` role and non-delegable direct membership (including PostgreSQL membership options where available), and fails if any other direct or inherited membership exists; it never silently revokes unknown memberships. | Unknown. No hosted role-delivery or password-rotation workflow is defined. |
-| First administrator    | `bootstrap_admin.py` checks schema and seeded roles, rejects an existing active admin, invites through server-side Supabase Auth, finalizes the local profile, and audits the admin promotion.                                             | Unknown. The confirmation guard exists, but no hosted bootstrap runbook or environment is defined.                                                                                                                             |
+| First administrator    | `bootstrap_admin.py` checks schema and seeded roles, reserves any non-deleted pending/active admin assignment (only the exact same pending reservation is idempotent), invites through server-side Supabase Auth, and leaves the profile `pending` for verified post-password acceptance; finalization rechecks under the admin-role lock and a concurrent loser remains a pending member with no destructive compensation. | Unknown. The confirmation guard exists, but no hosted bootstrap runbook or environment is defined.                                                                                                                             |
 | Optional sample data   | `seed_sample_data.py` calls the authenticated FastAPI API with an admin access token; it does not write tables directly.                                                                                                                   | Unknown. It is a development utility, not a release step.                                                                                                                                                                      |
 
 ## Update, rollback, backup, and recovery state

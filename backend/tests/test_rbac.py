@@ -20,9 +20,16 @@ import app.systems.modules.router as modules_router
 import app.systems.records.router as records_router
 import app.systems.relationships.router as relationships_router
 import app.systems.users.router as users_router
-from app.common.dependencies.auth import get_current_user, require_capability
+import app.systems.users.service as users_service
+from app.common.dependencies.auth import (
+    VerifiedPendingIdentity,
+    get_current_user,
+    get_verified_pending_identity,
+    require_capability,
+)
 from app.common.listing import ListQueryResult, PaginationMetadata
 from app.core.database import get_db
+from app.core.integrations.supabase import SupabaseAdminClient
 from app.main import create_app
 from app.systems.fields.models import Field, FieldType
 from app.systems.lifecycle.schemas import (
@@ -536,7 +543,7 @@ def test_users_roles_invitations_and_audit_are_literal_admin_only(
         monkeypatch.setattr(
             auth_router,
             "invite_user",
-            lambda *_args: make_user("invited"),
+            lambda *_args, **_kwargs: make_user("invited"),
         )
     else:
         monkeypatch.setattr(
@@ -555,6 +562,159 @@ def test_users_roles_invitations_and_audit_are_literal_admin_only(
     )
     response = _client(api, custom).request(method, path, json=payload)
     assert response.status_code == 403
+
+
+def test_pending_invitation_acceptance_uses_verified_identity_not_request_body(
+    api: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending_role = make_role("operator")
+    pending = make_user("pending", role=pending_role, status="pending")
+    pending.invitation_sent_at = datetime.now(UTC)
+    identity = VerifiedPendingIdentity(subject=pending.id, email=pending.email)
+    database = Mock(spec=Session)
+    admin_role = make_role(UserRole.ADMIN)
+    database.scalar.side_effect = [admin_role, pending, pending_role]
+    monkeypatch.setattr(users_service, "append_committed_security_event", lambda _payload: None)
+    api.dependency_overrides[get_verified_pending_identity] = lambda: identity
+
+    response = _client(api, pending, database).post(
+        "/api/auth/invitations/accept",
+        json={"user_id": str(uuid7()), "email": "attacker@example.com", "verified": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(pending.id)
+    assert pending.status == "active"
+
+
+def test_admin_user_patch_cannot_activate_or_set_a_pending_status(api: FastAPI) -> None:
+    admin = make_user("admin", role=make_role(UserRole.ADMIN))
+    target = make_user("pending", role=make_role(), status="disabled")
+    database = Mock(spec=Session)
+    database.scalar.return_value = target
+
+    response = _client(api, admin, database).patch(
+        f"/api/users/{target.id}",
+        json={"status": "pending"},
+    )
+
+    assert response.status_code == 422
+    assert target.status == "disabled"
+    database.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("status", "deleted", "method_name"),
+    [
+        ("active", False, "enable_user"),
+        ("pending", False, "disable_user"),
+        ("disabled", False, "disable_user"),
+        ("active", True, "disable_user"),
+    ],
+)
+def test_exact_admin_can_reconcile_auth_from_local_state(
+    api: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    deleted: bool,
+    method_name: str,
+) -> None:
+    target = make_user("reconcile-target", role=make_role(), status=status, deleted=deleted)
+    admin = make_user("admin", role=make_role(UserRole.ADMIN))
+    database = Mock(spec=Session)
+    database.scalar.side_effect = [
+        admin.role,
+        admin,
+        target,
+        admin.role,
+        admin,
+        target,
+    ]
+    client = Mock(spec=SupabaseAdminClient)
+    monkeypatch.setattr(users_router, "SupabaseAdminClient", lambda: client)
+    monkeypatch.setattr(users_router, "_security_event", lambda *_args, **_kwargs: None)
+
+    response = _client(api, admin, database).post(
+        f"/api/users/{target.id}/reconcile-auth",
+    )
+
+    assert response.status_code == 200
+    getattr(client, method_name).assert_called_once_with(target.id)
+    opposite = "disable_user" if method_name == "enable_user" else "enable_user"
+    getattr(client, opposite).assert_not_called()
+
+
+def test_reconcile_auth_remains_exact_admin_only_even_with_all_capabilities(api: FastAPI) -> None:
+    custom = make_user(
+        "custom",
+        role=make_role("operator", {capability: True for capability in ALL_CAPABILITIES}),
+    )
+    database = Mock(spec=Session)
+
+    response = _client(api, custom, database).post(
+        f"/api/users/{uuid7()}/reconcile-auth",
+    )
+
+    assert response.status_code == 403
+
+
+def test_reconcile_auth_emits_correlated_safe_attempt_and_outcome_events(
+    api: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = make_user("reconcile-target", role=make_role(), status="disabled")
+    admin = make_user("admin", role=make_role(UserRole.ADMIN))
+    database = Mock(spec=Session)
+    database.scalar.side_effect = [admin.role, admin, target, admin.role, admin, target]
+    client = Mock(spec=SupabaseAdminClient)
+    event_writer = Mock()
+    monkeypatch.setattr(users_router, "SupabaseAdminClient", lambda: client)
+    monkeypatch.setattr(users_router, "_security_event", event_writer)
+
+    response = _client(api, admin, database).post(
+        f"/api/users/{target.id}/reconcile-auth",
+    )
+
+    assert response.status_code == 200
+    events = [call.kwargs for call in event_writer.call_args_list]
+    assert len(events) >= 2
+    assert len({event["operation_id"] for event in events}) == 1
+    assert {getattr(event["outcome"], "value", event["outcome"]) for event in events} >= {
+        "attempt",
+        "success",
+    }
+
+
+def test_reconcile_auth_records_partial_drift_without_an_opposite_provider_call(
+    api: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = make_user("reconcile-target", role=make_role(), status="disabled")
+    changed = make_user("reconcile-target", role=target.role, status="active")
+    changed.id = target.id
+    admin = make_user("admin", role=make_role(UserRole.ADMIN))
+    database = Mock(spec=Session)
+    database.scalar.side_effect = [admin.role, admin, target, admin.role, admin, changed]
+    client = Mock(spec=SupabaseAdminClient)
+    events = Mock()
+    monkeypatch.setattr(users_router, "SupabaseAdminClient", lambda: client)
+    monkeypatch.setattr(users_router, "_security_event", events)
+
+    response = _client(api, admin, database).post(
+        f"/api/users/{target.id}/reconcile-auth",
+    )
+
+    assert response.status_code == 409
+    client.disable_user.assert_called_once_with(target.id)
+    client.enable_user.assert_not_called()
+    assert changed.status == "disabled"
+    assert changed.tokens_valid_after is not None
+    outcomes = {
+        getattr(call.kwargs["outcome"], "value", call.kwargs["outcome"])
+        for call in events.call_args_list
+    }
+    assert {"attempt", "partial"} <= outcomes
 
 
 @pytest.mark.parametrize(

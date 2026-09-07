@@ -22,6 +22,7 @@ class FieldCreate(BaseModel):
     type: FieldType
     required: bool = False
     position: int = Field(ge=0)
+    audit_redacted: bool = False
     config: dict[str, Any] = Field(default_factory=dict)
     relationship_target_module_id: UUID | None = None
     relationship_multiple_targets: bool | None = None
@@ -58,6 +59,7 @@ class FieldUpdate(BaseModel):
     type: FieldType | None = None
     required: bool | None = None
     position: int | None = Field(default=None, ge=0)
+    audit_redacted: bool | None = None
     config: dict[str, Any] | None = None
     relationship_target_module_id: UUID | None = None
     relationship_multiple_targets: bool | None = None
@@ -103,3 +105,8 @@ class FieldResponse(FieldCreate):
     performed_by: UUID | None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("audit_redacted", mode="before")
+    @classmethod
+    def default_missing_audit_redaction(cls, value: Any) -> Any:
+        return False if value is None else value

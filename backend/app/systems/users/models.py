@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
@@ -5,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import (
     CheckConstraint,
     Column,
+    DateTime,
     ForeignKey,
     String,
     Table,
@@ -85,6 +87,15 @@ class User(BaseModel):
         nullable=False,
         default=UserStatus.PENDING.value,
         server_default=text("'pending'"),
+    )
+    invitation_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    invitation_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    tokens_valid_after: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     role_id: Mapped[UUID] = mapped_column(
         ForeignKey("roles.id", ondelete="RESTRICT", use_alter=True),

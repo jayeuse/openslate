@@ -73,6 +73,7 @@ APPLICATION_TABLES = {
     "fields",
     "records",
     "audit_logs",
+    "security_events",
     "relationship_edges",
     "lifecycle_confirmation_challenges",
     "lifecycle_rate_limit_buckets",
@@ -84,6 +85,7 @@ NON_PRESERVED_TABLES = {
     "fields",
     "records",
     "audit_logs",
+    "security_events",
     "relationship_edges",
     "lifecycle_confirmation_challenges",
     "lifecycle_rate_limit_buckets",
@@ -99,6 +101,7 @@ DELETE_ORDER = [
     "lifecycle_rate_limit_buckets",
     "relationship_edges",
     "audit_logs",
+    "security_events",
     "records",
     "fields",
     "modules",
@@ -232,7 +235,7 @@ class FakeConnection:
     def __init__(
         self,
         *,
-        head: str = "20260831_0015",
+        head: str = "fc105d5b6283",
         public_tables: set[str] | None = None,
         auth_users: list[dict[str, object]] | None = None,
         profile: dict[str, object] | None = None,
@@ -1424,7 +1427,7 @@ def test_execute_uses_locks_parameterized_static_deletes_and_preserves_auth_stat
     assert database.committed is True
     assert database.rolled_back is False
     assert database.auth_users == auth_before
-    assert database.head == "20260831_0015"
+    assert database.head == "fc105d5b6283"
     assert all(database.counts[table] == 0 for table in NON_PRESERVED_TABLES)
     assert database.counts["users"] == 1
     assert database.counts["roles"] == 2
@@ -1439,7 +1442,7 @@ def test_execute_uses_locks_parameterized_static_deletes_and_preserves_auth_stat
         "LOCK TABLE auth.users IN SHARE MODE NOWAIT",
         "LOCK TABLE public.alembic_version, public.users, public.roles, "
         "public.departments, public.modules, public.fields, public.records, "
-        "public.audit_logs, public.relationship_edges, "
+        "public.audit_logs, public.security_events, public.relationship_edges, "
         "public.lifecycle_confirmation_challenges, "
         "public.lifecycle_rate_limit_buckets, "
         "public.lifecycle_rate_limit_failures IN ACCESS EXCLUSIVE MODE NOWAIT",
@@ -1451,10 +1454,12 @@ def test_execute_uses_locks_parameterized_static_deletes_and_preserves_auth_stat
         if re.match(r"DELETE\s+FROM\s+public\.", query, flags=re.IGNORECASE)
     ]
     assert len(deletes) == len(DELETE_ORDER)
-    assert [
-        re.match(r"DELETE\s+FROM\s+public\.([a-z_]+)\b", query, re.IGNORECASE).group(1)
-        for query, _ in deletes
-    ] == DELETE_ORDER
+    delete_names: list[str] = []
+    for query, _ in deletes:
+        match = re.match(r"DELETE\s+FROM\s+public\.([a-z_]+)\b", query, re.IGNORECASE)
+        assert match is not None
+        delete_names.append(match.group(1))
+    assert delete_names == DELETE_ORDER
     for query, _ in deletes:
         assert "cascade" not in query.casefold()
         assert "truncate" not in query.casefold()

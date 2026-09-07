@@ -25,7 +25,7 @@ from app.systems.fields.router import (
     update_field,
 )
 from app.systems.fields.router import router as fields_router
-from app.systems.fields.schemas import FieldCreate, FieldReorder, FieldUpdate
+from app.systems.fields.schemas import FieldCreate, FieldReorder, FieldResponse, FieldUpdate
 from app.systems.fields.validation import (
     FIELD_VALIDATORS,
     field_config,
@@ -82,6 +82,7 @@ def make_field(
     required: bool = False,
     config: dict[str, object] | None = None,
     deleted: bool = False,
+    audit_redacted: bool = False,
 ) -> Field:
     field = Field(
         module_id=module_id,
@@ -91,6 +92,7 @@ def make_field(
         position=0,
         config=config or {},
         is_deleted=deleted,
+        audit_redacted=audit_redacted,
     )
     field.id = uuid7()
     return field
@@ -191,6 +193,28 @@ def test_field_schema_rejects_invalid_configuration() -> None:
             position=0,
             config={"options": ["open", "open"]},
         )
+
+
+def test_field_audit_redaction_defaults_and_is_patchable() -> None:
+    module_id = uuid7()
+
+    create_payload = FieldCreate(
+        module_id=module_id,
+        name="Secret",
+        type=FieldType.TEXT,
+        position=0,
+    )
+
+    assert create_payload.audit_redacted is False
+    assert FieldUpdate().audit_redacted is None
+    assert FieldUpdate(audit_redacted=True).audit_redacted is True
+
+    response_field = make_field(module_id)
+    response_field.audit_redacted = None
+    response_field.created_at = datetime.now(UTC)
+    response_field.updated_at = datetime.now(UTC)
+    response = FieldResponse.model_validate(response_field, from_attributes=True)
+    assert response.audit_redacted is False
 
 
 @pytest.mark.parametrize(
@@ -368,13 +392,20 @@ def test_field_create_requires_active_module_and_checks_name_and_position() -> N
     db.scalar.side_effect = [module, None, None]
 
     field = create_field(
-        FieldCreate(module_id=module.id, name="  Title  ", type="text", position=0),
+        FieldCreate(
+            module_id=module.id,
+            name="  Title  ",
+            type="text",
+            position=0,
+            audit_redacted=True,
+        ),
         Mock(),
         db,
     )
 
     assert field.name == "Title"
     assert field.module_id == module.id
+    assert field.audit_redacted is True
     db.commit.assert_called_once()
 
 
@@ -441,6 +472,20 @@ def test_effective_field_lifecycle_changes_clear_schema_acceptance() -> None:
         db,
     )
     assert module.is_schema_accepted is False
+
+
+def test_audit_redaction_only_change_preserves_schema_acceptance() -> None:
+    module = make_module()
+    field = make_field(module.id)
+    db = Mock(spec=Session)
+    db.scalar.return_value = module
+    db.get.side_effect = [field, module, field]
+
+    updated = update_field(field.id, FieldUpdate(audit_redacted=True), Mock(), db)
+
+    assert updated.audit_redacted is True
+    assert module.is_schema_accepted is True
+    db.commit.assert_called_once()
 
 
 @pytest.mark.parametrize(

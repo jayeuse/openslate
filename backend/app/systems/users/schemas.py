@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -96,7 +96,7 @@ class UserUpdate(BaseModel):
         pattern=r"^[a-zA-Z0-9_-]+$",
     )
     role_id: UUID | None = None
-    status: UserStatus | None = None
+    status: Literal[UserStatus.ACTIVE, UserStatus.DISABLED] | None = None
 
     @field_validator("username", mode="before")
     @classmethod

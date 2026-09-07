@@ -31,7 +31,7 @@ flowchart LR
 ### Authentication and session protection
 
 - `verify_supabase_jwt` restricts algorithms and verifies JWKS signature, issuer, audience, expiry, and UUID subject.
-- `get_current_user` reloads the local profile and role on every protected API request and rejects missing, deleted, disabled, pending, or role-less users.
+- `get_current_user` reloads the local profile and role on every protected API request and rejects missing, deleted, disabled, pending, or role-less users; it additionally rejects access tokens with `iat` earlier than `User.tokens_valid_after`. Disable/delete advance that cutoff local-first. Supabase refresh-session revocation is not verified by the backend and remains absent/unverified.
 - Access/refresh cookies are HttpOnly, host-only, SameSite=Lax, and Secure in production.
 - Session and BFF mutations use `isSameOriginRequest`; the BFF forwards an allowlist of headers and never forwards the refresh token.
 - Global public signup and anonymous sign-in are disabled; local password minimum and complexity are configured in `supabase/config.toml`.
@@ -40,7 +40,7 @@ Sources: `backend/app/core/security/supabase.py`, `backend/app/common/dependenci
 
 ### Authorization
 
-Domain routers for departments, modules, fields, records, and relationships enforce matching flat `.read` and `.write` capabilities. The exact `admin` role is implicitly granted all ten capabilities. Each capability is independent; a read grant does not imply write and a write grant does not imply read. Users, roles, invitations, audit, and purge remain literal-admin-only. `/api/auth/me` is AuthN-only and returns the role plus sorted effective permissions. This is global authorization within one trust domain, not resource ownership or tenant authorization. FastAPI is authoritative; direct database access bypasses RBAC.
+Domain routers for departments, modules, fields, records, and relationships enforce matching flat `.read` and `.write` capabilities. The exact `admin` role is implicitly granted all ten capabilities. Each capability is independent; a read grant does not imply write and a write grant does not imply read. Users, roles, invitations, audit, security-event read/export, and purge remain literal-admin-only. `/api/auth/me` is AuthN-only and returns the role plus sorted effective permissions. This is global authorization within one trust domain, not resource ownership or tenant authorization. FastAPI is authoritative; direct database access bypasses RBAC.
 
 ### Browser and request controls
 
@@ -59,8 +59,9 @@ The confirmed boundary is that a provisioned `openslate_runtime` connection can 
 
 ### Audit and lifecycle controls
 
-- Normal `AuditSession` mutations create same-transaction minimal before/after logs.
+- Normal `AuditSession` mutations create same-transaction minimal before/after logs. `GET /audit-logs/export` returns a bounded JSON array of at most 100 rows.
 - ORM attempts to mutate audit logs or run bulk/raw mutation statements are rejected.
+- `SecurityEvent` is a separate append-only ledger; ordinary ORM insert/update/delete attempts are rejected, actor/subject IDs are immutable UUID snapshots without user FKs, exact-admin list/detail/export (at most 100 events) plus `SECURITY_EVENT_SERVER_KEY` internal ingestion apply, and request-facing flows use independent-session durable commits. Direct database access remains outside the append-only boundary.
 - Lifecycle confirmation stores a token hash, binds actor/operation/target/digest, expires after five minutes, rate-limits failures, and performs password verification outside long-held DB transactions.
 - Audit immutability is application-scoped, not cryptographic or owner-proof.
 
@@ -77,7 +78,7 @@ The confirmed boundary is that a provisioned `openslate_runtime` connection can 
 | ------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Tenant isolation                            | **Absent**                  | No tenant key or tenant predicate exists. The supported model is one trust domain per deployment; shared tenancy requires an architecture change.             |
 | Fine-grained permissions                    | **Implemented**             | Exactly ten flat read/write capabilities are enforced by FastAPI; omitted or malformed non-admin permissions default to deny, with no capability implication. |
-| Token revocation introspection              | **Absent**                  | Signed JWTs remain acceptable until expiry unless local profile/role state blocks them.                                                                       |
+| Token revocation introspection              | **Absent**                  | Signed JWTs remain acceptable until expiry unless the local status gate or `tokens_valid_after` cutoff blocks them. Refresh-session revocation is unverified/absent. |
 | Request body limits/general API rate limits | **Absent in repository**    | BFF buffers full bodies; only Supabase Auth and lifecycle password controls have scoped limits.                                                               |
 | Hosted TLS/HSTS/network policy              | **Unknown**                 | Images serve HTTP and no ingress is checked in.                                                                                                               |
 | Per-service hosted secret delivery/rotation | **Unknown**                 | Only process environment consumption is defined.                                                                                                              |
@@ -90,7 +91,7 @@ The confirmed boundary is that a provisioned `openslate_runtime` connection can 
 
 Configuration models wrap server keys in `SecretStr`, `.env` is ignored, examples contain placeholders, and browser code reads only public Supabase variables. The supported local frontend path uses `frontend/.env.local` based on `frontend/.env.example`, containing only `BACKEND_URL`, public Supabase values, and the optional purge flag. The root `.env` is not sourced into npm or Next.js, and `npm ci` runs without backend secrets.
 
-Audit redaction matches sensitive serialized key names. Dynamic record values are nested under field UUID keys, so a business field named “password” or “secret” is not recognized by name during record snapshotting. Such values can remain in audit history after record/field purge. Data classification and retention policy are not defined.
+Audit redaction matches sensitive serialized key names. Dynamic record values are nested under field UUID keys, so name-based markers do not match them; only the explicit `Field.audit_redacted` flag redacts those UUID-keyed values, and only in newly created Record audit snapshots (including renamed and soft-deleted fields, via `listeners._record_redacted_fields`). Flagged values do not change `Record.data`. Previously stored clear snapshots, copies in backups, and values that survive record/field purge remain: historical remediation was not performed and requires separate approval. Product decision: users with `fields.write` are trusted field data-classification owners allowed to toggle `audit_redacted` (`POST /fields` and `PATCH /fields/{field_id}` require `fields.write`); the flag affects only future snapshots. Retention policy and historical remediation remain undefined.
 
 ## Deployment-dependent security gates
 

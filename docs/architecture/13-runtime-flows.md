@@ -23,7 +23,7 @@ sequenceDiagram
     Operator->>Mig: bootstrap administrator
     Mig->>Auth: invite identity
     Auth->>DB: trigger pending profile
-    Mig->>DB: finalize and promote profile
+    Mig->>DB: reserve pending admin assignment
     Operator->>API: start Uvicorn
     Operator->>Web: start Next.js
 ```
@@ -34,10 +34,10 @@ sequenceDiagram
    separately with only `BACKEND_URL` and public Supabase values.
 3. `backend/migrations/env.py` uses the owner-capable migration URL, imports the model registry, excludes external `auth.users`, and applies the linear chain through `20260831_0015` (`canonical_decimal_strings`).
 4. `scripts/provision_database_role.py` creates or alters the constrained `openslate_runtime` login and grants `openslate_app` membership.
-5. `scripts/bootstrap_admin.py` invites through Supabase Auth, relies on the Auth profile trigger, finalizes the local profile, and commits an audited promotion to `admin`.
+5. `scripts/bootstrap_admin.py` reserves a pending single-use administrator assignment through Supabase Auth, relies on the Auth profile trigger, and leaves the profile `pending` until verified post-password acceptance; only the exact same pending reservation is idempotent.
 6. Uvicorn imports `app.main:app`; Next.js starts separately with its public/backend settings. Neither process performs migration or provisioning automatically.
 
-Failures include occupied ports, missing owner privileges, preexisting profiles at migration `0010`, missing seeded roles, Auth configuration failure, or an existing active administrator. A destructive reset requires `supabase db reset`, Alembic again, and possibly role/bootstrap repetition.
+Failures include occupied ports, missing owner privileges, preexisting profiles at migration `0010`, missing seeded roles, Auth configuration failure, or an existing administrator reservation (any non-deleted pending/active admin assignment). A destructive reset requires `supabase db reset`, Alembic again, and possibly role/bootstrap repetition.
 
 ## 2. Login, protected request, and token refresh
 
@@ -82,11 +82,11 @@ Evidence: frontend login/session/BFF files, `backend/app/core/security/supabase.
 2. `users.router:create_user` requires an administrator and delegates to `users.service:invite_user`.
 3. `SupabaseAdminClient.invite_user` uses the server-only secret to call Auth.
 4. Migration `0010`'s Auth trigger inserts a pending local member profile with the same UUID.
-5. The service reloads the profile, applies requested identity/role, marks it active, and commits. Local failure triggers rollback and a best-effort Auth-user deletion.
+5. The service verifies the exact trigger placeholder profile state, applies the requested email/username/role, keeps it `pending` with `invitation_sent_at`, and commits; after Auth success it never destructively compensates and leaves the trigger profile pending on finalization failure.
 6. The email link reaches `/auth/callback`, which exchanges a code or invite token, sets cookies, and redirects to `/auth/setup`.
-7. Password setup performs same-origin and minimum/equality validation, establishes the session, calls `auth.updateUser`, reissues cookies, and redirects to the workspace.
+7. Password setup performs same-origin and minimum/equality validation, establishes the session, calls `auth.updateUser`, then directly calls private `POST /api/auth/invitations/accept` with the fresh access token and flips the matching pending invite to `active`. The generic BFF denies `auth/invitations/accept`, so `/session/password` is the only browser-facing acceptance path; FastAPI stays private because direct exposure would bypass that BFF acceptance guard.
 
-The first-administrator script uses the same invitation path and then promotes the profile to `admin` in a separate audited commit. No local password hash is stored.
+The first-administrator script reserves a pending single-use admin assignment through the same invitation path (any non-deleted pending/active assignment blocks, only the exact same pending reservation is idempotent, finalization rechecks under the admin-role lock, and a concurrent loser remains a pending member with no destructive compensation) and leaves the profile `pending` until the verified post-password acceptance above. No local password hash is stored.
 
 ## 4. Field creation, schema acceptance, and record mutation
 

@@ -1,8 +1,9 @@
-"""Provision the first administrator through the Supabase Auth invite flow.
+"""Invite the first administrator through the Supabase Auth invite flow.
 
 The script never creates a local credential.  Supabase Auth owns the identity,
-and its user-created trigger creates the pending local profile.  This script
-then activates that profile and promotes it to the seeded ``admin`` role.
+and its user-created trigger creates the pending local profile.  The profile is
+assigned the seeded ``admin`` role but remains pending until the invitee
+completes verified invitation acceptance.
 """
 
 import argparse
@@ -10,6 +11,7 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -19,6 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.common.normalization import normalize_email, normalize_username
 from app.core.config import Settings, get_settings
 from app.core.database.session import AuditSession, get_engine
 from app.core.integrations.supabase import SupabaseAdminClient
@@ -95,99 +98,78 @@ def _matching_profile(db: AuditSession, invitation: InvitationCreate) -> User | 
     username_profile = db.scalar(select(User).where(User.username == invitation.username))
     if email_profile is None and username_profile is None:
         return None
-    if (
-        email_profile is not None
-        and username_profile is None
-        and email_profile.status == UserStatus.PENDING.value
-        and email_profile.username.startswith("auth_")
-        and not email_profile.is_deleted
-    ):
-        # invite_user can safely replace this stranded infrastructure profile.
-        return None
     if email_profile is not None and username_profile is not None:
         if email_profile.id != username_profile.id:
             raise BootstrapError("Email and username belong to different profiles")
         return email_profile
-    raise BootstrapError("Email or username is already associated with another profile")
+    return email_profile or username_profile
 
 
-def _active_admin_count(db: AuditSession) -> int:
-    return int(
-        db.scalar(
-            select(func.count())
-            .select_from(User)
-            .join(Role, User.role_id == Role.id)
-            .where(
-                User.is_deleted.is_(False),
-                User.status == UserStatus.ACTIVE.value,
-                Role.is_deleted.is_(False),
-                Role.role == UserRole.ADMIN,
-            )
-        )
-        or 0
+def _admin_assignment_count(
+    db: AuditSession,
+    admin_role: Role,
+    *,
+    excluded_user_id: UUID | None = None,
+) -> int:
+    statement = (
+        select(func.count())
+        .select_from(User)
+        .join(Role, User.role_id == Role.id)
+        .where(User.is_deleted.is_(False), Role.id == admin_role.id)
+    )
+    if excluded_user_id is not None:
+        statement = statement.where(User.id != excluded_user_id)
+    return int(db.scalar(statement) or 0)
+
+
+def _is_exact_admin_reservation(user: User, invitation: InvitationCreate, admin_role: Role) -> bool:
+    try:
+        normalized_email = normalize_email(user.email)
+        normalized_username = normalize_username(user.username)
+    except ValueError:
+        return False
+    return bool(
+        user.role_id == admin_role.id
+        and user.status == UserStatus.PENDING.value
+        and not user.is_deleted
+        and user.invitation_sent_at is not None
+        and user.invitation_accepted_at is None
+        and normalized_email == invitation.email
+        and normalized_username == invitation.username
     )
 
 
-def _promote(db: AuditSession, user: User, admin_role: Role) -> None:
-    user.role_id = admin_role.id
-    user.role = admin_role
-    user.status = UserStatus.ACTIVE.value
-    user.is_deleted = False
-    user.deleted_at = None
-
-
 def _provision(settings: Settings, invitation: InvitationCreate) -> User:
-    auth_client: SupabaseAdminClient | None = None
-    invited_user: User | None = None
-
     with AuditSession(get_engine()) as db:
         db.info[AUDIT_CONTEXT_KEY] = AuditContext()
-        member_role, admin_role = _validate_schema_and_roles(db)
+        _, admin_role = _validate_schema_and_roles(db)
         existing_profile = _matching_profile(db, invitation)
 
         if existing_profile is not None:
-            already_active_admin = (
-                existing_profile.role_id == admin_role.id
-                and existing_profile.status == UserStatus.ACTIVE.value
-                and not existing_profile.is_deleted
-            )
-            if not already_active_admin and _active_admin_count(db):
-                raise BootstrapError("An active administrator already exists")
-            _promote(db, existing_profile, admin_role)
-            try:
-                db.commit()
-                db.refresh(existing_profile)
-            except SQLAlchemyError as error:
-                db.rollback()
-                raise BootstrapError("Unable to finalize administrator profile") from error
-            return existing_profile
+            if _is_exact_admin_reservation(existing_profile, invitation, admin_role):
+                if not _admin_assignment_count(
+                    db,
+                    admin_role,
+                    excluded_user_id=existing_profile.id,
+                ):
+                    return existing_profile
+                raise BootstrapError("An administrator reservation already exists")
+            raise BootstrapError("Email or username is already associated with another profile")
 
-        if _active_admin_count(db):
-            raise BootstrapError("An active administrator already exists")
+        if _admin_assignment_count(db, admin_role):
+            raise BootstrapError("An administrator reservation already exists")
 
         auth_client = SupabaseAdminClient(settings)
         try:
-            invited_user = invite_user(
+            return invite_user(
                 db,
-                invitation.model_copy(update={"role_id": member_role.id}),
+                invitation.model_copy(update={"role_id": admin_role.id}),
                 client=auth_client,
+                actor_id=None,
+                bootstrap=True,
             )
-            # invite_user commits the trigger-created profile as an active member.
-            # Promotion is a separate audited ORM commit so the first admin grant
-            # is visible in the normal application audit stream.
-            _promote(db, invited_user, admin_role)
-            db.commit()
-            db.refresh(invited_user)
-            return invited_user
-        except (InvitationError, SQLAlchemyError, BootstrapError) as error:
+        except (InvitationError, SQLAlchemyError) as error:
             db.rollback()
-            if invited_user is not None:
-                try:
-                    auth_client.delete_user(invited_user.id)
-                except Exception:
-                    pass
-            if isinstance(error, BootstrapError):
-                raise
             raise BootstrapError("Unable to finalize administrator profile") from error
 
 

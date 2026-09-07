@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import Any, ClassVar
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -17,6 +17,14 @@ class AuditAction(StrEnum):
     CREATE = "create"
     UPDATE = "update"
     DELETE = "delete"
+
+
+class SecurityEventOutcome(StrEnum):
+    ATTEMPT = "attempt"
+    SUCCESS = "success"
+    DENIED = "denied"
+    FAILURE = "failure"
+    PARTIAL = "partial"
 
 
 class AuditLog(Base):
@@ -53,3 +61,56 @@ class AuditLog(Base):
     request_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     actor_label: Mapped[str | None] = mapped_column(String(100), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SecurityEvent(Base):
+    __tablename__ = "security_events"
+    __audit_enabled__: ClassVar[bool] = False
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IN ('attempt', 'success', 'denied', 'failure', 'partial')",
+            name="ck_security_events_outcome",
+        ),
+        Index("ix_security_events_occurred_at_id", "occurred_at", "id"),
+        Index("ix_security_events_operation_id", "operation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid7)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    outcome: Mapped[SecurityEventOutcome] = mapped_column(String(20), nullable=False)
+    source: Mapped[str] = mapped_column(String(100), nullable=False)
+    operation_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    actor_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        nullable=True,
+    )
+    subject_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        nullable=True,
+    )
+    labels: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+        nullable=False,
+    )
+    fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    request_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)
+    request_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    request_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ``metadata`` is reserved by SQLAlchemy's declarative base, so the Python
+    # attribute uses a more specific name while the database column keeps the
+    # public schema name.
+    event_metadata: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+        nullable=False,
+    )

@@ -4,8 +4,10 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
+from uuid6 import uuid7
 
 from app.common.listing import (
     ListQueryResult,
@@ -13,7 +15,10 @@ from app.common.listing import (
     StandardListRequest,
     execute_standard_list,
 )
-from app.systems.audit.models import AuditAction, AuditLog
+from app.core.base_model import utc_now
+from app.core.database.session import AuditSession, get_engine
+from app.systems.audit.models import AuditAction, AuditLog, SecurityEvent
+from app.systems.audit.schemas import SecurityEventIngestRequest
 
 
 class AuditLogSortField(StrEnum):
@@ -21,6 +26,10 @@ class AuditLogSortField(StrEnum):
     CREATED_AT = "created_at"
     ENTITY_TYPE = "entity_type"
     REQUEST_PATH = "request_path"
+
+
+class SecurityEventPersistenceError(RuntimeError):
+    """A security event could not be committed durably."""
 
 
 AUDIT_LOG_LIST_SPEC = ListQuerySpec(
@@ -69,3 +78,79 @@ def list_audit_logs(
 
     statement = select(AuditLog).where(*conditions)
     return execute_standard_list(db, statement, params, AUDIT_LOG_LIST_SPEC)
+
+
+class SecurityEventSortField(StrEnum):
+    EVENT_TYPE = "event_type"
+    OCCURRED_AT = "occurred_at"
+    OUTCOME = "outcome"
+    SOURCE = "source"
+
+
+SECURITY_EVENT_LIST_SPEC = ListQuerySpec(
+    sort_fields={
+        SecurityEventSortField.EVENT_TYPE: cast(ColumnElement[Any], SecurityEvent.event_type),
+        SecurityEventSortField.OCCURRED_AT: cast(ColumnElement[Any], SecurityEvent.occurred_at),
+        SecurityEventSortField.OUTCOME: cast(ColumnElement[Any], SecurityEvent.outcome),
+        SecurityEventSortField.SOURCE: cast(ColumnElement[Any], SecurityEvent.source),
+    },
+    default_sort=SecurityEventSortField.OCCURRED_AT,
+    tie_breaker=cast(ColumnElement[Any], SecurityEvent.id),
+    search_fields=(
+        cast(ColumnElement[str], SecurityEvent.event_type),
+        cast(ColumnElement[str], SecurityEvent.source),
+        cast(ColumnElement[str], SecurityEvent.reason),
+        cast(ColumnElement[str], SecurityEvent.request_path),
+    ),
+)
+
+
+def append_security_event(db: Session, payload: SecurityEventIngestRequest) -> SecurityEvent:
+    event = SecurityEvent(
+        id=uuid7(),
+        occurred_at=payload.occurred_at or utc_now(),
+        event_type=payload.event_type,
+        outcome=payload.outcome,
+        source=payload.source,
+        operation_id=payload.operation_id,
+        actor_id=payload.actor_id,
+        subject_id=payload.subject_id,
+        labels=dict(payload.labels),
+        fingerprint=payload.fingerprint,
+        reason=payload.reason,
+        request_id=payload.request_id,
+        request_method=payload.request_method,
+        request_path=payload.request_path,
+        event_metadata=dict(payload.metadata),
+    )
+    object.__setattr__(event, "_security_event_internal", True)
+    db.add(event)
+    return event
+
+
+def append_committed_security_event(payload: SecurityEventIngestRequest) -> None:
+    """Commit one security event through a session independent of the request transaction."""
+
+    session = AuditSession(bind=get_engine())
+    try:
+        append_security_event(session, payload)
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise SecurityEventPersistenceError("Unable to commit security event") from error
+    finally:
+        session.close()
+
+
+def list_security_events(
+    db: Session,
+    params: StandardListRequest[SecurityEventSortField],
+    *,
+    operation_id: UUID | None = None,
+) -> ListQueryResult[SecurityEvent]:
+    conditions: list[ColumnElement[bool]] = []
+    if operation_id is not None:
+        conditions.append(SecurityEvent.operation_id == operation_id)
+
+    statement = select(SecurityEvent).where(*conditions)
+    return execute_standard_list(db, statement, params, SECURITY_EVENT_LIST_SPEC)

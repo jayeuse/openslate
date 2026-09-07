@@ -85,6 +85,41 @@ def test_update_snapshot_redacts_sensitive_changes() -> None:
     }
 
 
+def test_update_snapshot_redacts_dynamic_field_keys_in_add_remove_diffs() -> None:
+    redacted_field_id = str(uuid7())
+    added_field_id = str(uuid7())
+
+    snapshot = build_update_snapshot(
+        {
+            "data": (
+                {redacted_field_id: "old secret", "clear-field": "old"},
+                {
+                    "clear-field": "new",
+                    redacted_field_id: "new secret",
+                    added_field_id: "added secret",
+                },
+            )
+        },
+        {redacted_field_id, added_field_id},
+    )
+
+    assert snapshot == {
+        "before": {
+            "data": {
+                redacted_field_id: REDACTED,
+                "clear-field": "old",
+            }
+        },
+        "after": {
+            "data": {
+                "clear-field": "new",
+                redacted_field_id: REDACTED,
+                added_field_id: REDACTED,
+            }
+        },
+    }
+
+
 def test_audit_log_is_not_included_in_its_own_record_snapshot() -> None:
     log = AuditLog(
         action="create",

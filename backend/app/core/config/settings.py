@@ -24,6 +24,7 @@ class Settings(BaseSettings):
         default="authenticated",
         validation_alias=AliasChoices("SUPABASE_JWT_AUDIENCE", "SUPABASE_AUDIENCE"),
     )
+    security_event_server_key: SecretStr | None = None
     lifecycle_purge_enabled: bool = False
     cors_origins: list[str] = ["http://localhost:3000"]
 

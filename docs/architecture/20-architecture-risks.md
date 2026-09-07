@@ -57,29 +57,29 @@ backup/PITR, restore, and monitoring do not.
 
 **Recommended direction:** Define a supported hosted topology and security/recovery runbook before claiming production support.
 
-## R5 — Audit redaction misses dynamic field sensitivity
+## R5 — Audit redaction misses historical dynamic field sensitivity
 
-**Current design:** Redaction matches serialized key names; record JSON keys are field UUIDs. Audit history survives entity purge.
+**Current design:** Name-based redaction still does not match UUID-keyed `Record.data` values. Dynamic `Field.audit_redacted` is implemented: `listeners._record_redacted_fields` loads the current flagged field-UUID set (including renamed and soft-deleted fields) and redacts those values as `[REDACTED]` only in newly created Record audit snapshots, without changing `Record.data`. Previously stored clear snapshots are untouched; audit history still survives entity purge.
 
-**Problem:** Sensitive business-field values can remain in audit JSON and backups.
+**Problem:** Sensitive business-field values stored before flagging remain in clear in audit JSON and backups.
 
-**Consequence:** Extended retention and failed erasure expectations.
+**Consequence:** Extended retention and failed erasure expectations for historical rows.
 
-**Affected:** Records, audit snapshots, lifecycle purge, retention policy.
+**Affected:** Records, `Field.audit_redacted`, audit snapshots/listeners, lifecycle purge, retention policy.
 
-**Recommended direction:** Add field sensitivity classification and record-aware redaction; define retention and historical remediation.
+**Recommended direction:** Keep the current flag for new snapshots; define retention and separately approved historical remediation (rewrite/backfill policy) for pre-flag clear values and backups.
 
-## R6 — Last-administrator invariant is raceable
+## R6 — Last-administrator invariant relies on mutex plus revalidation, with a cross-system crash window
 
-**Current design:** User update/delete counts active admins without serializing count plus mutation.
+**Current design:** User/role updates, deletes, activation, and restore lock the literal admin role and target rows (`require_fresh_exact_admin` plus `with_for_update`), evaluate the projected active-admin count, and revalidate admin plus unchanged user/role state after remote Auth calls before committing (`backend/app/systems/users/router.py`).
 
-**Problem:** Concurrent operations can both observe more than one admin and remove the final two.
+**Problem:** The single-database race is now serialized, but activation/restore enable the Auth identity before the local commit. A crash between provider success and local finalization still leaves Auth enabled while the local profile is not active.
 
-**Consequence:** Administrative lockout requiring privileged recovery.
+**Consequence:** Administrative divergence requiring explicit recovery (`POST /users/{user_id}/reconcile-auth`) rather than silent lockout; concurrent edge cases outside the locked transaction still need regression coverage.
 
-**Affected:** `users/router.py`, admin operations, integration tests.
+**Affected:** `users/router.py`, `require_fresh_exact_admin`, admin operations, integration tests.
 
-**Recommended direction:** Lock a stable admin/role boundary or use serializable transactions with retry; add multi-connection regression tests.
+**Recommended direction:** Keep the mutex/revalidation pattern; add multi-connection regression tests and document the crash-window recovery via explicit reconcile plus correlated `SecurityEvent` outcomes.
 
 ## R7 — Request size and general rate controls are absent
 
@@ -105,17 +105,17 @@ backup/PITR, restore, and monitoring do not.
 
 **Recommended direction:** Use a narrower server-mediated Realtime credential/channel or define a shorter/revocable token policy and test revocation expectations.
 
-## R9 — Auth/local user operations can diverge
+## R9 — Auth/local user operations can diverge across the crash/provider/session boundary
 
-**Current design:** User invite/disable/enable/restore spans Supabase Auth and a local SQL transaction with best-effort compensation/fail-closed ordering.
+**Current design:** User invite/resend/accept/disable/enable/restore/reconcile spans Supabase Auth and short local SQL phases with durable correlated `SecurityEvent` attempt/outcome rows (`operation_id`), no destructive compensation after Auth success (pending trigger profile is left for acceptance/retry), local-first disable/delete with `tokens_valid_after` cutoff, fail-closed activation/restore with post-Auth revalidation, and explicit `POST /users/{user_id}/reconcile-auth` realignment (`backend/app/systems/users/service.py`, `backend/app/systems/users/router.py`, `backend/app/common/dependencies/auth.py:get_verified_pending_identity`). Acceptance depends on private FastAPI via `/session/password`; the BFF denies `auth/invitations/accept`, and bootstrap concurrent-loser/external residuals remain pending without destructive compensation.
 
-**Problem:** One system can succeed while the other fails.
+**Problem:** One system can still succeed while the other fails: Auth success plus a crash before finalization leaves a pending profile, provider errors leave Auth/local out of sync, and refresh-session revocation remains unverified/absent (only the access-token cutoff plus local status gate apply).
 
-**Consequence:** Orphaned or temporarily inconsistent identities requiring retry/reconciliation.
+**Consequence:** Orphaned or temporarily inconsistent identities requiring retry/reconciliation via the explicit endpoint and correlated event ledger.
 
-**Affected:** Users service/router, Supabase admin integration, operations.
+**Affected:** Users service/router, invitation accept/resend, Supabase admin integration, token cutoff, operations.
 
-**Recommended direction:** Add explicit reconciliation tooling, observable failure state, and integration tests for each partial-failure order.
+**Recommended direction:** Keep short DB phases, correlated events, fail-closed ordering, and explicit reconcile; add observable failure-state runbook coverage and integration tests for each partial-failure order, including crash-after-provider-success and session-residual expectations.
 
 ## R10 — Frontend contract and invalidation are coarse
 

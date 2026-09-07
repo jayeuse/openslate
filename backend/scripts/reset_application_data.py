@@ -20,7 +20,7 @@ from uuid import UUID
 from psycopg import connect
 from sqlalchemy.engine import make_url
 
-EXPECTED_ALEMBIC_HEAD = "20260831_0015"
+EXPECTED_ALEMBIC_HEAD = "fc105d5b6283"
 EXPECTED_PROJECT_ID = "openslate"
 EXPECTED_DATABASE_PORT = 54322
 EXPECTED_DATABASE_HOST = "127.0.0.1"
@@ -34,6 +34,7 @@ APPLICATION_TABLES = (
     "fields",
     "records",
     "audit_logs",
+    "security_events",
     "relationship_edges",
     "lifecycle_confirmation_challenges",
     "lifecycle_rate_limit_buckets",
@@ -45,6 +46,7 @@ NON_PRESERVED_TABLES = (
     "fields",
     "records",
     "audit_logs",
+    "security_events",
     "relationship_edges",
     "lifecycle_confirmation_challenges",
     "lifecycle_rate_limit_buckets",
@@ -56,6 +58,7 @@ DELETE_ORDER = (
     "lifecycle_rate_limit_buckets",
     "relationship_edges",
     "audit_logs",
+    "security_events",
     "records",
     "fields",
     "modules",
@@ -73,6 +76,7 @@ _COUNT_STATEMENTS = (
     ("fields", "SELECT count(*) FROM public.fields"),
     ("records", "SELECT count(*) FROM public.records"),
     ("audit_logs", "SELECT count(*) FROM public.audit_logs"),
+    ("security_events", "SELECT count(*) FROM public.security_events"),
     ("relationship_edges", "SELECT count(*) FROM public.relationship_edges"),
     (
         "lifecycle_confirmation_challenges",
@@ -142,6 +146,7 @@ LOCK TABLE public.alembic_version,
            public.fields,
            public.records,
            public.audit_logs,
+           public.security_events,
            public.relationship_edges,
            public.lifecycle_confirmation_challenges,
            public.lifecycle_rate_limit_buckets,
@@ -745,6 +750,7 @@ def apply_reset(
         _execute(connection, "DELETE FROM public.lifecycle_rate_limit_buckets")
         _execute(connection, "DELETE FROM public.relationship_edges")
         _execute(connection, "DELETE FROM public.audit_logs")
+        _execute(connection, "DELETE FROM public.security_events")
         _execute(connection, "DELETE FROM public.records")
         _execute(connection, "DELETE FROM public.fields")
         _execute(connection, "DELETE FROM public.modules")

@@ -92,6 +92,19 @@ class SupabaseAdminClient:
     def delete_user(self, user_id: UUID) -> None:
         self._request("DELETE", f"/auth/v1/admin/users/{user_id}")
 
+    def resend_invitation(self, email: str) -> None:
+        if not self.settings.supabase_auth_redirect_url:
+            raise SupabaseAdminError("Supabase Auth redirect is not configured")
+        self._request(
+            "POST",
+            "/auth/v1/resend",
+            {
+                "type": "invite",
+                "email": email,
+                "options": {"redirect_to": self.settings.supabase_auth_redirect_url},
+            },
+        )
+
     def disable_user(self, user_id: UUID) -> None:
         self._request(
             "PUT",

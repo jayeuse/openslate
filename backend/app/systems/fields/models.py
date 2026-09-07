@@ -2,7 +2,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -71,6 +71,12 @@ class Field(BaseModel):
     type: Mapped[FieldType] = mapped_column(String(20), nullable=False)
     required: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+    audit_redacted: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default=text("false"),
+        nullable=False,
+    )
     config: Mapped[dict[str, Any]] = mapped_column(
         MutableDict.as_mutable(JSONB),
         default=dict,

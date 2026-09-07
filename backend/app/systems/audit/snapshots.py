@@ -6,7 +6,17 @@ from uuid import UUID
 
 from sqlalchemy import inspect
 
-AUDIT_METADATA_FIELDS = frozenset({"id", "created_at", "updated_at", "performed_by"})
+AUDIT_METADATA_FIELDS = frozenset(
+    {
+        "id",
+        "created_at",
+        "updated_at",
+        "performed_by",
+        "invitation_sent_at",
+        "invitation_accepted_at",
+        "tokens_valid_after",
+    }
+)
 REDACTED = "[REDACTED]"
 SENSITIVE_FIELD_MARKERS = (
     "password",
@@ -20,7 +30,7 @@ SENSITIVE_FIELD_MARKERS = (
 
 def is_sensitive_field(field_name: str, redacted_fields: Collection[str] = ()) -> bool:
     normalized = field_name.lower().replace("-", "_")
-    configured_fields = {field.lower() for field in redacted_fields}
+    configured_fields = {field.lower().replace("-", "_") for field in redacted_fields}
     return normalized in configured_fields or any(
         marker in normalized for marker in SENSITIVE_FIELD_MARKERS
     )
@@ -57,13 +67,15 @@ def serialize_record(
     instance: Any,
     *,
     include_default_deletion_state: bool = False,
+    redacted_fields: Collection[str] = (),
 ) -> dict[str, Any]:
     values: dict[str, Any] = {}
-    redacted_fields: Collection[str] = getattr(
+    model_redacted_fields: Collection[str] = getattr(
         type(instance),
         "__audit_redacted_fields__",
         frozenset(),
     )
+    effective_redacted_fields = frozenset((*model_redacted_fields, *redacted_fields))
     for column in inspect(instance).mapper.column_attrs:
         field_name = column.key
         if field_name in AUDIT_METADATA_FIELDS:
@@ -77,7 +89,7 @@ def serialize_record(
             continue
         if not include_default_deletion_state and field_name == "deleted_at" and value is None:
             continue
-        values[field_name] = serialize_value(value, field_name, redacted_fields)
+        values[field_name] = serialize_value(value, field_name, effective_redacted_fields)
     return values
 
 

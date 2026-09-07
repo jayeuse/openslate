@@ -1,17 +1,26 @@
 import os
+from datetime import UTC, datetime
+from uuid import uuid7
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.systems.audit.models import AuditAction, AuditLog
+from app.systems.audit.snapshots import REDACTED
 from app.systems.departments.models import Department
+from app.systems.fields.models import Field, FieldType
+from app.systems.modules.models import Module
+from app.systems.records.models import Record
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
-pytestmark = pytest.mark.skipif(
-    TEST_DATABASE_URL is None,
-    reason="Set TEST_DATABASE_URL to run PostgreSQL integration tests",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        TEST_DATABASE_URL is None,
+        reason="Set TEST_DATABASE_URL to run PostgreSQL integration tests",
+    ),
+]
 
 
 def audit_rows(session: Session, entity_id) -> list[AuditLog]:
@@ -74,3 +83,104 @@ def test_hard_delete_records_the_previous_state(integration_db: Session) -> None
     assert [row.action for row in rows] == [AuditAction.CREATE, AuditAction.DELETE]
     assert rows[-1].before["department_name"] == "Integration Hard Delete"
     assert integration_db.get(Department, department_id) is None
+
+
+def test_record_audit_redaction_preserves_data_and_historical_snapshots(
+    integration_db: Session,
+) -> None:
+    department = Department(department_name=f"Audit Redaction {uuid7()}")
+    module = Module(
+        department=department,
+        module_name="Governance export",
+        is_schema_accepted=True,
+    )
+    renamed = Field(
+        module=module,
+        name="Original secret",
+        type=FieldType.TEXT,
+        position=0,
+    )
+    soft_deleted = Field(
+        module=module,
+        name="Closed secret",
+        type=FieldType.TEXT,
+        position=1,
+    )
+    added = Field(
+        module=module,
+        name="Added secret",
+        type=FieldType.TEXT,
+        position=2,
+    )
+    clear = Field(
+        module=module,
+        name="Visible value",
+        type=FieldType.TEXT,
+        position=3,
+    )
+    integration_db.add(department)
+    integration_db.flush()
+
+    record = Record(
+        module=module,
+        data={
+            str(renamed.id): "historical renamed secret",
+            str(soft_deleted.id): "historical closed secret",
+            str(clear.id): "historical visible",
+        },
+    )
+    integration_db.add(record)
+    integration_db.flush()
+    historical_create = audit_rows(integration_db, record.id)[0]
+    assert historical_create.action == AuditAction.CREATE
+    assert historical_create.after["data"] == {
+        str(renamed.id): "historical renamed secret",
+        str(soft_deleted.id): "historical closed secret",
+        str(clear.id): "historical visible",
+    }
+
+    renamed.audit_redacted = True
+    renamed.name = "Renamed secret"
+    soft_deleted.audit_redacted = True
+    soft_deleted.is_deleted = True
+    soft_deleted.deleted_at = datetime.now(UTC)
+    added.audit_redacted = True
+    integration_db.flush()
+
+    record.data = {
+        str(renamed.id): "updated renamed secret",
+        str(soft_deleted.id): "updated closed secret",
+        str(added.id): "added secret",
+        str(clear.id): "updated visible",
+    }
+    integration_db.flush()
+    updated = audit_rows(integration_db, record.id)[-1]
+    assert updated.action == AuditAction.UPDATE
+    assert updated.before["data"] == {
+        str(renamed.id): REDACTED,
+        str(soft_deleted.id): REDACTED,
+        str(clear.id): "historical visible",
+    }
+    assert updated.after["data"] == {
+        str(renamed.id): REDACTED,
+        str(soft_deleted.id): REDACTED,
+        str(added.id): REDACTED,
+        str(clear.id): "updated visible",
+    }
+
+    record.data = {str(clear.id): "final visible"}
+    integration_db.flush()
+    removed = audit_rows(integration_db, record.id)[-1]
+    assert removed.before["data"] == {
+        str(renamed.id): REDACTED,
+        str(soft_deleted.id): REDACTED,
+        str(added.id): REDACTED,
+        str(clear.id): "updated visible",
+    }
+    assert removed.after["data"] == {str(clear.id): "final visible"}
+    assert record.data == {str(clear.id): "final visible"}
+    assert historical_create.after["data"] == {
+        str(renamed.id): "historical renamed secret",
+        str(soft_deleted.id): "historical closed secret",
+        str(clear.id): "historical visible",
+    }

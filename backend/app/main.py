@@ -7,6 +7,7 @@ from starlette.responses import Response
 from app.core.config import get_settings
 from app.core.database import model_registry  # noqa: F401
 from app.core.middleware.request_context import RequestContext
+from app.systems.audit.router import internal_security_events_router, security_events_router
 from app.systems.audit.router import router as audit_router
 from app.systems.auth.router import router as auth_router
 from app.systems.departments.router import router as departments_router
@@ -49,6 +50,8 @@ def create_app() -> FastAPI:
     app.include_router(relationships_router, prefix="/api")
     app.include_router(lifecycle_router, prefix="/api")
     app.include_router(audit_router, prefix="/api")
+    app.include_router(security_events_router, prefix="/api")
+    app.include_router(internal_security_events_router, prefix="/api")
 
     @app.get("/api/health", tags=["system"])
     def health() -> dict[str, str]:

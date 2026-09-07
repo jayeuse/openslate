@@ -146,4 +146,38 @@ Use `infra/AGENTS.md` for image and deployment artifact rules.
 
 Use `docs/architecture/README.md` for deeper architecture details.
 
-For tasks that require multiple agents, parallel work, or explicit evaluator loops, read `.agents/orchestration/PROTOCOL.md.`
+For tasks that require multiple agents, parallel work, or explicit evaluator loops, read `.agents/orchestration/PROTOCOL.md`.
+
+## Codex Orchestration
+
+Use the current primary model and approval settings from the user's global Codex configuration. Project workers live in `.codex/agents/`; project skills live in `.agents/skills/`. Keep the existing worker model overrides. Load only skills relevant to the assigned task. Repository instructions and installed project commands take precedence over generic skill examples (including pnpm, Pyright, Compose, or async SQLAlchemy examples that do not match this repository).
+
+Handle small, focused tasks directly. Delegate only when a bounded task benefits from separate work; do not duplicate verified discovery or use multiple workers for the same investigation without evidence of distinct responsibilities.
+
+For planning-only requests, gather evidence and return a plan without implementation. Use `explore` for narrow repository questions and `architect` or `security` for relevant decisions. Split plans by the domains actually affected.
+
+For implementation, the parent owns task decomposition, dependency ordering, integration, conflict resolution, and final review. Route work using the existing project workers:
+
+| Work | Worker |
+| --- | --- |
+| Repository discovery and cross-domain tracing | `explore` |
+| FastAPI, Python services, schemas, authorization, ORM mappings | `backend-general` |
+| React/Next.js pages, state, forms, API integration | `frontend-general` |
+| Alembic migrations, PostgreSQL schema, indexes, privileges | `db-general` |
+| Existing local runtime, environment, deployment configuration | `infra-general` |
+| Backend, frontend, or database code-level verification | `backend-test`, `frontend-test`, `db-test` |
+| Live browser acceptance checks once the app is running | `playwright-tester` |
+| Confirmed defects with unclear causes | `backend-debug`, `frontend-debug`, `db-debug`, `infra-debug` |
+| Architecture and security review | `architect`, `security` |
+
+Give each worker a precise objective, owned files or module boundaries, constraints, dependencies, acceptance criteria, expected evidence, and stopping condition. Tell workers they share the checkout: preserve others' edits, do not revert unrelated changes, and adapt to completed work. Parallelize only independent tasks with disjoint write ownership. Workers return to the parent instead of delegating further; their `[agents] enabled = false` enforces this.
+
+Call the first-pass reviewer before `architect-deep`, `security-deep`, or `debug-deep`. Escalate only after reported low confidence or an explicit escalation recommendation, carrying forward findings, evidence, uncertainties, and file references. Continue an incomplete worker with the exact remaining objective; do not restart completed investigation or treat unfinished implementation as a defect.
+
+Inspect every worker result. Run the narrowest relevant verification, resolve conflicting findings, and retest the original failing behavior after fixes. A missing running service is an environment blocker, not proof of an application defect. Browser acceptance checks complement code-level tests.
+
+Continue authorized work until acceptance criteria and relevant checks pass or a concrete blocker requires user input. Do not create goals or scheduled continuations unless requested. OpenCode's goal and VibeGuard plugins are not Codex plugins; do not claim their hooks, automatic turn limits, or enforcement were migrated.
+
+Context7 and Playwright are inherited from global Codex MCP settings; manage them through Desktop Settings when available. PostgreSQL remains project-scoped in `.codex/config.toml`. Do not add filesystem, sequential-thinking, or memory MCPs without a demonstrated need. Keep connection credentials out of tracked files and reports.
+
+For multi-worker task coordination, use `.agents/orchestration/PROTOCOL.md`. Keep simple task state in the conversation; do not invent runtime files or schemas for routine work.

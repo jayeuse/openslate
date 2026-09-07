@@ -1,6 +1,6 @@
 """Import all ORM models so runtime metadata and relationship mappings are complete."""
 
-from app.systems.audit.models import AuditLog  # noqa: F401
+from app.systems.audit.models import AuditLog, SecurityEvent  # noqa: F401
 from app.systems.departments.models import Department  # noqa: F401
 from app.systems.fields.models import Field  # noqa: F401
 from app.systems.lifecycle.models import (  # noqa: F401

@@ -107,6 +107,40 @@ def test_invite_rejects_an_invalid_auth_response(monkeypatch: pytest.MonkeyPatch
         SupabaseAdminClient(settings=settings()).invite_user("person@example.com", "person")
 
 
+def test_resend_invitation_uses_the_auth_resend_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = response_with_json({})
+    _, client = http_client(monkeypatch, response)
+
+    SupabaseAdminClient(settings=settings()).resend_invitation("person@example.com")
+
+    client.request.assert_called_once_with(
+        "POST",
+        "/auth/v1/resend",
+        json={
+            "type": "invite",
+            "email": "person@example.com",
+            "options": {"redirect_to": "http://localhost:3000/auth/callback"},
+        },
+        params=None,
+    )
+
+
+def test_resend_invitation_requires_a_redirect_url_before_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    http = Mock()
+    monkeypatch.setattr(supabase.httpx, "Client", http)
+
+    with pytest.raises(SupabaseAdminError, match="redirect is not configured"):
+        SupabaseAdminClient(settings=settings(redirect_url=None)).resend_invitation(
+            "person@example.com"
+        )
+
+    http.assert_not_called()
+
+
 def test_status_errors_are_safe_and_preserve_status_code(monkeypatch: pytest.MonkeyPatch) -> None:
     response = Mock()
     request = httpx.Request("DELETE", "https://example.supabase.co/auth/v1/admin/users")

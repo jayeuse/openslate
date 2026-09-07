@@ -149,17 +149,19 @@ def test_provision_supports_catalogs_without_membership_options(
 
 @pytest.mark.integration
 def test_provision_verifies_a_local_postgresql_role() -> None:
-    migration_url = os.getenv("TEST_DATABASE_URL")
+    migration_url = os.getenv("MIGRATION_DATABASE_URL")
     password = os.getenv("OPENSLATE_DATABASE_PASSWORD")
     if not migration_url or not password:
-        pytest.skip("Set TEST_DATABASE_URL and OPENSLATE_DATABASE_PASSWORD for local integration")
+        pytest.skip(
+            "Set MIGRATION_DATABASE_URL and OPENSLATE_DATABASE_PASSWORD for local owner integration"
+        )
 
     try:
         from tests.conftest import _guard_integration_database
 
         _guard_integration_database(migration_url)
     except RuntimeError:
-        pytest.skip("TEST_DATABASE_URL must target the local Supabase PostgreSQL database")
+        pytest.skip("MIGRATION_DATABASE_URL must target the local Supabase PostgreSQL database")
 
     provisioner.provision(migration_url, password)
 
