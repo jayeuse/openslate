@@ -48,6 +48,12 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-.opencode/
 .playwright-mcp/
 .tavily/
+
+.todo/
+
+.agents/
+.agent-runtime/
+.opencode/
+.codex/
