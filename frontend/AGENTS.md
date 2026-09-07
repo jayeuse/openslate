@@ -28,7 +28,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Data access and auth
 
-- Authenticated pages render inside `AppPage` (auth gate + shell); do not implement a second cookie/auth gate. `proxy.ts` sets CSP and security headers only — it is not auth.
+- Authenticated pages live under `src/app/(app)/`, whose layout mounts `AppPage` (auth gate + shell) once for the group; do not wrap pages individually or implement a second cookie/auth gate. `proxy.ts` sets CSP and security headers only — it is not auth.
 - All domain requests go through `apiFetch()` to `/bff/[...path]`; the BFF converts cookies to a Bearer token and refreshes the Supabase session on a backend 401. Never call `BACKEND_URL` or Supabase directly from pages.
 - Sessions use HttpOnly `openslate_access`/`openslate_refresh` cookies managed by the `/session/*` route handlers; the browser never sees tokens.
 - Fetch with `useEffect` + local `useState` — the app-wide convention. TanStack Query and React Hook Form are not installed; do not add them without a demonstrated need.
@@ -39,7 +39,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Record `data` is keyed by field UUID and validated with the dynamic Zod schemas in `lib/field-schema.ts`; relationships are managed by `RelationshipManager` and never stored inside primitive record data.
 - Close/reopen/purge flows use the `LifecycleAction` dialog (`components/lifecycle-dialog.tsx`), not ordinary CRUD controls.
 - Canonical routes live under `modules/[moduleId]`; department-scoped aliases (`departments/[departmentId]/modules/...`) are thin re-export pages — keep them that way.
-- Realtime is private Broadcast invalidation only: `RealtimeProvider` → `/session/realtime-token` → `openslate:invalidation`; pass `preserveStateOnInvalidation` to keep in-progress form state.
+- Realtime is private Broadcast invalidation only: `RealtimeProvider` → `/session/realtime-token` → `openslate:invalidation`; record authoring routes (`*/records/new`, `*/records/*/edit`) keep in-progress form state via the pathname-derived rule in `AppPage`.
 
 ## Styling
 

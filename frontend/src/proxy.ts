@@ -18,10 +18,14 @@ export function proxy(request: NextRequest) {
   const connectSources = ["'self'", supabaseConnectSources()]
     .filter(Boolean)
     .join(" ");
+  // Development allows 'unsafe-inline' for style-src *instead of* the nonce:
+  // per the CSP spec a nonce disables 'unsafe-inline', and Turbopack HMR plus
+  // the Next.js devtools inject styles without a nonce. Production stays
+  // nonce-strict.
   const contentSecurityPolicy = `
     default-src 'self';
     script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDevelopment ? " 'unsafe-eval'" : ""};
-    style-src 'self' 'nonce-${nonce}';
+    ${isDevelopment ? "style-src 'self' 'unsafe-inline';" : `style-src 'self' 'nonce-${nonce}';`}
     img-src 'self' data: blob:;
     font-src 'self';
     connect-src ${connectSources};

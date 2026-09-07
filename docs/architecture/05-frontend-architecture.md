@@ -42,7 +42,7 @@ flowchart TD
     Proxy --> Layout["frontend/src/app/layout.tsx\nRootLayout"]
     Layout --> Route["Selected route page"]
     Route --> Public["Public or auth page content"]
-    Route --> Gate["Protected page explicitly renders AppPage\nclient session gate"]
+    Route --> Gate["(app) group layout mounts AppPage once\nclient session gate"]
     Gate --> Realtime["RealtimeProvider"]
     Realtime --> Shell["AppShell"]
     Shell --> Protected["Protected page content"]
@@ -52,15 +52,15 @@ The route entry files and their current protection shape are:
 
 | Area                        | Routes                                                                                                                                                               | Actual structure                                                                                                                                        |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Public                      | `/`, `/setup`, `/access-restricted`                                                                                                                                  | Standalone pages with no `AppPage` wrapper. `/access-restricted` is a present page, not a reached authorization redirect.                               |
+| Public                      | `/`, `/setup`, `/access-restricted`                                                                                                                                  | Standalone pages outside the `(app)` group (no shared gate). `/access-restricted` is a present page, not a reached authorization redirect.                |
 | Sign-in and invitation      | `/login`, `/auth/setup`, `/auth/callback`                                                                                                                            | `/login` and `/auth/setup` are client-controlled forms. `/auth/callback` is a server Route Handler that exchanges a code or invite token and redirects. |
 | Session endpoints           | `/session/login`, `/session/logout`, `/session/password`, `/session/status`, `/session/realtime-token`                                                               | Server Route Handlers used by browser forms, `AppPage`, the BFF, and realtime initialization; these are not page layouts.                               |
-| Workspace                   | `/workspace`, `/onboarding`                                                                                                                                          | Client pages wrapped in `AppPage`; workspace metrics and checklist copy are currently static.                                                           |
-| Structure                   | `/departments`, `/departments/new`, `/departments/[departmentId]`                                                                                                    | Client pages wrapped in `AppPage` for listing, creation, module creation, and lifecycle controls.                                                       |
+| Workspace                   | `/workspace`, `/onboarding`                                                                                                                                          | Client pages under the `(app)` group (shared `AppPage` gate); workspace metrics and checklist copy are currently static.                                   |
+| Structure                   | `/departments`, `/departments/new`, `/departments/[departmentId]`                                                                                                    | Client pages under the `(app)` group for listing, creation, module creation, and lifecycle controls.                                                    |
 | Canonical module routes     | `/modules/[moduleId]`, `/modules/[moduleId]/schema`, `/modules/[moduleId]/records`, `/modules/[moduleId]/records/new`, `/modules/[moduleId]/records/[recordId]/edit` | Client pages that load module, department, field, record, and relationship data through `apiFetch`.                                                     |
 | Department-scoped aliases   | `/departments/[departmentId]/modules/[moduleId]` and its `schema`, `records`, `records/new`, and `records/[recordId]/edit` descendants                               | Each `page.tsx` re-exports the corresponding canonical module page; the canonical page chooses its URL prefix from optional params.                     |
-| Administration and settings | `/administration/users`, `/administration/roles`, `/administration/audit`, `/settings/appearance`                                                                    | Client pages wrapped in `AppPage`; all domain reads and writes go through the BFF.                                                                      |
-| Framework fallbacks         | `frontend/src/app/not-found.tsx`, `frontend/src/app/error.tsx`                                                                                                       | Root not-found UI and a root client error boundary. There is no `loading.tsx` or `global-error.tsx`.                                                    |
+| Administration and settings | `/administration/users`, `/administration/roles`, `/administration/audit`, `/settings/appearance`                                                                    | Client pages under the `(app)` group; all domain reads and writes go through the BFF.                                                                  |
+| Framework fallbacks         | `frontend/src/app/not-found.tsx`, `frontend/src/app/error.tsx`                                                                                                       | Root not-found UI and a root client error boundary. Route `loading.tsx` skeletons cover departments, records, admin users, and audit; no `global-error.tsx`. |
 
 The empty `frontend/src/app/api/proxy/[...path]` and `frontend/src/app/api/session/*`
 directories do not define Route Handlers. Application data uses `/bff/*`.
@@ -70,8 +70,7 @@ operator surfaces.
 
 ## Public, auth, and protected page boundaries
 
-`frontend/src/components/app-page.tsx:AppPage` is the shared client gate for all pages
-classified as protected. On mount it requests `GET /session/status` with
+`frontend/src/app/(app)/layout.tsx` mounts `frontend/src/components/app-page.tsx:AppPage` once for every authenticated route in the `(app)` group. `AppPage` is the shared client gate: on mount it requests `GET /session/status` with
 `cache: "no-store"`. While waiting it renders a centered “Checking your
 session…” status. A failed response, an invalid body, or a network error calls
 `router.replace("/login")`; only `{ authenticated: true }` allows the shell to
@@ -84,6 +83,10 @@ RealtimeProvider
 └── AppShell
     └── route page children
 ```
+
+Mounted once by the group layout, client-side navigation swaps only the route
+page children instead of remounting the session gate, `RealtimeProvider`, and
+`AppShell`.
 
 This is a client-side session check, not a protected server layout. It checks
 Supabase session validity only; it does not check the backend's local profile,
@@ -326,7 +329,11 @@ builds a CSP whose `connect-src` includes the configured Supabase origin and
 websocket endpoint, puts `x-nonce` and the CSP on the upstream request, and
 sets the CSP on the response. Its matcher excludes `/api`, `/bff`, `/session`,
 `/auth/callback`, Next static/image assets, and the favicon, and skips prefetch
-requests. Session and authorization decisions therefore remain in Route
+requests. In development only, `style-src` uses `'unsafe-inline'` instead of
+the nonce (per the CSP spec a nonce disables `'unsafe-inline'`, and
+Turbopack HMR plus the Next.js devtools inject styles without one —
+without this the devtools trigger renders as an unstyled box);
+production stays nonce-strict. Session and authorization decisions therefore remain in Route
 Handlers, `AppPage`, and especially the backend.
 
 `infra/docker/frontend.Dockerfile` builds with Node 24 in a dependency/build

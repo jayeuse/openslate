@@ -8,7 +8,9 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 const INVALIDATION_CHANNEL = "openslate-session-events";
 const INVALIDATION_EVENT = "session-invalidated";
@@ -51,16 +53,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
 
   const getClient = useCallback(() => {
     if (clientRef.current) return clientRef.current;
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-    if (!url || !key) throw new Error("Realtime is not configured");
-    clientRef.current = createClient(url, key, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    });
+    clientRef.current = getSupabaseBrowserClient();
     return clientRef.current;
   }, []);
 
