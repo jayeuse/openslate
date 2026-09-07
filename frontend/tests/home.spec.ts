@@ -84,3 +84,137 @@ test("renders the invited-account password setup form", async ({ page }) => {
     page.getByText("Finish setting up your invited OpenSlate account."),
   ).toBeVisible();
 });
+
+test("completes invited account setup after password acceptance", async ({
+  page,
+}) => {
+  const passwordRequests: string[] = [];
+  await page.route("**/session/password", async (route) => {
+    passwordRequests.push(route.request().postData() ?? "");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ authenticated: true }),
+    });
+  });
+  await page.route("**/session/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ authenticated: true }),
+    });
+  });
+
+  await page.goto("/auth/setup");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("a-password-long-enough");
+  await page.getByLabel("Confirm password").fill("a-password-long-enough");
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  await page.waitForURL("**/workspace");
+  await expect(
+    page.getByRole("heading", { name: /Good morning/ }),
+  ).toBeVisible();
+  expect(passwordRequests).toEqual([
+    JSON.stringify({
+      password: "a-password-long-enough",
+      confirmation: "a-password-long-enough",
+    }),
+  ]);
+});
+
+test("shows a safe recoverable error when invitation acceptance fails", async ({
+  page,
+}) => {
+  await page.route("**/session/password", async (route) => {
+    await route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "upstream invitation details" }),
+    });
+  });
+
+  await page.goto("/auth/setup");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("a-password-long-enough");
+  await page.getByLabel("Confirm password").fill("a-password-long-enough");
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  await expect(page.getByRole("status")).toContainText(
+    "We could not set up your password. The invitation may have expired.",
+  );
+  await expect(page.getByRole("status")).not.toContainText(
+    "upstream invitation details",
+  );
+  await expect(page).toHaveURL(/\/auth\/setup$/);
+});
+
+test("rejects password setup when the session or token is missing", async ({
+  page,
+}) => {
+  await page.goto("/auth/setup");
+  const result = await page.evaluate(async () => {
+    const response = await fetch("/session/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        password: "a-password-long-enough",
+        confirmation: "a-password-long-enough",
+      }),
+    });
+    return {
+      status: response.status,
+      body: await response.json(),
+    };
+  });
+
+  expect(result).toEqual({
+    status: 401,
+    body: { detail: "Authentication required" },
+  });
+});
+
+test("allows a failed invitation acceptance to be retried safely", async ({
+  page,
+}) => {
+  const passwordRequests: string[] = [];
+  await page.route("**/session/password", async (route) => {
+    passwordRequests.push(route.request().postData() ?? "");
+    const attempt = passwordRequests.length;
+    await route.fulfill({
+      status: attempt === 1 ? 400 : 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        attempt === 1
+          ? { detail: "Invitation cannot be accepted" }
+          : { authenticated: true },
+      ),
+    });
+  });
+  await page.route("**/session/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ authenticated: true }),
+    });
+  });
+
+  await page.goto("/auth/setup");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("a-password-long-enough");
+  await page.getByLabel("Confirm password").fill("a-password-long-enough");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "We could not set up your password",
+  );
+
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.waitForURL("**/workspace");
+
+  expect(passwordRequests).toHaveLength(2);
+  expect(passwordRequests[1]).toBe(passwordRequests[0]);
+});

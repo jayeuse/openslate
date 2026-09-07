@@ -36,6 +36,7 @@ export type Field = BaseEntity & {
   type: FieldType;
   required: boolean;
   position: number;
+  audit_redacted?: boolean;
   config: Record<string, unknown>;
   relationship_target_module_id: string | null;
   relationship_multiple_targets: boolean | null;
@@ -150,15 +151,64 @@ export type LifecycleMutationResponse = {
   operation_id: string | null;
 };
 export type LifecycleReopenRequest = { confirmed: true };
+export const CAPABILITIES = [
+  "departments.read",
+  "departments.write",
+  "fields.read",
+  "fields.write",
+  "modules.read",
+  "modules.write",
+  "records.read",
+  "records.write",
+  "relationships.read",
+  "relationships.write",
+] as const;
+export type Capability = (typeof CAPABILITIES)[number];
+export type RolePermissions = Partial<Record<Capability, boolean>>;
 export type Role = BaseEntity & {
   role: string;
-  permissions: Record<string, unknown>;
+  permissions: RolePermissions;
 };
 export type User = BaseEntity & {
   email: string;
   username: string;
   status: "pending" | "active" | "disabled";
   role_id: string;
+};
+export type AuditAction = "create" | "update" | "delete";
+export type AuditLog = {
+  id: string;
+  created_at: string;
+  performed_by: string | null;
+  action: AuditAction;
+  entity_type: string;
+  entity_id: string | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  request_id: string | null;
+  request_method: string | null;
+  request_path: string | null;
+  actor_label: string | null;
+  note: string | null;
+};
+export type SecurityEventOutcome =
+  "attempt" | "success" | "denied" | "failure" | "partial";
+export type SecurityEvent = {
+  id: string;
+  occurred_at: string;
+  event_type: string;
+  outcome: SecurityEventOutcome;
+  source: string;
+  operation_id: string;
+  actor_id: string | null;
+  subject_id: string | null;
+  labels: Record<string, string>;
+  fingerprint: string | null;
+  reason: string | null;
+  request_id: string | null;
+  request_method: string | null;
+  request_path: string | null;
+  metadata: Record<string, unknown>;
 };
 export class ApiError extends Error {
   constructor(

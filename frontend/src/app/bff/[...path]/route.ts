@@ -12,6 +12,7 @@ import { isSameOriginRequest } from "@/lib/request-security";
 
 const backend = process.env.BACKEND_URL ?? "http://localhost:8000";
 type Params = { params: Promise<{ path: string[] }> };
+const invitationAcceptancePath = "auth/invitations/accept";
 
 function forwardHeaders(request: Request, token: string | undefined) {
   const headers = new Headers();
@@ -45,12 +46,15 @@ async function requestBackend(
 }
 
 async function handle(request: Request, { params }: Params) {
+  const { path } = await params;
+  if (path.join("/") === invitationAcceptancePath)
+    return NextResponse.json({ detail: "Forbidden" }, { status: 403 });
+
   if (
     !["GET", "HEAD"].includes(request.method) &&
     !isSameOriginRequest(request)
   )
     return NextResponse.json({ detail: "Forbidden" }, { status: 403 });
-  const { path } = await params;
   const store = await cookies();
   let access = store.get(ACCESS_COOKIE)?.value;
   let refreshedSession = null;
@@ -114,8 +118,22 @@ async function handle(request: Request, { params }: Params) {
   return next;
 }
 
+async function handleOptions(_request: Request, { params }: Params) {
+  const { path } = await params;
+  if (path.join("/") === invitationAcceptancePath)
+    return NextResponse.json({ detail: "Forbidden" }, { status: 403 });
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      Allow: "GET, HEAD, POST, PATCH, PUT, DELETE, OPTIONS",
+    },
+  });
+}
+
 export const GET = handle;
 export const POST = handle;
 export const PATCH = handle;
 export const PUT = handle;
 export const DELETE = handle;
+export const HEAD = handle;
+export const OPTIONS = handleOptions;

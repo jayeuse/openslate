@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  ApiError,
   apiFetch,
   listQuery,
   type Field,
@@ -39,6 +40,58 @@ const fieldTypes: FieldType[] = [
   "select",
   "relationship",
 ];
+
+type SchemaMutation =
+  | { kind: "add" }
+  | { kind: "reorder" }
+  | { kind: "accept" }
+  | { kind: "audit-redaction"; fieldId: string };
+
+type SchemaErrorContext = "load" | "add" | "reorder" | "audit" | "accept";
+
+function safeErrorMessage(reason: unknown, context: SchemaErrorContext) {
+  if (reason instanceof ApiError) {
+    switch (reason.status) {
+      case 401:
+        return "Your session expired. Sign in again.";
+      case 403:
+        return "Administrator access is required to manage this schema.";
+      case 404:
+        return "This module or schema is no longer available. Refresh and try again.";
+      case 409:
+        return "This schema conflicts with current data. Refresh and try again.";
+      case 422:
+        if (context === "accept") {
+          return "The schema is not ready to be accepted. Complete the required fields and try again.";
+        }
+        if (context === "reorder") {
+          return "The field order was rejected. Refresh and try again.";
+        }
+        if (context === "audit") {
+          return "The audit redaction change was rejected. Refresh and try again.";
+        }
+        return "The field details were rejected. Check the values and try again.";
+      case 502:
+      case 503:
+        return "The schema service is temporarily unavailable. Try again.";
+      default:
+        break;
+    }
+  }
+  switch (context) {
+    case "load":
+      return "Fields could not be loaded. Refresh and try again.";
+    case "add":
+      return "The field could not be added. Check the values and try again.";
+    case "reorder":
+      return "Fields could not be reordered. Refresh and try again.";
+    case "audit":
+      return "Audit redaction could not be updated. Refresh and try again.";
+    case "accept":
+      return "Schema could not be accepted. Complete the fields and try again.";
+  }
+}
+
 export default function SchemaPage() {
   const { moduleId, departmentId } = useParams<{
     moduleId: string;
@@ -54,13 +107,13 @@ export default function SchemaPage() {
   const [name, setName] = useState("");
   const [type, setType] = useState<FieldType>("text");
   const [required, setRequired] = useState(false);
+  const [auditRedacted, setAuditRedacted] = useState(false);
   const [options, setOptions] = useState("");
   const [targetModuleId, setTargetModuleId] = useState("");
   const [multipleTargets, setMultipleTargets] = useState(false);
   const [multipleSources, setMultipleSources] = useState(false);
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [accepting, setAccepting] = useState(false);
+  const [mutationBusy, setMutationBusy] = useState<SchemaMutation | null>(null);
   async function load() {
     try {
       const current = await apiFetch<Module>(`/modules/${moduleId}`);
@@ -78,9 +131,7 @@ export default function SchemaPage() {
       setFields(result.items);
       setModules(moduleResult.items);
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Fields could not be loaded",
-      );
+      setError(safeErrorMessage(reason, "load"));
     }
   }
   useEffect(() => {
@@ -88,7 +139,8 @@ export default function SchemaPage() {
   }, [moduleId]);
   async function addField(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSaving(true);
+    if (mutationBusy !== null) return;
+    setMutationBusy({ kind: "add" });
     setError("");
     const config =
       type === "select"
@@ -107,6 +159,7 @@ export default function SchemaPage() {
           name,
           type,
           required,
+          audit_redacted: auditRedacted,
           position: fields.filter((field) => !field.is_deleted).length,
           config,
           ...(type === "relationship"
@@ -123,16 +176,33 @@ export default function SchemaPage() {
       setTargetModuleId("");
       setMultipleTargets(false);
       setMultipleSources(false);
+      setAuditRedacted(false);
       await load();
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Field could not be added",
-      );
+      setError(safeErrorMessage(reason, "add"));
     } finally {
-      setSaving(false);
+      setMutationBusy(null);
+    }
+  }
+  async function toggleAuditRedaction(field: Field) {
+    if (mutationBusy !== null) return;
+    const nextAuditRedacted = !field.audit_redacted;
+    setMutationBusy({ kind: "audit-redaction", fieldId: field.id });
+    setError("");
+    try {
+      await apiFetch<Field>(`/fields/${field.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ audit_redacted: nextAuditRedacted }),
+      });
+    } catch (reason) {
+      setError(safeErrorMessage(reason, "audit"));
+    } finally {
+      await load();
+      setMutationBusy(null);
     }
   }
   async function reorder(fieldId: string, direction: -1 | 1) {
+    if (mutationBusy !== null) return;
     const activeFields = fields.filter((field) => !field.is_deleted);
     const index = activeFields.findIndex((field) => field.id === fieldId);
     const target = index + direction;
@@ -146,6 +216,8 @@ export default function SchemaPage() {
     const next = fields.map((field) =>
       field.is_deleted ? field : nextActiveFields[activeIndex++],
     );
+    setMutationBusy({ kind: "reorder" });
+    setError("");
     setFields(next);
     try {
       const reorderedFields = await apiFetch<Field[]>(
@@ -166,16 +238,15 @@ export default function SchemaPage() {
         ),
       );
     } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "Fields could not be reordered",
-      );
+      setError(safeErrorMessage(reason, "reorder"));
       await load();
+    } finally {
+      setMutationBusy(null);
     }
   }
   async function acceptSchema() {
-    setAccepting(true);
+    if (mutationBusy !== null) return;
+    setMutationBusy({ kind: "accept" });
     setError("");
     try {
       const current = await apiFetch<Module>(
@@ -184,13 +255,9 @@ export default function SchemaPage() {
       );
       setModule(current);
     } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "Schema could not be accepted",
-      );
+      setError(safeErrorMessage(reason, "accept"));
     } finally {
-      setAccepting(false);
+      setMutationBusy(null);
     }
   }
   const activeFields = fields.filter((field) => !field.is_deleted);
@@ -205,6 +272,9 @@ export default function SchemaPage() {
     );
   const mutationsDisabled =
     module?.is_deleted === true || department?.is_deleted === true;
+  const schemaMutationBusy = mutationBusy !== null;
+  const auditMutationFieldId =
+    mutationBusy?.kind === "audit-redaction" ? mutationBusy.fieldId : null;
   return (
     <AppPage>
       <PageHeader
@@ -216,15 +286,14 @@ export default function SchemaPage() {
             <Button
               disabled={
                 mutationsDisabled ||
-                saving ||
-                accepting ||
+                schemaMutationBusy ||
                 activeFields.length === 0 ||
                 module?.is_schema_accepted === true
               }
               onClick={() => void acceptSchema()}
             >
               <CheckCircle2 size={16} />
-              {accepting ? "Accepting…" : "Accept Schema"}
+              {mutationBusy?.kind === "accept" ? "Accepting…" : "Accept Schema"}
             </Button>
             <Button asChild variant="ghost">
               <a href={modulePath}>
@@ -271,7 +340,7 @@ export default function SchemaPage() {
             )}
             {fields.map((field, index) => (
               <div
-                className="border-border flex items-center gap-3 border-b p-4 last:border-b-0"
+                className="border-border flex flex-wrap items-start gap-3 border-b p-4 last:border-b-0"
                 data-schema-field-id={field.id}
                 key={field.id}
               >
@@ -316,9 +385,36 @@ export default function SchemaPage() {
                       ""
                     )}
                   </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant={field.audit_redacted ? "warning" : "outline"}
+                    >
+                      Audit redaction: {field.audit_redacted ? "On" : "Off"}
+                    </Badge>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-11"
+                      aria-label={`${field.audit_redacted ? "Disable" : "Enable"} audit redaction for ${field.name}`}
+                      disabled={
+                        mutationsDisabled ||
+                        field.is_deleted ||
+                        schemaMutationBusy
+                      }
+                      onClick={() => void toggleAuditRedaction(field)}
+                    >
+                      {auditMutationFieldId === field.id
+                        ? "Saving…"
+                        : field.audit_redacted
+                          ? "Disable"
+                          : "Enable"}{" "}
+                      audit redaction
+                    </Button>
+                  </div>
                 </div>
                 {field.is_deleted && <Badge variant="warning">Closed</Badge>}
-                <div className="flex gap-1">
+                <div className="ml-auto flex w-full justify-end gap-1 sm:w-auto">
                   <Button
                     variant="ghost"
                     size="icon"
@@ -326,6 +422,7 @@ export default function SchemaPage() {
                     disabled={
                       mutationsDisabled ||
                       field.is_deleted ||
+                      schemaMutationBusy ||
                       activeFields.findIndex((item) => item.id === field.id) ===
                         0
                     }
@@ -340,6 +437,7 @@ export default function SchemaPage() {
                     disabled={
                       mutationsDisabled ||
                       field.is_deleted ||
+                      schemaMutationBusy ||
                       activeFields.findIndex((item) => item.id === field.id) ===
                         activeFields.length - 1
                     }
@@ -381,7 +479,7 @@ export default function SchemaPage() {
                   id="field-name"
                   required
                   value={name}
-                  disabled={mutationsDisabled}
+                  disabled={mutationsDisabled || schemaMutationBusy}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="e.g. Account owner"
                 />
@@ -390,7 +488,7 @@ export default function SchemaPage() {
                 <Label htmlFor="field-type">Type</Label>
                 <select
                   id="field-type"
-                  disabled={mutationsDisabled}
+                  disabled={mutationsDisabled || schemaMutationBusy}
                   className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
                   value={type}
                   onChange={(event) => {
@@ -412,7 +510,7 @@ export default function SchemaPage() {
                   <Input
                     id="field-options"
                     required
-                    disabled={mutationsDisabled}
+                    disabled={mutationsDisabled || schemaMutationBusy}
                     placeholder="New, Active, Closed"
                     value={options}
                     onChange={(event) => setOptions(event.target.value)}
@@ -429,7 +527,7 @@ export default function SchemaPage() {
                     <select
                       id="target-module"
                       required
-                      disabled={mutationsDisabled}
+                      disabled={mutationsDisabled || schemaMutationBusy}
                       className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
                       value={targetModuleId}
                       onChange={(event) =>
@@ -461,7 +559,7 @@ export default function SchemaPage() {
                             type="radio"
                             name="multiple-targets"
                             checked={multipleTargets === multiple}
-                            disabled={mutationsDisabled}
+                            disabled={mutationsDisabled || schemaMutationBusy}
                             onChange={() => setMultipleTargets(multiple)}
                           />
                           {multiple ? "Multiple" : "Single"}
@@ -486,7 +584,7 @@ export default function SchemaPage() {
                             type="radio"
                             name="multiple-sources"
                             checked={multipleSources === multiple}
-                            disabled={mutationsDisabled}
+                            disabled={mutationsDisabled || schemaMutationBusy}
                             onChange={() => setMultipleSources(multiple)}
                           />
                           {multiple ? "Multiple" : "Single"}
@@ -500,14 +598,48 @@ export default function SchemaPage() {
                 <input
                   type="checkbox"
                   checked={required}
-                  disabled={mutationsDisabled || type === "relationship"}
+                  disabled={
+                    mutationsDisabled ||
+                    schemaMutationBusy ||
+                    type === "relationship"
+                  }
                   onChange={(event) => setRequired(event.target.checked)}
                 />{" "}
                 Required field
               </label>
-              <Button className="w-full" disabled={saving || mutationsDisabled}>
+              <div className="flex items-start gap-3">
+                <input
+                  id="field-audit-redacted"
+                  type="checkbox"
+                  className="mt-1 size-4 shrink-0"
+                  checked={auditRedacted}
+                  disabled={mutationsDisabled || schemaMutationBusy}
+                  aria-describedby="field-audit-redacted-help"
+                  onChange={(event) => setAuditRedacted(event.target.checked)}
+                />
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="field-audit-redacted"
+                    className="cursor-pointer"
+                  >
+                    Redact values in future audit snapshots
+                  </Label>
+                  <p
+                    id="field-audit-redacted-help"
+                    className="text-muted-foreground text-xs leading-5"
+                  >
+                    When enabled, values remain in records, but future audit
+                    snapshots are masked. Stored record values and historical
+                    audit logs are unchanged.
+                  </p>
+                </div>
+              </div>
+              <Button
+                className="w-full"
+                disabled={schemaMutationBusy || mutationsDisabled}
+              >
                 <Plus size={16} />
-                {saving ? "Adding…" : "Add field"}
+                {mutationBusy?.kind === "add" ? "Adding…" : "Add field"}
               </Button>
             </form>
           </CardContent>

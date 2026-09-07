@@ -626,7 +626,7 @@ test.describe("relationship UI", () => {
     await expect(acceptButton).toBeDisabled();
   });
 
-  test("shows the backend validation error when schema acceptance is rejected", async ({
+  test("shows a safe error when schema acceptance is rejected", async ({
     page,
   }) => {
     const state = makeState();
@@ -642,10 +642,14 @@ test.describe("relationship UI", () => {
     await page.getByRole("button", { name: "Accept Schema" }).click();
 
     await expect(
-      page
-        .getByRole("status")
-        .filter({ hasText: "Schema contains an invalid field definition" }),
-    ).toContainText("Schema contains an invalid field definition");
+      page.getByRole("status").filter({
+        hasText:
+          "This schema conflicts with current data. Refresh and try again.",
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Schema contains an invalid field definition"),
+    ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Accept Schema" }),
     ).toBeEnabled();
@@ -776,6 +780,7 @@ test.describe("relationship UI", () => {
       name: "Related vendors",
       type: "relationship",
       required: false,
+      audit_redacted: false,
       position: 4,
       config: {},
       relationship_target_module_id: CONTACTS_MODULE_ID,

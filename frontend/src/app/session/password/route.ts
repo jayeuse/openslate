@@ -12,6 +12,8 @@ import {
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isSameOriginRequest } from "@/lib/request-security";
 
+const backend = process.env.BACKEND_URL ?? "http://localhost:8000";
+
 const PasswordSchema = z
   .object({
     password: z.string().min(12).max(1024),
@@ -59,6 +61,15 @@ export async function POST(request: Request) {
       password: input.data.password,
     });
     if (updated.error) throw new Error("password update failed");
+
+    const accepted = await fetch(`${backend}/api/auth/invitations/accept`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${establishedSession.access_token}`,
+      },
+      cache: "no-store",
+    });
+    if (!accepted.ok) throw new Error("invitation acceptance failed");
 
     const response = NextResponse.json(
       { authenticated: true },
