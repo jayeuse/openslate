@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, type DragEvent } from "react";
 
 import {
   FIELD_TYPE_META,
@@ -8,6 +8,7 @@ import {
   type SandboxState,
   type UpdateSandboxFieldPatch,
 } from "@/lib/sandbox/model";
+import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -23,6 +24,8 @@ export interface SandboxInspectorTarget {
 }
 
 export interface SandboxInspectorProps {
+  /** Render the persistent outline, properties, or both for legacy callers. */
+  mode?: "combined" | "outline" | "properties";
   state: SandboxState;
   onRenameDepartment: (departmentId: string, name: string) => void;
   onRenameModule: (moduleId: string, name: string) => void;
@@ -34,6 +37,8 @@ export interface SandboxInspectorProps {
   onAddDepartment: () => void;
   onMoveModule?: (moduleId: string, departmentId: string) => void;
   onSelect: (cellId: string) => void;
+  onEdit?: (cellId: string) => void;
+  onAddRelationship?: () => void;
 }
 
 const FIELD_TYPES = Object.keys(FIELD_TYPE_META) as SandboxFieldType[];
@@ -106,7 +111,7 @@ function OutlineName({
         event.stopPropagation();
         onBeginEdit(id, value);
       }}
-      title="Double-click to rename"
+      title={`${value} — Double-click to rename`}
     >
       {value}
     </span>
@@ -118,6 +123,7 @@ function OutlineName({
  * changes, while the detail section keeps the existing edit controls.
  */
 export function SandboxInspector({
+  mode = "combined",
   state,
   onRenameDepartment,
   onRenameModule,
@@ -129,9 +135,10 @@ export function SandboxInspector({
   onAddDepartment,
   onMoveModule,
   onSelect,
+  onEdit,
+  onAddRelationship,
 }: SandboxInspectorProps) {
-  const { selectedCellId, currentStage } = state;
-  const isReadOnly = currentStage === "automation";
+  const { selectedCellId } = state;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
 
@@ -147,11 +154,10 @@ export function SandboxInspector({
     field === undefined
       ? undefined
       : state.modules.find((item) => item.id === field.moduleId);
+  const showOutline = mode !== "properties";
+  const showProperties = mode !== "outline";
 
   function beginEdit(id: string, value: string): void {
-    if (isReadOnly) {
-      return;
-    }
     onSelect(id);
     setEditingId(id);
     setEditingValue(value);
@@ -180,217 +186,178 @@ export function SandboxInspector({
     });
   }
 
+  function rowActions(
+    kind: SandboxInspectorTargetKind,
+    id: string,
+    name: string,
+  ) {
+    const label = kind === "link" ? "relationship" : kind;
+    return (
+      <>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 shrink-0"
+          aria-label={`Edit ${label} ${name}`}
+          onClick={() => onEdit?.(id)}
+        >
+          <Pencil className="size-3.5" aria-hidden="true" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-destructive size-8 shrink-0"
+          aria-label={`Delete ${label} ${name}`}
+          onClick={() => onDeleteSelected({ kind, id })}
+        >
+          <Trash2 className="size-3.5" aria-hidden="true" />
+        </Button>
+      </>
+    );
+  }
+
+  function dragPayload(
+    event: DragEvent<HTMLButtonElement>,
+    kind: string,
+    type?: SandboxFieldType,
+  ) {
+    event.dataTransfer.setData("application/x-sandbox-kind", kind);
+    event.dataTransfer.setData(`application/x-sandbox-kind-${kind}`, kind);
+    if (type)
+      event.dataTransfer.setData("application/x-sandbox-field-type", type);
+    event.dataTransfer.effectAllowed = "copy";
+  }
+
+  function addRow(
+    kind: "department" | "module" | "field",
+    parentId?: string,
+    parentName?: string,
+  ) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        draggable
+        data-kind={kind}
+        data-testid={
+          kind === "department"
+            ? "inspector-add-department"
+            : `inspector-outline-add-${kind}`
+        }
+        aria-label={
+          parentName ? `Add ${kind} to ${parentName}` : "Add department"
+        }
+        onDragStart={(event) =>
+          dragPayload(event, kind, kind === "field" ? "text" : undefined)
+        }
+        onClick={() =>
+          kind === "department"
+            ? onAddDepartment()
+            : kind === "module"
+              ? onAddModule(parentId!)
+              : onAddField(parentId!, "text")
+        }
+        className="text-muted-foreground hover:text-foreground mt-1 h-9 w-full justify-start px-2 text-xs font-normal"
+      >
+        Add{" "}
+        {kind === "department"
+          ? "Department"
+          : kind === "module"
+            ? "Module"
+            : "Field"}
+      </Button>
+    );
+  }
+
+  function itemRow(
+    kind: "department" | "module" | "field",
+    item: { id: string; name: string },
+    selected: boolean,
+  ) {
+    return (
+      <div className="flex min-w-0 items-center gap-0.5">
+        {editingId === item.id ? (
+          <OutlineName
+            id={item.id}
+            value={item.name}
+            kind={kind}
+            editingId={editingId}
+            editingValue={editingValue}
+            onBeginEdit={beginEdit}
+            onEditingValueChange={setEditingValue}
+            onCommit={commitEdit}
+            onCancel={() => setEditingId(null)}
+          />
+        ) : (
+          <button
+            type="button"
+            data-testid={`inspector-outline-${kind}-select`}
+            aria-current={selected ? "true" : undefined}
+            aria-label={`Select ${kind} ${item.name}`}
+            onClick={() => onSelect(item.id)}
+            onDoubleClick={() => beginEdit(item.id, item.name)}
+            className={`flex min-h-9 min-w-0 flex-1 items-center gap-1 rounded-[var(--radius)] px-2 text-left text-xs ${kind === "department" ? "font-semibold" : ""} ${selectedClasses(selected)}`}
+          >
+            {kind !== "field" ? <span aria-hidden="true">▾</span> : null}
+            <span className="min-w-0 flex-1 truncate" title={item.name}>
+              {item.name}
+            </span>
+          </button>
+        )}
+        {rowActions(kind, item.id, item.name)}
+      </div>
+    );
+  }
+
   function renderDepartment(
     departmentItem: SandboxState["departments"][number],
   ) {
-    const departmentModules = departmentItem.moduleIds.flatMap((moduleId) => {
-      const match = state.modules.find((item) => item.id === moduleId);
-      return match === undefined ? [] : [match];
-    });
-    const isSelected =
-      selectedCellId === departmentItem.id ||
-      sandboxModule?.departmentId === departmentItem.id ||
-      selectedFieldModule?.departmentId === departmentItem.id;
-
+    const departmentModules = departmentItem.moduleIds.flatMap(
+      (id) => state.modules.find((item) => item.id === id) ?? [],
+    );
     return (
       <li key={departmentItem.id} data-testid="inspector-outline-department">
-        <div className="flex items-center gap-1">
-          {editingId === departmentItem.id ? (
-            <div className="min-w-0 flex-1">
-              <OutlineName
-                id={departmentItem.id}
-                value={departmentItem.name}
-                kind="department"
-                editingId={editingId}
-                editingValue={editingValue}
-                onBeginEdit={beginEdit}
-                onEditingValueChange={setEditingValue}
-                onCommit={commitEdit}
-                onCancel={() => setEditingId(null)}
-              />
-            </div>
-          ) : (
-            <button
-              type="button"
-              data-testid="inspector-outline-department-select"
-              aria-current={isSelected ? "true" : undefined}
-              aria-label={`Select department ${departmentItem.name}`}
-              onClick={() => onSelect(departmentItem.id)}
-              onDoubleClick={() =>
-                beginEdit(departmentItem.id, departmentItem.name)
-              }
-              className={`flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-left text-xs font-semibold transition ${selectedClasses(isSelected)}`}
-            >
-              <span aria-hidden="true" className="text-primary text-[10px]">
-                ▾
-              </span>
-              <span className="min-w-0 flex-1 truncate">
-                {departmentItem.name}
-              </span>
-              <span className="text-muted-foreground shrink-0">
-                {departmentModules.length}
-              </span>
-            </button>
-          )}
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            data-testid="inspector-outline-add-module"
-            aria-label={`Add module to ${departmentItem.name}`}
-            disabled={isReadOnly}
-            onClick={() => onAddModule(departmentItem.id)}
-            className="size-8 shrink-0"
-          >
-            +
-          </Button>
-        </div>
-
-        {departmentModules.length > 0 ? (
-          <ul className="border-border ml-3 flex flex-col gap-1 border-l pl-2">
-            {departmentModules.map((moduleItem) => {
-              const moduleFields = fieldsForModule(
-                moduleItem.id,
-                moduleItem.fieldIds,
-              );
-              const moduleSelected =
+        {itemRow(
+          "department",
+          departmentItem,
+          selectedCellId === departmentItem.id ||
+            sandboxModule?.departmentId === departmentItem.id ||
+            selectedFieldModule?.departmentId === departmentItem.id,
+        )}
+        <ul className="border-border mt-1 ml-2 flex flex-col gap-2 border-l pl-2">
+          {departmentModules.map((moduleItem) => (
+            <li key={moduleItem.id} data-testid="inspector-outline-module">
+              {itemRow(
+                "module",
+                moduleItem,
                 selectedCellId === moduleItem.id ||
-                field?.moduleId === moduleItem.id;
-
-              return (
-                <li key={moduleItem.id} data-testid="inspector-outline-module">
-                  <div className="flex items-center gap-1">
-                    {editingId === moduleItem.id ? (
-                      <div className="min-w-0 flex-1">
-                        <OutlineName
-                          id={moduleItem.id}
-                          value={moduleItem.name}
-                          kind="module"
-                          editingId={editingId}
-                          editingValue={editingValue}
-                          onBeginEdit={beginEdit}
-                          onEditingValueChange={setEditingValue}
-                          onCommit={commitEdit}
-                          onCancel={() => setEditingId(null)}
-                        />
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        data-testid="inspector-outline-module-select"
-                        aria-current={moduleSelected ? "true" : undefined}
-                        aria-label={`Select module ${moduleItem.name}`}
-                        onClick={() => onSelect(moduleItem.id)}
-                        onDoubleClick={() =>
-                          beginEdit(moduleItem.id, moduleItem.name)
-                        }
-                        className={`flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-left text-xs transition ${selectedClasses(moduleSelected)}`}
-                      >
-                        <span
-                          aria-hidden="true"
-                          className="text-muted-foreground text-[10px]"
-                        >
-                          ▾
-                        </span>
-                        <span className="min-w-0 flex-1 truncate">
-                          {moduleItem.name}
-                        </span>
-                        <span className="text-muted-foreground shrink-0">
-                          {moduleFields.length}
-                        </span>
-                      </button>
-                    )}
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      data-testid="inspector-outline-add-field"
-                      aria-label={`Add field to ${moduleItem.name}`}
-                      disabled={isReadOnly}
-                      onClick={() => onAddField(moduleItem.id, "text")}
-                      className="size-8 shrink-0"
+                  field?.moduleId === moduleItem.id,
+              )}
+              <ul className="sandbox-field-list border-border mt-1 ml-2 flex flex-col gap-1 border-l pl-2">
+                {fieldsForModule(moduleItem.id, moduleItem.fieldIds).map(
+                  (fieldItem) => (
+                    <li
+                      key={fieldItem.id}
+                      data-testid="inspector-outline-field"
                     >
-                      +
-                    </Button>
-                  </div>
-
-                  {moduleFields.length > 0 ? (
-                    <ul className="border-border ml-3 flex flex-col gap-0.5 border-l pl-2">
-                      {moduleFields.map((fieldItem) => {
-                        const fieldSelected = selectedCellId === fieldItem.id;
-                        return (
-                          <li
-                            key={fieldItem.id}
-                            data-testid="inspector-outline-field"
-                          >
-                            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_6rem] items-center gap-1">
-                              {editingId === fieldItem.id ? (
-                                <div className="min-w-0 flex-1">
-                                  <OutlineName
-                                    id={fieldItem.id}
-                                    value={fieldItem.name}
-                                    kind="field"
-                                    editingId={editingId}
-                                    editingValue={editingValue}
-                                    onBeginEdit={beginEdit}
-                                    onEditingValueChange={setEditingValue}
-                                    onCommit={commitEdit}
-                                    onCancel={() => setEditingId(null)}
-                                  />
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  data-testid="inspector-outline-field-select"
-                                  aria-current={
-                                    fieldSelected ? "true" : undefined
-                                  }
-                                  aria-label={`Select field ${fieldItem.name}`}
-                                  onClick={() => onSelect(fieldItem.id)}
-                                  onDoubleClick={() =>
-                                    beginEdit(fieldItem.id, fieldItem.name)
-                                  }
-                                  className={`flex min-h-8 min-w-0 flex-1 items-center rounded-[var(--radius)] px-2 py-1 text-left text-xs transition ${selectedClasses(fieldSelected)}`}
-                                >
-                                  <span className="min-w-0 flex-1 truncate">
-                                    {fieldItem.name}
-                                  </span>
-                                </button>
-                              )}
-                              <Select
-                                size="sm"
-                                value={fieldItem.type}
-                                aria-label={`Change type for field ${fieldItem.name}`}
-                                data-testid="inspector-outline-field-type"
-                                disabled={isReadOnly}
-                                onClick={(event) => event.stopPropagation()}
-                                onValueChange={(value) => {
-                                  if (isSandboxFieldType(value)) {
-                                    onSelect(fieldItem.id);
-                                    onUpdateField(fieldItem.id, {
-                                      type: value,
-                                    });
-                                  }
-                                }}
-                                className="max-w-none"
-                              >
-                                {FIELD_TYPES.map((type) => (
-                                  <SelectItem key={type} value={type}>
-                                    {FIELD_TYPE_META[type].label}
-                                  </SelectItem>
-                                ))}
-                              </Select>
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        ) : null}
+                      {itemRow(
+                        "field",
+                        fieldItem,
+                        selectedCellId === fieldItem.id,
+                      )}
+                    </li>
+                  ),
+                )}
+              </ul>
+              <div className="ml-4">
+                {addRow("field", moduleItem.id, moduleItem.name)}
+              </div>
+            </li>
+          ))}
+        </ul>
+        <div className="ml-2">
+          {addRow("module", departmentItem.id, departmentItem.name)}
+        </div>
       </li>
     );
   }
@@ -400,368 +367,485 @@ export function SandboxInspector({
       ? []
       : fieldsForModule(sandboxModule.id, sandboxModule.fieldIds);
 
+  const selectedName =
+    department?.name ??
+    sandboxModule?.name ??
+    field?.name ??
+    (link === undefined ? undefined : link.label || "Relationship");
+  const selectedType =
+    department !== undefined
+      ? "Department"
+      : sandboxModule !== undefined
+        ? "Module"
+        : field !== undefined
+          ? "Field"
+          : link !== undefined
+            ? "Relationship"
+            : undefined;
+  const selectedLocation =
+    department !== undefined
+      ? "Organization root"
+      : sandboxModule !== undefined
+        ? `Inside ${state.departments.find((item) => item.id === sandboxModule.departmentId)?.name ?? "department"}`
+        : field !== undefined
+          ? `Inside ${selectedFieldModule?.name ?? "module"}`
+          : link !== undefined
+            ? "Between two modules"
+            : undefined;
+
   return (
     <section
-      aria-label="Inspector"
-      data-testid="inspector-root"
+      aria-label={
+        showOutline && showProperties
+          ? "Inspector"
+          : showOutline
+            ? "Structure"
+            : "Properties"
+      }
+      data-testid={
+        showOutline && showProperties
+          ? "inspector-root"
+          : showOutline
+            ? "inspector-outline-root"
+            : "inspector-properties"
+      }
       className="flex flex-col gap-4"
     >
-      <Card data-testid="inspector-outline" className="p-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <SectionTitle>Structure</SectionTitle>
-            <p className="text-muted-foreground mt-1 text-[11px]">
-              Select an item to edit it. Double-click a name to rename it.
-            </p>
+      {showOutline ? (
+        <Card data-testid="inspector-outline" className="border-0 p-0">
+          <div className="flex flex-col gap-3">
+            <div>
+              <SectionTitle>Structure</SectionTitle>
+              <p className="text-muted-foreground mt-1 text-[11px]">
+                Select an item or use Edit for its settings. Double-click a name
+                to rename it.
+              </p>
+            </div>
           </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            data-testid="inspector-add-department"
-            disabled={isReadOnly}
-            onClick={onAddDepartment}
-            className="whitespace-nowrap"
-          >
-            + Department
-          </Button>
-        </div>
 
-        {state.departments.length > 0 ? (
-          <ul className="mt-3 flex flex-col gap-1">
-            {state.departments.map(renderDepartment)}
-          </ul>
-        ) : (
-          <p className="text-muted-foreground mt-3 rounded-[var(--radius)] border border-dashed p-3 text-xs">
-            No departments yet. Add one to start your sandbox.
-          </p>
-        )}
-      </Card>
-
-      {currentStage === "automation" ? (
-        <Card
-          data-testid="inspector-automation-preview"
-          className="border-dashed p-4"
-        >
-          <p className="text-sm font-semibold">
-            Automation Preview — not available yet
-          </p>
-          <p className="text-muted-foreground mt-1 text-xs">
-            Workflows arrive later. This read-only preview shows the shape.
-          </p>
-          <dl className="mt-3 flex flex-col gap-2 text-xs">
-            <div className="border-border bg-muted rounded-[var(--radius)] border px-3 py-2">
-              <dt className="font-semibold">When</dt>
-              <dd className="text-muted-foreground">
-                A record is created in Orders
-              </dd>
-            </div>
-            <div className="border-border bg-muted rounded-[var(--radius)] border px-3 py-2">
-              <dt className="font-semibold">If</dt>
-              <dd className="text-muted-foreground">Status is “Pending”</dd>
-            </div>
-            <div className="border-border bg-muted rounded-[var(--radius)] border px-3 py-2">
-              <dt className="font-semibold">Then</dt>
-              <dd className="text-muted-foreground">
-                Notify the Sales department
-              </dd>
-            </div>
-          </dl>
+          {state.departments.length > 0 ? (
+            <ul className="mt-3 flex flex-col gap-3">
+              {state.departments.map(renderDepartment)}
+            </ul>
+          ) : (
+            <p className="text-muted-foreground mt-3 rounded-[var(--radius)] border border-dashed p-3 text-xs">
+              No departments yet. Add one to start your sandbox.
+            </p>
+          )}
+          {addRow("department")}
+          <div className="border-border mt-4 border-t pt-3">
+            <SectionTitle>Relationships</SectionTitle>
+            <ul className="mt-2 flex flex-col gap-1">
+              {state.links.map((item) => {
+                const name =
+                  item.label ||
+                  `${state.modules.find((m) => m.id === item.sourceModuleId)?.name ?? "Module"} to ${state.modules.find((m) => m.id === item.targetModuleId)?.name ?? "Module"}`;
+                return (
+                  <li key={item.id} className="flex min-w-0 items-center">
+                    <button
+                      type="button"
+                      className={`min-h-9 min-w-0 flex-1 truncate rounded px-2 text-left text-xs ${selectedClasses(selectedCellId === item.id)}`}
+                      onClick={() => onSelect(item.id)}
+                      aria-current={
+                        selectedCellId === item.id ? "true" : undefined
+                      }
+                      aria-label={`Select relationship ${name}`}
+                      title={name}
+                    >
+                      {name}
+                    </button>
+                    {rowActions("link", item.id, name)}
+                  </li>
+                );
+              })}
+            </ul>
+            <Button
+              variant="ghost"
+              size="sm"
+              data-testid="inspector-add-relationship"
+              disabled={state.modules.length < 2}
+              onClick={onAddRelationship}
+              className="text-muted-foreground mt-1 w-full justify-start px-2 text-xs font-normal"
+            >
+              Add Relationship
+            </Button>
+            {state.modules.length < 2 ? (
+              <p className="text-muted-foreground px-2 text-[11px]">
+                Add two modules to connect them.
+              </p>
+            ) : null}
+          </div>
         </Card>
       ) : null}
 
-      <div
-        data-testid="inspector-selection-details"
-        className="flex flex-col gap-3"
-      >
-        <SectionTitle>
-          {department === undefined &&
-          sandboxModule === undefined &&
-          field === undefined &&
-          link === undefined
-            ? "Selection details"
-            : "Selected item"}
-        </SectionTitle>
+      {showProperties ? (
+        <div
+          data-testid="inspector-selection-details"
+          className="flex flex-col gap-3"
+        >
+          {selectedName === undefined ? (
+            <SectionTitle>Selection details</SectionTitle>
+          ) : null}
 
-        {currentStage === "automation" ? null : department !== undefined ? (
-          <div
-            data-testid="inspector-department"
-            className="flex flex-col gap-3"
-          >
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="inspector-dept-name">Name</Label>
-              <Input
-                id="inspector-dept-name"
-                data-testid="inspector-dept-name"
-                value={department.name}
-                onChange={(event) =>
-                  onRenameDepartment(department.id, event.target.value)
-                }
-              />
+          {selectedName !== undefined ? (
+            <div
+              data-testid="inspector-selection-summary"
+              className="border-border flex flex-col gap-2 border-b pb-5"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <p
+                  title={selectedName}
+                  className="min-w-0 text-lg font-semibold break-words"
+                >
+                  {selectedName}
+                </p>
+                <span className="text-muted-foreground shrink-0 text-[10px] font-medium tracking-[0.12em] uppercase">
+                  {selectedType}
+                </span>
+              </div>
+              <p className="text-muted-foreground text-xs">
+                {selectedLocation}
+              </p>
+              <p className="text-muted-foreground text-xs">
+                Changes apply to this session.
+              </p>
             </div>
-            <p
-              data-testid="inspector-dept-count"
-              className="text-muted-foreground text-xs"
+          ) : null}
+
+          {department !== undefined ? (
+            <div
+              data-testid="inspector-department"
+              className="flex flex-col gap-3"
             >
-              {department.moduleIds.length}{" "}
-              {department.moduleIds.length === 1 ? "module" : "modules"}
-            </p>
-            <Button
-              type="button"
-              variant="ghost"
-              className="text-destructive mt-2 justify-start"
-              size="sm"
-              data-testid="inspector-delete"
-              onClick={() =>
-                onDeleteSelected({ kind: "department", id: department.id })
-              }
-            >
-              Delete department
-            </Button>
-          </div>
-        ) : sandboxModule !== undefined ? (
-          <div data-testid="inspector-module" className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="inspector-module-name">Name</Label>
-              <Input
-                id="inspector-module-name"
-                data-testid="inspector-module-name"
-                value={sandboxModule.name}
-                onChange={(event) =>
-                  onRenameModule(sandboxModule.id, event.target.value)
-                }
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="inspector-module-dept">Department</Label>
-              <Select
-                id="inspector-module-dept"
-                data-testid="inspector-module-dept"
-                aria-label="Parent department"
-                value={sandboxModule.departmentId}
-                disabled={onMoveModule === undefined}
-                onValueChange={(value) =>
-                  onMoveModule?.(sandboxModule.id, value)
-                }
-              >
-                {state.departments.map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
-                    {item.name}
-                  </SelectItem>
-                ))}
-              </Select>
-            </div>
-            <p
-              data-testid="inspector-module-field-count"
-              className="text-muted-foreground text-xs"
-            >
-              {moduleFields.length}{" "}
-              {moduleFields.length === 1 ? "field" : "fields"}
-            </p>
-            {moduleFields.length > 0 ? (
-              <ul className="flex flex-col gap-1.5">
-                {moduleFields.map((item) => (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      data-testid="inspector-field-item"
-                      aria-label={`Select field ${item.name}`}
-                      onClick={() => onSelect(item.id)}
-                      className="border-border text-foreground hover:bg-muted flex w-full items-center justify-between gap-2 border-b px-1 py-3 text-left text-xs"
-                    >
-                      <span className="font-medium">{item.name}</span>
-                      <span className="text-muted-foreground">
-                        {FIELD_TYPE_META[item.type].label}
-                        {item.required ? " · required" : ""}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="inspector-module-add-field"
-              onClick={() => onAddField(sandboxModule.id, "text")}
-            >
-              + Add Field
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="text-destructive mt-2 justify-start"
-              size="sm"
-              data-testid="inspector-delete"
-              onClick={() =>
-                onDeleteSelected({ kind: "module", id: sandboxModule.id })
-              }
-            >
-              Delete module
-            </Button>
-          </div>
-        ) : field !== undefined ? (
-          <div data-testid="inspector-field" className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="inspector-field-name">Name</Label>
-              <Input
-                id="inspector-field-name"
-                data-testid="inspector-field-name"
-                value={field.name}
-                onChange={(event) =>
-                  onUpdateField(field.id, { name: event.target.value })
-                }
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="inspector-field-type">Type</Label>
-              <Select
-                id="inspector-field-type"
-                data-testid="inspector-field-type"
-                aria-label="Field type"
-                value={field.type}
-                onValueChange={(value) => {
-                  if (isSandboxFieldType(value)) {
-                    onUpdateField(field.id, { type: value });
+              <SectionTitle>Basics</SectionTitle>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="inspector-dept-name">Name</Label>
+                <Input
+                  id="inspector-dept-name"
+                  data-testid="inspector-dept-name"
+                  value={department.name}
+                  onChange={(event) =>
+                    onRenameDepartment(department.id, event.target.value)
                   }
-                }}
+                />
+              </div>
+              <div className="border-border flex items-center justify-between gap-3 border-b pb-3">
+                <div>
+                  <p className="text-xs font-medium">Contained modules</p>
+                  <p
+                    data-testid="inspector-dept-count"
+                    className="text-muted-foreground mt-0.5 text-xs"
+                  >
+                    {department.moduleIds.length}{" "}
+                    {department.moduleIds.length === 1 ? "module" : "modules"}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="inspector-dept-add-module"
+                  onClick={() => onAddModule(department.id)}
+                >
+                  + Add module
+                </Button>
+              </div>
+              <DestructiveAction
+                label="Delete department"
+                onClick={() =>
+                  onDeleteSelected({ kind: "department", id: department.id })
+                }
+              />
+            </div>
+          ) : sandboxModule !== undefined ? (
+            <div data-testid="inspector-module" className="flex flex-col gap-3">
+              <SectionTitle>Basics</SectionTitle>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="inspector-module-name">Name</Label>
+                <Input
+                  id="inspector-module-name"
+                  data-testid="inspector-module-name"
+                  value={sandboxModule.name}
+                  onChange={(event) =>
+                    onRenameModule(sandboxModule.id, event.target.value)
+                  }
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="inspector-module-dept">Parent department</Label>
+                <Select
+                  id="inspector-module-dept"
+                  data-testid="inspector-module-dept"
+                  aria-label="Parent department"
+                  value={sandboxModule.departmentId}
+                  disabled={onMoveModule === undefined}
+                  onValueChange={(value) =>
+                    onMoveModule?.(sandboxModule.id, value)
+                  }
+                >
+                  {state.departments.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name}
+                    </SelectItem>
+                  ))}
+                </Select>
+              </div>
+              <div className="border-border border-t pt-3">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-medium">Fields</p>
+                    <p
+                      data-testid="inspector-module-field-count"
+                      className="text-muted-foreground mt-0.5 text-xs"
+                    >
+                      {moduleFields.length}{" "}
+                      {moduleFields.length === 1 ? "field" : "fields"}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="inspector-module-add-field"
+                    onClick={() => onAddField(sandboxModule.id, "text")}
+                  >
+                    + Add field
+                  </Button>
+                </div>
+                {moduleFields.length > 0 ? (
+                  <ul className="sandbox-field-list flex flex-col gap-1">
+                    {moduleFields.map((item) => (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          data-testid="inspector-field-item"
+                          aria-label={`Select field ${item.name}`}
+                          onClick={() => onSelect(item.id)}
+                          className="border-border text-foreground hover:bg-muted flex w-full items-center justify-between gap-2 rounded-[var(--radius)] border px-3 py-2 text-left text-xs"
+                        >
+                          <span className="font-medium">{item.name}</span>
+                          <span className="text-muted-foreground">
+                            {FIELD_TYPE_META[item.type].label}
+                            {item.required ? " · required" : ""}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-muted-foreground rounded-[var(--radius)] border border-dashed p-3 text-xs">
+                    No fields yet. Add one to describe this module.
+                  </p>
+                )}
+              </div>
+              <DestructiveAction
+                label="Delete module"
+                onClick={() =>
+                  onDeleteSelected({ kind: "module", id: sandboxModule.id })
+                }
+              />
+            </div>
+          ) : field !== undefined ? (
+            <div data-testid="inspector-field" className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="inspector-field-name">Name</Label>
+                <Input
+                  id="inspector-field-name"
+                  data-testid="inspector-field-name"
+                  value={field.name}
+                  onChange={(event) =>
+                    onUpdateField(field.id, { name: event.target.value })
+                  }
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="inspector-field-type">Type</Label>
+                <Select
+                  id="inspector-field-type"
+                  data-testid="inspector-field-type"
+                  aria-label="Field type"
+                  value={field.type}
+                  onValueChange={(value) => {
+                    if (isSandboxFieldType(value)) {
+                      onUpdateField(field.id, { type: value });
+                    }
+                  }}
+                >
+                  {FIELD_TYPES.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {FIELD_TYPE_META[type].label}
+                    </SelectItem>
+                  ))}
+                </Select>
+              </div>
+              <label
+                htmlFor="inspector-field-required"
+                className="flex items-center gap-2 text-sm"
               >
-                {FIELD_TYPES.map((type) => (
-                  <SelectItem key={type} value={type}>
-                    {FIELD_TYPE_META[type].label}
+                <input
+                  id="inspector-field-required"
+                  data-testid="inspector-field-required"
+                  type="checkbox"
+                  checked={field.required}
+                  onChange={(event) =>
+                    onUpdateField(field.id, { required: event.target.checked })
+                  }
+                  className="size-4 accent-[var(--primary)]"
+                />
+                Required
+              </label>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="inspector-field-description">Description</Label>
+                <Input
+                  id="inspector-field-description"
+                  data-testid="inspector-field-description"
+                  value={field.description}
+                  placeholder="What is this field for?"
+                  onChange={(event) =>
+                    onUpdateField(field.id, { description: event.target.value })
+                  }
+                />
+              </div>
+              <div className="border-border border-t pt-3">
+                <p className="text-muted-foreground mb-1 text-[10px] font-medium tracking-[0.12em] uppercase">
+                  Parent module
+                </p>
+                <button
+                  type="button"
+                  className="text-primary hover:text-primary/80 text-left text-xs font-medium underline-offset-2 hover:underline"
+                  onClick={() => {
+                    if (selectedFieldModule !== undefined) {
+                      onSelect(selectedFieldModule.id);
+                    }
+                  }}
+                >
+                  {selectedFieldModule?.name ?? "Unknown module"}
+                </button>
+              </div>
+              <DestructiveAction
+                label="Delete field"
+                onClick={() =>
+                  onDeleteSelected({ kind: "field", id: field.id })
+                }
+              />
+            </div>
+          ) : link !== undefined ? (
+            <div data-testid="inspector-link" className="flex flex-col gap-3">
+              <div className="border-border bg-muted/50 flex items-center gap-2 rounded-[var(--radius)] border px-3 py-2 text-xs">
+                <span
+                  data-testid="inspector-link-from"
+                  className="min-w-0 flex-1 truncate"
+                >
+                  {state.modules.find((item) => item.id === link.sourceModuleId)
+                    ?.name ?? "Unknown module"}
+                </span>
+                <span aria-hidden="true" className="text-muted-foreground">
+                  →
+                </span>
+                <span
+                  data-testid="inspector-link-to"
+                  className="min-w-0 flex-1 truncate text-right"
+                >
+                  {state.modules.find((item) => item.id === link.targetModuleId)
+                    ?.name ?? "Unknown module"}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="inspector-link-label">Label</Label>
+                <Input
+                  id="inspector-link-label"
+                  data-testid="inspector-link-label"
+                  value={link.label}
+                  placeholder="e.g. supplied by"
+                  onChange={(event) =>
+                    onUpdateLinkLabel(link.id, event.target.value)
+                  }
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="inspector-link-type">Direction</Label>
+                <Select
+                  id="inspector-link-type"
+                  data-testid="inspector-link-type"
+                  aria-label="Relationship type"
+                  value={link.relationshipType ?? "directed"}
+                  disabled
+                  onValueChange={() => undefined}
+                >
+                  <SelectItem value="directed">
+                    Directed · source to target
                   </SelectItem>
-                ))}
-              </Select>
-            </div>
-            <label
-              htmlFor="inspector-field-required"
-              className="flex items-center gap-2 text-sm"
-            >
-              <input
-                id="inspector-field-required"
-                data-testid="inspector-field-required"
-                type="checkbox"
-                checked={field.required}
-                onChange={(event) =>
-                  onUpdateField(field.id, { required: event.target.checked })
-                }
-                className="size-4 accent-[var(--primary)]"
-              />
-              Required
-            </label>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="inspector-field-description">Description</Label>
-              <Input
-                id="inspector-field-description"
-                data-testid="inspector-field-description"
-                value={field.description}
-                placeholder="What is this field for?"
-                onChange={(event) =>
-                  onUpdateField(field.id, { description: event.target.value })
-                }
+                </Select>
+              </div>
+              <DestructiveAction
+                label="Delete relationship"
+                onClick={() => onDeleteSelected({ kind: "link", id: link.id })}
               />
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              className="text-destructive mt-2 justify-start"
-              size="sm"
-              data-testid="inspector-delete"
-              onClick={() => onDeleteSelected({ kind: "field", id: field.id })}
-            >
-              Delete field
-            </Button>
-          </div>
-        ) : link !== undefined ? (
-          <div data-testid="inspector-link" className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="inspector-link-from">From</Label>
-              <Input
-                id="inspector-link-from"
-                data-testid="inspector-link-from"
-                readOnly
-                value={
-                  state.modules.find((item) => item.id === link.sourceModuleId)
-                    ?.name ?? "Unknown module"
-                }
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="inspector-link-to">To</Label>
-              <Input
-                id="inspector-link-to"
-                data-testid="inspector-link-to"
-                readOnly
-                value={
-                  state.modules.find((item) => item.id === link.targetModuleId)
-                    ?.name ?? "Unknown module"
-                }
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="inspector-link-label">Label</Label>
-              <Input
-                id="inspector-link-label"
-                data-testid="inspector-link-label"
-                value={link.label}
-                placeholder="e.g. supplied by"
-                onChange={(event) =>
-                  onUpdateLinkLabel(link.id, event.target.value)
-                }
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="inspector-link-type">Type</Label>
-              <Select
-                id="inspector-link-type"
-                data-testid="inspector-link-type"
-                aria-label="Relationship type"
-                value={link.relationshipType ?? "directed"}
-                disabled
-                onValueChange={() => undefined}
+          ) : (
+            <div data-testid="inspector-empty" className="flex flex-col gap-3">
+              <p className="text-muted-foreground text-xs">
+                Select a department, module, field, or relationship on the
+                canvas or in the Structure panel to edit it here.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="inspector-empty-add-department"
+                onClick={onAddDepartment}
+                className="w-full"
               >
-                <SelectItem value="directed">Directed</SelectItem>
-              </Select>
+                + Add first department
+              </Button>
+              <dl className="border-border bg-muted grid grid-cols-2 gap-2 rounded-[var(--radius)] border p-3 text-xs">
+                <div>
+                  <dt className="text-muted-foreground">Departments</dt>
+                  <dd className="font-semibold">{state.departments.length}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Modules</dt>
+                  <dd className="font-semibold">{state.modules.length}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Fields</dt>
+                  <dd className="font-semibold">{state.fields.length}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Relationships</dt>
+                  <dd className="font-semibold">{state.links.length}</dd>
+                </div>
+              </dl>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              className="text-destructive mt-2 justify-start"
-              size="sm"
-              data-testid="inspector-delete"
-              onClick={() => onDeleteSelected({ kind: "link", id: link.id })}
-            >
-              Delete relationship
-            </Button>
-          </div>
-        ) : (
-          <div data-testid="inspector-empty" className="flex flex-col gap-3">
-            <p className="text-muted-foreground text-xs">
-              Select a department, module, field, or relationship on the canvas
-              or in the structure list to edit it here.
-            </p>
-            <dl className="border-border bg-muted grid grid-cols-2 gap-2 rounded-[var(--radius)] border p-3 text-xs">
-              <div>
-                <dt className="text-muted-foreground">Departments</dt>
-                <dd className="font-semibold">{state.departments.length}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Modules</dt>
-                <dd className="font-semibold">{state.modules.length}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Fields</dt>
-                <dd className="font-semibold">{state.fields.length}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Relationships</dt>
-                <dd className="font-semibold">{state.links.length}</dd>
-              </div>
-            </dl>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      ) : null}
     </section>
+  );
+}
+
+function DestructiveAction({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <div className="border-border mt-3 border-t pt-4">
+      <p className="text-xs font-medium">
+        Remove {label.replace("Delete ", "")}
+      </p>
+      <Button
+        type="button"
+        variant="ghost"
+        className="text-destructive justify-start px-0"
+        size="sm"
+        data-testid="inspector-delete"
+        onClick={onClick}
+      >
+        {label}
+      </Button>
+    </div>
   );
 }

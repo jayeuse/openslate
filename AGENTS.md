@@ -24,7 +24,9 @@ Use the requested access path. Do not replace CLI, SSH, or API work with UI auto
 
 For troubleshooting, gather evidence first. Change the smallest relevant part. Recheck the original problem. Stop when the requested behavior works.
 
-Do not add speculative abstractions, compatibility layers, future schemas, configuration options, dependencies, services, or unrelated cleanup. Add an abstraction only for a current requirement or a second real caller.
+Do not add speculative abstractions, compatibility layers, future schemas, configuration options, services, or unrelated cleanup. Add an abstraction only for a current requirement or a second real caller.
+
+Prefer suitable existing libraries and components over rebuilding functionality they already provide. You may install dependencies needed for the requested work without separate approval. Reuse the current stack where practical, keep additions relevant to the task, and verify the integration.
 
 If the work adds a new abstraction layer, a new configuration surface, roughly more than five files, or a speculative option, stop and reduce the design first.
 
@@ -36,7 +38,7 @@ VibeGuard U-17/U-29 applies only to real error paths in the requested change. Do
 
 Read-only discovery does not need approval.
 
-Get approval before you expand scope, touch unrelated files, add a dependency or service, or change an unrequested public API, schema, storage format, or wire format.
+Get approval before you expand scope, touch unrelated files, add a service, or change an unrequested public API, schema, storage format, or wire format.
 
 Also get approval before you delete data, drop data, overwrite user work, discard uncommitted changes, or rewrite Git history.
 

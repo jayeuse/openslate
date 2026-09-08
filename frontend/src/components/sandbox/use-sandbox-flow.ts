@@ -15,7 +15,6 @@ import {
   moveModule as moveModuleReducer,
   renameDepartment as renameDepartmentReducer,
   setSelection as setSelectionReducer,
-  setStage as setStageReducer,
   updateField as updateFieldReducer,
   updateLinkLabel as updateLinkLabelReducer,
   type SandboxDepartment,
@@ -24,10 +23,8 @@ import {
   type SandboxLink,
   type SandboxModule,
   type SandboxState,
-  type Stage,
   type UpdateSandboxFieldPatch,
 } from "@/lib/sandbox/model";
-import { canEnterStage } from "@/lib/sandbox/rules";
 
 export type SelectedSandboxObject =
   | { kind: "department"; department: SandboxDepartment }
@@ -56,14 +53,11 @@ export interface SandboxFlowActions {
   ) => string | null;
   updateLinkLabel: (linkId: string, label: string) => void;
   deleteLink: (linkId: string) => void;
-  /** Guarded by `canEnterStage`; returns false and keeps state when locked. */
-  setStage: (stage: Stage) => boolean;
   setSelection: (cellId: string | null) => void;
 }
 
 export interface SandboxFlowHelpers {
   selectedObject: SelectedSandboxObject | null;
-  stageHint: string;
 }
 
 export interface SandboxFlow {
@@ -71,14 +65,6 @@ export interface SandboxFlow {
   actions: SandboxFlowActions;
   helpers: SandboxFlowHelpers;
 }
-
-const STAGE_HINTS: Record<Stage, string> = {
-  departments: "Start with a department — groups of related modules.",
-  modules: "Add modules inside a department.",
-  fields: "Add fields to describe each module.",
-  relationships: "Connect two modules to model a relationship.",
-  automation: "Automation preview — not available yet.",
-};
 
 function resolveSelection(state: SandboxState): SelectedSandboxObject | null {
   const { selectedCellId } = state;
@@ -236,13 +222,6 @@ export function useSandboxFlow(): SandboxFlow {
     deleteLink: (linkId: string) => {
       setState((previous) => deleteLinkReducer(previous, linkId));
     },
-    setStage: (stage: Stage) => {
-      if (!canEnterStage(stage, state).ok) {
-        return false;
-      }
-      setState((previous) => setStageReducer(previous, stage));
-      return true;
-    },
     setSelection: (cellId: string | null) => {
       setState((previous) => setSelectionReducer(previous, cellId));
     },
@@ -253,7 +232,6 @@ export function useSandboxFlow(): SandboxFlow {
     actions,
     helpers: {
       selectedObject: resolveSelection(state),
-      stageHint: STAGE_HINTS[state.currentStage],
     },
   };
 }

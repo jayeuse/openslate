@@ -1,107 +1,88 @@
 "use client";
 
-import {
-  useEffect,
-  type DialogHTMLAttributes,
-  type HTMLAttributes,
-} from "react";
-
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import type { ComponentProps, HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
-export interface DialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  children: React.ReactNode;
+export interface DialogProps extends DialogPrimitive.Root.Props {
+  dismissible?: boolean;
 }
-
-/**
- * Minimal accessible dialog built on the native `<dialog>` element.
- *
- * No extra dependencies: the root renders a fixed overlay and handles
- * Escape + backdrop dismissal + body scroll lock. Content uses
- * `<dialog open>` so semantics survive without `showModal()`.
- */
-export function Dialog({ open, onOpenChange, children }: DialogProps) {
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onOpenChange(false);
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open, onOpenChange]);
-
-  if (!open) {
-    return null;
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button
-        type="button"
-        tabIndex={-1}
-        aria-label="Close dialog"
-        data-testid="dialog-backdrop"
-        onClick={() => onOpenChange(false)}
-        className="bg-foreground/20 absolute inset-0 cursor-default"
-      />
-      {children}
-    </div>
-  );
-}
-
-export function DialogContent({
-  className,
-  children,
+export function Dialog({
+  dismissible = true,
+  onOpenChange,
   ...props
-}: DialogHTMLAttributes<HTMLDialogElement>) {
+}: DialogProps) {
   return (
-    <dialog
+    <DialogPrimitive.Root
       {...props}
-      open
-      aria-modal="true"
-      className={cn(
-        "border-border bg-card text-card-foreground relative z-10 max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-[var(--radius)] border p-5 shadow-lg",
-        className,
-      )}
-    >
-      {children}
-    </dialog>
+      disablePointerDismissal={!dismissible || props.disablePointerDismissal}
+      onOpenChange={(open, details) => {
+        if (!open && !dismissible) {
+          details.cancel();
+          return;
+        }
+        onOpenChange?.(open, details);
+      }}
+    />
   );
 }
-
+export const DialogTrigger = DialogPrimitive.Trigger;
+export const DialogClose = DialogPrimitive.Close;
+export type DialogContentProps = Omit<
+  ComponentProps<typeof DialogPrimitive.Popup>,
+  "className"
+> & { className?: string };
+export function DialogContent({ className, ...props }: DialogContentProps) {
+  return (
+    <DialogPrimitive.Portal>
+      <DialogPrimitive.Backdrop
+        data-testid="dialog-backdrop"
+        className="bg-foreground/20 fixed inset-0 z-50 transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-none"
+      />
+      <DialogPrimitive.Viewport className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4">
+        <DialogPrimitive.Popup
+          className={cn(
+            "border-border bg-card text-card-foreground pointer-events-auto relative max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-[var(--radius)] border p-5 shadow-lg transition-opacity duration-150 outline-none data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-none",
+            className,
+          )}
+          {...props}
+        />
+      </DialogPrimitive.Viewport>
+    </DialogPrimitive.Portal>
+  );
+}
 export function DialogHeader({
   className,
   ...props
 }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("flex flex-col gap-1.5", className)} {...props} />;
 }
-
 export function DialogTitle({
   className,
   ...props
-}: HTMLAttributes<HTMLHeadingElement>) {
-  return <h2 className={cn("text-base font-semibold", className)} {...props} />;
+}: Omit<ComponentProps<typeof DialogPrimitive.Title>, "className"> & {
+  className?: string;
+}) {
+  return (
+    <DialogPrimitive.Title
+      className={cn("text-base font-semibold", className)}
+      {...props}
+    />
+  );
 }
-
 export function DialogDescription({
   className,
   ...props
-}: HTMLAttributes<HTMLParagraphElement>) {
+}: Omit<ComponentProps<typeof DialogPrimitive.Description>, "className"> & {
+  className?: string;
+}) {
   return (
-    <p className={cn("text-muted-foreground text-sm", className)} {...props} />
+    <DialogPrimitive.Description
+      className={cn("text-muted-foreground text-sm", className)}
+      {...props}
+    />
   );
 }
-
 export function DialogFooter({
   className,
   ...props

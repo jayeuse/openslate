@@ -397,12 +397,78 @@ test("reopens a closed department with one confirmed request", async ({
   });
 
   await page.goto(`/departments/${DEPARTMENT_ID}`);
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("All closed descendants");
-    await dialog.accept();
-  });
   await page.getByRole("button", { name: "Reopen", exact: true }).click();
+  const confirmation = page.getByRole("alertdialog");
+  await expect(confirmation).toContainText("All closed descendants");
+  await confirmation
+    .getByRole("button", { name: "Reopen", exact: true })
+    .click();
   await expect.poll(() => reopenBody).toEqual({ confirmed: true });
+});
+
+test("reopen confirmation focuses cancel, supports dismissal, and disables while pending", async ({
+  page,
+}) => {
+  await installSessionMocks(page);
+  let reopenBody: unknown;
+  let releaseReopen!: () => void;
+  const reopenResponse = new Promise<void>((resolve) => {
+    releaseReopen = resolve;
+  });
+  await page.route("**/bff/**", async (route) => {
+    const request = route.request();
+    const path = pathFor(route);
+    if (
+      request.method() === "GET" &&
+      path === `/departments/${DEPARTMENT_ID}`
+    ) {
+      await json(route, 200, departmentFixture(true));
+    } else if (request.method() === "GET" && path === "/modules") {
+      await json(route, 200, listResponse([]));
+    } else if (
+      request.method() === "POST" &&
+      path === `/departments/${DEPARTMENT_ID}/reopen`
+    ) {
+      reopenBody = request.postDataJSON();
+      await reopenResponse;
+      await json(route, 200, {
+        impact: lifecycleImpact("close"),
+        operation_id: null,
+      });
+    } else {
+      await json(route, 404, { detail: "Unhandled mock route" });
+    }
+  });
+
+  await page.goto(`/departments/${DEPARTMENT_ID}`);
+  await page.getByRole("button", { name: "Reopen", exact: true }).click();
+  const confirmation = page.getByRole("alertdialog");
+  const cancel = confirmation.getByRole("button", { name: "Cancel" });
+  await expect(cancel).toBeFocused();
+  await cancel.click();
+  await expect(confirmation).toHaveCount(0);
+  expect(reopenBody).toBeUndefined();
+
+  await page.getByRole("button", { name: "Reopen", exact: true }).click();
+  await page.getByRole("alertdialog").press("Escape");
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  expect(reopenBody).toBeUndefined();
+
+  await page.getByRole("button", { name: "Reopen", exact: true }).click();
+  const pendingDialog = page.getByRole("alertdialog");
+  await pendingDialog.getByRole("button", { name: "Reopen" }).click();
+  await expect.poll(() => reopenBody).toEqual({ confirmed: true });
+  await expect(
+    pendingDialog.getByRole("button", { name: "Working…" }),
+  ).toBeDisabled();
+  await expect(
+    pendingDialog.getByRole("button", { name: "Cancel" }),
+  ).toBeDisabled();
+  releaseReopen();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(
+    page.getByText("Operations reopened.", { exact: true }),
+  ).toBeVisible();
 });
 
 async function installRecordMocks(page: Page, sourceClosed: boolean) {

@@ -4,9 +4,6 @@
  * Pure data + pure reducers. No backend, no API calls, no X6 imports.
  */
 
-export type Stage =
-  "departments" | "modules" | "fields" | "relationships" | "automation";
-
 export type SandboxFieldType =
   "text" | "int" | "decimal" | "boolean" | "date" | "datetime" | "select";
 
@@ -47,7 +44,6 @@ export interface SandboxState {
   fields: SandboxField[];
   links: SandboxLink[];
   selectedCellId: string | null;
-  currentStage: Stage;
 }
 
 export interface SandboxFieldTypeMeta {
@@ -80,7 +76,6 @@ export function createEmptySandbox(): SandboxState {
     fields: [],
     links: [],
     selectedCellId: null,
-    currentStage: "departments",
   };
 }
 
@@ -170,7 +165,6 @@ export function createSandboxFixture(): SandboxState {
       },
     ],
     selectedCellId: null,
-    currentStage: "departments",
   };
 }
 
@@ -407,10 +401,6 @@ export function deleteLink(state: SandboxState, linkId: string): SandboxState {
     selectedCellId:
       state.selectedCellId === linkId ? null : state.selectedCellId,
   };
-}
-
-export function setStage(state: SandboxState, stage: Stage): SandboxState {
-  return { ...state, currentStage: stage };
 }
 
 export function setSelection(

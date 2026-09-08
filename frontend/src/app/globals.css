@@ -1,60 +1,76 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f6f8fb;
-  --foreground: #152238;
+  --background: #ffffff;
+  --foreground: #20242c;
   --card: #ffffff;
-  --card-foreground: #152238;
+  --card-foreground: #20242c;
   --popover: #ffffff;
-  --popover-foreground: #152238;
+  --popover-foreground: #20242c;
   --primary: #2563eb;
   --primary-foreground: #ffffff;
-  --secondary: #e9eef6;
-  --secondary-foreground: #24344d;
-  --muted: #eef2f7;
-  --muted-foreground: #65738a;
-  --accent: #e8f0ff;
+  --secondary: #f1f3f6;
+  --secondary-foreground: #313843;
+  --muted: #f5f6f8;
+  --muted-foreground: #6b7480;
+  --accent: #edf3ff;
   --accent-foreground: #1d4ed8;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
   --success: #15803d;
   --warning: #b45309;
-  --border: #dce3ed;
-  --input: #d3dce9;
-  --ring: #60a5fa;
-  --sidebar: #17243a;
-  --sidebar-foreground: #dbe5f3;
-  --sidebar-muted: #91a2bb;
-  --sidebar-accent: #243758;
+  --border: #e4e7ec;
+  --input: #d1d7e0;
+  --ring: #7da7f5;
+  --sidebar: #f5f6f8;
+  --sidebar-foreground: #29313d;
+  --sidebar-muted: #6b7480;
+  --sidebar-accent: #e7ebf0;
+  --density-space: 1rem;
+  --density-control-height: 2.5rem;
+  --canvas-background: #ffffff;
+  --canvas-moving: #fff8eb;
+  --canvas-drop: #edf3ff;
+  --canvas-grid: #d8dde5;
+  --canvas-grid-major: #bac3cf;
+  --sandbox-node-border: #9da8b8;
+  --sandbox-field-stripe: #f1f3f6;
   --radius: 0.65rem;
 }
 
 .dark {
-  --background: #101722;
-  --foreground: #e8eef7;
-  --card: #172231;
-  --card-foreground: #e8eef7;
-  --popover: #1b293a;
-  --popover-foreground: #e8eef7;
-  --primary: #69a2ff;
-  --primary-foreground: #0c1a2c;
-  --secondary: #253449;
-  --secondary-foreground: #dbe5f3;
-  --muted: #1c2939;
-  --muted-foreground: #9eacc0;
-  --accent: #20375b;
-  --accent-foreground: #a9c9ff;
+  --background: #111315;
+  --foreground: #f1f3f5;
+  --card: #181a1d;
+  --card-foreground: #f1f3f5;
+  --popover: #1d2024;
+  --popover-foreground: #f1f3f5;
+  --primary: #77a9ff;
+  --primary-foreground: #111827;
+  --secondary: #272b30;
+  --secondary-foreground: #e5e7eb;
+  --muted: #22262b;
+  --muted-foreground: #aeb6c0;
+  --accent: #253653;
+  --accent-foreground: #c6d8ff;
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
   --success: #4ade80;
   --warning: #fbbf24;
-  --border: #2a3a50;
-  --input: #34465d;
-  --ring: #93c5fd;
-  --sidebar: #0b1320;
-  --sidebar-foreground: #dbe5f3;
-  --sidebar-muted: #8495ad;
-  --sidebar-accent: #182a45;
+  --border: #30343b;
+  --input: #3a414b;
+  --ring: #8cb4ff;
+  --sidebar: #17191c;
+  --sidebar-foreground: #eef1f4;
+  --sidebar-muted: #a8b0ba;
+  --sidebar-accent: #292d33;
+  --canvas-background: #181b1f;
+  --canvas-moving: #3d311b;
+  --canvas-drop: #253653;
+  --canvas-grid: color-mix(in srgb, #343941 45%, transparent);
+  --canvas-grid-major: color-mix(in srgb, #4b535d 55%, transparent);
+  --sandbox-node-border: var(--border);
+  --sandbox-field-stripe: #22262b;
 }
 
 [data-accent="indigo"] {
@@ -62,21 +78,41 @@
   --accent: #eef2ff;
   --accent-foreground: #4338ca;
 }
+.dark[data-accent="indigo"] {
+  --primary: #9aa5ff;
+  --primary-foreground: #15152b;
+  --accent: #30345a;
+  --accent-foreground: #d0d4ff;
+}
 [data-accent="emerald"] {
   --primary: #059669;
   --accent: #ecfdf5;
   --accent-foreground: #047857;
+}
+.dark[data-accent="emerald"] {
+  --primary: #5ee0b0;
+  --primary-foreground: #08251b;
+  --accent: #1d493c;
+  --accent-foreground: #a9f3d3;
 }
 [data-accent="neutral"] {
   --primary: #334155;
   --accent: #f1f5f9;
   --accent-foreground: #334155;
 }
+.dark[data-accent="neutral"] {
+  --primary: #c1cad6;
+  --primary-foreground: #1c2128;
+  --accent: #343a43;
+  --accent-foreground: #edf1f5;
+}
 [data-density="compact"] {
   --density-space: 0.75rem;
+  --density-control-height: 2.25rem;
 }
 [data-density="comfortable"] {
   --density-space: 1rem;
+  --density-control-height: 2.5rem;
 }
 [data-radius="square"] {
   --radius: 0.2rem;
@@ -166,4 +202,125 @@ textarea:focus-visible {
 ::selection {
   background: var(--accent);
   color: var(--accent-foreground);
+}
+
+/* Keep canvas editor contrast and interaction feedback local to the sandbox. */
+.sandbox-ui {
+  --background: #e4e9ef;
+  --card: #e9edf2;
+  --popover: #e9edf2;
+  --muted: #dce1e8;
+  --secondary: #dce1e8;
+  --sandbox-field-stripe: #d5dde6;
+  --border: #b8c1ce;
+  --input: #a5b0c0;
+}
+
+.dark .sandbox-ui {
+  --background: #111315;
+  --card: #181a1d;
+  --popover: #1d2024;
+  --muted: #22262b;
+  --secondary: #272b30;
+  --sandbox-field-stripe: #272e37;
+  --border: #30343b;
+  --input: #3a414b;
+}
+
+.sandbox-ui .sandbox-field-list > li {
+  border-radius: var(--radius);
+}
+
+.sandbox-ui .sandbox-field-list > li:nth-child(even) {
+  background-color: var(--sandbox-field-stripe);
+}
+
+.sandbox-ui
+  :is(
+    button,
+    a[href],
+    summary,
+    input,
+    select,
+    textarea,
+    [role="separator"]
+  ):not(:disabled):not([aria-disabled="true"]) {
+  transition-property:
+    color, background-color, border-color, box-shadow, opacity;
+  transition-duration: 120ms;
+}
+
+.sandbox-ui
+  :is(
+    button,
+    a[href],
+    summary,
+    input,
+    select,
+    textarea,
+    [role="separator"]
+  ):not(:disabled):not([aria-disabled="true"]):active {
+  box-shadow: inset 0 0 0 999px
+    color-mix(in srgb, var(--primary) 10%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  outline-offset: -1px;
+}
+
+.sandbox-ui
+  :is(
+    button,
+    a[href],
+    summary,
+    input,
+    select,
+    textarea,
+    [role="separator"]
+  ):not(:disabled):not([aria-disabled="true"]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sandbox-ui
+    :is(button, a[href], summary, input, select, textarea, [role="separator"]) {
+    transition: none;
+  }
+}
+
+.sandbox-ui
+  [data-sandbox-pressed="true"]
+  :is([data-sandbox-body], [data-sandbox-line]) {
+  stroke: var(--primary);
+  stroke-width: 2px;
+}
+
+@keyframes sandbox-relationship-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.sandbox-ui [data-sandbox-line="true"] {
+  animation: sandbox-relationship-flow 2.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sandbox-ui [data-sandbox-line="true"] {
+    animation: none;
+  }
+}
+
+/* Resizing follows the pointer instead of the sidebar toggle transition. */
+.app-shell[data-sidebar-resizing] {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.app-shell[data-sidebar-resizing]
+  :is(
+    [data-slot="sidebar-gap"],
+    [data-slot="sidebar-container"],
+    [data-slot="sidebar-menu-button"]
+  ) {
+  transition: none;
 }

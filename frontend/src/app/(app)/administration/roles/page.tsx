@@ -11,6 +11,9 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { toast } from "@/components/ui/toast";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +25,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Field as FormField } from "@/components/ui/field";
 import { Label } from "@/components/ui/label";
 import {
   ApiError,
@@ -105,7 +109,12 @@ export default function RolesPage() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [confirmation, setConfirmation] = useState<{
+    title: string;
+    description: string;
+    label: string;
+    action: () => void;
+  } | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
   async function refreshRoles(): Promise<unknown> {
@@ -150,7 +159,6 @@ export default function RolesPage() {
 
   async function retryLoad() {
     setError("");
-    setNotice("");
     const reason = await refreshRoles();
     if (reason) setError(safeErrorMessage(reason, "load"));
   }
@@ -164,7 +172,6 @@ export default function RolesPage() {
     if (busyAction) return;
     setBusyAction(actionKey);
     setError("");
-    setNotice("");
     let actionError: unknown;
     try {
       await action();
@@ -191,9 +198,10 @@ export default function RolesPage() {
         `The action completed, but ${safeErrorMessage(refreshError, "load").toLowerCase()}`,
       );
     } else {
-      setNotice(successMessage);
+      toast.add({ title: successMessage, type: "success" });
     }
     setBusyAction(null);
+    setConfirmation(null);
   }
 
   async function create(event: FormEvent<HTMLFormElement>) {
@@ -217,7 +225,6 @@ export default function RolesPage() {
 
   function startEdit(role: Role) {
     setError("");
-    setNotice("");
     setEditingRoleId(role.id);
     setEditName(role.role);
     setEditPermissions(permissionsFor(role.permissions));
@@ -245,19 +252,19 @@ export default function RolesPage() {
   }
 
   function archive(role: Role) {
-    if (
-      !window.confirm(
-        `Archive ${role.role}? Assigned users must be moved to another role first.`,
-      )
-    ) {
-      return;
-    }
-    setEditingRoleId(null);
-    void runMutation(
-      `archive-${role.id}`,
-      () => apiFetch(`/roles/${role.id}`, { method: "DELETE" }),
-      `${role.role} was archived.`,
-    );
+    setConfirmation({
+      title: `Archive ${role.role}?`,
+      description: "Assigned users must be moved to another role first.",
+      label: "Archive",
+      action: () => {
+        setEditingRoleId(null);
+        void runMutation(
+          `archive-${role.id}`,
+          () => apiFetch(`/roles/${role.id}`, { method: "DELETE" }),
+          `${role.role} was archived.`,
+        );
+      },
+    });
   }
 
   function isBuiltIn(role: Role) {
@@ -266,6 +273,17 @@ export default function RolesPage() {
 
   return (
     <>
+      <ConfirmationDialog
+        open={!!confirmation}
+        onOpenChange={(open) => {
+          if (!open) setConfirmation(null);
+        }}
+        title={confirmation?.title ?? "Confirm action"}
+        description={confirmation?.description}
+        confirmLabel={confirmation?.label ?? "Confirm"}
+        pending={!!busyAction}
+        onConfirm={() => confirmation?.action()}
+      />
       <PageHeader
         eyebrow="Administration"
         title="Roles"
@@ -287,11 +305,6 @@ export default function RolesPage() {
           >
             <RefreshCw aria-hidden="true" /> Try again
           </Button>
-        </Alert>
-      )}
-      {notice && (
-        <Alert variant="success" className="mb-5">
-          {notice}
         </Alert>
       )}
       <Alert className="mb-5 flex gap-3">
@@ -318,9 +331,14 @@ export default function RolesPage() {
           </CardHeader>
           <CardContent className="p-0">
             {loading && roles.length === 0 ? (
-              <p className="text-muted-foreground p-5 text-sm" role="status">
-                Loading roles…
-              </p>
+              <div className="space-y-4 p-5" aria-busy="true">
+                <span className="sr-only" role="status">
+                  Loading roles…
+                </span>
+                {[0, 1, 2].map((row) => (
+                  <Skeleton key={row} className="h-12 w-full" />
+                ))}
+              </div>
             ) : roles.length === 0 ? (
               <p className="text-muted-foreground p-5 text-sm">
                 No roles found.
@@ -449,7 +467,7 @@ export default function RolesPage() {
                           className="bg-muted/40 border-border rounded-[var(--radius)] border p-4"
                           onSubmit={saveEdit}
                         >
-                          <div className="space-y-2">
+                          <FormField className="space-y-2">
                             <Label htmlFor={`edit-role-name-${role.id}`}>
                               Role name for {role.role}
                             </Label>
@@ -461,7 +479,7 @@ export default function RolesPage() {
                                 setEditName(event.target.value)
                               }
                             />
-                          </div>
+                          </FormField>
                           <fieldset className="mt-4">
                             <legend className="text-foreground text-sm font-medium">
                               Capabilities for {role.role}
@@ -531,7 +549,7 @@ export default function RolesPage() {
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={create}>
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label htmlFor="role-name">Role name</Label>
                 <Input
                   id="role-name"
@@ -540,7 +558,7 @@ export default function RolesPage() {
                   onChange={(event) => setName(event.target.value)}
                   placeholder="e.g. Operations lead"
                 />
-              </div>
+              </FormField>
               <fieldset>
                 <legend className="text-foreground text-sm font-medium">
                   Capabilities

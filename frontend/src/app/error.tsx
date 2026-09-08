@@ -7,19 +7,19 @@ export default function Error({
   reset: () => void;
 }) {
   return (
-    <main className="grid min-h-screen place-items-center bg-stone-950 px-6 text-stone-100">
+    <main className="bg-background text-foreground grid min-h-screen place-items-center px-6">
       <div className="max-w-md text-center">
-        <p className="font-mono text-xs tracking-[0.24em] text-red-400 uppercase">
+        <p className="text-destructive font-mono text-xs tracking-[0.24em] uppercase">
           500 / Application error
         </p>
-        <h1 className="mt-5 text-4xl font-semibold tracking-tight">
+        <h1 className="mt-5 text-2xl font-semibold tracking-tight">
           Something went wrong.
         </h1>
-        <p className="mt-4 text-stone-400">
+        <p className="text-muted-foreground mt-4">
           Try the request again or return to the homepage.
         </p>
         <button
-          className="mt-8 inline-flex h-11 items-center rounded-md bg-lime-300 px-5 font-medium text-stone-950 hover:bg-lime-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-300"
+          className="bg-primary text-primary-foreground focus-visible:outline-ring mt-8 inline-flex h-11 items-center rounded-md px-5 font-medium hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2"
           onClick={reset}
           type="button"
         >

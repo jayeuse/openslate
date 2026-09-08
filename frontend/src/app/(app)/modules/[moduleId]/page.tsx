@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Database, Settings2, Table2 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { LifecycleAction } from "@/components/lifecycle-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useBreadcrumbLabels } from "@/components/app-breadcrumbs";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -22,34 +24,74 @@ export default function ModulePage() {
   const { moduleId } = useParams<{ moduleId: string }>();
   const [module, setModule] = useState<Module | null>(null);
   const [department, setDepartment] = useState<Department | null>(null);
+  useBreadcrumbLabels({
+    department: department
+      ? { id: department.id, name: department.department_name }
+      : undefined,
+    module: module ? { id: module.id, name: module.module_name } : undefined,
+  });
   const [fields, setFields] = useState<Field[]>([]);
   const [error, setError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const modulePath = department
     ? `/departments/${department.id}/modules/${moduleId}`
     : `/modules/${moduleId}`;
-  useEffect(() => {
-    async function load() {
-      try {
-        const current = await apiFetch<Module>(`/modules/${moduleId}`);
-        const [parent, fieldList] = await Promise.all([
-          apiFetch<Department>(`/departments/${current.department_id}`),
-          apiFetch<ListResponse<Field>>(
-            `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "include", sort_by: "position", sort_order: "asc" })}`,
-          ),
-        ]);
-        setModule(current);
-        setDepartment(parent);
-        setFields(fieldList.items);
-      } catch (reason) {
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Module could not be loaded",
-        );
-      }
+  async function load() {
+    setRefreshing(true);
+    try {
+      const current = await apiFetch<Module>(`/modules/${moduleId}`);
+      const [parent, fieldList] = await Promise.all([
+        apiFetch<Department>(`/departments/${current.department_id}`),
+        apiFetch<ListResponse<Field>>(
+          `/fields?${listQuery({ module_id: moduleId, limit: 100, deleted: "include", sort_by: "position", sort_order: "asc" })}`,
+        ),
+      ]);
+      setModule(current);
+      setDepartment(parent);
+      setFields(fieldList.items);
+      setError("");
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Module could not be loaded",
+      );
+    } finally {
+      setRefreshing(false);
     }
+  }
+  useEffect(() => {
     void load();
   }, [moduleId]);
+  if (!module) {
+    if (error)
+      return (
+        <Alert
+          variant="destructive"
+          className="flex flex-wrap items-center justify-between gap-3"
+        >
+          <span>{error}</span>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void load()}
+            disabled={refreshing}
+          >
+            Try again
+          </Button>
+        </Alert>
+      );
+    return (
+      <div aria-busy="true" className="space-y-6">
+        <span role="status" className="sr-only">
+          Loading module…
+        </span>
+        <Skeleton className="h-16 w-2/3" />
+        <div className="grid gap-5 md:grid-cols-2">
+          <Skeleton className="h-72" />
+          <Skeleton className="h-72" />
+        </div>
+      </div>
+    );
+  }
   return (
     <>
       <PageHeader

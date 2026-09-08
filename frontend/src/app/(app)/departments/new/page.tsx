@@ -8,6 +8,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Field as FormField } from "@/components/ui/field";
 import { Label } from "@/components/ui/label";
 import { apiFetch, type Department } from "@/lib/api";
 
@@ -57,7 +58,7 @@ export default function NewDepartmentPage() {
         <CardContent>
           <form className="space-y-6" onSubmit={submit}>
             {error && <Alert variant="destructive">{error}</Alert>}
-            <div className="space-y-2">
+            <FormField className="space-y-2">
               <Label htmlFor="department-name">Department name</Label>
               <Input
                 id="department-name"
@@ -71,7 +72,7 @@ export default function NewDepartmentPage() {
               <p className="text-muted-foreground text-xs">
                 Use a name your team will recognize in navigation and reports.
               </p>
-            </div>
+            </FormField>
             <div className="flex justify-end">
               <Button disabled={pending}>
                 {pending ? (

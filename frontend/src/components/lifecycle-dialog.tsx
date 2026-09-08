@@ -7,6 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { toast } from "@/components/ui/toast";
+import {
   ApiError,
   apiFetch,
   type LifecycleImpact,
@@ -120,6 +128,7 @@ export function LifecycleAction({
     "close",
   );
   const [open, setOpen] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
   const [step, setStep] = useState<WizardStep>("preview");
   const [preview, setPreview] = useState<LifecyclePreviewResponse | null>(null);
   const [name, setName] = useState("");
@@ -167,7 +176,8 @@ export function LifecycleAction({
   }
 
   async function execute() {
-    if (!preview || name !== preview.confirmation_name || !password) return;
+    if (pending || !preview || name !== preview.confirmation_name || !password)
+      return;
     if (new Date(preview.expires_at).getTime() <= Date.now()) {
       await loadPreview();
       return;
@@ -187,7 +197,18 @@ export function LifecycleAction({
         },
       );
       closeWizard();
-      await onComplete();
+      try {
+        await onComplete();
+      } catch {
+        setError(
+          "The operation completed, but the updated data could not be loaded. Refresh the page.",
+        );
+        return;
+      }
+      toast.add({
+        title: `${targetName} ${wizardOperation === "purge" ? "purged" : "closed"}.`,
+        type: "success",
+      });
     } catch (reason) {
       setPassword("");
       if (
@@ -205,12 +226,7 @@ export function LifecycleAction({
   }
 
   async function reopen() {
-    if (
-      !window.confirm(
-        `Reopen ${targetName}? All closed descendants of this ${targetType} will reopen too.`,
-      )
-    )
-      return;
+    if (pending) return;
     setPending(true);
     setError("");
     try {
@@ -218,7 +234,16 @@ export function LifecycleAction({
         `/${targetType}s/${targetId}/reopen`,
         { method: "POST", body: JSON.stringify({ confirmed: true }) },
       );
-      await onComplete();
+      setReopenOpen(false);
+      try {
+        await onComplete();
+      } catch {
+        setError(
+          "Reopening completed, but the updated data could not be loaded. Refresh the page.",
+        );
+        return;
+      }
+      toast.add({ title: `${targetName} reopened.`, type: "success" });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not reopen");
     } finally {
@@ -236,7 +261,7 @@ export function LifecycleAction({
               variant="outline"
               size="sm"
               disabled={pending}
-              onClick={() => void reopen()}
+              onClick={() => setReopenOpen(true)}
             >
               Reopen
             </Button>
@@ -265,144 +290,142 @@ export function LifecycleAction({
       {error && !open && (
         <span className="text-destructive text-xs">{error}</span>
       )}
-      {open && (
-        <div
-          className="bg-background/80 fixed inset-0 z-50 grid place-items-center p-4 backdrop-blur-sm"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) closeWizard();
-          }}
-        >
-          <div
-            className="bg-card max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-[var(--radius)] border p-6 shadow-xl"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="lifecycle-dialog-title"
-            onKeyDown={(event) => {
-              if (event.key === "Escape") closeWizard();
-            }}
-            tabIndex={-1}
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2
-                  id="lifecycle-dialog-title"
-                  className="text-lg font-semibold"
-                >
-                  {operationLabel(operation)} {targetType}
-                </h2>
-                <p className="text-muted-foreground mt-1 text-sm">
-                  {targetName}
+      <ConfirmationDialog
+        open={reopenOpen}
+        onOpenChange={setReopenOpen}
+        title={`Reopen ${targetName}?`}
+        description={`All closed descendants of this ${targetType} will reopen too.`}
+        confirmLabel="Reopen"
+        pending={pending}
+        onConfirm={reopen}
+      />
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!next && !pending) closeWizard();
+        }}
+        dismissible={!pending}
+      >
+        <DialogContent aria-labelledby="lifecycle-dialog-title">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <DialogTitle
+                id="lifecycle-dialog-title"
+                className="text-lg font-semibold"
+              >
+                {operationLabel(operation)} {targetType}
+              </DialogTitle>
+              <DialogDescription className="text-muted-foreground mt-1 text-sm">
+                {targetName}
+              </DialogDescription>
+            </div>
+            <Badge variant="outline">
+              {step === "preview" ? "1" : step === "name" ? "2" : "3"} of 3
+            </Badge>
+          </div>
+          {error && (
+            <Alert variant="destructive" className="mt-4">
+              {error}
+            </Alert>
+          )}
+          <div className="mt-5">
+            {pending && !preview && (
+              <p className="text-muted-foreground text-sm">
+                Loading impact preview…
+              </p>
+            )}
+            {preview && step === "preview" && (
+              <>
+                <ImpactReport impact={preview.impact} operation={operation} />
+                <p className="text-muted-foreground mt-4 text-xs">
+                  Preview expires{" "}
+                  {new Date(preview.expires_at).toLocaleString()}.
+                </p>
+              </>
+            )}
+            {preview && step === "name" && (
+              <div className="space-y-2">
+                <Label htmlFor="lifecycle-confirmation-name">
+                  Type <strong>{preview.confirmation_name}</strong> to continue
+                </Label>
+                <Input
+                  id="lifecycle-confirmation-name"
+                  autoFocus
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </div>
+            )}
+            {preview && step === "password" && (
+              <div className="space-y-2">
+                <Label htmlFor="lifecycle-password">Your password</Label>
+                <Input
+                  id="lifecycle-password"
+                  type="password"
+                  autoFocus
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+                <p className="text-muted-foreground text-xs">
+                  Password is used once and is never stored.
                 </p>
               </div>
-              <Badge variant="outline">
-                {step === "preview" ? "1" : step === "name" ? "2" : "3"} of 3
-              </Badge>
-            </div>
-            {error && (
-              <Alert variant="destructive" className="mt-4">
-                {error}
-              </Alert>
             )}
-            <div className="mt-5">
-              {pending && !preview && (
-                <p className="text-muted-foreground text-sm">
-                  Loading impact preview…
-                </p>
-              )}
-              {preview && step === "preview" && (
-                <>
-                  <ImpactReport impact={preview.impact} operation={operation} />
-                  <p className="text-muted-foreground mt-4 text-xs">
-                    Preview expires{" "}
-                    {new Date(preview.expires_at).toLocaleString()}.
-                  </p>
-                </>
-              )}
-              {preview && step === "name" && (
-                <div className="space-y-2">
-                  <Label htmlFor="lifecycle-confirmation-name">
-                    Type <strong>{preview.confirmation_name}</strong> to
-                    continue
-                  </Label>
-                  <Input
-                    id="lifecycle-confirmation-name"
-                    autoFocus
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                  />
-                </div>
-              )}
-              {preview && step === "password" && (
-                <div className="space-y-2">
-                  <Label htmlFor="lifecycle-password">Your password</Label>
-                  <Input
-                    id="lifecycle-password"
-                    type="password"
-                    autoFocus
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                  />
-                  <p className="text-muted-foreground text-xs">
-                    Password is used once and is never stored.
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <Button variant="ghost" onClick={closeWizard}>
-                Cancel
-              </Button>
-              {preview && step !== "preview" && (
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    setStep(step === "password" ? "name" : "preview")
-                  }
-                >
-                  Back
-                </Button>
-              )}
-              {preview && step === "preview" && (
-                <Button
-                  disabled={pending || preview.impact.blockers.length > 0}
-                  onClick={() => setStep("name")}
-                >
-                  Continue
-                </Button>
-              )}
-              {preview && step === "name" && (
-                <Button
-                  disabled={name !== preview.confirmation_name}
-                  onClick={() => setStep("password")}
-                >
-                  Continue
-                </Button>
-              )}
-              {preview && step === "password" && (
-                <Button
-                  variant="destructive"
-                  disabled={pending || !password}
-                  onClick={() => void execute()}
-                >
-                  {pending
-                    ? `${operationLabel(operation)}ing…`
-                    : operationLabel(operation)}
-                </Button>
-              )}
-              {preview && step === "preview" && (
-                <Button
-                  variant="ghost"
-                  onClick={() => void loadPreview()}
-                  disabled={pending}
-                >
-                  Refresh preview
-                </Button>
-              )}
-            </div>
           </div>
-        </div>
-      )}
+          <div className="mt-6 flex justify-end gap-2">
+            <Button variant="ghost" disabled={pending} onClick={closeWizard}>
+              Cancel
+            </Button>
+            {preview && step !== "preview" && (
+              <Button
+                variant="outline"
+                disabled={pending}
+                onClick={() =>
+                  setStep(step === "password" ? "name" : "preview")
+                }
+              >
+                Back
+              </Button>
+            )}
+            {preview && step === "preview" && (
+              <Button
+                disabled={pending || preview.impact.blockers.length > 0}
+                onClick={() => setStep("name")}
+              >
+                Continue
+              </Button>
+            )}
+            {preview && step === "name" && (
+              <Button
+                disabled={pending || name !== preview.confirmation_name}
+                onClick={() => setStep("password")}
+              >
+                Continue
+              </Button>
+            )}
+            {preview && step === "password" && (
+              <Button
+                variant="destructive"
+                disabled={pending || !password}
+                onClick={() => void execute()}
+              >
+                {pending
+                  ? `${operationLabel(operation)}ing…`
+                  : operationLabel(operation)}
+              </Button>
+            )}
+            {preview && step === "preview" && (
+              <Button
+                variant="ghost"
+                onClick={() => void loadPreview()}
+                disabled={pending}
+              >
+                Refresh preview
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

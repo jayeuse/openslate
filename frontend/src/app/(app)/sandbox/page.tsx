@@ -1,8 +1,7 @@
 "use client";
 
+import { useAppShellNavigation } from "@/components/app-shell";
 import { useEffect, useRef, useState } from "react";
-
-import { ArrowRight, PackagePlus, Plus, Workflow } from "lucide-react";
 
 import { EmptyBuilder } from "@/components/sandbox/sandbox-empty-state";
 import {
@@ -14,10 +13,9 @@ import {
   SandboxInspector,
   type SandboxInspectorTarget,
 } from "@/components/sandbox/sandbox-inspector";
-import { SandboxPalette } from "@/components/sandbox/sandbox-palette";
 import { SandboxShell } from "@/components/sandbox/sandbox-shell";
 import { SandboxToolbar } from "@/components/sandbox/sandbox-toolbar";
-import { SandboxWorkflow } from "@/components/sandbox/sandbox-workflow";
+
 import { useSandboxFlow } from "@/components/sandbox/use-sandbox-flow";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +26,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectItem } from "@/components/ui/select";
@@ -47,6 +53,19 @@ interface LinkDialogState {
   label: string;
 }
 
+function editDialogElement(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    '[data-testid="dialog-edit-item"]',
+  );
+}
+
+function editNameInput(): HTMLElement | null {
+  return (
+    editDialogElement()?.querySelector<HTMLElement>('input[id$="-name"]') ??
+    null
+  );
+}
+
 /**
  * OpenSlate Sandbox prototype route.
  *
@@ -55,6 +74,7 @@ interface LinkDialogState {
  * domain intents to the flow actions and renders the shell chrome.
  */
 export default function SandboxPage() {
+  const { openNavigation, mobileNavigationOpen } = useAppShellNavigation();
   const { state, actions, helpers } = useSandboxFlow();
   const canvasRef = useRef<SandboxCanvasApi | null>(null);
   const moduleDropPosition = useRef<{ x: number; y: number } | null>(null);
@@ -64,6 +84,7 @@ export default function SandboxPage() {
     canRedo: false,
   });
 
+  const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [addModuleOpen, setAddModuleOpen] = useState(false);
   const [modulePickerDept, setModulePickerDept] = useState<string>("");
@@ -106,48 +127,11 @@ export default function SandboxPage() {
       : null;
   }
 
-  function inferredFieldModuleId(): string | null {
-    const selected = helpers.selectedObject;
-    if (selected?.kind === "module") {
-      return selected.module.id;
-    }
-    if (selected?.kind === "field") {
-      return selected.field.moduleId;
-    }
-    if (selected?.kind === "department") {
-      const moduleIds = selected.department.moduleIds;
-      return moduleIds.length === 1 ? (moduleIds[0] ?? null) : null;
-    }
-    return state.modules.length === 1 ? (state.modules[0]?.id ?? null) : null;
-  }
-
-  function handlePaletteAddModule(): void {
-    moduleDropPosition.current = null;
-    if (state.departments.length === 0) return;
-    const inferredDepartment = inferredDepartmentId();
-    if (inferredDepartment !== null) {
-      addNewModuleIn(inferredDepartment);
-      return;
-    }
-    setModulePickerDept(state.departments[0]?.id ?? "");
-    setAddModuleOpen(true);
-  }
-
   function handleAddFieldTo(moduleId: string, type: SandboxFieldType): void {
     const id = actions.addField(moduleId, type);
     if (id !== null) {
       actions.setSelection(id);
     }
-  }
-
-  function handlePaletteAddField(type: SandboxFieldType): void {
-    const inferredModule = inferredFieldModuleId();
-    if (inferredModule !== null) {
-      handleAddFieldTo(inferredModule, type);
-      return;
-    }
-    setAddFieldModule(state.modules[0]?.id ?? "");
-    setAddFieldType(type);
   }
 
   function handleCanvasDrop(
@@ -348,120 +332,35 @@ export default function SandboxPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const stage = state.currentStage;
   const linkVerdict =
     linkDialog === null
       ? null
       : canConnect(linkDialog.sourceModuleId, linkDialog.targetModuleId, state);
 
-  const stageActions = (
-    <div className="flex flex-wrap items-center justify-end gap-2">
-      {stage === "departments" && state.departments.length > 0 ? (
-        <>
-          <Button
-            variant="ghost"
-            size="sm"
-            data-testid="dept-add-another"
-            onClick={addNewDepartment}
-          >
-            <Plus aria-hidden="true" />
-            Add another Department
-          </Button>
-          <Button
-            size="sm"
-            data-testid="dept-continue-modules"
-            onClick={() => actions.setStage("modules")}
-          >
-            Continue to Modules
-            <ArrowRight aria-hidden="true" />
-          </Button>
-        </>
-      ) : null}
-      {stage === "modules" && state.modules.length > 0 ? (
-        <Button size="sm" onClick={() => actions.setStage("fields")}>
-          Continue to Fields
-          <ArrowRight aria-hidden="true" />
-        </Button>
-      ) : null}
-      {stage === "fields" && state.modules.length > 0 ? (
-        <>
-          <Button
-            variant="ghost"
-            size="sm"
-            data-testid="loop-add-another-module"
-            onClick={() => actions.setStage("modules")}
-          >
-            <PackagePlus aria-hidden="true" />
-            Add Another Module
-          </Button>
-          <Button
-            size="sm"
-            data-testid="loop-continue-relationships"
-            disabled={state.modules.length < 2}
-            title={
-              state.modules.length < 2
-                ? "Add a second module to create a relationship"
-                : undefined
-            }
-            onClick={() => actions.setStage("relationships")}
-          >
-            Continue to Relationships
-            <ArrowRight aria-hidden="true" />
-          </Button>
-        </>
-      ) : null}
-      {stage === "relationships" ? (
-        <>
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="rel-start-dialog"
-            disabled={state.modules.length < 2}
-            onClick={startRelationshipFromEmpty}
-          >
-            <Workflow aria-hidden="true" />
-            Connect two Modules
-          </Button>
-          <Button
-            size="sm"
-            data-testid="rel-done"
-            onClick={() => actions.setStage("automation")}
-          >
-            Done with Relationships
-            <ArrowRight aria-hidden="true" />
-          </Button>
-        </>
-      ) : null}
-      {stage === "automation" ? (
-        <p
-          data-testid="automation-banner"
-          className="text-muted-foreground text-sm"
-        >
-          Automation Preview — not available yet.
-        </p>
-      ) : null}
-    </div>
-  );
-
   return (
     <>
       <SandboxShell
-        actions={stageActions}
-        hint={helpers.stageHint}
-        workflow={
-          <SandboxWorkflow
-            stage={stage}
-            state={state}
-            onStageChange={(next) => actions.setStage(next)}
-          />
-        }
-        palette={
-          <SandboxPalette
-            stage={stage}
-            onAddDepartment={addNewDepartment}
-            onAddModule={handlePaletteAddModule}
-            onAddField={handlePaletteAddField}
+        onOpenNavigation={openNavigation}
+        mobileNavigationOpen={mobileNavigationOpen}
+        structure={
+          <SandboxInspector
+            mode="outline"
+            onEdit={(id) => {
+              actions.setSelection(id);
+              setEditTargetId(id);
+            }}
             onAddRelationship={startRelationshipFromEmpty}
+            state={state}
+            onRenameDepartment={actions.renameDepartment}
+            onRenameModule={actions.renameModule}
+            onUpdateField={actions.updateField}
+            onUpdateLinkLabel={actions.updateLinkLabel}
+            onDeleteSelected={openDeleteConfirmation}
+            onAddField={handleAddFieldTo}
+            onAddModule={addNewModuleIn}
+            onAddDepartment={addNewDepartment}
+            onMoveModule={actions.moveModule}
+            onSelect={(cellId) => actions.setSelection(cellId)}
           />
         }
         canvas={
@@ -490,21 +389,6 @@ export default function SandboxPage() {
             ) : null}
           </div>
         }
-        inspector={
-          <SandboxInspector
-            state={state}
-            onRenameDepartment={actions.renameDepartment}
-            onRenameModule={actions.renameModule}
-            onUpdateField={actions.updateField}
-            onUpdateLinkLabel={actions.updateLinkLabel}
-            onDeleteSelected={openDeleteConfirmation}
-            onAddField={handleAddFieldTo}
-            onAddModule={addNewModuleIn}
-            onAddDepartment={addNewDepartment}
-            onMoveModule={actions.moveModule}
-            onSelect={(cellId) => actions.setSelection(cellId)}
-          />
-        }
         toolbar={
           <SandboxToolbar
             onZoomIn={() => canvasRef.current?.zoomIn()}
@@ -520,13 +404,60 @@ export default function SandboxPage() {
       />
 
       <Dialog
+        open={editTargetId !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditTargetId(null);
+        }}
+      >
+        <DialogContent
+          className="sandbox-ui"
+          data-testid="dialog-edit-item"
+          initialFocus={editNameInput}
+        >
+          <DialogHeader>
+            <DialogTitle>Edit item</DialogTitle>
+            <DialogDescription>
+              Update the settings for this item.
+            </DialogDescription>
+          </DialogHeader>
+          <SandboxInspector
+            mode="properties"
+            state={{ ...state, selectedCellId: editTargetId }}
+            onRenameDepartment={actions.renameDepartment}
+            onRenameModule={actions.renameModule}
+            onUpdateField={actions.updateField}
+            onUpdateLinkLabel={actions.updateLinkLabel}
+            onDeleteSelected={(target) => {
+              setEditTargetId(null);
+              openDeleteConfirmation(target);
+            }}
+            onAddField={handleAddFieldTo}
+            onAddModule={addNewModuleIn}
+            onAddDepartment={addNewDepartment}
+            onMoveModule={actions.moveModule}
+            onSelect={(cellId) => {
+              editDialogElement()?.focus({ preventScroll: true });
+              actions.setSelection(cellId);
+              setEditTargetId(cellId);
+              requestAnimationFrame(() => editNameInput()?.focus());
+            }}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTargetId(null)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={addModuleOpen}
         onOpenChange={(open) => {
           setAddModuleOpen(open);
           if (!open) moduleDropPosition.current = null;
         }}
       >
-        <DialogContent data-testid="dialog-add-module">
+        <DialogContent className="sandbox-ui" data-testid="dialog-add-module">
           <DialogHeader>
             <DialogTitle>Choose a Department</DialogTitle>
             <DialogDescription>
@@ -584,7 +515,7 @@ export default function SandboxPage() {
           }
         }}
       >
-        <DialogContent data-testid="dialog-add-field">
+        <DialogContent className="sandbox-ui" data-testid="dialog-add-field">
           <DialogHeader>
             <DialogTitle>Choose a Module</DialogTitle>
             <DialogDescription>
@@ -633,7 +564,7 @@ export default function SandboxPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog
+      <AlertDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => {
           if (!open) {
@@ -641,19 +572,22 @@ export default function SandboxPage() {
           }
         }}
       >
-        <DialogContent data-testid="dialog-delete-confirm">
-          <DialogHeader>
-            <DialogTitle>
+        <AlertDialogContent
+          className="sandbox-ui"
+          data-testid="dialog-delete-confirm"
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>
               Delete {deleteTarget?.name ?? "this item"}?
-            </DialogTitle>
-            <DialogDescription>
+            </AlertDialogTitle>
+            <AlertDialogDescription>
               {deleteTarget?.childSummary !== null &&
               deleteTarget?.childSummary !== undefined
                 ? `This contains ${deleteTarget.childSummary}.`
                 : "This removes the item from your sandbox."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
             <Button
               type="button"
               variant="outline"
@@ -669,9 +603,9 @@ export default function SandboxPage() {
             >
               Delete
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog
         open={linkDialog !== null}
@@ -682,7 +616,7 @@ export default function SandboxPage() {
         }}
       >
         {linkDialog !== null ? (
-          <DialogContent data-testid="dialog-link">
+          <DialogContent className="sandbox-ui" data-testid="dialog-link">
             <DialogHeader>
               <DialogTitle>Relationship</DialogTitle>
               <DialogDescription>

@@ -7,17 +7,29 @@ import { useRouter } from "next/navigation";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  Field,
+  FieldControl,
+  FieldLabel,
+  FieldError,
+} from "@/components/ui/field";
 
 export default function AuthSetupPage() {
   const router = useRouter();
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
+  const [mismatch, setMismatch] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
+    setMismatch(password !== confirmation);
+    if (password !== confirmation) {
+      document.getElementById("confirmation")?.focus();
+      return;
+    }
     setError("");
     setPending(true);
     try {
@@ -65,30 +77,45 @@ export default function AuthSetupPage() {
           </Alert>
         )}
         <form className="space-y-5" onSubmit={submit}>
-          <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              type="password"
-              autoComplete="new-password"
-              minLength={12}
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
+          <Field className="space-y-2">
+            <FieldLabel htmlFor="password">Password</FieldLabel>
+            <FieldControl
+              render={
+                <Input
+                  id="password"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={12}
+                  required
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              }
             />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="confirmation">Confirm password</Label>
-            <Input
-              id="confirmation"
-              type="password"
-              autoComplete="new-password"
-              minLength={12}
-              required
-              value={confirmation}
-              onChange={(event) => setConfirmation(event.target.value)}
+          </Field>
+          <Field className="space-y-2" invalid={mismatch}>
+            <FieldLabel htmlFor="confirmation">Confirm password</FieldLabel>
+            <FieldControl
+              render={
+                <Input
+                  id="confirmation"
+                  aria-invalid={mismatch}
+                  aria-describedby={mismatch ? "confirmation-error" : undefined}
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={12}
+                  required
+                  value={confirmation}
+                  onChange={(event) => setConfirmation(event.target.value)}
+                />
+              }
             />
-          </div>
+            {mismatch && (
+              <FieldError match id="confirmation-error">
+                Passwords must match.
+              </FieldError>
+            )}
+          </Field>
           <Button className="w-full" size="lg" disabled={pending}>
             {pending ? (
               "Saving…"

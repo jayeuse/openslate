@@ -4,12 +4,20 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Save } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import type { Route } from "next";
+import { useBreadcrumbLabels } from "@/components/app-breadcrumbs";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  Field as FormField,
+  FieldControl,
+  FieldLabel,
+  FieldDescription,
+  FieldError,
+} from "@/components/ui/field";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   apiFetch,
   getApiFieldErrors,
@@ -38,6 +46,12 @@ export default function NewRecordPage() {
   const router = useRouter();
   const [module, setModule] = useState<Module | null>(null);
   const [department, setDepartment] = useState<Department | null>(null);
+  useBreadcrumbLabels({
+    department: department
+      ? { id: department.id, name: department.department_name }
+      : undefined,
+    module: module ? { id: module.id, name: module.module_name } : undefined,
+  });
   const [fields, setFields] = useState<Field[]>([]);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
   const [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({});
@@ -94,6 +108,7 @@ export default function NewRecordPage() {
     .flatMap(([, messages]) => messages);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     setPending(true);
     setError("");
     setFieldErrors({});
@@ -103,6 +118,9 @@ export default function NewRecordPage() {
       if (!validation.success) {
         const validationErrors = collectZodFieldErrors(validation.error);
         setFieldErrors(validationErrors.fieldErrors);
+        document
+          .getElementById(Object.keys(validationErrors.fieldErrors)[0] ?? "")
+          ?.focus();
         setError(
           validationErrors.formErrors.length > 0
             ? validationErrors.formErrors.join(" ")
@@ -116,7 +134,9 @@ export default function NewRecordPage() {
       });
       router.push(`${modulePath}/records/${record.id}/edit` as Route);
     } catch (reason) {
-      setFieldErrors(getApiFieldErrors(reason));
+      const errors = getApiFieldErrors(reason);
+      setFieldErrors(errors);
+      document.getElementById(Object.keys(errors)[0] ?? "")?.focus();
       setError(
         reason instanceof Error
           ? reason.message
@@ -150,19 +170,40 @@ export default function NewRecordPage() {
       )}
       <Card className="max-w-3xl">
         <CardContent className="p-6">
-          <form className="space-y-6" noValidate onSubmit={submit}>
+          {!module && !error && (
+            <div aria-busy="true" className="space-y-6">
+              <span role="status" className="sr-only">
+                Loading record form…
+              </span>
+              {[0, 1, 2].map((row) => (
+                <Skeleton key={row} className="h-16 w-full" />
+              ))}
+            </div>
+          )}
+          <form
+            hidden={!module}
+            className="space-y-6"
+            noValidate
+            onSubmit={submit}
+          >
             {primitiveFields.map((field) => (
-              <div className="space-y-2" key={field.id}>
-                <Label htmlFor={field.id}>
+              <FormField
+                className="space-y-2"
+                key={field.id}
+                invalid={!!fieldErrors[field.id]?.length}
+              >
+                <FieldLabel htmlFor={field.id}>
                   {field.name}{" "}
                   {field.required && (
                     <span className="text-destructive">*</span>
                   )}
-                </Label>
+                </FieldLabel>
                 {field.type === "boolean" ? (
                   <label className="flex h-10 items-center gap-2 text-sm">
                     <input
                       id={field.id}
+                      aria-invalid={!!fieldErrors[field.id]?.length}
+                      aria-describedby={`${field.id}-feedback`}
                       type="checkbox"
                       checked={Boolean(values[field.id])}
                       disabled={sourceReadOnly || field.is_deleted}
@@ -178,6 +219,8 @@ export default function NewRecordPage() {
                 ) : field.type === "select" ? (
                   <select
                     id={field.id}
+                    aria-invalid={!!fieldErrors[field.id]?.length}
+                    aria-describedby={`${field.id}-feedback`}
                     required={field.required}
                     disabled={sourceReadOnly || field.is_deleted}
                     className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
@@ -198,54 +241,60 @@ export default function NewRecordPage() {
                       ))}
                   </select>
                 ) : (
-                  <Input
-                    id={field.id}
-                    required={field.required}
-                    type={
-                      field.type === "date"
-                        ? "date"
-                        : field.type === "datetime"
-                          ? "datetime-local"
-                          : field.type === "number" || field.type === "int"
-                            ? "number"
-                            : field.type === "decimal"
-                              ? "text"
-                              : "text"
-                    }
-                    inputMode={field.type === "decimal" ? "decimal" : undefined}
-                    maxLength={field.type === "decimal" ? 58 : undefined}
-                    step={
-                      field.type === "int"
-                        ? "1"
-                        : field.type === "number"
-                          ? "any"
-                          : undefined
-                    }
-                    value={String(values[field.id] ?? "")}
-                    disabled={sourceReadOnly || field.is_deleted}
-                    onChange={(event) =>
-                      setValues((current) => ({
-                        ...current,
-                        [field.id]: event.target.value,
-                      }))
+                  <FieldControl
+                    render={
+                      <Input
+                        id={field.id}
+                        aria-invalid={!!fieldErrors[field.id]?.length}
+                        aria-describedby={`${field.id}-feedback`}
+                        required={field.required}
+                        type={
+                          field.type === "date"
+                            ? "date"
+                            : field.type === "datetime"
+                              ? "datetime-local"
+                              : field.type === "number" || field.type === "int"
+                                ? "number"
+                                : field.type === "decimal"
+                                  ? "text"
+                                  : "text"
+                        }
+                        inputMode={
+                          field.type === "decimal" ? "decimal" : undefined
+                        }
+                        maxLength={field.type === "decimal" ? 58 : undefined}
+                        step={
+                          field.type === "int"
+                            ? "1"
+                            : field.type === "number"
+                              ? "any"
+                              : undefined
+                        }
+                        value={String(values[field.id] ?? "")}
+                        disabled={sourceReadOnly || field.is_deleted}
+                        onChange={(event) =>
+                          setValues((current) => ({
+                            ...current,
+                            [field.id]: event.target.value,
+                          }))
+                        }
+                      />
                     }
                   />
                 )}
-                {fieldErrors[field.id]?.map((message, index) => (
-                  <p
-                    className="text-destructive text-xs"
-                    key={`${message}-${index}`}
-                    role="alert"
-                  >
-                    {message}
-                  </p>
-                ))}
-                {field.type === "datetime" && (
-                  <p className="text-muted-foreground text-xs">
-                    Your timezone will be included as an ISO datetime.
-                  </p>
-                )}
-              </div>
+                <div id={`${field.id}-feedback`}>
+                  {fieldErrors[field.id]?.map((message, index) => (
+                    <FieldError match key={`${message}-${index}`}>
+                      {message}
+                    </FieldError>
+                  ))}
+                  {field.type === "datetime" && (
+                    <FieldDescription>
+                      Your timezone will be included as an ISO datetime.
+                    </FieldDescription>
+                  )}
+                </div>
+              </FormField>
             ))}
             {fields.length === 0 && (
               <p className="text-muted-foreground text-sm">

@@ -11,6 +11,9 @@ import {
 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { LifecycleAction } from "@/components/lifecycle-dialog";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useBreadcrumbLabels } from "@/components/app-breadcrumbs";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -37,11 +40,19 @@ export default function RecordsPage() {
   const { moduleId } = useParams<{ moduleId: string }>();
   const [module, setModule] = useState<Module | null>(null);
   const [department, setDepartment] = useState<Department | null>(null);
+  useBreadcrumbLabels({
+    department: department
+      ? { id: department.id, name: department.department_name }
+      : undefined,
+    module: module ? { id: module.id, name: module.module_name } : undefined,
+  });
   const [fields, setFields] = useState<Field[]>([]);
   const [records, setRecords] = useState<RecordEntity[]>([]);
   const [deleted, setDeleted] = useState("include");
   const [recordId, setRecordId] = useState("");
   const [error, setError] = useState("");
+  const [archiveTarget, setArchiveTarget] = useState<RecordEntity | null>(null);
+  const [pending, setPending] = useState(false);
   const [loading, setLoading] = useState(true);
   const modulePath = module
     ? `/departments/${module.department_id}/modules/${moduleId}`
@@ -90,25 +101,35 @@ export default function RecordsPage() {
     }
   }
   async function archive(record: RecordEntity) {
-    if (
-      !window.confirm(
-        "Archive this record? You can restore it later if its data still matches the active schema.",
-      )
-    )
-      return;
+    if (pending) return;
+    setPending(true);
     try {
       await apiFetch(`/records/${record.id}`, { method: "DELETE" });
       await load();
+      setArchiveTarget(null);
     } catch (reason) {
       setError(
         reason instanceof Error
           ? reason.message
           : "Record could not be archived",
       );
+    } finally {
+      setPending(false);
     }
   }
   return (
     <>
+      <ConfirmationDialog
+        open={!!archiveTarget}
+        onOpenChange={(open) => {
+          if (!open) setArchiveTarget(null);
+        }}
+        title="Archive this record?"
+        description="You can restore it later if its data still matches the active schema."
+        confirmLabel="Archive"
+        pending={pending}
+        onConfirm={() => (archiveTarget ? archive(archiveTarget) : undefined)}
+      />
       <PageHeader
         eyebrow="Module / Records"
         title={module?.module_name ?? "Records"}
@@ -194,6 +215,11 @@ export default function RecordsPage() {
           </a>
         </Alert>
       )}
+      {loading && records.length > 0 && (
+        <p role="status" className="text-muted-foreground mb-3 text-xs">
+          Refreshing records…
+        </p>
+      )}
       <Card>
         <CardContent className="overflow-x-auto p-0">
           <table className="w-full min-w-[720px] text-left text-sm">
@@ -209,18 +235,22 @@ export default function RecordsPage() {
                 <th className="px-5 py-3 text-right font-medium">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-border divide-y">
-              {loading && (
+            <tbody className="divide-border divide-y" aria-busy={loading}>
+              {loading && records.length === 0 && (
                 <tr>
                   <td
                     className="text-muted-foreground px-5 py-8"
                     colSpan={fields.length + 3}
                   >
-                    Loading records…
+                    <span className="sr-only" role="status">
+                      Loading records…
+                    </span>
+                    <Skeleton className="h-12 w-full" />
                   </td>
                 </tr>
               )}
               {!loading &&
+                !error &&
                 records.filter(
                   (record) =>
                     !recordId ||
@@ -292,7 +322,7 @@ export default function RecordsPage() {
                             module?.is_deleted === true ||
                             department?.is_deleted === true
                           }
-                          onClick={() => void archive(record)}
+                          onClick={() => setArchiveTarget(record)}
                         >
                           Archive <ArrowRight size={14} />
                         </Button>

@@ -4,12 +4,15 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Boxes, Plus } from "lucide-react";
 import { useParams } from "next/navigation";
 import { LifecycleAction } from "@/components/lifecycle-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useBreadcrumbLabels } from "@/components/app-breadcrumbs";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Field as FormField } from "@/components/ui/field";
 import { Label } from "@/components/ui/label";
 import {
   apiFetch,
@@ -22,11 +25,18 @@ import {
 export default function DepartmentDetailPage() {
   const { departmentId } = useParams<{ departmentId: string }>();
   const [department, setDepartment] = useState<Department | null>(null);
+  useBreadcrumbLabels({
+    department: department
+      ? { id: department.id, name: department.department_name }
+      : undefined,
+  });
   const [modules, setModules] = useState<Module[]>([]);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
-  async function load() {
+  const [refreshing, setRefreshing] = useState(false);
+  async function load(propagateError = false) {
+    setRefreshing(true);
     try {
       const [parent, children] = await Promise.all([
         apiFetch<Department>(`/departments/${departmentId}`),
@@ -36,12 +46,16 @@ export default function DepartmentDetailPage() {
       ]);
       setDepartment(parent);
       setModules(children.items);
+      setError("");
     } catch (reason) {
       setError(
         reason instanceof Error
           ? reason.message
           : "Department could not be loaded",
       );
+      if (propagateError) throw reason;
+    } finally {
+      setRefreshing(false);
     }
   }
   useEffect(() => {
@@ -72,8 +86,44 @@ export default function DepartmentDetailPage() {
     }
   }
   const departmentClosed = department?.is_deleted === true;
+  if (!department) {
+    if (error)
+      return (
+        <Alert
+          variant="destructive"
+          className="flex flex-wrap items-center justify-between gap-3"
+        >
+          <span>{error}</span>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void load()}
+            disabled={refreshing}
+          >
+            Try again
+          </Button>
+        </Alert>
+      );
+    return (
+      <div aria-busy="true" className="space-y-6">
+        <span role="status" className="sr-only">
+          Loading department…
+        </span>
+        <Skeleton className="h-16 w-2/3" />
+        <div className="grid gap-5 md:grid-cols-2">
+          <Skeleton className="h-72" />
+          <Skeleton className="h-72" />
+        </div>
+      </div>
+    );
+  }
   return (
     <>
+      {refreshing && department && (
+        <p role="status" className="text-muted-foreground mb-3 text-xs">
+          Refreshing…
+        </p>
+      )}
       <PageHeader
         eyebrow="Workspace / Department"
         title={department?.department_name ?? "Department"}
@@ -161,7 +211,7 @@ export default function DepartmentDetailPage() {
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={createModule}>
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label htmlFor="module-name">Module name</Label>
                 <Input
                   id="module-name"
@@ -172,7 +222,7 @@ export default function DepartmentDetailPage() {
                   disabled={departmentClosed}
                   onChange={(event) => setName(event.target.value)}
                 />
-              </div>
+              </FormField>
               <Button
                 className="w-full"
                 disabled={creating || departmentClosed}
@@ -207,7 +257,7 @@ export default function DepartmentDetailPage() {
               targetId={department.id}
               targetName={department.department_name}
               isClosed={department.is_deleted}
-              onComplete={load}
+              onComplete={() => load(true)}
             />
           </CardContent>
         </Card>

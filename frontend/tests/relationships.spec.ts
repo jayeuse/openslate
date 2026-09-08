@@ -13,6 +13,7 @@ const TARGET_MODULE_ID = "44444444-4444-4444-8444-444444444444";
 const CONTACTS_MODULE_ID = "55555555-5555-4555-8555-555555555555";
 const EXTERNAL_MODULE_ID = "66666666-6666-4666-8666-666666666666";
 const SOURCE_RECORD_ID = "77777777-7777-4777-8777-777777777777";
+const SECOND_SOURCE_RECORD_ID = "78787878-7878-4787-8787-787878787878";
 const TARGET_RECORD_ID = "88888888-8888-4888-8888-888888888888";
 const SECOND_TARGET_RECORD_ID = "99999999-9999-4999-8999-999999999999";
 const ARCHIVED_TARGET_RECORD_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -30,6 +31,9 @@ const NEW_OWNER_RECORD_ID = "20202020-2020-4020-8020-202020202020";
 const NEW_TARGET_RECORD_ID = "21212121-2121-4121-8121-212121212121";
 const OWNER_NAME_FIELD_ID = "23232323-2323-4232-8232-232323232323";
 const CONTACT_NAME_FIELD_ID = "24242424-2424-4242-8242-242424242424";
+const OWNER_SCORE_FIELD_ID = "25252525-2525-4252-8252-252525252525";
+const OWNER_SECRET_FIELD_ID = "26262626-2626-4262-8262-262626262626";
+const OWNER_RELATIONSHIP_FIELD_ID = "27272727-2727-4272-8272-272727272727";
 
 type JsonObject = { [key: string]: unknown };
 
@@ -58,6 +62,7 @@ type FieldFixture = BaseEntityFixture & {
   type: string;
   required: boolean;
   position: number;
+  audit_redacted?: boolean;
   config: JsonObject;
   relationship_target_module_id: string | null;
   relationship_multiple_targets: boolean | null;
@@ -83,6 +88,11 @@ type FixtureState = {
   records: RecordFixture[];
   relationships: RelationshipFixture[];
   acceptanceError?: string;
+  duplicateTargetPage?: boolean;
+  targetRecordsFailures?: number;
+  metadataError?: boolean;
+  delayedRelationshipSourceId?: string;
+  delayedRelationshipResponse?: Promise<void>;
 };
 
 type CapturedRequest = {
@@ -91,6 +101,13 @@ type CapturedRequest = {
   url: string;
   body: unknown;
 };
+
+type PaginationOverrides = Partial<{
+  limit: number;
+  offset: number;
+  total: number;
+  has_more: boolean;
+}>;
 
 const CREATED_AT = "2026-01-01T00:00:00.000Z";
 
@@ -162,6 +179,30 @@ function relationshipField(
   };
 }
 
+function metadataField(
+  id: string,
+  moduleId: string,
+  name: string,
+  position: number,
+  type: "text" | "number" | "relationship" = "text",
+  auditRedacted = false,
+): FieldFixture {
+  return {
+    ...baseEntity(id),
+    module_id: moduleId,
+    name,
+    type,
+    required: false,
+    position,
+    config: {},
+    relationship_target_module_id:
+      type === "relationship" ? SOURCE_MODULE_ID : null,
+    relationship_multiple_targets: type === "relationship" ? false : null,
+    relationship_multiple_sources: type === "relationship" ? false : null,
+    ...(auditRedacted ? { audit_redacted: true } : {}),
+  };
+}
+
 function recordFixture(
   id: string,
   moduleId: string,
@@ -229,6 +270,28 @@ function makeState(): FixtureState {
         true,
       ),
       primitiveField(OWNER_NAME_FIELD_ID, TARGET_MODULE_ID, "Name", 0),
+      metadataField(
+        OWNER_SCORE_FIELD_ID,
+        TARGET_MODULE_ID,
+        "Score",
+        1,
+        "number",
+      ),
+      metadataField(
+        OWNER_SECRET_FIELD_ID,
+        TARGET_MODULE_ID,
+        "Secret",
+        2,
+        "text",
+        true,
+      ),
+      metadataField(
+        OWNER_RELATIONSHIP_FIELD_ID,
+        TARGET_MODULE_ID,
+        "Asset link",
+        3,
+        "relationship",
+      ),
       primitiveField(CONTACT_NAME_FIELD_ID, CONTACTS_MODULE_ID, "Name", 0),
     ],
     records: [
@@ -238,9 +301,12 @@ function makeState(): FixtureState {
       }),
       recordFixture(TARGET_RECORD_ID, TARGET_MODULE_ID, {
         [OWNER_NAME_FIELD_ID]: "Owner One",
+        [OWNER_SCORE_FIELD_ID]: 7,
+        [OWNER_SECRET_FIELD_ID]: "do-not-display",
       }),
       recordFixture(NEW_OWNER_RECORD_ID, TARGET_MODULE_ID, {
         [OWNER_NAME_FIELD_ID]: "Owner Two",
+        [OWNER_SCORE_FIELD_ID]: 8,
       }),
       recordFixture(SECOND_TARGET_RECORD_ID, CONTACTS_MODULE_ID, {
         [CONTACT_NAME_FIELD_ID]: "Contact Two",
@@ -306,15 +372,21 @@ function pathFor(request: Request): string {
   return new URL(request.url()).pathname.replace(/^\/bff/, "") || "/";
 }
 
-function listResponse<T>(items: T[]): JsonObject {
+function listResponse<T>(
+  items: T[],
+  pagination: PaginationOverrides = {},
+): JsonObject {
+  const limit = pagination.limit ?? 100;
+  const offset = pagination.offset ?? 0;
+  const total = pagination.total ?? items.length;
   return {
     items,
     pagination: {
-      limit: 100,
-      offset: 0,
+      limit,
+      offset,
       count: items.length,
-      total: items.length,
-      has_more: false,
+      total,
+      has_more: pagination.has_more ?? offset + items.length < total,
     },
   };
 }
@@ -400,6 +472,10 @@ async function installMocks(
     }
     if (method === "GET" && path === "/fields") {
       const moduleId = new URL(request.url()).searchParams.get("module_id");
+      if (moduleId === TARGET_MODULE_ID && state.metadataError) {
+        await fulfill(route, 503, { detail: "Metadata unavailable" });
+        return;
+      }
       const fields = state.fields.filter(
         (field) => !moduleId || field.module_id === moduleId,
       );
@@ -440,15 +516,44 @@ async function installMocks(
       return;
     }
     if (method === "GET" && path === "/records") {
-      const moduleId = new URL(request.url()).searchParams.get("module_id");
-      const includeDeleted =
-        new URL(request.url()).searchParams.get("deleted") === "include";
+      const url = new URL(request.url());
+      const moduleId = url.searchParams.get("module_id");
+      const includeDeleted = url.searchParams.get("deleted") === "include";
       const records = state.records.filter(
         (record) =>
           (!moduleId || record.module_id === moduleId) &&
           (includeDeleted || !record.is_deleted),
       );
-      await fulfill(route, 200, listResponse(records));
+      const offset = Number(url.searchParams.get("offset") ?? "0");
+      const limit = Number(url.searchParams.get("limit") ?? "100");
+      if (
+        moduleId === TARGET_MODULE_ID &&
+        state.targetRecordsFailures !== undefined &&
+        state.targetRecordsFailures > 0
+      ) {
+        state.targetRecordsFailures -= 1;
+        await fulfill(route, 503, { detail: "Target records unavailable" });
+        return;
+      }
+      const page = records.slice(offset, offset + limit);
+      if (
+        moduleId === TARGET_MODULE_ID &&
+        state.duplicateTargetPage &&
+        offset === 100 &&
+        page.length > 0
+      ) {
+        page.unshift(records[99]);
+      }
+      await fulfill(
+        route,
+        200,
+        listResponse(page, {
+          limit,
+          offset,
+          total: records.length,
+          has_more: offset + page.length < records.length,
+        }),
+      );
       return;
     }
     if (method === "POST" && path === "/records") {
@@ -483,6 +588,13 @@ async function installMocks(
     }
     if (method === "GET" && path === "/relationships") {
       const params = new URL(request.url()).searchParams;
+      if (
+        state.delayedRelationshipSourceId &&
+        state.delayedRelationshipResponse &&
+        params.get("source_record_id") === state.delayedRelationshipSourceId
+      ) {
+        await state.delayedRelationshipResponse;
+      }
       const includeDeleted = params.get("deleted") === "include";
       const relationships = state.relationships.filter((relationship) => {
         if (!includeDeleted && relationship.is_deleted) return false;
@@ -844,17 +956,24 @@ test.describe("relationship UI", () => {
     await expect(page.getByLabel("Notes")).toHaveValue("Initial notes");
     await expect(page.getByText(/Manage relationships/i)).toBeVisible();
 
-    const ownerTarget = page.getByRole("combobox", { name: /Owner/ });
-    await expect(ownerTarget).toHaveValue(TARGET_RECORD_ID);
+    const ownerTarget = page.getByRole("combobox", {
+      name: "Owner target",
+    });
+    await expect(ownerTarget).toHaveAttribute("title", TARGET_RECORD_ID);
+    await ownerTarget.click();
+    const ownerSearch = page.getByRole("combobox", {
+      name: "Search loaded records for Owner",
+    });
+    await expect(ownerSearch).toBeVisible();
+    await expect(page.getByRole("option", { name: /Owner One/ })).toBeVisible();
     const ownerPut = page.waitForResponse(
       (response) =>
         response.request().method() === "PUT" &&
         pathFor(response.request()) ===
           `/relationships/fields/${OWNER_FIELD_ID}/sources/${SOURCE_RECORD_ID}`,
     );
-    await ownerTarget.selectOption({
-      label: compactId(NEW_OWNER_RECORD_ID),
-    });
+    await ownerSearch.fill("Owner Two");
+    await page.getByRole("option", { name: /Owner Two/ }).click();
     await ownerPut;
     expect(
       lastRequestMatching(
@@ -863,15 +982,16 @@ test.describe("relationship UI", () => {
         `/relationships/fields/${OWNER_FIELD_ID}/sources/${SOURCE_RECORD_ID}`,
       ).body,
     ).toEqual({ target_record_id: NEW_OWNER_RECORD_ID });
-    await expect(ownerTarget).toHaveValue(NEW_OWNER_RECORD_ID);
+    await expect(ownerTarget).toHaveAttribute("title", NEW_OWNER_RECORD_ID);
 
+    await ownerTarget.click();
     const clearOwnerPut = page.waitForResponse(
       (response) =>
         response.request().method() === "PUT" &&
         pathFor(response.request()) ===
           `/relationships/fields/${OWNER_FIELD_ID}/sources/${SOURCE_RECORD_ID}`,
     );
-    await ownerTarget.selectOption({ value: "" });
+    await page.getByRole("option", { name: "No target" }).click();
     await clearOwnerPut;
     expect(
       lastRequestMatching(
@@ -882,11 +1002,19 @@ test.describe("relationship UI", () => {
     ).toEqual({ target_record_id: null });
 
     const contactsTarget = page.getByRole("combobox", {
-      name: /Related contacts/,
+      name: "Related contacts target",
     });
-    await contactsTarget.selectOption({
-      label: compactId(NEW_TARGET_RECORD_ID),
-    });
+    await contactsTarget.click();
+    await page
+      .getByRole("combobox", {
+        name: "Search loaded records for Related contacts",
+      })
+      .fill(NEW_TARGET_RECORD_ID);
+    await page
+      .getByRole("option", {
+        name: new RegExp(NEW_TARGET_RECORD_ID.slice(0, 8)),
+      })
+      .click();
     const addRelationship = page.waitForRequest(
       (request) =>
         request.method() === "POST" && pathFor(request) === "/relationships",
@@ -959,6 +1087,253 @@ test.describe("relationship UI", () => {
         [NOTES_FIELD_ID]: "Updated notes",
       },
     });
+  });
+
+  test("loads relationship targets in pages, filters locally, and deduplicates appended records", async ({
+    page,
+  }) => {
+    const state = makeState();
+    state.duplicateTargetPage = true;
+    state.records = state.records.filter(
+      (record) => record.module_id !== TARGET_MODULE_ID,
+    );
+    const targetRecords = Array.from({ length: 105 }, (_, index) => {
+      const id =
+        index === 0
+          ? TARGET_RECORD_ID
+          : index === 1
+            ? NEW_OWNER_RECORD_ID
+            : `a0000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+      const data: JsonObject = {
+        [OWNER_NAME_FIELD_ID]: `Owner ${index}`,
+        [OWNER_SCORE_FIELD_ID]: index,
+      };
+      if (index === 102) {
+        data[OWNER_NAME_FIELD_ID] = "";
+        data[OWNER_SCORE_FIELD_ID] = 42;
+        data[OWNER_SECRET_FIELD_ID] = "must stay hidden";
+      }
+      if (index === 103 || index === 104) {
+        data[OWNER_NAME_FIELD_ID] = "";
+        delete data[OWNER_SCORE_FIELD_ID];
+        data[OWNER_SECRET_FIELD_ID] = "must stay hidden";
+        data[OWNER_RELATIONSHIP_FIELD_ID] = "relationship marker";
+      }
+      return recordFixture(id, TARGET_MODULE_ID, data);
+    });
+    targetRecords[101].data[OWNER_NAME_FIELD_ID] = "Tail Target";
+    state.records.push(...targetRecords);
+    const currentOwnerEdge = state.relationships.find(
+      (relationship) => relationship.field_id === OWNER_FIELD_ID,
+    );
+    if (!currentOwnerEdge)
+      throw new Error("Owner relationship fixture missing");
+    currentOwnerEdge.target_record_id = targetRecords[104].id;
+    const requests = await installMocks(page, state);
+
+    await page.goto(
+      `/departments/${DEPARTMENT_ID}/modules/${SOURCE_MODULE_ID}/records/${SOURCE_RECORD_ID}/edit`,
+    );
+    const ownerTarget = page.getByRole("combobox", {
+      name: "Owner target",
+    });
+    await expect(ownerTarget).toHaveAttribute("title", targetRecords[104].id);
+    await ownerTarget.click();
+    const ownerSearch = page.getByRole("combobox", {
+      name: "Search loaded records for Owner",
+    });
+    await expect(
+      page.getByText("100 records loaded · More available", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("option", {
+        name: new RegExp(targetRecords[104].id),
+      }),
+    ).toBeVisible();
+
+    const metadataRequests = requests.filter(
+      (request) =>
+        request.method === "GET" &&
+        request.path === "/fields" &&
+        new URL(request.url).searchParams.get("module_id") === TARGET_MODULE_ID,
+    );
+    expect(metadataRequests).toHaveLength(1);
+    expect(new URL(metadataRequests[0].url).searchParams.get("offset")).toBe(
+      "0",
+    );
+    expect(new URL(metadataRequests[0].url).searchParams.get("deleted")).toBe(
+      "include",
+    );
+
+    const targetRequests = requests.filter(
+      (request) =>
+        request.method === "GET" &&
+        request.path === "/records" &&
+        new URL(request.url).searchParams.get("module_id") === TARGET_MODULE_ID,
+    );
+    expect(targetRequests).toHaveLength(1);
+    expect(new URL(targetRequests[0].url).searchParams.get("offset")).toBe("0");
+    expect(new URL(targetRequests[0].url).searchParams.get("limit")).toBe(
+      "100",
+    );
+
+    await ownerSearch.fill("Owner 5");
+    await expect(
+      page.getByRole("option", { name: /Owner 5/ }).first(),
+    ).toBeVisible();
+    expect(
+      requests.filter(
+        (request) =>
+          request.method === "GET" &&
+          request.path === "/records" &&
+          new URL(request.url).searchParams.get("module_id") ===
+            TARGET_MODULE_ID,
+      ),
+    ).toHaveLength(1);
+
+    await ownerSearch.fill("Tail Target");
+    await expect(
+      page.getByText(
+        "No matches in loaded records. More records may exist; load more to continue.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Load more", exact: true }).click();
+    await expect(ownerSearch).toBeFocused();
+    await expect(ownerSearch).toHaveValue("Tail Target");
+    await expect(
+      page.getByRole("option", { name: /Tail Target/ }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("105 records loaded", { exact: true }),
+    ).toBeVisible();
+
+    const pages = requests.filter(
+      (request) =>
+        request.method === "GET" &&
+        request.path === "/records" &&
+        new URL(request.url).searchParams.get("module_id") === TARGET_MODULE_ID,
+    );
+    expect(pages).toHaveLength(2);
+    expect(new URL(pages[1].url).searchParams.get("offset")).toBe("100");
+
+    await ownerSearch.fill("42");
+    const numberOption = page.getByRole("option", {
+      name: new RegExp(targetRecords[102].id),
+    });
+    await expect(numberOption).toContainText("42");
+    await expect(numberOption).toContainText(compactId(targetRecords[102].id));
+    await ownerSearch.fill(targetRecords[102].id);
+    await expect(
+      page.getByRole("option", {
+        name: new RegExp(targetRecords[102].id),
+      }),
+    ).toBeVisible();
+    await ownerSearch.fill(targetRecords[103].id);
+    const metadataFallbackOption = page.getByRole("option", {
+      name: new RegExp(targetRecords[103].id),
+    });
+    await expect(metadataFallbackOption).toContainText(
+      compactId(targetRecords[103].id),
+    );
+    await expect(metadataFallbackOption).not.toContainText("must stay hidden");
+    await expect(metadataFallbackOption).not.toContainText(
+      "relationship marker",
+    );
+  });
+
+  test("falls back to IDs when target metadata is unavailable", async ({
+    page,
+  }) => {
+    const state = makeState();
+    state.metadataError = true;
+    await installMocks(page, state);
+
+    await page.goto(
+      `/departments/${DEPARTMENT_ID}/modules/${SOURCE_MODULE_ID}/records/${SOURCE_RECORD_ID}/edit`,
+    );
+    const ownerTarget = page.getByRole("combobox", {
+      name: "Owner target",
+    });
+    await ownerTarget.click();
+    await expect(
+      page.getByRole("option", {
+        name: new RegExp(TARGET_RECORD_ID),
+      }),
+    ).toBeVisible();
+    await expect(page.getByRole("option", { name: /Owner One/ })).toHaveCount(
+      0,
+    );
+  });
+
+  test("offers a bounded retry when the target page fails", async ({
+    page,
+  }) => {
+    const state = makeState();
+    state.targetRecordsFailures = 1;
+    await installMocks(page, state);
+
+    await page.goto(
+      `/departments/${DEPARTMENT_ID}/modules/${SOURCE_MODULE_ID}/records/${SOURCE_RECORD_ID}/edit`,
+    );
+    const ownerTarget = page.getByRole("combobox", {
+      name: "Owner target",
+    });
+    await ownerTarget.click();
+    await expect(page.getByText("Targets could not be loaded.")).toBeVisible();
+    await page
+      .getByRole("button", { name: "Try loading targets again", exact: true })
+      .click();
+    await expect(
+      page.getByText("3 records loaded", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("option", { name: /Owner One/ })).toBeVisible();
+  });
+
+  test("cancels relationship requests from a previous source record", async ({
+    page,
+  }) => {
+    const state = makeState();
+    state.records.push(
+      recordFixture(SECOND_SOURCE_RECORD_ID, SOURCE_MODULE_ID, {
+        [NAME_FIELD_ID]: "Asset Beta",
+        [NOTES_FIELD_ID]: "Second source",
+      }),
+    );
+    let releaseOldRequest!: () => void;
+    state.delayedRelationshipSourceId = SOURCE_RECORD_ID;
+    state.delayedRelationshipResponse = new Promise<void>((resolve) => {
+      releaseOldRequest = resolve;
+    });
+    const requests = await installMocks(page, state);
+
+    await page.goto(
+      `/departments/${DEPARTMENT_ID}/modules/${SOURCE_MODULE_ID}/records/${SOURCE_RECORD_ID}/edit`,
+    );
+    await expect
+      .poll(() =>
+        requests.some(
+          (request) =>
+            request.method === "GET" &&
+            request.path === "/relationships" &&
+            request.url.includes(`source_record_id=${SOURCE_RECORD_ID}`),
+        ),
+      )
+      .toBe(true);
+
+    await page.goto(
+      `/departments/${DEPARTMENT_ID}/modules/${SOURCE_MODULE_ID}/records/${SECOND_SOURCE_RECORD_ID}/edit`,
+    );
+    await expect(page.getByLabel("Name")).toHaveValue("Asset Beta");
+    await expect(
+      page.getByText("No links yet.", { exact: true }),
+    ).toBeVisible();
+
+    releaseOldRequest();
+    await expect(page.getByLabel("Name")).toHaveValue("Asset Beta");
+    await expect(
+      page.getByText("No links yet.", { exact: true }),
+    ).toBeVisible();
   });
 
   test("renders relationship columns as edit-managed links instead of JSONB values", async ({

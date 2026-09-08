@@ -11,13 +11,15 @@ import {
   ShieldAlert,
 } from "lucide-react";
 
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/components/ui/toast";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
@@ -586,7 +588,6 @@ export default function AuditPage() {
   const [securityLoading, setSecurityLoading] = useState(false);
   const [securityError, setSecurityError] = useState("");
   const [exportError, setExportError] = useState("");
-  const [notice, setNotice] = useState("");
   const [exporting, setExporting] = useState<AuditView | null>(null);
 
   useEffect(() => {
@@ -688,7 +689,6 @@ export default function AuditPage() {
   function selectView(nextView: AuditView) {
     setView(nextView);
     setExportError("");
-    setNotice("");
   }
 
   function clearAuditFilters() {
@@ -710,7 +710,6 @@ export default function AuditPage() {
     if (exporting) return;
     setExporting("audit");
     setExportError("");
-    setNotice("");
     const query = listQuery({
       limit: PAGE_SIZE,
       offset: auditOffset,
@@ -728,7 +727,10 @@ export default function AuditPage() {
       if (!items)
         throw new Error("Audit export returned an unexpected response");
       triggerJsonDownload(items, "audit-logs.json");
-      setNotice("Audit logs exported as bounded JSON.");
+      toast.add({
+        title: "Audit logs exported as bounded JSON.",
+        type: "success",
+      });
     } catch (reason: unknown) {
       setExportError(safeErrorMessage(reason, "audit logs", "export"));
     } finally {
@@ -740,7 +742,6 @@ export default function AuditPage() {
     if (exporting) return;
     setExporting("security");
     setExportError("");
-    setNotice("");
     const query = listQuery({
       limit: EXPORT_LIMIT,
       operation_id: securityOperationId.trim() || undefined,
@@ -751,7 +752,10 @@ export default function AuditPage() {
       if (!items)
         throw new Error("Security export returned an unexpected response");
       triggerJsonDownload(items, "security-events.json");
-      setNotice("Security events exported as bounded JSON.");
+      toast.add({
+        title: "Security events exported as bounded JSON.",
+        type: "success",
+      });
     } catch (reason: unknown) {
       setExportError(safeErrorMessage(reason, "security events", "export"));
     } finally {
@@ -806,302 +810,279 @@ export default function AuditPage() {
             {exporting === view ? "Exporting…" : "Export JSON"}
           </Button>
         </CardHeader>
-        <div
-          role="tablist"
-          aria-label="Audit governance views"
-          className="border-border flex flex-wrap gap-1 border-b px-5 pt-4"
+        <Tabs
+          value={view}
+          onValueChange={(value) => selectView(value as AuditView)}
         >
-          <Button
-            type="button"
-            role="tab"
-            id="audit-logs-tab"
-            aria-selected={isAudit}
-            aria-controls={isAudit ? "audit-logs-panel" : undefined}
-            variant={isAudit ? "secondary" : "ghost"}
-            onClick={() => selectView("audit")}
+          <TabsList
+            aria-label="Audit governance views"
+            activateOnFocus={false}
+            className="border-border flex flex-wrap gap-1 border-b px-5 pt-4"
           >
-            Audit logs
-          </Button>
-          <Button
-            type="button"
-            role="tab"
-            id="security-events-tab"
-            aria-selected={!isAudit}
-            aria-controls={!isAudit ? "security-events-panel" : undefined}
-            variant={!isAudit ? "secondary" : "ghost"}
-            onClick={() => selectView("security")}
-          >
-            Security events
-          </Button>
-        </div>
-        <CardContent
-          role="tabpanel"
-          id={isAudit ? "audit-logs-panel" : "security-events-panel"}
-          aria-labelledby={isAudit ? "audit-logs-tab" : "security-events-tab"}
-          tabIndex={0}
-          className="space-y-5 p-0"
-        >
-          {isAudit ? (
-            <form
-              className="bg-muted/20 grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-6"
-              onSubmit={(event) => event.preventDefault()}
-            >
-              <div className="space-y-2 sm:col-span-2 lg:col-span-2">
-                <label
-                  className="text-foreground text-sm font-medium"
-                  htmlFor="audit-search"
-                >
-                  Search audit trail
-                </label>
-                <div className="relative">
-                  <Search
-                    size={16}
-                    className="text-muted-foreground absolute top-3 left-3"
-                    aria-hidden="true"
-                  />
-                  <Input
-                    id="audit-search"
-                    className="pl-9"
-                    placeholder="Search entity or request path"
-                    value={auditSearch}
+            <TabsTrigger value="audit">Audit logs</TabsTrigger>
+            <TabsTrigger value="security">Security events</TabsTrigger>
+          </TabsList>
+          <TabsContent value={view} className="space-y-5 p-0">
+            {isAudit ? (
+              <form
+                className="bg-muted/20 grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-6"
+                onSubmit={(event) => event.preventDefault()}
+              >
+                <div className="space-y-2 sm:col-span-2 lg:col-span-2">
+                  <label
+                    className="text-foreground text-sm font-medium"
+                    htmlFor="audit-search"
+                  >
+                    Search audit trail
+                  </label>
+                  <div className="relative">
+                    <Search
+                      size={16}
+                      className="text-muted-foreground absolute top-3 left-3"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      id="audit-search"
+                      className="pl-9"
+                      placeholder="Search entity or request path"
+                      value={auditSearch}
+                      onChange={(event) => {
+                        setAuditSearch(event.target.value);
+                        setAuditOffset(0);
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label
+                    className="text-foreground text-sm font-medium"
+                    htmlFor="audit-action"
+                  >
+                    Action
+                  </label>
+                  <select
+                    id="audit-action"
+                    className="border-input bg-card text-foreground focus-visible:border-primary h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
+                    value={auditAction}
                     onChange={(event) => {
-                      setAuditSearch(event.target.value);
+                      setAuditAction(event.target.value);
+                      setAuditOffset(0);
+                    }}
+                  >
+                    <option value="">All actions</option>
+                    <option value="create">Create</option>
+                    <option value="update">Update</option>
+                    <option value="delete">Delete</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label
+                    className="text-foreground text-sm font-medium"
+                    htmlFor="audit-entity-type"
+                  >
+                    Entity type
+                  </label>
+                  <Input
+                    id="audit-entity-type"
+                    placeholder="e.g. records"
+                    value={auditEntityType}
+                    onChange={(event) => {
+                      setAuditEntityType(event.target.value);
                       setAuditOffset(0);
                     }}
                   />
                 </div>
-              </div>
-              <div className="space-y-2">
-                <label
-                  className="text-foreground text-sm font-medium"
-                  htmlFor="audit-action"
-                >
-                  Action
-                </label>
-                <select
-                  id="audit-action"
-                  className="border-input bg-card text-foreground focus-visible:border-primary h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
-                  value={auditAction}
-                  onChange={(event) => {
-                    setAuditAction(event.target.value);
-                    setAuditOffset(0);
-                  }}
-                >
-                  <option value="">All actions</option>
-                  <option value="create">Create</option>
-                  <option value="update">Update</option>
-                  <option value="delete">Delete</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label
-                  className="text-foreground text-sm font-medium"
-                  htmlFor="audit-entity-type"
-                >
-                  Entity type
-                </label>
-                <Input
-                  id="audit-entity-type"
-                  placeholder="e.g. records"
-                  value={auditEntityType}
-                  onChange={(event) => {
-                    setAuditEntityType(event.target.value);
-                    setAuditOffset(0);
-                  }}
-                />
-              </div>
-              <div className="space-y-2">
-                <label
-                  className="text-foreground text-sm font-medium"
-                  htmlFor="audit-from"
-                >
-                  From date
-                </label>
-                <Input
-                  id="audit-from"
-                  type="date"
-                  value={auditFrom}
-                  onChange={(event) => {
-                    setAuditFrom(event.target.value);
-                    setAuditOffset(0);
-                  }}
-                />
-              </div>
-              <div className="space-y-2">
-                <label
-                  className="text-foreground text-sm font-medium"
-                  htmlFor="audit-to"
-                >
-                  To date
-                </label>
-                <Input
-                  id="audit-to"
-                  type="date"
-                  value={auditTo}
-                  onChange={(event) => {
-                    setAuditTo(event.target.value);
-                    setAuditOffset(0);
-                  }}
-                />
-              </div>
-              {(auditSearch ||
-                auditAction ||
-                auditEntityType ||
-                auditFrom ||
-                auditTo) && (
-                <div className="flex items-end lg:col-span-6">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={clearAuditFilters}
+                <div className="space-y-2">
+                  <label
+                    className="text-foreground text-sm font-medium"
+                    htmlFor="audit-from"
                   >
-                    Clear filters
-                  </Button>
-                </div>
-              )}
-            </form>
-          ) : (
-            <form
-              className="bg-muted/20 grid gap-4 p-5 sm:grid-cols-2"
-              onSubmit={(event) => event.preventDefault()}
-            >
-              <div className="space-y-2">
-                <label
-                  className="text-foreground text-sm font-medium"
-                  htmlFor="security-search"
-                >
-                  Search security events
-                </label>
-                <div className="relative">
-                  <Search
-                    size={16}
-                    className="text-muted-foreground absolute top-3 left-3"
-                    aria-hidden="true"
-                  />
+                    From date
+                  </label>
                   <Input
-                    id="security-search"
-                    className="pl-9"
-                    placeholder="Search type, source, reason, or path"
-                    value={securitySearch}
+                    id="audit-from"
+                    type="date"
+                    value={auditFrom}
                     onChange={(event) => {
-                      setSecuritySearch(event.target.value);
+                      setAuditFrom(event.target.value);
+                      setAuditOffset(0);
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label
+                    className="text-foreground text-sm font-medium"
+                    htmlFor="audit-to"
+                  >
+                    To date
+                  </label>
+                  <Input
+                    id="audit-to"
+                    type="date"
+                    value={auditTo}
+                    onChange={(event) => {
+                      setAuditTo(event.target.value);
+                      setAuditOffset(0);
+                    }}
+                  />
+                </div>
+                {(auditSearch ||
+                  auditAction ||
+                  auditEntityType ||
+                  auditFrom ||
+                  auditTo) && (
+                  <div className="flex items-end lg:col-span-6">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearAuditFilters}
+                    >
+                      Clear filters
+                    </Button>
+                  </div>
+                )}
+              </form>
+            ) : (
+              <form
+                className="bg-muted/20 grid gap-4 p-5 sm:grid-cols-2"
+                onSubmit={(event) => event.preventDefault()}
+              >
+                <div className="space-y-2">
+                  <label
+                    className="text-foreground text-sm font-medium"
+                    htmlFor="security-search"
+                  >
+                    Search security events
+                  </label>
+                  <div className="relative">
+                    <Search
+                      size={16}
+                      className="text-muted-foreground absolute top-3 left-3"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      id="security-search"
+                      className="pl-9"
+                      placeholder="Search type, source, reason, or path"
+                      value={securitySearch}
+                      onChange={(event) => {
+                        setSecuritySearch(event.target.value);
+                        setSecurityOffset(0);
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label
+                    className="text-foreground text-sm font-medium"
+                    htmlFor="security-operation-id"
+                  >
+                    Operation ID
+                  </label>
+                  <Input
+                    id="security-operation-id"
+                    className="font-mono text-xs"
+                    placeholder="Filter a correlated operation"
+                    value={securityOperationId}
+                    onChange={(event) => {
+                      setSecurityOperationId(event.target.value);
                       setSecurityOffset(0);
                     }}
                   />
                 </div>
-              </div>
-              <div className="space-y-2">
-                <label
-                  className="text-foreground text-sm font-medium"
-                  htmlFor="security-operation-id"
-                >
-                  Operation ID
-                </label>
-                <Input
-                  id="security-operation-id"
-                  className="font-mono text-xs"
-                  placeholder="Filter a correlated operation"
-                  value={securityOperationId}
-                  onChange={(event) => {
-                    setSecurityOperationId(event.target.value);
-                    setSecurityOffset(0);
+                {(securitySearch || securityOperationId) && (
+                  <div className="flex items-end sm:col-span-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearSecurityFilters}
+                    >
+                      Clear filters
+                    </Button>
+                  </div>
+                )}
+              </form>
+            )}
+            {currentError && (
+              <Alert
+                variant="destructive"
+                className="mx-5 flex flex-wrap items-center justify-between gap-3"
+              >
+                <span>{currentError}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (isAudit) setAuditRetry((retry) => retry + 1);
+                    else setSecurityRetry((retry) => retry + 1);
                   }}
-                />
+                  disabled={currentLoading}
+                >
+                  <RefreshCw aria-hidden="true" /> Try again
+                </Button>
+              </Alert>
+            )}
+            {exportError && (
+              <Alert variant="destructive" className="mx-5">
+                {exportError}
+              </Alert>
+            )}
+            {currentLoading && currentItems.length === 0 ? (
+              <div
+                className="text-muted-foreground px-5 py-10 text-sm"
+                role="status"
+              >
+                <span className="sr-only">
+                  Loading {isAudit ? "audit logs" : "security events"}…
+                </span>
+                <Skeleton className="h-40 w-full" />
               </div>
-              {(securitySearch || securityOperationId) && (
-                <div className="flex items-end sm:col-span-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={clearSecurityFilters}
+            ) : currentError ? null : currentItems.length === 0 ? (
+              <EmptyState kind={view} />
+            ) : (
+              <>
+                {currentLoading && (
+                  <p
+                    className="text-muted-foreground border-border border-y px-5 py-3 text-xs"
+                    role="status"
                   >
-                    Clear filters
-                  </Button>
-                </div>
-              )}
-            </form>
-          )}
-          {currentError && (
-            <Alert
-              variant="destructive"
-              className="mx-5 flex flex-wrap items-center justify-between gap-3"
-            >
-              <span>{currentError}</span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (isAudit) setAuditRetry((retry) => retry + 1);
-                  else setSecurityRetry((retry) => retry + 1);
+                    Refreshing {isAudit ? "audit logs" : "security events"}…
+                  </p>
+                )}
+                {isAudit ? (
+                  <AuditTable items={auditItems} />
+                ) : (
+                  <SecurityTable items={securityItems} />
+                )}
+              </>
+            )}
+            {currentPagination && !currentError && (
+              <PaginationControls
+                label={isAudit ? "audit logs" : "security events"}
+                offset={currentOffset}
+                pagination={currentPagination}
+                itemCount={currentItems.length}
+                onPrevious={() => {
+                  if (isAudit) {
+                    setAuditOffset((offset) => Math.max(0, offset - PAGE_SIZE));
+                  } else {
+                    setSecurityOffset((offset) =>
+                      Math.max(0, offset - PAGE_SIZE),
+                    );
+                  }
+                }}
+                onNext={() => {
+                  if (isAudit) setAuditOffset((offset) => offset + PAGE_SIZE);
+                  else setSecurityOffset((offset) => offset + PAGE_SIZE);
                 }}
                 disabled={currentLoading}
-              >
-                <RefreshCw aria-hidden="true" /> Try again
-              </Button>
-            </Alert>
-          )}
-          {exportError && (
-            <Alert variant="destructive" className="mx-5">
-              {exportError}
-            </Alert>
-          )}
-          {notice && (
-            <Alert variant="success" className="mx-5">
-              {notice}
-            </Alert>
-          )}
-          {currentLoading && currentItems.length === 0 ? (
-            <p
-              className="text-muted-foreground px-5 py-10 text-sm"
-              role="status"
-            >
-              Loading {isAudit ? "audit logs" : "security events"}…
-            </p>
-          ) : currentError ? null : currentItems.length === 0 ? (
-            <EmptyState kind={view} />
-          ) : (
-            <>
-              {currentLoading && (
-                <p
-                  className="text-muted-foreground border-border border-y px-5 py-3 text-xs"
-                  role="status"
-                >
-                  Refreshing {isAudit ? "audit logs" : "security events"}…
-                </p>
-              )}
-              {isAudit ? (
-                <AuditTable items={auditItems} />
-              ) : (
-                <SecurityTable items={securityItems} />
-              )}
-            </>
-          )}
-          {currentPagination && !currentError && (
-            <PaginationControls
-              label={isAudit ? "audit logs" : "security events"}
-              offset={currentOffset}
-              pagination={currentPagination}
-              itemCount={currentItems.length}
-              onPrevious={() => {
-                if (isAudit) {
-                  setAuditOffset((offset) => Math.max(0, offset - PAGE_SIZE));
-                } else {
-                  setSecurityOffset((offset) =>
-                    Math.max(0, offset - PAGE_SIZE),
-                  );
-                }
-              }}
-              onNext={() => {
-                if (isAudit) setAuditOffset((offset) => offset + PAGE_SIZE);
-                else setSecurityOffset((offset) => offset + PAGE_SIZE);
-              }}
-              disabled={currentLoading}
-            />
-          )}
-        </CardContent>
+              />
+            )}
+          </TabsContent>
+        </Tabs>
       </Card>
       <p className="sr-only" role="status">
         Showing {isAudit ? "audit logs" : "security events"}

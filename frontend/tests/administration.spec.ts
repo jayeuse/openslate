@@ -218,18 +218,12 @@ test("people resolves roles and refreshes authoritative state after success and 
   await page.goto("/administration/users");
 
   await expect(page.getByText("pending@example.com")).toBeVisible();
-  await expect(
-    page
-      .locator("[data-user-id]")
-      .getByText("Role: operator", { exact: true })
-      .first(),
-  ).toBeVisible();
-  await expect(
-    page
-      .locator("[data-user-id]")
-      .getByText("Role: admin", { exact: true })
-      .first(),
-  ).toBeVisible();
+  await expect(page.locator(`[data-user-id="${PENDING_ID}"]`)).toContainText(
+    "operator",
+  );
+  await expect(page.locator(`[data-user-id="${ACTIVE_ID}"]`)).toContainText(
+    "admin",
+  );
   await expect(
     page.getByText("Invitation pending", { exact: true }),
   ).toBeVisible();
@@ -247,6 +241,9 @@ test("people resolves roles and refreshes authoritative state after success and 
     .getByRole("button", { name: "Send invitation", exact: true })
     .click();
   await expect(page.getByText("invited@example.com")).toBeVisible();
+  await expect(
+    page.getByText("Invitation sent.", { exact: true }),
+  ).toBeVisible();
   expect(inviteBody).toEqual({
     email: "invited@example.com",
     username: "invited",
@@ -254,13 +251,26 @@ test("people resolves roles and refreshes authoritative state after success and 
   });
 
   await page
-    .getByRole("button", { name: "Resend invitation to pending@example.com" })
+    .getByRole("button", { name: "Actions for pending", exact: true })
     .click();
-  await expect(page.getByRole("status")).toContainText("Invitation resent");
+  await page
+    .getByRole("menuitem", {
+      name: "Resend invitation to pending@example.com",
+    })
+    .click();
+  await expect(
+    page.getByText("Invitation resent.", { exact: true }),
+  ).toBeVisible();
   await expect.poll(() => userListRequests).toBeGreaterThan(1);
 
-  await page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Disable active" }).click();
+  await page
+    .getByRole("button", { name: "Actions for active", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "Disable active" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Disable", exact: true })
+    .click();
   await expect(
     page.getByRole("status").filter({
       hasText: "The people service is temporarily unavailable. Try again.",
@@ -275,11 +285,20 @@ test("people resolves roles and refreshes authoritative state after success and 
   await expect.poll(() => userListRequests).toBeGreaterThan(2);
 
   await page
-    .getByRole("button", { name: "Edit username and role for active" })
+    .getByRole("button", { name: "Actions for active", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Edit username and role for active" })
     .click();
   await expect(page.getByLabel("Username for active")).toBeVisible();
-  await page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Delete active" }).click();
+  await page
+    .getByRole("button", { name: "Actions for active", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "Delete active" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete", exact: true })
+    .click();
   await expect(
     page.getByRole("status").filter({
       hasText: "The people service is temporarily unavailable. Try again.",
@@ -292,6 +311,68 @@ test("people resolves roles and refreshes authoritative state after success and 
   await expect(page.locator(`[data-user-id="${ACTIVE_ID}"]`)).toContainText(
     "Deleted",
   );
+});
+
+test("people shows an initial skeleton and retains rows during refresh", async ({
+  page,
+}) => {
+  await installSessionMocks(page);
+  const role = roleFixture(OPERATOR_ID, "operator");
+  const user = userFixture(
+    ACTIVE_ID,
+    "active@example.com",
+    "active",
+    OPERATOR_ID,
+    "active",
+  );
+  let userRequests = 0;
+  let releaseInitial!: () => void;
+  let releaseRefresh!: () => void;
+  const initialResponse = new Promise<void>((resolve) => {
+    releaseInitial = resolve;
+  });
+  const refreshResponse = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  await page.route("**/bff/**", async (route) => {
+    const request = route.request();
+    const path = pathForRequest(request);
+    if (request.method() === "GET" && path === "/users") {
+      userRequests += 1;
+      if (userRequests === 1) await initialResponse;
+      if (userRequests === 2) await refreshResponse;
+      await json(route, 200, listResponse([user]));
+    } else if (request.method() === "GET" && path === "/roles") {
+      await json(route, 200, listResponse([role]));
+    } else if (request.method() === "POST" && path === "/users") {
+      await json(route, 201, user);
+    } else {
+      await json(route, 404, {
+        detail: `Unhandled ${request.method()} ${path}`,
+      });
+    }
+  });
+
+  const navigation = page.goto("/administration/users");
+  await expect(page.locator('[aria-busy="true"]')).toBeVisible();
+  releaseInitial();
+  await navigation;
+  await expect(page.getByText("active@example.com")).toBeVisible();
+
+  await page.getByLabel("Email").fill("new@example.com");
+  await page.getByRole("textbox", { name: "Username" }).fill("new");
+  await page.getByRole("combobox", { name: "Role" }).selectOption(OPERATOR_ID);
+  await page
+    .getByRole("button", { name: "Send invitation", exact: true })
+    .click();
+  await expect(page.getByText("active@example.com")).toBeVisible();
+  await expect(
+    page.getByText("Refreshing authoritative list…", { exact: true }),
+  ).toBeVisible();
+  releaseRefresh();
+  await expect(
+    page.getByText("Invitation sent.", { exact: true }),
+  ).toBeVisible();
 });
 
 test("roles use the fixed capability payload and protect built-in lifecycle", async ({
@@ -399,6 +480,7 @@ test("roles use the fixed capability payload and protect built-in lifecycle", as
   await page.getByRole("checkbox", { name: "records.write" }).check();
   await page.getByRole("button", { name: "Create role" }).click();
   await expect(page.getByText("support", { exact: true })).toBeVisible();
+  await expect(page.getByText("Role created.", { exact: true })).toBeVisible();
   expect(createBody).toEqual({
     role: "support",
     permissions: { ...permissions, "records.write": true },
@@ -418,8 +500,21 @@ test("roles use the fixed capability payload and protect built-in lifecycle", as
 
   await page.getByRole("button", { name: "Edit ops lead" }).click();
   await expect(page.getByLabel("Role name for ops lead")).toBeVisible();
-  await page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Archive ops lead" }).click();
+  const archiveConfirmation = page.getByRole("alertdialog");
+  await expect(
+    archiveConfirmation.getByRole("button", { name: "Cancel" }),
+  ).toBeFocused();
+  await archiveConfirmation.getByRole("button", { name: "Cancel" }).click();
+  await expect(archiveConfirmation).toHaveCount(0);
+  await page.getByRole("button", { name: "Archive ops lead" }).click();
+  await page.getByRole("alertdialog").press("Escape");
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Archive ops lead" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Archive", exact: true })
+    .click();
   await expect(
     page.getByRole("status").filter({
       hasText:
@@ -428,8 +523,11 @@ test("roles use the fixed capability payload and protect built-in lifecycle", as
   ).toBeVisible();
   await expect(page.getByText("Role has assigned users")).toHaveCount(0);
   await expect(page.getByLabel("Role name for ops lead")).toHaveCount(0);
-  await page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Archive ops lead" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Archive", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: "Restore ops lead" }),
   ).toBeVisible();
@@ -466,14 +564,17 @@ test("people reflow on mobile and expose labelled edit controls", async ({
   });
 
   await page.goto("/administration/users");
+  await page
+    .getByRole("button", { name: "Actions for mobile", exact: true })
+    .click();
   await expect(
-    page.getByRole("button", { name: "Edit username and role for mobile" }),
+    page.getByRole("menuitem", { name: "Edit username and role for mobile" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Disable mobile" }),
+    page.getByRole("menuitem", { name: "Disable mobile" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Reconcile mobile authentication" }),
+    page.getByRole("menuitem", { name: "Reconcile mobile authentication" }),
   ).toBeVisible();
   await expect(page.getByLabel("Email")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Username" })).toBeVisible();
@@ -486,7 +587,7 @@ test("people reflow on mobile and expose labelled edit controls", async ({
     .toBe(true);
 
   await page
-    .getByRole("button", { name: "Edit username and role for mobile" })
+    .getByRole("menuitem", { name: "Edit username and role for mobile" })
     .click();
   await expect(page.getByLabel("Username for mobile")).toHaveValue("mobile");
   await expect(
@@ -511,6 +612,34 @@ function pagedResponse(
     },
   };
 }
+
+test("audit and security loading skeletons use valid block markup", async ({
+  page,
+}) => {
+  await installSessionMocks(page);
+  const pending = Promise.withResolvers<void>();
+  await page.route("**/bff/**", async (route) => {
+    await pending.promise;
+    await json(route, 200, listResponse([]));
+  });
+
+  try {
+    await page.goto("/administration/audit");
+    for (const label of ["Audit logs", "Security events"]) {
+      await page.getByRole("tab", { name: label, exact: true }).click();
+      const loading = page
+        .getByRole("status")
+        .filter({ hasText: `Loading ${label.toLowerCase()}…` });
+      await expect(loading).toBeVisible();
+      await expect(loading.locator('[aria-hidden="true"]')).toHaveCount(1);
+      expect(
+        await loading.evaluate((element) => element.closest("p")),
+      ).toBeNull();
+    }
+  } finally {
+    pending.resolve();
+  }
+});
 
 test("audit governance switches views, filters, paginates, details, and exports", async ({
   page,
@@ -609,7 +738,9 @@ test("audit governance switches views, filters, paginates, details, and exports"
   });
 
   await page.goto("/administration/audit");
-  await expect(page.getByRole("heading", { name: "Audit logs" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Audit logs", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByText("records", { exact: true }).first(),
   ).toBeVisible();
@@ -685,7 +816,13 @@ test("audit governance switches views, filters, paginates, details, and exports"
   expect(auditExportUrl?.searchParams.get("sort_order")).toBe("desc");
   expect(auditExportUrl?.searchParams.get("action")).toBe("update");
 
-  await page.getByRole("tab", { name: "Security events" }).click();
+  const securityTab = page.getByRole("tab", { name: "Security events" });
+  await securityTab.focus();
+  await expect(securityTab).toHaveAttribute("aria-selected", "false");
+  await expect(
+    page.getByRole("heading", { name: "Audit logs", exact: true }),
+  ).toBeVisible();
+  await securityTab.press("Enter");
   await expect(
     page.getByRole("heading", { name: "Security events" }),
   ).toBeVisible();

@@ -8,6 +8,7 @@ import {
   Search,
   SlidersHorizontal,
 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -121,12 +122,27 @@ export default function DepartmentsPage() {
           </CardContent>
         </Card>
       )}
-      {loading && (
+      {loading && items.length === 0 && (
         <div className="border-border bg-card text-muted-foreground rounded-[var(--radius)] border p-8 text-sm">
-          Loading departments…
+          <span role="status" className="sr-only">
+            Loading departments…
+          </span>
+          <div
+            className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"
+            aria-busy="true"
+          >
+            {[0, 1, 2].map((row) => (
+              <Skeleton key={row} className="h-48" />
+            ))}
+          </div>
         </div>
       )}
-      {!loading && items.length > 0 && (
+      {loading && items.length > 0 && (
+        <p role="status" className="text-muted-foreground mb-3 text-xs">
+          Refreshing departments…
+        </p>
+      )}
+      {items.length > 0 && (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {items.map((department) => (
             <Card

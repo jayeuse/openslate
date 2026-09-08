@@ -1,10 +1,10 @@
 /**
  * Sandbox pure rules (no X6, no backend).
  *
- * Embed/connect/stage gating for the frontend-only prototype.
+ * Embed/connect rules for the frontend-only prototype.
  */
 
-import type { SandboxState, Stage } from "./model";
+import type { SandboxState } from "./model";
 
 export interface SandboxRuleResult {
   ok: boolean;
@@ -54,41 +54,4 @@ export function canConnect(
     return { ok: false, reason: "These modules are already connected." };
   }
   return { ok: true };
-}
-
-export function canEnterStage(
-  stage: Stage,
-  state: SandboxState,
-): SandboxRuleResult {
-  switch (stage) {
-    case "departments":
-      return { ok: true };
-    case "modules":
-      return state.departments.length >= 1
-        ? { ok: true }
-        : { ok: false, reason: "Add at least one department first." };
-    case "fields":
-      return state.modules.length >= 1
-        ? { ok: true }
-        : { ok: false, reason: "Add at least one module first." };
-    case "relationships":
-      return state.modules.length >= 2
-        ? { ok: true }
-        : { ok: false, reason: "Add at least two modules first." };
-    case "automation":
-      return { ok: true };
-  }
-}
-
-/** Readiness of every stage for the given mock state. */
-export function stageStatus(
-  state: SandboxState,
-): Record<Stage, SandboxRuleResult> {
-  return {
-    departments: canEnterStage("departments", state),
-    modules: canEnterStage("modules", state),
-    fields: canEnterStage("fields", state),
-    relationships: canEnterStage("relationships", state),
-    automation: canEnterStage("automation", state),
-  };
 }

@@ -19,12 +19,10 @@ export default function Home() {
     <main className="bg-background text-foreground min-h-screen">
       <header className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-10">
         <a className="flex items-center gap-3" href="/">
-          <span className="bg-primary text-primary-foreground grid size-9 place-items-center rounded-[var(--radius)] text-sm font-bold">
+          <span className="bg-foreground text-background grid size-9 place-items-center rounded-[var(--radius)] text-sm font-bold">
             OS
           </span>
-          <span className="text-sm font-semibold tracking-[0.16em] uppercase">
-            OpenSlate
-          </span>
+          <span className="text-sm font-semibold">OpenSlate</span>
         </a>
         <nav className="flex items-center gap-2">
           <Button asChild variant="ghost" size="sm">
@@ -40,11 +38,7 @@ export default function Home() {
 
       <section className="mx-auto grid max-w-7xl gap-14 px-6 py-16 lg:grid-cols-[1.1fr_0.9fr] lg:px-10 lg:py-28">
         <div className="max-w-3xl self-center">
-          <p className="text-primary mb-6 flex items-center gap-2 text-xs font-semibold tracking-[0.18em] uppercase">
-            <span className="bg-success size-2 rounded-full" /> Operations
-            workspace
-          </p>
-          <h1 className="text-5xl leading-[1.02] font-semibold tracking-[-0.05em] text-balance sm:text-7xl">
+          <h1 className="text-4xl leading-tight font-semibold tracking-tight text-balance sm:text-5xl">
             Make the next action obvious.
           </h1>
           <p className="text-muted-foreground mt-7 max-w-2xl text-lg leading-8">
@@ -73,7 +67,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="border-border bg-card rounded-[calc(var(--radius)*1.5)] border p-5 shadow-sm sm:p-7">
+        <div className="border-border bg-card rounded-[calc(var(--radius)*1.5)] border p-5 sm:p-7">
           <div className="border-border flex items-center justify-between border-b pb-5">
             <div>
               <p className="text-muted-foreground text-xs font-semibold tracking-[0.16em] uppercase">

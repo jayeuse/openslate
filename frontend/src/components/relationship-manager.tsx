@@ -1,16 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   apiFetch,
   listQuery,
+  listAllModuleFields,
   type Field,
   type ListResponse,
   type RecordEntity,
   type Relationship,
 } from "@/lib/api";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Combobox,
+  ComboboxTrigger,
+  ComboboxInput,
+  ComboboxContent,
+  ComboboxList,
+  ComboboxItem,
+  ComboboxEmpty,
+} from "@/components/ui/combobox";
 import { compactId } from "@/lib/utils";
 
 type RelationshipManagerProps = {
@@ -27,7 +38,16 @@ function humanizeHiddenReason(reason: string) {
     .join(" ");
 }
 
-export function RelationshipManager({
+export function RelationshipManager(props: RelationshipManagerProps) {
+  return (
+    <RelationshipManagerContent
+      key={`${props.moduleId}:${props.recordId}`}
+      {...props}
+    />
+  );
+}
+
+function RelationshipManagerContent({
   moduleId,
   recordId,
   fields,
@@ -38,9 +58,6 @@ export function RelationshipManager({
   );
   const [outgoing, setOutgoing] = useState<Relationship[]>([]);
   const [incoming, setIncoming] = useState<Relationship[]>([]);
-  const [targetRecords, setTargetRecords] = useState<
-    Record<string, RecordEntity[]>
-  >({});
   const [selectedTargets, setSelectedTargets] = useState<
     Record<string, string>
   >({});
@@ -48,52 +65,46 @@ export function RelationshipManager({
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
 
+  const request = useRef<AbortController | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
   async function load() {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     setLoading(true);
     setError("");
     try {
       const [outgoingResult, incomingResult] = await Promise.all([
         apiFetch<ListResponse<Relationship>>(
           `/relationships?${listQuery({ source_record_id: recordId, availability: "all", deleted: "exclude", limit: 100 })}`,
+          { signal: controller.signal },
         ),
         apiFetch<ListResponse<Relationship>>(
           `/relationships?${listQuery({ target_record_id: recordId, availability: "all", deleted: "exclude", limit: 100 })}`,
+          { signal: controller.signal },
         ),
       ]);
-      const targetModuleIds = [
-        ...new Set(
-          relationshipFields
-            .map((field) => field.relationship_target_module_id)
-            .filter((targetModuleId): targetModuleId is string =>
-              Boolean(targetModuleId),
-            ),
-        ),
-      ];
-      const targetResults = await Promise.all(
-        targetModuleIds.map(async (targetModuleId) => {
-          const result = await apiFetch<ListResponse<RecordEntity>>(
-            `/records?${listQuery({ module_id: targetModuleId, deleted: "exclude", limit: 100, sort_by: "created_at", sort_order: "desc" })}`,
-          );
-          return [targetModuleId, result.items] as const;
-        }),
-      );
+      if (controller.signal.aborted) return;
       setOutgoing(outgoingResult.items);
       setIncoming(incomingResult.items);
-      setTargetRecords(Object.fromEntries(targetResults));
+      setLoaded(true);
       setSelectedTargets({});
     } catch (reason) {
+      if (controller.signal.aborted) return;
       setError(
         reason instanceof Error
           ? reason.message
           : "Relationships could not be loaded",
       );
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }
 
   useEffect(() => {
     void load();
+    return () => request.current?.abort();
   }, [moduleId, recordId, fields]);
 
   async function assignSingle(field: Field, targetRecordId: string) {
@@ -159,27 +170,6 @@ export function RelationshipManager({
     }
   }
 
-  function recordsForField(field: Field) {
-    const records =
-      targetRecords[field.relationship_target_module_id ?? ""] ?? [];
-    const linkedIds = outgoing
-      .filter((edge) => edge.field_id === field.id)
-      .map((edge) => edge.target_record_id);
-    const knownIds = new Set(records.map((record) => record.id));
-    return [
-      ...records.map((record) => ({
-        id: record.id,
-        label: compactId(record.id),
-      })),
-      ...linkedIds
-        .filter((targetRecordId) => !knownIds.has(targetRecordId))
-        .map((targetRecordId) => ({
-          id: targetRecordId,
-          label: compactId(targetRecordId),
-        })),
-    ];
-  }
-
   const configuredFieldIds = new Set(
     relationshipFields.map((field) => field.id),
   );
@@ -190,7 +180,8 @@ export function RelationshipManager({
   return (
     <section
       aria-labelledby="relationship-manager-heading"
-      className="space-y-4"
+      aria-busy={loading}
+      className="flex flex-col gap-4"
     >
       <div>
         <h2 id="relationship-manager-heading" className="text-lg font-semibold">
@@ -208,21 +199,24 @@ export function RelationshipManager({
           </button>
         </Alert>
       )}
-      {loading ? (
-        <p className="text-muted-foreground text-sm">Loading relationships…</p>
-      ) : (
-        <div className="space-y-4">
+      {loaded && loading && (
+        <p role="status" className="text-muted-foreground text-sm">
+          Refreshing relationships…
+        </p>
+      )}
+      {loading && !loaded ? (
+        <div role="status" className="flex flex-col gap-3">
+          <span className="sr-only">Loading relationships…</span>
+          <Skeleton className="h-6 w-40" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      ) : loaded ? (
+        <div className="flex flex-col gap-4">
           {relationshipFields.map((field) => {
             const edges = outgoing.filter((edge) => edge.field_id === field.id);
             const current = edges[0]?.target_record_id ?? "";
             const multiple = field.relationship_multiple_targets === true;
-            const options = recordsForField(field);
-            const selectableOptions = multiple
-              ? options.filter(
-                  (option) =>
-                    !edges.some((edge) => edge.target_record_id === option.id),
-                )
-              : options;
             const fieldReadOnly = sourceReadOnly || field.is_deleted;
             return (
               <fieldset
@@ -231,35 +225,30 @@ export function RelationshipManager({
               >
                 <legend className="px-1 font-medium">{field.name}</legend>
                 {multiple ? (
-                  <div className="space-y-3">
+                  <div className="flex flex-col gap-3">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                      <div className="min-w-0 flex-1 space-y-2">
+                      <div className="flex min-w-0 flex-1 flex-col gap-2">
                         <label
                           htmlFor={`relationship-target-${field.id}`}
                           className="text-sm"
                         >
                           Add target
                         </label>
-                        <select
-                          id={`relationship-target-${field.id}`}
-                          aria-label={`${field.name} target`}
-                          className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
+                        <TargetPicker
+                          key={field.relationship_target_module_id}
+                          field={field}
+                          edges={edges}
                           value={selectedTargets[field.id] ?? ""}
-                          disabled={fieldReadOnly || pending !== null}
-                          onChange={(event) =>
-                            setSelectedTargets({
-                              ...selectedTargets,
-                              [field.id]: event.target.value,
-                            })
+                          disabled={
+                            fieldReadOnly || pending !== null || loading
                           }
-                        >
-                          <option value="">Select a target</option>
-                          {selectableOptions.map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
+                          onValueChange={(value) =>
+                            setSelectedTargets((previous) => ({
+                              ...previous,
+                              [field.id]: value,
+                            }))
+                          }
+                        />
                       </div>
                       <Button
                         type="button"
@@ -267,7 +256,8 @@ export function RelationshipManager({
                         disabled={
                           !selectedTargets[field.id] ||
                           fieldReadOnly ||
-                          pending !== null
+                          pending !== null ||
+                          loading
                         }
                         onClick={() => void addMultiple(field)}
                       >
@@ -275,7 +265,7 @@ export function RelationshipManager({
                       </Button>
                     </div>
                     <ul
-                      className="space-y-2"
+                      className="flex flex-col gap-2"
                       aria-label={`${field.name} current links`}
                     >
                       {edges.length === 0 && (
@@ -288,7 +278,9 @@ export function RelationshipManager({
                           className="flex items-center justify-between gap-3 text-sm"
                           key={edge.id}
                         >
-                          <span>{compactId(edge.target_record_id)}</span>
+                          <span title={edge.target_record_id}>
+                            {compactId(edge.target_record_id)}
+                          </span>
                           {edge.visibility === "hidden" && (
                             <span className="text-muted-foreground mr-auto ml-2">
                               (
@@ -302,7 +294,9 @@ export function RelationshipManager({
                             type="button"
                             variant="ghost"
                             size="sm"
-                            disabled={sourceReadOnly || pending !== null}
+                            disabled={
+                              sourceReadOnly || pending !== null || loading
+                            }
                             onClick={() => void unlink(edge)}
                           >
                             Unlink
@@ -312,32 +306,23 @@ export function RelationshipManager({
                     </ul>
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="flex flex-col gap-2">
                     <label
                       htmlFor={`relationship-target-${field.id}`}
                       className="text-sm"
                     >
                       Target
                     </label>
-                    <select
-                      id={`relationship-target-${field.id}`}
-                      aria-label={`${field.name} target`}
-                      className="border-input bg-card h-10 w-full rounded-[var(--radius)] border px-3 text-sm"
+                    <TargetPicker
+                      key={field.relationship_target_module_id}
+                      field={field}
+                      edges={edges}
                       value={current}
-                      disabled={fieldReadOnly || pending !== null}
-                      onChange={(event) =>
-                        void assignSingle(field, event.target.value)
-                      }
-                    >
-                      <option value="">No target</option>
-                      {options.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
+                      disabled={fieldReadOnly || pending !== null || loading}
+                      onValueChange={(value) => void assignSingle(field, value)}
+                    />
                     {edges.some((edge) => edge.visibility === "hidden") && (
-                      <div className="text-muted-foreground space-y-1 text-xs">
+                      <div className="text-muted-foreground flex flex-col gap-1 text-xs">
                         {edges
                           .filter((edge) => edge.visibility === "hidden")
                           .map((edge) => (
@@ -354,7 +339,9 @@ export function RelationshipManager({
                             type="button"
                             variant="outline"
                             size="sm"
-                            disabled={sourceReadOnly || pending !== null}
+                            disabled={
+                              sourceReadOnly || pending !== null || loading
+                            }
                             onClick={() => void unlink(edges[0])}
                           >
                             Unlink hidden target
@@ -376,7 +363,7 @@ export function RelationshipManager({
               <p className="text-muted-foreground mt-1 text-sm">
                 These preserved links use an archived or unavailable field.
               </p>
-              <ul className="mt-3 space-y-2">
+              <ul className="mt-3 flex flex-col gap-2">
                 {unavailableOutgoing.map((edge) => (
                   <li
                     className="flex items-center justify-between gap-3 text-sm"
@@ -390,7 +377,7 @@ export function RelationshipManager({
                       type="button"
                       variant="ghost"
                       size="sm"
-                      disabled={sourceReadOnly || pending !== null}
+                      disabled={sourceReadOnly || pending !== null || loading}
                       onClick={() => void unlink(edge)}
                     >
                       Unlink
@@ -401,7 +388,7 @@ export function RelationshipManager({
             </section>
           )}
         </div>
-      )}
+      ) : null}
       <section
         aria-label="Incoming links"
         className="border-border rounded-[var(--radius)] border p-4"
@@ -410,12 +397,14 @@ export function RelationshipManager({
         <p className="text-muted-foreground mt-1 text-sm">
           Other records linking to this record.
         </p>
-        {incoming.length === 0 ? (
+        {loading && !loaded ? (
+          <Skeleton className="mt-3 h-8 w-full" />
+        ) : !loaded ? null : incoming.length === 0 ? (
           <p className="text-muted-foreground mt-3 text-sm">
             No incoming links.
           </p>
         ) : (
-          <ul className="mt-3 space-y-2 text-sm">
+          <ul className="mt-3 flex flex-col gap-2 text-sm">
             {incoming.map((edge) => (
               <li key={edge.id}>
                 {compactId(edge.source_record_id)}
@@ -430,5 +419,228 @@ export function RelationshipManager({
         )}
       </section>
     </section>
+  );
+}
+
+type TargetPickerProps = {
+  field: Field;
+  edges: Relationship[];
+  value: string;
+  disabled: boolean;
+  onValueChange: (value: string) => void;
+};
+
+function targetLabel(
+  record: RecordEntity | undefined,
+  fields: Field[],
+  id: string,
+) {
+  if (!record) return compactId(id);
+  const readable = fields
+    .filter(
+      (field) =>
+        !field.audit_redacted &&
+        !field.is_deleted &&
+        field.type !== "relationship",
+    )
+    .sort((a, b) => a.position - b.position);
+  const text = readable.find(
+    (field) =>
+      field.type === "text" &&
+      typeof record.data[field.id] === "string" &&
+      String(record.data[field.id]).trim(),
+  );
+  if (text) return String(record.data[text.id]);
+  for (const field of readable) {
+    const value = record.data[field.id];
+    if (
+      (typeof value === "string" && value.trim()) ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    )
+      return String(value);
+  }
+  return compactId(id);
+}
+
+function TargetPicker({
+  field,
+  edges,
+  value,
+  disabled,
+  onValueChange,
+}: TargetPickerProps) {
+  const [records, setRecords] = useState<RecordEntity[]>([]);
+  const [metadata, setMetadata] = useState<Field[]>([]);
+  const [started, setStarted] = useState(false);
+  const [pageLoaded, setPageLoaded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const active = useRef<AbortController | null>(null);
+  const metadataRequest = useRef<AbortController | null>(null);
+  const fetching = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(
+    () => () => {
+      active.current?.abort();
+      metadataRequest.current?.abort();
+    },
+    [],
+  );
+  const targetModule = field.relationship_target_module_id;
+  const multiple = field.relationship_multiple_targets === true;
+  const label = (id: string) =>
+    targetLabel(
+      records.find((record) => record.id === id),
+      metadata,
+      id,
+    );
+  const display = (id: string) =>
+    label(id) === compactId(id)
+      ? compactId(id)
+      : `${label(id)} · ${compactId(id)}`;
+  const hidden = new Set(
+    edges
+      .filter((edge) => edge.visibility === "hidden")
+      .map((edge) => edge.target_record_id),
+  );
+  const options = records
+    .filter(
+      (record) =>
+        !hidden.has(record.id) &&
+        (!multiple ||
+          !edges.some((edge) => edge.target_record_id === record.id)),
+    )
+    .map((record) => record.id);
+  // An existing target outside the page remains selected, but unavailable links cannot be newly selected.
+  if (!multiple && value && !options.includes(value)) options.unshift(value);
+  if (!multiple) options.unshift("");
+
+  async function loadPage() {
+    if (!targetModule || fetching.current) return;
+    fetching.current = true;
+    const controller = new AbortController();
+    active.current = controller;
+    setLoading(true);
+    setError("");
+    if (!started) {
+      setStarted(true);
+      metadataRequest.current = controller;
+      void listAllModuleFields(targetModule)
+        .then((fields) => {
+          if (!controller.signal.aborted) setMetadata(fields);
+        })
+        .catch(() => {
+          /* Record IDs remain available when metadata is not authorized. */
+        });
+    }
+    try {
+      const result = await apiFetch<ListResponse<RecordEntity>>(
+        `/records?${listQuery({ module_id: targetModule, deleted: "exclude", limit: 100, offset, sort_by: "created_at", sort_order: "desc" })}`,
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted) return;
+      setRecords((previous) => [
+        ...new Map(
+          [...previous, ...result.items].map((record) => [record.id, record]),
+        ).values(),
+      ]);
+      setPageLoaded(true);
+      setOffset(result.pagination.offset + result.items.length);
+      setHasMore(result.pagination.has_more);
+    } catch {
+      if (!controller.signal.aborted) setError("Targets could not be loaded.");
+    } finally {
+      fetching.current = false;
+      if (!controller.signal.aborted) setLoading(false);
+    }
+  }
+
+  return (
+    <Combobox<string>
+      items={options}
+      value={value || null}
+      inputValue={query}
+      onInputValueChange={setQuery}
+      disabled={disabled}
+      filter={(id, search) =>
+        `${label(id)} ${id}`
+          .toLocaleLowerCase()
+          .includes(search.toLocaleLowerCase())
+      }
+      onOpenChange={(open) => {
+        if (open && !started) void loadPage();
+      }}
+      onValueChange={(id) => {
+        if (id !== null) onValueChange(id);
+      }}
+    >
+      <ComboboxTrigger
+        id={`relationship-target-${field.id}`}
+        aria-label={`${field.name} target`}
+        title={value || undefined}
+      >
+        <span className="truncate">
+          {value ? display(value) : multiple ? "Select a target" : "No target"}
+        </span>
+      </ComboboxTrigger>
+      <ComboboxContent>
+        <ComboboxInput
+          ref={searchInputRef}
+          aria-label={`Search loaded records for ${field.name}`}
+          placeholder="Search loaded records"
+        />
+        <p role="status" className="text-muted-foreground text-xs">
+          {loading
+            ? "Loading targets…"
+            : !pageLoaded
+              ? "Targets unavailable"
+              : `${records.length} records loaded${hasMore ? " · More available" : ""}`}
+        </p>
+        <ComboboxEmpty className="text-muted-foreground text-sm">
+          {loading ? (
+            <div className="p-2">Loading targets…</div>
+          ) : !pageLoaded ? null : hasMore ? (
+            <div className="p-2">
+              No matches in loaded records. More records may exist; load more to
+              continue.
+            </div>
+          ) : (
+            <div className="p-2">No matching records.</div>
+          )}
+        </ComboboxEmpty>
+        <ComboboxList className="max-h-60 overflow-y-auto">
+          {(id: string) => (
+            <ComboboxItem
+              key={id || "none"}
+              value={id}
+              disabled={hidden.has(id)}
+              title={id || undefined}
+              aria-label={id ? `${display(id)} · ${id}` : "No target"}
+            >
+              {id ? display(id) : "No target"}
+            </ComboboxItem>
+          )}
+        </ComboboxList>
+        {error && <Alert variant="destructive">{error}</Alert>}
+        {(hasMore || error) && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={loading}
+            onClick={() => {
+              searchInputRef.current?.focus();
+              void loadPage();
+            }}
+          >
+            {error ? "Try loading targets again" : "Load more"}
+          </Button>
+        )}
+      </ComboboxContent>
+    </Combobox>
   );
 }

@@ -20,11 +20,15 @@ import {
 import { canConnect } from "@/lib/sandbox/rules";
 import {
   MODULE_TABLE,
+  SANDBOX_GRID_MAJOR_SIZE,
+  SANDBOX_GRID_SIZE,
   getModulePorts,
   graphOptions,
+  relationshipLineAttrs,
   moduleTableAttrs,
   moduleTableHeight,
   moduleTableMarkup,
+  snapSandboxPosition,
   toCells,
 } from "@/lib/sandbox/x6-adapter";
 
@@ -99,6 +103,22 @@ interface CanvasPosition {
 
 type CanvasFeedback = "drop" | "moving" | null;
 
+interface DropResolution {
+  parentId: string | null;
+  targetId: string | null;
+  error: string | null;
+}
+
+const CANVAS_BACKGROUND =
+  "var(--canvas-background, var(--background, #ffffff))";
+const CANVAS_GRID = "var(--canvas-grid, #d8dde5)";
+const CANVAS_GRID_MAJOR = "var(--canvas-grid-major, #bac3cf)";
+const CANVAS_NODE_BORDER = "var(--sandbox-node-border, #a8b2c1)";
+const CANVAS_NODE_TEXT = "var(--muted-foreground, #68707d)";
+const CANVAS_NODE_SELECTED = "var(--accent, #f5f9ff)";
+const CANVAS_NODE_ACTIVE = "var(--primary, #3b82f6)";
+const CANVAS_NODE_MOVING = "var(--canvas-moving, #fff8eb)";
+
 interface CanvasEditor {
   target: "department" | "module" | "field";
   property: "name" | "type";
@@ -153,24 +173,25 @@ function departmentNodeAttrs(
     text: { refX: 0, refY: 0 },
     rect: { stroke: "none", strokeWidth: 0 },
     body: {
+      "data-sandbox-body": "true",
       width: DEPARTMENT_WIDTH,
       height,
       fill: moving
-        ? "#fff8eb"
+        ? CANVAS_NODE_MOVING
         : dropTarget
-          ? "#eff6ff"
+          ? "var(--canvas-drop, #eff6ff)"
           : selected
-            ? "#f5f9ff"
-            : "#ffffff",
+            ? CANVAS_NODE_SELECTED
+            : "var(--card, #e9edf2)",
       stroke: moving
-        ? "#f59e0b"
+        ? "var(--warning, #f59e0b)"
         : dropTarget || selected
-          ? "#3b82f6"
-          : "#c8cdd6",
+          ? CANVAS_NODE_ACTIVE
+          : CANVAS_NODE_BORDER,
       strokeWidth: moving || dropTarget || selected ? 2 : 1,
-      strokeDasharray: moving || dropTarget || selected ? "" : "5 4",
-      rx: 0,
-      ry: 0,
+      strokeDasharray: "",
+      rx: 8,
+      ry: 8,
       "data-selected": selected ? "true" : "false",
       "data-feedback": feedback ?? "",
     },
@@ -181,8 +202,33 @@ function departmentNodeAttrs(
       textVerticalAnchor: "middle",
       fontSize: 11,
       fontWeight: 600,
-      fill: moving ? "#b45309" : dropTarget || selected ? "#2563eb" : "#68707d",
+      fill: moving
+        ? "var(--warning, #b45309)"
+        : dropTarget || selected
+          ? CANVAS_NODE_ACTIVE
+          : CANVAS_NODE_TEXT,
       text: truncateLabel(name, 30),
+    },
+    resizeGrip: {
+      width: 24,
+      height: 24,
+      rx: 4,
+      fill: "transparent",
+      stroke: "none",
+      cursor: "nwse-resize",
+      tabindex: selected ? 0 : -1,
+      visibility: selected ? "visible" : "hidden",
+      role: "button",
+      "aria-label": "Resize department",
+      "data-department-resize": "true",
+      style: { touchAction: "none" },
+    },
+    resizeLines: {
+      stroke: CANVAS_NODE_ACTIVE,
+      strokeWidth: 2,
+      fill: "none",
+      pointerEvents: "none",
+      visibility: selected ? "visible" : "hidden",
     },
     subheading: {
       x: DEPARTMENT_WIDTH - 12,
@@ -190,10 +236,51 @@ function departmentNodeAttrs(
       textAnchor: "end",
       textVerticalAnchor: "middle",
       fontSize: 10,
-      fill: "#9aa1ac",
-      text: `${moduleCount} modules`,
+      fill: "var(--muted-foreground, #9aa1ac)",
+      text: `${moduleCount} ${moduleCount === 1 ? "module" : "modules"}`,
     },
   };
+}
+
+/** Grow frames only as needed; never reflow or move their children. */
+function fitDepartmentFrames(graph: Graph): void {
+  for (const department of graph.getNodes()) {
+    if (nodeKindOf(department) !== "department") continue;
+    const boxes = (department.getChildren() ?? []).flatMap((cell) =>
+      cell.isNode() && nodeKindOf(cell) === "module" ? [cell.getBBox()] : [],
+    );
+    const position = department.getPosition();
+    const size = department.getSize();
+    const x = Math.min(position.x, ...boxes.map((box) => box.x - 24));
+    const y = Math.min(position.y, ...boxes.map((box) => box.y - 48));
+    const width = Math.max(
+      336,
+      position.x + size.width - x,
+      ...boxes.map((box) => box.right - x + 24),
+    );
+    const height = Math.max(
+      144,
+      position.y + size.height - y,
+      ...boxes.map((box) => box.bottom - y + 24),
+    );
+    if (position.x !== x || position.y !== y)
+      department.setPosition(x, y, { deep: false });
+    if (size.width !== width || size.height !== height)
+      department.setSize(width, height);
+    updateDepartmentSizeAttrs(department);
+  }
+}
+
+function updateDepartmentSizeAttrs(node: Node): void {
+  const { width, height } = node.getSize();
+  node.setAttrs({
+    body: { width, height },
+    subheading: { x: width - 12 },
+    resizeGrip: { x: width - 24, y: height - 24 },
+    resizeLines: {
+      d: `M${width - 17} ${height - 7}l10 -10 M${width - 11} ${height - 7}l4 -4`,
+    },
+  });
 }
 
 function nodeKindOf(node: Node): string | null {
@@ -296,26 +383,36 @@ function selectNodeOrField(
 }
 
 /**
- * Resolve the drop parent at a canvas point: a field lands on the module
- * under the cursor, a module lands on the department under the cursor (or
- * the department of the module under the cursor), departments land loose.
+ * Resolve a palette drop against the existing containment rules. The target
+ * id is kept separate from the parent id so a valid drop can highlight the
+ * object receiving the new child while the page receives the domain parent.
  */
-function findDropParent(
+function resolveDrop(
   graph: Graph,
   kind: SandboxDropKind,
   point: { x: number; y: number },
-): string | null {
+): DropResolution {
   const nodes = graph.getNodes();
   for (const node of nodes) {
     if (
       nodeKindOf(node) === "module" &&
       node.getBBox().containsPoint(point.x, point.y)
     ) {
+      if (kind === "department") {
+        return { parentId: null, targetId: null, error: null };
+      }
       if (kind === "field") {
-        return node.id;
+        return { parentId: node.id, targetId: node.id, error: null };
       }
       const parent = node.getParent();
-      return parent ? parent.id : null;
+      return {
+        parentId: parent ? parent.id : null,
+        targetId: parent?.id ?? null,
+        error:
+          kind === "module" && parent === null
+            ? "Modules must be added inside a department."
+            : null,
+      };
     }
   }
   for (const node of nodes) {
@@ -323,10 +420,19 @@ function findDropParent(
       nodeKindOf(node) === "department" &&
       node.getBBox().containsPoint(point.x, point.y)
     ) {
-      return kind === "module" ? node.id : null;
+      if (kind === "module") {
+        return { parentId: node.id, targetId: node.id, error: null };
+      }
+      if (kind === "field") {
+        return {
+          parentId: null,
+          targetId: node.id,
+          error: "Fields can only be added inside a module.",
+        };
+      }
     }
   }
-  return null;
+  return { parentId: null, targetId: null, error: null };
 }
 
 export function SandboxCanvas({
@@ -341,12 +447,15 @@ export function SandboxCanvas({
   graphRef,
 }: SandboxCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<SandboxCanvasRuntime | null>(null);
   const pendingPositionsRef = useRef<Map<string, CanvasPosition>>(new Map());
+  const freeMoveRef = useRef(false);
   const syncingRef = useRef(false);
   const [editor, setEditor] = useState<CanvasEditor | null>(null);
   const editorRef = useRef<CanvasEditor | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [dropError, setDropError] = useState<string | null>(null);
   const [paletteDragKind, setPaletteDragKind] =
     useState<SandboxDropKind | null>(null);
   const [movingNodeId, setMovingNodeId] = useState<string | null>(null);
@@ -380,11 +489,6 @@ export function SandboxCanvas({
     };
     stateRef.current = state;
   });
-  useEffect(() => {
-    if (state.currentStage === "automation" && editorRef.current !== null) {
-      closeEditor();
-    }
-  }, [state.currentStage]);
   // Single Graph owner: create once, dispose on unmount (StrictMode-safe).
   useEffect(() => {
     const container = containerRef.current;
@@ -397,6 +501,52 @@ export function SandboxCanvas({
     const history = new History();
     graph.use(history);
     runtimeRef.current = { graph, history };
+
+    const updateGridVisual = (): void => {
+      const grid = gridRef.current;
+      if (grid === null) {
+        return;
+      }
+      const matrix = graph.matrix();
+      const scaleX = Math.abs(matrix.a || 1);
+      const scaleY = Math.abs(matrix.d || 1);
+      const offsetX = matrix.e || 0;
+      const offsetY = matrix.f || 0;
+      grid.style.backgroundSize = [
+        `${SANDBOX_GRID_SIZE * scaleX}px ${SANDBOX_GRID_SIZE * scaleY}px`,
+        `${SANDBOX_GRID_SIZE * scaleX}px ${SANDBOX_GRID_SIZE * scaleY}px`,
+        `${SANDBOX_GRID_MAJOR_SIZE * scaleX}px ${SANDBOX_GRID_MAJOR_SIZE * scaleY}px`,
+        `${SANDBOX_GRID_MAJOR_SIZE * scaleX}px ${SANDBOX_GRID_MAJOR_SIZE * scaleY}px`,
+      ].join(", ");
+      grid.style.backgroundPosition = [
+        `${offsetX}px ${offsetY}px`,
+        `${offsetX}px ${offsetY}px`,
+        `${offsetX}px ${offsetY}px`,
+        `${offsetX}px ${offsetY}px`,
+      ].join(", ");
+      grid.dataset.scale = `${scaleX}`;
+      grid.dataset.translate = `${offsetX},${offsetY}`;
+    };
+    updateGridVisual();
+    graph.on("scale", updateGridVisual);
+    graph.on("translate", updateGridVisual);
+
+    const updateDragSnap = (freeMove: boolean): void => {
+      if (freeMoveRef.current === freeMove) {
+        return;
+      }
+      freeMoveRef.current = freeMove;
+      graph.setGridSize(freeMove ? 1 : SANDBOX_GRID_SIZE);
+    };
+
+    // Set precision before X6 normalizes the initial pointer coordinates.
+    const preparePointer = (event: MouseEvent): void =>
+      updateDragSnap(event.altKey);
+    const updateModifier = (event: KeyboardEvent): void =>
+      updateDragSnap(event.altKey);
+    container.addEventListener("mousedown", preparePointer, true);
+    window.addEventListener("keydown", updateModifier);
+    window.addEventListener("keyup", updateModifier);
 
     const restoreCanonicalParent = (node: Node): void => {
       const sandboxModule = stateRef.current.modules.find(
@@ -486,10 +636,7 @@ export function SandboxCanvas({
       property: CanvasEditor["property"],
       rowIndex?: number,
     ): void => {
-      if (
-        stateRef.current.currentStage === "automation" ||
-        editorRef.current !== null
-      ) {
+      if (editorRef.current !== null) {
         return;
       }
       const currentState = stateRef.current;
@@ -567,32 +714,240 @@ export function SandboxCanvas({
         undo: () => {
           history.undo();
           reconcileModuleParents();
+          history.disable();
+          fitDepartmentFrames(graph);
+          history.enable();
         },
         redo: () => {
           history.redo();
           reconcileModuleParents();
+          history.disable();
+          fitDepartmentFrames(graph);
+          history.enable();
         },
         canUndo: () => history.canUndo(),
         canRedo: () => history.canRedo(),
         placeNode: (nodeId, position) => {
+          const snappedPosition = position;
           const cell = graph.getCellById(nodeId);
           if (cell !== null && cell.isNode()) {
-            cell.setPosition(position);
+            cell.setPosition(snappedPosition);
             return;
           }
-          pendingPositionsRef.current.set(nodeId, position);
+          pendingPositionsRef.current.set(nodeId, snappedPosition);
         },
       };
     }
+
+    let connectingPorts = false;
+    const portSelected = (node: Node): boolean =>
+      stateRef.current.selectedCellId === node.id ||
+      stateRef.current.fields.some(
+        (field) =>
+          field.moduleId === node.id &&
+          field.id === stateRef.current.selectedCellId,
+      );
+    const revealPorts = (node: Node, visible: boolean): void => {
+      const enabled = history.isEnabled();
+      history.disable();
+      try {
+        for (const port of node.getPorts()) {
+          if (port.id !== undefined)
+            node.setPortProp(
+              port.id,
+              ["attrs", "circle", "opacity"],
+              visible ? 1 : 0,
+            );
+        }
+      } finally {
+        if (enabled) history.enable();
+      }
+    };
+    const beginConnection = (event: PointerEvent): void => {
+      if (
+        !(event.target instanceof Element) ||
+        event.target.closest('[magnet="true"]') === null
+      )
+        return;
+      connectingPorts = true;
+      for (const node of graph.getNodes()) revealPorts(node, true);
+    };
+    const endConnection = (): void => {
+      if (!connectingPorts) return;
+      connectingPorts = false;
+      for (const node of graph.getNodes())
+        revealPorts(node, portSelected(node));
+    };
+    container.addEventListener("pointerdown", beginConnection, true);
+    window.addEventListener("pointerup", endConnection);
+    window.addEventListener("pointercancel", endConnection);
+    graph.on("node:mouseenter", ({ node }) => revealPorts(node, true));
+    graph.on("node:mouseleave", ({ node }) =>
+      revealPorts(node, connectingPorts || portSelected(node)),
+    );
+
+    let resizeGesture: {
+      node: Node;
+      pointerId: number;
+      startX: number;
+      startY: number;
+      width: number;
+      height: number;
+    } | null = null;
+    const resizeDepartment = (
+      node: Node,
+      width: number,
+      height: number,
+      free: boolean,
+    ): void => {
+      const origin = node.getPosition();
+      const boxes = (node.getChildren() ?? []).flatMap((child) =>
+        child.isNode() ? [child.getBBox()] : [],
+      );
+      const minimumWidth = Math.max(
+        336,
+        ...boxes.map((box) => box.right - origin.x + 24),
+      );
+      const minimumHeight = Math.max(
+        144,
+        ...boxes.map((box) => box.bottom - origin.y + 24),
+      );
+      node.setSize(
+        Math.max(
+          minimumWidth,
+          free
+            ? width
+            : Math.round(width / SANDBOX_GRID_SIZE) * SANDBOX_GRID_SIZE,
+        ),
+        Math.max(
+          minimumHeight,
+          free
+            ? height
+            : Math.round(height / SANDBOX_GRID_SIZE) * SANDBOX_GRID_SIZE,
+        ),
+      );
+    };
+    const refreshSize = ({ node }: { node: Node }): void => {
+      if (nodeKindOf(node) !== "department") return;
+      const enabled = history.isEnabled();
+      history.disable();
+      updateDepartmentSizeAttrs(node);
+      if (enabled) history.enable();
+    };
+    graph.on("node:change:size", refreshSize);
+    const resizePointerDown = (event: PointerEvent): void => {
+      if (
+        !(event.target instanceof Element) ||
+        !event.target.closest("[data-department-resize]")
+      )
+        return;
+      const view = graph.findViewByElem(event.target);
+      if (!view?.cell.isNode() || nodeKindOf(view.cell) !== "department")
+        return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const point = graph.clientToLocal(event.clientX, event.clientY);
+      resizeGesture = {
+        node: view.cell,
+        pointerId: event.pointerId,
+        startX: point.x,
+        startY: point.y,
+        ...view.cell.getSize(),
+      };
+      graph.startBatch("department-resize");
+      event.target.setPointerCapture(event.pointerId);
+      (event.target as SVGElement).focus();
+    };
+    const resizePointerMove = (event: PointerEvent): void => {
+      if (!resizeGesture || resizeGesture.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const point = graph.clientToLocal(event.clientX, event.clientY);
+      resizeDepartment(
+        resizeGesture.node,
+        resizeGesture.width + point.x - resizeGesture.startX,
+        resizeGesture.height + point.y - resizeGesture.startY,
+        event.altKey,
+      );
+    };
+    const resizePointerEnd = (event: PointerEvent): void => {
+      if (!resizeGesture || resizeGesture.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.type === "pointercancel")
+        resizeGesture.node.setSize(resizeGesture.width, resizeGesture.height);
+      resizeGesture = null;
+      graph.stopBatch("department-resize");
+    };
+    const resizeKeyDown = (event: KeyboardEvent): void => {
+      if (
+        !(event.target instanceof Element) ||
+        !event.target.closest("[data-department-resize]")
+      )
+        return;
+      if (
+        !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+      )
+        return;
+      const view = graph.findViewByElem(event.target);
+      if (!view?.cell.isNode()) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const size = view.cell.getSize();
+      const step = event.altKey ? 1 : SANDBOX_GRID_SIZE;
+      resizeDepartment(
+        view.cell,
+        size.width +
+          (event.key === "ArrowRight"
+            ? step
+            : event.key === "ArrowLeft"
+              ? -step
+              : 0),
+        size.height +
+          (event.key === "ArrowDown"
+            ? step
+            : event.key === "ArrowUp"
+              ? -step
+              : 0),
+        // Keyboard deltas are exact; only pointer resizing snaps to the grid.
+        true,
+      );
+    };
+    const swallowResizeMouse = (event: MouseEvent): void => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest("[data-department-resize]")
+      ) {
+        event.stopImmediatePropagation();
+      }
+    };
+    container.addEventListener("pointerdown", resizePointerDown, true);
+    window.addEventListener("pointermove", resizePointerMove, true);
+    window.addEventListener("pointerup", resizePointerEnd, true);
+    window.addEventListener("pointercancel", resizePointerEnd, true);
+    container.addEventListener("keydown", resizeKeyDown, true);
+    container.addEventListener("mousedown", swallowResizeMouse, true);
+    container.addEventListener("click", swallowResizeMouse, true);
+    container.addEventListener("dblclick", swallowResizeMouse, true);
+    const feedbackTimers = new Map<Element, ReturnType<typeof setTimeout>>();
+    const showPressed = (element: Element): void => {
+      clearTimeout(feedbackTimers.get(element));
+      element.setAttribute("data-sandbox-pressed", "true");
+      feedbackTimers.set(
+        element,
+        setTimeout(() => {
+          element.removeAttribute("data-sandbox-pressed");
+          feedbackTimers.delete(element);
+        }, 160),
+      );
+    };
+    graph.on("cell:click", ({ view }) => showPressed(view.container));
 
     graph.on("node:click", ({ node, y }) => {
       container.focus({ preventScroll: true });
       selectNodeOrField(node, y, stateRef.current, callbacksRef.current);
     });
     graph.on("node:dblclick", (event) => {
-      if (stateRef.current.currentStage === "automation") {
-        return;
-      }
       const { node, view, x, y } = event;
       const selector =
         event.e.target instanceof Element
@@ -648,7 +1003,19 @@ export function SandboxCanvas({
       container.focus({ preventScroll: true });
       callbacksRef.current.onSelect(null);
     });
-    graph.on("node:moving", ({ node }) => {
+    graph.on("node:mousedown", ({ e }) => {
+      // X6's built-in node translator consults graph.getGridSize() for each
+      // pointer move. Temporarily switching it to one lets Alt/Option opt
+      // out of snapping while the independent visual grid stays unchanged.
+      updateDragSnap(e.altKey);
+    });
+    graph.on("node:mouseup", () => {
+      updateDragSnap(false);
+    });
+    graph.on("node:moving", ({ node, e }) => {
+      if (e.altKey !== freeMoveRef.current) {
+        updateDragSnap(e.altKey);
+      }
       setMovingNodeId(node.id);
     });
     graph.on("node:embedding", ({ node, candidateParent }) => {
@@ -663,6 +1030,7 @@ export function SandboxCanvas({
       }
     });
     graph.on("node:moved", ({ node }) => {
+      updateDragSnap(false);
       setMovingNodeId(null);
       setDropTargetId(null);
       if (syncingRef.current || nodeKindOf(node) !== "module") {
@@ -710,15 +1078,17 @@ export function SandboxCanvas({
       edge.remove();
     });
 
+    // X6 writes a fixed pixel size onto its container. Observe the flexible
+    // canvas frame, otherwise expanding panels leaves the graph at its old size.
+    const canvasFrame = container.parentElement ?? container;
     const observer = new ResizeObserver(() => {
-      graph.resize(container.clientWidth, container.clientHeight);
+      graph.resize(canvasFrame.clientWidth, canvasFrame.clientHeight);
     });
-    observer.observe(container);
+    observer.observe(canvasFrame);
 
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "F2") {
         if (
-          stateRef.current.currentStage !== "automation" &&
           editorRef.current === null &&
           stateRef.current.selectedCellId !== null
         ) {
@@ -762,6 +1132,21 @@ export function SandboxCanvas({
 
     return () => {
       observer.disconnect();
+      for (const timer of feedbackTimers.values()) clearTimeout(timer);
+      container.removeEventListener("pointerdown", resizePointerDown, true);
+      window.removeEventListener("pointermove", resizePointerMove, true);
+      window.removeEventListener("pointerup", resizePointerEnd, true);
+      window.removeEventListener("pointercancel", resizePointerEnd, true);
+      container.removeEventListener("keydown", resizeKeyDown, true);
+      container.removeEventListener("mousedown", swallowResizeMouse, true);
+      container.removeEventListener("click", swallowResizeMouse, true);
+      container.removeEventListener("dblclick", swallowResizeMouse, true);
+      container.removeEventListener("pointerdown", beginConnection, true);
+      window.removeEventListener("pointerup", endConnection);
+      window.removeEventListener("pointercancel", endConnection);
+      container.removeEventListener("mousedown", preparePointer, true);
+      window.removeEventListener("keydown", updateModifier);
+      window.removeEventListener("keyup", updateModifier);
       container.removeEventListener("keydown", handleKeyDown);
       syncingRef.current = false;
       runtimeRef.current = null;
@@ -782,23 +1167,11 @@ export function SandboxCanvas({
     }
     const { graph, history } = runtime;
     const fieldsById = new Map(state.fields.map((field) => [field.id, field]));
-    const relationshipMode = state.currentStage === "relationships";
 
     syncingRef.current = true;
     history.disable();
     try {
-      graph.options.interacting =
-        state.currentStage === "automation"
-          ? {
-              nodeMovable: false,
-              magnetConnectable: false,
-              edgeMovable: false,
-              edgeLabelMovable: false,
-              vertexMovable: false,
-              vertexAddable: false,
-              vertexDeletable: false,
-            }
-          : { edgeLabelMovable: false };
+      graph.options.interacting = { edgeLabelMovable: false };
 
       const descriptors = toCells(state);
       const descriptorIds = new Set(descriptors.map((cell) => cell.id));
@@ -822,7 +1195,10 @@ export function SandboxCanvas({
         const moduleHeights = departmentModules.map((sandboxModule) =>
           moduleTableHeight(sandboxModule.fieldIds.length),
         );
-        const height = departmentHeight(moduleHeights);
+        const height =
+          departmentModules.length === 0
+            ? 144
+            : departmentHeight(moduleHeights);
         const departmentFeedback: CanvasFeedback =
           movingNodeId === department.id
             ? "moving"
@@ -846,12 +1222,14 @@ export function SandboxCanvas({
                 shape: "rect",
                 ...(pendingPositionsRef.current.get(department.id) ??
                   departmentPosition(index)),
-                width: DEPARTMENT_WIDTH,
+                width: departmentModules.length === 0 ? 336 : DEPARTMENT_WIDTH,
                 height,
                 markup: [
                   { tagName: "rect", selector: "body" },
                   { tagName: "text", selector: "heading" },
                   { tagName: "text", selector: "subheading" },
+                  { tagName: "rect", selector: "resizeGrip" },
+                  { tagName: "path", selector: "resizeLines" },
                 ],
                 attrs: departmentAttrs,
                 data: { kind: "department", departmentId: department.id },
@@ -861,8 +1239,16 @@ export function SandboxCanvas({
           existing.remove();
         }
         pendingPositionsRef.current.delete(department.id);
-        departmentNode.setSize(DEPARTMENT_WIDTH, height);
-        departmentNode.setAttrs(departmentAttrs);
+
+        const frameSize = departmentNode.getSize();
+        departmentNode.setAttrs({
+          ...departmentAttrs,
+          body: { ...departmentAttrs.body, ...frameSize },
+          subheading: {
+            ...departmentAttrs.subheading,
+            x: frameSize.width - 12,
+          },
+        });
         departmentNode.setData({
           kind: "department",
           departmentId: department.id,
@@ -922,7 +1308,7 @@ export function SandboxCanvas({
                     : null,
               ),
               ports: {
-                ...getModulePorts(relationshipMode),
+                ...getModulePorts(state.selectedCellId === sandboxModule.id),
                 items: [
                   { id: `${sandboxModule.id}-in`, group: "in" },
                   { id: `${sandboxModule.id}-out`, group: "out" },
@@ -973,20 +1359,21 @@ export function SandboxCanvas({
                 group: portId.endsWith("-in") ? "in" : "out",
               });
             }
+            moduleNode.setPortProp(portId, ["attrs", "circle", "magnet"], true);
             moduleNode.setPortProp(
               portId,
-              ["attrs", "circle", "magnet"],
-              relationshipMode,
-            );
-            moduleNode.setPortProp(
-              portId,
-              ["attrs", "circle", "visibility"],
-              relationshipMode ? "visible" : "hidden",
+              ["attrs", "circle", "opacity"],
+              state.selectedCellId === sandboxModule.id ||
+                moduleFields.some((field) => field.id === state.selectedCellId)
+                ? 1
+                : 0,
             );
           }
           moduleNodes.set(sandboxModule.id, moduleNode);
         }
       }
+
+      if (movingNodeId === null) fitDepartmentFrames(graph);
 
       const relationshipRouter = {
         name: "manhattan",
@@ -1012,23 +1399,39 @@ export function SandboxCanvas({
           port: `${link.targetModuleId}-in`,
         };
         const linkAttrs = {
-          line: {
-            stroke: "#9299a5",
-            strokeWidth: 1.25,
-            targetMarker: { name: "classic", size: 7 },
-          },
+          line: relationshipLineAttrs(state.selectedCellId === link.id),
         };
-        const linkLabels = [
-          {
-            attrs: {
-              label: {
-                fontSize: 10,
-                fill: "#68707d",
-                text: link.label,
-              },
-            },
-          },
-        ];
+        const linkLabels =
+          link.label.trim() === ""
+            ? []
+            : [
+                {
+                  markup: [
+                    { tagName: "rect", selector: "body" },
+                    { tagName: "text", selector: "label" },
+                  ],
+                  attrs: {
+                    label: {
+                      fontSize: 10,
+                      fill: "var(--card-foreground, #20242c)",
+                      pointerEvents: "none",
+                      text: link.label,
+                    },
+                    body: {
+                      ref: "label",
+                      fill: "var(--card, #ffffff)",
+                      stroke: "var(--border, #e4e7ec)",
+                      strokeWidth: 1,
+                      rx: 3,
+                      ry: 3,
+                      refWidth: 10,
+                      refHeight: 6,
+                      refX: -5,
+                      refY: -3,
+                    },
+                  },
+                },
+              ];
         const existing = graph.getCellById(link.id);
         const edge =
           existing !== null && existing.isEdge()
@@ -1101,8 +1504,9 @@ export function SandboxCanvas({
     event.preventDefault();
     setPaletteDragKind(null);
     setDropTargetId(null);
+    setDropError(null);
     const runtime = runtimeRef.current;
-    if (runtime === null || state.currentStage === "automation") {
+    if (runtime === null) {
       return;
     }
     const rawKind = dragKindFromTransfer(event.dataTransfer);
@@ -1110,18 +1514,26 @@ export function SandboxCanvas({
       return;
     }
     const point = runtime.graph.clientToLocal(event.clientX, event.clientY);
-    const parentId = findDropParent(runtime.graph, rawKind, {
+    const resolution = resolveDrop(runtime.graph, rawKind, {
       x: point.x,
       y: point.y,
     });
+    if (resolution.error !== null) {
+      setDropError(resolution.error);
+      return;
+    }
     const rawFieldType = event.dataTransfer.getData(
       "application/x-sandbox-field-type",
     );
     const fieldType = isFieldType(rawFieldType) ? rawFieldType : undefined;
-    callbacksRef.current.onDrop(rawKind, parentId, fieldType, {
-      x: point.x,
-      y: point.y,
-    });
+    callbacksRef.current.onDrop(
+      rawKind,
+      resolution.parentId,
+      fieldType,
+      event.altKey
+        ? { x: point.x, y: point.y }
+        : snapSandboxPosition({ x: point.x, y: point.y }),
+    );
   }
 
   function handleCanvasDragOver(event: DragEvent<HTMLDivElement>): void {
@@ -1132,16 +1544,17 @@ export function SandboxCanvas({
       return;
     }
     const runtime = runtimeRef.current;
-    if (runtime === null || state.currentStage === "automation") {
+    if (runtime === null) {
       return;
     }
     setPaletteDragKind(rawKind);
     const point = runtime.graph.clientToLocal(event.clientX, event.clientY);
-    const target = findDropParent(runtime.graph, rawKind, {
+    const resolution = resolveDrop(runtime.graph, rawKind, {
       x: point.x,
       y: point.y,
     });
-    setDropTargetId(target);
+    setDropTargetId(resolution.error === null ? resolution.targetId : null);
+    setDropError(resolution.error);
   }
 
   function handleCanvasDragLeave(event: DragEvent<HTMLDivElement>): void {
@@ -1154,6 +1567,7 @@ export function SandboxCanvas({
     }
     setPaletteDragKind(null);
     setDropTargetId(null);
+    setDropError(null);
   }
 
   return (
@@ -1161,24 +1575,53 @@ export function SandboxCanvas({
       data-testid="sandbox-canvas"
       role="application"
       aria-label="Sandbox organization canvas. Select a node to inspect it."
-      className="relative h-full w-full overflow-hidden bg-white"
+      className="relative h-full w-full overflow-hidden"
+      style={{ backgroundColor: CANVAS_BACKGROUND }}
       onDragOver={handleCanvasDragOver}
       onDragLeave={handleCanvasDragLeave}
       onDrop={handleCanvasDrop}
     >
       <div
+        ref={gridRef}
+        data-testid="sandbox-grid"
+        data-grid-size={SANDBOX_GRID_SIZE}
+        data-grid-major-size={SANDBOX_GRID_MAJOR_SIZE}
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage: [
+            `linear-gradient(to right, ${CANVAS_GRID} 1px, transparent 1px)`,
+            `linear-gradient(to bottom, ${CANVAS_GRID} 1px, transparent 1px)`,
+            `linear-gradient(to right, ${CANVAS_GRID_MAJOR} 1px, transparent 1px)`,
+            `linear-gradient(to bottom, ${CANVAS_GRID_MAJOR} 1px, transparent 1px)`,
+          ].join(", "),
+          backgroundSize: [
+            `${SANDBOX_GRID_SIZE}px ${SANDBOX_GRID_SIZE}px`,
+            `${SANDBOX_GRID_SIZE}px ${SANDBOX_GRID_SIZE}px`,
+            `${SANDBOX_GRID_MAJOR_SIZE}px ${SANDBOX_GRID_MAJOR_SIZE}px`,
+            `${SANDBOX_GRID_MAJOR_SIZE}px ${SANDBOX_GRID_MAJOR_SIZE}px`,
+          ].join(", "),
+          backgroundPosition: "0 0, 0 0, 0 0, 0 0",
+        }}
+      />
+      <div
         ref={containerRef}
         tabIndex={0}
         className="absolute inset-0 outline-none"
       />
-      {paletteDragKind !== null ? (
+      {paletteDragKind !== null || dropError !== null ? (
         <div
           aria-live="polite"
-          className="pointer-events-none absolute top-3 left-1/2 z-20 -translate-x-1/2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 shadow-sm"
+          className={`pointer-events-none absolute top-3 left-1/2 z-20 -translate-x-1/2 rounded-full border px-3 py-1 text-xs font-medium shadow-sm ${
+            dropError === null
+              ? "border-primary/30 bg-accent text-accent-foreground"
+              : "border-warning/30 bg-card text-warning"
+          }`}
         >
-          {dropTargetId === null
-            ? `Drop to add ${paletteDragKind}`
-            : `Drop ${paletteDragKind} here`}
+          {dropError ??
+            (dropTargetId === null
+              ? `Drop to add ${paletteDragKind}`
+              : `Drop ${paletteDragKind} here`)}
         </div>
       ) : null}
       {editor !== null ? (
@@ -1193,7 +1636,7 @@ export function SandboxCanvas({
             <select
               aria-label="Canvas field type"
               autoFocus
-              className="h-7 w-full rounded border border-blue-500 bg-white px-1 text-[10px] font-semibold text-slate-700 uppercase shadow-md ring-2 ring-blue-100 outline-none"
+              className="border-primary bg-card text-foreground ring-ring/30 h-7 w-full rounded border px-1 text-[10px] font-semibold uppercase shadow-md ring-2 outline-none"
               value={editor.value}
               onChange={(event) => {
                 setEditor((current) =>
@@ -1224,7 +1667,7 @@ export function SandboxCanvas({
             <input
               aria-label="Canvas name editor"
               autoFocus
-              className="h-7 w-full rounded border border-blue-500 bg-white px-2 text-xs text-slate-900 shadow-md ring-2 ring-blue-100 outline-none"
+              className="border-primary bg-card text-foreground ring-ring/30 h-7 w-full rounded border px-2 text-xs shadow-md ring-2 outline-none"
               value={editor.value}
               onChange={(event) =>
                 setEditor((current) =>

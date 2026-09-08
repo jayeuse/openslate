@@ -8,12 +8,10 @@ export default function SetupPage() {
     <main className="bg-background min-h-screen">
       <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5">
         <a href="/" className="flex items-center gap-3">
-          <span className="bg-primary text-primary-foreground grid size-9 place-items-center rounded-md text-sm font-bold">
+          <span className="bg-foreground text-background grid size-9 place-items-center rounded-md text-sm font-bold">
             OS
           </span>
-          <span className="text-sm font-semibold tracking-[0.16em] uppercase">
-            OpenSlate
-          </span>
+          <span className="text-sm font-semibold">OpenSlate</span>
         </a>
         <Button asChild variant="ghost">
           <a href="/login">Back to sign in</a>
@@ -23,7 +21,7 @@ export default function SetupPage() {
         <p className="text-primary text-xs font-semibold tracking-[0.18em] uppercase">
           First deployment
         </p>
-        <h1 className="mt-4 text-4xl font-semibold tracking-tight sm:text-5xl">
+        <h1 className="mt-4 text-2xl font-semibold tracking-tight sm:text-3xl">
           Provision the administrator before you enter.
         </h1>
         <p className="text-muted-foreground mt-5 max-w-2xl text-lg leading-8">
@@ -56,7 +54,7 @@ export default function SetupPage() {
               provisioning script creates the runtime login; and the bootstrap
               script sends the invitation.
             </p>
-            <pre className="mt-4 overflow-x-auto rounded-md bg-slate-950 p-4 text-xs leading-6 text-slate-200">
+            <pre className="bg-muted text-foreground mt-4 overflow-x-auto rounded-md p-4 text-xs leading-6">
               supabase start{`\n`}
               cd backend{`\n`}
               uv sync --locked{`\n`}

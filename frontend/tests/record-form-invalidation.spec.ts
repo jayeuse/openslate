@@ -254,6 +254,15 @@ test.describe("record form invalidation", () => {
 
     await expect(page.getByText("Name is required")).toBeVisible();
     await expect(page.getByText("Notes is required")).toBeVisible();
+    await expect(page.getByLabel("Name")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await expect(page.getByLabel("Name")).toHaveAttribute(
+      "aria-describedby",
+      `${NAME_FIELD_ID}-feedback`,
+    );
+    await expect(page.getByLabel("Name")).toBeFocused();
     expect(mutations).toEqual([]);
   });
 
@@ -296,6 +305,15 @@ test.describe("record form invalidation", () => {
       .click();
 
     await expect(page.getByText("Name is required")).toBeVisible();
+    await expect(page.getByLabel("Name")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await expect(page.getByLabel("Name")).toHaveAttribute(
+      "aria-describedby",
+      `${NAME_FIELD_ID}-feedback`,
+    );
+    await expect(page.getByLabel("Name")).toBeFocused();
     expect(mutations).toEqual([]);
   });
 
@@ -373,5 +391,17 @@ test.describe("record form invalidation", () => {
     await expect(page.getByText("Name is already used")).toBeVisible();
     await expect(page.getByText("Notes are too long")).toBeVisible();
     await expect(page.getByText("Notes contain a banned term")).toBeVisible();
+    await expect(page.getByLabel("Name")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await expect(page.getByLabel("Name")).toHaveAttribute(
+      "aria-describedby",
+      `${NAME_FIELD_ID}-feedback`,
+    );
+    await expect(page.getByLabel("Name")).toBeFocused();
+    await expect(
+      page.getByRole("alert").filter({ hasText: /^Name is already used$/ }),
+    ).toBeVisible();
   });
 });

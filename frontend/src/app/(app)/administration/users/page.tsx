@@ -8,13 +8,22 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  ShieldCheck,
+  MoreHorizontal,
   Trash2,
   UserRound,
   UserRoundCheck,
   UserRoundX,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { PageHeader } from "@/components/page-header";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { toast } from "@/components/ui/toast";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +35,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Field as FormField } from "@/components/ui/field";
 import { Label } from "@/components/ui/label";
 import {
   ApiError,
@@ -91,7 +101,12 @@ export default function UsersPage() {
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [confirmation, setConfirmation] = useState<{
+    title: string;
+    description: string;
+    label: string;
+    action: () => void;
+  } | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
   async function refreshLists(): Promise<unknown> {
@@ -171,7 +186,6 @@ export default function UsersPage() {
 
   async function retryLoad() {
     setError("");
-    setNotice("");
     const reason = await refreshLists();
     if (reason) setError(safeErrorMessage(reason, "load"));
   }
@@ -185,7 +199,6 @@ export default function UsersPage() {
     if (busyAction) return;
     setBusyAction(actionKey);
     setError("");
-    setNotice("");
     let actionError: unknown;
     try {
       await action();
@@ -209,9 +222,10 @@ export default function UsersPage() {
         `The action completed, but ${safeErrorMessage(refreshError, "load").toLowerCase()}`,
       );
     } else {
-      setNotice(successMessage);
+      toast.add({ title: successMessage, type: "success" });
     }
     setBusyAction(null);
+    setConfirmation(null);
   }
 
   async function invite(event: FormEvent<HTMLFormElement>) {
@@ -233,43 +247,42 @@ export default function UsersPage() {
   }
 
   function confirmDisable(user: User) {
-    if (
-      !window.confirm(
-        `Disable ${user.username}? They will lose access immediately.`,
-      )
-    ) {
-      return;
-    }
-    void runMutation(
-      `disable-${user.id}`,
-      () =>
-        apiFetch<User>(`/users/${user.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ status: "disabled" }),
-        }),
-      `${user.username} was disabled.`,
-    );
+    setConfirmation({
+      title: `Disable ${user.username}?`,
+      description: "They will lose access immediately.",
+      label: "Disable",
+      action: () => {
+        void runMutation(
+          `disable-${user.id}`,
+          () =>
+            apiFetch<User>(`/users/${user.id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ status: "disabled" }),
+            }),
+          `${user.username} was disabled.`,
+        );
+      },
+    });
   }
 
   function confirmDelete(user: User) {
-    if (
-      !window.confirm(
-        `Delete ${user.username}? This keeps the account for possible restoration.`,
-      )
-    ) {
-      return;
-    }
-    setEditDraft(null);
-    void runMutation(
-      `delete-${user.id}`,
-      () => apiFetch(`/users/${user.id}`, { method: "DELETE" }),
-      `${user.username} was deleted.`,
-    );
+    setConfirmation({
+      title: `Delete ${user.username}?`,
+      description: "This keeps the account for possible restoration.",
+      label: "Delete",
+      action: () => {
+        setEditDraft(null);
+        void runMutation(
+          `delete-${user.id}`,
+          () => apiFetch(`/users/${user.id}`, { method: "DELETE" }),
+          `${user.username} was deleted.`,
+        );
+      },
+    });
   }
 
   function editUser(user: User) {
     setError("");
-    setNotice("");
     setEditDraft({
       id: user.id,
       username: user.username,
@@ -306,6 +319,17 @@ export default function UsersPage() {
 
   return (
     <>
+      <ConfirmationDialog
+        open={!!confirmation}
+        onOpenChange={(open) => {
+          if (!open) setConfirmation(null);
+        }}
+        title={confirmation?.title ?? "Confirm action"}
+        description={confirmation?.description}
+        confirmLabel={confirmation?.label ?? "Confirm"}
+        pending={!!busyAction}
+        onConfirm={() => confirmation?.action()}
+      />
       <PageHeader
         eyebrow="Administration"
         title="People"
@@ -328,12 +352,7 @@ export default function UsersPage() {
           </Button>
         </Alert>
       )}
-      {notice && (
-        <Alert variant="success" className="mb-5">
-          {notice}
-        </Alert>
-      )}
-      <div className="grid gap-5 lg:grid-cols-[1fr_0.44fr]">
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.54fr)]">
         <Card>
           <CardHeader>
             <CardTitle>People</CardTitle>
@@ -344,9 +363,14 @@ export default function UsersPage() {
           </CardHeader>
           <CardContent className="p-0">
             {loading && users.length === 0 ? (
-              <p className="text-muted-foreground p-5 text-sm" role="status">
-                Loading people…
-              </p>
+              <div className="space-y-4 p-5" aria-busy="true">
+                <span className="sr-only" role="status">
+                  Loading people…
+                </span>
+                {[0, 1, 2].map((row) => (
+                  <Skeleton key={row} className="h-12 w-full" />
+                ))}
+              </div>
             ) : users.length === 0 ? (
               <p className="text-muted-foreground p-5 text-sm">
                 No people found.
@@ -361,39 +385,55 @@ export default function UsersPage() {
                     Refreshing authoritative list…
                   </p>
                 )}
+                <div className="bg-muted/60 text-muted-foreground hidden grid-cols-[minmax(0,1fr)_100px_90px_44px] gap-3 px-5 py-2 text-xs sm:grid">
+                  <span>Name</span>
+                  <span>Role</span>
+                  <span>Status</span>
+                  <span className="text-right">Actions</span>
+                </div>
                 {users.map((user) => (
                   <div
                     key={user.id}
                     data-user-id={user.id}
-                    className="border-border flex flex-col gap-4 border-b p-5 last:border-b-0 sm:flex-row sm:items-start"
+                    className="border-border grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b px-5 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_100px_90px_44px]"
                   >
                     <div className="flex min-w-0 flex-1 gap-3">
-                      <div className="bg-accent text-accent-foreground grid size-9 shrink-0 place-items-center rounded-full">
+                      <div className="bg-muted text-muted-foreground grid size-9 shrink-0 place-items-center rounded-full">
                         <UserRound size={17} aria-hidden="true" />
                       </div>
                       <div className="min-w-0">
                         <p className="font-medium break-words">
                           {user.username}
                         </p>
-                        <p className="text-muted-foreground mt-1 text-sm break-all">
+                        <p className="text-muted-foreground mt-0.5 text-xs break-all">
                           {user.email}
-                        </p>
-                        <p className="text-muted-foreground mt-2 flex items-center gap-1.5 text-xs">
-                          <ShieldCheck size={13} aria-hidden="true" />
-                          <span>Role: {roleName(user)}</span>
                         </p>
                       </div>
                     </div>
-                    <div className="flex flex-col items-start gap-3 sm:items-end">
+                    <p className="text-muted-foreground col-start-1 row-start-2 text-xs sm:col-auto sm:row-auto">
+                      <span className="sr-only">Role: </span>
+                      {roleName(user)}
+                    </p>
+                    <div className="col-start-1 row-start-3 sm:col-auto sm:row-auto">
                       <Badge variant={statusVariant(user)}>
                         {statusLabel(user)}
                       </Badge>
-                      <div className="flex flex-wrap gap-2">
-                        {user.status === "pending" && !user.is_deleted && (
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
                           <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Actions for ${user.username}`}
+                          />
+                        }
+                      >
+                        <MoreHorizontal size={17} aria-hidden="true" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent>
+                        {user.status === "pending" && !user.is_deleted && (
+                          <DropdownMenuItem
                             aria-label={`Resend invitation to ${user.email}`}
                             onClick={() =>
                               void runMutation(
@@ -409,13 +449,10 @@ export default function UsersPage() {
                             disabled={!!busyAction}
                           >
                             <Mail aria-hidden="true" /> Resend
-                          </Button>
+                          </DropdownMenuItem>
                         )}
                         {user.status === "disabled" && !user.is_deleted && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
+                          <DropdownMenuItem
                             aria-label={`Activate ${user.username}`}
                             onClick={() =>
                               void runMutation(
@@ -431,37 +468,28 @@ export default function UsersPage() {
                             disabled={!!busyAction}
                           >
                             <UserRoundCheck aria-hidden="true" /> Activate
-                          </Button>
+                          </DropdownMenuItem>
                         )}
                         {user.status === "active" && !user.is_deleted && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
+                          <DropdownMenuItem
                             aria-label={`Disable ${user.username}`}
                             onClick={() => confirmDisable(user)}
                             disabled={!!busyAction}
                           >
                             <UserRoundX aria-hidden="true" /> Disable
-                          </Button>
+                          </DropdownMenuItem>
                         )}
                         {!user.is_deleted && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
+                          <DropdownMenuItem
                             aria-label={`Edit username and role for ${user.username}`}
                             onClick={() => editUser(user)}
                             disabled={!!busyAction}
                           >
                             <Pencil aria-hidden="true" /> Edit
-                          </Button>
+                          </DropdownMenuItem>
                         )}
                         {!user.is_deleted ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
+                          <DropdownMenuItem
                             aria-label={`Delete ${user.username}`}
                             onClick={() => confirmDelete(user)}
                             disabled={!!busyAction}
@@ -471,12 +499,9 @@ export default function UsersPage() {
                               aria-hidden="true"
                             />{" "}
                             Delete
-                          </Button>
+                          </DropdownMenuItem>
                         ) : (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
+                          <DropdownMenuItem
                             aria-label={`Restore ${user.username}`}
                             onClick={() =>
                               void runMutation(
@@ -491,12 +516,9 @@ export default function UsersPage() {
                             disabled={!!busyAction}
                           >
                             <RotateCcw aria-hidden="true" /> Restore
-                          </Button>
+                          </DropdownMenuItem>
                         )}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
+                        <DropdownMenuItem
                           aria-label={`Reconcile ${user.username} authentication`}
                           onClick={() =>
                             void runMutation(
@@ -514,12 +536,12 @@ export default function UsersPage() {
                           disabled={!!busyAction}
                         >
                           <RefreshCw aria-hidden="true" /> Reconcile
-                        </Button>
-                      </div>
-                    </div>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     {editDraft?.id === user.id && (
                       <form
-                        className="bg-muted/40 border-border flex w-full flex-col gap-4 rounded-[var(--radius)] border p-4 sm:ml-12 sm:flex-row sm:flex-wrap sm:items-end"
+                        className="bg-muted/40 border-border col-span-full flex w-full min-w-0 flex-col gap-4 rounded-[var(--radius)] border p-4 sm:flex-row sm:flex-wrap sm:items-end"
                         onSubmit={saveUser}
                       >
                         <div className="min-w-52 flex-1 space-y-2">
@@ -598,7 +620,7 @@ export default function UsersPage() {
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={invite}>
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label htmlFor="staff-email">Email</Label>
                 <Input
                   id="staff-email"
@@ -608,8 +630,8 @@ export default function UsersPage() {
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                 />
-              </div>
-              <div className="space-y-2">
+              </FormField>
+              <FormField className="space-y-2">
                 <Label htmlFor="staff-username">Username</Label>
                 <Input
                   id="staff-username"
@@ -619,8 +641,8 @@ export default function UsersPage() {
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
                 />
-              </div>
-              <div className="space-y-2">
+              </FormField>
+              <FormField className="space-y-2">
                 <Label htmlFor="staff-role">Role</Label>
                 <select
                   id="staff-role"
@@ -640,7 +662,7 @@ export default function UsersPage() {
                     ))
                   )}
                 </select>
-              </div>
+              </FormField>
               <Button className="w-full" disabled={!!busyAction || !roleId}>
                 <Mail aria-hidden="true" />
                 {busyAction === "invite" ? (

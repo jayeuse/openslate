@@ -7,7 +7,11 @@ import { useRouter } from "next/navigation";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  Field as FormField,
+  FieldControl,
+  FieldLabel,
+} from "@/components/ui/field";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -48,18 +52,13 @@ export default function LoginPage() {
       <section className="bg-sidebar text-sidebar-foreground hidden p-10 lg:flex lg:flex-col lg:justify-between">
         <div>
           <a href="/" className="flex items-center gap-3">
-            <span className="bg-primary text-primary-foreground grid size-9 place-items-center rounded-md text-sm font-bold">
+            <span className="bg-foreground text-background grid size-9 place-items-center rounded-md text-sm font-bold">
               OS
             </span>
-            <span className="font-semibold tracking-[0.14em] uppercase">
-              OpenSlate
-            </span>
+            <span className="font-semibold">OpenSlate</span>
           </a>
           <div className="mt-32 max-w-md">
-            <p className="text-sidebar-muted text-xs font-semibold tracking-[0.18em] uppercase">
-              Operations workspace
-            </p>
-            <h1 className="mt-5 text-5xl leading-tight font-semibold tracking-[-0.04em]">
+            <h1 className="mt-5 text-4xl leading-tight font-semibold tracking-[-0.04em]">
               A clear view of what comes next.
             </h1>
             <p className="text-sidebar-muted mt-6 leading-7">
@@ -78,13 +77,13 @@ export default function LoginPage() {
             href="/"
             className="mb-12 inline-flex items-center gap-2 text-sm font-semibold lg:hidden"
           >
-            <span className="bg-primary text-primary-foreground grid size-8 place-items-center rounded-md text-xs">
+            <span className="bg-foreground text-background grid size-8 place-items-center rounded-md text-xs">
               OS
             </span>
             OpenSlate
           </a>
           <div className="mb-8">
-            <div className="bg-accent text-accent-foreground mb-5 grid size-11 place-items-center rounded-full">
+            <div className="bg-muted text-muted-foreground mb-5 grid size-11 place-items-center rounded-full">
               <LockKeyhole size={20} />
             </div>
             <h2 className="text-2xl font-semibold">Welcome back</h2>
@@ -98,32 +97,40 @@ export default function LoginPage() {
             </Alert>
           )}
           <form className="space-y-5" onSubmit={submit}>
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
+            <FormField className="space-y-2">
+              <FieldLabel htmlFor="email">Email</FieldLabel>
+              <FieldControl
+                render={
+                  <Input
+                    id="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                  />
+                }
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                minLength={12}
-                required
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
+            </FormField>
+            <FormField className="space-y-2">
+              <FieldLabel htmlFor="password">Password</FieldLabel>
+              <FieldControl
+                render={
+                  <Input
+                    id="password"
+                    type="password"
+                    autoComplete="current-password"
+                    minLength={12}
+                    required
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                  />
+                }
               />
               <p className="text-muted-foreground text-xs">
                 Use the credentials provisioned for your administrator account.
               </p>
-            </div>
+            </FormField>
             <Button className="w-full" size="lg" disabled={pending}>
               {pending ? (
                 "Signing in…"

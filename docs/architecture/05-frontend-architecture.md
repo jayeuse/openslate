@@ -254,7 +254,7 @@ Important current form patterns include:
   single replacement or multiple links, shows hidden-link reasons, and leaves
   incoming links read-only.
 - `LifecycleAction` is a preview → exact-name → password wizard for close or
-  purge. Reopen uses the browser's native confirmation dialog and a
+  purge. Reopen uses the shared in-app Alert Dialog and a
   `{ confirmed: true }` request.
 - `frontend/src/app/administration/roles/page.tsx` parses the permissions textarea with
   `JSON.parse` and checks only that it is an object. Permission metadata is
@@ -272,10 +272,11 @@ duplicating them.
 
 - `AppPage` owns the initial session-check loading state and redirects on a
   failed check.
-- Data pages usually render plain text such as “Loading records…” or “Loading
-  departments…” from local state. `frontend/src/components/ui/skeleton.tsx` exists but
-  is not used by the current route pages, and there are no route-level
-  `loading.tsx` Suspense boundaries.
+- Data pages use local loading state with skeletons for initial content and
+  quiet progress indicators for populated refreshes. Route-level `loading.tsx`
+  skeletons cover departments, records, People, and audit views. Initial errors
+  do not become successful empty states; available retry actions reuse the
+  existing requests.
 - Most mutations and loads render a destructive `Alert` with a “Try again”
   action or an inline error. The audit page displays a text error without a
   retry action. `ApiError` preserves status/details/code for lifecycle-aware
@@ -296,9 +297,49 @@ limitations](20-architecture-risks.md) docs for coverage and impact.
 `frontend/src/components/app-shell.tsx:AppShell` is the protected chrome: a fixed
 desktop sidebar, a mobile overlay menu, a sticky header, account/sign-out
 controls, a skip-to-content link, and a `main#main-content` container. Its
-primary navigation targets workspace, departments, people, roles, and audit;
-appearance is a secondary setting. `frontend/src/components/page-header.tsx:PageHeader`
-provides the repeated eyebrow/title/description/actions pattern.
+primary navigation follows OpenView, Boards, OpenComms, Sandbox, Access, and
+Manage. Settings → Appearance selects OpenSlate or Classic, in that order;
+the OpenSlate logo is the workspace shortcut in both structures. Structure,
+ordinary-page collapse state, and expanded width persist in browser storage.
+The desktop sidebar uses locally adapted shadcn Base UI Sidebar primitives,
+with controlled state and a synchronized layout spacer. Mobile navigation uses
+a Base UI Dialog-backed Sheet with focus restoration and scroll locking.
+It uses a 64px collapsed rail and a
+256px default/minimum
+expanded width, resizable up to 400px. Its single footer toggle sits above
+Appearance; width and page offset animate together for 180ms, except while
+resizing or with reduced motion. The expanded-only separator supports pointer
+and keyboard resizing, with Home or double-click restoring 256px. Mobile uses
+a fixed-width dismissible drawer. Clicking a collapsed section expands the
+sidebar and opens its nested items inline. Boards and OpenComms remain future features.
+`frontend/src/components/page-header.tsx:PageHeader` provides compact titles,
+descriptions, and actions. The ordinary-page top bar uses a breadcrumb navigation
+landmark rather than another page heading. Ancestors link only to existing routes;
+entity labels come from data already loaded by the current page.
+
+Sandbox opens with a separate 64px navigation rail. Its
+Structure panel has a 408px minimum/default width and a pointer/keyboard
+separator, preserving at least 360px of canvas. Its preferred width persists
+separately from navigation preferences and is temporarily clamped to available
+space. Smaller editor containers use a dismissible Structure drawer, exclusive
+with navigation. There is no right-side panel. Trailing creation rows and item
+removal controls live in the hierarchy; explicit Edit actions open properties
+in a dialog. Creation is freeform, subject to parent and relationship
+prerequisites rather than workflow stages. Module cards display
+field names, types, and required/optional markers in alternating rows. Selected
+departments expose a corner resize grip with pointer, touch, and keyboard access.
+Frames retain their chosen size and grow only when needed to contain children;
+resizing never rearranges modules and is undoable. Structure groups have separate
+spacing, and Sandbox controls use scoped pressed/focus feedback. Sandbox surfaces
+use dimmer neutral tones. Relationships use animated dashed lines without
+arrowheads; reduced-motion preferences disable the animation while preserving
+the dashed appearance and stored relationship direction.
+The canvas grid uses 24-unit cells with major lines every five cells. Node
+movement and creation-row drops snap to the grid; Alt/Option permits free placement.
+The grid follows pan/zoom, while theme and available-size updates preserve the
+live graph and its positions. The sidebar Appearance action always navigates
+to Settings → Appearance, including from Sandbox. Work remains session-only
+and resets on navigation away or reload.
 
 Reusable primitives in `frontend/src/components/ui/` are small typed wrappers for
 `Button`, `Input`, `Label`, `Alert`, `Badge`, `Card`, `Separator`, and
@@ -306,6 +347,26 @@ Reusable primitives in `frontend/src/components/ui/` are small typed wrappers fo
 `asChild`, variant, and size behavior. Domain-specific shared components are
 `LifecycleAction`, `RelationshipManager`, `RealtimeProvider`, and
 `ApiStatus` (the latter is implemented but not mounted by a current page).
+
+Stateful interactions use local shadcn-style Base UI wrappers: Dialog and Alert
+Dialog for editing and confirmations, Sheet for mobile panels, Menu for account
+and People actions, Tabs for audit views, Radio Group for Appearance choices,
+Field for associated form errors, and Toast for confirmed action success.
+Lifecycle confirmation steps and backend validation remain authoritative.
+Errors that require action remain inline. Base UI receives the existing request
+nonce through its CSP provider; production CSP is not relaxed for components.
+
+Relationship target pickers use a Combobox with explicit paginated loading.
+Opening a picker loads the first page; Load more follows the existing API's
+offset and `has_more` response. Search filters only loaded records by readable
+label and full ID, and the UI identifies incomplete results. Labels use available
+non-redacted primitive field values with an ID fallback. Picker data remains
+ordinary component state; no shared or persistent frontend cache is introduced.
+
+Initial client loading states use layout-shaped skeletons with a loading status
+and busy region. Refreshes retain populated content, while forms retain drafts.
+Skeleton decoration is hidden from assistive technology and respects reduced
+motion. Existing route-level skeletons remain in use.
 
 `frontend/src/app/globals.css` is the design-token layer: Tailwind CSS 4, CSS variables for
 background/foreground/surface/status/sidebar colors, radius, and data-attribute
@@ -365,7 +426,7 @@ flag. Configuration ownership and cutover implications are tracked in
 | Realtime invalidation                                         | **Partial**                               | Private Broadcast invalidation and broad remount/refetch work; no polling fallback, row payload handling, or surfaced subscription failure exists.                                                          |
 | Setup guidance                                                | **Implemented**                           | `/setup` points to the supported Supabase/Alembic/runtime-role/administrator bootstrap commands; the root README remains the canonical environment and operations guide.     |
 | Files, reports, views, and application storage UI             | **Absent**                                | No frontend routes or client API for these capabilities; Storage is only a platform foundation at present.                                                                                                  |
-| Loading and error system                                      | **Partial**                               | Local text/alerts and root error/not-found UI exist; route loading files, global error handling, and consistent recovery are absent.                                                                        |
+| Loading and error system                                      | **Partial**                               | Initial client and route skeletons, retained refresh content, inline errors/retries, and root error/not-found UI exist; no global-error boundary or app-wide data cache is introduced.                                                                        |
 | Frontend automated verification                               | **Partial**                               | Playwright covers public pages plus mocked lifecycle/relationship flows and one home-page axe scan; there is no unit/component test framework, and session/BFF/JWT/database/realtime integration is mocked. |
 
 The table intentionally separates **static UI** from Next.js static

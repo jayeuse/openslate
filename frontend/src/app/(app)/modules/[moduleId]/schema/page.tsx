@@ -10,12 +10,15 @@ import {
 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { LifecycleAction } from "@/components/lifecycle-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useBreadcrumbLabels } from "@/components/app-breadcrumbs";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Field as FormField } from "@/components/ui/field";
 import { Label } from "@/components/ui/label";
 import {
   ApiError,
@@ -101,6 +104,12 @@ export default function SchemaPage() {
     : `/modules/${moduleId}`;
   const [module, setModule] = useState<Module | null>(null);
   const [department, setDepartment] = useState<Department | null>(null);
+  useBreadcrumbLabels({
+    department: department
+      ? { id: department.id, name: department.department_name }
+      : undefined,
+    module: module ? { id: module.id, name: module.module_name } : undefined,
+  });
   const [fields, setFields] = useState<Field[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
   const [name, setName] = useState("");
@@ -113,7 +122,9 @@ export default function SchemaPage() {
   const [multipleSources, setMultipleSources] = useState(false);
   const [error, setError] = useState("");
   const [mutationBusy, setMutationBusy] = useState<SchemaMutation | null>(null);
-  async function load() {
+  const [refreshing, setRefreshing] = useState(false);
+  async function load(propagateError = false) {
+    setRefreshing(true);
     try {
       const current = await apiFetch<Module>(`/modules/${moduleId}`);
       const [parent, result, moduleResult] = await Promise.all([
@@ -131,6 +142,9 @@ export default function SchemaPage() {
       setModules(moduleResult.items);
     } catch (reason) {
       setError(safeErrorMessage(reason, "load"));
+      if (propagateError) throw reason;
+    } finally {
+      setRefreshing(false);
     }
   }
   useEffect(() => {
@@ -274,8 +288,26 @@ export default function SchemaPage() {
   const schemaMutationBusy = mutationBusy !== null;
   const auditMutationFieldId =
     mutationBusy?.kind === "audit-redaction" ? mutationBusy.fieldId : null;
+  if (!module && !error)
+    return (
+      <div aria-busy="true" className="space-y-6">
+        <span role="status" className="sr-only">
+          Loading schema…
+        </span>
+        <Skeleton className="h-16 w-2/3" />
+        <div className="grid gap-5 md:grid-cols-2">
+          <Skeleton className="h-72" />
+          <Skeleton className="h-72" />
+        </div>
+      </div>
+    );
   return (
     <>
+      {refreshing && module && (
+        <p role="status" className="text-muted-foreground mb-3 text-xs">
+          Refreshing…
+        </p>
+      )}
       <PageHeader
         eyebrow="Module / Schema"
         title="Field builder"
@@ -457,7 +489,7 @@ export default function SchemaPage() {
                         targetId={field.id}
                         targetName={field.name}
                         isClosed={field.is_deleted}
-                        onComplete={load}
+                        onComplete={() => load(true)}
                       />
                     </div>
                   </details>
@@ -472,7 +504,7 @@ export default function SchemaPage() {
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={addField}>
-              <div className="space-y-2">
+              <FormField className="space-y-2">
                 <Label htmlFor="field-name">Field name</Label>
                 <Input
                   id="field-name"
@@ -482,8 +514,8 @@ export default function SchemaPage() {
                   onChange={(event) => setName(event.target.value)}
                   placeholder="e.g. Account owner"
                 />
-              </div>
-              <div className="space-y-2">
+              </FormField>
+              <FormField className="space-y-2">
                 <Label htmlFor="field-type">Type</Label>
                 <select
                   id="field-type"
@@ -502,9 +534,9 @@ export default function SchemaPage() {
                     </option>
                   ))}
                 </select>
-              </div>
+              </FormField>
               {type === "select" && (
-                <div className="space-y-2">
+                <FormField className="space-y-2">
                   <Label htmlFor="field-options">Options</Label>
                   <Input
                     id="field-options"
@@ -517,11 +549,11 @@ export default function SchemaPage() {
                   <p className="text-muted-foreground text-xs">
                     Enter unique values separated by commas.
                   </p>
-                </div>
+                </FormField>
               )}
               {type === "relationship" && (
                 <>
-                  <div className="space-y-2">
+                  <FormField className="space-y-2">
                     <Label htmlFor="target-module">Target module</Label>
                     <select
                       id="target-module"
@@ -540,7 +572,7 @@ export default function SchemaPage() {
                         </option>
                       ))}
                     </select>
-                  </div>
+                  </FormField>
                   <fieldset
                     className="space-y-2"
                     aria-label="Targets per source"

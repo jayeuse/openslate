@@ -7,7 +7,7 @@ import type { OptionHTMLAttributes, SelectHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
 const selectVariants = cva(
-  "border-input bg-card text-foreground focus-visible:border-primary w-full appearance-none rounded-[var(--radius)] border pr-9 shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50",
+  "border-input bg-card text-foreground focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring w-full appearance-none rounded-[var(--radius)] border pr-9 transition disabled:cursor-not-allowed disabled:opacity-50",
   {
     variants: {
       size: {
