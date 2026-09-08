@@ -1,187 +1,57 @@
 # Repository Guide
 
-## Scope and Boundaries
-
-Read the nearest `AGENTS.md` before work in a subdirectory. The nearest file takes priority in that scope.
-
-The repository root owns orchestration and documentation. Run Supabase commands at the root. Run Python, uv, and Alembic commands in `backend/`. Run npm and Playwright commands in `frontend/`.
-
-Local development uses Supabase CLI with host-run FastAPI and Next.js. Do not add root Compose orchestration, another database UI, a reverse proxy, or filesystem storage as the supported local path.
-
-FastAPI is the application data API. Do not write application data through the Supabase Data API. Alembic owns application schema changes. Do not add application migrations or seeds under `supabase/`.
-
-`backend/app/core/` owns cross-cutting infrastructure. `backend/app/common/` owns shared application code. `backend/app/systems/<capability>/` owns domain behavior.
-
-Active capabilities are auth, users, roles, departments, modules, fields, records, relationships, lifecycle, and audit. Other system directories remain placeholders until requested.
-
-## Task Rules
-
-Use the smallest sufficient change. The latest user instruction has priority.
-
-Before editing, identify the exact outcome, non-goals, expected files, and narrowest proof. Read the relevant implementation, tests, configuration, and scoped `AGENTS.md` files first.
-
-Use the requested access path. Do not replace CLI, SSH, or API work with UI automation unless the requested path is unavailable or the user requests UI operation.
-
-For troubleshooting, gather evidence first. Change the smallest relevant part. Recheck the original problem. Stop when the requested behavior works.
-
-Do not add speculative abstractions, compatibility layers, future schemas, configuration options, services, or unrelated cleanup. Add an abstraction only for a current requirement or a second real caller.
-
-Prefer suitable existing libraries and components over rebuilding functionality they already provide. You may install dependencies needed for the requested work without separate approval. Reuse the current stack where practical, keep additions relevant to the task, and verify the integration.
-
-If the work adds a new abstraction layer, a new configuration surface, roughly more than five files, or a speculative option, stop and reduce the design first.
-
-Reuse existing helpers, patterns, and tests. Fix the root cause. Remove replaced code unless compatibility is requested.
-
-VibeGuard U-17/U-29 applies only to real error paths in the requested change. Do not use it to justify extra validators or compatibility layers.
-
-## Approval
-
-Read-only discovery does not need approval.
-
-Get approval before you expand scope, touch unrelated files, add a service, or change an unrequested public API, schema, storage format, or wire format.
-
-Also get approval before you delete data, drop data, overwrite user work, discard uncommitted changes, or rewrite Git history.
-
-## Verification
-
-Run the narrowest existing check that proves the change.
-
-Extend the nearest existing test before you create a new test file. Add tests only for changed behavior, a known regression risk, or an explicit request.
-
-Before completion, inspect the diff. Remove debug code, dead code, backups, scratch files, and unrelated changes.
-
-A task is complete when the requested behavior works, the acceptance criteria pass, relevant checks pass, and the diff contains only necessary changes.
-
-Report the verification commands and results. Also report assumptions, limitations, and runtime behavior that you did not verify.
-
-Update existing documentation only when the implementation changes documented behavior. Use the smallest existing document with the correct scope.
-
-## Setup
-
-Required runtimes are Python `>=3.12,<3.15` and Node `>=24`. Use `backend/uv.lock` and `frontend/package-lock.json`.
-
-Start local infrastructure from the root:
-
-```bash
-supabase start
-supabase status -o env
-```
-
-Treat the full Supabase status output as secret.
-
-Set up the backend from `backend/`:
-
-```bash
-uv sync --locked
-uv run alembic upgrade head
-uv run alembic check
-```
-
-Run the backend with:
-
-```bash
-uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-Use `frontend/.env.local` for frontend environment values. Do not source the root `.env` into npm or Next.js.
-
-Run the frontend from `frontend/`:
-
-```bash
-npm ci
-npm run dev -- --hostname 127.0.0.1
-```
-
-For a destructive local reset:
-
-```bash
-supabase start
-supabase db reset
-cd backend
-uv run alembic upgrade head
-```
-
-Supabase reset does not restore the Alembic-owned application schema.
-
-## Verification Commands
-
-Run backend verification from `backend/`:
-
-```bash
-uv run ruff check .
-uv run mypy app scripts
-TEST_DATABASE_URL="$DATABASE_URL" uv run pytest
-uv run alembic check
-```
-
-Run frontend verification from `frontend/`:
-
-```bash
-npm run verify
-```
-
-Use focused tests when the full suite is not necessary.
-
-## Global Data and Security Rules
-
-`MIGRATION_DATABASE_URL` is the Alembic owner connection. `DATABASE_URL` uses the `openslate_runtime` login. Do not substitute SQLite.
-
-Supabase Auth owns identities, passwords, and invitations. Browser code uses only the publishable key. Keep private Supabase credentials on the backend.
-
-Domain authorization uses ten flat read/write capabilities. Malformed permission documents fail closed. The literal `admin` role has all capabilities.
-
-Application mutations use `AuditSession` and individual ORM changes. Do not use bulk or raw ORM mutation statements. Audit covers application ORM mutations only.
-
-Realtime uses private Broadcast invalidation. Do not send row snapshots in realtime payloads.
-
-Purge is disabled by default with `LIFECYCLE_PURGE_ENABLED=false`.
-
-## Scoped References
-
-Use `backend/AGENTS.md` for backend architecture, API, audit, persistence, and testing rules.
-
-Use `backend/migrations/AGENTS.md` for schema changes and Alembic workflow.
-
-Use `frontend/AGENTS.md` for Next.js, React, auth, data access, styling, and frontend testing rules.
-
-Use `infra/AGENTS.md` for image and deployment artifact rules.
-
-Use `docs/architecture/README.md` for deeper architecture details.
-
-For implementation, troubleshooting, multi-agent work, or explicit evaluation, read `.agents/orchestration/PROTOCOL.md`. Apply its refresh-context -> act -> inspect-evidence -> evaluate loop; keep small tasks in the conversation. If the local protocol is missing, report the missing setup and use the rules here without claiming the full workflow is installed.
-
-## Codex Orchestration
-
-Use the current primary model and approval settings from the user's global Codex configuration. Project workers live in `.codex/agents/`; project skills live in `.agents/skills/`. Keep the existing worker model overrides. Load only skills relevant to the assigned task. Repository instructions and installed project commands take precedence over generic skill examples (including pnpm, Pyright, Compose, or async SQLAlchemy examples that do not match this repository).
-
-Handle small, focused tasks directly. Delegate only when a bounded task benefits from separate work; do not duplicate verified discovery or use multiple workers for the same investigation without evidence of distinct responsibilities.
-
-For planning-only requests, gather evidence and return a plan without implementation. Use `explore` for narrow repository questions and `architect` or `security` for relevant decisions. Split plans by the domains actually affected.
-
-For implementation, the parent owns task decomposition, dependency ordering, integration, conflict resolution, and final review. Route work using the existing project workers:
-
-| Work | Worker |
-| --- | --- |
-| Repository discovery and cross-domain tracing | `explore` |
-| FastAPI, Python services, schemas, authorization, ORM mappings | `backend-general` |
-| React/Next.js pages, state, forms, API integration | `frontend-general` |
-| Alembic migrations, PostgreSQL schema, indexes, privileges | `db-general` |
-| Existing local runtime, environment, deployment configuration | `infra-general` |
-| Backend, frontend, or database code-level verification | `backend-test`, `frontend-test`, `db-test` |
-| Live browser acceptance checks once the app is running | `playwright-tester` |
-| Confirmed defects with unclear causes | `backend-debug`, `frontend-debug`, `db-debug`, `infra-debug` |
-| Architecture and security review | `architect`, `security` |
-
-Give each worker a precise objective, owned files or module boundaries, constraints, dependencies, acceptance criteria, expected evidence, and stopping condition. Tell workers they share the checkout: preserve others' edits, do not revert unrelated changes, and adapt to completed work. Parallelize only independent tasks with disjoint write ownership. Workers return to the parent instead of delegating further; their `[agents] enabled = false` enforces this.
-
-Call the first-pass reviewer before `architect-deep`, `security-deep`, or `debug-deep`. Escalate only after reported low confidence or an explicit escalation recommendation, carrying forward findings, evidence, uncertainties, and file references. Continue an incomplete worker with the exact remaining objective; do not restart completed investigation or treat unfinished implementation as a defect.
-
-Inspect every worker result. Run the narrowest relevant verification, resolve conflicting findings, and retest the original failing behavior after fixes. A missing running service is an environment blocker, not proof of an application defect. Browser acceptance checks complement code-level tests.
-
-Continue authorized work until acceptance criteria and relevant checks pass or a concrete blocker requires user input. Do not create goals or scheduled continuations unless requested. OpenCode's goal and VibeGuard plugins are not Codex plugins; do not claim their hooks, automatic turn limits, or enforcement were migrated.
-
-Context7 and Playwright are inherited from global Codex MCP settings; manage them through Desktop Settings when available. PostgreSQL remains project-scoped in `.codex/config.toml`. Do not add filesystem, sequential-thinking, or memory MCPs without a demonstrated need. Keep connection credentials out of tracked files and reports.
-
-For multi-worker task coordination, use `.agents/orchestration/PROTOCOL.md`. Keep simple task state in the conversation. For substantial multi-step work or a handoff, use its Markdown run record in the already-ignored `.agent-runtime/` directory. Record evidence as work happens and checkpoint before pausing; no runtime JSON schema is required. Promote cross-run lessons into memory only when the user explicitly requests it.
-
-After changing local agent setup, run `uv run python ../scripts/agent-task.py doctor` from `backend/`. This read-only check validates local workflow assets and worker configuration; it does not run application acceptance tests or enforce approvals. The protocol defines the evidence required for task completion and the manual multi-run maintenance review. Do not claim background scheduling, automatic retries, per-worker cost tracing, or isolated worker worktrees unless those capabilities were actually used and verified.
+## Scope and architecture
+- Read the nearest `AGENTS.md` before subdirectory work; it takes priority in its scope. Latest user instructions take priority.
+- Root owns orchestration/documentation and Supabase CLI commands; run Python/uv/Alembic in `backend/`, npm/Playwright in `frontend/`.
+- Local development is Supabase CLI plus host-run FastAPI and Next.js. Do not add root Compose, another database UI, a reverse proxy, or filesystem storage as the supported local path.
+- FastAPI owns application data access; never write application data through Supabase Data API. Alembic owns application schema; no application migrations/seeds under `supabase/`.
+- Backend `app/core/` owns infrastructure, `app/common/` shared application code, and `app/systems/<capability>/` domain behavior.
+- Active capabilities: auth, users, roles, departments, modules, fields, records, relationships, lifecycle, audit. Other systems remain placeholders until requested.
+- Read scoped guides in `backend/`, `backend/migrations/`, `frontend/`, `infra/`, `supabase/`, and `docs/`; deeper architecture starts at `docs/architecture/README.md`.
+
+## Task scope and approval
+- Before editing, define outcome, non-goals, expected files, and narrowest proof; inspect relevant implementation, tests, configuration, and instructions.
+- Use the requested CLI/SSH/API access path; use UI automation only when that path is unavailable or UI operation is requested.
+- Make the smallest sufficient change: gather evidence, fix the root cause, reuse helpers/patterns/tests, remove replaced code unless compatibility is requested, and recheck the original problem.
+- Avoid speculative abstractions, compatibility layers, future schemas/options/services, and unrelated cleanup. Abstract only for a current requirement or a second real caller.
+- Prefer existing libraries/components; needed dependencies may be installed without separate approval, but keep them relevant and verify integration.
+- If adding an abstraction layer, configuration surface, roughly more than five files, or a speculative option, stop and reduce the design first.
+- Read-only discovery needs no approval. Obtain approval for scope expansion, unrelated files, new services, or unrequested public API/schema/storage/wire-format changes.
+- Obtain approval before deleting/dropping data, overwriting user work, discarding uncommitted changes, or rewriting Git history; preserve unrelated edits.
+- VibeGuard U-17/U-29 applies only to real error paths in scope, never as justification for extra validators or compatibility layers.
+
+## Setup and security
+- Require Python `>=3.12,<3.15`, Node `>=24`; use `backend/uv.lock` and `frontend/package-lock.json`.
+- Root startup: `supabase start`, then `supabase status -o env`; treat the full status output as secret.
+- Backend setup: `uv sync --locked`, `uv run alembic upgrade head`, `uv run alembic check`; serve with `uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`.
+- Frontend: use `frontend/.env.local`, never source root `.env` into npm/Next.js; run `npm ci`, then `npm run dev -- --hostname 127.0.0.1`.
+- Approved destructive reset: root `supabase start`, `supabase db reset`, then backend `uv run alembic upgrade head`; Supabase reset does not restore application schema.
+- `MIGRATION_DATABASE_URL` is Alembic's owner connection; `DATABASE_URL` uses `openslate_runtime`. Never substitute SQLite.
+- Supabase Auth owns identities/passwords/invitations. Browser code uses only the publishable key; private credentials stay on the backend and out of tracked files/reports.
+- Authorization uses ten flat read/write capabilities; malformed permission documents fail closed; literal `admin` has all capabilities.
+- Mutations use `AuditSession` and individual ORM changes, never bulk/raw ORM mutations. Audit covers application ORM mutations only.
+- Realtime is private Broadcast invalidation without row snapshots. Purge defaults to `LIFECYCLE_PURGE_ENABLED=false`.
+
+## Verification and completion
+- Run the narrowest existing checks proving the change; extend the nearest test before adding files, and add tests only for changed behavior, known regression risk, or explicit requests.
+- Backend checks: `uv run ruff check .`, `uv run mypy app scripts`, `TEST_DATABASE_URL="$DATABASE_URL" uv run pytest`, `uv run alembic check`; frontend: `npm run verify`. Focus runs when sufficient.
+- Verify rendered UI behavior in a browser when runnable; static checks and worker claims do not prove runtime behavior. Missing services are environment blockers, not application defects.
+- Inspect the final diff; remove debug/dead code, backups, scratch files, and unrelated changes. Update the smallest existing document only when documented behavior changes.
+- Continue until requested behavior, acceptance criteria, relevant checks, and diff scope pass, or a concrete blocker needs input. Report commands/results, assumptions, limitations, and unverified runtime behavior.
+
+## Codex orchestration
+- For implementation, troubleshooting, multi-agent work, or explicit evaluation, read `.agents/orchestration/PROTOCOL.md`; apply refresh-context → act → inspect-evidence → evaluate. If missing, report it and follow this guide without claiming full setup.
+- Preserve global primary model/approval settings and existing worker model overrides. Workers: `.codex/agents/`; skills: `.agents/skills/`. Read only relevant skills; repository rules/commands override mismatched generic examples.
+- Handle small tasks directly; automatically delegate substantial bounded work when it improves quality or time. Do not duplicate verified discovery or assign the same investigation without distinct responsibilities.
+- Planning-only requests produce investigation and a plan, not implementation. Parent owns decomposition, dependencies, integration, conflict resolution, and final review.
+- Route discovery to `explore`; application work to `backend-general`/`frontend-general`; schema to `db-general`; runtime/deployment to `infra-general`.
+- Route code verification to `backend-test`/`frontend-test`/`db-test`, live browser acceptance to `playwright-tester`, and unclear confirmed defects to the matching `backend-debug`/`frontend-debug`/`db-debug`/`infra-debug`.
+- Use `architect`/`security` for relevant reviews; call `architect-deep`/`security-deep`/`debug-deep` only after first-pass low confidence or explicit escalation, carrying findings, evidence, uncertainties, and references.
+- Give workers objective, ownership, constraints, dependencies, acceptance criteria, expected evidence, skill paths, and stopping condition; require reading/reporting applicable skills.
+- Workers share the checkout: preserve others' edits, parallelize only independent disjoint writes, serialize conflicts, and return to parent without further delegation (`[agents] enabled = false`).
+- Inspect every worker diff/result, reconcile findings, and retest fixes. Continue incomplete workers with the precise remaining objective; do not restart discovery or equate unfinished work with a defect.
+- Keep small task state in conversation; substantial multi-step work/handoffs use the protocol's Markdown run record in ignored `.agent-runtime/`. Record evidence as work happens and checkpoint before pausing; no runtime JSON schema required.
+- Change persistent memory, create goals, or schedule continuations only when requested. OpenCode goal/VibeGuard hooks and turn limits are not migrated Codex enforcement.
+- Context7/Playwright inherit global MCP settings (manage through Desktop Settings when available); PostgreSQL stays in project `.codex/config.toml`. Add no filesystem/sequential-thinking/memory MCP without demonstrated need.
+- After local agent setup changes, run backend `uv run python ../scripts/agent-task.py doctor`; it checks workflow assets/configuration, not application acceptance or approval enforcement.
+- Do not claim background scheduling, automatic retries, per-worker cost tracing, or isolated worktrees unless actually used and verified; follow the protocol for manual maintenance reviews.

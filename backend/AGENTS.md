@@ -1,116 +1,52 @@
 # Backend Guide
 
-FastAPI application data API: Python 3.12, sync SQLAlchemy 2 + Alembic, Supabase
-Auth for identities. Run every command from this directory (`uv run ...`); the
-project is not installed as a package.
+FastAPI application data API: Python 3.12, synchronous SQLAlchemy 2 + Alembic, and Supabase Auth for identities. Run commands from `backend/` (`uv run ...`); the project is not installed as a package.
 
-Deployment profile: single-tenant, one full stack per client (micro–medium SMB
-organizations; on-premise first, hosted instances later). Per-instance
-concurrency is small by design, so the synchronous stack is the correct fit —
-do not refactor toward async SQLAlchemy, keyset pagination, or tenant-scoped
-schemas without an explicit decision.
+The deployment profile is one full stack per client (single tenant, micro–medium SMB, on-premise first). Keep the synchronous stack; do not introduce async SQLAlchemy, keyset pagination, or tenant-scoped schemas without an explicit decision.
 
 ## Layout
 
-- `app/core/` — cross-cutting infrastructure: `config/` (typed settings),
-  `database/` (engine, `AuditSession`, `model_registry`), `security/` (Supabase
-  JWT verification), `middleware/`, `integrations/`.
-- `app/common/` — shared code: `dependencies/` (auth), `listing/` (standard
-  list schemas and offset query building), `exceptions/` (documentation only),
-  `normalization.py`.
-- `app/systems/<capability>/` — one directory per domain feature with
-  `models.py`, `schemas.py`, `router.py`; add `service.py` only when
-  coordination (locking, multi-entity invariants) demands it — see
-  `relationships` and `lifecycle` for the reference implementations. `files`,
-  `reports`, `views`, `businesses`, `admin` are placeholders; do not build
-  features there yet.
-- `migrations/` — Alembic revisions; read `migrations/AGENTS.md` before any
-  schema work.
+- `app/core/` owns cross-cutting infrastructure: typed config, database/`AuditSession`/model registry, JWT security, middleware, and integrations.
+- `app/common/` owns shared dependencies/auth, standard listing, documented exceptions, and normalization.
+- `app/systems/<capability>/` owns domain features (`models.py`, `schemas.py`, `router.py`); add `service.py` only for coordination such as locking or multi-entity invariants (see `relationships` and `lifecycle`).
+- `files`, `reports`, `views`, `businesses`, and `admin` are placeholders; do not build them until requested. Read `migrations/AGENTS.md` before schema work.
 
 ## Tooling and style
 
-- Python `>=3.12,<3.15`. Ruff: rules `E,F,I,B,UP`, line length 100. Mypy:
-  `strict = true` with pydantic and sqlalchemy plugins. Check with
-  `uv run ruff check . && uv run mypy app scripts`.
-- This backend is synchronous: plain `sqlalchemy.orm.Session` from `get_db`,
-  `create_engine`, `db.commit()` in routes/services. Do not introduce async
-  SQLAlchemy.
-- Type-first code: `Mapped[...]` ORM columns, `Annotated[..., Depends(...)]`
-  dependencies, `StrEnum`, typed Pydantic v2 schemas. Response models use
-  `from_attributes=True`; request models use `extra="forbid"` where silently
-  ignored input is unsafe.
-- Keep simple use cases in the router. No new abstraction layers (generic
-  repositories, global error envelope, service-per-feature) without an
-  explicit need — simple wins.
+- Require Python `>=3.12,<3.15`; Ruff rules are `E,F,I,B,UP` with line length 100; mypy is strict with Pydantic and SQLAlchemy plugins. Check with `uv run ruff check . && uv run mypy app scripts`.
+- Use plain `sqlalchemy.orm.Session` from `get_db`, `create_engine`, and `db.commit()` in routes/services. Do not refactor to async SQLAlchemy.
+- Prefer typed code: `Mapped[...]` ORM columns, `Annotated[..., Depends(...)]`, `StrEnum`, and typed Pydantic v2 schemas. Responses use `from_attributes=True`; request models use `extra="forbid"` when silently ignored input is unsafe.
+- Keep simple use cases in routers. Do not add generic repositories, a global error envelope, or service-per-feature layers without an explicit need.
 
 ## Persistence invariants
 
-- Domain models inherit `app.core.base_model.BaseModel` (UUIDv7 `id`,
-  `created_at`, `updated_at`, `deleted_at`, `is_deleted`, `performed_by`).
-  Audit and lifecycle support tables inherit `Base` directly and disable audit.
-- Register every ORM model in `app/core/database/model_registry.py` — Alembic
-  autogenerate sees only what the registry imports.
-- Schema changes start in the models files, then flow through
-  `migrations/AGENTS.md`: models → `alembic revision --autogenerate` → review →
-  `upgrade head` + `alembic check`.
-- Tables marked `info={"external": True}` (Supabase Auth placeholders) are
-  excluded from autogenerate — never migrate or alter them.
-- Soft delete is explicit: set `is_deleted`/`deleted_at`; `BaseModel` does not
-  filter automatically. Deleted-aware lists go through
-  `execute_standard_list`.
+- Domain models inherit `app.core.base_model.BaseModel` (`UUIDv7 id`, timestamps, soft-delete fields, and `performed_by`). Audit/lifecycle support tables inherit `Base` directly and disable audit.
+- Register every ORM model in `app/core/database/model_registry.py`; Alembic autogenerate only sees imported registry models.
+- Schema flow is models → `migrations/AGENTS.md` → `uv run alembic revision --autogenerate` → review → `uv run alembic upgrade head` and `uv run alembic check`.
+- Tables with `info={"external": True}` are Supabase Auth placeholders: exclude them from autogenerate and never migrate or alter them.
+- Soft delete is explicit (`is_deleted`/`deleted_at`); `BaseModel` does not filter automatically. Deleted-aware lists use `execute_standard_list`.
 
 ## Mutations and audit
 
-- All mutations go through the request-provided `AuditSession` (`get_db`) as
-  individual ORM instance changes. Bulk `update()`/`delete()` ORM statements
-  and raw ORM mutation execution are rejected by the audit listeners.
-- Routes and services own `commit()`/`rollback()`; translate
-  `IntegrityError`/concurrency failures into safe HTTP responses after
-  rollback.
-- Audit captures application ORM mutations only — Auth, Alembic, Studio, and
-  direct SQL are outside its boundary. Snapshots are minimal diffs with
-  key-name redaction (`password`, `token`, `secret`, `api_key`, ...).
+- Every mutation uses the request-provided `AuditSession` (`get_db`) and individual ORM instance changes. Bulk ORM `update()`/`delete()` and raw ORM mutation execution are rejected by audit listeners.
+- Routes/services own `commit()` and `rollback()`; roll back before translating `IntegrityError` or concurrency failures into safe HTTP responses.
+- Audit covers application ORM mutations only, not Auth, Alembic, Studio, or direct SQL. Record minimal diffs and redact keys such as `password`, `token`, `secret`, and `api_key`.
 
 ## API conventions
 
-- Routers register under `/api` in `app/main.py`. The auth router aggregates
-  users/roles/invitations — do not register them separately.
-- Exactly ten flat capabilities (`<feature>.read`/`<feature>.write`); malformed
-  permission documents fail closed; the literal `admin` role has everything.
-  Users, roles, invitations, audit, and purge are administrator-only.
-- List endpoints use `StandardListRequest/Response` + `ListQuerySpec`: explicit
-  sort enum, allowlisted columns, default sort, UUID tie-breaker, offset
-  pagination (no keyset).
-- Errors are route-local `HTTPException` shapes (for example lifecycle
-  `{"detail": {"code", "message"}}`, record validation `{"detail": {"code",
-  "message", "errors", "truncated"}}`). Do not introduce a global error
-  envelope.
-- Ordinary `DELETE` on departments/modules/fields returns `close_required`:
-  hierarchical close/reopen/purge is lifecycle's job, never CRUD.
+- Routers register under `/api` in `app/main.py`; the auth router aggregates users, roles, and invitations, which must not be registered separately.
+- Use exactly ten flat `<feature>.read`/`<feature>.write` capabilities. Malformed permission documents fail closed; literal `admin` has all capabilities. Users, roles, invitations, audit, and purge are administrator-only.
+- List endpoints use `StandardListRequest`/`StandardListResponse` and `ListQuerySpec`: explicit sort enum, allowlisted columns, default sort, UUID tie-breaker, and offset pagination (never keyset).
+- Keep errors route-local `HTTPException` shapes (for example lifecycle `{"detail":{"code","message"}}` and record validation with `code`, `message`, `errors`, `truncated`); do not add a global envelope.
+- Ordinary `DELETE` on departments/modules/fields returns `close_required`; hierarchical close/reopen/purge belongs to lifecycle, never CRUD.
 
-## Tests
+## Tests and scripts
 
-- `uv run pytest` from this directory; repository-wide 80% coverage gate
-  (`--cov=app`). Use `--no-cov` or `-k <name>` for focused runs.
-- PostgreSQL integration tests require `TEST_DATABASE_URL` pointing at the
-  loopback Supabase database (port 54322, database `postgres`, at the current
-  Alembic head) and are marked `pytest.mark.integration`.
-- Override `get_db`/`get_current_user` via `dependency_overrides`; build rows
-  with local `make_*` helpers — there is no factory module.
-
-## Scripts
-
-- `scripts/bootstrap_admin.py` — first administrator via Supabase invite (once).
-- `scripts/provision_database_role.py` — least-privilege `openslate_runtime`
-  role (export `.env` first).
-- `scripts/seed_sample_data.py` — seeds through the API with an admin token.
-- `scripts/reset_application_data.py` — dry-run by default; requires
-  `--execute`, a TTY, and exact digest confirmation.
+- Run `uv run pytest`; the repository has an 80% `--cov=app` gate. Use `--no-cov` or `-k <name>` for focused runs.
+- PostgreSQL integration tests require `TEST_DATABASE_URL` for the loopback Supabase database (port 54322, database `postgres`, current Alembic head) and use `pytest.mark.integration`. Override `get_db`/`get_current_user` with `dependency_overrides`; build rows with local `make_*` helpers, not a factory module.
+- `scripts/bootstrap_admin.py` invites the first administrator once; `provision_database_role.py` creates least-privilege `openslate_runtime` (export `.env` first); `seed_sample_data.py` seeds through the API with an admin token; `reset_application_data.py` is dry-run by default and requires `--execute`, a TTY, and exact digest confirmation.
 
 ## Verification and references
 
-- CI-equivalent: `uv run ruff check . && uv run mypy app scripts &&
-  TEST_DATABASE_URL="$DATABASE_URL" uv run pytest`, plus
-  `uv run alembic check`.
-- Deep architecture: `docs/architecture/README.md`. Global rules: root
-  `AGENTS.md`. Schema workflow: `migrations/AGENTS.md`.
+- CI-equivalent backend check: `uv run ruff check . && uv run mypy app scripts && TEST_DATABASE_URL="$DATABASE_URL" uv run pytest`, plus `uv run alembic check`.
+- See `../AGENTS.md` for global rules, `migrations/AGENTS.md` for schema workflow, and `../docs/architecture/README.md` for deeper architecture.
