@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   TableProperties,
   Users,
+  Workflow,
   X,
 } from "lucide-react";
 
@@ -22,6 +23,11 @@ import { cn } from "@/lib/utils";
 const primaryLinks = [
   { href: "/workspace", label: "Workspace", icon: LayoutDashboard },
   { href: "/departments", label: "Departments", icon: PanelLeft },
+  {
+    href: "/sandbox",
+    label: "Sandbox",
+    icon: Workflow,
+  },
   { href: "/administration/users", label: "People", icon: Users },
   { href: "/administration/roles", label: "Roles", icon: ShieldCheck },
   {
@@ -60,6 +66,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       invalidate();
       router.replace("/login");
     }
+  }
+
+  if (pathname === "/sandbox") {
+    return <main id="main-content">{children}</main>;
   }
 
   return (

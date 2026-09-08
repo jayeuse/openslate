@@ -146,7 +146,7 @@ Use `infra/AGENTS.md` for image and deployment artifact rules.
 
 Use `docs/architecture/README.md` for deeper architecture details.
 
-For tasks that require multiple agents, parallel work, or explicit evaluator loops, read `.agents/orchestration/PROTOCOL.md`.
+For implementation, troubleshooting, multi-agent work, or explicit evaluation, read `.agents/orchestration/PROTOCOL.md`. Apply its refresh-context -> act -> inspect-evidence -> evaluate loop; keep small tasks in the conversation. If the local protocol is missing, report the missing setup and use the rules here without claiming the full workflow is installed.
 
 ## Codex Orchestration
 
@@ -180,4 +180,6 @@ Continue authorized work until acceptance criteria and relevant checks pass or a
 
 Context7 and Playwright are inherited from global Codex MCP settings; manage them through Desktop Settings when available. PostgreSQL remains project-scoped in `.codex/config.toml`. Do not add filesystem, sequential-thinking, or memory MCPs without a demonstrated need. Keep connection credentials out of tracked files and reports.
 
-For multi-worker task coordination, use `.agents/orchestration/PROTOCOL.md`. Keep simple task state in the conversation; do not invent runtime files or schemas for routine work.
+For multi-worker task coordination, use `.agents/orchestration/PROTOCOL.md`. Keep simple task state in the conversation. For substantial multi-step work or a handoff, use its Markdown run record in the already-ignored `.agent-runtime/` directory. Record evidence as work happens and checkpoint before pausing; no runtime JSON schema is required. Promote cross-run lessons into memory only when the user explicitly requests it.
+
+After changing local agent setup, run `uv run python ../scripts/agent-task.py doctor` from `backend/`. This read-only check validates local workflow assets and worker configuration; it does not run application acceptance tests or enforce approvals. The protocol defines the evidence required for task completion and the manual multi-run maintenance review. Do not claim background scheduling, automatic retries, per-worker cost tracing, or isolated worker worktrees unless those capabilities were actually used and verified.

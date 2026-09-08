@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -162,6 +164,9 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("task_id")
     validate.set_defaults(func=cmd_validate)
 
+    doctor = commands.add_parser("doctor", help="Check local agent workflow setup.")
+    doctor.set_defaults(func=cmd_doctor)
+
     return parser
 
 
@@ -169,6 +174,70 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     args.func(args)
+
+
+def check_workspace(root: Path) -> list[str]:
+    """Return setup failures without exposing configuration contents."""
+    failures: list[str] = []
+    required = (
+        "AGENTS.md",
+        ".agents/orchestration/PROTOCOL.md",
+        ".agents/orchestration/RUN.md",
+    )
+    for relative in required:
+        path = root / relative
+        if not path.is_file() or not path.read_text().strip():
+            failures.append(f"Missing or empty workflow asset: {relative}")
+
+    guide = root / "AGENTS.md"
+    if not guide.is_file():
+        return failures
+    instructions = guide.read_text()
+    roles = set()
+    for line in instructions.splitlines():
+        if line.startswith("| "):
+            roles.update(re.findall(r"`([a-z]+(?:-[a-z]+)*)`", line))
+    roles.update(re.findall(r"`((?:architect|security|debug)-deep)`", instructions))
+    if not roles:
+        failures.append("No worker roles found in the root routing table")
+
+    directory = root / ".codex/agents"
+    for role in sorted(roles):
+        if not (directory / f"{role}.toml").is_file():
+            failures.append(f"Missing routed worker: {role}")
+
+    workers = sorted(directory.glob("*.toml"))
+    if not workers:
+        failures.append("No local worker configurations found")
+    for path in workers:
+        try:
+            worker = tomllib.loads(path.read_text())
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+            failures.append(f"Cannot parse worker configuration: {path.name}")
+            continue
+        if worker.get("name") != path.stem:
+            failures.append(f"Worker name does not match filename: {path.name}")
+        for field in ("model", "model_reasoning_effort", "developer_instructions"):
+            if not isinstance(worker.get(field), str) or not worker[field].strip():
+                failures.append(f"Missing worker {field}: {path.name}")
+        agents = worker.get("agents")
+        if not isinstance(agents, dict) or agents.get("enabled") is not False:
+            failures.append(f"Worker must disable delegation: {path.name}")
+    return failures
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    try:
+        failures = check_workspace(Path(__file__).resolve().parents[1])
+    except (OSError, UnicodeError):
+        print("FAIL: Cannot read required local workflow assets")
+        raise SystemExit(1) from None
+    for failure in failures:
+        print(f"FAIL: {failure}")
+    if failures:
+        raise SystemExit(1)
+    print("PASS: Local workflow assets, routing, and worker configuration")
+    print("Application tests, runtime connectivity, and approval enforcement were not checked.")
 
 
 if __name__ == "__main__":
