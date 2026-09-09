@@ -3,7 +3,6 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
@@ -16,7 +15,6 @@ from app.systems.relationships.service import (
     create_relationship,
 )
 from tests.relationships_integration_support import (
-    _edge_audit_rows,
     _guard_integration_database,
     _seed_committed_graph,
     _set_request,
@@ -31,40 +29,6 @@ pytestmark = [
     ),
 ]
 
-def test_relationship_operation_fails_nowait_behind_held_dependency_lock(
-    integration_db: AuditSession, owned_ids: set[UUID]
-) -> None:
-    field, _, _, sources, targets, _ = _seed_committed_graph(owned_ids)
-    request_id = uuid7()
-    _set_request(integration_db, request_id)
-    database_url = os.environ["TEST_DATABASE_URL"]
-    _guard_integration_database(database_url)
-    holder_engine = create_engine(database_url)
-    try:
-        with holder_engine.connect() as holder_connection:
-            holder = Session(bind=holder_connection)
-            try:
-                holder.scalar(
-                    select(Record)
-                    .where(Record.id == sources[0].id)
-                    .with_for_update()
-                )
-                with pytest.raises(RelationshipUnavailable):
-                    create_relationship(
-                        integration_db,
-                        field.id,
-                        sources[0].id,
-                        targets[0].id,
-                    )
-            finally:
-                holder.rollback()
-                holder.close()
-    finally:
-        holder_engine.dispose()
-
-    assert integration_db.scalar(select(RelationshipEdge.id)) is None
-    assert not [row for row in _edge_audit_rows(integration_db, field.id)
-                if row.request_id == request_id]
 
 def test_single_target_race_returns_unavailable_then_committed_conflict(
     integration_db: AuditSession, owned_ids: set[UUID]

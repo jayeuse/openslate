@@ -1,3 +1,4 @@
+from secrets import token_urlsafe
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +17,9 @@ from app.systems.audit.snapshots import REDACTED
 from app.systems.fields.models import Field, FieldType
 from app.systems.records.models import Record
 from app.systems.users.models import User
+
+FIRST_RECORD_CANARY = token_urlsafe(32)
+SECOND_RECORD_CANARY = token_urlsafe(32)
 
 
 class FakeSession:
@@ -81,10 +85,10 @@ def test_record_create_snapshots_redact_current_dynamic_fields_in_one_query() ->
     redacted_key = str(redacted_field.id)
     record_one = Record(
         module_id=module_id,
-        data={redacted_key: "secret", "clear": "visible"},
+        data={redacted_key: FIRST_RECORD_CANARY, "clear": "visible"},
     )
     record_one.id = uuid7()
-    record_two = Record(module_id=module_id, data={redacted_key: "another secret"})
+    record_two = Record(module_id=module_id, data={redacted_key: SECOND_RECORD_CANARY})
     record_two.id = uuid7()
     session = FakeSession()
     session.new = [record_one, record_two]
@@ -104,7 +108,7 @@ def test_record_create_snapshots_redact_current_dynamic_fields_in_one_query() ->
         "module_id": str(module_id),
         "data": {redacted_key: REDACTED},
     }
-    assert record_one.data == {redacted_key: "secret", "clear": "visible"}
+    assert record_one.data == {redacted_key: FIRST_RECORD_CANARY, "clear": "visible"}
 
 
 def test_rollback_clears_staged_changes() -> None:

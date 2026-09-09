@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "scripts/test*.py"
       - "infra/docker/backend.Dockerfile"
       - ".dockerignore"
       - "supabase/**"
@@ -13,6 +14,7 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "scripts/test*.py"
       - "infra/docker/backend.Dockerfile"
       - ".dockerignore"
       - "supabase/**"
@@ -68,8 +70,19 @@ jobs:
           publishable_key="$(STATUS_ENV="$status_env" python -c 'import os, shlex; print(next((shlex.split(line)[0].split("=", 1)[1] for line in os.environ["STATUS_ENV"].splitlines() if line.startswith("PUBLISHABLE_KEY=")), ""))')"
           test -n "$db_url"
           test -n "$publishable_key"
-          printf 'MIGRATION_DATABASE_URL=%s\nDATABASE_URL=%s\n' "$db_url" "$db_url" >> "$GITHUB_ENV"
-          PUBLISHABLE_KEY_VALUE="$publishable_key" python -c 'import json, os, urllib.error, urllib.request; request=urllib.request.Request("http://127.0.0.1:54321/auth/v1/signup", data=json.dumps({"email":"ci-public-signup@example.com","password":"Blocked-Signup-Password-42!"}).encode(), headers={"apikey":os.environ["PUBLISHABLE_KEY_VALUE"],"Content-Type":"application/json"}, method="POST");
+          DB_URL_VALUE="$db_url" python - <<'PYMASK'
+          import os
+          from urllib.parse import unquote, urlsplit
+          url = os.environ["DB_URL_VALUE"]
+          password = urlsplit(url).password or ""
+          for value in (url, password, unquote(password)):
+              if value:
+                  escaped = value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  print(f"::add-mask::{escaped}", flush=True)
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write(f"MIGRATION_DATABASE_URL={url}\nDATABASE_URL={url}\n")
+          PYMASK
+          PUBLISHABLE_KEY_VALUE="$publishable_key" python -c 'import json, os, secrets, urllib.error, urllib.request; request=urllib.request.Request("http://127.0.0.1:54321/auth/v1/signup", data=json.dumps({"email":"ci-public-signup@example.com","password":secrets.token_urlsafe(24)}).encode(), headers={"apikey":os.environ["PUBLISHABLE_KEY_VALUE"],"Content-Type":"application/json"}, method="POST");
           try: urllib.request.urlopen(request); raise SystemExit("public signup unexpectedly succeeded")
           except urllib.error.HTTPError as error: assert error.code == 422 and json.loads(error.read()).get("error_code") == "signup_disabled"'
           unset status_env db_url publishable_key
@@ -83,8 +96,10 @@ jobs:
       - name: Provision least-privilege runtime database role
         run: |
           runtime_password="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          printf '::add-mask::%s\n' "$runtime_password"
           OPENSLATE_DATABASE_PASSWORD="$runtime_password" uv run python scripts/provision_database_role.py
           runtime_url="postgresql+psycopg://openslate_runtime:${runtime_password}@127.0.0.1:54322/postgres"
+          printf '::add-mask::%s\n' "$runtime_url"
           printf 'DATABASE_URL=%s\nTEST_DATABASE_URL=%s\n' "$runtime_url" "$runtime_url" >> "$GITHUB_ENV"
           unset runtime_password runtime_url
 
@@ -93,6 +108,9 @@ jobs:
 
       - name: Run mypy
         run: uv run mypy app scripts
+
+      - name: Verify test selection and tooling
+        run: uv run python -m unittest discover -s ../scripts -p 'test_*.py'
 
       - name: Run backend tests, including PostgreSQL integration tests
         run: uv run pytest

@@ -2,6 +2,7 @@ import os
 import re
 from collections.abc import Generator
 from pathlib import Path
+from secrets import token_urlsafe
 from urllib.parse import urlsplit
 
 import pytest
@@ -15,7 +16,9 @@ from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession
 from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 
-os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://test:test@localhost/test")
+MOCK_DATABASE_PASSWORD = token_urlsafe(32)
+
+os.environ.setdefault("DATABASE_URL", f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test")
 
 
 def _guard_integration_database(database_url: str) -> None:

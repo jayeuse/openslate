@@ -48,6 +48,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Tests and verification
 
-- Playwright is the only test runner — including pure-library tests — under `tests/`. Mock `**/session/status` (authenticated) and `**/bff/**` (JSON fixtures); assert user-visible behavior with roles/labels/text, including failure and accessibility paths.
-- Live tests (`tests/live/`) are opt-in via `npm run test:e2e:live`, serial, loopback-only, and excluded from ordinary runs and `verify`.
+- Playwright is the only test runner, including pure-library tests, under `tests/isolated/`, `tests/http/`, and `tests/browser/`. In mocked browser tests, mock `**/session/status` (authenticated) and `**/bff/**` (JSON fixtures); assert user-visible behavior with roles/labels/text and relevant failure and accessibility paths.
+- Real-stack tests (`tests/fullstack/`) run through `npm run test:e2e:fullstack` with a disposable Supabase stack and generated identities; they are excluded from ordinary runs and `verify`.
 - Run `npm run verify` (format, lint, typecheck, build, production E2E) before handoff. Copy `frontend/.env.local` from `.env.example`; never source the root `.env` into npm or Next.
+
+## TDD and coverage
+
+- Before creating/extending tests, changing behavior, fixing bugs, or refactoring, read and follow [tdd-workflow](../.agents/skills/tdd-workflow/SKILL.md). It owns test admission, sequencing, and exceptions; this guide owns project runners and coverage thresholds.
+- Workers must report the skill path actually read and the focused failing/passing test evidence, or the applicable exception. A reference or announcement alone does not prove TDD execution.
+- Require **90% changed executable production-line coverage** against the task's base revision. Missing measurement or a failed gate is **NOT READY** under the skill's exception policy. `npm run verify` currently reports no coverage percentage; report this tooling gap when production code changes.

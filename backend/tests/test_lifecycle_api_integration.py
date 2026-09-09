@@ -1,5 +1,6 @@
 import os
 from collections.abc import Callable
+from secrets import token_urlsafe
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -17,6 +18,8 @@ from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.lifecycle.exceptions import LifecyclePasswordServiceUnavailable
 from tests.api_integration_support import create_owned_admin, delete_owned_admin
 from tests.conftest import _assert_alembic_head, _guard_integration_database
+
+CONFIRMATION_PASSWORD = token_urlsafe(32)
 
 pytestmark = pytest.mark.integration
 
@@ -188,7 +191,7 @@ def test_registered_close_password_callback_starts_without_request_transaction(
         closed = client.request(
             "POST",
             f"/api/modules/{module_id}/close",
-            {"token": token, "confirmation_name": "Assets", "password": "secret"},
+            {"token": token, "confirmation_name": "Assets", "password": CONFIRMATION_PASSWORD},
         )
 
     assert closed.status_code == 200
@@ -225,7 +228,7 @@ def test_registered_close_rejects_invalid_confirmation_without_provider_call(
             {
                 "token": preview.json()["token"],
                 "confirmation_name": "Wrong",
-                "password": "secret",
+                "password": CONFIRMATION_PASSWORD,
             },
         )
 
@@ -264,7 +267,7 @@ def test_registered_close_maps_provider_failure_and_consumed_token_replay(
         failed = client.request(
             "POST",
             f"/api/modules/{module_id}/close",
-            {"token": token, "confirmation_name": "Assets", "password": "secret"},
+            {"token": token, "confirmation_name": "Assets", "password": CONFIRMATION_PASSWORD},
         )
 
     assert failed.status_code == 503
@@ -283,7 +286,7 @@ def test_registered_close_maps_provider_failure_and_consumed_token_replay(
         closed = client.request(
             "POST",
             f"/api/modules/{module_id}/close",
-            {"token": token, "confirmation_name": "Assets", "password": "secret"},
+            {"token": token, "confirmation_name": "Assets", "password": CONFIRMATION_PASSWORD},
         )
     assert closed.status_code == 200
 
@@ -295,7 +298,7 @@ def test_registered_close_maps_provider_failure_and_consumed_token_replay(
     replay = client.request(
         "POST",
         f"/api/modules/{module_id}/close",
-        {"token": token, "confirmation_name": "Assets", "password": "secret"},
+        {"token": token, "confirmation_name": "Assets", "password": CONFIRMATION_PASSWORD},
     )
     assert replay.status_code == 404
     assert replay.json()["detail"]["code"] == "challenge_not_found"
@@ -332,7 +335,7 @@ def test_registered_close_rejects_plan_drift_after_provider_success(
         response = client.request(
             "POST",
             f"/api/modules/{module_id}/close",
-            {"token": token, "confirmation_name": "Assets", "password": "secret"},
+            {"token": token, "confirmation_name": "Assets", "password": CONFIRMATION_PASSWORD},
         )
 
     assert response.status_code == 409
@@ -380,7 +383,7 @@ def test_registered_module_purge_succeeds_when_enabled(
             {
                 "token": close_preview.json()["token"],
                 "confirmation_name": "Assets",
-                "password": "secret",
+                "password": CONFIRMATION_PASSWORD,
             },
         )
         purge_preview = client.request("POST", f"/api/modules/{module_id}/purge/preview")
@@ -390,7 +393,7 @@ def test_registered_module_purge_succeeds_when_enabled(
             {
                 "token": purge_preview.json()["token"],
                 "confirmation_name": "Assets",
-                "password": "secret",
+                "password": CONFIRMATION_PASSWORD,
             },
         )
 

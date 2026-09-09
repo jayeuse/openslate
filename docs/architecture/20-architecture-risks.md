@@ -155,8 +155,7 @@ Keep the page concise and aligned with the README and scripts.
 ## R12 — Hosted-control gaps remain after the disposable full-stack release gate
 
 **Current design:** Default frontend domain Playwright tests still mock many
-sessions/BFF/backend interactions, and an opt-in local live suite remains
-available. In addition, `.github/workflows/fullstack.yml` runs the stable
+sessions/BFF/backend interactions. `.github/workflows/fullstack.yml` runs the stable
 **Full-stack release gate** through `backend/tests/fullstack_runner.py` for
 relevant changes. The harness creates an isolated Supabase stack, runs the
 current Alembic head and backend suite, and tests production Next.js, BFF,

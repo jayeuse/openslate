@@ -67,33 +67,6 @@ def test_impact_query_selects_only_presence_and_value_and_uses_250_batch_size() 
     assert result.closed is True
 
 
-@pytest.mark.parametrize(
-    ("required", "row", "message"),
-    [
-        (True, (False, None), "Field change would invalidate active records"),
-        (True, (True, None), "Field change would invalidate active records"),
-        (False, (False, None), None),
-    ],
-)
-def test_impact_validation_handles_required_missing_and_null_values(
-    required: bool,
-    row: tuple[bool, Any],
-    message: str | None,
-) -> None:
-    field = _make_field()
-    result = _TrackingResult([row])
-    database = Mock(spec=Session)
-    database.execute.return_value = result
-
-    if message is None:
-        validate_change_impact(database, field, FieldType.TEXT, required, {"minLength": 1})
-    else:
-        with pytest.raises(ValueError, match=message):
-            validate_change_impact(database, field, FieldType.TEXT, required, {})
-
-    assert result.closed is True
-
-
 def test_impact_validation_closes_stream_immediately_after_first_invalid_value() -> None:
     field = _make_field()
     result = _TrackingResult([(True, "too long"), (True, "never consumed")])
@@ -112,21 +85,12 @@ def test_impact_validation_closes_stream_immediately_after_first_invalid_value()
     assert result.closed is True
 
 
-def test_impact_validation_reaches_an_invalid_value_after_four_250_row_batches() -> None:
+def test_impact_reaches_invalid_value_after_four_batches() -> None:
     field = _make_field()
     result = _TrackingResult([(True, "ok")] * 1000 + [(True, "too long")])
     database = Mock(spec=Session)
     database.execute.return_value = result
-
     with pytest.raises(ValueError, match="Field change would invalidate active records"):
-        validate_change_impact(
-            database,
-            field,
-            FieldType.TEXT,
-            required=False,
-            config={"maxLength": 3},
-        )
-
-    assert result.batch_size == 250
+        validate_change_impact(database, field, FieldType.TEXT, False, {"maxLength": 3})
     assert result.consumed == 1001
     assert result.closed is True

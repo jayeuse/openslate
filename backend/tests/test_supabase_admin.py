@@ -1,3 +1,4 @@
+from secrets import token_urlsafe
 from unittest.mock import MagicMock, Mock
 from uuid import UUID
 
@@ -13,13 +14,15 @@ from app.core.integrations.supabase import (
     SupabaseAdminError,
 )
 
-SECRET = "server-only-supabase-secret"
+MOCK_DATABASE_PASSWORD = token_urlsafe(32)
+
+SECRET = token_urlsafe(32)
 USER_ID = UUID("00000000-0000-0000-0000-000000000123")
 
 
 def settings(*, redirect_url: str | None = "http://localhost:3000/auth/callback") -> Settings:
     return Settings(
-        database_url="postgresql+psycopg://test:test@localhost/test",
+        database_url=f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test",
         supabase_url="https://example.supabase.co/",
         supabase_secret_key=SecretStr(SECRET),
         supabase_auth_redirect_url=redirect_url,

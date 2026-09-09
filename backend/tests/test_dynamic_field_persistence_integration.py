@@ -201,8 +201,9 @@ def test_replacement_update_preserves_closed_values_drops_optional_active_values
     ]
     assert module.is_schema_accepted is False
 
+@pytest.mark.parametrize("stale_acceptance", [False, True])
 def test_record_create_rejects_last_active_field_closed_module(
-    integration_db: AuditSession, owned_ids: set[UUID]
+    stale_acceptance: bool, integration_db: AuditSession, owned_ids: set[UUID]
 ) -> None:
     seeded = _seed_committed_module(
         owned_ids,
@@ -218,6 +219,9 @@ def test_record_create_rejects_last_active_field_closed_module(
     closed_field = integration_db.get(Field, field_id)
     assert module is not None and module.is_schema_accepted is False
     assert closed_field is not None and closed_field.is_deleted is True
+    if stale_acceptance:
+        module.is_schema_accepted = True
+        integration_db.commit()
 
     with pytest.raises(HTTPException) as raised:
         create_record(

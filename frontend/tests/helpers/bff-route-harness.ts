@@ -1,9 +1,14 @@
+import { testSecret } from "./test-secret";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { runInNewContext } from "node:vm";
 
 import { NextResponse } from "next/server";
 import ts from "typescript";
+
+const failureCanary = testSecret();
+const expiredAccess = testSecret();
+const originalRefresh = testSecret();
 
 type Session = {
   access_token: string;
@@ -21,8 +26,8 @@ export function createBffHarness(options: {
   refresh: () => Promise<{ data: { session: Session | null }; error: unknown }>;
 }) {
   const jar = new Map<string, string>([
-    ["openslate_access", "expired-access"],
-    ["openslate_refresh", "original-refresh"],
+    ["openslate_access", expiredAccess],
+    ["openslate_refresh", originalRefresh],
   ]);
   const logs: string[] = [];
   const cache = new Map<string, Record<string, unknown>>();
@@ -52,7 +57,7 @@ export function createBffHarness(options: {
             return {
               mkdirSync: () => undefined,
               appendFileSync: (_path: string, line: string) => {
-                if (options.failLogWrites) throw new Error("secret-canary");
+                if (options.failLogWrites) throw new Error(failureCanary);
                 logs.push(line);
               },
             };

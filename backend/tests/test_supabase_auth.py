@@ -1,6 +1,7 @@
 import importlib
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from secrets import token_urlsafe
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import Mock
@@ -8,10 +9,12 @@ from unittest.mock import Mock
 import jwt
 import pytest
 
+MOCK_PUBLIC_KEY = token_urlsafe(32)
+
 SUPABASE_ISSUER = "https://project.supabase.co/auth/v1"
 SUPABASE_AUDIENCE = "authenticated"
 SUPABASE_JWKS_URL = f"{SUPABASE_ISSUER}/.well-known/jwks.json"
-TOKEN = "supabase-jwt"
+TOKEN = token_urlsafe(32)
 
 
 def _supabase_module() -> ModuleType:
@@ -43,7 +46,7 @@ def _mock_jwks_and_decode(
 ) -> tuple[Mock, Mock]:
     module = _supabase_module()
     client = Mock()
-    client.get_signing_key_from_jwt.return_value = SimpleNamespace(key="mock-public-key")
+    client.get_signing_key_from_jwt.return_value = SimpleNamespace(key=MOCK_PUBLIC_KEY)
     client_factory = Mock(return_value=client)
     decode = Mock(
         side_effect=decode_error
@@ -74,7 +77,7 @@ def test_supabase_jwt_verification_uses_mocked_jwks_and_strict_claims(
     client.get_signing_key_from_jwt.assert_called_once_with(TOKEN)
     decode.assert_called_once_with(
         TOKEN,
-        "mock-public-key",
+        MOCK_PUBLIC_KEY,
         algorithms=["ES256", "RS256"],
         issuer=SUPABASE_ISSUER,
         audience=SUPABASE_AUDIENCE,

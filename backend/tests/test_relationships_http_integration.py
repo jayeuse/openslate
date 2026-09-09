@@ -39,6 +39,7 @@ def test_create_route_persists_and_rejects_duplicate_edge(relationship_http_fixt
         )
         assert created.status_code == 201
         body = created.json()
+        assert "data" not in body
         assert body["field_id"] == str(graph.field_id)
         assert body["source_record_id"] == str(graph.source_id)
         assert body["target_record_id"] == str(graph.target_id)

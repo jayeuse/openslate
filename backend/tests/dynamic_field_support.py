@@ -9,8 +9,6 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import bindparam, create_engine, select, text
-from sqlalchemy.engine import Connection
-from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -239,66 +237,6 @@ def _hold_module_lock(module_id: UUID) -> Iterator[None]:
                 holder.close()
     finally:
         engine.dispose()
-
-
-@contextmanager
-def _runtime_transaction() -> Iterator[Connection]:
-    """Prefer an owner transaction with SET LOCAL ROLE, then use the runtime login."""
-
-    owner_engine = create_engine(_database_url())
-    owner_connection = owner_engine.connect()
-    try:
-        role_available = owner_connection.scalar(
-            text("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openslate_runtime')")
-        )
-        owner_connection.rollback()
-        if role_available is not True:
-            pytest.skip("openslate_runtime role is unavailable in the test database")
-
-        owner_transaction = owner_connection.begin()
-        try:
-            try:
-                owner_connection.execute(text("SET LOCAL ROLE openslate_runtime"))
-            except ProgrammingError as error:
-                if getattr(error.orig, "sqlstate", None) != "42501":
-                    raise
-                owner_transaction.rollback()
-                runtime_url = os.getenv("DATABASE_URL")
-                if runtime_url is None:
-                    raise RuntimeError(
-                        "openslate_runtime exists but the owner cannot assume it and "
-                        "DATABASE_URL is unavailable for a runtime-login check"
-                    ) from error
-                _guard_integration_database(runtime_url)
-                owner_connection.close()
-                owner_engine.dispose()
-                runtime_engine = create_engine(runtime_url)
-                try:
-                    with runtime_engine.connect() as runtime_connection:
-                        runtime_transaction = runtime_connection.begin()
-                        try:
-                            if runtime_connection.scalar(text("SELECT current_user")) != (
-                                "openslate_runtime"
-                            ):
-                                raise RuntimeError(
-                                    "DATABASE_URL did not connect as openslate_runtime"
-                                )
-                            yield runtime_connection
-                        finally:
-                            runtime_transaction.rollback()
-                finally:
-                    runtime_engine.dispose()
-                return
-
-            if owner_connection.scalar(text("SELECT current_user")) != "openslate_runtime":
-                raise RuntimeError("SET LOCAL ROLE did not select openslate_runtime")
-            yield owner_connection
-        finally:
-            if owner_transaction.is_active:
-                owner_transaction.rollback()
-    finally:
-        owner_connection.close()
-        owner_engine.dispose()
 
 
 def _json_types(db: Session, record_id: UUID) -> dict[str, tuple[str, str | None]]:

@@ -1,5 +1,6 @@
 import os
 from datetime import UTC, datetime
+from secrets import token_urlsafe
 
 import pytest
 from sqlalchemy import select
@@ -12,6 +13,12 @@ from app.systems.departments.models import Department
 from app.systems.fields.models import Field, FieldType
 from app.systems.modules.models import Module
 from app.systems.records.models import Record
+
+UPDATED_RENAMED_CANARY = token_urlsafe(32)
+UPDATED_CLOSED_CANARY = token_urlsafe(32)
+ADDED_FIELD_CANARY = token_urlsafe(32)
+HISTORICAL_RENAMED_CANARY = token_urlsafe(32)
+HISTORICAL_CLOSED_CANARY = token_urlsafe(32)
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = [
@@ -124,8 +131,8 @@ def test_record_audit_redaction_preserves_data_and_historical_snapshots(
     record = Record(
         module=module,
         data={
-            str(renamed.id): "historical renamed secret",
-            str(soft_deleted.id): "historical closed secret",
+            str(renamed.id): HISTORICAL_RENAMED_CANARY,
+            str(soft_deleted.id): HISTORICAL_CLOSED_CANARY,
             str(clear.id): "historical visible",
         },
     )
@@ -134,8 +141,8 @@ def test_record_audit_redaction_preserves_data_and_historical_snapshots(
     historical_create = audit_rows(integration_db, record.id)[0]
     assert historical_create.action == AuditAction.CREATE
     assert historical_create.after["data"] == {
-        str(renamed.id): "historical renamed secret",
-        str(soft_deleted.id): "historical closed secret",
+        str(renamed.id): HISTORICAL_RENAMED_CANARY,
+        str(soft_deleted.id): HISTORICAL_CLOSED_CANARY,
         str(clear.id): "historical visible",
     }
 
@@ -148,9 +155,9 @@ def test_record_audit_redaction_preserves_data_and_historical_snapshots(
     integration_db.flush()
 
     record.data = {
-        str(renamed.id): "updated renamed secret",
-        str(soft_deleted.id): "updated closed secret",
-        str(added.id): "added secret",
+        str(renamed.id): UPDATED_RENAMED_CANARY,
+        str(soft_deleted.id): UPDATED_CLOSED_CANARY,
+        str(added.id): ADDED_FIELD_CANARY,
         str(clear.id): "updated visible",
     }
     integration_db.flush()
@@ -180,7 +187,7 @@ def test_record_audit_redaction_preserves_data_and_historical_snapshots(
     assert removed.after["data"] == {str(clear.id): "final visible"}
     assert record.data == {str(clear.id): "final visible"}
     assert historical_create.after["data"] == {
-        str(renamed.id): "historical renamed secret",
-        str(soft_deleted.id): "historical closed secret",
+        str(renamed.id): HISTORICAL_RENAMED_CANARY,
+        str(soft_deleted.id): HISTORICAL_CLOSED_CANARY,
         str(clear.id): "historical visible",
     }

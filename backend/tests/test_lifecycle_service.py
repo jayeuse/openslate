@@ -1,5 +1,4 @@
 from datetime import UTC, datetime
-from uuid import UUID
 
 from uuid6 import uuid7
 
@@ -15,145 +14,54 @@ from app.systems.lifecycle.schemas import (
 )
 
 
-def test_lifecycle_contract_has_explicit_targets_and_operations() -> None:
-    assert [item.value for item in LifecycleTargetType] == [
-        "department",
-        "module",
-        "field",
-        "record",
+def test_digest_is_order_independent_and_binds_operation_actor_and_destructive_impacts() -> None:
+    actor, root, field_id, source_id, target_id = [uuid7() for _ in range(5)]
+    state = {"is_deleted": True, "deleted_at": None, "updated_at": datetime(2026, 1, 1, tzinfo=UTC)}
+    rows = [
+        LifecycleRowState(entity_type="fields", entity_id=field_id, **state),
+        LifecycleRowState(entity_type="modules", entity_id=root, **state),
     ]
-    assert [item.value for item in LifecycleOperation] == [
-        "close",
-        "reopen",
-        "purge",
-    ]
-
-
-def test_lifecycle_digest_is_canonical_and_order_independent() -> None:
-    actor_id = uuid7()
-    first = [
-        LifecycleRowState(
-            entity_type="modules",
-            entity_id=uuid7(),
-            is_deleted=False,
-            deleted_at=None,
-            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
-        ),
-        LifecycleRowState(
-            entity_type="departments",
-            entity_id=uuid7(),
-            is_deleted=False,
-            deleted_at=None,
-            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
-        ),
-    ]
-    second = list(reversed(first))
-
-    assert canonical_lifecycle_digest(
+    arguments = (LifecycleOperation.PURGE, LifecycleTargetType.FIELD, root, actor)
+    base = canonical_lifecycle_digest(*arguments, rows)
+    assert base == canonical_lifecycle_digest(*arguments, list(reversed(rows)))
+    assert base != canonical_lifecycle_digest(
         LifecycleOperation.CLOSE,
-        LifecycleTargetType.DEPARTMENT,
-        first[1].entity_id,
-        actor_id,
-        first,
-    ) == canonical_lifecycle_digest(
-        LifecycleOperation.CLOSE,
-        LifecycleTargetType.DEPARTMENT,
-        first[1].entity_id,
-        actor_id,
-        second,
+        *arguments[1:],
+        rows,
     )
-    assert canonical_lifecycle_digest(
-        LifecycleOperation.REOPEN,
-        LifecycleTargetType.DEPARTMENT,
-        first[1].entity_id,
-        actor_id,
-        first,
-    ) != canonical_lifecycle_digest(
-        LifecycleOperation.CLOSE,
-        LifecycleTargetType.DEPARTMENT,
-        first[1].entity_id,
-        actor_id,
-        first,
-    )
+    assert base != canonical_lifecycle_digest(*arguments[:3], uuid7(), rows)
 
-
-def test_purge_digest_changes_for_each_destructive_impact() -> None:
-    actor_id = UUID("00000000-0000-0000-0000-000000000001")
-    root_id = UUID("00000000-0000-0000-0000-000000000002")
-    row = LifecycleRowState(
-        entity_type="fields",
-        entity_id=UUID("00000000-0000-0000-0000-000000000003"),
-        is_deleted=True,
-        deleted_at=datetime(2026, 1, 1, tzinfo=UTC),
-        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
-    )
     edge = LifecycleEdgeState(
-        edge_id=UUID("00000000-0000-0000-0000-000000000004"),
-        field_id=row.entity_id,
-        source_record_id=UUID("00000000-0000-0000-0000-000000000005"),
-        target_record_id=UUID("00000000-0000-0000-0000-000000000006"),
-        is_deleted=False,
-        deleted_at=None,
-        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        edge_id=uuid7(),
+        field_id=field_id,
+        source_record_id=source_id,
+        target_record_id=target_id,
         available=True,
+        **state,
     )
-    strip = LifecycleKeyStrip(
-        record_id=edge.source_record_id,
-        module_id=UUID("00000000-0000-0000-0000-000000000007"),
-        field_id=row.entity_id,
-        key=str(row.entity_id),
-    )
-    blocker = LifecycleBlocker(
-        code=LifecycleBlockerCode.PURGE_EXTERNAL_SCHEMA_DEPENDENCY,
-        entity_type="fields",
-        entity_id=UUID("00000000-0000-0000-0000-000000000008"),
-        detail="external relationship",
-    )
-
-    base = canonical_lifecycle_digest(
-        LifecycleOperation.PURGE,
-        LifecycleTargetType.FIELD,
-        root_id,
-        actor_id,
-        [row],
-    )
-    assert base != canonical_lifecycle_digest(
-        LifecycleOperation.PURGE,
-        LifecycleTargetType.FIELD,
-        root_id,
-        actor_id,
-        [row],
-        edges=[edge],
-    )
-    assert base != canonical_lifecycle_digest(
-        LifecycleOperation.PURGE,
-        LifecycleTargetType.FIELD,
-        root_id,
-        actor_id,
-        [row],
-        key_strips=[strip],
-    )
-    assert base != canonical_lifecycle_digest(
-        LifecycleOperation.PURGE,
-        LifecycleTargetType.FIELD,
-        root_id,
-        actor_id,
-        [row],
-        blockers=[blocker],
-    )
-    changed_edge = edge.model_copy(update={"is_deleted": True})
-    assert canonical_lifecycle_digest(
-        LifecycleOperation.PURGE,
-        LifecycleTargetType.FIELD,
-        root_id,
-        actor_id,
-        [row],
-        edges=[edge],
-    ) != canonical_lifecycle_digest(
-        LifecycleOperation.PURGE,
-        LifecycleTargetType.FIELD,
-        root_id,
-        actor_id,
-        [row],
-        edges=[changed_edge],
+    impacts = {
+        "edges": [edge],
+        "key_strips": [
+            LifecycleKeyStrip(
+                record_id=source_id,
+                module_id=root,
+                field_id=field_id,
+                key=str(field_id),
+            )
+        ],
+        "blockers": [
+            LifecycleBlocker(
+                code=LifecycleBlockerCode.PURGE_EXTERNAL_SCHEMA_DEPENDENCY,
+                entity_type="fields",
+                entity_id=field_id,
+                detail="external relationship",
+            )
+        ],
+    }
+    for name, values in impacts.items():
+        assert base != canonical_lifecycle_digest(*arguments, rows, **{name: values})
+    assert canonical_lifecycle_digest(*arguments, rows, edges=[edge]) != canonical_lifecycle_digest(
+        *arguments,
+        rows,
+        edges=[edge.model_copy(update={"is_deleted": False})],
     )

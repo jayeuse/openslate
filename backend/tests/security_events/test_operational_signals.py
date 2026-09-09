@@ -1,4 +1,5 @@
 import logging
+from secrets import token_urlsafe
 
 import pytest
 from sqlalchemy.exc import OperationalError
@@ -7,6 +8,9 @@ from uuid6 import uuid7
 from app.core.integrations.supabase import SupabaseAdminError
 from app.systems.audit import listeners, service
 from app.systems.audit.schemas import SecurityEventIngestRequest
+
+SQL_CANARY = token_urlsafe(32)
+PASSWORD_CANARY = token_urlsafe(32)
 
 
 def test_persistence_failure_is_logged_without_payload(monkeypatch, caplog) -> None:
@@ -18,7 +22,7 @@ def test_persistence_failure_is_logged_without_payload(monkeypatch, caplog) -> N
             pass
 
         def commit(self):
-            raise OperationalError("secret SQL", {}, Exception("secret password"))
+            raise OperationalError(SQL_CANARY, {}, Exception(PASSWORD_CANARY))
 
         def rollback(self):
             pass
@@ -38,8 +42,8 @@ def test_persistence_failure_is_logged_without_payload(monkeypatch, caplog) -> N
     with caplog.at_level(logging.WARNING), pytest.raises(service.SecurityEventPersistenceError):
         service.append_committed_security_event(payload)
     assert "security_event_ingestion_failed" in caplog.text
-    assert "secret SQL" not in caplog.text
-    assert "secret password" not in caplog.text
+    assert SQL_CANARY not in caplog.text
+    assert PASSWORD_CANARY not in caplog.text
     assert "private business data" not in caplog.text
 
 

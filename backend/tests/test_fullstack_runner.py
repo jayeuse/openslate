@@ -1,4 +1,5 @@
 from pathlib import Path
+from secrets import token_urlsafe
 from unittest.mock import MagicMock
 from xml.etree.ElementTree import ParseError
 
@@ -6,12 +7,14 @@ import pytest
 
 from tests import fullstack_runner as runner
 
+PRIVATE_FILE_CANARY = token_urlsafe(32)
+
 
 @pytest.mark.parametrize("failure", ["malformed_report", "summary_write"])
 def test_report_failure_still_deletes_private_credentials(tmp_path, monkeypatch, failure):
     private = tmp_path / "private"
     private.mkdir()
-    (private / "fixture.json").write_text("private-test-canary")
+    (private / "fixture.json").write_text(PRIVATE_FILE_CANARY)
     if failure == "malformed_report":
         (private / "pytest.xml").write_text("<truncated")
     monkeypatch.setattr(runner.tempfile, "mkdtemp", lambda **_: str(private))

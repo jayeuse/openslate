@@ -1,12 +1,16 @@
+import { testSecret } from "./test-secret";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 
-export const passwordCanary = "password-secret-canary-123";
-export const accessCanary = "access-secret-canary";
-export const refreshCanary = "refresh-secret-canary";
+export const queryCanary = testSecret();
+export const callerCanary = testSecret();
+
+export const passwordCanary = testSecret();
+export const accessCanary = testSecret();
+export const refreshCanary = testSecret();
 
 // Load the real handler and helpers; replace only external I/O boundaries.
 export function passwordRouteHarness(transport: typeof fetch) {
@@ -110,14 +114,14 @@ export function passwordRouteHarness(transport: typeof fetch) {
     post: (origin = "http://frontend.invalid") =>
       handler(
         new Request(
-          "http://frontend.invalid/session/password?secret=query-canary",
+          `http://frontend.invalid/session/password?secret=${queryCanary}`,
           {
             method: "POST",
             headers: {
               host: "frontend.invalid",
               origin,
               "content-type": "application/json",
-              "x-request-id": "caller-forged-canary",
+              "x-request-id": callerCanary,
             },
             body: JSON.stringify({
               password: passwordCanary,

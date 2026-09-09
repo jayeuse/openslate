@@ -1,5 +1,6 @@
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
+from secrets import token_urlsafe
 from unittest.mock import Mock
 
 import pytest
@@ -15,6 +16,8 @@ from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.main import create_app
 from app.systems.users.models import Role, User, UserRole, UserStatus
+
+MOCK_ACCESS_TOKEN = token_urlsafe(32)
 
 
 def _role(name: str = UserRole.MEMBER.value) -> Role:
@@ -158,12 +161,14 @@ def test_established_profiles_can_authenticate_and_member_cannot_admin_list(
         user = _user(role, sent=sent, accepted=accepted)
         database = Mock(spec=Session)
         with _auth_client(api, user, database, monkeypatch) as client:
-            me = client.get("/api/auth/me", headers={"Authorization": "Bearer test-token"})
+            me = client.get(
+                "/api/auth/me", headers={"Authorization": f"Bearer {MOCK_ACCESS_TOKEN}"}
+            )
             assert me.status_code == 200, index
             assert me.json()["id"] == str(user.id)
             admin_list = client.get(
                 "/api/users",
-                headers={"Authorization": "Bearer test-token"},
+                headers={"Authorization": f"Bearer {MOCK_ACCESS_TOKEN}"},
             )
             assert admin_list.status_code == 403, index
 
@@ -181,7 +186,7 @@ def test_pending_and_corrupted_active_profiles_fail_real_auth_dependency(
         with _auth_client(api, user, database, monkeypatch) as client:
             response = client.get(
                 "/api/auth/me",
-                headers={"Authorization": "Bearer test-token"},
+                headers={"Authorization": f"Bearer {MOCK_ACCESS_TOKEN}"},
             )
         assert response.status_code == 401
 

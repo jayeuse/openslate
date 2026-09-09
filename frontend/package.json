@@ -18,8 +18,9 @@
     "test:e2e": "playwright test",
     "test:e2e:fullstack": "cd ../backend && uv run python tests/fullstack_runner.py",
     "test:e2e:production": "PLAYWRIGHT_USE_PRODUCTION=1 playwright test",
-    "test:e2e:live": "PLAYWRIGHT_NO_COPY_PROMPT=1 playwright test --config=playwright.live.config.ts",
-    "test:e2e:live:list": "PLAYWRIGHT_NO_COPY_PROMPT=1 playwright test --config=playwright.live.config.ts --list"
+    "test:section": "python3 ../scripts/test.py frontend section",
+    "test:affected": "python3 ../scripts/test.py frontend affected",
+    "test:full": "python3 ../scripts/test.py frontend full"
   },
   "dependencies": {
     "@antv/x6": "^3.1.8",

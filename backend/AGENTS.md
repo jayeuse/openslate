@@ -43,11 +43,17 @@ The deployment profile is one full stack per client (single tenant, micro–medi
 
 ## Tests and scripts
 
-- Run `uv run pytest`; the repository has an 80% `--cov=app` gate. Use `--no-cov` or `-k <name>` for focused runs.
+- Run `uv run pytest --cov-fail-under=90` for the full backend coverage gate. The configured default is still 80%; the explicit override enforces this guide's stricter 90% requirement. Use `uv run pytest --no-cov -k <name>` for focused iteration; this does not satisfy the coverage gate.
 - PostgreSQL integration tests require `TEST_DATABASE_URL` for the loopback Supabase database (port 54322, database `postgres`, current Alembic head) and use `pytest.mark.integration`. Override `get_db`/`get_current_user` with `dependency_overrides`; build rows with local `make_*` helpers, not a factory module.
 - `scripts/bootstrap_admin.py` invites the first administrator once; `provision_database_role.py` creates least-privilege `openslate_runtime` (export `.env` first); `seed_sample_data.py` seeds through the API with an admin token; `reset_application_data.py` is dry-run by default and requires `--execute`, a TTY, and exact digest confirmation.
 
+## TDD and coverage
+
+- Before creating/extending tests, changing behavior, fixing bugs, or refactoring, read and follow [tdd-workflow](../.agents/skills/tdd-workflow/SKILL.md). It owns test admission, sequencing, and exceptions; this guide owns project runners and coverage thresholds.
+- Workers must report the skill path actually read and the focused failing/passing test evidence, or the applicable exception. A reference or announcement alone does not prove TDD execution.
+- Require **90% changed executable production-line coverage** against the task's base revision and **90% overall `app` coverage** for full backend verification. Report these separately; missing measurement or a failed gate is **NOT READY** under the skill's exception policy.
+
 ## Verification and references
 
-- CI-equivalent backend check: `uv run ruff check . && uv run mypy app scripts && TEST_DATABASE_URL="$DATABASE_URL" uv run pytest`, plus `uv run alembic check`.
+- Backend handoff check: `uv run ruff check . && uv run mypy app scripts && TEST_DATABASE_URL="$DATABASE_URL" uv run pytest --cov-fail-under=90`, plus `uv run alembic check` and changed-code coverage evidence when production code changes. This explicitly applies the stricter coverage policy even while CI configuration retains its older default.
 - See `../AGENTS.md` for global rules, `migrations/AGENTS.md` for schema workflow, and `../docs/architecture/README.md` for deeper architecture.

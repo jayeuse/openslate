@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from secrets import token_urlsafe
 from unittest.mock import Mock, patch
 from uuid import UUID
 
@@ -21,8 +22,14 @@ from app.systems.lifecycle.models import (
 from app.systems.lifecycle.password import SupabasePasswordGrantClient
 from app.systems.lifecycle.service import begin_verification, hash_challenge_token
 
+CHALLENGE_TOKEN = token_urlsafe(32)
+TEMPORARY_ACCESS_TOKEN = token_urlsafe(32)
+CONFIRMATION_PASSWORD = token_urlsafe(32)
+PASSWORD_CANARY = token_urlsafe(32)
+MALFORMED_RESPONSE_TOKEN = token_urlsafe(32)
+
 ACTOR_ID = UUID("00000000-0000-0000-0000-000000000123")
-PUBLISHABLE_KEY = "publishable-key"
+PUBLISHABLE_KEY = token_urlsafe(32)
 
 
 def _settings() -> Settings:
@@ -41,7 +48,7 @@ def _response(status_code: int, payload: object) -> Mock:
 
 
 def test_challenge_tokens_are_256_bit_and_only_the_hash_is_persistable() -> None:
-    token = "opaque-token"
+    token = CHALLENGE_TOKEN
 
     digest = hash_challenge_token(token)
 
@@ -95,7 +102,7 @@ def test_in_flight_verifications_reserve_the_actor_failure_budget() -> None:
     ):
         begin_verification(
             db,
-            "opaque-token",
+            CHALLENGE_TOKEN,
             ACTOR_ID,
             LifecycleOperation.CLOSE,
             "department",
@@ -107,7 +114,7 @@ def test_in_flight_verifications_reserve_the_actor_failure_budget() -> None:
 
 
 def test_password_grant_revokes_only_the_temporary_session() -> None:
-    access_token = "temporary-access-token"
+    access_token = TEMPORARY_ACCESS_TOKEN
     http_client = Mock()
     http_client.post.side_effect = [
         _response(
@@ -119,7 +126,7 @@ def test_password_grant_revokes_only_the_temporary_session() -> None:
 
     returned_id = SupabasePasswordGrantClient(
         _settings(), http_client=http_client
-    ).verify_password("actor@example.com", "password-that-is-not-stored")
+    ).verify_password("actor@example.com", CONFIRMATION_PASSWORD)
 
     assert returned_id == ACTOR_ID
     assert http_client.post.call_count == 2
@@ -127,7 +134,7 @@ def test_password_grant_revokes_only_the_temporary_session() -> None:
     assert grant_call.args[0] == "/auth/v1/token?grant_type=password"
     assert grant_call.kwargs["json"] == {
         "email": "actor@example.com",
-        "password": "password-that-is-not-stored",
+        "password": CONFIRMATION_PASSWORD,
     }
     revoke_call = http_client.post.call_args_list[1]
     assert revoke_call.args[0] == "/auth/v1/logout?scope=local"
@@ -152,11 +159,11 @@ def test_password_grant_maps_upstream_failures_without_retry(
 
     with pytest.raises(error) as raised:
         SupabasePasswordGrantClient(_settings(), http_client=http_client).verify_password(
-            "actor@example.com", "super-secret-password"
+            "actor@example.com", PASSWORD_CANARY
         )
 
     assert http_client.post.call_count == 1
-    assert "super-secret-password" not in str(raised.value)
+    assert PASSWORD_CANARY not in str(raised.value)
     assert "redacted upstream detail" not in str(raised.value)
     assert PUBLISHABLE_KEY not in str(raised.value)
 
@@ -165,22 +172,22 @@ def test_password_grant_rejects_malformed_success_without_leaking_session_data()
     http_client = Mock()
     http_client.post.return_value = _response(
         200,
-        {"access_token": "temporary-token", "user": {"id": "not-a-uuid"}},
+        {"access_token": MALFORMED_RESPONSE_TOKEN, "user": {"id": "not-a-uuid"}},
     )
     http_client.post.side_effect = [
         _response(
             200,
-            {"access_token": "temporary-token", "user": {"id": "not-a-uuid"}},
+            {"access_token": MALFORMED_RESPONSE_TOKEN, "user": {"id": "not-a-uuid"}},
         ),
         _response(204, {}),
     ]
 
     with pytest.raises(LifecyclePasswordServiceUnavailable):
         SupabasePasswordGrantClient(_settings(), http_client=http_client).verify_password(
-            "actor@example.com", "super-secret-password"
+            "actor@example.com", PASSWORD_CANARY
         )
 
     assert http_client.post.call_count == 2
     revoke_call = http_client.post.call_args_list[1]
     assert revoke_call.args[0] == "/auth/v1/logout?scope=local"
-    assert revoke_call.kwargs["headers"]["Authorization"] == "Bearer temporary-token"
+    assert revoke_call.kwargs["headers"]["Authorization"] == f"Bearer {MALFORMED_RESPONSE_TOKEN}"

@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from secrets import token_urlsafe
 from uuid import UUID
 
 import pytest
@@ -9,6 +10,8 @@ from app.systems.lifecycle.service import hash_challenge_token
 from tests.test_lifecycle_api_integration import (  # noqa: F401
     LifecycleApiClient,
 )
+
+CONFIRMATION_PASSWORD = token_urlsafe(32)
 
 pytest_plugins = ("tests.test_lifecycle_api_integration",)
 pytestmark = pytest.mark.integration
@@ -61,7 +64,7 @@ def test_registered_close_rejects_expired_challenge_before_password_provider(
         response = client.request(
             "POST",
             f"/api/modules/{module_id}/close",
-            {"token": token, "confirmation_name": "Assets", "password": "secret"},
+            {"token": token, "confirmation_name": "Assets", "password": CONFIRMATION_PASSWORD},
         )
 
         with client.engine.connect() as connection:
@@ -77,7 +80,7 @@ def test_registered_close_rejects_expired_challenge_before_password_provider(
         repeated = client.request(
             "POST",
             f"/api/modules/{module_id}/close",
-            {"token": token, "confirmation_name": "Assets", "password": "secret"},
+            {"token": token, "confirmation_name": "Assets", "password": CONFIRMATION_PASSWORD},
         )
 
     with client.engine.connect() as connection:

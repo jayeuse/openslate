@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from secrets import token_urlsafe
 from unittest.mock import MagicMock
 
 import pytest
@@ -6,6 +7,10 @@ from sqlalchemy import text
 from uuid6 import uuid7
 
 from scripts import check_operational_health as checker
+
+METADATA_CANARY = token_urlsafe(32)
+
+DATABASE_ERROR_CANARY = token_urlsafe(32)
 
 
 def test_checker_caps_output_and_never_includes_metadata() -> None:
@@ -17,19 +22,19 @@ def test_checker_caps_output_and_never_includes_metadata() -> None:
             "event_type": "user.invitation",
             "source": "users.service",
             "reason": "unresolved",
-            "metadata": "secret",
+            "metadata": METADATA_CANARY,
         }
         for _ in range(101)
     ]
     report = checker.inspect_operations(connection)
     assert report["truncated"] is True
     assert len(report["operations"]) == 100
-    assert "secret" not in str(report)
+    assert METADATA_CANARY not in str(report)
 
 
 def test_checker_failure_is_not_a_healthy_result(monkeypatch, capsys) -> None:
     def unavailable():
-        raise RuntimeError("database password secret")
+        raise RuntimeError(DATABASE_ERROR_CANARY)
 
     monkeypatch.setattr(checker, "get_engine", unavailable)
     assert checker.main() == 2

@@ -212,8 +212,11 @@ npm run build
 npm run test:e2e
 ```
 
-Run one backend test with `uv run pytest tests/test_health.py`. Run one browser
-test with `npm run test:e2e -- tests/home.spec.ts --project=chromium`.
+From the repository root, run a backend section with
+`python3 scripts/test.py backend section runtime --layer isolated`. From
+`frontend/`, run `npm run test:section -- security --layer isolated` or
+`npm run test:affected -- --list`. See the [testing workflow](docs/architecture/16-testing-architecture.md)
+for sections, affected selection, and full verification.
 
 PostgreSQL integration tests can use the local database URL without exposing
 it in source control:

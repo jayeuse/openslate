@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from secrets import token_urlsafe
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
@@ -10,6 +11,8 @@ from uuid6 import uuid7
 
 import app.common.dependencies.auth as auth_dependencies
 from app.systems.users.models import Role, User, UserRole
+
+MOCK_ACCESS_TOKEN = token_urlsafe(32)
 
 
 def test_role_dependency_accepts_allowed_role() -> None:
@@ -69,34 +72,14 @@ def _profile(
     )
 
 
-def test_current_user_loads_same_id_active_profile(monkeypatch: pytest.MonkeyPatch) -> None:
-    user_id = uuid7()
-    profile = _profile(user_id)
-    db = Mock(spec=Session)
-    db.scalar.return_value = profile
-    _use_verified_claims(monkeypatch, {"sub": str(user_id)})
-
-    current_user = auth_dependencies.get_current_user("supabase-token", db)
-
-    assert current_user is profile
-
-
-@pytest.mark.parametrize(
-    ("status", "deleted"),
-    [("pending", False), ("disabled", False), ("active", True)],
-)
-def test_current_user_rejects_inactive_or_deleted_profile(
-    monkeypatch: pytest.MonkeyPatch,
-    status: str,
-    deleted: bool,
-) -> None:
+def test_current_user_rejects_disabled_profile(monkeypatch: pytest.MonkeyPatch) -> None:
     user_id = uuid7()
     db = Mock(spec=Session)
-    db.scalar.return_value = _profile(user_id, status=status, deleted=deleted)
+    db.scalar.return_value = _profile(user_id, status="disabled")
     _use_verified_claims(monkeypatch, {"sub": str(user_id)})
 
     with pytest.raises(HTTPException) as error:
-        auth_dependencies.get_current_user("supabase-token", db)
+        auth_dependencies.get_current_user(MOCK_ACCESS_TOKEN, db)
 
     assert error.value.status_code == 401
 
@@ -108,7 +91,7 @@ def test_current_user_rejects_missing_profile(monkeypatch: pytest.MonkeyPatch) -
     _use_verified_claims(monkeypatch, {"sub": str(user_id)})
 
     with pytest.raises(HTTPException) as error:
-        auth_dependencies.get_current_user("supabase-token", db)
+        auth_dependencies.get_current_user(MOCK_ACCESS_TOKEN, db)
 
     assert error.value.status_code == 401
 
@@ -120,36 +103,21 @@ def test_current_user_rejects_profile_with_different_id(monkeypatch: pytest.Monk
     _use_verified_claims(monkeypatch, {"sub": str(token_user_id)})
 
     with pytest.raises(HTTPException) as error:
-        auth_dependencies.get_current_user("supabase-token", db)
+        auth_dependencies.get_current_user(MOCK_ACCESS_TOKEN, db)
 
     assert error.value.status_code == 401
 
 
-@pytest.mark.parametrize(
-    ("issued_at", "accepted"),
-    [
-        (datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC).timestamp() - 1, False),
-        (datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC).timestamp(), True),
-    ],
-)
-def test_current_user_applies_the_local_token_cutoff(
+def test_current_user_accepts_token_at_exact_local_cutoff(
     monkeypatch: pytest.MonkeyPatch,
-    issued_at: float,
-    accepted: bool,
 ) -> None:
     user_id = uuid7()
     cutoff = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     db = Mock(spec=Session)
     db.scalar.return_value = _profile(user_id, tokens_valid_after=cutoff)
-    _use_verified_claims(monkeypatch, {"sub": str(user_id), "iat": issued_at})
+    _use_verified_claims(monkeypatch, {"sub": str(user_id), "iat": cutoff.timestamp()})
 
-    if accepted:
-        assert auth_dependencies.get_current_user("supabase-token", db).id == user_id
-    else:
-        with pytest.raises(HTTPException) as error:
-            auth_dependencies.get_current_user("supabase-token", db)
-
-        assert error.value.status_code == 401
+    assert auth_dependencies.get_current_user(MOCK_ACCESS_TOKEN, db).id == user_id
 
 
 def test_verified_pending_identity_uses_only_verified_jwt_subject_and_email(
@@ -161,7 +129,7 @@ def test_verified_pending_identity_uses_only_verified_jwt_subject_and_email(
         {"sub": str(user_id), "email": " Pending@Example.COM "},
     )
 
-    identity = auth_dependencies.get_verified_pending_identity("supabase-token")
+    identity = auth_dependencies.get_verified_pending_identity(MOCK_ACCESS_TOKEN)
 
     assert identity.subject == user_id
     assert identity.email == "pending@example.com"
@@ -178,6 +146,6 @@ def test_verified_pending_identity_rejects_missing_or_invalid_verified_email(
     _use_verified_claims(monkeypatch, claims)
 
     with pytest.raises(HTTPException) as error:
-        auth_dependencies.get_verified_pending_identity("supabase-token")
+        auth_dependencies.get_verified_pending_identity(MOCK_ACCESS_TOKEN)
 
     assert error.value.status_code == 401

@@ -1,4 +1,5 @@
 import json
+from secrets import token_urlsafe
 
 import pytest
 from fastapi import FastAPI
@@ -13,10 +14,14 @@ from app.systems.users.models import User, UserRole
 
 from .support import _make_event, _payload_values, _SecurityEventDatabase, _user
 
+SERVER_KEY = token_urlsafe(32)
+WRONG_SERVER_KEY = token_urlsafe(32)
+REJECTED_TOKEN = token_urlsafe(32)
+
 
 @pytest.fixture
 def api(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
-    monkeypatch.setenv("SECURITY_EVENT_SERVER_KEY", "configured-server-key")
+    monkeypatch.setenv("SECURITY_EVENT_SERVER_KEY", SERVER_KEY)
     get_settings.cache_clear()
     application = create_app()
     yield application
@@ -87,7 +92,7 @@ def test_security_event_export_rejects_unbounded_limit_for_admin(api: FastAPI) -
 
 @pytest.mark.parametrize(
     "headers",
-    [{}, {"X-OpenSlate-Server-Key": "wrong-server-key"}],
+    [{}, {"X-OpenSlate-Server-Key": WRONG_SERVER_KEY}],
     ids=["missing-key", "wrong-key"],
 )
 def test_internal_security_event_ingestion_rejects_missing_or_wrong_server_key(
@@ -114,7 +119,7 @@ def test_internal_security_event_ingestion_accepts_configured_key_and_valid_payl
 
     response = client.post(
         "/api/internal/security-events",
-        headers={"X-OpenSlate-Server-Key": "configured-server-key"},
+        headers={"X-OpenSlate-Server-Key": SERVER_KEY},
         json=_payload_values(),
     )
 
@@ -131,8 +136,8 @@ def test_internal_security_event_ingestion_validates_before_persisting(api: Fast
 
     response = client.post(
         "/api/internal/security-events",
-        headers={"X-OpenSlate-Server-Key": "configured-server-key"},
-        json=_payload_values(outcome="not-an-outcome", token="secret-token"),
+        headers={"X-OpenSlate-Server-Key": SERVER_KEY},
+        json=_payload_values(outcome="not-an-outcome", token=REJECTED_TOKEN),
     )
 
     assert response.status_code == 422

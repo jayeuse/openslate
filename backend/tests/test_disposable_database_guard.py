@@ -1,10 +1,14 @@
+from secrets import token_urlsafe
+
 import pytest
 
 from tests.conftest import _guard_integration_database
 
+MOCK_DATABASE_PASSWORD = token_urlsafe(32)
+
 
 def test_alternate_test_port_requires_explicit_disposable_tuple(monkeypatch):
-    url = "postgresql+psycopg://test:test@127.0.0.1:55322/postgres"
+    url = f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@127.0.0.1:55322/postgres"
     monkeypatch.delenv("E2E_ALLOW_MUTATIONS", raising=False)
     monkeypatch.delenv("OPENSLATE_FULLSTACK_RUN_ID", raising=False)
     with pytest.raises(RuntimeError):

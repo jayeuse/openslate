@@ -4,7 +4,7 @@ from unittest.mock import patch
 from uuid import UUID
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -89,30 +89,20 @@ def test_postgres_partial_unique_allows_relink_after_soft_delete(
     assert {edge.id for edge in edges} == {original.id, replacement.id}
     assert sum(not edge.is_deleted for edge in edges) == 1
 
-def test_service_cardinality_counts_hidden_archived_edges_as_reserved(
-    integration_db: Session, owned_ids: set[UUID]
+@pytest.mark.parametrize("side", ["source", "target"])
+def test_relationship_cardinality_rejects_a_second_edge(
+    side: str, integration_db: Session, owned_ids: set[UUID]
 ) -> None:
-    field, _, target_module, sources, targets = _seed_graph(integration_db, owned_ids)
+    field, _, _, sources, targets = _seed_graph(integration_db, owned_ids, record_count=2)
     _add_edge(integration_db, owned_ids, field, sources[0], targets[0])
-
-    targets[0].is_deleted = True
-    targets[0].deleted_at = datetime.now(UTC)
-    new_target = Record(module_id=target_module.id, data={})
-    integration_db.add(new_target)
-    integration_db.flush()
-    owned_ids.add(new_target.id)
-    integration_db.commit()
-
-    with pytest.raises(RelationshipConflict, match="Source already has"):
-        create_relationship(integration_db, field.id, sources[0].id, new_target.id)
-
+    source, target = (sources[0], targets[1]) if side == "source" else (sources[1], targets[0])
+    with pytest.raises(RelationshipConflict):
+        create_relationship(integration_db, field.id, source.id, target.id)
     assert integration_db.scalar(
-        select(RelationshipEdge.id).where(
-            RelationshipEdge.field_id == field.id,
-            RelationshipEdge.source_record_id == sources[0].id,
-            RelationshipEdge.is_deleted.is_(False),
-        )
-    ) is not None
+        select(func.count())
+        .select_from(RelationshipEdge)
+        .where(RelationshipEdge.field_id == field.id)
+    ) == 1
 
 def test_assignment_commits_delete_and_create_audits_same_request(
     integration_db: AuditSession, owned_ids: set[UUID]

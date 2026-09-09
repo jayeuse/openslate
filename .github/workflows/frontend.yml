@@ -57,11 +57,18 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Generate disposable image-test key
+        run: |
+          test_key="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("base64url"))')"
+          printf '::add-mask::%s\n' "$test_key"
+          printf 'IMAGE_TEST_PUBLISHABLE_KEY=%s\n' "$test_key" >> "$GITHUB_ENV"
+          unset test_key
+
       - name: Build frontend Docker image
         working-directory: ${{ github.workspace }}
         env:
           NEXT_PUBLIC_SUPABASE_URL: https://example.invalid
-          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ env.IMAGE_TEST_PUBLISHABLE_KEY }}
         run: >-
           docker build
           --build-arg NEXT_PUBLIC_SUPABASE_URL="$NEXT_PUBLIC_SUPABASE_URL"
@@ -73,9 +80,9 @@ jobs:
       - name: Assert frontend image environment boundary
         working-directory: ${{ github.workspace }}
         run: >-
-          docker run --rm --entrypoint /bin/sh openslate-frontend:ci -c
+          docker run --rm --env IMAGE_TEST_PUBLISHABLE_KEY --entrypoint /bin/sh openslate-frontend:ci -c
           'test "$NEXT_PUBLIC_SUPABASE_URL" = "https://example.invalid" &&
-          test "$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" = "sb_publishable_ci" &&
+          test "$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" = "$IMAGE_TEST_PUBLISHABLE_KEY" &&
           test -z "${BACKEND_URL+x}"'
 
       - name: Run end-to-end tests

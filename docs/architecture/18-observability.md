@@ -25,7 +25,7 @@ Priority 3 must separately verify these release prerequisites and wire readiness
 to traffic admission. Neither endpoint is a public hosted monitoring deployment.
 
 Sources: `backend/app/main.py`, `backend/app/core/readiness.py`,
-`backend/tests/test_readiness.py`, `backend/tests/test_runtime_boundaries.py`.
+`backend/tests/runtime/test_readiness.py`, `backend/tests/runtime/test_boundaries.py`.
 
 ## Correlation and logging — implemented
 

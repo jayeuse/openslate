@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from enum import StrEnum
+from secrets import token_urlsafe
 
 from uuid6 import uuid7
 
@@ -11,6 +12,11 @@ from app.systems.audit.snapshots import (
     serialize_value,
 )
 from app.systems.users.models import User
+
+BINARY_CANARY = token_urlsafe(32)
+OLD_FIELD_CANARY = token_urlsafe(32)
+NEW_FIELD_CANARY = token_urlsafe(32)
+ADDED_FIELD_CANARY = token_urlsafe(32)
 
 
 class ExampleRole(StrEnum):
@@ -25,7 +31,7 @@ def test_serialize_value_handles_common_database_values() -> None:
     assert serialize_value(timestamp) == timestamp.isoformat()
     assert serialize_value(ExampleRole.MEMBER) == "member"
     assert serialize_value([identifier]) == [str(identifier)]
-    assert serialize_value(b"secret") == REDACTED
+    assert serialize_value(BINARY_CANARY.encode()) == REDACTED
 
 
 def test_serialize_record_contains_only_supabase_profile_fields() -> None:
@@ -78,7 +84,7 @@ def test_update_snapshot_contains_only_changed_nested_values() -> None:
 
 
 def test_update_snapshot_redacts_sensitive_changes() -> None:
-    snapshot = build_update_snapshot({"password_hash": ("old", "new")})
+    snapshot = build_update_snapshot({"password_hash": (BINARY_CANARY, OLD_FIELD_CANARY)})
 
     assert snapshot == {
         "before": {"password_hash": REDACTED},
@@ -93,11 +99,11 @@ def test_update_snapshot_redacts_dynamic_field_keys_in_add_remove_diffs() -> Non
     snapshot = build_update_snapshot(
         {
             "data": (
-                {redacted_field_id: "old secret", "clear-field": "old"},
+                {redacted_field_id: OLD_FIELD_CANARY, "clear-field": "old"},
                 {
                     "clear-field": "new",
-                    redacted_field_id: "new secret",
-                    added_field_id: "added secret",
+                    redacted_field_id: NEW_FIELD_CANARY,
+                    added_field_id: ADDED_FIELD_CANARY,
                 },
             )
         },

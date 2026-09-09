@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from secrets import token_urlsafe
 from unittest.mock import Mock
 
 import pytest
@@ -39,6 +40,9 @@ from .support import (
     make_role,
     make_user,
 )
+
+CONFIRMATION_TOKEN = token_urlsafe(32)
+CONFIRMATION_PASSWORD = token_urlsafe(32)
 
 
 @pytest.mark.parametrize(
@@ -233,9 +237,9 @@ def test_lifecycle_close_and_reopen_use_corresponding_resource_write_capability(
     if operation is LifecycleOperation.CLOSE:
         monkeypatch.setattr(lifecycle_router, "_close", lambda *_args: mutation)
         payload: dict[str, object] = {
-            "token": "token",
+            "token": CONFIRMATION_TOKEN,
             "confirmation_name": "Operations",
-            "password": "password",
+            "password": CONFIRMATION_PASSWORD,
         }
     else:
         monkeypatch.setattr(lifecycle_router, "_reopen", lambda *_args: mutation)
@@ -290,7 +294,7 @@ def test_all_purge_routes_remain_literal_admin_only(
     impact = _purge_impact(target_type)
     preview = LifecyclePurgePreviewResponse(
         impact=impact,
-        token="token",
+        token=CONFIRMATION_TOKEN,
         expires_at=datetime.now(UTC),
         confirmation_name="Operations",
     )
@@ -301,9 +305,9 @@ def test_all_purge_routes_remain_literal_admin_only(
         None
         if path.endswith("/preview")
         else {
-            "token": "token",
+            "token": CONFIRMATION_TOKEN,
             "confirmation_name": "Operations",
-            "password": "password",
+            "password": CONFIRMATION_PASSWORD,
         }
     )
 

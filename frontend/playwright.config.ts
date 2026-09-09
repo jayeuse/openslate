@@ -27,11 +27,15 @@ function isolatedCommand(command: string): string {
   return ["env", "-i", ...pathAssignment, ...environment, command].join(" ");
 }
 
+const testLayer = process.env.TEST_LAYER ?? "all";
+if (!["all", "isolated", "http", "browser"].includes(testLayer)) {
+  throw new Error("TEST_LAYER must be all, isolated, http, or browser");
+}
+
 export default defineConfig({
   testDir: "./tests",
-  testIgnore: ["**/live/**", "**/fullstack/**"],
-  // Keep ordinary Playwright cleanup away from persistent live-run manifests
-  // stored under test-results/live/<run-id>.
+  testIgnore: ["**/fullstack/**"],
+  // Keep ordinary cleanup separate from disposable full-stack results.
   outputDir: "test-results/playwright",
   fullyParallel: true,
   forbidOnly: isCI,
@@ -44,22 +48,51 @@ export default defineConfig({
     video: "retain-on-failure",
   },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-    { name: "mobile-chromium", use: { ...devices["Pixel 7"] } },
-    ...(isCI
+    ...(testLayer === "all" || testLayer === "isolated"
+      ? [{ name: "isolated", testDir: "./tests/isolated" }]
+      : []),
+    ...(testLayer === "all" || testLayer === "http"
+      ? [{ name: "http", testDir: "./tests/http" }]
+      : []),
+    ...(testLayer === "all" || testLayer === "browser"
       ? [
-          { name: "firefox", use: { ...devices["Desktop Firefox"] } },
-          { name: "webkit", use: { ...devices["Desktop Safari"] } },
+          {
+            name: "chromium",
+            testDir: "./tests/browser",
+            use: { ...devices["Desktop Chrome"] },
+          },
+          {
+            name: "mobile-chromium",
+            testDir: "./tests/browser",
+            use: { ...devices["Pixel 7"] },
+          },
+          ...(isCI
+            ? [
+                {
+                  name: "firefox",
+                  testDir: "./tests/browser",
+                  use: { ...devices["Desktop Firefox"] },
+                },
+                {
+                  name: "webkit",
+                  testDir: "./tests/browser",
+                  use: { ...devices["Desktop Safari"] },
+                },
+              ]
+            : []),
         ]
       : []),
   ],
-  webServer: {
-    command: isolatedCommand(
-      useProductionServer ? "npm run start" : "npm run dev",
-    ),
-    url: process.env.BASE_URL ?? "http://localhost:3000",
-    env: frontendEnvironment,
-    reuseExistingServer: !isCI,
-    timeout: 120_000,
-  },
+  webServer:
+    testLayer === "isolated"
+      ? undefined
+      : {
+          command: isolatedCommand(
+            useProductionServer ? "npm run start" : "npm run dev",
+          ),
+          url: process.env.BASE_URL ?? "http://localhost:3000",
+          env: frontendEnvironment,
+          reuseExistingServer: !isCI,
+          timeout: 120_000,
+        },
 });

@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import os
+import secrets
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,6 +19,7 @@ spec.loader.exec_module(agent_task)
 
 class WorkflowCheckTests(unittest.TestCase):
     def setUp(self):
+        self.private_value = secrets.token_urlsafe(24)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name) / "project"
@@ -97,20 +99,20 @@ class WorkflowCheckTests(unittest.TestCase):
         self.assertEqual(agent_task.check_workspace(self.root, self.codex_home), [])
 
     def test_malformed_project_override_does_not_fall_back(self):
-        self.write(".codex/agents/explore.toml", 'secret = "private-value"\ninvalid')
+        self.write(".codex/agents/explore.toml", f'secret = "{self.private_value}"\ninvalid')
         self.write_global()
         failures = self.failures(self.codex_home)
         self.assertIn("Cannot parse worker configuration: explore.toml", failures)
-        self.assertNotIn("private-value", failures)
+        self.assertNotIn(self.private_value, failures)
 
     def test_missing_global_routed_worker_fails(self):
         self.assertIn("Missing routed worker: explore", self.failures(self.codex_home))
 
     def test_malformed_global_worker_fails_without_leaking_contents(self):
-        self.write_global(content='secret = "private-value"\ninvalid')
+        self.write_global(content=f'secret = "{self.private_value}"\ninvalid')
         failures = self.failures(self.codex_home)
         self.assertIn("Cannot parse worker configuration: explore.toml", failures)
-        self.assertNotIn("private-value", failures)
+        self.assertNotIn(self.private_value, failures)
 
     def test_global_worker_read_error_is_sanitized(self):
         global_path = self.write_global()
@@ -118,13 +120,13 @@ class WorkflowCheckTests(unittest.TestCase):
 
         def read_text(path, *args, **kwargs):
             if path == global_path:
-                raise OSError("private-value")
+                raise OSError(self.private_value)
             return original_read_text(path, *args, **kwargs)
 
         with patch.object(Path, "read_text", new=read_text):
             failures = self.failures(self.codex_home)
         self.assertIn("Cannot read worker configuration: explore.toml", failures)
-        self.assertNotIn("private-value", failures)
+        self.assertNotIn(self.private_value, failures)
 
     def test_project_worker_directory_read_error_is_sanitized(self):
         self.write_global()
@@ -134,13 +136,13 @@ class WorkflowCheckTests(unittest.TestCase):
 
         def iterdir(path):
             if path == project_directory:
-                raise OSError("private-value")
+                raise OSError(self.private_value)
             return original_iterdir(path)
 
         with patch.object(Path, "iterdir", new=iterdir):
             failures = self.failures(self.codex_home)
         self.assertIn("Cannot read project worker configurations", failures)
-        self.assertNotIn("private-value", failures)
+        self.assertNotIn(self.private_value, failures)
 
     def test_default_codex_home_is_used_when_environment_is_unset(self):
         default_home = self.codex_home.parent
@@ -236,11 +238,12 @@ class WorkflowCheckTests(unittest.TestCase):
         self.assertEqual(result.exception.code, 1)
 
     def test_doctor_read_error_is_sanitized(self):
+        private_value = secrets.token_urlsafe(24)
         with patch.object(
-            agent_task, "check_workspace", side_effect=OSError("secret")
+            agent_task, "check_workspace", side_effect=OSError(private_value)
         ), patch("builtins.print") as output, self.assertRaises(SystemExit):
             agent_task.cmd_doctor(argparse.Namespace())
-        self.assertNotIn("secret", str(output.call_args_list))
+        self.assertNotIn(private_value, str(output.call_args_list))
 
 
 if __name__ == "__main__":
