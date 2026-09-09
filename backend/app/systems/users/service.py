@@ -173,7 +173,18 @@ def _lock_profile(db: Session, user_id: UUID) -> User | None:
 
 def _profile_state(
     profile: User,
-) -> tuple[UUID, str, str, UUID, str, bool, datetime | None, datetime | None]:
+) -> tuple[
+    UUID,
+    str,
+    str,
+    UUID,
+    str,
+    bool,
+    datetime | None,
+    datetime | None,
+    datetime | None,
+    datetime | None,
+]:
     return (
         profile.id,
         profile.email,
@@ -181,8 +192,10 @@ def _profile_state(
         profile.role_id,
         profile.status,
         profile.is_deleted,
+        profile.deleted_at,
         profile.invitation_sent_at,
         profile.invitation_accepted_at,
+        profile.tokens_valid_after,
     )
 
 
@@ -230,6 +243,7 @@ def invite_user(
     if existing_profile is not None and not isinstance(existing_profile, User):
         db.rollback()
         raise InvitationError("Unable to inspect invitation profile")
+    existing_profile_id = existing_profile.id if existing_profile is not None else None
 
     # No request transaction or row lock may survive into Auth HTTP.
     db.rollback()
@@ -238,7 +252,7 @@ def invite_user(
         outcome=SecurityEventOutcome.ATTEMPT,
         operation_id=operation_id,
         actor_id=actor_id,
-        subject_id=existing_profile.id if existing_profile is not None else None,
+        subject_id=existing_profile_id,
     )
     if existing_profile is not None:
         _security_event(
@@ -246,7 +260,7 @@ def invite_user(
             outcome=SecurityEventOutcome.FAILURE,
             operation_id=operation_id,
             actor_id=actor_id,
-            subject_id=existing_profile.id,
+            subject_id=existing_profile_id,
             reason="email or username is already in use",
         )
         raise InvitationConflict("Email or username is already in use")
@@ -295,6 +309,8 @@ def invite_user(
             False,
             None,
             None,
+            None,
+            None,
         )
         if _profile_state(profile) != expected_profile_state:
             raise InvitationError("Invitation profile changed before finalization")
@@ -308,7 +324,6 @@ def invite_user(
         profile.is_deleted = False
         profile.deleted_at = None
         db.commit()
-        db.refresh(profile)
     except HTTPException:
         db.rollback()
         _security_event(
@@ -422,7 +437,6 @@ def resend_invitation(
         finalized.role = finalized_role
         finalized.invitation_sent_at = utc_now()
         db.commit()
-        db.refresh(finalized)
     except HTTPException:
         db.rollback()
         _security_event(
@@ -455,146 +469,3 @@ def resend_invitation(
         subject_id=user_id,
     )
     return finalized
-
-
-def accept_verified_invitation(
-    db: Session,
-    user_id: UUID,
-    *,
-    verified_email: str,
-    verified_identity: UUID,
-) -> User:
-    """Finalize a pending invitation after Supabase has verified the identity."""
-
-    operation_id = uuid7()
-    _security_event(
-        event_type="user.invitation_acceptance",
-        outcome=SecurityEventOutcome.ATTEMPT,
-        operation_id=operation_id,
-        actor_id=user_id,
-        subject_id=user_id,
-    )
-    if verified_identity != user_id:
-        db.rollback()
-        _security_event(
-            event_type="user.invitation_acceptance",
-            outcome=SecurityEventOutcome.FAILURE,
-            operation_id=operation_id,
-            actor_id=user_id,
-            subject_id=user_id,
-            reason="verified identity does not match profile",
-        )
-        raise InvitationError("Verified identity does not match invitation")
-    try:
-        email = normalize_email(verified_email)
-    except ValueError as error:
-        db.rollback()
-        _security_event(
-            event_type="user.invitation_acceptance",
-            outcome=SecurityEventOutcome.FAILURE,
-            operation_id=operation_id,
-            actor_id=user_id,
-            subject_id=user_id,
-            reason="verified email is invalid",
-        )
-        raise InvitationError("Verified email does not match invitation") from error
-    try:
-        _lock_admin_role(db)
-        profile = _lock_profile(db, user_id)
-    except InvitationError as error:
-        db.rollback()
-        _security_event(
-            event_type="user.invitation_acceptance",
-            outcome=SecurityEventOutcome.FAILURE,
-            operation_id=operation_id,
-            actor_id=user_id,
-            subject_id=user_id,
-            reason="unable to lock invitation profile",
-        )
-        raise error
-    if profile is None or profile.email != email or profile.is_deleted:
-        db.rollback()
-        _security_event(
-            event_type="user.invitation_acceptance",
-            outcome=SecurityEventOutcome.FAILURE,
-            operation_id=operation_id,
-            actor_id=user_id,
-            subject_id=user_id,
-            reason="verified email does not match invitation",
-        )
-        raise InvitationError("Verified email does not match invitation")
-    try:
-        assigned_role = _lock_role_any_state(db, profile.role_id)
-    except InvitationError as error:
-        db.rollback()
-        _security_event(
-            event_type="user.invitation_acceptance",
-            outcome=SecurityEventOutcome.FAILURE,
-            operation_id=operation_id,
-            actor_id=user_id,
-            subject_id=user_id,
-            reason="unable to lock invitation role",
-        )
-        raise error
-    if assigned_role is None or assigned_role.is_deleted:
-        db.rollback()
-        _security_event(
-            event_type="user.invitation_acceptance",
-            outcome=SecurityEventOutcome.FAILURE,
-            operation_id=operation_id,
-            actor_id=user_id,
-            subject_id=user_id,
-            reason="invitation role is not active",
-        )
-        raise InvitationError("Invitation role is not active")
-    profile.role = assigned_role
-    if profile.status == UserStatus.ACTIVE.value and profile.invitation_accepted_at is not None:
-        db.rollback()
-        _security_event(
-            event_type="user.invitation_acceptance",
-            outcome=SecurityEventOutcome.SUCCESS,
-            operation_id=operation_id,
-            actor_id=user_id,
-            subject_id=user_id,
-        )
-        return profile
-    if (
-        profile.status != UserStatus.PENDING.value
-        or profile.invitation_sent_at is None
-        or profile.role is None
-        or profile.role.is_deleted
-    ):
-        db.rollback()
-        _security_event(
-            event_type="user.invitation_acceptance",
-            outcome=SecurityEventOutcome.FAILURE,
-            operation_id=operation_id,
-            actor_id=user_id,
-            subject_id=user_id,
-            reason="invitation is not pending",
-        )
-        raise InvitationError("Invitation is not pending")
-
-    profile.status = UserStatus.ACTIVE.value
-    profile.invitation_accepted_at = utc_now()
-    try:
-        db.commit()
-    except SQLAlchemyError as error:
-        db.rollback()
-        _security_event(
-            event_type="user.invitation_acceptance",
-            outcome=SecurityEventOutcome.FAILURE,
-            operation_id=operation_id,
-            actor_id=user_id,
-            subject_id=user_id,
-            reason="unable to finalize invitation acceptance",
-        )
-        raise InvitationError("Unable to finalize invitation acceptance") from error
-    _security_event(
-        event_type="user.invitation_acceptance",
-        outcome=SecurityEventOutcome.SUCCESS,
-        operation_id=operation_id,
-        actor_id=user_id,
-        subject_id=user_id,
-    )
-    return profile

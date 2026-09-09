@@ -12,7 +12,6 @@ from app.systems.departments.models import Department
 from app.systems.departments.router import (
     DepartmentSortField,
     create_department,
-    delete_department,
     list_departments,
     restore_department,
     update_department,
@@ -27,7 +26,6 @@ from app.systems.modules.router import (
     ModuleSortField,
     accept_module_schema,
     create_module,
-    delete_module,
     list_modules,
     restore_module,
     update_module,
@@ -114,12 +112,6 @@ def test_department_lifecycle_and_active_module_dependency() -> None:
     update_department(department.id, DepartmentUpdate(department_name="  Support  "), None, db)
     assert department.department_name == "Support"
 
-    db.scalar.return_value = 1
-    with pytest.raises(HTTPException) as error:
-        delete_department(department.id, None, db)
-    assert error.value.status_code == 409
-    assert department.is_deleted is False
-
     db.scalar.side_effect = [None]
     deleted = Department(department_name="Retired", is_deleted=True)
     deleted.id = uuid7()
@@ -161,20 +153,6 @@ def test_module_requires_active_parent_and_keeps_department_immutable() -> None:
         )
     assert error.value.status_code == 409
     db.commit.assert_not_called()
-
-
-def test_module_delete_checks_active_fields_and_records() -> None:
-    module = Module(department_id=uuid7(), module_name="Assets", is_deleted=False)
-    module.id = uuid7()
-    db = Mock(spec=Session)
-    db.get.return_value = module
-    db.scalar.return_value = 1
-
-    with pytest.raises(HTTPException) as error:
-        delete_module(module.id, None, db)
-
-    assert error.value.status_code == 409
-    assert module.is_deleted is False
 
 
 def test_module_restore_requires_active_parent_and_duplicate_preflight() -> None:

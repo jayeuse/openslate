@@ -85,9 +85,12 @@ def test_in_flight_verifications_reserve_the_actor_failure_budget() -> None:
     db.scalar.return_value = pending
 
     with (
-        patch("app.systems.lifecycle.service._challenge_for_token", return_value=pending),
-        patch("app.systems.lifecycle.service._refresh_failure_bucket", return_value=bucket),
-        patch("app.systems.lifecycle.service._blocked_until", return_value=None),
+        patch("app.systems.lifecycle.challenge_store._challenge_for_token", return_value=pending),
+        patch(
+            "app.systems.lifecycle.challenge_store._refresh_failure_bucket",
+            return_value=bucket,
+        ),
+        patch("app.systems.lifecycle.challenge_store._blocked_until", return_value=None),
         pytest.raises(LifecycleActorBlocked),
     ):
         begin_verification(
@@ -127,7 +130,7 @@ def test_password_grant_revokes_only_the_temporary_session() -> None:
         "password": "password-that-is-not-stored",
     }
     revoke_call = http_client.post.call_args_list[1]
-    assert revoke_call.args[0] == "/auth/v1/logout"
+    assert revoke_call.args[0] == "/auth/v1/logout?scope=local"
     assert revoke_call.kwargs["json"] is None
     assert revoke_call.kwargs["headers"]["Authorization"] == f"Bearer {access_token}"
 
@@ -178,3 +181,6 @@ def test_password_grant_rejects_malformed_success_without_leaking_session_data()
         )
 
     assert http_client.post.call_count == 2
+    revoke_call = http_client.post.call_args_list[1]
+    assert revoke_call.args[0] == "/auth/v1/logout?scope=local"
+    assert revoke_call.kwargs["headers"]["Authorization"] == "Bearer temporary-token"

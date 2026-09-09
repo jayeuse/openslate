@@ -1,6 +1,5 @@
-from uuid import uuid7
-
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 from app.systems.audit.context import AuditContext, get_audit_context, set_audit_actor
 

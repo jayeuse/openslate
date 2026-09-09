@@ -1,7 +1,7 @@
 from types import SimpleNamespace
-from uuid import uuid7
 
 import pytest
+from uuid6 import uuid7
 
 from app.systems.audit.context import AuditContext
 from app.systems.audit.listeners import (

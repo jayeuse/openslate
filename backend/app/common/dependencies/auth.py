@@ -14,6 +14,7 @@ from app.common.normalization import normalize_email
 from app.core.database import get_db
 from app.core.security.supabase import verify_supabase_jwt
 from app.systems.audit.context import set_audit_actor
+from app.systems.users.eligibility import is_established_user
 from app.systems.users.models import Role, User, UserRole
 from app.systems.users.permissions import Capability, has_capability
 
@@ -49,6 +50,7 @@ def get_current_user(
         or user.id != user_id
         or user.is_deleted
         or getattr(user, "status", None) != "active"
+        or not is_established_user(user)
         or user.role is None
         or user.role.is_deleted
     ):
@@ -157,6 +159,7 @@ def require_fresh_exact_admin(db: Session, actor_id: UUID) -> User:
     if not (
         actor.id == actor_id
         and actor.status == "active"
+        and is_established_user(actor)
         and not actor.is_deleted
         and actor.role_id == admin_role.id
         and actor.role is not None

@@ -41,12 +41,41 @@
 
 ## Codex orchestration
 - For implementation, troubleshooting, multi-agent work, or explicit evaluation, read `.agents/orchestration/PROTOCOL.md`; apply refresh-context → act → inspect-evidence → evaluate. If missing, report it and follow this guide without claiming full setup.
-- Preserve global primary model/approval settings and existing worker model overrides. Workers: `.codex/agents/`; skills: `.agents/skills/`. Read only relevant skills; repository rules/commands override mismatched generic examples.
+- Inherit the global Astra-high primary and approval settings. Shared workers live in `~/.codex/agents/`; optional project overrides live in `.codex/agents/`; skills live in `.agents/skills/`. Read only relevant skills; repository rules/commands override mismatched generic examples.
 - Handle small tasks directly; automatically delegate substantial bounded work when it improves quality or time. Do not duplicate verified discovery or assign the same investigation without distinct responsibilities.
 - Planning-only requests produce investigation and a plan, not implementation. Parent owns decomposition, dependencies, integration, conflict resolution, and final review.
-- Route discovery to `explore`; application work to `backend-general`/`frontend-general`; schema to `db-general`; runtime/deployment to `infra-general`.
-- Route code verification to `backend-test`/`frontend-test`/`db-test`, live browser acceptance to `playwright-tester`, and unclear confirmed defects to the matching `backend-debug`/`frontend-debug`/`db-debug`/`infra-debug`.
-- Use `architect`/`security` for relevant reviews; call `architect-deep`/`security-deep`/`debug-deep` only after first-pass low confidence or explicit escalation, carrying findings, evidence, uncertainties, and references.
+- Choose a shared role by responsibility and complexity; include domain ownership and the applicable skill paths below in each assignment. Difficult escalations, integration, final review, and re-verification remain with the Astra-high parent.
+
+### Worker routing
+
+| Work | Worker |
+| --- | --- |
+| Exact searches, inventories, prescribed checks | `utility` |
+| Repository exploration and behavior tracing | `explore` |
+| Routine changes and straightforward test authoring | `general` |
+| Assigned live-browser reproduction and acceptance | `browser` |
+| Substantial implementation and complex regression-test design | `implement` |
+| Difficult debugging, architecture planning, security first pass (one mode) | `analyst` |
+
+### Project skill routing
+Resolve these skill paths from the repository root. Select only the skills relevant to the assignment; workers read and report them themselves.
+
+| Domain / task | Skill paths |
+| --- | --- |
+| React/Next.js implementation or tracing | `.agents/skills/react-frontend-patterns/SKILL.md` |
+| Backend behavior; API contract work when applicable | `.agents/skills/fastapi-backend-patterns/SKILL.md`; `.agents/skills/fastapi-api-design/SKILL.md` |
+| Schema, persistence, database evidence | `.agents/skills/postgres-patterns/SKILL.md`; `.agents/skills/supabase-postgres-best-practices/SKILL.md` |
+| Supabase products or integration | `.agents/skills/supabase/SKILL.md` |
+| Infrastructure/tooling setup | `.agents/skills/project-tooling/SKILL.md` |
+| Live browser checks (browser); test authoring (general/implement) | `.agents/skills/playwright-e2e-testing/SKILL.md` |
+| Security decisions and review | `.agents/skills/webapp-security-review/SKILL.md` |
+| Behavior changes and regression-test design | `.agents/skills/tdd-workflow/SKILL.md` |
+| Meaningful completion verification | `.agents/skills/verification-loop/SKILL.md` |
+
+- For assigned UI visual-quality/accessibility review, add the available personal `frontend-design-review` skill. Plugin/personal skills complement project guidance only when relevant; do not load artifact skills for unrelated coding.
+- A prescribed-check utility assignment does not authorize test-strategy selection. Browser assignments specify target, workflow, expected results, permitted interactions, and required evidence; unknown causes return to the parent.
+- MCPs/plugins are inherited capabilities, not authorization. Use Context7 for unresolved library facts, project PostgreSQL for authorized evidence, and available browser tools for assigned live checks. If a skill expects an unavailable Supabase MCP, report it and use the configured CLI or database path only when sufficient and authorized; do not install a substitute automatically.
+
 - Give workers objective, ownership, constraints, dependencies, acceptance criteria, expected evidence, skill paths, and stopping condition; require reading/reporting applicable skills.
 - Workers share the checkout: preserve others' edits, parallelize only independent disjoint writes, serialize conflicts, and return to parent without further delegation (`[agents] enabled = false`).
 - Inspect every worker diff/result, reconcile findings, and retest fixes. Continue incomplete workers with the precise remaining objective; do not restart discovery or equate unfinished work with a defect.

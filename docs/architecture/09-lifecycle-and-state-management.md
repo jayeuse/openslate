@@ -39,7 +39,7 @@ Purge is **Implemented but disabled by default** (`Settings.lifecycle_purge_enab
 | User              | Direct soft delete/restore and enable/disable coordination | Restore/enable                                             | No lifecycle purge API   | Supabase Auth and local state are separate systems.                             |
 | Role              | Direct soft delete/restore where allowed                   | Restore                                                    | No lifecycle purge API   | Built-in/protected-role rules are application-enforced.                         |
 
-Sources: capability routers, `backend/app/systems/lifecycle/router.py`, `planner.py`, and `service.py`.
+Sources: capability routers, `backend/app/systems/lifecycle/router.py`, `backend/app/systems/lifecycle/planning_scope.py`, `backend/app/systems/lifecycle/planning.py`, `backend/app/systems/lifecycle/planning_preflight.py`, `backend/app/systems/lifecycle/challenge_store.py`, `backend/app/systems/lifecycle/challenge_verification.py`, and `backend/app/systems/lifecycle/execution.py` (with compatibility exports from `planner.py` and `service.py`).
 
 ## Close preview and confirmation
 
@@ -77,7 +77,7 @@ Preview then stores a five-minute challenge containing only a SHA-256 token hash
 
 ### Password step-up
 
-Confirmed close requires the exact confirmation name, challenge token, and current password. The service reserves a verification lease and commits before making the network call, so a database transaction is not held over password verification. A temporary Supabase password grant validates identity and is revoked; its access token is neither returned nor persisted.
+Confirmed close requires the exact confirmation name, challenge token, and current password. `challenge_store.begin_verification` locks the challenge, expires stale pending rows, and rejects both newly expired and already-`expired` rows before reserving a lease. It commits the lease before making the network call, so a database transaction is not held over password verification; expired challenges return `409` without invoking the password provider. A temporary Supabase password grant validates identity and is revoked; its access token is neither returned nor persisted.
 
 Failed passwords increment challenge and rolling actor failure state. Expired, exhausted, already-verifying, actor-mismatched, or target-mismatched challenges fail without changing the target.
 
@@ -130,8 +130,8 @@ Physical purge differs: edges that would violate FK restrictions are deleted fir
 - Record updates preserve closed-field values and reject attempts to alter them.
 - Reopening a field checks field identity/position conflicts and validates the resulting schema and records.
 - Purging a field may strip its UUID key from record JSON as a planned mutation.
-- Field creation, an effective API field update, or a changed reorder can invalidate module schema acceptance. Lifecycle close/reopen does not itself flip `is_schema_accepted`; reopen preflight validates the effective schema and records.
-- Known unresolved behavior: closing the last active field leaves acceptance true, so record creation can still succeed with an empty `{}` record. This stale-acceptance consequence is current behavior, not a fixed lifecycle invariant.
+- Field creation, an effective API field update, or a changed reorder can invalidate module schema acceptance. Lifecycle field close/reopen also invalidates acceptance under the existing parent-module lock; reopen preflight still validates the effective schema and records.
+- Record creation rejects zero-active-field modules even if an old acceptance flag remains true. No historical records or flags are rewritten.
 
 ## Failure and recovery behavior
 
@@ -149,8 +149,13 @@ Challenge/password-state commits are separate from the final domain transaction.
 ## Source references
 
 - `backend/app/systems/lifecycle/router.py`
-- `backend/app/systems/lifecycle/planner.py:plan_lifecycle`
-- `backend/app/systems/lifecycle/service.py:issue_challenge`, `verify_challenge`, `execute_lifecycle`
+- `backend/app/systems/lifecycle/planning_scope.py:load_lifecycle_scope`, `LifecyclePlan`, and canonical digest helpers
+- `backend/app/systems/lifecycle/planning.py:plan_lifecycle`, `impact_response`
+- `backend/app/systems/lifecycle/planning_preflight.py:reopen_blockers`
+- `backend/app/systems/lifecycle/challenge_store.py:issue_challenge`, `begin_verification`
+- `backend/app/systems/lifecycle/challenge_verification.py:verify_challenge`, `consume_challenge`
+- `backend/app/systems/lifecycle/execution.py:execute_lifecycle`, `close_lifecycle`, `reopen_lifecycle`, `purge_lifecycle`
+- `backend/app/systems/lifecycle/planner.py` and `service.py` compatibility exports
 - `backend/app/systems/lifecycle/password.py:SupabasePasswordGrantClient`
 - `backend/app/systems/lifecycle/models.py`
 - `backend/app/systems/audit/listeners.py`

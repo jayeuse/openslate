@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
-from uuid import uuid7
 
 from sqlalchemy.dialects import postgresql
+from uuid6 import uuid7
 
 from app.common.listing import StandardListRequest
 from app.systems.audit.models import AuditAction, AuditLog

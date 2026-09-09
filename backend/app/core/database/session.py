@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import Request
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -22,7 +23,26 @@ class AuditSession(Session):
 
 @lru_cache
 def get_engine() -> Engine:
-    return create_engine(get_settings().database_url, pool_pre_ping=True)
+    settings = get_settings()
+    return create_engine(
+        settings.database_url,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_timeout=settings.database_pool_timeout_seconds,
+        pool_pre_ping=True,
+        connect_args={
+            "connect_timeout": settings.database_connect_timeout_seconds,
+            "options": f"-c statement_timeout={settings.database_statement_timeout_ms}",
+        },
+    )
+
+
+def dispose_database_resources() -> None:
+    """Dispose the cached application pool during application shutdown."""
+
+    if get_engine.cache_info().currsize:
+        get_engine().dispose()
+    get_engine.cache_clear()
 
 
 def get_db(request: Request) -> Generator[Session, None, None]:
@@ -35,4 +55,8 @@ def get_db(request: Request) -> Generator[Session, None, None]:
     )
     with AuditSession(get_engine()) as session:
         session.info[AUDIT_CONTEXT_KEY] = audit_context
-        yield session
+        try:
+            yield session
+        except SQLAlchemyError:
+            session.rollback()
+            raise

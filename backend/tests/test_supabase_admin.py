@@ -45,6 +45,8 @@ def test_client_requires_url_and_secret_configuration() -> None:
         SupabaseAdminClient(
             settings=Settings(
                 database_url="postgresql://localhost/test",
+                supabase_url=None,
+                supabase_secret_key=None,
                 _env_file=None,
             )
         )
@@ -53,6 +55,7 @@ def test_client_requires_url_and_secret_configuration() -> None:
         SupabaseAdminClient(
             settings=Settings(
                 database_url="postgresql://localhost/test",
+                supabase_url=None,
                 supabase_secret_key=SecretStr(SECRET),
                 _env_file=None,
             )
@@ -231,15 +234,19 @@ def test_broadcast_uses_the_exact_private_realtime_endpoint_and_opaque_payload(
 
     SupabaseAdminClient(settings=settings()).broadcast(event)
 
-    client_factory.assert_called_once_with(
-        base_url="https://example.supabase.co",
-        headers={
-            "apikey": SECRET,
-            "Authorization": f"Bearer {SECRET}",
-            "Content-Type": "application/json",
-        },
-        timeout=10.0,
-    )
+    client_factory.assert_called_once()
+    assert client_factory.call_args.kwargs["base_url"] == "https://example.supabase.co"
+    assert client_factory.call_args.kwargs["headers"] == {
+        "apikey": SECRET,
+        "Authorization": f"Bearer {SECRET}",
+        "Content-Type": "application/json",
+    }
+    timeout = client_factory.call_args.kwargs["timeout"]
+    assert isinstance(timeout, httpx.Timeout)
+    assert timeout.connect == 10.0
+    assert timeout.read == 10.0
+    assert timeout.write == 10.0
+    assert timeout.pool == 10.0
     client.post.assert_called_once_with(
         "/realtime/v1/api/broadcast/openslate%3Ainvalidation/events/invalidate",
         params={"private": "true"},

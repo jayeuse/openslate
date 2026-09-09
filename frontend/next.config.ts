@@ -1,6 +1,15 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  logging: {
+    incomingRequests: {
+      ignore: [
+        /^\/bff(?:\/|$)/,
+        /^\/session(?:\/|$)/,
+        /^\/auth\/callback(?:\?|$)/,
+      ],
+    },
+  },
   output: "standalone",
   reactStrictMode: true,
   typedRoutes: true,

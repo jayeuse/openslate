@@ -79,7 +79,7 @@ Evidence: frontend login/session/BFF files, `backend/app/core/security/supabase.
 ## 3. Administrator invitation and password setup
 
 1. Administration UI sends entered email, username, and role ID to `POST /bff/users`; backend schemas/services normalize identity values.
-2. `users.router:create_user` requires an administrator and delegates to `users.service:invite_user`.
+2. `backend/app/systems/users/router.py:create_user` requires an administrator and delegates to `backend/app/systems/users/service.py:invite_user`.
 3. `SupabaseAdminClient.invite_user` uses the server-only secret to call Auth.
 4. Migration `0010`'s Auth trigger inserts a pending local member profile with the same UUID.
 5. The service verifies the exact trigger placeholder profile state, applies the requested email/username/role, keeps it `pending` with `invitation_sent_at`, and commits; after Auth success it never destructively compensates and leaves the trigger profile pending on finalization failure.
@@ -114,10 +114,10 @@ The frontend new-record page may request fields including deleted rows, but it f
 The complete close sequence is documented in [Lifecycle and state management](09-lifecycle-and-state-management.md). At runtime:
 
 1. A user with the target resource's write capability requests close preview.
-2. Planner loads department, descendant modules/fields/records, and touching edges; returns impact/blockers/digest.
+2. The lifecycle planning modules load department, descendant modules/fields/records, and touching edges; they return the impact, blockers, and canonical digest.
 3. Service commits a hashed, actor/target/digest-bound challenge.
 4. The authorized target writer submits token, exact name, and password.
-5. Password verification reserves and commits a lease, uses a temporary Supabase password grant, revokes it, and consumes the challenge.
+5. Password verification first locks and revalidates the challenge. Pending challenges whose expiry has passed and challenges already stored as `expired` return `409` before any provider call. Otherwise it reserves and commits a lease, uses a temporary Supabase password grant, revokes it, and consumes the challenge.
 6. Planner recomputes; execution locks complete scope in stable order, replans, rejects drift/blockers, applies one closed timestamp, and commits domain plus audit rows.
 7. Edges remain but become hidden through dependency visibility.
 8. After commit, Realtime invalidation is attempted.
@@ -157,5 +157,5 @@ After commit, the listener calls Supabase Broadcast with an opaque data invalida
 | Login/request | login/session handlers → BFF → JWT verifier → auth dependency → domain router                                                   |
 | Invitation    | users UI → users router/service → Supabase admin client → migration Auth trigger → callback/password handlers                   |
 | Schema/record | schema page → fields/modules routers → record page → records router/validation → audit listeners                                |
-| Lifecycle     | lifecycle UI → lifecycle router → planner → challenge/password service → executor → audit                                       |
+| Lifecycle     | lifecycle UI → lifecycle router → planning scope/plan/preflight → challenge store/verification (including pre-provider expiry guard) → password grant → execution → audit |
 | Invalidation  | audited commit → `audit/listeners.py` → Supabase client → `realtime-provider.tsx` → `AppPage`                                   |

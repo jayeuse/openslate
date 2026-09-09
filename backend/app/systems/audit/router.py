@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import datetime
 from typing import Annotated
@@ -5,12 +6,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import Field
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.common.dependencies import require_roles
 from app.common.listing import SortOrder, StandardListRequest
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.observability import log_event
 from app.systems.audit import listeners as _listeners  # noqa: F401
 from app.systems.audit.models import AuditAction, AuditLog, SecurityEvent
 from app.systems.audit.schemas import (
@@ -174,8 +177,20 @@ def ingest_security_event(
     expected_key = configured_key.get_secret_value() if configured_key is not None else ""
     provided_key = server_key or ""
     if not expected_key or not secrets.compare_digest(provided_key, expected_key):
+        log_event(
+            "security_event_ingestion_failed", level=logging.WARNING,
+            reason_code="ingestion_rejected",
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid server key")
 
-    event = append_security_event(db, payload)
-    db.commit()
+    try:
+        event = append_security_event(db, payload)
+        db.commit()
+    except SQLAlchemyError:
+        log_event(
+            "security_event_ingestion_failed", level=logging.ERROR,
+            operation_id=payload.operation_id, reason_code="persistence_failed",
+        )
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Security event storage unavailable") from None
     return SecurityEventResponse.model_validate(event)

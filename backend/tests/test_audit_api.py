@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
-from uuid import uuid7
 
 import pytest
 from fastapi import HTTPException
+from uuid6 import uuid7
 
 from app.common.listing import DeletedFilter
 from app.systems.audit.models import AuditAction, AuditLog

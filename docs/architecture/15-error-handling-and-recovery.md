@@ -9,14 +9,16 @@
 | Area                                             | Status                       | Evidence-based state                                                                                                                                 |
 | ------------------------------------------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Local route/service status mapping               | **Implemented**              | Routers and domain services translate known validation, authorization, conflict, external-service, and lifecycle failures to explicit HTTP statuses. |
-| Global exception normalization                   | **Absent / Documented Only** | `create_app` registers no global exception handlers; unhandled exceptions retain framework/server behavior.                                          |
+| Process-boundary exception handling              | **Implemented**              | Request middleware returns generic `500` responses for unexpected application exceptions and generic `503` responses for database operational/pool failures, with a backend-generated diagnostic ID. |
 | Transaction rollback for known mutation failures | **Implemented**              | Commit helpers and locking/lifecycle services explicitly roll back selected database failures before raising.                                        |
 | Generic backend retry                            | **Absent**                   | No backend-wide retry wrapper is present; selected external clients are explicitly non-retrying.                                                     |
 | BFF session refresh                              | **Implemented**              | The Next BFF retries one backend `401` after a refresh-token exchange, then clears cookies on failure.                                               |
+| Request correlation and safe operational logs    | **Implemented**              | FastAPI and the BFF generate independent IDs, return the final backend ID when available, and emit allowlisted structured records without request bodies, cookies, credentials, or raw query values. |
+| Application resource bounds                      | **Implemented**              | FastAPI and the BFF enforce bounded JSON/request buffering, BFF deadlines, database pool/query timeouts, and a bounded readiness probe. Hosted aggregate limits remain a Priority 3 gate. |
 
 ## Common error envelope and origin
 
-FastAPI validation and most application errors use the default `{ "detail": ... }` body. `backend/app/main.py:create_app` does not register a global exception handler, so status/body selection is local to the dependency, router, or service adapter. A known failure that escapes those mappings is not normalized by the application; framework/server handling is **Unknown** from this code.
+FastAPI validation and most application errors use the default `{ "detail": ... }` body. Route-local contracts remain unchanged. The request middleware in `backend/app/main.py:create_app` supplies a generic `500` for unexpected application exceptions and `503` for database operational/pool failures; each application response receives a backend-generated `X-Request-ID`. Server rejection before application middleware remains outside that guarantee.
 
 | Origin                                         | Status/body behavior                                                                                                                                                                 | Transaction state and recovery behavior                                                                                                                                                                             |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -27,13 +29,16 @@ FastAPI validation and most application errors use the default `{ "detail": ... 
 | Resource lookup                                | `404` with a resource-specific string such as `Department not found`, `Record not found`, or `Audit log not found`.                                                                  | No mutation is committed. Re-resolve the resource ID before a new request.                                                                                                                                          |
 | Domain conflict/precondition                   | Usually `409` with a string detail; examples include active-name conflicts, deleted/open state conflicts, accepted-schema requirements, cardinality conflicts, and `close_required`. | Domain commit helpers roll back when the conflict came from `IntegrityError`; pre-handler business checks have no commit. The caller must resolve the reported state conflict.                                      |
 | Record data validation                         | Structured `record_validation_failed` detail; ordinary validation is `422`, while changed/new closed-field values are `409`.                                                         | Validation runs before commit. The response contains deterministic errors capped at 20 plus `truncated`; the caller must correct the submitted data or leave closed values unchanged.                            |
+| Request body or buffered BFF payload too large | `413` with a safe size detail.                                                                                                                                                  | Declared sizes are rejected early and streamed bytes are authoritative. No body content is returned or logged.                                                                                                            |
+| BFF upstream timeout/oversized response        | `504` for the total BFF deadline or `502` for an oversized backend response, each with a diagnostic ID.                                                                          | A mutation may already have committed when the response outcome is unknown; inspect current state or reconcile before resubmitting.                                                                                        |
 | Relationship input/availability                | `422` for `RelationshipInvalid`; `404` for `RelationshipNotFound`; `409` for `RelationshipConflict`; `503` for `RelationshipUnavailable`.                                            | `lock_row`, relationship list locking, and relationship commit paths roll back selected operational failures. There is no relationship retry in the backend.                                                        |
 | Supabase invitation adapter                    | `409` for Auth status `409/422` conflicts; `502` for handled `InvitationError` failures. Client-construction/configuration errors can escape local normalization.                    | Invitation/resend/accept record durable correlated attempt/failure/partial `SecurityEvent` outcomes (`operation_id`); local finalization failure rolls back, emits `partial`, and leaves the trigger profile pending without deleting the external Auth identity. Retry uses resend/accept and drift uses `POST /users/{user_id}/reconcile-auth`. |
 | Supabase user enable/disable adapter           | `503` with a generic enable/disable detail when `SupabaseAdminClient` fails.                                                                                                         | Disable/delete are local-first: they commit the local disabled/deleted state and token cutoff before the remote call, and remote provider errors after that commit are recorded as correlated `partial` outcomes. Enable/restore are fail-closed: they call the remote enable first, then revalidate and commit; local finalization failure after remote success is `partial`. Explicit recovery is `POST /users/{user_id}/reconcile-auth`. |
 | Lifecycle                                      | Lifecycle-router endpoints use structured `detail` with `code`, `message`, and optional `blockers`; compatibility restore routes map lifecycle failures to plain string detail.      | Challenge state and password lease transactions are committed separately from the final lifecycle mutation. Final plan execution rolls back on drift, blockers, integrity, operational, or lifecycle failures.      |
 | Audit listener/insertion                       | Known `IntegrityError` can be handled by the caller’s commit helper; immutability/bulk guards raise `RuntimeError` and are not globally normalized.                                  | Audit rows are in the same transaction as the domain mutation; a failed transaction does not commit its audit row.                                                                                                  |
-| Post-commit Realtime invalidation              | No API error is returned for `SupabaseAdminError` from the after-commit broadcast listener.                                                                                          | The database/audit commit is already complete; the invalidation failure is swallowed and not retried by the backend.                                                                                                |
-| Unhandled exception                            | No application mapping; framework/server behavior is **Unknown** in this source set.                                                                                                 | No backend-wide recovery or retry policy is evidenced. The request is not replayed by the backend.                                                                                                                  |
+| Post-commit Realtime invalidation              | No API error is returned for `SupabaseAdminError` from the after-commit broadcast listener.                                                                                          | The database/audit commit is already complete; the invalidation failure is logged as a safe operational signal and is not retried by the backend.                                                                       |
+| Database operational/pool failure              | `503` with a generic database-unavailable detail and a diagnostic ID.                                                                                                               | The middleware records a safe failure signal. The caller may retry a read; a failed mutation requires current-state inspection before resubmission.                                                                        |
+| Unhandled application exception                | `500` with a generic detail and a diagnostic ID.                                                                                                                                 | The middleware logs an allowlisted failure record. No backend-wide replay is performed.                                                                                                                                |
 
 ## Lifecycle status and code map
 
@@ -58,7 +63,7 @@ The backend does not use an implicit request-wide commit. `get_db` yields an `Au
 
 ### Dynamic record validation
 
-Record create and update errors use `detail.code = "record_validation_failed"`, a message, an `errors` array of `{code, field_id, message}`, and `truncated`. Submitted keys are processed in deterministic order and four phases: closed-field values, known active values, malformed/unknown keys, and missing required active fields. At most 20 issues are returned; `truncated` is true when additional issues were found. A changed or newly supplied closed-field value makes the response `409`; all other record validation failures are `422`. Record creation is additionally gated by accepted schema, while update is not.
+Record create and update errors use `detail.code = "record_validation_failed"`, a message, an `errors` array of `{code, field_id, message}`, and `truncated`. Submitted keys are processed in deterministic order and four phases: closed-field values, known active values, malformed/unknown keys, and missing required active fields. At most 20 issues are returned; `truncated` is true when additional issues were found. A changed or newly supplied closed-field value makes the response `409`; all other record validation failures are `422`. Record creation requires an accepted schema with at least one active field; updates remain allowed after field lifecycle invalidation so closed values can be retained.
 
 The [dynamic-field validation test plan](../dynamic-field-validation-test-plan.md) contains the detailed contract evidence without duplicating its full matrix here.
 
@@ -85,11 +90,13 @@ Challenge issuance, verification-lease reservation, failure recording, and succe
 3. If refresh succeeds, forward the same request body once with the new access token.
 4. If refresh fails or the retry still returns `401`, clear both cookies and return the response; `frontend/src/lib/api.ts:apiFetch` navigates the browser to `/login` for a `401`.
 
+A successful refresh is retained in cookies even if the subsequent backend response exceeds the buffer limit or a transport/deadline failure occurs. A final backend `401` clears cookies even if its error body cannot be read. Neither path adds another mutation replay.
+
 There is no second refresh attempt and no replay for `403`, `409`, `422`, `502`, or `503`.
 
 ### External and lock operations
 
-`SupabaseAdminClient._request` uses one ten-second `httpx` request and does not retry. `SupabasePasswordGrantClient` is explicitly non-retrying; it classifies the one password grant and one temporary-session revoke request. Relationship/lifecycle row locks use `NOWAIT` and return `503` when an operational lock failure is caught; no server-side wait/retry loop is present.
+`SupabaseAdminClient._request` and `SupabasePasswordGrantClient` use explicit bounded HTTP stage timeouts and do not retry. Relationship/lifecycle row locks use `NOWAIT` and return `503` when an operational lock failure is caught; no server-side wait/retry loop is present. Runtime SQL connections have bounded pool, connection, and statement waits; readiness uses a separate single-connection probe and never creates replacement probes while one is in flight.
 
 The post-commit Realtime broadcast is best effort: `broadcast_committed_changes` catches `SupabaseAdminError` and returns normally. There is no outbox, durable notification queue, or invalidation retry path in the reviewed code.
 
@@ -105,11 +112,26 @@ The post-commit Realtime broadcast is best effort: `broadcast_committed_changes`
 | `429`                                       | Lifecycle actor/password verification is blocked or upstream rate-limited. The backend persists the relevant attempt window/block state and does not replay the request.                       |
 | `502`                                       | Invitation delivery/finalization did not complete as a normal API operation; the invitation service records durable correlated attempt/failure/partial outcomes (`operation_id`) with no destructive compensation. The pending profile remains for resend/accept retry or explicit reconciliation. |
 | `503`                                       | A known external, lock, or temporary database path failed. No backend retry or queue is created for the request.                                                                               |
+| `504`                                       | The BFF deadline expired. The upstream operation may have completed; inspect state or use the explicit reconciliation path before retrying an unsafe request.                                   |
 | Successful mutation but missed invalidation | Realtime is not the database of record; the API response and subsequent reads remain the available data path because post-commit broadcast failure is swallowed.                               |
+
+## Operational diagnostics and remaining delivery gates
+
+`backend/scripts/check_operational_health.py` is a read-only bounded checker for
+unresolved or partial backend administrative `SecurityEvent` operations. It
+uses database time and returns `0` for no issue, `1` for attention, and `2` for
+an unavailable check; it performs no reconciliation. Structured logs and this
+checker are application signals only. Priority 3 must provide collection,
+retention, alert routing, ownership, and demonstrated delivery before hosted
+production traffic.
+
+The checker covers backend administrative event families. Priority 4's Next.js
+session/BFF SecurityEvent producers remain absent, so browser-side operation
+visibility is incomplete even though the BFF emits safe structured logs.
 
 ## Source grounding
 
-- `backend/app/main.py:create_app` for the absence of global exception handlers.
+- `backend/app/main.py:create_app` for request IDs, bounded request bodies, readiness, and process-boundary failure handling.
 - `backend/app/common/dependencies/auth.py:get_current_user` and `require_roles`.
 - `_commit` helpers in `backend/app/systems/departments/router.py`, `modules/router.py`, `fields/router.py`, `records/router.py`, and `users/router.py`.
 - `backend/app/systems/relationships/service.py:RelationshipError`, lock helpers, and `_commit`.
@@ -117,3 +139,4 @@ The post-commit Realtime broadcast is best effort: `broadcast_committed_changes`
 - `backend/app/systems/users/service.py:invite_user` and `backend/app/core/integrations/supabase.py:SupabaseAdminClient`.
 - `backend/app/systems/audit/listeners.py:broadcast_committed_changes`.
 - `frontend/src/app/bff/[...path]/route.ts:handle` and `frontend/src/lib/api.ts:apiFetch`.
+- `backend/scripts/check_operational_health.py` and `backend/app/core/observability.py`.

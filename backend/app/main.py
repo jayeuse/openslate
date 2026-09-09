@@ -1,12 +1,23 @@
-from collections.abc import Awaitable, Callable
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import Response
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
+from starlette.responses import JSONResponse, Response
 
 from app.core.config import get_settings
 from app.core.database import model_registry  # noqa: F401
-from app.core.middleware.request_context import RequestContext
+from app.core.database.session import dispose_database_resources
+from app.core.middleware.request_context import (
+    RequestContext,
+    bind_request_context,
+    reset_request_context,
+)
+from app.core.observability import configure_observability_logging, log_event
+from app.core.readiness import dispose_readiness_resources, is_database_ready
 from app.systems.audit.router import internal_security_events_router, security_events_router
 from app.systems.audit.router import router as audit_router
 from app.systems.auth.router import router as auth_router
@@ -19,9 +30,68 @@ from app.systems.records.router import router as records_router
 from app.systems.relationships.router import router as relationships_router
 
 
+def _request_route(request: Request) -> str:
+    route = request.scope.get("route")
+    # FastAPI included routers keep the child route in scope; their effective
+    # context carries the registered template with all inclusion prefixes.
+    fastapi_scope = request.scope.get("fastapi", {})
+    effective = fastapi_scope.get("effective_route_context")
+    if effective is not None and getattr(effective, "original_route", None) is route:
+        route = effective
+    path = getattr(route, "path", None)
+    return path if isinstance(path, str) else "unknown"
+
+
+def _request_headers(context: RequestContext) -> dict[str, str]:
+    return {"X-Request-ID": str(context.request_id)}
+
+
+def _database_unavailable_response(request: Request, context: RequestContext) -> JSONResponse:
+    log_event(
+        "database_unavailable",
+        request_id=context.request_id,
+        method=request.method,
+        route=_request_route(request),
+        status=503,
+        reason_code="database_operation_failed",
+    )
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database unavailable"},
+        headers=_request_headers(context),
+    )
+
+
+def _unexpected_error_response(request: Request, context: RequestContext) -> JSONResponse:
+    log_event(
+        "http_failure",
+        request_id=context.request_id,
+        method=request.method,
+        route=_request_route(request),
+        status=500,
+        reason_code="unexpected_error",
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+        headers=_request_headers(context),
+    )
+
+
+@asynccontextmanager
+async def application_lifespan(_: FastAPI) -> AsyncIterator[None]:
+    configure_observability_logging()
+    try:
+        yield
+    finally:
+        dispose_readiness_resources()
+        dispose_database_resources()
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title=settings.app_name, version="0.1.0")
+    configure_observability_logging()
+    app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=application_lifespan)
 
     app.add_middleware(
         CORSMiddleware,
@@ -36,10 +106,45 @@ def create_app() -> FastAPI:
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        request.state.request_context = RequestContext(method=request.method, path=request.url.path)
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = str(request.state.request_context.request_id)
-        return response
+        context = RequestContext(method=request.method, path=request.url.path)
+        request.state.request_context = context
+        token = bind_request_context(context)
+        started = time.perf_counter()
+        try:
+            declared_size = request.headers.get("content-length")
+            response: Response
+            if declared_size is not None and _is_body_too_large(
+                declared_size,
+                settings.request_body_max_bytes,
+            ):
+                response = JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body is too large"},
+                )
+            else:
+                if not await _read_bounded_body(request, settings.request_body_max_bytes):
+                    response = JSONResponse(
+                        status_code=413,
+                        content={"detail": "Request body is too large"},
+                    )
+                else:
+                    response = await call_next(request)
+        except (OperationalError, SQLAlchemyTimeoutError):
+            response = _database_unavailable_response(request, context)
+        except Exception:
+            response = _unexpected_error_response(request, context)
+        try:
+            response.headers.update(_request_headers(context))
+            log_event(
+                "http_request",
+                method=request.method,
+                route=_request_route(request),
+                status=response.status_code,
+                duration_ms=int((time.perf_counter() - started) * 1000),
+            )
+            return response
+        finally:
+            reset_request_context(token)
 
     app.include_router(auth_router, prefix="/api")
     app.include_router(departments_router, prefix="/api")
@@ -57,7 +162,42 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "openslate-api"}
 
+    @app.get("/api/ready", tags=["system"])
+    def ready() -> JSONResponse:
+        if is_database_ready():
+            return JSONResponse(
+                status_code=200,
+                content={"status": "ready"},
+                headers={"Cache-Control": "no-store"},
+            )
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready"},
+            headers={"Cache-Control": "no-store"},
+        )
+
     return app
 
 
 app = create_app()
+
+
+def _is_body_too_large(content_length: str, limit: int) -> bool:
+    try:
+        return int(content_length) > limit
+    except ValueError:
+        return False
+
+
+async def _read_bounded_body(request: Request, limit: int) -> bool:
+    """Cache only an in-limit body so the downstream request can read it once."""
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            return False
+        chunks.append(chunk)
+    request._body = b"".join(chunks)  # noqa: SLF001 - Starlette middleware cache contract.
+    return True

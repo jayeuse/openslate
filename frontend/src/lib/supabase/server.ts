@@ -2,6 +2,8 @@ import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
 
+import { withRequestSignal } from "@/lib/supabase/request-fetch";
+
 function requiredPublicEnv(
   name: "NEXT_PUBLIC_SUPABASE_URL" | "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
 ) {
@@ -10,7 +12,7 @@ function requiredPublicEnv(
   return value;
 }
 
-export function createSupabaseServerClient() {
+export function createSupabaseServerClient(signal?: AbortSignal) {
   return createClient(
     requiredPublicEnv("NEXT_PUBLIC_SUPABASE_URL"),
     requiredPublicEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"),
@@ -20,6 +22,9 @@ export function createSupabaseServerClient() {
         autoRefreshToken: false,
         detectSessionInUrl: false,
       },
+      ...(signal === undefined
+        ? {}
+        : { global: { fetch: withRequestSignal(signal) } }),
     },
   );
 }

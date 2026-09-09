@@ -15,5 +15,6 @@ if (existsSync(publicSource)) {
   cpSync(publicSource, resolve(standalone, "public"), { recursive: true });
 }
 
+process.env.LOG_DIR = resolve(root, process.env.LOG_DIR || "logs");
 process.chdir(standalone);
 await import(pathToFileURL(resolve(standalone, "server.js")).href);

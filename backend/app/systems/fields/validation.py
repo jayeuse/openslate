@@ -70,9 +70,10 @@ def _decimal_config(config: dict[str, Any]) -> dict[str, Any]:
 
     normalized = dict(config)
     for key in set(config).intersection(allowed):
-        normalized[key] = _canonical_decimal(config[key], key)
+        if config[key] is not None:
+            normalized[key] = _canonical_decimal(config[key], key)
 
-    if "minimum" in normalized and "maximum" in normalized:
+    if normalized.get("minimum") is not None and normalized.get("maximum") is not None:
         try:
             if Decimal(normalized["minimum"]) > Decimal(normalized["maximum"]):
                 raise ValueError("Decimal field minimum cannot exceed maximum")
