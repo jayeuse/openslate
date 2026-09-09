@@ -1,10 +1,9 @@
-from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -17,6 +16,7 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
+from app.systems.fields.impact import validate_change_impact
 from app.systems.fields.models import Field, FieldType
 from app.systems.fields.schemas import (
     FieldCreate,
@@ -24,12 +24,10 @@ from app.systems.fields.schemas import (
     FieldResponse,
     FieldUpdate,
 )
-from app.systems.fields.validation import field_config, validate_field_value
 from app.systems.lifecycle.exceptions import LifecycleError
 from app.systems.lifecycle.schemas import LifecycleTargetType
 from app.systems.lifecycle.service import reopen_lifecycle
 from app.systems.modules.models import Module
-from app.systems.records.models import Record
 from app.systems.relationships.service import (
     RelationshipError,
     lock_modules,
@@ -75,6 +73,33 @@ FIELD_LIST_SPEC = ListQuerySpec(
     search_fields=(cast(ColumnElement[str], Field.name),),
     deleted_field=cast(ColumnElement[bool], Field.is_deleted),
 )
+
+CLOSE_REQUIRED_RESPONSE: dict[int | str, dict[str, Any]] = {
+    status.HTTP_409_CONFLICT: {
+        "description": "Close the field through the lifecycle workflow.",
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": ["detail"],
+                    "properties": {
+                        "detail": {
+                            "type": "object",
+                            "required": ["code", "message"],
+                            "properties": {
+                                "code": {"type": "string", "enum": ["close_required"]},
+                                "message": {"type": "string"},
+                            },
+                        }
+                    },
+                },
+                "example": {
+                    "detail": {"code": "close_required", "message": "Use Close to close this field"}
+                },
+            }
+        },
+    }
+}
 
 
 def _not_found() -> HTTPException:
@@ -171,57 +196,6 @@ def _position_conflict(
     if exclude_id is not None:
         statement = statement.where(Field.id != exclude_id)
     return db.scalar(statement) is not None
-
-
-def _active_records(db: Session, module_id: UUID) -> list[Record]:
-    return list(
-        db.scalars(
-            select(Record).where(
-                Record.module_id == module_id,
-                Record.is_deleted.is_(False),
-            )
-        ).all()
-    )
-
-
-def _validate_change_impact(
-    db: Session,
-    field: Field,
-    field_type: FieldType,
-    required: bool,
-    config: dict[str, Any],
-) -> dict[str, Any]:
-    try:
-        normalized_config = field_config(field_type, config)
-    except ValueError as error:
-        raise _invalid(str(error)) from error
-
-    if (
-        field_type == FieldType(field.type)
-        and required == field.required
-        and normalized_config == field.config
-    ):
-        return normalized_config
-
-    candidate = Field(
-        module_id=field.module_id,
-        name=field.name,
-        type=field_type,
-        required=required,
-        position=field.position,
-        config=normalized_config,
-    )
-    candidate.id = field.id
-    for record in _active_records(db, field.module_id):
-        key = str(field.id)
-        if required and (key not in record.data or record.data[key] is None):
-            raise _conflict("Field change would invalidate active records")
-        if key in record.data:
-            try:
-                validate_field_value(candidate, record.data[key])
-            except ValueError as error:
-                raise _conflict("Field change would invalidate active records") from error
-    return normalized_config
 
 
 def _commit(db: Session, message: str) -> None:
@@ -373,7 +347,13 @@ def update_field(
     field_type = current_type
     required = field.required if payload.required is None else payload.required
     config = field.config if payload.config is None else payload.config
-    config = _validate_change_impact(db, field, field_type, required, config)
+    try:
+        config = validate_change_impact(db, field, field_type, required, config)
+    except ValueError as error:
+        message = str(error)
+        if message == "Field change would invalidate active records":
+            raise _conflict(message) from error
+        raise _invalid(message) from error
 
     effective = any(
         (
@@ -411,43 +391,16 @@ def update_field(
     return field
 
 
-def delete_field(
-    field_id: UUID,
-    _: FieldWriteUser,
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    field = _field(db, field_id)
-    if field.is_deleted:
-        raise _conflict("Field is already deleted")
-    _active_module(db, field.module_id)
-    module = _lock_active_module(db, field.module_id)
-    field = _lock_field(db, field)
-    if field.is_deleted:
-        raise _conflict("Field is already deleted")
-    has_data = db.scalar(
-        select(func.count())
-        .select_from(Record)
-        .where(
-            Record.module_id == field.module_id,
-            Record.is_deleted.is_(False),
-            Record.data.has_key(str(field.id)),
-        )
-    )
-    if has_data:
-        raise _conflict("Field is present in active records")
-    field.is_deleted = True
-    field.deleted_at = datetime.now(UTC)
-    _invalidate_module_schema(module)
-    _commit(db, "Unable to delete field")
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.delete("/{field_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{field_id}",
+    status_code=status.HTTP_409_CONFLICT,
+    responses=CLOSE_REQUIRED_RESPONSE,
+)
 def legacy_delete_field(
     field_id: UUID,
     _: FieldWriteUser,
     db: Annotated[Session, Depends(get_db)],
-) -> Response:
+) -> None:
     _field(db, field_id)
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,

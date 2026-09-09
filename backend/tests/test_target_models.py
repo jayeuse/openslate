@@ -1,6 +1,5 @@
-from uuid import uuid7
-
 from sqlalchemy import Boolean, ForeignKey, inspect
+from uuid6 import uuid7
 
 from app.core.base_model import BaseModel
 from app.systems.audit.models import AuditLog

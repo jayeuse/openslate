@@ -12,15 +12,17 @@ from app.common.dependencies import (
 from app.common.dependencies.auth import VerifiedPendingIdentity
 from app.core.database import get_db
 from app.systems.auth.schemas import InvitationCreate
+from app.systems.users.acceptance import accept_verified_invitation
+from app.systems.users.account_operations import router as account_operations_router
 from app.systems.users.models import User, UserRole
 from app.systems.users.permissions import effective_permissions
-from app.systems.users.router import roles_router
+from app.systems.users.reconciliation import router as reconciliation_router
+from app.systems.users.roles_router import router as roles_router
 from app.systems.users.router import router as users_router
 from app.systems.users.schemas import AuthMeResponse, UserResponse
 from app.systems.users.service import (
     InvitationConflict,
     InvitationError,
-    accept_verified_invitation,
     invite_user,
     resend_invitation,
 )
@@ -104,4 +106,6 @@ def me(user: Annotated[User, Depends(get_current_user)]) -> AuthMeResponse:
 # The current application registration includes only this exported router.
 router.include_router(auth_router)
 router.include_router(users_router)
+router.include_router(account_operations_router)
+router.include_router(reconciliation_router)
 router.include_router(roles_router)

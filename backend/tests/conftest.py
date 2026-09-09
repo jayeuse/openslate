@@ -2,13 +2,13 @@ import os
 from collections.abc import Generator
 from pathlib import Path
 from urllib.parse import urlsplit
-from uuid import uuid7
 
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession

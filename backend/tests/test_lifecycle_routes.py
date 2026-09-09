@@ -5,11 +5,18 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.common.dependencies.auth import get_current_user
+from app.core.database import get_db
+from app.main import create_app
 from app.systems.lifecycle.exceptions import (
+    LifecycleChallengeExpired,
+    LifecycleChallengeNotFound,
     LifecycleClosedAncestorError,
     LifecycleInvalidCredentials,
+    LifecyclePasswordServiceUnavailable,
     LifecyclePreflightError,
 )
 from app.systems.lifecycle.router import (
@@ -31,8 +38,19 @@ from app.systems.lifecycle.schemas import (
 )
 
 
+def _registered_client(database: Session) -> TestClient:
+    app = create_app()
+    app.dependency_overrides[get_current_user] = lambda: _user()
+    app.dependency_overrides[get_db] = lambda: database
+    return TestClient(app)
+
+
 def _user() -> SimpleNamespace:
-    return SimpleNamespace(id=uuid7(), email="admin@example.com")
+    return SimpleNamespace(
+        id=uuid7(),
+        email="admin@example.com",
+        role=SimpleNamespace(role="admin", permissions={}),
+    )
 
 
 def _impact() -> LifecycleImpactResponse:
@@ -135,6 +153,73 @@ def test_close_maps_wrong_password_to_forbidden_and_drift_to_named_conflict() ->
             _close(LifecycleTargetType.MODULE, target_id, request, user, db, Response())
     assert raised.value.status_code == 409
     assert raised.value.detail["code"] == "impact_changed"
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "code"),
+    [
+        (LifecycleChallengeNotFound("challenge missing"), 404, "challenge_not_found"),
+        (LifecycleChallengeExpired("challenge expired"), 409, "challenge_expired"),
+        (
+            LifecyclePasswordServiceUnavailable("provider unavailable"),
+            503,
+            "password_upstream_unavailable",
+        ),
+    ],
+)
+def test_registered_close_maps_challenge_and_provider_failures(
+    error: Exception,
+    status_code: int,
+    code: str,
+) -> None:
+    database = Mock(spec=Session)
+    database.get.return_value = SimpleNamespace(is_deleted=False, module_name="Assets")
+    client = _registered_client(database)
+    request = {"token": "token", "confirmation_name": "Assets", "password": "password"}
+
+    with (
+        patch("app.systems.lifecycle.router.challenge_impact_digest", return_value="digest"),
+        patch("app.systems.lifecycle.router.verify_challenge", side_effect=error),
+    ):
+        response = client.post(f"/api/modules/{uuid7()}/close", json=request)
+
+    assert response.status_code == status_code
+    assert response.json()["detail"]["code"] == code
+
+
+def test_registered_close_rejects_confirmation_name_before_provider_verification() -> None:
+    database = Mock(spec=Session)
+    database.get.return_value = SimpleNamespace(is_deleted=False, module_name="Assets")
+    client = _registered_client(database)
+
+    with patch("app.systems.lifecycle.router.verify_challenge") as verify:
+        response = client.post(
+            f"/api/modules/{uuid7()}/close",
+            json={"token": "token", "confirmation_name": "Wrong", "password": "password"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "confirmation_name_mismatch"
+    verify.assert_not_called()
+
+
+def test_registered_close_rejects_plan_drift_after_verification() -> None:
+    database = Mock(spec=Session)
+    database.get.return_value = SimpleNamespace(is_deleted=False, module_name="Assets")
+    client = _registered_client(database)
+    challenge = SimpleNamespace(impact_digest="old")
+    request = {"token": "token", "confirmation_name": "Assets", "password": "password"}
+
+    with (
+        patch("app.systems.lifecycle.router.challenge_impact_digest", return_value="old"),
+        patch("app.systems.lifecycle.router.verify_challenge", return_value=challenge),
+        patch("app.systems.lifecycle.router.plan_lifecycle") as plan,
+    ):
+        plan.return_value.impact_digest = "new"
+        response = client.post(f"/api/modules/{uuid7()}/close", json=request)
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "impact_changed"
 
 
 def test_purge_is_forbidden_by_default_before_loading_the_target() -> None:

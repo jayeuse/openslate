@@ -1,10 +1,10 @@
 import os
 from datetime import UTC, datetime
-from uuid import uuid7
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 from app.systems.audit.models import AuditAction, AuditLog
 from app.systems.audit.snapshots import REDACTED

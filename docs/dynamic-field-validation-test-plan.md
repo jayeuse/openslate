@@ -79,13 +79,15 @@ Concurrency checks use independent engines, connections, and sessions. They use 
 | R-031 | Contention can produce `503`; after the winner commits, a retry can produce deterministic `409`, with no losing mutation/audit. | duplicate-field race test and `test_single_target_race_returns_unavailable_then_committed_conflict` |
 | R-032 | Migration-preserved explicit-null decimal bounds conflict with current runtime configuration validation in a controlled way. | `test_migrated_explicit_null_decimal_config_is_a_controlled_runtime_conflict` |
 
-## Executed results
+## Historical executed results
 
-Results recorded on 2026-08-31:
+The following baseline was recorded on 2026-08-31, before the current test-file
+split. The historical commands and counts are retained unchanged for comparison
+with the current refactor.
 
 | Command | Result |
 |---|---|
-| `uv run pytest --no-cov tests/test_fields_records.py tests/test_departments_modules.py tests/test_relationships.py` | 116 passed |
+| `uv run pytest --no-cov tests/test_fields_records.py tests/test_departments_modules.py tests/test_relationships.py` (pre-split grouping) | 116 passed |
 | Runtime-role PostgreSQL run of the dynamic, relationship, and decimal migration integration files | 33 passed |
 | Owner-role PostgreSQL run of the dynamic and relationship integration files | 27 passed |
 | Full backend `pytest` with runtime `TEST_DATABASE_URL` and isolated Supabase-admin environment variables | 382 passed, 2 skipped, 82.08% coverage |
@@ -93,7 +95,7 @@ Results recorded on 2026-08-31:
 | `uv run mypy app scripts` | Passed |
 | `uv run alembic check` | Passed; no new upgrade operations |
 
-Exact commands, run from `backend/`:
+The historical baseline commands, run from `backend/`, were:
 
 ```sh
 uv run pytest --no-cov tests/test_fields_records.py tests/test_departments_modules.py tests/test_relationships.py
@@ -115,7 +117,78 @@ uv run mypy app scripts
 uv run alembic check
 ```
 
-The first full-suite attempt inherited `SUPABASE_URL` and `SUPABASE_SECRET_KEY` from the sourced local environment. That made `test_client_requires_url_and_secret_configuration` observe configured values and fail its expected missing-configuration assertion. Re-running with those two ambient variables unset passed. This is test-environment isolation behavior, not a dynamic-field failure.
+## Current split-file rerun commands
+
+Run the equivalent checks against the current test-module layout from
+`backend/`. These commands describe the verification scope; their current
+results are recorded separately below and do not replace the historical counts.
+
+```sh
+uv run pytest --no-cov \
+  tests/test_fields.py \
+  tests/test_fields_api_contract.py \
+  tests/test_record_validation.py \
+  tests/test_records.py \
+  tests/test_departments_modules.py \
+  tests/test_relationships.py
+
+set -a; source ../.env; set +a
+TEST_DATABASE_URL="$DATABASE_URL" uv run pytest --no-cov \
+  tests/test_dynamic_field_database_integration.py \
+  tests/test_dynamic_field_persistence_integration.py \
+  tests/test_dynamic_field_concurrency_integration.py \
+  tests/relationships_integration/test_concurrency.py \
+  tests/relationships_integration/test_lifecycle.py \
+  tests/relationships_integration/test_migration.py \
+  tests/relationships_integration/test_mutations.py \
+  tests/migration_0015/test_integration.py
+TEST_DATABASE_URL="$MIGRATION_DATABASE_URL" uv run pytest --no-cov \
+  tests/test_dynamic_field_database_integration.py \
+  tests/test_dynamic_field_persistence_integration.py \
+  tests/test_dynamic_field_concurrency_integration.py \
+  tests/relationships_integration/test_concurrency.py \
+  tests/relationships_integration/test_lifecycle.py \
+  tests/relationships_integration/test_migration.py \
+  tests/relationships_integration/test_mutations.py
+
+unset SUPABASE_URL SUPABASE_SECRET_KEY
+TEST_DATABASE_URL="$DATABASE_URL" uv run pytest
+
+uv run ruff check .
+uv run mypy app scripts
+uv run alembic check
+```
+
+The historical full-suite attempt inherited `SUPABASE_URL` and `SUPABASE_SECRET_KEY` from the sourced local environment. That made `test_client_requires_url_and_secret_configuration` observe configured values and fail its expected missing-configuration assertion. Re-running with those two ambient variables unset passed. This is test-environment isolation behavior, not a dynamic-field failure.
+
+## Current backend-refactor evidence
+
+The following evidence was completed on 2026-09-09. It distinguishes the
+runtime/network suite from the separate owner-only rollback verification.
+
+| Evidence | Result |
+|---|---|
+| User-account PostgreSQL verification | 14 passed |
+| Invitation transaction PostgreSQL verification | 11 passed |
+| Field PostgreSQL verification | 16 passed |
+| Registered relationship HTTP/PostgreSQL verification | 7 passed |
+| Independent relationship/lifecycle race verification | 4 passed |
+| Registered seed/lifecycle/expired-challenge API scenarios | 9 passed; expired challenge cases made no password-provider call |
+| Network API smoke against an owned loopback FastAPI process with real local Auth and cleanup | 1 passed |
+| Handwritten Python size guard | 207 files scanned; zero over 500 lines; largest file 499 lines |
+| Final test collection | 673 collected; baseline 573 |
+| Architecture and security static reviews | Closed; no additional finding |
+| Existing focused PostgreSQL domain regression | 30 passed; focused existing regression only, not the final registered-route/API gate |
+| Final full backend suite | 671 passed, 2 owner-reset skips; separate owner rollback run passed 2/2, covering all 673 collected cases |
+| Python 3.12, 3.13, and 3.14 compatibility checks | Each 565 passed, 1 skipped; the existing database-dependent skip remains separately identified |
+| Owner rollback-only reset verification | 2 passed; teardown verified baseline counts, admin/role/Auth snapshots, plan digest, and fixture-ID absence after physical rollback; PostgreSQL rollback itself restores the data, and no reset was committed |
+| Combined application and six changed-script coverage | 87.41% |
+| Changed executable coverage | 83.29% (1,775/2,131 lines; threshold at least 80%) |
+| Alembic drift check | Passed; no new upgrade operations |
+
+Frontend pagination and stale-request findings remain deferred pending separate
+approval. The provider resend-contract concern remains unverified and is not a
+confirmed defect; no provider redesign is included in this verification.
 
 ## Confirmed observations
 
@@ -167,10 +240,10 @@ These tests distinguish transient NOWAIT contention from committed-state conflic
 - Ordinary browser `number`/`int` values can lose JavaScript precision outside the safe integer range; exact values should use decimal strings.
 - Dynamic record audit redaction is UUID-keyed and was not redesigned by this test work.
 - PostgreSQL relationship cardinality remains application-enforced rather than constrained directly by the database.
-- The suite uses router/service calls plus real PostgreSQL for deterministic concurrency. It does not run a live browser→BFF→FastAPI→database workflow.
+- The suite uses router/service calls plus registered API and real PostgreSQL checks for deterministic concurrency. It does not run a live browser→BFF→FastAPI→database workflow.
 
 ## Exit assessment
 
-The tested FastAPI path rejects malformed dynamic data and PostgreSQL preserves the expected normalized result. Structural database constraints and NOWAIT conflict behavior are verified with both runtime and owner execution. No production code was changed.
+The tested FastAPI path rejects malformed dynamic data and PostgreSQL preserves the expected normalized result. Structural database constraints and NOWAIT conflict behavior are verified with both runtime and owner execution. The current backend refactor adds targeted registered-route evidence while preserving these dynamic-field contracts; its final full-suite and release-gate results are recorded above.
 
 The suite also establishes, rather than conceals, three boundaries requiring product or operational decisions: direct SQL bypass, stale acceptance after closing the last field, and explicit-null decimal migration compatibility.

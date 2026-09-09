@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
-from uuid import UUID, uuid7
+from uuid import UUID
+
+from uuid6 import uuid7
 
 from app.systems.lifecycle.planner import canonical_lifecycle_digest
 from app.systems.lifecycle.schemas import (

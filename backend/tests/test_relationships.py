@@ -16,7 +16,9 @@ from app.systems.fields.schemas import FieldCreate
 from app.systems.fields.validation import validate_record_data
 from app.systems.modules.models import Module
 from app.systems.records.models import Record
+from app.systems.relationships.locking import _nowait
 from app.systems.relationships.models import RelationshipEdge
+from app.systems.relationships.mutations import _active_edge_statement
 from app.systems.relationships.schemas import (
     RelationshipAssignment,
     RelationshipAvailability,
@@ -27,8 +29,6 @@ from app.systems.relationships.schemas import (
 from app.systems.relationships.service import (
     RelationshipConflict,
     RelationshipInvalid,
-    _active_edge_statement,
-    _nowait,
     assign_relationship,
     create_relationship,
     list_relationships,
@@ -203,11 +203,11 @@ def test_create_validates_exact_membership_and_department_from_attached_modules(
 
     with (
         patch(
-            "app.systems.relationships.service._load_create_dependencies",
+            "app.systems.relationships.mutations._load_create_dependencies",
             return_value=(field, source, target),
         ),
         patch(
-            "app.systems.relationships.service._lock_relationship_rows",
+            "app.systems.relationships.mutations._lock_relationship_rows",
             return_value=locked_dependencies(field, source, target),
         ),
     ):
@@ -223,7 +223,7 @@ def test_create_rejects_self_links_and_duplicate_edges() -> None:
     db = Mock(spec=Session)
 
     with patch(
-        "app.systems.relationships.service._load_create_dependencies",
+        "app.systems.relationships.mutations._load_create_dependencies",
         return_value=(field, record, record),
     ):
         with pytest.raises(RelationshipInvalid, match="must differ"):
@@ -233,11 +233,11 @@ def test_create_rejects_self_links_and_duplicate_edges() -> None:
     duplicate = make_edge(field, record, target)
     with (
         patch(
-            "app.systems.relationships.service._load_create_dependencies",
+            "app.systems.relationships.mutations._load_create_dependencies",
             return_value=(field, record, target),
         ),
         patch(
-            "app.systems.relationships.service._find_active_edge",
+            "app.systems.relationships.mutations._find_active_edge",
             return_value=duplicate,
         ),
     ):
@@ -263,10 +263,10 @@ def test_create_accepts_all_four_cardinalities(
     db = Mock(spec=Session)
     with (
         patch(
-            "app.systems.relationships.service._load_create_dependencies",
+            "app.systems.relationships.mutations._load_create_dependencies",
             return_value=(field, source, target),
         ),
-        patch("app.systems.relationships.service._find_active_edge", return_value=None),
+        patch("app.systems.relationships.mutations._find_active_edge", return_value=None),
     ):
         edge = create_relationship(db, field.id, source.id, target.id)
     assert (edge.field_id, edge.source_record_id, edge.target_record_id) == (
@@ -300,11 +300,11 @@ def test_create_enforces_both_cardinalities(
     db = Mock(spec=Session)
     with (
         patch(
-            "app.systems.relationships.service._load_create_dependencies",
+            "app.systems.relationships.mutations._load_create_dependencies",
             return_value=(field, source, target),
         ),
         patch(
-            "app.systems.relationships.service._find_active_edge",
+            "app.systems.relationships.mutations._find_active_edge",
             side_effect=[None, existing],
         ),
     ):
@@ -401,11 +401,11 @@ def test_assignment_replaces_atomically_and_clear_soft_deletes_old_edge() -> Non
     assert clear_payload.target_record_id is None
     with (
         patch(
-            "app.systems.relationships.service._find_active_edge",
+            "app.systems.relationships.mutations._find_active_edge",
             side_effect=[old_edge, old_edge, None],
         ),
         patch(
-            "app.systems.relationships.service._lock_relationship_rows",
+            "app.systems.relationships.mutations._lock_relationship_rows",
             return_value=locked_dependencies(field, source, new_target),
         ),
     ):
@@ -415,11 +415,11 @@ def test_assignment_replaces_atomically_and_clear_soft_deletes_old_edge() -> Non
         assert old_edge.is_deleted is True
     with (
         patch(
-            "app.systems.relationships.service._find_active_edge",
+            "app.systems.relationships.mutations._find_active_edge",
             return_value=replacement,
         ),
         patch(
-            "app.systems.relationships.service._lock_relationship_rows",
+            "app.systems.relationships.mutations._lock_relationship_rows",
             return_value=locked_dependencies(field, source, old_target),
         ),
     ):
@@ -437,7 +437,7 @@ def test_assignment_clear_and_no_edge_reject_multi_target_fields() -> None:
     source = make_record(module)
     db = Mock(spec=Session)
     with patch(
-        "app.systems.relationships.service._lock_relationship_rows",
+        "app.systems.relationships.mutations._lock_relationship_rows",
         return_value=locked_dependencies(field, source, None),
     ):
         with pytest.raises(RelationshipConflict, match="single-target"):
@@ -454,11 +454,11 @@ def test_assignment_counts_target_side_edges_excluding_replaced_edge() -> None:
     db = Mock(spec=Session)
     with (
         patch(
-            "app.systems.relationships.service._find_active_edge",
+            "app.systems.relationships.mutations._find_active_edge",
             side_effect=[current, current, conflicting],
         ),
         patch(
-            "app.systems.relationships.service._lock_relationship_rows",
+            "app.systems.relationships.mutations._lock_relationship_rows",
             return_value=locked_dependencies(field, source, new_target),
         ),
     ):
@@ -473,7 +473,7 @@ def test_list_filters_before_count_and_pagination_and_returns_response_items() -
     edge = make_edge(field, source, target)
     pagination = PaginationMetadata(limit=25, offset=0, count=1, total=1, has_more=False)
     with patch(
-        "app.systems.relationships.service.execute_standard_list",
+        "app.systems.relationships.projection.execute_standard_list",
         return_value=ListQueryResult(items=[edge], pagination=pagination),
     ) as execute:
         result = list_relationships(

@@ -85,9 +85,12 @@ def test_in_flight_verifications_reserve_the_actor_failure_budget() -> None:
     db.scalar.return_value = pending
 
     with (
-        patch("app.systems.lifecycle.service._challenge_for_token", return_value=pending),
-        patch("app.systems.lifecycle.service._refresh_failure_bucket", return_value=bucket),
-        patch("app.systems.lifecycle.service._blocked_until", return_value=None),
+        patch("app.systems.lifecycle.challenge_store._challenge_for_token", return_value=pending),
+        patch(
+            "app.systems.lifecycle.challenge_store._refresh_failure_bucket",
+            return_value=bucket,
+        ),
+        patch("app.systems.lifecycle.challenge_store._blocked_until", return_value=None),
         pytest.raises(LifecycleActorBlocked),
     ):
         begin_verification(

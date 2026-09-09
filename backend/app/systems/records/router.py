@@ -27,7 +27,8 @@ from app.systems.fields.validation import (
 from app.systems.modules.models import Module
 from app.systems.records.models import Record
 from app.systems.records.schemas import RecordCreate, RecordResponse, RecordUpdate
-from app.systems.relationships.service import RelationshipError, lock_row
+from app.systems.relationships.errors import RelationshipError
+from app.systems.relationships.locking import lock_row
 from app.systems.users.models import User
 from app.systems.users.permissions import Capability
 

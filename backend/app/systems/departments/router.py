@@ -1,10 +1,9 @@
-from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -26,8 +25,6 @@ from app.systems.departments.schemas import (
 from app.systems.lifecycle.exceptions import LifecycleError
 from app.systems.lifecycle.schemas import LifecycleTargetType
 from app.systems.lifecycle.service import reopen_lifecycle
-from app.systems.modules.models import Module
-from app.systems.relationships.service import RelationshipError, lock_row
 from app.systems.users.models import User
 from app.systems.users.permissions import Capability
 
@@ -58,6 +55,29 @@ DEPARTMENT_LIST_SPEC = ListQuerySpec(
     deleted_field=cast(ColumnElement[bool], Department.is_deleted),
 )
 
+CLOSE_REQUIRED_RESPONSE: dict[int | str, dict[str, Any]] = {
+    status.HTTP_409_CONFLICT: {
+        "description": "Close the department through the lifecycle workflow.",
+        "content": {"application/json": {
+            "schema": {
+                "type": "object",
+                "required": ["detail"],
+                "properties": {"detail": {
+                    "type": "object",
+                    "required": ["code", "message"],
+                    "properties": {
+                        "code": {"type": "string", "enum": ["close_required"]},
+                        "message": {"type": "string"},
+                    }
+                }},
+            },
+            "example": {"detail": {
+                "code": "close_required", "message": "Use Close to close this department"
+            }},
+        }},
+    }
+}
+
 
 def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Department not found")
@@ -84,16 +104,6 @@ def _department(db: Session, department_id: UUID) -> Department:
     return department
 
 
-def _lock_department(db: Session, department: Department) -> Department:
-    try:
-        locked = lock_row(db, Department, department.id)
-    except RelationshipError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
-    if locked is None:
-        raise _conflict("Department is unavailable")
-    return locked
-
-
 def _name_conflict(db: Session, name: str, exclude_id: UUID | None = None) -> bool:
     statement = select(Department.id).where(
         Department.department_name == name,
@@ -102,17 +112,6 @@ def _name_conflict(db: Session, name: str, exclude_id: UUID | None = None) -> bo
     if exclude_id is not None:
         statement = statement.where(Department.id != exclude_id)
     return db.scalar(statement) is not None
-
-
-def _active_module_count(db: Session, department_id: UUID) -> int:
-    return int(
-        db.scalar(
-            select(func.count())
-            .select_from(Module)
-            .where(Module.department_id == department_id, Module.is_deleted.is_(False))
-        )
-        or 0
-    )
 
 
 def _commit(db: Session, message: str) -> None:
@@ -179,29 +178,16 @@ def update_department(
     return department
 
 
-def delete_department(
-    department_id: UUID,
-    _: DepartmentWriteUser,
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    department = _department(db, department_id)
-    if department.is_deleted:
-        raise _conflict("Department is already deleted")
-    department = _lock_department(db, department)
-    if _active_module_count(db, department.id):
-        raise _conflict("Department has active modules")
-    department.is_deleted = True
-    department.deleted_at = datetime.now(UTC)
-    _commit(db, "Unable to delete department")
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.delete("/{department_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{department_id}",
+    status_code=status.HTTP_409_CONFLICT,
+    responses=CLOSE_REQUIRED_RESPONSE,
+)
 def legacy_delete_department(
     department_id: UUID,
     _: DepartmentWriteUser,
     db: Annotated[Session, Depends(get_db)],
-) -> Response:
+) -> None:
     # Keep the endpoint for clients that still discover DELETE, but do not
     # permit it to bypass the close preview and confirmation flow.
     _department(db, department_id)

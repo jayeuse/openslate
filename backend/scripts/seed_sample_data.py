@@ -16,360 +16,24 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-ROLE_SPECS = {
-    "admin": {
-        "departments.read": True,
-        "departments.write": True,
-        "modules.read": True,
-        "modules.write": True,
-        "fields.read": True,
-        "fields.write": True,
-        "records.read": True,
-        "records.write": True,
-        "relationships.read": True,
-        "relationships.write": True,
-    },
-    "manager": {"records.read": True, "records.write": True},
-    "staff": {"records.read": True},
-}
-
-DEPARTMENT_SPECS = {
-    "dept-inv": "Inventory",
-    "dept-acc": "Accounting",
-    "dept-sales": "Sales",
-}
-
-MODULE_SPECS = {
-    "mod-products": ("dept-inv", "Inventory Catalog"),
-    "mod-suppliers": ("dept-inv", "Suppliers"),
-    "mod-stock": ("dept-inv", "Stock Movements"),
-    "mod-trans": ("dept-acc", "Transactions"),
-    "mod-exp": ("dept-acc", "Expenses"),
-    "mod-payable": ("dept-acc", "Accounts Payable"),
-    "mod-customers": ("dept-sales", "Customers"),
-    "mod-orders": ("dept-sales", "Sales Orders"),
-    "mod-payments": ("dept-sales", "Payments"),
-}
-
-FIELD_SPECS = [
-    ("field-prod-name", "mod-products", "Product Name", "text", True, 1, {}),
-    ("field-prod-price", "mod-products", "Price", "decimal", True, 2, {"minimum": "0"}),
-    ("field-prod-stock", "mod-products", "Stock", "int", True, 3, {"minimum": 0}),
-    (
-        "field-prod-cat",
-        "mod-products",
-        "Category",
-        "select",
-        False,
-        4,
-        {"options": ["Drink", "Food", "Other"]},
-    ),
-    (
-        "field-prod-status",
-        "mod-products",
-        "Status",
-        "select",
-        True,
-        5,
-        {"options": ["Available", "Low Stock", "Out of Stock"]},
-    ),
-    ("field-sup-name", "mod-suppliers", "Supplier Name", "text", True, 1, {}),
-    ("field-sup-contact", "mod-suppliers", "Contact Number", "text", False, 2, {}),
-    ("field-sup-email", "mod-suppliers", "Email", "text", False, 3, {}),
-    (
-        "field-sup-status",
-        "mod-suppliers",
-        "Status",
-        "select",
-        True,
-        4,
-        {"options": ["Active", "Inactive"]},
-    ),
-    ("field-stock-product", "mod-stock", "Product", "text", True, 1, {}),
-    ("field-stock-qty", "mod-stock", "Quantity", "int", True, 2, {}),
-    (
-        "field-stock-type",
-        "mod-stock",
-        "Movement Type",
-        "select",
-        True,
-        3,
-        {"options": ["Stock In", "Stock Out"]},
-    ),
-    ("field-stock-date", "mod-stock", "Date", "datetime", True, 4, {}),
-    ("field-stock-remarks", "mod-stock", "Remarks", "text", False, 5, {}),
-    ("field-trans-name", "mod-trans", "Transaction", "text", True, 1, {}),
-    ("field-trans-amount", "mod-trans", "Amount", "decimal", True, 2, {}),
-    (
-        "field-trans-type",
-        "mod-trans",
-        "Type",
-        "select",
-        True,
-        3,
-        {"options": ["Income", "Expense"]},
-    ),
-    ("field-trans-date", "mod-trans", "Date", "datetime", True, 4, {}),
-    ("field-exp-name", "mod-exp", "Expense", "text", True, 1, {}),
-    ("field-exp-cost", "mod-exp", "Cost", "decimal", True, 2, {"minimum": "0"}),
-    (
-        "field-exp-category",
-        "mod-exp",
-        "Category",
-        "select",
-        True,
-        3,
-        {"options": ["Utilities", "Supplies", "Rent", "Other"]},
-    ),
-    ("field-exp-due", "mod-exp", "Due Date", "datetime", True, 4, {}),
-    ("field-exp-paid", "mod-exp", "Paid", "boolean", True, 5, {}),
-    ("field-customer-name", "mod-customers", "Customer Name", "text", True, 1, {}),
-    ("field-customer-contact", "mod-customers", "Contact Number", "text", False, 2, {}),
-    ("field-customer-address", "mod-customers", "Address", "text", False, 3, {}),
-    (
-        "field-customer-status",
-        "mod-customers",
-        "Status",
-        "select",
-        True,
-        4,
-        {"options": ["Active", "Inactive"]},
-    ),
-    ("field-order-number", "mod-orders", "Order Number", "text", True, 1, {}),
-    ("field-order-customer", "mod-orders", "Customer", "text", True, 2, {}),
-    ("field-order-total", "mod-orders", "Total", "decimal", True, 3, {"minimum": "0"}),
-    ("field-order-date", "mod-orders", "Order Date", "datetime", True, 4, {}),
-    (
-        "field-order-status",
-        "mod-orders",
-        "Status",
-        "select",
-        True,
-        5,
-        {"options": ["Pending", "Completed", "Cancelled"]},
-    ),
-]
-
-RECORD_SPECS = [
-    (
-        "rec-001",
-        "mod-products",
-        {
-            "field-prod-name": "Coca-Cola 1.5L",
-            "field-prod-price": "75",
-            "field-prod-stock": 20,
-            "field-prod-cat": "Drink",
-            "field-prod-status": "Available",
-        },
-    ),
-    (
-        "rec-002",
-        "mod-products",
-        {
-            "field-prod-name": "Potato Chips",
-            "field-prod-price": "35.5",
-            "field-prod-stock": 4,
-            "field-prod-cat": "Food",
-            "field-prod-status": "Low Stock",
-        },
-    ),
-    (
-        "rec-003",
-        "mod-products",
-        {
-            "field-prod-name": "Bottled Water",
-            "field-prod-price": "20",
-            "field-prod-stock": 0,
-            "field-prod-cat": "Drink",
-            "field-prod-status": "Out of Stock",
-        },
-    ),
-    (
-        "rec-sup-001",
-        "mod-suppliers",
-        {
-            "field-sup-name": "Metro Wholesale",
-            "field-sup-contact": "09171234567",
-            "field-sup-email": "sales@metro.example",
-            "field-sup-status": "Active",
-        },
-    ),
-    (
-        "rec-sup-002",
-        "mod-suppliers",
-        {
-            "field-sup-name": "ABC Distribution",
-            "field-sup-contact": "09181234567",
-            "field-sup-email": "orders@abc.example",
-            "field-sup-status": "Active",
-        },
-    ),
-    (
-        "rec-stock-001",
-        "mod-stock",
-        {
-            "field-stock-product": "Coca-Cola 1.5L",
-            "field-stock-qty": 20,
-            "field-stock-type": "Stock In",
-            "field-stock-date": "2026-08-19T09:00:00+08:00",
-            "field-stock-remarks": "Supplier delivery",
-        },
-    ),
-    (
-        "rec-stock-002",
-        "mod-stock",
-        {
-            "field-stock-product": "Potato Chips",
-            "field-stock-qty": 3,
-            "field-stock-type": "Stock Out",
-            "field-stock-date": "2026-08-19T11:30:00+08:00",
-            "field-stock-remarks": "Sold",
-        },
-    ),
-    (
-        "rec-stock-003",
-        "mod-stock",
-        {
-            "field-stock-product": "Bottled Water",
-            "field-stock-qty": 24,
-            "field-stock-type": "Stock In",
-            "field-stock-date": "2026-08-19T13:00:00+08:00",
-            "field-stock-remarks": "Restock",
-        },
-    ),
-    (
-        "rec-trans-001",
-        "mod-trans",
-        {
-            "field-trans-name": "Daily Sales",
-            "field-trans-amount": "12450",
-            "field-trans-type": "Income",
-            "field-trans-date": "2026-08-19T17:00:00+08:00",
-        },
-    ),
-    (
-        "rec-trans-002",
-        "mod-trans",
-        {
-            "field-trans-name": "Supplier Payment",
-            "field-trans-amount": "4000",
-            "field-trans-type": "Expense",
-            "field-trans-date": "2026-08-19T15:00:00+08:00",
-        },
-    ),
-    (
-        "rec-trans-003",
-        "mod-trans",
-        {
-            "field-trans-name": "Delivery Fee",
-            "field-trans-amount": "500",
-            "field-trans-type": "Expense",
-            "field-trans-date": "2026-08-19T16:00:00+08:00",
-        },
-    ),
-    (
-        "rec-exp-001",
-        "mod-exp",
-        {
-            "field-exp-name": "Electricity",
-            "field-exp-cost": "4500",
-            "field-exp-category": "Utilities",
-            "field-exp-due": "2026-08-30T23:59:59+08:00",
-            "field-exp-paid": False,
-        },
-    ),
-    (
-        "rec-exp-002",
-        "mod-exp",
-        {
-            "field-exp-name": "Internet",
-            "field-exp-cost": "1699",
-            "field-exp-category": "Utilities",
-            "field-exp-due": "2026-08-25T23:59:59+08:00",
-            "field-exp-paid": True,
-        },
-    ),
-    (
-        "rec-exp-003",
-        "mod-exp",
-        {
-            "field-exp-name": "Store Rent",
-            "field-exp-cost": "12000",
-            "field-exp-category": "Rent",
-            "field-exp-due": "2026-09-01T23:59:59+08:00",
-            "field-exp-paid": False,
-        },
-    ),
-    (
-        "rec-customer-001",
-        "mod-customers",
-        {
-            "field-customer-name": "Juan Dela Cruz",
-            "field-customer-contact": "09171234567",
-            "field-customer-address": "Manila",
-            "field-customer-status": "Active",
-        },
-    ),
-    (
-        "rec-customer-002",
-        "mod-customers",
-        {
-            "field-customer-name": "Maria Santos",
-            "field-customer-contact": "09181234567",
-            "field-customer-address": "Pasig",
-            "field-customer-status": "Active",
-        },
-    ),
-    (
-        "rec-customer-003",
-        "mod-customers",
-        {
-            "field-customer-name": "Pedro Reyes",
-            "field-customer-contact": "09191234567",
-            "field-customer-address": "Makati",
-            "field-customer-status": "Inactive",
-        },
-    ),
-    (
-        "rec-order-001",
-        "mod-orders",
-        {
-            "field-order-number": "SO-1001",
-            "field-order-customer": "Juan Dela Cruz",
-            "field-order-total": "1250",
-            "field-order-date": "2026-08-19T10:00:00+08:00",
-            "field-order-status": "Completed",
-        },
-    ),
-    (
-        "rec-order-002",
-        "mod-orders",
-        {
-            "field-order-number": "SO-1002",
-            "field-order-customer": "Maria Santos",
-            "field-order-total": "850",
-            "field-order-date": "2026-08-19T12:00:00+08:00",
-            "field-order-status": "Pending",
-        },
-    ),
-    (
-        "rec-order-003",
-        "mod-orders",
-        {
-            "field-order-number": "SO-1003",
-            "field-order-customer": "Juan Dela Cruz",
-            "field-order-total": "2100",
-            "field-order-date": "2026-08-19T14:00:00+08:00",
-            "field-order-status": "Completed",
-        },
-    ),
-]
-
-SAMPLE_USER_SPECS = (
-    ("sample-admin@example.com", "sample-admin", "admin"),
-    ("maria@example.com", "maria", "manager"),
-    ("jose@example.com", "jose", "staff"),
-)
+if __package__:
+    from .seed_sample_data_specs import (  # type: ignore[import-not-found]
+        DEPARTMENT_SPECS,
+        FIELD_SPECS,
+        MODULE_SPECS,
+        RECORD_SPECS,
+        ROLE_SPECS,
+        SAMPLE_USER_SPECS,
+    )
+else:
+    from seed_sample_data_specs import (
+        DEPARTMENT_SPECS,
+        FIELD_SPECS,
+        MODULE_SPECS,
+        RECORD_SPECS,
+        ROLE_SPECS,
+        SAMPLE_USER_SPECS,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -498,6 +162,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         if field is None:
             raise RuntimeError(f"Field creation returned no response: {name}")
         field_ids[logical_id] = field["id"]
+
+    populated_module_ids = {module_id for _logical_id, module_id, *_rest in FIELD_SPECS}
+    for logical_id in MODULE_SPECS:
+        if logical_id not in populated_module_ids:
+            continue
+        accepted = client.request(
+            "POST",
+            f"/api/modules/{module_ids[logical_id]}/schema/accept",
+        )
+        if accepted is None:
+            raise RuntimeError(f"Schema acceptance returned no response: {logical_id}")
 
     record_ids: dict[str, str] = {}
     record_responses: dict[str, dict[str, Any]] = {}

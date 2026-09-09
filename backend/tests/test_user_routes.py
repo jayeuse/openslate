@@ -7,18 +7,18 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-import app.systems.users.router as users_router
+import app.systems.users.account_operations as users_router
+import app.systems.users.reconciliation as reconciliation
 from app.core.integrations.supabase import SupabaseAdminClient, SupabaseAdminError
 from app.systems.audit.service import SecurityEventPersistenceError
-from app.systems.users.models import Role, User, UserRole, UserStatus
-from app.systems.users.router import (
-    _active_role,
-    delete_role,
+from app.systems.users.account_operations import (
     delete_user,
     restore_user,
-    update_role,
     update_user,
 )
+from app.systems.users.coordination import lock_active_role as _active_role
+from app.systems.users.models import Role, User, UserRole, UserStatus
+from app.systems.users.roles_router import delete_role, update_role
 from app.systems.users.schemas import RoleUpdate, UserUpdate
 
 
@@ -209,7 +209,7 @@ def test_deleted_user_can_be_restored_only_with_an_active_role(
     admin = make_user("admin", admin_role)
     db.scalar.side_effect = [admin_role, admin, user, role, admin_role, admin, user, role]
     monkeypatch.setattr(users_router, "_enable_auth_user", lambda _: None)
-    monkeypatch.setattr(users_router, "_security_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(users_router, "_record_security_event", lambda *_args, **_kwargs: None)
 
     restored = restore_user(user.id, admin, db)
 
@@ -270,7 +270,7 @@ def test_activation_records_partial_when_local_finalization_fails(
     client = Mock(spec=SupabaseAdminClient)
     monkeypatch.setattr(users_router, "SupabaseAdminClient", lambda: client)
     events = Mock()
-    monkeypatch.setattr(users_router, "_security_event", events)
+    monkeypatch.setattr(users_router, "_record_security_event", events)
 
     with pytest.raises(HTTPException) as error:
         update_user(target.id, UserUpdate(status=UserStatus.ACTIVE), admin, db)
@@ -297,12 +297,12 @@ def test_reconcile_auth_records_provider_failure_without_opposite_call(
     db.scalar.side_effect = [admin_role, admin, target]
     client = Mock(spec=SupabaseAdminClient)
     client.disable_user.side_effect = SupabaseAdminError("provider unavailable")
-    monkeypatch.setattr(users_router, "SupabaseAdminClient", lambda: client)
+    monkeypatch.setattr(reconciliation, "SupabaseAdminClient", lambda: client)
     events = Mock()
-    monkeypatch.setattr(users_router, "_security_event", events)
+    monkeypatch.setattr(users_router, "_record_security_event", events)
 
     with pytest.raises(HTTPException) as error:
-        users_router.reconcile_auth(target.id, admin, db)
+        reconciliation.reconcile_auth(target.id, admin, db)
 
     assert error.value.status_code == 503
     client.disable_user.assert_called_once_with(target.id)

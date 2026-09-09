@@ -1,10 +1,9 @@
-from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -25,7 +24,6 @@ from app.systems.lifecycle.schemas import LifecycleTargetType
 from app.systems.lifecycle.service import reopen_lifecycle
 from app.systems.modules.models import Module
 from app.systems.modules.schemas import ModuleCreate, ModuleResponse, ModuleUpdate
-from app.systems.records.models import Record
 from app.systems.relationships.service import RelationshipError, lock_row
 from app.systems.users.models import User
 from app.systems.users.permissions import Capability
@@ -60,6 +58,29 @@ MODULE_LIST_SPEC = ListQuerySpec(
     search_fields=(cast(ColumnElement[str], Module.module_name),),
     deleted_field=cast(ColumnElement[bool], Module.is_deleted),
 )
+
+CLOSE_REQUIRED_RESPONSE: dict[int | str, dict[str, Any]] = {
+    status.HTTP_409_CONFLICT: {
+        "description": "Close the module through the lifecycle workflow.",
+        "content": {"application/json": {
+            "schema": {
+                "type": "object",
+                "required": ["detail"],
+                "properties": {"detail": {
+                    "type": "object",
+                    "required": ["code", "message"],
+                    "properties": {
+                        "code": {"type": "string", "enum": ["close_required"]},
+                        "message": {"type": "string"},
+                    }
+                }},
+            },
+            "example": {"detail": {
+                "code": "close_required", "message": "Use Close to close this module"
+            }},
+        }},
+    }
+}
 
 
 def _not_found() -> HTTPException:
@@ -133,21 +154,6 @@ def _name_conflict(
     if exclude_id is not None:
         statement = statement.where(Module.id != exclude_id)
     return db.scalar(statement) is not None
-
-
-def _active_dependency_count(
-    db: Session,
-    model: type[Field] | type[Record],
-    module_id: UUID,
-) -> int:
-    return int(
-        db.scalar(
-            select(func.count())
-            .select_from(model)
-            .where(model.module_id == module_id, model.is_deleted.is_(False))
-        )
-        or 0
-    )
 
 
 def _active_fields(db: Session, module_id: UUID) -> list[Field]:
@@ -264,35 +270,16 @@ def update_module(
     return module
 
 
-def delete_module(
-    module_id: UUID,
-    _: ModuleWriteUser,
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    module = _module(db, module_id)
-    if module.is_deleted:
-        raise _conflict("Module is already deleted")
-    _active_department(db, module.department_id)
-    _lock_department(db, module.department_id)
-    module = _lock_module(db, module)
-    if module.is_deleted:
-        raise _conflict("Module is already deleted")
-    if _active_dependency_count(db, Field, module.id):
-        raise _conflict("Module has active fields")
-    if _active_dependency_count(db, Record, module.id):
-        raise _conflict("Module has active records")
-    module.is_deleted = True
-    module.deleted_at = datetime.now(UTC)
-    _commit(db, "Unable to delete module")
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.delete("/{module_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{module_id}",
+    status_code=status.HTTP_409_CONFLICT,
+    responses=CLOSE_REQUIRED_RESPONSE,
+)
 def legacy_delete_module(
     module_id: UUID,
     _: ModuleWriteUser,
     db: Annotated[Session, Depends(get_db)],
-) -> Response:
+) -> None:
     _module(db, module_id)
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from enum import StrEnum
-from uuid import uuid7
+
+from uuid6 import uuid7
 
 from app.systems.audit.models import AuditLog
 from app.systems.audit.snapshots import (
