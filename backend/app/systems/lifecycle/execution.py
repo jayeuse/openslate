@@ -92,6 +92,17 @@ def _transition_instances(db: Session, plan: LifecyclePlan) -> list[Any]:
     return instances
 
 
+def _invalidate_transitioned_field_modules(db: Session, instances: list[Any]) -> None:
+    """Require schema acceptance again after a field lifecycle transition."""
+
+    module_ids = {instance.module_id for instance in instances if isinstance(instance, Field)}
+    for module_id in module_ids:
+        module = db.get(Module, module_id)
+        if module is None:
+            raise LifecycleUnavailable("Lifecycle operation row is no longer available")
+        module.is_schema_accepted = False
+
+
 def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
     """Physically remove a validated plan in dependency-safe audited phases."""
 
@@ -145,7 +156,8 @@ def _execute(db: Session, plan: LifecyclePlan) -> LifecycleImpactResponse:
             _purge_instances(db, current)
         else:
             timestamp = utc_now()
-            for instance in _transition_instances(db, current):
+            instances = _transition_instances(db, current)
+            for instance in instances:
                 if plan.operation is LifecycleOperation.CLOSE:
                     instance.is_deleted = True
                     instance.deleted_at = timestamp
@@ -155,6 +167,7 @@ def _execute(db: Session, plan: LifecyclePlan) -> LifecycleImpactResponse:
                 # Explicit assignment keeps every changed instance on one lifecycle
                 # timestamp instead of relying on SQLAlchemy's per-instance onupdate.
                 instance.updated_at = timestamp
+            _invalidate_transitioned_field_modules(db, instances)
         db.commit()
     except IntegrityError as error:
         db.rollback()

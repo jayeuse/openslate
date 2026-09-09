@@ -126,9 +126,10 @@ def test_resource_write_routes_require_write_and_not_read(
         payload = {"field_ids": [str(second.id), str(first.id)]}
     elif resource == "records":
         module = make_module(accepted=True)
+        field = make_field(module.id, position=0, name="Title")
         monkeypatch.setattr(records_router, "_active_module", lambda *_args: module)
         monkeypatch.setattr(records_router, "_lock_active_module", lambda *_args: module)
-        monkeypatch.setattr(records_router, "_module_fields", lambda *_args: [])
+        monkeypatch.setattr(records_router, "_module_fields", lambda *_args: [field])
         db.refresh.side_effect = lambda entity: _persisted(entity)
         path = "/api/records"
         payload = {"module_id": str(module.id), "data": {}}

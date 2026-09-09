@@ -81,17 +81,25 @@ backup/PITR, restore, and monitoring do not.
 
 **Recommended direction:** Keep the mutex/revalidation pattern; add multi-connection regression tests and document the crash-window recovery via explicit reconcile plus correlated `SecurityEvent` outcomes.
 
-## R7 — Request size and general rate controls are absent
+## R7 — Application bounds exist, but aggregate traffic controls remain absent
 
-**Current design:** The BFF buffers entire request/response bodies; dynamic JSON and search have incomplete size bounds; no general application rate limiter exists.
+**Current design:** FastAPI rejects request bodies over 1 MiB, and the BFF
+stream-counts request bodies and buffered backend responses (8 MiB default),
+uses a total deadline, and returns diagnostic IDs. Backend database pool,
+connection, statement, concurrency, and readiness-probe bounds are configured.
+There is still no distributed or ingress-level general rate limiter.
 
 **Problem:** Oversized or repeated requests can consume memory, connections, DB capacity, and audit storage.
 
 **Consequence:** Service degradation or denial of service.
 
-**Affected:** Next BFF/session routes, FastAPI, records/roles/fields, ingress.
+**Affected:** Next BFF/session routes, FastAPI, records/roles/fields, ingress,
+database capacity, and hosted topology.
 
-**Recommended direction:** Enforce early byte/depth/cardinality limits, timeouts, streaming where possible, and trusted-proxy-aware rate controls.
+**Recommended direction:** Retain the application bounds and safe failure
+responses. Priority 3 must select and prove trusted-proxy-aware aggregate
+ingress limiting, traffic admission from readiness, and a database connection
+budget before public production exposure.
 
 ## R8 — Browser-exposed access token has a revocation window
 
@@ -109,7 +117,7 @@ backup/PITR, restore, and monitoring do not.
 
 **Current design:** User invite/resend/accept/disable/enable/restore/reconcile spans Supabase Auth and short local SQL phases with durable correlated `SecurityEvent` attempt/outcome rows (`operation_id`), no destructive compensation after Auth success (pending trigger profile is left for acceptance/retry), local-first disable/delete with `tokens_valid_after` cutoff, fail-closed activation/restore with post-Auth revalidation, and explicit `POST /users/{user_id}/reconcile-auth` realignment. Invitation preflight/finalization and acceptance capture immutable actor/target/email/role primitives before provider I/O and start a fresh request transaction for revalidation; the implementation is split across `backend/app/systems/users/service.py`, `backend/app/systems/users/acceptance.py`, `backend/app/systems/users/account_operations.py`, `backend/app/systems/users/coordination.py`, and `backend/app/systems/users/reconciliation.py`, with `backend/app/common/dependencies/auth.py:get_verified_pending_identity`. Acceptance depends on private FastAPI via `/session/password`; the BFF denies `auth/invitations/accept`, and bootstrap concurrent-loser/external residuals remain pending without destructive compensation.
 
-Invitation provenance is classified centrally: `pending` is always ineligible; a non-pending profile with a sent invitation and no acceptance is unaccepted; an accepted non-pending profile is established; and a non-pending profile with neither timestamp remains a legacy account. Deleted unaccepted invitations remain deleted and their email identities remain reserved; recovery or reuse requires a separately approved procedure. Pending-to-disabled returns `409`, pending deletion preserves pending status, and known corrupted active profiles are denied authentication and excluded from active-administrator counts. No acceptance timestamp is guessed or backfilled. Targeted registered API and PostgreSQL evidence and final verification results are recorded in [Testing architecture](16-testing-architecture.md).
+Invitation provenance is classified centrally: `pending` is always ineligible; a non-pending profile with a sent invitation and no acceptance is unaccepted; an accepted non-pending profile is established; and a non-pending profile with neither timestamp remains a legacy account. Deleted unaccepted invitations remain deleted and their email identities remain reserved; recovery or reuse requires a separately approved procedure. Pending-to-disabled returns `409`, pending deletion preserves pending status, and known corrupted active profiles are denied authentication and excluded from active-administrator counts. No acceptance timestamp is guessed or backfilled.
 
 **Problem:** One system can still succeed while the other fails: Auth success plus a crash before finalization leaves a pending profile, provider errors leave Auth/local out of sync, and refresh-session revocation remains unverified/absent (only the access-token cutoff plus local status gate apply).
 
@@ -144,17 +152,31 @@ command requires both email and username.
 
 Keep the page concise and aligned with the README and scripts.
 
-## R12 — Verification gaps hide cross-system failures
+## R12 — Hosted-control gaps remain after the disposable full-stack release gate
 
-**Current design:** Default frontend domain Playwright tests mock sessions/BFF/backend, while an opt-in local live suite exercises real Auth, BFF, FastAPI, and PostgreSQL outside CI. Backend PostgreSQL integration now covers dynamic-field persistence, selected field/relationship races, and runtime-role trust boundaries when the guarded database environment is available.
+**Current design:** Default frontend domain Playwright tests still mock many
+sessions/BFF/backend interactions, and an opt-in local live suite remains
+available. In addition, `.github/workflows/fullstack.yml` runs the stable
+**Full-stack release gate** through `backend/tests/fullstack_runner.py` for
+relevant changes. The harness creates an isolated Supabase stack, runs the
+current Alembic head and backend suite, and tests production Next.js, BFF,
+FastAPI, PostgreSQL, and local Auth with disposable identities.
 
-**Problem:** The live suite is not a CI gate and does not verify Realtime delivery or hosted ingress, network, secret, backup, and recovery controls. Concurrent last-administrator mutations and broader multi-worker/load scenarios also remain uncovered.
+**Problem:** The disposable release gate does not verify Realtime delivery or
+hosted ingress, network, secret, backup, recovery, aggregate rate limiting,
+log collection, or alert delivery. Branch protection is also a maintainer
+configuration step, not a checked-in enforcement mechanism. Concurrent
+last-administrator mutations and broader multi-worker/load scenarios remain
+uncovered.
 
 **Consequence:** CI may pass individual layers while selected integrated, hosted, or operational workflows still regress.
 
 **Affected:** Test suites, CI, auth, BFF, lifecycle, Realtime, and hosted operations.
 
-**Recommended direction:** Preserve the unit/integration and opt-in live layers; add a controlled CI or staging live smoke gate where operationally feasible, plus Realtime-delivery, remaining concurrency, and hosted-control verification.
+**Recommended direction:** Require the stable full-stack check through branch
+protection after landing. Priority 3 must prove hosted controls and alert
+delivery before production traffic; retain targeted unit, integration, and
+disposable release coverage for application behavior.
 
 ## R13 — Placeholder capabilities can be mistaken for working features
 
@@ -167,3 +189,24 @@ Keep the page concise and aligned with the README and scripts.
 **Affected:** Backend package tree, docs, Storage.
 
 **Recommended direction:** Mark placeholders explicitly or remove stale scaffolding until requirements and security design exist.
+
+## R14 — Browser-side SecurityEvent producers are incomplete
+
+**Current design:** Backend administrative operations persist durable correlated
+`SecurityEvent` attempt/outcome rows. The BFF and session routes emit safe
+structured logs with request correlation, but the Priority 4 Next.js
+SecurityEvent producers are not implemented.
+
+**Problem:** Browser/session operations do not yet have the same durable event
+coverage as backend administrative operations. The read-only operational checker
+therefore reports only the backend event families it knows.
+
+**Consequence:** Cross-system incident visibility and reconciliation context are
+incomplete even when request logs identify a failure.
+
+**Affected:** Next.js BFF/session routes, SecurityEvent ingestion, operational
+checker, and alerting.
+
+**Recommended direction:** Priority 4 should add the scoped Next.js producers
+and their ingestion failure signals. Priority 3 must collect, retain, and alert
+on the resulting operational events before production exposure.

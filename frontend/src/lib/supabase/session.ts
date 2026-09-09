@@ -7,9 +7,10 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export async function establishSupabaseSession(
   accessToken: string | undefined,
   refreshToken: string | undefined,
+  signal?: AbortSignal,
 ): Promise<Session | null> {
   if (!refreshToken) return null;
-  const supabase = createSupabaseServerClient();
+  const supabase = createSupabaseServerClient(signal);
   const result = accessToken
     ? await supabase.auth.setSession({
         access_token: accessToken,

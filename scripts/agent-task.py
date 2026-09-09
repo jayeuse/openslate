@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import tomllib
 from pathlib import Path
@@ -176,7 +177,121 @@ def main() -> None:
     args.func(args)
 
 
-def check_workspace(root: Path) -> list[str]:
+WORKER_FIELDS = (
+    "description",
+    "model",
+    "model_reasoning_effort",
+    "developer_instructions",
+)
+
+
+def _read_text(path: Path) -> str | None:
+    """Read text while keeping filesystem details out of diagnostics."""
+    try:
+        return path.read_text()
+    except (OSError, UnicodeError):
+        return None
+
+
+def _is_file(path: Path) -> bool:
+    """Return whether a path is a regular file without surfacing OS errors."""
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
+def _worker_files(directory: Path) -> list[Path] | None:
+    """Return TOML worker files, or None when the directory cannot be read."""
+    try:
+        if not directory.is_dir():
+            return []
+        return sorted(path for path in directory.iterdir() if path.suffix == ".toml")
+    except OSError:
+        return None
+
+
+def _validate_worker(path: Path) -> list[str]:
+    """Validate one worker definition without exposing its contents."""
+    contents = _read_text(path)
+    if contents is None:
+        return [f"Cannot read worker configuration: {path.name}"]
+    try:
+        worker = tomllib.loads(contents)
+    except tomllib.TOMLDecodeError:
+        return [f"Cannot parse worker configuration: {path.name}"]
+
+    failures: list[str] = []
+    if worker.get("name") != path.stem:
+        failures.append(f"Worker name does not match filename: {path.name}")
+    for field in WORKER_FIELDS:
+        value = worker.get(field)
+        if not isinstance(value, str) or not value.strip():
+            failures.append(f"Missing worker {field}: {path.name}")
+    agents = worker.get("agents")
+    if not isinstance(agents, dict) or agents.get("enabled") is not False:
+        failures.append(f"Worker must disable delegation: {path.name}")
+    return failures
+
+
+def _routed_roles(instructions: str) -> set[str]:
+    """Extract worker names from Markdown tables with a role column."""
+    lines = instructions.splitlines()
+    role_headers = {"worker", "workers", "role", "roles"}
+
+    def cells(line: str) -> list[str] | None:
+        if not line.lstrip().startswith("|"):
+            return None
+        return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+    roles: set[str] = set()
+    index = 0
+    while index < len(lines):
+        header = cells(lines[index])
+        if header is None:
+            index += 1
+            continue
+        end = index
+        while end < len(lines) and cells(lines[end]) is not None:
+            end += 1
+        normalized = [value.strip("`").lower() for value in header]
+        role_indexes = [
+            position
+            for position, value in enumerate(normalized)
+            if value in role_headers
+        ]
+        if role_indexes:
+            row_start = index + 1
+            separator = cells(lines[row_start]) if row_start < end else None
+            if separator is not None and separator and all(
+                set(value) <= {"-", ":", " "} for value in separator
+            ):
+                row_start += 1
+            for row in lines[row_start:end]:
+                values = cells(row)
+                if values is None or all(
+                    set(value) <= {"-", ":", " "} for value in values
+                ):
+                    continue
+                for position in role_indexes:
+                    if position < len(values):
+                        roles.update(
+                            re.findall(r"`([a-z]+(?:-[a-z]+)*)`", values[position])
+                        )
+        index = end
+    return roles
+
+
+def _global_agents_directory(codex_home: Path | None) -> Path:
+    """Resolve the global worker directory, allowing deterministic injection."""
+    if codex_home is not None:
+        return codex_home / "agents"
+    configured_home = os.environ.get("CODEX_HOME")
+    home = Path(configured_home) if configured_home else Path.home() / ".codex"
+    return home / "agents"
+
+
+def check_workspace(root: Path, codex_home: Path | None = None) -> list[str]:
     """Return setup failures without exposing configuration contents."""
     failures: list[str] = []
     required = (
@@ -186,43 +301,43 @@ def check_workspace(root: Path) -> list[str]:
     )
     for relative in required:
         path = root / relative
-        if not path.is_file() or not path.read_text().strip():
+        contents = _read_text(path) if _is_file(path) else None
+        if not contents or not contents.strip():
             failures.append(f"Missing or empty workflow asset: {relative}")
 
     guide = root / "AGENTS.md"
-    if not guide.is_file():
+    instructions = _read_text(guide) if _is_file(guide) else None
+    if instructions is None:
         return failures
-    instructions = guide.read_text()
-    roles = set()
-    for line in instructions.splitlines():
-        if line.startswith("| "):
-            roles.update(re.findall(r"`([a-z]+(?:-[a-z]+)*)`", line))
-    roles.update(re.findall(r"`((?:architect|security|debug)-deep)`", instructions))
+
+    roles = _routed_roles(instructions)
     if not roles:
         failures.append("No worker roles found in the root routing table")
 
-    directory = root / ".codex/agents"
-    for role in sorted(roles):
-        if not (directory / f"{role}.toml").is_file():
-            failures.append(f"Missing routed worker: {role}")
+    project_directory = root / ".codex/agents"
+    project_workers = _worker_files(project_directory)
+    if project_workers is None:
+        failures.append("Cannot read project worker configurations")
+        project_workers = []
+    validated_project_paths: set[Path] = set()
+    for path in project_workers:
+        failures.extend(_validate_worker(path))
+        validated_project_paths.add(path)
 
-    workers = sorted(directory.glob("*.toml"))
-    if not workers:
-        failures.append("No local worker configurations found")
-    for path in workers:
-        try:
-            worker = tomllib.loads(path.read_text())
-        except (OSError, UnicodeError, tomllib.TOMLDecodeError):
-            failures.append(f"Cannot parse worker configuration: {path.name}")
+    global_directory = _global_agents_directory(codex_home)
+    for role in sorted(roles):
+        project_path = project_directory / f"{role}.toml"
+        global_path = global_directory / f"{role}.toml"
+        if _is_file(project_path):
+            # A malformed project override is authoritative and must not fall
+            # through to a global definition.
+            if project_path not in validated_project_paths:
+                failures.extend(_validate_worker(project_path))
             continue
-        if worker.get("name") != path.stem:
-            failures.append(f"Worker name does not match filename: {path.name}")
-        for field in ("model", "model_reasoning_effort", "developer_instructions"):
-            if not isinstance(worker.get(field), str) or not worker[field].strip():
-                failures.append(f"Missing worker {field}: {path.name}")
-        agents = worker.get("agents")
-        if not isinstance(agents, dict) or agents.get("enabled") is not False:
-            failures.append(f"Worker must disable delegation: {path.name}")
+        if not _is_file(global_path):
+            failures.append(f"Missing routed worker: {role}")
+            continue
+        failures.extend(_validate_worker(global_path))
     return failures
 
 

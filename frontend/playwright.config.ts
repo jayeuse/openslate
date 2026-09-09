@@ -29,7 +29,7 @@ function isolatedCommand(command: string): string {
 
 export default defineConfig({
   testDir: "./tests",
-  testIgnore: ["**/live/**"],
+  testIgnore: ["**/live/**", "**/fullstack/**"],
   // Keep ordinary Playwright cleanup away from persistent live-run manifests
   // stored under test-results/live/<run-id>.
   outputDir: "test-results/playwright",

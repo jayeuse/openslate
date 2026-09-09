@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
@@ -12,6 +13,7 @@ from app.core.integrations.supabase import (
     SupabaseAdminError,
     broadcast_invalidation,
 )
+from app.core.observability import log_event
 from app.systems.audit.context import get_audit_context
 from app.systems.audit.models import AuditAction, AuditLog, SecurityEvent
 from app.systems.audit.snapshots import (
@@ -199,7 +201,10 @@ def broadcast_committed_changes(session: AuditSession) -> None:
         broadcast_invalidation(InvalidationEvent(entity="data"))
     except SupabaseAdminError:
         # Realtime is an optional invalidation path; FastAPI remains canonical.
-        pass
+        log_event(
+            "realtime_invalidation_failure", level=logging.WARNING,
+            reason_code="broadcast_failed", upstream="supabase",
+        )
 
 
 @event.listens_for(AuditSession, "do_orm_execute")

@@ -8,12 +8,20 @@ import {
   setAuthCookies,
 } from "@/lib/auth-cookies";
 import { establishSupabaseSession } from "@/lib/supabase/session";
+import { withinDeadline } from "@/lib/reliability";
+import { beginSessionRoute } from "@/lib/session-response";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const sessionRoute = beginSessionRoute("/session/status", request.method);
+  const { complete, deadline } = sessionRoute;
   const store = await cookies();
-  const session = await establishSupabaseSession(
-    store.get(ACCESS_COOKIE)?.value,
-    store.get(REFRESH_COOKIE)?.value,
+  const session = await withinDeadline(
+    establishSupabaseSession(
+      store.get(ACCESS_COOKIE)?.value,
+      store.get(REFRESH_COOKIE)?.value,
+      deadline.signal,
+    ),
+    deadline.signal,
   ).catch(() => null);
   const response = NextResponse.json(
     { authenticated: session !== null },
@@ -21,5 +29,5 @@ export async function GET() {
   );
   if (session) setAuthCookies(response, session);
   else clearAuthCookies(response);
-  return response;
+  return complete(response, session ? undefined : "unauthenticated");
 }

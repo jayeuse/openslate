@@ -13,7 +13,7 @@
 | Migration drift/contract tests  | **Implemented**                            | Alembic head, revision SQL/contracts—including decimal migration 0015—and model-to-schema drift in CI.                                           |
 | Frontend browser tests          | **Implemented, mostly mocked integration** | Public pages plus dynamic-field schema/record, relationship, and lifecycle UI behavior through mocked session/BFF routes; these tests are not backend/DB integration. |
 | Frontend unit/component tests   | **Absent**                                 | No Vitest/Jest/component-test framework is configured.                                                                                            |
-| Live full-stack browser tests   | **Implemented, opt-in/local-only**         | Separate live Playwright specs exercise the browser→Next/BFF→FastAPI→PostgreSQL path with real local Auth and manifest-scoped cleanup; excluded from the default suite and CI, and not a Realtime-delivery test. |
+| Disposable full-stack release gate | **Implemented**                         | `.github/workflows/fullstack.yml` invokes `backend/tests/fullstack_runner.py` to create a fresh Supabase stack, production Next.js, FastAPI, and browser path. It is not a hosted-control or Realtime-delivery test. |
 | Security/performance/load tests | **Absent**                                 | No dedicated automated suites are checked in.                                                                                                     |
 
 ## Backend verification
@@ -75,50 +75,21 @@ through a guarded owner-capable connection, preferring
 tests use dry-run and rollback-protected execution paths and do not authorize
 a committed database reset.
 
-The backend CI workflow starts local Supabase, verifies public signup is blocked, applies Alembic, runs `alembic check`, provisions a disposable runtime role, and sets `TEST_DATABASE_URL` before Ruff, mypy, and pytest. This is the authoritative integration path.
+The backend CI workflow starts local Supabase, verifies public signup is blocked, applies Alembic, runs `alembic check`, provisions a disposable runtime role, and sets `TEST_DATABASE_URL` before Ruff, mypy, and pytest. This is the authoritative backend integration path.
 
-The following dynamic-field validation results are a historical baseline recorded on 2026-08-31, before the current backend refactor:
+The full-stack workflow supplies the cross-system release gate. Its one stable
+**Full-stack release gate** job performs relevant-change detection inside the
+workflow, so the job still completes for irrelevant changes. For relevant
+changes, `backend/tests/fullstack_runner.py` creates an isolated Supabase
+project on dedicated ports; runs the current Alembic head, drift check,
+runtime-role provisioning, backend suite and coverage gate; then starts
+FastAPI and production Next.js and runs `frontend/playwright.fullstack.config.ts`
+with disposable identities. Its only retained artifact is a sanitized summary.
+The runner does not reuse developer identities or an existing stack.
 
-| Check | Result |
-| --- | --- |
-| Focused field/record/module/relationship tests | **116 passed** |
-| Runtime-role PostgreSQL integration tests | **33 passed** |
-| Owner-role PostgreSQL integration tests | **27 passed** |
-| Full backend pytest | **382 passed, 2 skipped, 82.08% coverage** |
-| Ruff | **Passed** |
-| mypy | **Passed** |
-| Alembic | **Passed**; no new upgrade operations |
-
-The exact commands, PostgreSQL role split, and environment-isolation note are recorded in the [dynamic-field validation test plan](../dynamic-field-validation-test-plan.md).
-
-### Current backend-refactor verification status
-
-The final evidence below was completed on 2026-09-09. The default runtime suite skips the two owner-only reset checks because they require the owner connection and baseline fixture; those checks were run separately with rollback protection.
-
-| Evidence | Status |
-| --- | --- |
-| User-account PostgreSQL verification | **14 passed** |
-| Invitation transaction PostgreSQL verification | **11 passed** |
-| Field PostgreSQL verification | **16 passed** |
-| Registered relationship HTTP/PostgreSQL verification | **7 passed** |
-| Independent relationship/lifecycle race verification | **4 passed** |
-| Registered seed/lifecycle/expired-challenge API scenarios | **9 passed**; includes one seed scenario, six lifecycle scenarios, and pending/`expired` challenge cases with no password-provider call |
-| Existing focused PostgreSQL domain regression | **30 passed; focused existing regression only, not the final registered-route/API gate** |
-| Loopback API smoke test against an owned FastAPI process with real local Auth and cleanup | **1 passed** |
-| Architecture and security static reviews | **Closed; no additional finding** |
-| Handwritten Python size guard | **207 files scanned; zero over 500 lines; largest file 499 lines** |
-| Final test collection | **673 collected; baseline 573** |
-| Final full backend pytest suite | **671 passed, 2 owner-reset skips; separate owner rollback run passed 2/2, covering all 673 collected cases** |
-| Python 3.12, 3.13, and 3.14 compatibility checks | **Each 565 passed, 1 skipped; the existing database-dependent skip remains separately identified** |
-| Owner rollback-only reset verification | **2 passed; teardown verified baseline counts, admin/role/Auth snapshots, plan digest, and fixture-ID absence after physical rollback; PostgreSQL rollback itself restores the data, and no reset was committed** |
-| Ruff and strict mypy | **Passed; mypy checked 103 source files** |
-| Combined application and six changed-script coverage | **87.41%** |
-| Changed executable coverage | **83.29% (1,775/2,131 lines; threshold at least 80%)** |
-| Alembic drift check | **Passed; no new upgrade operations** |
-
-Frontend pagination and stale-request findings remain deferred pending separate
-approval. The provider resend-contract concern remains unverified and is not a
-confirmed defect; no provider redesign is included in this verification.
+The workflow exists, but branch protection is not source-controlled here. A
+repository maintainer must require the stable check after landing before it is
+an enforced merge gate.
 
 ### Isolated Python compatibility checks
 
@@ -158,9 +129,6 @@ the focused guard from `backend/` with:
 UV_CACHE_DIR=/tmp/openslate-workflow-uv-cache uv run pytest --no-cov tests/test_python_file_size.py
 ```
 
-The focused size guard passes; final suite, rollback-only reset, coverage, and
-Alembic evidence are recorded above.
-
 ## Frontend verification
 
 Playwright configuration runs against a development server locally and a standalone production server in CI. Local projects include Chromium/mobile; CI installs and runs Chromium, Firefox, and WebKit. Failure artifacts and the HTML report are uploaded by `.github/workflows/frontend.yml`.
@@ -183,22 +151,30 @@ Default domain tests mock `/session/status`, `/session/realtime-token`, and `/bf
 flowchart LR
     PR[Pull request or main push] --> B[Backend workflow]
     PR --> F[Frontend workflow]
+    PR --> S[Full-stack release gate]
     B --> BI[Supabase + Alembic + role]
     BI --> BC[Ruff + mypy + pytest]
     F --> FC[format + lint + typecheck + build]
     FC --> FE[Playwright production server]
+    S --> SS[Disposable Supabase + Alembic + role]
+    SS --> SA[FastAPI + production Next.js + Chromium]
 ```
 
-Backend and frontend workflows use path filters and cancel superseded runs. They verify changes but do not publish images or deploy.
+Backend and frontend workflows use path filters and cancel superseded runs. The
+full-stack workflow uses internal relevant-change detection to preserve its
+stable check name. None of these workflows publishes images or deploys.
 
 ## Known coverage gaps
 
-- Real invitation email through callback/password setup and cookie persistence; session-handler, cookie, same-origin, BFF refresh, AppPage redirect, and successful Realtime paths lack code-level tests.
-- BFF refresh/retry against actual Supabase Auth and backend JWT validation.
-- Browser-to-Realtime authorization and invalidation delivery.
+- Realtime authorization and invalidation delivery; the release harness does not
+  establish Broadcast delivery guarantees.
+- Priority 4 Next.js SecurityEvent producers and their durable ingestion
+  visibility; current full-stack and BFF coverage does not add those producers.
 - Administration users/roles/audit UI, workspace/onboarding correctness, appearance persistence, pagination, and protected-page accessibility.
 - Concurrent last-administrator mutations and additional multi-connection scenarios beyond the covered field/relationship races.
-- Request-size/rate-limit behavior, hosted TLS/network policy, backup/restore, and disaster recovery.
+- Load limits beyond the application bounds, hosted TLS/network policy,
+  aggregate ingress limiting, log-alert delivery, backup/restore, and disaster
+  recovery. These are Priority 3 production gates.
 - Storage, reports, views, and file workflows because those capabilities are not implemented.
 
 ## Choosing a test location
@@ -206,6 +182,6 @@ Backend and frontend workflows use path filters and cancel superseded runs. They
 - Put pure schema/service/listener behavior in backend unit tests.
 - Use PostgreSQL integration tests for constraints, locks, RLS, migrations, concurrency, rollback, and audit transaction guarantees.
 - Use Playwright fixture tests for isolated UI state and rendering.
-- Run the opt-in live Playwright suite only when the complete local platform, backend, and frontend are running; it complements rather than replaces code-level tests.
+- Run the opt-in live Playwright suite only when the complete local platform, backend, and frontend are running; use the full-stack runner for the disposable production-style release path. Neither replaces hosted-control verification.
 
 Sources: `backend/pyproject.toml`, `backend/tests/`, `frontend/playwright.config.ts`, `frontend/tests/`, `.github/workflows/`.

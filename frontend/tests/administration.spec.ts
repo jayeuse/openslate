@@ -325,7 +325,8 @@ test("people shows an initial skeleton and retains rows during refresh", async (
     OPERATOR_ID,
     "active",
   );
-  let userRequests = 0;
+  let initialReady = false;
+  let blockRefresh = false;
   let releaseInitial!: () => void;
   let releaseRefresh!: () => void;
   const initialResponse = new Promise<void>((resolve) => {
@@ -338,9 +339,8 @@ test("people shows an initial skeleton and retains rows during refresh", async (
     const request = route.request();
     const path = pathForRequest(request);
     if (request.method() === "GET" && path === "/users") {
-      userRequests += 1;
-      if (userRequests === 1) await initialResponse;
-      if (userRequests === 2) await refreshResponse;
+      if (!initialReady) await initialResponse;
+      if (blockRefresh) await refreshResponse;
       await json(route, 200, listResponse([user]));
     } else if (request.method() === "GET" && path === "/roles") {
       await json(route, 200, listResponse([role]));
@@ -355,6 +355,7 @@ test("people shows an initial skeleton and retains rows during refresh", async (
 
   const navigation = page.goto("/administration/users");
   await expect(page.locator('[aria-busy="true"]')).toBeVisible();
+  initialReady = true;
   releaseInitial();
   await navigation;
   await expect(page.getByText("active@example.com")).toBeVisible();
@@ -362,6 +363,7 @@ test("people shows an initial skeleton and retains rows during refresh", async (
   await page.getByLabel("Email").fill("new@example.com");
   await page.getByRole("textbox", { name: "Username" }).fill("new");
   await page.getByRole("combobox", { name: "Role" }).selectOption(OPERATOR_ID);
+  blockRefresh = true;
   await page
     .getByRole("button", { name: "Send invitation", exact: true })
     .click();

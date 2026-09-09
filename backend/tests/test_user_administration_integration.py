@@ -97,7 +97,7 @@ def test_concurrent_admin_demotions_serialize_on_the_exact_admin_role(
     assert observed_role_locks >= 2
     assert (
         sum(result is not None and not isinstance(result, BaseException) for result in results) == 2
-    )
+    ), [type(result).__name__ for result in results]
     failures = [result for result in results if isinstance(result, HTTPException)]
     assert not failures
 

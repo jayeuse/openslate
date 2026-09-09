@@ -130,7 +130,7 @@ def test_password_grant_revokes_only_the_temporary_session() -> None:
         "password": "password-that-is-not-stored",
     }
     revoke_call = http_client.post.call_args_list[1]
-    assert revoke_call.args[0] == "/auth/v1/logout"
+    assert revoke_call.args[0] == "/auth/v1/logout?scope=local"
     assert revoke_call.kwargs["json"] is None
     assert revoke_call.kwargs["headers"]["Authorization"] == f"Bearer {access_token}"
 
@@ -181,3 +181,6 @@ def test_password_grant_rejects_malformed_success_without_leaking_session_data()
         )
 
     assert http_client.post.call_count == 2
+    revoke_call = http_client.post.call_args_list[1]
+    assert revoke_call.args[0] == "/auth/v1/logout?scope=local"
+    assert revoke_call.kwargs["headers"]["Authorization"] == "Bearer temporary-token"

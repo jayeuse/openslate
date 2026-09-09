@@ -36,6 +36,7 @@ RUN addgroup --system --gid 10001 nodejs && adduser --system --uid 10001 nextjs
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+RUN mkdir -p /app/logs && chown nextjs:nodejs /app/logs && chmod 700 /app/logs
 USER nextjs
 
 EXPOSE 3000

@@ -7,6 +7,7 @@ from uuid import UUID
 import httpx
 
 from app.core.config import Settings, get_settings
+from app.core.observability import log_event
 from app.systems.lifecycle.exceptions import (
     LifecycleInvalidCredentials,
     LifecyclePasswordRateLimited,
@@ -69,13 +70,18 @@ class SupabasePasswordGrantClient:
                 )
             with self._client_factory(
                 base_url=self._base_url,
-                timeout=10.0,
+                timeout=_supabase_timeout(self.settings),
             ) as client:
                 return cast(
                     httpx.Response,
                     client.post(path, json=payload, headers=headers),
                 )
         except httpx.HTTPError:
+            log_event(
+                "upstream_failure",
+                reason_code="supabase_password_transport_error",
+                upstream="supabase_auth",
+            )
             raise LifecyclePasswordServiceUnavailable(
                 "Supabase password verification is unavailable"
             ) from None
@@ -123,7 +129,7 @@ class SupabasePasswordGrantClient:
         if access_token is not None:
             try:
                 revoke_response = self._post(
-                    "/auth/v1/logout",
+                    "/auth/v1/logout?scope=local",
                     payload=None,
                     headers=self._headers(access_token),
                 )
@@ -145,3 +151,13 @@ class SupabasePasswordGrantClient:
 
 
 __all__ = ["PasswordGrantClient", "SupabasePasswordGrantClient"]
+
+
+def _supabase_timeout(settings: Settings) -> httpx.Timeout:
+    return httpx.Timeout(
+        timeout=settings.supabase_timeout_seconds,
+        connect=settings.supabase_timeout_seconds,
+        read=settings.supabase_timeout_seconds,
+        write=settings.supabase_timeout_seconds,
+        pool=settings.supabase_timeout_seconds,
+    )

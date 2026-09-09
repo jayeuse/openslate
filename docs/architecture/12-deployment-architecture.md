@@ -18,7 +18,8 @@
 | Local development platform                | Implemented          | Supabase CLI plus host-run FastAPI and Next.js; see `README.md` and `supabase/config.toml`. |
 | Backend image                             | Implemented artifact | `infra/docker/backend.Dockerfile` builds a standalone non-root image.                       |
 | Frontend image                            | Implemented artifact | `infra/docker/frontend.Dockerfile` builds a standalone Next.js image.                       |
-| Pull-request and main-branch verification | Implemented          | `.github/workflows/backend.yml` and `frontend.yml` verify code and both standalone images.    |
+| Pull-request and main-branch verification | Implemented          | `.github/workflows/backend.yml`, `frontend.yml`, and `fullstack.yml` verify code, images, and the disposable production-style release gate. |
+| Branch-protection enforcement              | Maintainer action    | The stable `Full-stack release gate` check exists, but repository branch protection is not represented in source; a maintainer must require it after landing. |
 | Image registry and image publishing       | Absent               | No registry, `docker push`, release tag, or image-publishing step is checked in.            |
 | Hosted application target                 | Unknown              | No provider, cluster, VM, service definition, DNS, or environment manifest is present.      |
 | Hosted ingress/TLS                        | Unknown              | No hosted ingress or TLS termination configuration is present.                              |
@@ -61,11 +62,13 @@ The corresponding commands are documented in `README.md`:
 `backend/migrations/env.py` chooses `MIGRATION_DATABASE_URL` and falls back to
 `DATABASE_URL`, imports the model registry, excludes the external Auth profile
 table placeholder from autogeneration, and runs the linear Alembic chain. The
-15-revision checked-in chain ends at revision `20260831_0015`. Revision `0015`
-converts decimal config bounds and UUID-keyed record values to canonical JSON
-strings across active and closed rows while preserving explicit JSON `null`
-bounds. Supabase migrations and seeds are disabled, so neither `supabase start`
-nor a container command applies this chain.
+checked-in migration chain is resolved dynamically by Alembic (`upgrade head`,
+`check`, or `heads`); release procedures must not hard-code a revision ID.
+Historically, revision `0015` converted decimal config bounds and UUID-keyed
+record values to canonical JSON strings across active and closed rows while
+preserving explicit JSON `null` bounds. Supabase migrations and seeds are
+disabled, so neither `supabase start` nor a container command applies this
+chain.
 
 ## Standalone image artifacts — Implemented
 
@@ -116,6 +119,29 @@ the required public Supabase build arguments. It uploads the HTML Playwright
 report always and test results on failure. It has no image publishing or
 deployment step.
 
+### Full-stack release-gate workflow
+
+`.github/workflows/fullstack.yml` supplies one stable check named **Full-stack
+release gate** for pull requests and pushes to `main`. Its internal
+relevant-change detection runs the substantive job for backend, frontend,
+Supabase, infrastructure, environment-example, Docker-ignore, and workflow
+changes; otherwise the same check completes with a no-relevant-change result.
+This avoids path-filtered required checks remaining pending.
+
+For relevant changes, `backend/tests/fullstack_runner.py` creates a fresh
+Supabase stack on dedicated ports, applies the dynamically discovered Alembic
+head and drift check, provisions the runtime role, starts FastAPI, builds and
+starts production Next.js, and runs the dedicated Chromium browser suite. It
+uses per-run identities and a private temporary fixture, retains only a
+sanitized acceptance summary, and stops the disposable stack without a backup.
+It also runs the read-only operational checker. This is a real
+Supabase → Next.js → FastAPI → PostgreSQL release gate, not evidence that a
+hosted deployment is production-ready.
+
+The workflow definition alone does not enforce merge protection. After landing,
+a repository maintainer must configure branch protection to require the stable
+**Full-stack release gate** check.
+
 ## Approved hosted deployment contract — implementation still blocked
 
 This is the approved operating contract for a future hosted deployment, not
@@ -130,8 +156,13 @@ evidence that hosted infrastructure exists or is production-ready.
   provider policy.
 - Release in this order: **pre-migration backup; Alembic upgrade and drift
   check; runtime-role provision and verification; backend/private smoke;
-  frontend/BFF/Auth smoke; traffic**. The application must be at exact Alembic
-  head `20260831_0015` before traffic.
+  frontend/BFF/Auth smoke; traffic**. Resolve the current Alembic head during
+  the release; do not pin a historical revision in the runbook.
+- Before hosted traffic, Priority 3 must prove private FastAPI/PostgreSQL
+  boundaries, trusted proxy/Host handling, aggregate ingress limits, readiness
+  traffic admission, the database connection budget, log collection/retention,
+  and alert delivery for operational failures. Priority 5 application bounds
+  and structured logs do not establish those infrastructure controls.
 - Rollback is forward-only: apply a forward fix or perform a coordinated
   restore. Do not treat Alembic downgrade or the local reset utility as release
   recovery. Purge remains off.

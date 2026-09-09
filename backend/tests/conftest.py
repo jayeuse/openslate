@@ -1,4 +1,5 @@
 import os
+import re
 from collections.abc import Generator
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -25,7 +26,13 @@ def _guard_integration_database(database_url: str) -> None:
         raise RuntimeError("TEST_DATABASE_URL must use a PostgreSQL URL")
     if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
         raise RuntimeError("TEST_DATABASE_URL must target loopback")
-    if parsed.port != 54322:
+    disposable_fullstack = (
+        os.getenv("E2E_ALLOW_MUTATIONS") == "true"
+        and re.fullmatch(r"[a-f0-9]{32}", os.getenv("OPENSLATE_FULLSTACK_RUN_ID", "")) is not None
+        and parsed.hostname == "127.0.0.1"
+        and parsed.port == 55322
+    )
+    if parsed.port != 54322 and not disposable_fullstack:
         raise RuntimeError("TEST_DATABASE_URL must target the local Supabase port")
     if parsed.path.rstrip("/") != "/postgres":
         raise RuntimeError("TEST_DATABASE_URL must target the local disposable postgres DB")

@@ -97,7 +97,7 @@ Record JSON uses field UUID strings as keys. Creation requires an active module 
 
 Update behavior replaces active field data rather than deep-merging it. Values belonging to closed fields are retained; clients cannot change them. This preserves historical data across field closure while allowing the active schema to evolve.
 
-Known unresolved behavior: closing the last active field leaves `is_schema_accepted = true`, so record creation can still pass the stale acceptance flag and persist an empty `{}` record. This is current behavior, not a fixed invariant.
+Field close/reopen invalidates parent schema acceptance inside existing module locks. Record creation also rejects already-stale accepted modules with zero active fields; existing records are preserved and updates retain their existing behavior.
 
 Evidence: `records/router.py:validate_record_mutation`, record schemas, `fields/validation.py`.
 

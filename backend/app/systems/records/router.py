@@ -389,11 +389,14 @@ def create_record(
     module = _lock_active_module(db, payload.module_id)
     if not module.is_schema_accepted:
         raise _conflict("Module schema is not accepted")
+    fields = _module_fields(db, payload.module_id)
+    if not any(not field.is_deleted for field in fields):
+        raise _conflict("Module schema is not accepted")
     try:
         normalized_data = validate_record_mutation(
             payload.data,
             {},
-            _module_fields(db, payload.module_id),
+            fields,
         )
     except RecordValidationError as error:
         raise _record_validation_http_error(error) from error

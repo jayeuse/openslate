@@ -205,6 +205,21 @@ def test_record_create_requires_an_accepted_schema_after_module_lock() -> None:
     db.add.assert_not_called()
 
 
+def test_record_create_rejects_an_accepted_module_without_active_fields_after_module_lock() -> None:
+    module = make_module()
+    db = Mock(spec=Session)
+    db.scalar.return_value = module
+    db.get.return_value = module
+    db.scalars.return_value.all.return_value = []
+
+    with pytest.raises(HTTPException) as error:
+        create_record(RecordCreate(module_id=module.id, data={}), Mock(), db)
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "Module schema is not accepted"
+    db.add.assert_not_called()
+
+
 def test_record_patch_preserves_closed_field_values_and_rejects_changes() -> None:
     module = make_module()
     active = make_field(module.id)
@@ -250,4 +265,3 @@ def test_record_patch_preserves_closed_field_values_and_rejects_changes() -> Non
         ],
         "truncated": False,
     }
-

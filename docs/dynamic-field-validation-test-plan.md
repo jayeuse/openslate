@@ -1,4 +1,4 @@
-# Dynamic Field Validation Test Plan and Results
+# Dynamic Field Validation Contracts and Testing
 
 ## Purpose
 
@@ -32,11 +32,11 @@ Not in scope:
 - defining new payload, text, field-count, or option-count limits;
 - changing lifecycle/schema-acceptance policy;
 - changing audit redaction policy;
-- fixing findings discovered by this test pass.
+- changing the validation contract as part of test execution.
 
 ## Environment and safety
 
-PostgreSQL checks are guarded to the disposable loopback Supabase database on port `54322`, database `postgres`.
+PostgreSQL checks require an explicitly authorized disposable database. The full-stack runner creates an isolated loopback Supabase stack with a per-run namespace; tests reject unrecognized targets.
 
 Application operations run through `TEST_DATABASE_URL`. Tests that commit fixtures clean only their generated UUIDs through the owner-capable `MIGRATION_DATABASE_URL`. No table-wide reset or user-data cleanup is performed.
 
@@ -62,8 +62,8 @@ Concurrency checks use independent engines, connections, and sessions. They use 
 | R-014 | Field module and type are immutable through the API; effective changes invalidate acceptance. | Existing field-update tests and `test_effective_field_lifecycle_changes_clear_schema_acceptance` |
 | R-015 | Tightened required/config rules cannot invalidate active records. | Existing field-update impact tests |
 | R-016 | Reorder requires the complete active field set and normalizes positions. | Existing reorder tests |
-| R-017 | Lifecycle close changes field availability but currently does not invalidate schema acceptance. | `test_replacement_update_preserves_closed_values_drops_optional_active_values`, `test_last_active_field_close_is_characterized_as_leaving_empty_record_creation_enabled` |
-| R-018 | Record create requires an accepted active module; update does not use acceptance as its gate. | `test_record_create_requires_an_accepted_schema_after_module_lock` and PostgreSQL lifecycle characterization |
+| R-017 | Field close/reopen transitions invalidate the parent module’s schema acceptance. | `test_replacement_update_preserves_closed_values_drops_optional_active_values`, `test_record_create_rejects_last_active_field_closed_module` |
+| R-018 | Record create requires an accepted active module with at least one active field; update does not use acceptance as its gate. | `test_record_create_requires_an_accepted_schema_after_module_lock` and PostgreSQL lifecycle tests |
 | R-019 | Record keys are exact field UUID strings; malformed and unknown keys are rejected. | Existing aggregate/deterministic record mutation tests |
 | R-020 | Optional primitive null is accepted; required null and required empty text are rejected. | `test_optional_primitive_record_values_accept_null`, `test_required_text_record_values_reject_null_and_empty` |
 | R-021 | Every active primitive value uses its registered type validator and normalization. | `test_field_validators_cover_every_type_and_return_clean_values`, shared parity fixture |
@@ -77,173 +77,58 @@ Concurrency checks use independent engines, connections, and sessions. They use 
 | R-029 | Runtime-role direct SQL bypasses FastAPI semantic validation and ORM audit. | `test_runtime_role_can_store_invalid_record_data_without_orm_audit_and_rolls_back` |
 | R-030 | Relationship cardinality is application-enforced; all four flag combinations and hidden-edge reservation are covered. | `test_create_accepts_all_four_cardinalities`, `test_create_enforces_both_cardinalities`, existing hidden-edge PostgreSQL test |
 | R-031 | Contention can produce `503`; after the winner commits, a retry can produce deterministic `409`, with no losing mutation/audit. | duplicate-field race test and `test_single_target_race_returns_unavailable_then_committed_conflict` |
-| R-032 | Migration-preserved explicit-null decimal bounds conflict with current runtime configuration validation in a controlled way. | `test_migrated_explicit_null_decimal_config_is_a_controlled_runtime_conflict` |
+| R-032 | Explicit-null decimal bounds mean unbounded and are preserved by runtime validation and applied migrations. | `test_migrated_explicit_null_decimal_config_is_accepted_as_an_unbounded_runtime_bound` |
 
-## Historical executed results
+## Running checks
 
-The following baseline was recorded on 2026-08-31, before the current test-file
-split. The historical commands and counts are retained unchanged for comparison
-with the current refactor.
+Run focused field and record tests from `backend/` with the repository's pytest
+configuration. Database and cross-system checks use the disposable full-stack
+runner, which provisions its own database and identities, applies migrations,
+and cleans up its resources. See [Testing architecture](architecture/16-testing-architecture.md)
+for test layers, commands, isolation, and CI workflows.
 
-| Command | Result |
-|---|---|
-| `uv run pytest --no-cov tests/test_fields_records.py tests/test_departments_modules.py tests/test_relationships.py` (pre-split grouping) | 116 passed |
-| Runtime-role PostgreSQL run of the dynamic, relationship, and decimal migration integration files | 33 passed |
-| Owner-role PostgreSQL run of the dynamic and relationship integration files | 27 passed |
-| Full backend `pytest` with runtime `TEST_DATABASE_URL` and isolated Supabase-admin environment variables | 382 passed, 2 skipped, 82.08% coverage |
-| `uv run ruff check .` | Passed |
-| `uv run mypy app scripts` | Passed |
-| `uv run alembic check` | Passed; no new upgrade operations |
-
-The historical baseline commands, run from `backend/`, were:
-
-```sh
-uv run pytest --no-cov tests/test_fields_records.py tests/test_departments_modules.py tests/test_relationships.py
-
-set -a; source ../.env; set +a
-TEST_DATABASE_URL="$DATABASE_URL" uv run pytest --no-cov \
-  tests/test_dynamic_field_validation_integration.py \
-  tests/test_relationships_integration.py \
-  tests/test_migration_0015_contract.py
-TEST_DATABASE_URL="$MIGRATION_DATABASE_URL" uv run pytest --no-cov \
-  tests/test_dynamic_field_validation_integration.py \
-  tests/test_relationships_integration.py
-
-unset SUPABASE_URL SUPABASE_SECRET_KEY
-TEST_DATABASE_URL="$DATABASE_URL" uv run pytest
-
-uv run ruff check .
-uv run mypy app scripts
-uv run alembic check
-```
-
-## Current split-file rerun commands
-
-Run the equivalent checks against the current test-module layout from
-`backend/`. These commands describe the verification scope; their current
-results are recorded separately below and do not replace the historical counts.
-
-```sh
-uv run pytest --no-cov \
-  tests/test_fields.py \
-  tests/test_fields_api_contract.py \
-  tests/test_record_validation.py \
-  tests/test_records.py \
-  tests/test_departments_modules.py \
-  tests/test_relationships.py
-
-set -a; source ../.env; set +a
-TEST_DATABASE_URL="$DATABASE_URL" uv run pytest --no-cov \
-  tests/test_dynamic_field_database_integration.py \
-  tests/test_dynamic_field_persistence_integration.py \
-  tests/test_dynamic_field_concurrency_integration.py \
-  tests/relationships_integration/test_concurrency.py \
-  tests/relationships_integration/test_lifecycle.py \
-  tests/relationships_integration/test_migration.py \
-  tests/relationships_integration/test_mutations.py \
-  tests/migration_0015/test_integration.py
-TEST_DATABASE_URL="$MIGRATION_DATABASE_URL" uv run pytest --no-cov \
-  tests/test_dynamic_field_database_integration.py \
-  tests/test_dynamic_field_persistence_integration.py \
-  tests/test_dynamic_field_concurrency_integration.py \
-  tests/relationships_integration/test_concurrency.py \
-  tests/relationships_integration/test_lifecycle.py \
-  tests/relationships_integration/test_migration.py \
-  tests/relationships_integration/test_mutations.py
-
-unset SUPABASE_URL SUPABASE_SECRET_KEY
-TEST_DATABASE_URL="$DATABASE_URL" uv run pytest
-
-uv run ruff check .
-uv run mypy app scripts
-uv run alembic check
-```
-
-The historical full-suite attempt inherited `SUPABASE_URL` and `SUPABASE_SECRET_KEY` from the sourced local environment. That made `test_client_requires_url_and_secret_configuration` observe configured values and fail its expected missing-configuration assertion. Re-running with those two ambient variables unset passed. This is test-environment isolation behavior, not a dynamic-field failure.
-
-## Current backend-refactor evidence
-
-The following evidence was completed on 2026-09-09. It distinguishes the
-runtime/network suite from the separate owner-only rollback verification.
-
-| Evidence | Result |
-|---|---|
-| User-account PostgreSQL verification | 14 passed |
-| Invitation transaction PostgreSQL verification | 11 passed |
-| Field PostgreSQL verification | 16 passed |
-| Registered relationship HTTP/PostgreSQL verification | 7 passed |
-| Independent relationship/lifecycle race verification | 4 passed |
-| Registered seed/lifecycle/expired-challenge API scenarios | 9 passed; expired challenge cases made no password-provider call |
-| Network API smoke against an owned loopback FastAPI process with real local Auth and cleanup | 1 passed |
-| Handwritten Python size guard | 207 files scanned; zero over 500 lines; largest file 499 lines |
-| Final test collection | 673 collected; baseline 573 |
-| Architecture and security static reviews | Closed; no additional finding |
-| Existing focused PostgreSQL domain regression | 30 passed; focused existing regression only, not the final registered-route/API gate |
-| Final full backend suite | 671 passed, 2 owner-reset skips; separate owner rollback run passed 2/2, covering all 673 collected cases |
-| Python 3.12, 3.13, and 3.14 compatibility checks | Each 565 passed, 1 skipped; the existing database-dependent skip remains separately identified |
-| Owner rollback-only reset verification | 2 passed; teardown verified baseline counts, admin/role/Auth snapshots, plan digest, and fixture-ID absence after physical rollback; PostgreSQL rollback itself restores the data, and no reset was committed |
-| Combined application and six changed-script coverage | 87.41% |
-| Changed executable coverage | 83.29% (1,775/2,131 lines; threshold at least 80%) |
-| Alembic drift check | Passed; no new upgrade operations |
-
-Frontend pagination and stale-request findings remain deferred pending separate
-approval. The provider resend-contract concern remains unverified and is not a
-confirmed defect; no provider redesign is included in this verification.
-
-## Confirmed observations
+## Enforcement boundaries
 
 ### 1. FastAPI validation protects supported API writes
 
-The expanded value matrix, aggregate mutation tests, and runtime-role PostgreSQL persistence tests passed. Values written through record routes were normalized and stored with expected JSONB types. Invalid API values did not mutate records.
+Record routes validate and normalize dynamic values before persistence. Invalid values are rejected without changing records; accepted values retain their normalized JSONB types.
 
 ### 2. Direct database access is a trusted bypass boundary
 
-Confirmed with the real `openslate_runtime` login: semantically invalid dynamic record JSON can be inserted directly, and no ORM audit row is created. The transaction was rolled back after verification.
+Direct SQL through the runtime role can store semantically invalid dynamic record JSON without creating an ORM audit row. Dynamic validation and audit capture belong to the application path.
 
-PostgreSQL still rejected its structural field invariants: unsupported field type, negative position, duplicate active name, and duplicate active position.
+PostgreSQL separately enforces supported field types, nonnegative positions, and unique active names and positions.
 
 This is not an HTTP authorization bypass. It means runtime/owner credentials and PostgreSQL network access must remain private because dynamic semantics and ORM audit are application-level controls.
 
-### 3. Last-active-field close leaves acceptance stale
+### 3. Field lifecycle schema acceptance
 
-Confirmed current behavior:
+Actual field close/reopen transitions invalidate the parent module under its existing lock.
+Creating a record with zero active fields returns the existing 409 schema-not-accepted
+response, including previously stale accepted modules. Existing record updates remain
+supported; data is not rewritten.
 
-1. Accept a module containing one active primitive field.
-2. Close that field through lifecycle.
-3. `module.is_schema_accepted` remains `true`.
-4. Record creation with `{}` succeeds and persists an empty record.
+### 4. Explicit-null decimal bounds
 
-This is an unresolved product-contract/integrity issue because repository documents disagree on whether field lifecycle changes invalidate schema acceptance. The test is explicitly named as a characterization, not a desired invariant.
-
-### 4. Explicit-null decimal migration/runtime mismatch
-
-A persisted decimal config containing `{"minimum": null}` is permitted and preserved by migration `0015`, but current schema acceptance rejects it with controlled `409` detail:
-
-`Module schema is invalid: Decimal minimum must be a valid decimal string`
-
-No unhandled `500` occurred.
+Explicit `minimum`/`maximum: null` means unbounded. Runtime schema validation preserves
+nulls and compares only non-null canonical bounds. Applied migration 0015 is unchanged;
+no historical JSON rewrite is required.
 
 ### 5. Concurrency outcomes are controlled
 
-Observed deterministic outcomes for field uniqueness and single-target relationship contention:
+Field uniqueness and single-target relationship contention have separate transient and committed-state outcomes:
 
 - contender during held lock: `503`;
 - retry after winner commit: `409`;
-- final state satisfies active uniqueness/cardinality;
+- committed state must satisfy active uniqueness/cardinality;
 - failed contender produces no domain or audit mutation.
 
 These tests distinguish transient NOWAIT contention from committed-state conflicts and do not assume a predetermined thread winner.
 
 ## Remaining risks and limitations
 
-- No application-level total request-body, record-key, module-field, text-byte, option-count, or option-length ceiling currently exists. This pass does not invent thresholds.
+- Requests have a 1 MiB total body limit. Separate record-key, module-field, text-byte and option-count limits are not defined.
 - Ordinary browser `number`/`int` values can lose JavaScript precision outside the safe integer range; exact values should use decimal strings.
-- Dynamic record audit redaction is UUID-keyed and was not redesigned by this test work.
+- Dynamic record audit redaction is UUID-keyed.
 - PostgreSQL relationship cardinality remains application-enforced rather than constrained directly by the database.
 - The suite uses router/service calls plus registered API and real PostgreSQL checks for deterministic concurrency. It does not run a live browser→BFF→FastAPI→database workflow.
-
-## Exit assessment
-
-The tested FastAPI path rejects malformed dynamic data and PostgreSQL preserves the expected normalized result. Structural database constraints and NOWAIT conflict behavior are verified with both runtime and owner execution. The current backend refactor adds targeted registered-route evidence while preserving these dynamic-field contracts; its final full-suite and release-gate results are recorded above.
-
-The suite also establishes, rather than conceals, three boundaries requiring product or operational decisions: direct SQL bypass, stale acceptance after closing the last field, and explicit-null decimal migration compatibility.

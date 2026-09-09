@@ -8,12 +8,22 @@ import {
   setAuthCookies,
 } from "@/lib/auth-cookies";
 import { isSameOriginRequest } from "@/lib/request-security";
+import { withinDeadline } from "@/lib/reliability";
+import { beginSessionRoute } from "@/lib/session-response";
 import { establishSupabaseSession } from "@/lib/supabase/session";
 
 export async function GET(request: Request) {
+  const sessionRoute = beginSessionRoute(
+    "/session/realtime-token",
+    request.method,
+  );
+  const { complete, deadline } = sessionRoute;
   const headers = { "Cache-Control": "no-store" };
   if (!isSameOriginRequest(request)) {
-    return NextResponse.json({ detail: "Forbidden" }, { status: 403, headers });
+    return complete(
+      NextResponse.json({ detail: "Forbidden" }, { status: 403, headers }),
+      "same_origin_rejected",
+    );
   }
 
   const store = await cookies();
@@ -25,11 +35,14 @@ export async function GET(request: Request) {
       { status: 401, headers },
     );
     clearAuthCookies(response);
-    return response;
+    return complete(response, "authentication_required");
   }
 
   try {
-    const session = await establishSupabaseSession(accessToken, refreshToken);
+    const session = await withinDeadline(
+      establishSupabaseSession(accessToken, refreshToken, deadline.signal),
+      deadline.signal,
+    );
     if (!session) throw new Error("session refresh failed");
 
     const response = NextResponse.json(
@@ -37,13 +50,13 @@ export async function GET(request: Request) {
       { headers },
     );
     setAuthCookies(response, session);
-    return response;
+    return complete(response);
   } catch {
     const response = NextResponse.json(
       { detail: "Session expired" },
       { status: 401, headers },
     );
     clearAuthCookies(response);
-    return response;
+    return complete(response, "session_refresh_failed");
   }
 }

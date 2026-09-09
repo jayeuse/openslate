@@ -159,7 +159,7 @@ def test_runtime_role_can_store_invalid_record_data_without_orm_audit_and_rolls_
         observer_engine.dispose()
 
 
-def test_migrated_explicit_null_decimal_config_is_a_controlled_runtime_conflict(
+def test_migrated_explicit_null_decimal_config_is_accepted_as_an_unbounded_runtime_bound(
     integration_db: AuditSession, owned_ids: set[UUID]
 ) -> None:
     seeded = _seed_committed_module(
@@ -180,15 +180,8 @@ def test_migrated_explicit_null_decimal_config_is_a_controlled_runtime_conflict(
     ).scalar_one()
     assert config_type == "null"
 
-    with pytest.raises(HTTPException) as raised:
-        accept_module_schema(seeded.module_id, None, integration_db)
-
-    # Migration 0015 permits and preserves explicit JSON null bounds; current
-    # runtime decimal canonicalization rejects the same persisted config.
-    assert raised.value.status_code == 409
-    assert raised.value.detail == (
-        "Module schema is invalid: Decimal minimum must be a valid decimal string"
-    )
+    accepted = accept_module_schema(seeded.module_id, None, integration_db)
+    assert accepted.is_schema_accepted is True
 
 
 

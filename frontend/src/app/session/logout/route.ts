@@ -8,37 +8,58 @@ import {
 } from "@/lib/auth-cookies";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isSameOriginRequest } from "@/lib/request-security";
+import { withinDeadline } from "@/lib/reliability";
+import { beginSessionRoute } from "@/lib/session-response";
 
 export async function POST(request: Request) {
+  const sessionRoute = beginSessionRoute("/session/logout", request.method);
+  const { complete, deadline } = sessionRoute;
   if (!isSameOriginRequest(request))
-    return NextResponse.json({ detail: "Forbidden" }, { status: 403 });
+    return complete(
+      NextResponse.json({ detail: "Forbidden" }, { status: 403 }),
+      "same_origin_rejected",
+    );
   const store = await cookies();
   const access = store.get(ACCESS_COOKIE)?.value;
   const refresh = store.get(REFRESH_COOKIE)?.value;
 
   try {
-    const supabase = createSupabaseServerClient();
+    const supabase = createSupabaseServerClient(deadline.signal);
     if (access && refresh) {
-      const session = await supabase.auth.setSession({
-        access_token: access,
-        refresh_token: refresh,
-      });
-      if (!session.error && session.data.session) {
-        await supabase.auth.signOut({ scope: "local" });
-      } else if (refresh) {
-        const refreshed = await supabase.auth.refreshSession({
+      const session = await withinDeadline(
+        supabase.auth.setSession({
+          access_token: access,
           refresh_token: refresh,
-        });
+        }),
+        deadline.signal,
+      );
+      if (!session.error && session.data.session) {
+        await withinDeadline(
+          supabase.auth.signOut({ scope: "local" }),
+          deadline.signal,
+        );
+      } else if (refresh) {
+        const refreshed = await withinDeadline(
+          supabase.auth.refreshSession({ refresh_token: refresh }),
+          deadline.signal,
+        );
         if (!refreshed.error && refreshed.data.session) {
-          await supabase.auth.signOut({ scope: "local" });
+          await withinDeadline(
+            supabase.auth.signOut({ scope: "local" }),
+            deadline.signal,
+          );
         }
       }
     } else if (refresh) {
-      const session = await supabase.auth.refreshSession({
-        refresh_token: refresh,
-      });
+      const session = await withinDeadline(
+        supabase.auth.refreshSession({ refresh_token: refresh }),
+        deadline.signal,
+      );
       if (!session.error && session.data.session) {
-        await supabase.auth.signOut({ scope: "local" });
+        await withinDeadline(
+          supabase.auth.signOut({ scope: "local" }),
+          deadline.signal,
+        );
       }
     }
   } catch {
@@ -48,5 +69,5 @@ export async function POST(request: Request) {
 
   const response = new NextResponse(null, { status: 204 });
   clearAuthCookies(response);
-  return response;
+  return complete(response);
 }

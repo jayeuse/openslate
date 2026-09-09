@@ -3,6 +3,14 @@ import { z } from "zod";
 
 import { setAuthCookies } from "@/lib/auth-cookies";
 import { isSameOriginRequest } from "@/lib/request-security";
+import {
+  MAX_JSON_REQUEST_BYTES,
+  parseJsonBody,
+  PayloadTooLargeError,
+  readLimitedStream,
+  withinDeadline,
+} from "@/lib/reliability";
+import { beginSessionRoute } from "@/lib/session-response";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const LoginSchema = z
@@ -13,22 +21,63 @@ const LoginSchema = z
   .strict();
 
 export async function POST(request: Request) {
+  const sessionRoute = beginSessionRoute("/session/login", request.method);
+  const { complete, deadline } = sessionRoute;
   if (!isSameOriginRequest(request))
-    return NextResponse.json({ detail: "Forbidden" }, { status: 403 });
-  const input = LoginSchema.safeParse(await request.json().catch(() => null));
+    return complete(
+      NextResponse.json({ detail: "Forbidden" }, { status: 403 }),
+      "same_origin_rejected",
+    );
+  let body: unknown;
+  try {
+    body = parseJsonBody(
+      await readLimitedStream(
+        request.body,
+        request.headers,
+        MAX_JSON_REQUEST_BYTES,
+        deadline.signal,
+      ),
+    );
+  } catch (error) {
+    if (error instanceof PayloadTooLargeError)
+      return complete(
+        NextResponse.json(
+          { detail: "Request is too large" },
+          { status: 413, headers: { "Cache-Control": "no-store" } },
+        ),
+        "payload_too_large",
+      );
+    return complete(
+      NextResponse.json(
+        { detail: "Invalid sign-in request" },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
+      ),
+      "invalid_request",
+    );
+  }
+  const input = LoginSchema.safeParse(body);
   if (!input.success)
-    return NextResponse.json(
-      { detail: "Invalid sign-in request" },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+    return complete(
+      NextResponse.json(
+        { detail: "Invalid sign-in request" },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
+      ),
+      "invalid_request",
     );
 
   try {
-    const supabase = createSupabaseServerClient();
-    const { data, error } = await supabase.auth.signInWithPassword(input.data);
+    const supabase = createSupabaseServerClient(deadline.signal);
+    const { data, error } = await withinDeadline(
+      supabase.auth.signInWithPassword(input.data),
+      deadline.signal,
+    );
     if (error || !data.session) {
-      return NextResponse.json(
-        { detail: "Invalid email or password" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+      return complete(
+        NextResponse.json(
+          { detail: "Invalid email or password" },
+          { status: 401, headers: { "Cache-Control": "no-store" } },
+        ),
+        "invalid_credentials",
       );
     }
 
@@ -37,11 +86,14 @@ export async function POST(request: Request) {
       { headers: { "Cache-Control": "no-store" } },
     );
     setAuthCookies(response, data.session);
-    return response;
+    return complete(response);
   } catch {
-    return NextResponse.json(
-      { detail: "Unable to sign in" },
-      { status: 503, headers: { "Cache-Control": "no-store" } },
+    return complete(
+      NextResponse.json(
+        { detail: "Unable to sign in" },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      ),
+      "auth_provider_unavailable",
     );
   }
 }

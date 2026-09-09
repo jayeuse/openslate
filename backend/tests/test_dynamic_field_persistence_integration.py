@@ -2,6 +2,7 @@ import os
 from uuid import UUID
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select, text
 from uuid6 import uuid7
 
@@ -11,7 +12,7 @@ from app.systems.fields.models import Field, FieldType
 from app.systems.fields.router import create_field
 from app.systems.fields.schemas import FieldCreate
 from app.systems.lifecycle.schemas import LifecycleTargetType
-from app.systems.lifecycle.service import close_lifecycle
+from app.systems.lifecycle.service import close_lifecycle, reopen_lifecycle
 from app.systems.modules.models import Module
 from app.systems.modules.router import accept_module_schema
 from app.systems.records.router import create_record, update_record
@@ -167,9 +168,7 @@ def test_replacement_update_preserves_closed_values_drops_optional_active_values
     )
     module = integration_db.get(Module, seeded.module_id)
     assert module is not None
-    # Current lifecycle service behavior: closing a field does not invalidate
-    # the module acceptance flag when the remaining active schema is valid.
-    assert module.is_schema_accepted is True
+    assert module.is_schema_accepted is False
 
     closed_field = integration_db.get(Field, legacy_id)
     assert closed_field is not None and closed_field.is_deleted is True
@@ -191,7 +190,18 @@ def test_replacement_update_preserves_closed_values_drops_optional_active_values
     ).scalar_one()
     assert stored == updated.data
 
-def test_last_active_field_close_is_characterized_as_leaving_empty_record_creation_enabled(
+    reopened = reopen_lifecycle(
+        integration_db,
+        LifecycleTargetType.FIELD,
+        legacy_id,
+        None,
+    )
+    assert [(row.entity_type, row.entity_id) for row in reopened.rows] == [
+        ("fields", legacy_id)
+    ]
+    assert module.is_schema_accepted is False
+
+def test_record_create_rejects_last_active_field_closed_module(
     integration_db: AuditSession, owned_ids: set[UUID]
 ) -> None:
     seeded = _seed_committed_module(
@@ -206,20 +216,18 @@ def test_last_active_field_close_is_characterized_as_leaving_empty_record_creati
 
     module = integration_db.get(Module, seeded.module_id)
     closed_field = integration_db.get(Field, field_id)
-    assert module is not None and module.is_schema_accepted is True
+    assert module is not None and module.is_schema_accepted is False
     assert closed_field is not None and closed_field.is_deleted is True
 
-    # Characterization only, not a desired invariant: current lifecycle code
-    # leaves acceptance true after closing the last active primitive field, so
-    # the record router persists an empty replacement record.
-    record = create_record(
-        RecordCreate(module_id=seeded.module_id, data={}),
-        None,
-        integration_db,
-    )
-    owned_ids.add(record.id)
-    assert record.data == {}
+    with pytest.raises(HTTPException) as raised:
+        create_record(
+            RecordCreate(module_id=seeded.module_id, data={}),
+            None,
+            integration_db,
+        )
+    assert raised.value.status_code == 409
+    assert raised.value.detail == "Module schema is not accepted"
     assert integration_db.connection().execute(
-        text("SELECT data FROM public.records WHERE id = :record_id"),
-        {"record_id": record.id},
-    ).scalar_one() == {}
+        text("SELECT count(*) FROM public.records WHERE module_id = :module_id"),
+        {"module_id": seeded.module_id},
+    ).scalar_one() == 0

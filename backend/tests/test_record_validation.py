@@ -149,6 +149,20 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         FieldType.DECIMAL,
         {"minimum": minimum_decimal, "maximum": maximum_decimal},
     ) == {"minimum": minimum_decimal, "maximum": maximum_decimal}
+    assert field_config(FieldType.DECIMAL, {"minimum": None}) == {"minimum": None}
+    assert field_config(FieldType.DECIMAL, {"maximum": None}) == {"maximum": None}
+    assert field_config(FieldType.DECIMAL, {"minimum": None, "maximum": None}) == {
+        "minimum": None,
+        "maximum": None,
+    }
+    assert validate_field_value(
+        make_field(
+            uuid7(),
+            FieldType.DECIMAL,
+            config={"minimum": None, "maximum": None},
+        ),
+        "999.9900",
+    ) == "999.99"
     with pytest.raises(ValueError):
         field_config(FieldType.DECIMAL, {"maximum": "1" * 39})
     with pytest.raises(ValueError):
@@ -470,4 +484,3 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
     assert raised.value.status_code == 409
     assert raised.value.detail["errors"][0]["code"] == "closed_field_mutation"
     assert record.data == {str(closed.id): 1}
-

@@ -33,6 +33,8 @@
 *.pem
 
 # debug
+/backend/logs/
+/frontend/logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

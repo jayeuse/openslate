@@ -5,6 +5,7 @@ from uuid import UUID
 import httpx
 
 from app.core.config import Settings, get_settings
+from app.core.observability import log_event
 
 
 class SupabaseAdminError(RuntimeError):
@@ -54,16 +55,26 @@ class SupabaseAdminClient:
             with httpx.Client(
                 base_url=self._base_url,
                 headers=self._headers,
-                timeout=10.0,
+                timeout=_supabase_timeout(self.settings),
             ) as client:
                 response = client.request(method, path, json=payload, params=params)
                 response.raise_for_status()
         except httpx.HTTPStatusError as error:
+            log_event(
+                "upstream_failure",
+                reason_code="supabase_auth_status_error",
+                upstream="supabase_auth",
+            )
             raise SupabaseAdminError(
                 "Supabase Auth request failed",
                 status_code=error.response.status_code,
             ) from error
         except httpx.HTTPError as error:
+            log_event(
+                "upstream_failure",
+                reason_code="supabase_auth_transport_error",
+                upstream="supabase_auth",
+            )
             raise SupabaseAdminError("Supabase Auth request failed") from error
         try:
             return response.json()
@@ -129,7 +140,7 @@ class SupabaseAdminClient:
             with httpx.Client(
                 base_url=self.settings.supabase_url.rstrip("/"),
                 headers=self._headers,
-                timeout=10.0,
+                timeout=_supabase_timeout(self.settings),
             ) as client:
                 topic = quote("openslate:invalidation", safe="")
                 event_name = quote("invalidate", safe="")
@@ -146,3 +157,13 @@ def broadcast_invalidation(event: InvalidationEvent) -> None:
     """Publish only an opaque post-commit invalidation event."""
 
     SupabaseAdminClient().broadcast(event)
+
+
+def _supabase_timeout(settings: Settings) -> httpx.Timeout:
+    return httpx.Timeout(
+        timeout=settings.supabase_timeout_seconds,
+        connect=settings.supabase_timeout_seconds,
+        read=settings.supabase_timeout_seconds,
+        write=settings.supabase_timeout_seconds,
+        pool=settings.supabase_timeout_seconds,
+    )

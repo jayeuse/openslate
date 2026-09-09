@@ -1,3 +1,4 @@
+from contextvars import ContextVar, Token
 from uuid import UUID
 
 from fastapi import Request
@@ -18,6 +19,12 @@ class RequestContext:
         self.performed_by: UUID | None = None
 
 
+_current_request_context: ContextVar[RequestContext | None] = ContextVar(
+    "current_request_context",
+    default=None,
+)
+
+
 def get_request_context(request: Request) -> RequestContext:
     context = getattr(request.state, "request_context", None)
     if isinstance(context, RequestContext):
@@ -29,3 +36,17 @@ def get_request_context(request: Request) -> RequestContext:
     )
     request.state.request_context = context
     return context
+
+
+def bind_request_context(context: RequestContext) -> Token[RequestContext | None]:
+    """Make the request context available to safe infrastructure diagnostics."""
+
+    return _current_request_context.set(context)
+
+
+def reset_request_context(token: Token[RequestContext | None]) -> None:
+    _current_request_context.reset(token)
+
+
+def get_current_request_context() -> RequestContext | None:
+    return _current_request_context.get()
