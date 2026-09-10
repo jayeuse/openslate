@@ -74,7 +74,7 @@ jobs:
       - name: Verify the disposable production stack
         if: steps.changes.outputs.run == 'true'
         working-directory: backend
-        run: uv run python tests/fullstack_runner.py
+        run: uv run python -m tests.fullstack_runner
 
       - name: No relevant application changes
         if: steps.changes.outputs.run != 'true'

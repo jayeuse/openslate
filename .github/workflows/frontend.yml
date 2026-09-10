@@ -110,7 +110,7 @@ jobs:
           test -z "${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED+x}"'
 
       - name: Run end-to-end tests
-        run: PLAYWRIGHT_USE_PRODUCTION=1 PLAYWRIGHT_CONFIGURATION=process node scripts/run-playwright.mjs
+        run: PLAYWRIGHT_USE_PRODUCTION=1 PLAYWRIGHT_CONFIGURATION=process node scripts/run-playwright.mjs --max-failures=5
 
       - name: Verify scanner UI executable coverage
         run: npm run test:scanner:coverage
@@ -124,7 +124,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload Playwright test artifacts
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-test-results

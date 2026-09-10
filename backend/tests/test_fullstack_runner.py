@@ -6,7 +6,10 @@ from xml.etree.ElementTree import ParseError
 
 import pytest
 
+from app.core.config import Settings
+from app.core.config.environment import environment_inputs
 from tests import fullstack_runner as runner
+from tests.scanner_recovery import _replace_engine
 
 PRIVATE_FILE_CANARY = token_urlsafe(32)
 
@@ -101,3 +104,103 @@ def test_changed_project_identity_cannot_start_or_stop_an_existing_stack(tmp_pat
     assert runner.main() == 1
     command.assert_not_called()
     assert not private.exists()
+
+
+def test_backend_regression_subprocess_includes_authenticated_jwt_audience(tmp_path, monkeypatch):
+    private = tmp_path / "private"
+    private.mkdir()
+    captured = {}
+    monkeypatch.setattr(runner.tempfile, "mkdtemp", lambda **_: str(private))
+    monkeypatch.setattr(runner.socket, "socket", MagicMock())
+    monkeypatch.setattr(runner, "FRONTEND", tmp_path / "frontend")
+
+    def command(command, **kwargs):
+        if command == ["supabase", "status", "-o", "json"]:
+            return MagicMock(
+                stdout=runner.json.dumps(
+                    {
+                        "DB_URL": "postgresql://postgres:test-password@127.0.0.1:55322/postgres",
+                        "API_URL": runner.AUTH,
+                        "PUBLISHABLE_KEY": "test-publishable-key",
+                        "SECRET_KEY": "test-secret-key",
+                    }
+                )
+            )
+        if command[1:3] == ["-m", "pytest"]:
+            captured.update(kwargs["env"])
+        return MagicMock()
+
+    monkeypatch.setattr(runner.subprocess, "run", command)
+
+    assert runner.main() == 1
+    settings = Settings.model_validate(environment_inputs(tmp_path / ".env", process=captured))
+    assert settings.supabase_jwt_audience == "authenticated"
+
+
+@pytest.mark.parametrize(
+    ("platform", "cache_override", "browser_override", "expected"),
+    [
+        ("linux", None, None, "installer/.cache/ms-playwright"),
+        ("darwin", None, None, "installer/Library/Caches/ms-playwright"),
+        ("linux", "shared-cache", None, "shared-cache/ms-playwright"),
+        ("linux", None, "shared-browsers", "shared-browsers"),
+        ("linux", None, "0", "0"),
+    ],
+)
+def test_private_tool_environment_preserves_installed_browser_location(
+    tmp_path, monkeypatch, platform, cache_override, browser_override, expected
+):
+    private = tmp_path / "private"
+    private.mkdir()
+    captured = {}
+    monkeypatch.setenv("HOME", str(tmp_path / "installer"))
+    monkeypatch.setenv("UNRELATED_PRIVATE_SETTING", PRIVATE_FILE_CANARY)
+    for name, value in (
+        ("XDG_CACHE_HOME", cache_override),
+        ("PLAYWRIGHT_BROWSERS_PATH", browser_override),
+    ):
+        monkeypatch.delenv(name, raising=False)
+        if value is not None:
+            monkeypatch.setenv(name, value if value == "0" else str(tmp_path / value))
+    monkeypatch.setattr(runner.sys, "platform", platform)
+    monkeypatch.setattr(runner.tempfile, "mkdtemp", lambda **_: str(private))
+    monkeypatch.setattr(runner.socket, "socket", MagicMock())
+    monkeypatch.setattr(runner, "FRONTEND", tmp_path / "frontend")
+
+    def command(command, **kwargs):
+        captured.update(kwargs["env"])
+        raise RuntimeError("Stop before starting services")
+
+    monkeypatch.setattr(runner.subprocess, "run", command)
+    assert runner.main() == 1
+    assert captured["HOME"] == str(private / "home")
+    assert "UNRELATED_PRIVATE_SETTING" not in captured
+    assert captured["PLAYWRIGHT_BROWSERS_PATH"] == (
+        expected if expected == "0" else str(tmp_path / expected)
+    )
+
+
+def test_replacement_scanner_receives_the_required_listener_port(tmp_path):
+    scanner = MagicMock()
+    scanner.container = "disposable-scanner"
+    scanner.manifest = tmp_path / "manifest.json"
+    scanner.manifest.write_text(
+        runner.json.dumps({"image_digest": "test-image", "signature_hashes": {}})
+    )
+    scanner._hashes.return_value = {}
+    scanner._security.return_value = []
+    scanner._sidecar.return_value = {"ready": True}
+    launched_environment = {}
+
+    def command(arguments, **kwargs):
+        if arguments[0] == "run":
+            for index, argument in enumerate(arguments[:-1]):
+                if argument == "--env":
+                    key, value = arguments[index + 1].split("=", 1)
+                    launched_environment[key] = value
+        return MagicMock(stdout="test-image" if arguments[0] == "inspect" else "")
+
+    scanner._run.side_effect = command
+    _replace_engine(scanner)
+
+    assert launched_environment.get("FILES_CLAMAV_PORT") == "3310"

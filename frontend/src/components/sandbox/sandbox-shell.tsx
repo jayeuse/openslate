@@ -24,7 +24,7 @@ export interface SandboxShellProps {
   hint?: ReactNode;
   className?: string;
   /** Optional bridge to the global AppShell navigation on mobile. */
-  onOpenNavigation?: () => void;
+  onOpenNavigation?: (opener: HTMLElement) => void;
   mobileNavigationOpen?: boolean;
 }
 
@@ -170,9 +170,9 @@ export function SandboxShell({
           variant="ghost"
           size="icon"
           aria-label="Open navigation"
-          onClick={() => {
+          onClick={(event) => {
             closePanel();
-            onOpenNavigation?.();
+            onOpenNavigation?.(event.currentTarget);
           }}
           className="lg:hidden"
         >
