@@ -157,6 +157,7 @@ def _replace_engine(scanner: "DisposableScanner") -> None:
             scanner.network,
             "--mount",
             f"type=bind,src={scanner.definitions},dst=/var/lib/clamav,readonly",
+            "--env", "FILES_CLAMAV_PORT=3310",
             image,
         ],
         timeout=30,

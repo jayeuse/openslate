@@ -167,13 +167,19 @@ def main(arguments=()):
     stage = "prepare"
     started = False
     result = 1
-    admission = {}
-    checker_exit = None
+    admission, checker_exit = {}, None
     scanner = None
     scanner_observations = {}
     failure_type = failure_message = None
     summary_path = FRONTEND / "test-results/fullstack-summary.json"
     base_env = {"PATH": os.environ["PATH"], "OPENSLATE_ENV_SOURCE": "process"}
+    # Browser binaries remain in the installer's cache while runtime HOME is private.
+    browser_cache = Path.home() / ("Library/Caches" if sys.platform == "darwin" else ".cache")
+    if sys.platform == "linux":
+        browser_cache = Path(os.environ.get("XDG_CACHE_HOME", browser_cache))
+    base_env["PLAYWRIGHT_BROWSERS_PATH"] = os.environ.get(
+        "PLAYWRIGHT_BROWSERS_PATH", str(browser_cache / "ms-playwright")
+    )
     (private / "home").mkdir(mode=0o700)
     base_env["HOME"] = str(private / "home")
     (private / "tmp").mkdir(mode=0o700)
@@ -241,6 +247,7 @@ def main(arguments=()):
             "SUPABASE_AUTH_REDIRECT_URL": WEB + "/auth/callback",
             "SUPABASE_JWT_ISSUER": AUTH + "/auth/v1",
             "SUPABASE_JWKS_URL": AUTH + "/auth/v1/.well-known/jwks.json",
+            "SUPABASE_JWT_AUDIENCE": "authenticated",
             "ENVIRONMENT": "test",
             "LIFECYCLE_PURGE_ENABLED": "false",
             "SECURITY_EVENT_SERVER_KEY": secrets.token_urlsafe(32),
@@ -310,17 +317,10 @@ def main(arguments=()):
         processes.append(
             subprocess.Popen(
                 [
-                    sys.executable,
-                    "-m",
-                    "uvicorn",
-                    "app.main:app",
-                    "--host",
-                    "127.0.0.1",
-                    "--port",
-                    "8008",
+                    sys.executable, "-m", "uvicorn", "app.main:app",
+                    "--host", "127.0.0.1", "--port", "8008",
                     "--no-access-log",
-                    "--limit-concurrency",
-                    "32",
+                    "--limit-concurrency", "32",
                 ],
                 cwd=BACKEND,
                 env=api_env,
