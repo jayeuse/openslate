@@ -1,3 +1,6 @@
+import json
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from secrets import token_urlsafe
@@ -204,3 +207,41 @@ def test_replacement_scanner_receives_the_required_listener_port(tmp_path):
     _replace_engine(scanner)
 
     assert launched_environment.get("FILES_CLAMAV_PORT") == "3310"
+
+
+def test_fullstack_backend_environment_loads_strict_application_settings(tmp_path, monkeypatch):
+    """The runner must supply every setting without inheriting a developer's shell."""
+    monkeypatch.setattr(runner.socket, "socket", MagicMock())
+    monkeypatch.setattr(runner, "FRONTEND", tmp_path / "frontend")
+    execute = subprocess.run
+    configuration_checks = []
+    status = {
+        "DB_URL": f"postgresql://postgres:{token_urlsafe(32)}@127.0.0.1:55322/postgres",
+        "API_URL": runner.AUTH,
+        "PUBLISHABLE_KEY": token_urlsafe(32),
+        "SECRET_KEY": token_urlsafe(32),
+    }
+
+    def disposable_command(command, **kwargs):
+        if command[:3] == [sys.executable, "-m", "pytest"]:
+            configuration_checks.append(
+                execute(
+                    [
+                        sys.executable,
+                        "-c",
+                        "from app.core.config import get_settings; get_settings()",
+                    ],
+                    cwd=kwargs["cwd"],
+                    env=kwargs["env"],
+                    capture_output=True,
+                    text=True,
+                )
+            )
+            raise RuntimeError("Stop at the validated backend test boundary")
+        output = json.dumps(status) if command[:2] == ["supabase", "status"] else ""
+        return subprocess.CompletedProcess(command, 0, stdout=output)
+
+    monkeypatch.setattr(runner.subprocess, "run", disposable_command)
+    assert runner.main() == 1
+    assert len(configuration_checks) == 1
+    assert configuration_checks[0].returncode == 0, configuration_checks[0].stderr
