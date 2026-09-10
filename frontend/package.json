@@ -16,7 +16,7 @@
     "check": "npm run format:check && npm run lint && npm run typecheck",
     "verify": "npm run check && npm run build && npm run test:e2e:production",
     "test:e2e": "TEST_LAYER=all BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node scripts/run-playwright.mjs",
-    "test:e2e:fullstack": "cd ../backend && uv run python tests/fullstack_runner.py",
+    "test:e2e:fullstack": "cd ../backend && uv run python -m tests.fullstack_runner",
     "test:e2e:production": "PLAYWRIGHT_USE_PRODUCTION=1 TEST_LAYER=all BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node scripts/run-playwright.mjs",
     "test:section": "python3 ../scripts/test.py frontend section",
     "test:affected": "python3 ../scripts/test.py frontend affected",

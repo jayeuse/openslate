@@ -37,21 +37,21 @@ jobs:
       contents: read
     env:
       OPENSLATE_ENV_SOURCE: process
-      SUPABASE_PROJECT_ID: openslate-ci
-      SUPABASE_API_PORT: "54321"
-      SUPABASE_DB_PORT: "54322"
-      SUPABASE_SHADOW_PORT: "54320"
-      SUPABASE_STUDIO_PORT: "54323"
-      SUPABASE_MAIL_PORT: "54324"
-      SUPABASE_POOLER_PORT: "54329"
-      SUPABASE_URL: http://127.0.0.1:54321
+      E2E_ALLOW_MUTATIONS: "true"
+      SUPABASE_API_PORT: "55321"
+      SUPABASE_DB_PORT: "55322"
+      SUPABASE_SHADOW_PORT: "55320"
+      SUPABASE_STUDIO_PORT: "55323"
+      SUPABASE_MAIL_PORT: "55324"
+      SUPABASE_POOLER_PORT: "55329"
+      SUPABASE_URL: http://127.0.0.1:55321
       FRONTEND_URL: http://localhost:3000
       SUPABASE_AUTH_REDIRECT_URL: http://localhost:3000/auth/callback
       AUTH_SETUP_URL: http://localhost:3000/auth/setup
       ENVIRONMENT: test
       LOG_DIR: /tmp/openslate-api-logs
-      SUPABASE_JWT_ISSUER: http://127.0.0.1:54321/auth/v1
-      SUPABASE_JWKS_URL: http://127.0.0.1:54321/auth/v1/.well-known/jwks.json
+      SUPABASE_JWT_ISSUER: http://127.0.0.1:55321/auth/v1
+      SUPABASE_JWKS_URL: http://127.0.0.1:55321/auth/v1/.well-known/jwks.json
       SUPABASE_JWT_AUDIENCE: authenticated
       LIFECYCLE_PURGE_ENABLED: "false"
       CORS_ORIGINS: '["http://localhost:3000"]'
@@ -97,6 +97,13 @@ jobs:
       - name: Install backend dependencies
         run: uv sync --locked
 
+      - name: Configure disposable test namespace
+        run: |
+          run_id="$(python -c 'import uuid; print(uuid.uuid4().hex)')"
+          printf 'OPENSLATE_FULLSTACK_RUN_ID=%s\n' "$run_id" >> "$GITHUB_ENV"
+          printf 'SUPABASE_PROJECT_ID=p5-%s\n' "$run_id" >> "$GITHUB_ENV"
+          unset run_id
+
       - name: Start local Supabase
         working-directory: .
         run: supabase start > /tmp/openslate-supabase-start.log 2>&1
@@ -129,7 +136,7 @@ jobs:
             printf 'SUPABASE_SECRET_KEY=%s\n' "$secret_key"
             printf 'SECURITY_EVENT_SERVER_KEY=%s\n' "$security_event_key"
           } >> "$GITHUB_ENV"
-          PUBLISHABLE_KEY_VALUE="$publishable_key" python -c 'import json, os, secrets, urllib.error, urllib.request; request=urllib.request.Request("http://127.0.0.1:54321/auth/v1/signup", data=json.dumps({"email":"ci-public-signup@example.com","password":secrets.token_urlsafe(24)}).encode(), headers={"apikey":os.environ["PUBLISHABLE_KEY_VALUE"],"Content-Type":"application/json"}, method="POST");
+          PUBLISHABLE_KEY_VALUE="$publishable_key" python -c 'import json, os, secrets, urllib.error, urllib.request; request=urllib.request.Request("http://127.0.0.1:55321/auth/v1/signup", data=json.dumps({"email":"ci-public-signup@example.com","password":secrets.token_urlsafe(24)}).encode(), headers={"apikey":os.environ["PUBLISHABLE_KEY_VALUE"],"Content-Type":"application/json"}, method="POST");
           try: urllib.request.urlopen(request); raise SystemExit("public signup unexpectedly succeeded")
           except urllib.error.HTTPError as error: assert error.code == 422 and json.loads(error.read()).get("error_code") == "signup_disabled"'
           unset status_env db_url publishable_key secret_key security_event_key
@@ -143,7 +150,7 @@ jobs:
       - name: Provision least-privilege runtime database role
         run: |
           runtime_password="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-          runtime_url="postgresql+psycopg://openslate_runtime:${runtime_password}@127.0.0.1:54322/postgres"
+          runtime_url="postgresql+psycopg://openslate_runtime:${runtime_password}@127.0.0.1:55322/postgres"
           printf '::add-mask::%s\n' "$runtime_password"
           printf '::add-mask::%s\n' "$runtime_url"
           DATABASE_URL="$runtime_url" uv run python scripts/provision_database_role.py --confirm
