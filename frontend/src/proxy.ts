@@ -8,9 +8,23 @@ function supabaseConnectSources() {
   return `${url.origin} ${websocketProtocol}//${url.host}`;
 }
 
+function isLoopbackHost(host: string | null) {
+  const match = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::(\d+))?$/.exec(
+    host ?? "",
+  );
+  if (match === null) return false;
+  if (match[1] === undefined) return true;
+  const port = Number(match[1]);
+  return port > 0 && port <= 65_535;
+}
+
 export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const isDevelopment = process.env.NODE_ENV === "development";
+  const isHttpLoopback =
+    request.nextUrl.protocol === "http:" &&
+    ["localhost", "127.0.0.1", "[::1]"].includes(request.nextUrl.hostname) &&
+    isLoopbackHost(request.headers.get("host"));
   const connectSources = ["'self'", supabaseConnectSources()]
     .filter(Boolean)
     .join(" ");
@@ -30,7 +44,7 @@ export function proxy(request: NextRequest) {
     form-action 'self';
     frame-ancestors 'none';
     worker-src 'self' blob:;
-    ${isDevelopment ? "" : "upgrade-insecure-requests;"}
+    ${isDevelopment || isHttpLoopback ? "" : "upgrade-insecure-requests;"}
   `
     .replace(/\s{2,}/g, " ")
     .trim();

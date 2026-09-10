@@ -70,7 +70,7 @@ function clampSidebarWidth(width: number) {
 export interface AppShellNavigationContextValue {
   structure: NavigationStructure;
   setStructure: (structure: NavigationStructure) => void;
-  openNavigation: () => void;
+  openNavigation: (opener: HTMLElement) => void;
   closeNavigation: () => void;
   mobileNavigationOpen: boolean;
 }
@@ -109,7 +109,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
-  const mobileTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileCloseRef = useRef<HTMLButtonElement>(null);
   const navigationReturnFocus = useRef<HTMLElement | null>(null);
 
@@ -168,8 +167,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     router.push(href as Route);
   }
 
-  function openMobileNavigation() {
-    navigationReturnFocus.current = document.activeElement as HTMLElement;
+  function openMobileNavigation(opener: HTMLElement) {
+    navigationReturnFocus.current = opener;
     setAccountOpen(false);
     setMobileOpen(true);
   }
@@ -338,9 +337,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               side="left"
               id="mobile-navigation"
               initialFocus={mobileCloseRef}
-              finalFocus={() =>
-                navigationReturnFocus.current ?? mobileTriggerRef.current
-              }
+              finalFocus={() => navigationReturnFocus.current}
               className="flex h-full w-72 max-w-[calc(100vw-2rem)] flex-col p-0"
             >
               <SheetTitle className="sr-only">OpenSlate navigation</SheetTitle>
@@ -390,14 +387,15 @@ export function AppShell({ children }: { children: ReactNode }) {
               <header className="border-border bg-background/95 sticky top-0 z-20 flex h-12 items-center border-b px-4 backdrop-blur sm:px-8">
                 <div className="flex min-w-0 items-center gap-2.5">
                   <Button
-                    ref={mobileTriggerRef}
                     variant="ghost"
                     size="icon"
                     className="lg:hidden"
                     aria-label="Open navigation"
                     aria-expanded={mobileOpen}
                     aria-controls="mobile-navigation"
-                    onClick={openMobileNavigation}
+                    onClick={(event) =>
+                      openMobileNavigation(event.currentTarget)
+                    }
                   >
                     <Menu aria-hidden="true" />
                   </Button>

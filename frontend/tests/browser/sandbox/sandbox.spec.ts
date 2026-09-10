@@ -401,6 +401,21 @@ test.describe("sandbox graph movement, drops, and mobile drawers", () => {
     await expect(structureDrawer).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(structureTrigger).toBeFocused();
+
+    const navigationTrigger = page.getByRole("button", {
+      name: "Open navigation",
+      exact: true,
+    });
+    await navigationTrigger.click();
+    const navigationDrawer = page.locator("#mobile-navigation");
+    await expect(
+      navigationDrawer.getByRole("button", {
+        name: "Close navigation",
+        exact: true,
+      }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(navigationTrigger).toBeFocused();
   });
 });
 
@@ -413,8 +428,11 @@ test.describe("sandbox regression coverage", () => {
     await renameInspectorName(page, "inspector-dept-name", "Sales");
     await selectOutlineModule(page, "Equipment");
 
+    await page.getByTestId("toolbar-fit").click();
     const moduleLabel = node(page, "Equipment");
     const salesLabel = node(page, "Sales");
+    await expect(moduleLabel).toBeVisible();
+    await expect(salesLabel).toBeVisible();
     const salesBounds = await nodeBox(salesLabel);
     if (salesBounds === null) throw new Error("Sales frame has no bounds");
     await dragNodeToPoint(page, moduleLabel, {

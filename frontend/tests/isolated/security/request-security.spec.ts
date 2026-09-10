@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { NextRequest } from "next/server";
 
 import { isSameOriginRequest } from "../../../src/lib/request-security-core";
+import { proxy } from "../../../src/proxy";
 
 type HeaderValues = Readonly<{
   host?: string;
@@ -39,7 +41,74 @@ function sameOriginRequest(
   );
 }
 
+function contentSecurityPolicy(url: string, headers?: HeadersInit): string {
+  const policy = proxy(new NextRequest(url, { headers })).headers.get(
+    "Content-Security-Policy",
+  );
+  if (policy === null) throw new Error("Proxy did not set a CSP header");
+  return policy;
+}
+
 test.describe("same-origin request security", () => {
+  test("omits HTTPS upgrading only for production HTTP loopback requests", () => {
+    const localhostPolicy = contentSecurityPolicy(
+      "http://localhost:3104/workspace",
+      { host: "localhost:3104" },
+    );
+    expect(localhostPolicy).not.toContain("upgrade-insecure-requests");
+    expect(localhostPolicy).toMatch(
+      /script-src 'self' 'nonce-[^']+' 'strict-dynamic';/,
+    );
+    expect(localhostPolicy).toContain("object-src 'none';");
+    expect(
+      contentSecurityPolicy("http://localhost:3104/workspace", {
+        host: "localhost",
+      }),
+    ).not.toContain("upgrade-insecure-requests");
+
+    for (const [url, host] of [
+      ["http://127.0.0.1:3104/workspace", "127.0.0.1:3104"],
+      ["http://[::1]:3104/workspace", "[::1]:3104"],
+    ]) {
+      expect(contentSecurityPolicy(url, { host })).not.toContain(
+        "upgrade-insecure-requests",
+      );
+    }
+  });
+
+  test("keeps HTTPS upgrading for public HTTPS and external HTTP requests", () => {
+    for (const url of [
+      "https://127.0.0.1:3104/workspace",
+      "https://app.example/workspace",
+      "http://app.example/workspace",
+    ]) {
+      expect(contentSecurityPolicy(url, { host: new URL(url).host })).toContain(
+        "upgrade-insecure-requests",
+      );
+    }
+  });
+
+  test("does not trust forwarded headers to exempt a public origin", () => {
+    expect(
+      contentSecurityPolicy("https://app.example/workspace", {
+        host: "app.example",
+        "x-forwarded-host": "127.0.0.1:3104",
+        "x-forwarded-proto": "http",
+      }),
+    ).toContain("upgrade-insecure-requests");
+  });
+
+  test("requires the actual Host header to be loopback before exempting HTTPS upgrading", () => {
+    expect(
+      contentSecurityPolicy("http://127.0.0.1:3104/workspace", {
+        host: "app.example",
+      }),
+    ).toContain("upgrade-insecure-requests");
+    expect(contentSecurityPolicy("http://127.0.0.1:3104/workspace")).toContain(
+      "upgrade-insecure-requests",
+    );
+  });
+
   test("accepts an internal request URL when Host supplies the public authority", () => {
     expect(
       sameOriginRequest(
