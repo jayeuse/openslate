@@ -640,10 +640,12 @@ test("people save role changes and restore, activate and reconcile an account", 
     .click();
   await expect(
     page
-      .getByLabel("Role for returning")
+      .getByLabel("Role for returning", { exact: true })
       .getByRole("option", { name: "archived" }),
   ).toHaveCount(0);
-  await page.getByLabel("Username for returning").fill("discarded");
+  await page
+    .getByLabel("Username for returning", { exact: true })
+    .fill("discarded");
   await row.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(row).toContainText("returning");
   await page
@@ -652,11 +654,15 @@ test("people save role changes and restore, activate and reconcile an account", 
   await page
     .getByRole("menuitem", { name: "Edit username and role for returning" })
     .click();
-  await expect(page.getByLabel("Username for returning")).toHaveValue(
-    "returning",
-  );
-  await page.getByLabel("Username for returning").fill("coordinator");
-  await page.getByLabel("Role for returning").selectOption(ADMIN_ID);
+  await expect(
+    page.getByLabel("Username for returning", { exact: true }),
+  ).toHaveValue("returning");
+  await page
+    .getByLabel("Username for returning", { exact: true })
+    .fill("coordinator");
+  await page
+    .getByLabel("Role for returning", { exact: true })
+    .selectOption(ADMIN_ID);
   await row.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(row).toContainText("coordinator");
   await expect(row).toContainText("admin");

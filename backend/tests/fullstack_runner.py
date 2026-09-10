@@ -164,7 +164,7 @@ def main(arguments=()):
         output = BACKEND / "test-results/coverage"
         if output.exists():
             shutil.rmtree(output)
-    for port in (55321, 55322, 55323, 55324, 8008, 3008):
+    for port in (55321, 55322, 55323, 55324) + (() if backend_only else (8008, 3008)):
         with socket.socket() as listener:
             try:
                 listener.bind(("127.0.0.1", port))
