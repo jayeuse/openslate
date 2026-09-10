@@ -2,6 +2,7 @@ import "server-only";
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { requiredLogDirectory } from "./environment";
 import { safeLogRoute } from "./log-routes";
 
 type SafeLogEvent = Readonly<{
@@ -78,9 +79,7 @@ export function logSafeEvent(input: SafeLogEvent): void {
   const time = record.timestamp.slice(11, 23) + "Z";
   // Synchronous append keeps memory bounded and creates no background write queue.
   try {
-    const directory = resolve(
-      process.env.LOG_DIR || resolve(process.cwd(), "logs"),
-    );
+    const directory = resolve(requiredLogDirectory());
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     appendFileSync(
       resolve(directory, `${record.timestamp.slice(0, 10)}.log`),

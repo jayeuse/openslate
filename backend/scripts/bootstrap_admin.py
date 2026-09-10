@@ -7,7 +7,6 @@ completes verified invitation acceptance.
 """
 
 import argparse
-import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -22,7 +21,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.common.normalization import normalize_email, normalize_username
-from app.core.config import Settings, get_settings
+from app.core.config import Settings, get_admin_settings, get_settings
 from app.core.database.session import AuditSession, get_engine
 from app.core.integrations.supabase import SupabaseAdminClient
 from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
@@ -30,7 +29,6 @@ from app.systems.auth.schemas import InvitationCreate
 from app.systems.users.models import Role, User, UserRole, UserStatus
 from app.systems.users.service import InvitationError, invite_user
 
-CONFIRMATION_ENV = "BOOTSTRAP_ADMIN_CONFIRM"
 LOCAL_ENVIRONMENTS = frozenset({"development", "dev", "local"})
 
 
@@ -40,42 +38,26 @@ class BootstrapError(RuntimeError):
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--email", required=True, help="email address to invite")
-    parser.add_argument("--username", required=True, help="local username for the invitee")
     parser.add_argument(
         "--confirm",
         action="store_true",
-        help=(
-            "confirm first-administrator provisioning; required outside development/local "
-            f"unless {CONFIRMATION_ENV}=1 is set"
-        ),
+        help="confirm first-administrator provisioning outside development/local environments",
     )
     return parser
 
 
-def _confirmation_from_environment() -> bool:
-    return os.environ.get(CONFIRMATION_ENV, "").strip().casefold() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
 def _validate_confirmation(settings: Settings, confirmed: bool) -> None:
-    if settings.environment.strip().casefold() not in LOCAL_ENVIRONMENTS and not (
-        confirmed or _confirmation_from_environment()
-    ):
+    if settings.environment.strip().casefold() not in LOCAL_ENVIRONMENTS and not confirmed:
         raise BootstrapError(
             "Administrator bootstrap requires --confirm outside development/local environments"
         )
 
 
-def _invitation(parser: argparse.ArgumentParser, email: str, username: str) -> InvitationCreate:
+def _invitation(email: str, username: str) -> InvitationCreate:
     try:
         return InvitationCreate(email=email, username=username)
     except ValueError:
-        parser.error("email and username must be valid")
+        raise BootstrapError("ADMIN_EMAIL and ADMIN_USERNAME must be valid") from None
 
 
 def _active_role(db: AuditSession, role: UserRole) -> Role:
@@ -176,10 +158,14 @@ def _provision(settings: Settings, invitation: InvitationCreate) -> User:
 def main(argv: Sequence[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
-    invitation = _invitation(parser, args.email, args.username)
 
     try:
         settings = get_settings()
+        admin = get_admin_settings()
+        # ADMIN_PASSWORD is deliberately only validated here. Supabase Auth's
+        # invitation flow remains the sole identity/password owner.
+        admin.admin_password.get_secret_value()
+        invitation = _invitation(admin.admin_email, admin.admin_username)
         _validate_confirmation(settings, args.confirm)
         user = _provision(settings, invitation)
     except SystemExit:

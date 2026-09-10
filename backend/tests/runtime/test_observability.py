@@ -71,6 +71,7 @@ def test_daily_files_append_and_terminal_is_readable(tmp_path, capsys, monkeypat
 
     from app.core.config import get_settings
 
+    monkeypatch.setenv("OPENSLATE_ENV_SOURCE", "process")
     monkeypatch.setenv("LOG_DIR", str(tmp_path))
     get_settings.cache_clear()
     logger = logging.getLogger(observability.LOGGER_NAME)
@@ -209,6 +210,7 @@ def test_api_responses_survive_log_sink_failure_and_recover(tmp_path, monkeypatc
 
     destination = tmp_path / "destination"
     destination.write_text("not a directory")
+    monkeypatch.setenv("OPENSLATE_ENV_SOURCE", "process")
     monkeypatch.setenv("LOG_DIR", str(destination))
     get_settings.cache_clear()
     logger = logging.getLogger(observability.LOGGER_NAME)

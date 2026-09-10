@@ -1,0 +1,110 @@
+name: openslate
+
+# Run through scripts/environment.py compose so root .env is projected once.
+# Supabase remains CLI-managed. No migrations, account changes or secret defaults.
+x-runtime: &runtime
+  init: true
+  read_only: true
+  user: "10001:10001"
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs:
+    - /tmp:rw,nosuid,size=256m,mode=1777
+  extra_hosts:
+    - host.docker.internal:host-gateway
+  networks: [app]
+
+services:
+  backend:
+    <<: *runtime
+    build:
+      context: .
+      dockerfile: infra/docker/backend.Dockerfile
+    environment:
+      OPENSLATE_ENV_SOURCE: ${OPENSLATE_ENV_SOURCE:?OPENSLATE_ENV_SOURCE is required}
+      ENVIRONMENT: ${ENVIRONMENT:?ENVIRONMENT is required}
+      LOG_DIR: ${LOG_DIR:?LOG_DIR is required}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?SUPABASE_PUBLISHABLE_KEY is required}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:?SUPABASE_SECRET_KEY is required}
+      SUPABASE_AUTH_REDIRECT_URL: ${SUPABASE_AUTH_REDIRECT_URL:?SUPABASE_AUTH_REDIRECT_URL is required}
+      SUPABASE_JWT_ISSUER: ${SUPABASE_JWT_ISSUER:?SUPABASE_JWT_ISSUER is required}
+      SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:?SUPABASE_JWKS_URL is required}
+      SUPABASE_JWT_AUDIENCE: ${SUPABASE_JWT_AUDIENCE:?SUPABASE_JWT_AUDIENCE is required}
+      SECURITY_EVENT_SERVER_KEY: ${SECURITY_EVENT_SERVER_KEY:?SECURITY_EVENT_SERVER_KEY is required}
+      LIFECYCLE_PURGE_ENABLED: ${LIFECYCLE_PURGE_ENABLED:?LIFECYCLE_PURGE_ENABLED is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
+      REQUEST_BODY_MAX_BYTES: ${REQUEST_BODY_MAX_BYTES:?REQUEST_BODY_MAX_BYTES is required}
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:?DATABASE_POOL_SIZE is required}
+      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:?DATABASE_MAX_OVERFLOW is required}
+      DATABASE_POOL_TIMEOUT_SECONDS: ${DATABASE_POOL_TIMEOUT_SECONDS:?DATABASE_POOL_TIMEOUT_SECONDS is required}
+      DATABASE_CONNECT_TIMEOUT_SECONDS: ${DATABASE_CONNECT_TIMEOUT_SECONDS:?DATABASE_CONNECT_TIMEOUT_SECONDS is required}
+      DATABASE_STATEMENT_TIMEOUT_MS: ${DATABASE_STATEMENT_TIMEOUT_MS:?DATABASE_STATEMENT_TIMEOUT_MS is required}
+      READINESS_POOL_TIMEOUT_SECONDS: ${READINESS_POOL_TIMEOUT_SECONDS:?READINESS_POOL_TIMEOUT_SECONDS is required}
+      READINESS_CONNECT_TIMEOUT_SECONDS: ${READINESS_CONNECT_TIMEOUT_SECONDS:?READINESS_CONNECT_TIMEOUT_SECONDS is required}
+      READINESS_STATEMENT_TIMEOUT_MS: ${READINESS_STATEMENT_TIMEOUT_MS:?READINESS_STATEMENT_TIMEOUT_MS is required}
+      READINESS_CALLER_TIMEOUT_SECONDS: ${READINESS_CALLER_TIMEOUT_SECONDS:?READINESS_CALLER_TIMEOUT_SECONDS is required}
+      SUPABASE_TIMEOUT_SECONDS: ${SUPABASE_TIMEOUT_SECONDS:?SUPABASE_TIMEOUT_SECONDS is required}
+      BACKEND_BIND_HOST: ${BACKEND_BIND_HOST:?BACKEND_BIND_HOST is required}
+      BACKEND_PORT: ${BACKEND_PORT:?BACKEND_PORT is required}
+      SERVER_MAX_CONCURRENCY: ${SERVER_MAX_CONCURRENCY:?SERVER_MAX_CONCURRENCY is required}
+      SERVER_KEEP_ALIVE_SECONDS: ${SERVER_KEEP_ALIVE_SECONDS:?SERVER_KEEP_ALIVE_SECONDS is required}
+    ports: ["${COMPOSE_BIND_HOST:?COMPOSE_BIND_HOST is required}:${BACKEND_PORT:?BACKEND_PORT is required}:${BACKEND_PORT:?BACKEND_PORT is required}"]
+
+  frontend:
+    <<: *runtime
+    build:
+      context: .
+      dockerfile: infra/docker/frontend.Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?NEXT_PUBLIC_SUPABASE_URL is required}
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:?NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY is required}
+        NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: ${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED:?NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED is required}
+    environment:
+      BACKEND_URL: ${BACKEND_URL:?BACKEND_URL is required}
+      SUPABASE_SERVER_URL: ${SUPABASE_SERVER_URL:?SUPABASE_SERVER_URL is required}
+      LOG_DIR: ${LOG_DIR:?LOG_DIR is required}
+      PORT: ${PORT:?PORT is required}
+      HOSTNAME: ${HOSTNAME:?HOSTNAME is required}
+      BFF_REQUEST_BODY_LIMIT_BYTES: ${BFF_REQUEST_BODY_LIMIT_BYTES:?BFF_REQUEST_BODY_LIMIT_BYTES is required}
+      BFF_RESPONSE_BODY_LIMIT_BYTES: ${BFF_RESPONSE_BODY_LIMIT_BYTES:?BFF_RESPONSE_BODY_LIMIT_BYTES is required}
+      BFF_REQUEST_DEADLINE_MS: ${BFF_REQUEST_DEADLINE_MS:?BFF_REQUEST_DEADLINE_MS is required}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?NEXT_PUBLIC_SUPABASE_URL is required}
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:?NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY is required}
+      NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: ${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED:?NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED is required}
+    ports: ["${COMPOSE_BIND_HOST:?COMPOSE_BIND_HOST is required}:${FRONTEND_PORT:?FRONTEND_PORT is required}:${FRONTEND_PORT:?FRONTEND_PORT is required}"]
+
+  clamav:
+    build:
+      context: .
+      dockerfile: infra/docker/clamav.Dockerfile
+    platform: linux/amd64
+    init: true
+    restart: "no"
+    read_only: true
+    user: "100:101"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CLAMAV_MEMORY_LIMIT:?CLAMAV_MEMORY_LIMIT is required}
+    cpus: ${CLAMAV_CPUS:?CLAMAV_CPUS is required}
+    pids_limit: ${CLAMAV_PIDS_LIMIT:?CLAMAV_PIDS_LIMIT is required}
+    environment:
+      FILES_CLAMAV_PORT: ${FILES_CLAMAV_PORT:?FILES_CLAMAV_PORT is required}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,uid=100,gid=101,mode=1770
+    logging:
+      driver: none
+    volumes:
+      - type: bind
+        source: ${SCANNER_DEFINITIONS:?SCANNER_DEFINITIONS is required}
+        target: /var/lib/clamav
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [scanner]
+
+networks:
+  app:
+  scanner:
+    internal: true

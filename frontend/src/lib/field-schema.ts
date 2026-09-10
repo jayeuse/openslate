@@ -1,3 +1,4 @@
+import { datetimeInputToUtc, formatDateTimeLocal } from "./date-time";
 import { z } from "zod";
 import type { Field } from "./api";
 
@@ -354,7 +355,12 @@ function serializeNumericInput(value: string): number {
   return Number(value);
 }
 
-export function serializeFieldValue(field: Field, value: unknown): unknown {
+export function serializeFieldValue(
+  field: Field,
+  value: unknown,
+  timezone = "UTC",
+  offset?: string,
+): unknown {
   if (field.type === "boolean") return value;
   if (typeof value !== "string") return value;
   if (value === "") return undefined;
@@ -362,8 +368,9 @@ export function serializeFieldValue(field: Field, value: unknown): unknown {
     return serializeNumericInput(value);
   }
   if (field.type === "datetime") {
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+    if (DATETIME_PATTERN.test(value)) return value;
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return value;
+    return datetimeInputToUtc(value, timezone, offset);
   }
   return value;
 }
@@ -371,11 +378,29 @@ export function serializeFieldValue(field: Field, value: unknown): unknown {
 export function serializeFormValues(
   fields: readonly Field[],
   values: Record<string, unknown>,
+  options: {
+    timezone?: string;
+    offsets?: Record<string, string>;
+    original?: Record<string, unknown>;
+  } = {},
 ): Record<string, unknown> {
   const data: Record<string, unknown> = {};
   for (const field of fields) {
     if (field.is_deleted || field.type === "relationship") continue;
-    const serialized = serializeFieldValue(field, values[field.id]);
+    const original = options.original?.[field.id];
+    const unchanged =
+      field.type === "datetime" &&
+      !options.offsets?.[field.id] &&
+      typeof original === "string" &&
+      values[field.id] === formatDateTimeLocal(original, options.timezone);
+    const serialized = unchanged
+      ? original
+      : serializeFieldValue(
+          field,
+          values[field.id],
+          options.timezone,
+          options.offsets?.[field.id],
+        );
     if (serialized !== undefined) data[field.id] = serialized;
   }
   return data;

@@ -1,3 +1,4 @@
+import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
 import { expect, test } from "@playwright/test";
 import { testSecret } from "../../helpers/test-secret";
 import {
@@ -61,6 +62,7 @@ test("completes the Close preview, exact-name, and password steps", async ({
   await installSessionMocks(page);
   const requests: { path: string; body: JsonObject }[] = [];
   await page.route("**/bff/**", async (route) => {
+    if (await fulfillWorkspaceRequest(route)) return;
     const request = route.request();
     const path = pathFor(route);
     const body: JsonObject =
@@ -146,6 +148,7 @@ test("reopen confirmation focuses cancel, supports dismissal, and disables while
     releaseReopen = resolve;
   });
   await page.route("**/bff/**", async (route) => {
+    if (await fulfillWorkspaceRequest(route)) return;
     const request = route.request();
     const path = pathFor(route);
     if (

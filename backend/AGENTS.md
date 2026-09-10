@@ -45,7 +45,7 @@ The deployment profile is one full stack per client (single tenant, micro–medi
 
 - Run `uv run pytest --cov-fail-under=90` for the full backend coverage gate. The configured default is still 80%; the explicit override enforces this guide's stricter 90% requirement. Use `uv run pytest --no-cov -k <name>` for focused iteration; this does not satisfy the coverage gate.
 - PostgreSQL integration tests require `TEST_DATABASE_URL` for the loopback Supabase database (port 54322, database `postgres`, current Alembic head) and use `pytest.mark.integration`. Override `get_db`/`get_current_user` with `dependency_overrides`; build rows with local `make_*` helpers, not a factory module.
-- `scripts/bootstrap_admin.py` invites the first administrator once; `provision_database_role.py` creates least-privilege `openslate_runtime` (export `.env` first); `seed_sample_data.py` seeds through the API with an admin token; `reset_application_data.py` is dry-run by default and requires `--execute`, a TTY, and exact digest confirmation.
+- `scripts/bootstrap_admin.py` invites the first administrator once; `provision_database_role.py` creates least-privilege `openslate_runtime` (reads canonical root `.env`); `seed_sample_data.py` seeds through the API with an admin token; `reset_application_data.py` is dry-run by default and requires `--execute`, a TTY, and exact digest confirmation.
 
 ## TDD and coverage
 

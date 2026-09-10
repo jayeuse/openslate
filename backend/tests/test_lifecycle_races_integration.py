@@ -53,29 +53,28 @@ class _LifecycleOutcome:
 
 
 def _owner_url() -> str:
-    for variable in ("MIGRATION_DATABASE_URL", "TEST_DATABASE_URL"):
-        database_url = os.getenv(variable)
-        if database_url is None:
-            continue
-        _guard_integration_database(database_url)
-        engine = create_engine(database_url)
-        try:
-            with engine.connect() as connection:
-                is_owner = connection.scalar(
-                    text(
-                        """
-                        SELECT current_user = pg_get_userbyid(c.relowner)
-                        FROM pg_class AS c
-                        JOIN pg_namespace AS n ON n.oid = c.relnamespace
-                        WHERE n.nspname = 'public' AND c.relname = 'departments'
-                        """
-                    )
+    database_url = os.getenv("MIGRATION_DATABASE_URL")
+    if database_url is None:
+        raise RuntimeError("MIGRATION_DATABASE_URL is required for owner fixture setup")
+    _guard_integration_database(database_url)
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            is_owner = connection.scalar(
+                text(
+                    """
+                    SELECT current_user = pg_get_userbyid(c.relowner)
+                    FROM pg_class AS c
+                    JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'public' AND c.relname = 'departments'
+                    """
                 )
-                connection.rollback()
-                if is_owner is True:
-                    return database_url
-        finally:
-            engine.dispose()
+            )
+            connection.rollback()
+            if is_owner is True:
+                return database_url
+    finally:
+        engine.dispose()
     raise RuntimeError("An owner-capable local database URL is required")
 
 

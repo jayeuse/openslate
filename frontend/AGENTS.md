@@ -50,7 +50,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - Playwright is the only test runner, including pure-library tests, under `tests/isolated/`, `tests/http/`, and `tests/browser/`. In mocked browser tests, mock `**/session/status` (authenticated) and `**/bff/**` (JSON fixtures); assert user-visible behavior with roles/labels/text and relevant failure and accessibility paths.
 - Real-stack tests (`tests/fullstack/`) run through `npm run test:e2e:fullstack` with a disposable Supabase stack and generated identities; they are excluded from ordinary runs and `verify`.
-- Run `npm run verify` (format, lint, typecheck, build, production E2E) before handoff. Copy `frontend/.env.local` from `.env.example`; never source the root `.env` into npm or Next.
+- Run `npm run verify` (format, lint, typecheck, build, production E2E) before handoff. Local npm commands generate `frontend/.env.local` from canonical root `.env`; never source the root `.env` into npm or Next.
 
 ## TDD and coverage
 

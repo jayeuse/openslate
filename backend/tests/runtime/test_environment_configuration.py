@@ -1,0 +1,193 @@
+from pathlib import Path
+from unittest.mock import Mock
+
+import pytest
+from pydantic import ValidationError
+
+import app.core.config.settings as settings_module
+from app.core.config import (
+    ConfigurationError,
+    ScannerSettings,
+    Settings,
+    get_admin_settings,
+    get_migration_settings,
+    get_provision_settings,
+    get_seed_settings,
+    read_environment,
+)
+from app.core.config.environment import environment_inputs
+from tests.config_support import settings_values
+
+
+def test_dotenv_reader_uses_one_file_for_expansion(tmp_path: Path) -> None:
+    environment = tmp_path / ".env"
+    environment.write_text("ROOT=/srv/openslate\nLOG_DIR=${ROOT}/logs\n", encoding="utf-8")
+
+    assert read_environment(environment) == {
+        "ROOT": "/srv/openslate",
+        "LOG_DIR": "/srv/openslate/logs",
+    }
+    values = environment_inputs(environment, process={"LOG_DIR": "/mounted/logs"})
+    assert values["LOG_DIR"] == "/srv/openslate/logs"
+    assert environment_inputs(
+        tmp_path / "not-read.env",
+        process={"OPENSLATE_ENV_SOURCE": "process", "LOG_DIR": "/injected/logs"},
+    ) == {"OPENSLATE_ENV_SOURCE": "process", "LOG_DIR": "/injected/logs"}
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "DATABASE_URL=first\nDATABASE_URL=second\n",
+        "DATABASE_URL=${MISSING_URL}\n",
+        "DATABASE_URL=${MIGRATION_DATABASE_URL}\nMIGRATION_DATABASE_URL=${DATABASE_URL}\n",
+        "DATABASE_URL\n",
+        "DATABASE_URL=${MISSING_URL:-fallback}\n",
+        'DATABASE_URL="unterminated-private-value\n',
+    ],
+)
+def test_dotenv_reader_rejects_ambiguous_or_external_resolution(
+    tmp_path: Path, contents: str
+) -> None:
+    environment = tmp_path / ".env"
+    environment.write_text(contents, encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as error:
+        read_environment(environment)
+
+    assert "first" not in str(error.value)
+    assert "second" not in str(error.value)
+    assert "fallback" not in str(error.value)
+    assert "unterminated-private-value" not in str(error.value)
+
+
+def test_dotenv_reader_rejects_unreadable_and_unsupported_source_selector(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="unavailable"):
+        read_environment(tmp_path / "missing.env")
+    with pytest.raises(ConfigurationError, match="OPENSLATE_ENV_SOURCE"):
+        environment_inputs(tmp_path / "missing.env", process={"OPENSLATE_ENV_SOURCE": "shell"})
+
+
+def test_operation_loaders_read_canonical_values_and_report_missing_names(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    environment = tmp_path / ".env"
+    environment.write_text(
+        "ADMIN_EMAIL=admin@example.test\nADMIN_USERNAME=admin\nADMIN_PASSWORD=test-password\n"
+        "BACKEND_URL=http://backend.test\nSUPABASE_ACCESS_TOKEN=test-token\n"
+        "ENVIRONMENT=test\nDATABASE_URL=postgresql+psycopg://openslate_runtime:pass@127.0.0.1/db\n"
+        "MIGRATION_DATABASE_URL=postgresql+psycopg://postgres:pass@127.0.0.1/db\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_module, "DOTENV_PATH", environment)
+    monkeypatch.delenv("OPENSLATE_ENV_SOURCE", raising=False)
+
+    assert get_admin_settings().admin_username == "admin"
+    assert get_seed_settings().backend_url == "http://backend.test"
+    assert get_provision_settings().environment == "test"
+
+    environment.write_text("ADMIN_EMAIL=admin@example.test\n", encoding="utf-8")
+    with pytest.raises(ConfigurationError) as error:
+        get_admin_settings()
+    assert str(error.value) == "Invalid configuration: ADMIN_PASSWORD, ADMIN_USERNAME"
+
+
+def test_settings_rejects_blank_and_malformed_canonical_values() -> None:
+    values = settings_values(
+        supabase_publishable_key=" ",
+        backend_port="not-a-port",
+        log_dir="relative-logs",
+        supabase_url="not-a-url",
+        database_url="postgresql://test:test-password@127.0.0.1/test",
+        lifecycle_purge_enabled="yes",
+        cors_origins="[invalid-origin-list",
+    )
+
+    with pytest.raises(ValidationError) as error:
+        Settings(**values, _env_file=None)
+
+    rendered = str(error.value)
+    assert "supabase_publishable_key" in rendered
+    assert "backend_port" in rendered
+    assert "log_dir" in rendered
+    assert "supabase_url" in rendered
+    assert "database_url" in rendered
+    assert "lifecycle_purge_enabled" in rendered
+    assert "cors_origins" in rendered
+    assert "not-a-port" not in rendered
+    assert "invalid-origin-list" not in rendered
+
+
+def test_missing_local_admin_values_cannot_be_filled_from_the_shell(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    environment = tmp_path / ".env"
+    environment.write_text("ADMIN_EMAIL=local@example.test\n", encoding="utf-8")
+    monkeypatch.setattr(settings_module, "DOTENV_PATH", environment)
+    monkeypatch.delenv("OPENSLATE_ENV_SOURCE", raising=False)
+    monkeypatch.setenv("ADMIN_USERNAME", "stale-user")
+    monkeypatch.setenv("ADMIN_PASSWORD", "stale-private-password")
+
+    with pytest.raises(ConfigurationError) as error:
+        get_admin_settings()
+
+    assert str(error.value) == "Invalid configuration: ADMIN_PASSWORD, ADMIN_USERNAME"
+
+
+def test_migration_requires_its_owner_url_without_runtime_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    environment = tmp_path / ".env"
+    environment.write_text(
+        "DATABASE_URL=postgresql://runtime:private@127.0.0.1/db\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(settings_module, "DOTENV_PATH", environment)
+    monkeypatch.delenv("MIGRATION_DATABASE_URL", raising=False)
+    monkeypatch.delenv("OPENSLATE_ENV_SOURCE", raising=False)
+
+    with pytest.raises(ConfigurationError) as error:
+        get_migration_settings()
+
+    assert str(error.value) == "Invalid configuration: MIGRATION_DATABASE_URL"
+    assert "private" not in str(error.value)
+
+
+def test_scanner_configuration_is_not_required_by_api_settings() -> None:
+    settings = Settings(**settings_values(), _env_file=None)
+
+    assert settings.database_url.endswith("/test")
+
+
+def test_scanner_settings_reject_missing_manifest_before_worker_startup(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError) as error:
+        ScannerSettings(
+            files_clamav_host="scanner.test",
+            files_clamav_port=3310,
+            files_clamav_manifest_path=tmp_path / "missing-manifest.json",
+            _env_file=None,
+        )
+
+    assert "files_clamav_manifest_path" in str(error.value)
+
+
+def test_module_entrypoint_passes_each_server_option_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import __main__ as entrypoint
+
+    settings = Settings(**settings_values(), _env_file=None)
+    run = Mock()
+    monkeypatch.setattr(entrypoint, "get_settings", lambda: settings)
+    monkeypatch.setattr(entrypoint.uvicorn, "run", run)
+
+    entrypoint.main([])
+
+    run.assert_called_once_with(
+        "app.main:app",
+        host="127.0.0.1",
+        port=8000,
+        limit_concurrency=32,
+        timeout_keep_alive=5,
+        reload=False,
+        access_log=False,
+    )

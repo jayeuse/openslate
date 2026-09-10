@@ -1,8 +1,9 @@
+import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
@@ -11,6 +12,11 @@ from starlette.responses import JSONResponse, Response
 from app.core.config import get_settings
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import dispose_database_resources
+from app.core.middleware.file_transfers import (
+    CapacityResponse,
+    FileDispatchMiddleware,
+    file_transfer_policy,
+)
 from app.core.middleware.request_context import (
     RequestContext,
     bind_request_context,
@@ -24,10 +30,16 @@ from app.systems.auth.router import router as auth_router
 from app.systems.departments.router import router as departments_router
 from app.systems.fields.router import module_fields_router
 from app.systems.fields.router import router as fields_router
+from app.systems.files.lifecycle_router import router as file_lifecycle_router
+from app.systems.files.providers import transfer_slot
+from app.systems.files.router import router as files_router
 from app.systems.lifecycle.router import router as lifecycle_router
 from app.systems.modules.router import router as modules_router
+from app.systems.records.query_router import router as record_queries_router
 from app.systems.records.router import router as records_router
 from app.systems.relationships.router import router as relationships_router
+from app.systems.views.router import router as views_router
+from app.systems.workspace.router import router as workspace_router
 
 
 def _request_route(request: Request) -> str:
@@ -100,6 +112,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(FileDispatchMiddleware)
 
     @app.middleware("http")
     async def add_request_context(
@@ -110,30 +123,59 @@ def create_app() -> FastAPI:
         request.state.request_context = context
         token = bind_request_context(context)
         started = time.perf_counter()
+        transfer = file_transfer_policy(request.url.path, request.method)
+        capacity = ExitStack()
+        body_limit = transfer.request_bytes if transfer else settings.request_body_max_bytes
         try:
+            if transfer is not None:
+                request.state.file_transfer_lease = capacity.enter_context(transfer_slot())
             declared_size = request.headers.get("content-length")
             response: Response
             if declared_size is not None and _is_body_too_large(
                 declared_size,
-                settings.request_body_max_bytes,
+                body_limit,
             ):
                 response = JSONResponse(
                     status_code=413,
                     content={"detail": "Request body is too large"},
                 )
             else:
-                if not await _read_bounded_body(request, settings.request_body_max_bytes):
-                    response = JSONResponse(
-                        status_code=413,
-                        content={"detail": "Request body is too large"},
-                    )
-                else:
-                    response = await call_next(request)
+                async with asyncio.timeout(transfer.deadline_seconds if transfer else None):
+                    if not await _read_bounded_body(request, body_limit):
+                        response = JSONResponse(
+                            status_code=413,
+                            content={"detail": "Request body is too large"},
+                        )
+                    else:
+                        response = await call_next(request)
+        except HTTPException as error:
+            response = JSONResponse(
+                status_code=error.status_code,
+                content={"detail": error.detail},
+                headers=error.headers,
+            )
+        except TimeoutError:
+            response = JSONResponse(
+                status_code=504,
+                content={
+                    "detail": {
+                        "code": "file_timeout",
+                        "message": "File operation timed out; inspect its state before retrying",
+                    }
+                },
+            )
         except (OperationalError, SQLAlchemyTimeoutError):
             response = _database_unavailable_response(request, context)
         except Exception:
             response = _unexpected_error_response(request, context)
+        except BaseException:
+            # Client cancellation must close admission without dropping a running worker ref.
+            capacity.close()
+            reset_request_context(token)
+            raise
         try:
+            if request.url.path.startswith(("/api/workspace", "/api/views", "/api/files")):
+                response.headers["Cache-Control"] = "no-store"
             response.headers.update(_request_headers(context))
             log_event(
                 "http_request",
@@ -142,7 +184,10 @@ def create_app() -> FastAPI:
                 status=response.status_code,
                 duration_ms=int((time.perf_counter() - started) * 1000),
             )
-            return response
+            return CapacityResponse(response, capacity.close)
+        except BaseException:
+            capacity.close()
+            raise
         finally:
             reset_request_context(token)
 
@@ -151,7 +196,12 @@ def create_app() -> FastAPI:
     app.include_router(modules_router, prefix="/api")
     app.include_router(fields_router, prefix="/api")
     app.include_router(module_fields_router, prefix="/api")
+    app.include_router(record_queries_router, prefix="/api")
     app.include_router(records_router, prefix="/api")
+    app.include_router(views_router, prefix="/api")
+    app.include_router(workspace_router, prefix="/api")
+    app.include_router(files_router, prefix="/api")
+    app.include_router(file_lifecycle_router, prefix="/api")
     app.include_router(relationships_router, prefix="/api")
     app.include_router(lifecycle_router, prefix="/api")
     app.include_router(audit_router, prefix="/api")

@@ -31,6 +31,8 @@ function harness(directory: string) {
     require: (name: string) => {
       if (name === "node:fs") return fs;
       if (name === "node:path") return path;
+      if (name === "./environment")
+        return { requiredLogDirectory: () => directory };
       if (name === "./log-routes") return { safeLogRoute };
       return {};
     },

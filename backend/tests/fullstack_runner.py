@@ -24,20 +24,48 @@ from uuid import uuid4
 import httpx
 from sqlalchemy import create_engine, text
 
+if __package__:
+    from .scanner_runtime import DisposableScanner
+else:
+    from scanner_runtime import DisposableScanner
+
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
 FRONTEND = ROOT / "frontend"
 API = "http://127.0.0.1:8008"
 AUTH = "http://127.0.0.1:55321"
 WEB = "http://localhost:3008"
+_DISPOSABLE_VALUES = {
+    "SUPABASE_API_PORT": "55321",
+    "SUPABASE_DB_PORT": "55322",
+    "SUPABASE_SHADOW_PORT": "55320",
+    "SUPABASE_STUDIO_PORT": "55323",
+    "SUPABASE_MAIL_PORT": "55324",
+    "SUPABASE_POOLER_PORT": "55329",
+    "SUPABASE_URL": AUTH,
+    "FRONTEND_URL": WEB,
+    "SUPABASE_AUTH_REDIRECT_URL": WEB + "/auth/callback",
+    "AUTH_SETUP_URL": WEB + "/auth/setup",
+}
+_PORT_REFERENCES = tuple(name for name in _DISPOSABLE_VALUES if name.endswith("_PORT"))
+
+
+def rewrite_disposable_config(source, run_id):
+    values = {"SUPABASE_PROJECT_ID": f"p5-{run_id}", **_DISPOSABLE_VALUES}
+    missing = [name for name in values if f"env({name})" not in source]
+    if missing:
+        raise RuntimeError("disposable configuration is missing required references")
+    for name, value in values.items():
+        source = source.replace(f"env({name})", value)
+    for name in _PORT_REFERENCES:
+        source = source.replace(f'"{values[name]}"', values[name])
+    return source.replace("jwt_expiry = 3600", "jwt_expiry = 60")
 
 
 def measure_admission():
     """Exercise a bounded local burst and recovery; this is not a capacity target."""
     held = []
     try:
-        # Hold idle accepted connections to deterministically reach Uvicorn's
-        # configured admission limit without adding a production test endpoint.
         for _ in range(32):
             held.append(socket.create_connection(("127.0.0.1", 8008), timeout=2))
         if httpx.get(API + "/api/health", timeout=6).status_code != 503:
@@ -45,7 +73,6 @@ def measure_admission():
     finally:
         for connection in held:
             connection.close()
-
     def request_health(_):
         started_at = time.perf_counter()
         response = httpx.get(API + "/api/health", timeout=6)
@@ -54,7 +81,6 @@ def measure_admission():
         if response.status_code == 200 and "x-request-id" not in response.headers:
             raise RuntimeError("missing application diagnostic ID")
         return response.status_code, time.perf_counter() - started_at
-
     with ThreadPoolExecutor(max_workers=40) as workers:
         results = list(workers.map(request_health, range(64)))
     if httpx.get(API + "/api/health", timeout=6).status_code != 200:
@@ -124,7 +150,10 @@ def seed(owner_url, secret_key, run_id):
     return identities
 
 
-def main():
+def main(arguments=()):
+    if list(arguments) not in ([], ["--scanner-only"]):
+        raise SystemExit("Usage: fullstack_runner.py [--scanner-only]")
+    scanner_only = list(arguments) == ["--scanner-only"]
     for port in (55321, 55322, 55323, 55324, 8008, 3008):
         with socket.socket() as listener:
             try:
@@ -140,17 +169,16 @@ def main():
     result = 1
     admission = {}
     checker_exit = None
+    scanner = None
+    scanner_observations = {}
+    failure_type = failure_message = None
     summary_path = FRONTEND / "test-results/fullstack-summary.json"
-    # Child programs receive allowlisted configuration, never the root .env.
-    base_env = {
-        name: os.environ[name]
-        for name in ("PATH", "HOME", "TMPDIR", "UV_CACHE_DIR")
-        if name in os.environ
-    }
+    base_env = {"PATH": os.environ["PATH"], "OPENSLATE_ENV_SOURCE": "process"}
+    (private / "home").mkdir(mode=0o700)
+    base_env["HOME"] = str(private / "home")
     (private / "tmp").mkdir(mode=0o700)
     base_env["TMPDIR"] = str(private / "tmp")
     log = (private / "process.log").open("w")
-
     def run(command, cwd, env=base_env, capture=False):
         print(f"Full-stack: {stage}", flush=True)
         return subprocess.run(
@@ -162,7 +190,6 @@ def main():
             stderr=log,
             text=True,
         )
-
     try:
         shutil.copytree(
             ROOT / "supabase",
@@ -170,12 +197,7 @@ def main():
             ignore=shutil.ignore_patterns(".temp", ".branches"),
         )
         config = private / "supabase/config.toml"
-        source = config.read_text()
-        source = source.replace('project_id = "openslate"', f'project_id = "p5-{run_id}"')
-        source = re.sub(r"5432([0-9])", r"5532\1", source)
-        source = source.replace("localhost:3000", "localhost:3008")
-        # Real token expiry is exercised without waiting an hour in CI.
-        source = source.replace("jwt_expiry = 3600", "jwt_expiry = 60")
+        source = rewrite_disposable_config(config.read_text(), run_id)
         configured = tomllib.loads(source)
         if (
             configured["project_id"] != f"p5-{run_id}"
@@ -195,10 +217,24 @@ def main():
             raise RuntimeError("unexpected disposable service tuple")
         publishable = status["PUBLISHABLE_KEY"]
         secret_key = status["SECRET_KEY"]
-        env = {
+        migration_env = {
             **base_env,
-            "DATABASE_URL": owner_url,
             "MIGRATION_DATABASE_URL": owner_url,
+        }
+        stage = "migrations"
+        run([sys.executable, "-m", "alembic", "upgrade", "head"], BACKEND, migration_env)
+        run([sys.executable, "-m", "alembic", "check"], BACKEND, migration_env)
+        password = secrets.token_urlsafe(32)
+        runtime_url = f"postgresql+psycopg://openslate_runtime:{password}@127.0.0.1:55322/postgres"
+        stage = "runtime role"
+        run(
+            [sys.executable, "scripts/provision_database_role.py", "--confirm"],
+            BACKEND,
+            {**migration_env, "DATABASE_URL": runtime_url, "ENVIRONMENT": "test"},
+        )
+        api_env = {
+            **base_env,
+            "DATABASE_URL": runtime_url,
             "SUPABASE_URL": AUTH,
             "SUPABASE_PUBLISHABLE_KEY": publishable,
             "SUPABASE_SECRET_KEY": secret_key,
@@ -209,43 +245,52 @@ def main():
             "LIFECYCLE_PURGE_ENABLED": "false",
             "SECURITY_EVENT_SERVER_KEY": secrets.token_urlsafe(32),
             "CORS_ORIGINS": json.dumps([WEB]),
+            "LOG_DIR": str(private / "api-logs"),
+            "REQUEST_BODY_MAX_BYTES": "1048576",
+            "DATABASE_POOL_SIZE": "5",
+            "DATABASE_MAX_OVERFLOW": "5",
+            "DATABASE_POOL_TIMEOUT_SECONDS": "5",
+            "DATABASE_CONNECT_TIMEOUT_SECONDS": "3",
+            "DATABASE_STATEMENT_TIMEOUT_MS": "15000",
+            "READINESS_POOL_TIMEOUT_SECONDS": "0.25",
+            "READINESS_CONNECT_TIMEOUT_SECONDS": "1",
+            "READINESS_STATEMENT_TIMEOUT_MS": "500",
+            "READINESS_CALLER_TIMEOUT_SECONDS": "2",
+            "SUPABASE_TIMEOUT_SECONDS": "10",
+            "BACKEND_BIND_HOST": "127.0.0.1",
+            "BACKEND_PORT": "8008",
+            "SERVER_MAX_CONCURRENCY": "32",
+            "SERVER_KEEP_ALIVE_SECONDS": "5",
         }
-        stage = "migrations"
-        run([sys.executable, "-m", "alembic", "upgrade", "head"], BACKEND, env)
-        run([sys.executable, "-m", "alembic", "check"], BACKEND, env)
-        stage = "runtime role"
-        password = secrets.token_urlsafe(32)
-        run(
-            [sys.executable, "scripts/provision_database_role.py", "--confirm"],
-            BACKEND,
-            {**env, "OPENSLATE_DATABASE_PASSWORD": password},
-        )
-        env["DATABASE_URL"] = (
-            f"postgresql+psycopg://openslate_runtime:{password}@127.0.0.1:55322/postgres"
-        )
-        stage = "backend regression and coverage gate"
-        run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
-                "-q",
-                "--cov=app",
-                "--cov=scripts.check_operational_health",
-                "--cov-report=term",
-                f"--cov-report=json:{private / 'coverage.json'}",
-                f"--junitxml={private / 'pytest.xml'}",
-            ],
-            BACKEND,
-            {
-                **env,
-                "TEST_DATABASE_URL": env["DATABASE_URL"],
-                "OPENSLATE_FULLSTACK_RUN_ID": run_id,
-                "E2E_ALLOW_MUTATIONS": "true",
-            },
-        )
-        coverage = json.loads((private / "coverage.json").read_text())
-        print(f"Backend coverage: {coverage['totals']['percent_covered']:.2f}%", flush=True)
+        if not scanner_only:
+            stage = "backend regression and coverage gate"
+            run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "--cov=app",
+                    "--cov=scripts.check_operational_health",
+                    "--cov-report=term",
+                    f"--cov-report=json:{private / 'coverage.json'}",
+                    f"--junitxml={private / 'pytest.xml'}",
+                ],
+                BACKEND,
+                {
+                    **api_env,
+                    "MIGRATION_DATABASE_URL": owner_url,
+                    "TEST_DATABASE_URL": runtime_url,
+                    "OPENSLATE_FULLSTACK_RUN_ID": run_id,
+                    "E2E_ALLOW_MUTATIONS": "true",
+                },
+            )
+            coverage = json.loads((private / "coverage.json").read_text())
+            print(f"Backend coverage: {coverage['totals']['percent_covered']:.2f}%", flush=True)
+        stage = "official scanner generation"
+        scanner = DisposableScanner(ROOT, private, run_id, base_env, log)
+        scanner_observations = scanner.observations
+        scanner.start()
         stage = "dedicated identities"
         identities = seed(owner_url, secret_key, run_id)
         fixture = private / "fixture.json"
@@ -262,8 +307,6 @@ def main():
         )
         fixture.chmod(0o600)
         stage = "FastAPI startup"
-        # Keep migration credentials out of the running API process.
-        api_env = {**env, "MIGRATION_DATABASE_URL": ""}
         processes.append(
             subprocess.Popen(
                 [
@@ -287,11 +330,18 @@ def main():
             )
         )
         wait_for(API + "/api/ready", processes[-1])
+        stage = "automatic scan worker"
+        scanner.start_worker(api_env)
         stage = "bounded admission and recovery"
         admission = measure_admission()
         frontend_env = {
             **base_env,
             "BACKEND_URL": API,
+            "SUPABASE_SERVER_URL": AUTH,
+            "LOG_DIR": str(private / "frontend-logs"),
+            "BFF_REQUEST_BODY_LIMIT_BYTES": "1048576",
+            "BFF_RESPONSE_BODY_LIMIT_BYTES": "8388608",
+            "BFF_REQUEST_DEADLINE_MS": "60000",
             "NEXT_PUBLIC_SUPABASE_URL": AUTH,
             "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": publishable,
             "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED": "false",
@@ -299,11 +349,11 @@ def main():
             "HOSTNAME": "localhost",
         }
         stage = "production frontend build"
-        run(["npm", "run", "build"], FRONTEND, frontend_env)
+        run(["npm", "run", "build", "--", "--from-process", "--webpack"], FRONTEND, frontend_env)
         stage = "production frontend startup"
         processes.append(
             subprocess.Popen(
-                ["npm", "run", "start"],
+                ["npm", "run", "start", "--", "--from-process"],
                 cwd=FRONTEND,
                 env=frontend_env,
                 stdout=log,
@@ -321,23 +371,35 @@ def main():
             "PLAYWRIGHT_NO_COPY_PROMPT": "1",
         }
         run(
-            ["npx", "playwright", "test", "--config=playwright.fullstack.config.ts"],
+            [
+                "npx",
+                "playwright",
+                "test",
+                "--config=playwright.fullstack.config.ts",
+                *(["workspace-views-files.spec.ts"] if scanner_only else []),
+            ],
             FRONTEND,
             test_env,
         )
+        stage = "real worker crash recovery"
+        if __package__:
+            from .scanner_recovery import verify_worker_recovery
+        else:
+            from scanner_recovery import verify_worker_recovery
+        verify_worker_recovery(scanner, api_env, identities["admin"])
         stage = "read-only operational checker"
         try:
             run([sys.executable, "scripts/check_operational_health.py"], BACKEND, api_env)
             checker_exit = 0
         except subprocess.CalledProcessError as error:
-            # Backend regressions deliberately persist partial operation fixtures.
-            # Attention is valid detection; loss of visibility must fail the gate.
             checker_exit = error.returncode
             if checker_exit != 1:
                 raise
         result = 0
-    except Exception:
-        print(f"Full-stack FAIL at {stage}. See sanitized fullstack-summary.json.")
+    except Exception as error:
+        failure_type = type(error).__name__
+        failure_message = str(error) if type(error) is RuntimeError else None
+        print(f"Full-stack FAIL at {stage} ({failure_type}). See sanitized fullstack-summary.json.")
         result = 1
     finally:
         try:
@@ -356,6 +418,12 @@ def main():
                     except ProcessLookupError:
                         pass
                     process.wait()
+            if scanner is not None:
+                try:
+                    scanner.stop()
+                except Exception:
+                    print("Disposable scanner cleanup failed; operator attention required.")
+                    result = 1
             if started:
                 try:
                     run(["supabase", "stop", "--no-backup"], private)
@@ -365,7 +433,6 @@ def main():
             log.close()
             coverage_path = private / "coverage.json"
             if coverage_path.exists():
-                # Coverage contains source paths and line numbers, never runtime values.
                 shutil.copyfile(coverage_path, BACKEND / "coverage.json")
             browser_results = []
             backend_failures = []
@@ -383,7 +450,6 @@ def main():
                         if name in {"pool_checkout_wait_seconds", "statement_timeout_wait_seconds"}:
                             resource_observations[name] = float(value)
                     for failure in suite.findall(".//failure") + suite.findall(".//error"):
-                        # Static Python source locations aid diagnosis without raw errors.
                         for location in re.findall(
                             r"^(tests/[A-Za-z0-9_/.-]+:\d+):", failure.text or "", re.M
                         ):
@@ -406,6 +472,8 @@ def main():
                 json.dumps(
                     {
                         "result": "passed" if result == 0 else "failed",
+                        "scope": "scanner-only" if scanner_only else "full",
+                        "backend_tests_rerun": not scanner_only,
                         "stage": stage,
                         "browser_tests": browser_results,
                         "backend_failures": backend_failures,
@@ -413,12 +481,14 @@ def main():
                         "resource_observations": resource_observations,
                         "admission_observations": admission,
                         "checker_exit": checker_exit,
+                        "scanner_observations": scanner_observations,
+                        "failure_type": failure_type,
+                        "failure_message": failure_message,
                     },
                     indent=2,
                 )
             )
         finally:
-            # Reporting failure must never bypass deletion of credentials/raw logs.
             log.close()
             shutil.rmtree(private)
     if result == 0:
@@ -427,4 +497,4 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

@@ -64,9 +64,15 @@ def signed_auth(monkeypatch: pytest.MonkeyPatch) -> Generator[SignedAuthHarness,
         return SimpleNamespace(get_signing_key_from_jwt=get_key)
 
     monkeypatch.setattr(jwt_security, "PyJWKClient", client_factory)
-    monkeypatch.setattr(jwt_security, "SUPABASE_JWKS_URL", "https://signed-test.local/jwks")
-    monkeypatch.setattr(jwt_security, "SUPABASE_ISSUER", ISSUER)
-    monkeypatch.setattr(jwt_security, "SUPABASE_AUDIENCE", AUDIENCE)
+    monkeypatch.setattr(
+        jwt_security,
+        "get_settings",
+        lambda: SimpleNamespace(
+            supabase_jwks_url="https://signed-test.local/jwks",
+            supabase_jwt_issuer=ISSUER,
+            supabase_jwt_audience=AUDIENCE,
+        ),
+    )
     jwt_security._cached_jwks_client.cache_clear()
     try:
         yield SignedAuthHarness(application, database)

@@ -1,3 +1,4 @@
+import tomllib
 from pathlib import Path
 from secrets import token_urlsafe
 from unittest.mock import MagicMock
@@ -8,6 +9,52 @@ import pytest
 from tests import fullstack_runner as runner
 
 PRIVATE_FILE_CANARY = token_urlsafe(32)
+
+
+def test_disposable_config_rewrite_uses_only_the_fixed_release_tuple():
+    source = '''project_id = "env(SUPABASE_PROJECT_ID)"
+
+[api]
+port = "env(SUPABASE_API_PORT)"
+
+[db]
+port = "env(SUPABASE_DB_PORT)"
+shadow_port = "env(SUPABASE_SHADOW_PORT)"
+
+[db.pooler]
+port = "env(SUPABASE_POOLER_PORT)"
+
+[studio]
+port = "env(SUPABASE_STUDIO_PORT)"
+api_url = "env(SUPABASE_URL)"
+
+[local_smtp]
+port = "env(SUPABASE_MAIL_PORT)"
+
+[auth]
+site_url = "env(FRONTEND_URL)"
+additional_redirect_urls = [
+  "env(SUPABASE_AUTH_REDIRECT_URL)",
+  "env(AUTH_SETUP_URL)",
+]
+enable_signup = false
+'''
+
+    rewritten = runner.rewrite_disposable_config(source, "a" * 32)
+    config = tomllib.loads(rewritten)
+
+    assert config["project_id"] == "p5-" + "a" * 32
+    assert config["api"]["port"] == 55321
+    assert config["db"] == {"port": 55322, "shadow_port": 55320, "pooler": {"port": 55329}}
+    assert config["studio"] == {"port": 55323, "api_url": "http://127.0.0.1:55321"}
+    assert config["local_smtp"]["port"] == 55324
+    assert config["auth"]["site_url"] == "http://localhost:3008"
+    assert config["auth"]["additional_redirect_urls"] == [
+        "http://localhost:3008/auth/callback",
+        "http://localhost:3008/auth/setup",
+    ]
+    assert config["auth"]["enable_signup"] is False
+    assert "env(" not in rewritten
 
 
 @pytest.mark.parametrize("failure", ["malformed_report", "summary_write"])

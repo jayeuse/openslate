@@ -149,3 +149,22 @@ test.describe("dynamic field schemas", () => {
     });
   });
 });
+
+test("preserves original microseconds on unchanged datetime edits but normalizes changed local values", () => {
+  const datetime = field("datetime", { id: "when" });
+  const original = { when: "2026-01-01T00:30:12.123456Z" };
+  expect(
+    serializeFormValues(
+      [datetime],
+      { when: "2026-01-01T08:30" },
+      { timezone: "Asia/Manila", original },
+    ),
+  ).toEqual(original);
+  expect(
+    serializeFormValues(
+      [datetime],
+      { when: "2026-01-01T09:30" },
+      { timezone: "Asia/Manila", original },
+    ),
+  ).toEqual({ when: "2026-01-01T01:30:00Z" });
+});

@@ -1,3 +1,4 @@
+import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
 import { expect, test } from "@playwright/test";
 import {
   ACTIVE_ID,
@@ -122,6 +123,7 @@ test("people resolves roles and refreshes authoritative state after success and 
   let userListRequests = 0;
   let inviteBody: JsonObject | undefined;
   await page.route("**/bff/**", async (route) => {
+    if (await fulfillWorkspaceRequest(route)) return;
     const request = route.request();
     const path = pathForRequest(request);
     if (request.method() === "GET" && path === "/users") {

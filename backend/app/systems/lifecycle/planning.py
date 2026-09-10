@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.systems.departments.models import Department
 from app.systems.fields.models import Field
+from app.systems.lifecycle.batch_dependencies import load_purge_dependencies
 from app.systems.lifecycle.exceptions import (
     LifecycleInvalidTarget,
     LifecycleUnsupportedOperation,
@@ -90,6 +91,12 @@ def plan_lifecycle(
         "records": {row.entity_id for row in rows if row.entity_type == "records"},
     }
     purge_blockers: list[LifecycleBlocker] = []
+    dependency_ids: dict[str, tuple[UUID, ...]] = {}
+    if resolved_operation is LifecycleOperation.PURGE:
+        dependencies = load_purge_dependencies(db, scope, resolved_target)
+        rows += dependencies.rows
+        purge_blockers.extend(dependencies.blockers)
+        dependency_ids = dependencies.ids
     # Close plans contain active rows; reopen plans contain closed rows.
     modules_by_id = {module.id: module for module in scope.modules}
     fields_by_id = {field.id: field for field in scope.fields}
@@ -300,6 +307,7 @@ def plan_lifecycle(
         blockers,
     )
     scope_ids = scope.ids
+    scope_ids.update(dependency_ids)
     # Edge dependencies are locked as part of the transaction even when they
     # are outside the structural mutation scope (notably for Field plans).
     scope_ids["fields"] = tuple(sorted(set(scope_ids["fields"]) | set(fields_by_id)))

@@ -1,4 +1,6 @@
 "use client";
+import { useWorkspace } from "@/components/workspace-provider";
+import { formatWorkspaceDateTime, datetimeInputToUtc } from "@/lib/date-time";
 
 import { useEffect, useState } from "react";
 import {
@@ -171,11 +173,6 @@ function compactId(value: string) {
   return `${value.slice(0, 8)}…${value.slice(-8)}`;
 }
 
-function formatTimestamp(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-}
-
 function snapshotText(value: Record<string, unknown> | null) {
   if (value === null) return "Not recorded";
   try {
@@ -185,9 +182,12 @@ function snapshotText(value: Record<string, unknown> | null) {
   }
 }
 
-function dateBoundary(value: string, endOfDay = false) {
+function dateBoundary(value: string, timezone: string, endOfDay = false) {
   if (!value) return undefined;
-  return `${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`;
+  return datetimeInputToUtc(
+    `${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}`,
+    timezone,
+  );
 }
 
 function safeErrorMessage(
@@ -246,6 +246,7 @@ function DetailList({
 }
 
 function AuditDetails({ item }: { item: AuditLog }) {
+  const { profile } = useWorkspace();
   return (
     <details className="group">
       <summary
@@ -277,7 +278,10 @@ function AuditDetails({ item }: { item: AuditLog }) {
                 `${item.request_method ?? "Not recorded"} ${item.request_path ?? ""}`.trim(),
               mono: true,
             },
-            { label: "Timestamp", value: formatTimestamp(item.created_at) },
+            {
+              label: "Timestamp",
+              value: formatWorkspaceDateTime(item.created_at, profile),
+            },
             { label: "Note", value: item.note ?? "No note recorded" },
           ]}
         />
@@ -305,6 +309,7 @@ function AuditDetails({ item }: { item: AuditLog }) {
 }
 
 function AuditTable({ items }: { items: AuditLog[] }) {
+  const { profile } = useWorkspace();
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[900px] text-left text-sm">
@@ -356,7 +361,7 @@ function AuditTable({ items }: { items: AuditLog[] }) {
               </td>
               <td className="text-muted-foreground px-5 py-4 text-xs whitespace-nowrap">
                 <time dateTime={item.created_at}>
-                  {formatTimestamp(item.created_at)}
+                  {formatWorkspaceDateTime(item.created_at, profile)}
                 </time>
               </td>
               <td className="px-5 py-4">
@@ -380,6 +385,7 @@ function outcomeVariant(outcome: SecurityEventOutcome) {
 }
 
 function SecurityDetails({ item }: { item: SecurityEvent }) {
+  const { profile } = useWorkspace();
   return (
     <details className="group">
       <summary
@@ -410,7 +416,10 @@ function SecurityDetails({ item }: { item: SecurityEvent }) {
               mono: true,
             },
             { label: "Reason", value: item.reason ?? "No reason recorded" },
-            { label: "Timestamp", value: formatTimestamp(item.occurred_at) },
+            {
+              label: "Timestamp",
+              value: formatWorkspaceDateTime(item.occurred_at, profile),
+            },
             {
               label: "Request",
               value:
@@ -430,6 +439,7 @@ function SecurityDetails({ item }: { item: SecurityEvent }) {
 }
 
 function SecurityTable({ items }: { items: SecurityEvent[] }) {
+  const { profile } = useWorkspace();
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[900px] text-left text-sm">
@@ -485,7 +495,7 @@ function SecurityTable({ items }: { items: SecurityEvent[] }) {
               </td>
               <td className="text-muted-foreground px-5 py-4 text-xs whitespace-nowrap">
                 <time dateTime={item.occurred_at}>
-                  {formatTimestamp(item.occurred_at)}
+                  {formatWorkspaceDateTime(item.occurred_at, profile)}
                 </time>
               </td>
               <td className="px-5 py-4">
@@ -564,6 +574,7 @@ function PaginationControls({
 }
 
 export default function AuditPage() {
+  const { profile } = useWorkspace();
   const [view, setView] = useState<AuditView>("audit");
   const [auditItems, setAuditItems] = useState<AuditLog[]>([]);
   const [auditPagination, setAuditPagination] = useState<Pagination | null>(
@@ -595,17 +606,28 @@ export default function AuditPage() {
     let active = true;
     setAuditLoading(true);
     setAuditError("");
-    const query = listQuery({
-      limit: PAGE_SIZE,
-      offset: auditOffset,
-      search: auditSearch.trim() || undefined,
-      action: auditAction || undefined,
-      entity_type: auditEntityType.trim() || undefined,
-      created_after: dateBoundary(auditFrom),
-      created_before: dateBoundary(auditTo, true),
-      sort_by: "created_at",
-      sort_order: "desc",
-    });
+    let query: string;
+    try {
+      query = listQuery({
+        limit: PAGE_SIZE,
+        offset: auditOffset,
+        search: auditSearch.trim() || undefined,
+        action: auditAction || undefined,
+        entity_type: auditEntityType.trim() || undefined,
+        created_after: dateBoundary(auditFrom, profile.timezone),
+        created_before: dateBoundary(auditTo, profile.timezone, true),
+        sort_by: "created_at",
+        sort_order: "desc",
+      });
+    } catch {
+      setAuditItems([]);
+      setAuditPagination(null);
+      setAuditLoading(false);
+      setAuditError(
+        "The selected date boundary is not unique in the workspace timezone. Choose another date.",
+      );
+      return () => controller.abort();
+    }
     void apiFetch<unknown>(`/audit-logs?${query}`, {
       signal: controller.signal,
     })
@@ -638,6 +660,7 @@ export default function AuditPage() {
     auditRetry,
     auditSearch,
     auditTo,
+    profile.timezone,
   ]);
 
   useEffect(() => {
@@ -710,18 +733,18 @@ export default function AuditPage() {
     if (exporting) return;
     setExporting("audit");
     setExportError("");
-    const query = listQuery({
-      limit: PAGE_SIZE,
-      offset: auditOffset,
-      search: auditSearch.trim() || undefined,
-      action: auditAction || undefined,
-      entity_type: auditEntityType.trim() || undefined,
-      created_after: dateBoundary(auditFrom),
-      created_before: dateBoundary(auditTo, true),
-      sort_by: "created_at",
-      sort_order: "desc",
-    });
     try {
+      const query = listQuery({
+        limit: PAGE_SIZE,
+        offset: auditOffset,
+        search: auditSearch.trim() || undefined,
+        action: auditAction || undefined,
+        entity_type: auditEntityType.trim() || undefined,
+        created_after: dateBoundary(auditFrom, profile.timezone),
+        created_before: dateBoundary(auditTo, profile.timezone, true),
+        sort_by: "created_at",
+        sort_order: "desc",
+      });
       const value = await apiFetch<unknown>(`/audit-logs/export?${query}`);
       const items = parseExport(value, isAuditLog);
       if (!items)

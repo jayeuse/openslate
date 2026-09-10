@@ -3,14 +3,12 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from app.core.config import get_settings
+from app.core.config import get_migration_settings
 from app.core.database import Base, model_registry  # noqa: F401
 
 config = context.config
-settings = get_settings()
-config.set_main_option(
-    "sqlalchemy.url", settings.migration_database_url or settings.database_url
-)
+settings = get_migration_settings()
+config.set_main_option("sqlalchemy.url", settings.migration_database_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

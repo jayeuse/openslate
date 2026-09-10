@@ -10,9 +10,9 @@
 | --------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | FastAPI application assembly      | **Implemented**           | `backend/app/main.py:create_app` creates the application, middleware, routers, and health endpoint.                                                                            |
 | Domain capability packages        | **Implemented**           | `auth`, `users`, `departments`, `modules`, `fields`, `records`, `relationships`, `lifecycle`, and `audit` have registered runtime behavior.                                    |
-| Placeholder capability packages   | **Partially Implemented** | `files`, `reports`, `views`, `businesses`, and `admin` exist as package paths but are not included as routers by `create_app`; no runtime endpoint is evidenced for them here. |
+| Additional capabilities           | **Implemented / placeholders** | Workspace, files and views have registered routes. `reports`, `businesses` and `admin` remain placeholders. |
 | ORM transaction and audit session | **Implemented**           | `backend/app/core/database/session.py:AuditSession` and `get_db` provide the request-scoped SQLAlchemy session used by the routers and audit listeners.                        |
-| Background processing             | **Unknown**               | No worker, scheduler, queue, or asynchronous job entry point appears in the reviewed backend application paths.                                                                |
+| Background processing             | **Implemented for files** | `app.systems.files.worker` owns serial scan processing, PostgreSQL leadership and audited reservation expiry; there is no general scheduler or broker. |
 
 ## Runtime assembly
 

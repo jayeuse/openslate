@@ -21,6 +21,7 @@ from app.systems.lifecycle.models import (
 )
 from app.systems.lifecycle.password import SupabasePasswordGrantClient
 from app.systems.lifecycle.service import begin_verification, hash_challenge_token
+from tests.config_support import settings_values
 
 CHALLENGE_TOKEN = token_urlsafe(32)
 TEMPORARY_ACCESS_TOKEN = token_urlsafe(32)
@@ -34,9 +35,11 @@ PUBLISHABLE_KEY = token_urlsafe(32)
 
 def _settings() -> Settings:
     return Settings(
-        database_url="postgresql://localhost/test",
-        supabase_url="https://example.supabase.co",
-        supabase_publishable_key=SecretStr(PUBLISHABLE_KEY),
+        **settings_values(
+            database_url="postgresql+psycopg://localhost/test",
+            supabase_url="https://example.supabase.co",
+            supabase_publishable_key=SecretStr(PUBLISHABLE_KEY),
+        )
     )
 
 

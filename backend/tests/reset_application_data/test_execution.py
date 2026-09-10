@@ -62,4 +62,4 @@ def test_reset_rejects_remote_or_mismatched_database_and_missing_owner_environme
             local, expected_url=local.replace(password, token_urlsafe(32))
         )
     with pytest.raises(reset.ResetError):
-        reset.required_environment({"DATABASE_URL": local, "SAMPLE_EMAIL": "admin@example.test"})
+        reset.required_environment({"DATABASE_URL": local, "ADMIN_EMAIL": "admin@example.test"})

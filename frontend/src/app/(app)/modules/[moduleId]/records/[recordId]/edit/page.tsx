@@ -1,5 +1,8 @@
 "use client";
 
+import { RecordAttachments } from "@/components/files/record-attachments";
+import { useWorkspace } from "@/components/workspace-provider";
+import { DatetimeOffsetChoice } from "@/components/workspace-datetime";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Save } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -16,7 +19,6 @@ import {
   Field as FormField,
   FieldControl,
   FieldLabel,
-  FieldDescription,
   FieldError,
 } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -37,9 +39,13 @@ import {
   type FieldErrorMap,
 } from "@/lib/field-schema";
 
-function editValue(field: Field, value: unknown): string | boolean {
+function editValue(
+  field: Field,
+  value: unknown,
+  timezone: string,
+): string | boolean {
   if (field.type === "boolean") return value === true;
-  if (field.type === "datetime") return formatDateTimeLocal(value);
+  if (field.type === "datetime") return formatDateTimeLocal(value, timezone);
   return value === null || value === undefined ? "" : String(value);
 }
 export default function EditRecordPage() {
@@ -49,6 +55,10 @@ export default function EditRecordPage() {
     departmentId?: string;
   }>();
   const router = useRouter();
+  const { profile } = useWorkspace();
+  const [formTimezone] = useState(profile.timezone);
+  const [confirmedTimezone, setConfirmedTimezone] = useState(profile.timezone);
+  const [offsets, setOffsets] = useState<Record<string, string>>({});
   const [module, setModule] = useState<Module | null>(null);
   const [department, setDepartment] = useState<Department | null>(null);
   useBreadcrumbLabels({
@@ -89,7 +99,7 @@ export default function EditRecordPage() {
               .filter((field) => field.type !== "relationship")
               .map((field) => [
                 field.id,
-                editValue(field, currentRecord.data[field.id]),
+                editValue(field, currentRecord.data[field.id], formTimezone),
               ]),
           ),
         );
@@ -106,7 +116,7 @@ export default function EditRecordPage() {
     return () => {
       active = false;
     };
-  }, [moduleId, recordId]);
+  }, [moduleId, recordId, formTimezone]);
   const primitiveFields = fields.filter(
     (field) => field.type !== "relationship",
   );
@@ -128,11 +138,21 @@ export default function EditRecordPage() {
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending) return;
+    if (confirmedTimezone !== profile.timezone) {
+      setError(
+        "Workspace timezone changed. Confirm the form timezone before saving.",
+      );
+      return;
+    }
     setPending(true);
     setError("");
     setFieldErrors({});
     try {
-      const data = serializeFormValues(activePrimitiveFields, values);
+      const data = serializeFormValues(activePrimitiveFields, values, {
+        timezone: formTimezone,
+        offsets,
+        original: record?.data,
+      });
       const validation = buildModuleSchema(activePrimitiveFields).safeParse(
         data,
       );
@@ -215,6 +235,19 @@ export default function EditRecordPage() {
             noValidate
             onSubmit={submit}
           >
+            {confirmedTimezone !== profile.timezone && (
+              <Alert>
+                Workspace timezone is now {profile.timezone}. This form still
+                uses {formTimezone}.
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setConfirmedTimezone(profile.timezone)}
+                >
+                  Keep {formTimezone} for this submission
+                </Button>
+              </Alert>
+            )}
             {primitiveFields.map((field) => (
               <FormField
                 className="space-y-2"
@@ -294,12 +327,19 @@ export default function EditRecordPage() {
                         maxLength={field.type === "decimal" ? 58 : undefined}
                         value={String(values[field.id] ?? "")}
                         disabled={sourceClosed || field.is_deleted}
-                        onChange={(event) =>
+                        onChange={(event) => {
                           setValues((current) => ({
                             ...current,
                             [field.id]: event.target.value,
-                          }))
-                        }
+                          }));
+                          if (field.type === "datetime") {
+                            setOffsets((current) => {
+                              const next = { ...current };
+                              delete next[field.id];
+                              return next;
+                            });
+                          }
+                        }}
                       />
                     }
                   />
@@ -311,9 +351,18 @@ export default function EditRecordPage() {
                     </FieldError>
                   ))}
                   {field.type === "datetime" && (
-                    <FieldDescription>
-                      Your timezone will be included as an ISO datetime.
-                    </FieldDescription>
+                    <DatetimeOffsetChoice
+                      id={field.id}
+                      value={String(values[field.id] ?? "")}
+                      timezone={formTimezone}
+                      offset={offsets[field.id] ?? ""}
+                      onChange={(offset) =>
+                        setOffsets((current) => ({
+                          ...current,
+                          [field.id]: offset,
+                        }))
+                      }
+                    />
                   )}
                 </div>
               </FormField>
@@ -327,6 +376,14 @@ export default function EditRecordPage() {
           </form>
         </CardContent>
       </Card>
+      {record && (
+        <div className="mt-5 max-w-3xl">
+          <RecordAttachments
+            recordId={recordId}
+            isRecordClosed={sourceClosed}
+          />
+        </div>
+      )}
       <Card className="mt-5 max-w-3xl">
         <CardContent className="p-6">
           <RelationshipManager

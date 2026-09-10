@@ -1,4 +1,7 @@
 "use client";
+import { useWorkspace } from "@/components/workspace-provider";
+import { formatWorkspaceDateTime } from "@/lib/date-time";
+import { currentPublicEnvironment } from "@/lib/environment";
 
 import { useCallback, useEffect, useState } from "react";
 import { Alert } from "@/components/ui/alert";
@@ -24,7 +27,7 @@ import {
   type LifecycleTargetType,
 } from "@/lib/api";
 
-const purgeEnabled = process.env.NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED === "true";
+const purgeEnabled = currentPublicEnvironment().lifecyclePurgeEnabled;
 
 type LifecycleActionProps = {
   targetType: LifecycleTargetType;
@@ -124,6 +127,7 @@ export function LifecycleAction({
   allowReopen = true,
   onComplete,
 }: LifecycleActionProps) {
+  const { profile } = useWorkspace();
   const [wizardOperation, setWizardOperation] = useState<"close" | "purge">(
     "close",
   );
@@ -339,7 +343,7 @@ export function LifecycleAction({
                 <ImpactReport impact={preview.impact} operation={operation} />
                 <p className="text-muted-foreground mt-4 text-xs">
                   Preview expires{" "}
-                  {new Date(preview.expires_at).toLocaleString()}.
+                  {formatWorkspaceDateTime(preview.expires_at, profile)}.
                 </p>
               </>
             )}

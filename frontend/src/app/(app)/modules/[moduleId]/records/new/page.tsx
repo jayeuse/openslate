@@ -1,5 +1,7 @@
 "use client";
 
+import { useWorkspace } from "@/components/workspace-provider";
+import { DatetimeOffsetChoice } from "@/components/workspace-datetime";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Save } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -14,7 +16,6 @@ import {
   Field as FormField,
   FieldControl,
   FieldLabel,
-  FieldDescription,
   FieldError,
 } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -44,6 +45,10 @@ export default function NewRecordPage() {
     departmentId?: string;
   }>();
   const router = useRouter();
+  const { profile } = useWorkspace();
+  const [formTimezone] = useState(profile.timezone);
+  const [confirmedTimezone, setConfirmedTimezone] = useState(profile.timezone);
+  const [offsets, setOffsets] = useState<Record<string, string>>({});
   const [module, setModule] = useState<Module | null>(null);
   const [department, setDepartment] = useState<Department | null>(null);
   useBreadcrumbLabels({
@@ -109,11 +114,20 @@ export default function NewRecordPage() {
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending) return;
+    if (confirmedTimezone !== profile.timezone) {
+      setError(
+        "Workspace timezone changed. Confirm the form timezone before saving.",
+      );
+      return;
+    }
     setPending(true);
     setError("");
     setFieldErrors({});
     try {
-      const data = serializeFormValues(primitiveFields, values);
+      const data = serializeFormValues(primitiveFields, values, {
+        timezone: formTimezone,
+        offsets,
+      });
       const validation = buildModuleSchema(primitiveFields).safeParse(data);
       if (!validation.success) {
         const validationErrors = collectZodFieldErrors(validation.error);
@@ -186,6 +200,19 @@ export default function NewRecordPage() {
             noValidate
             onSubmit={submit}
           >
+            {confirmedTimezone !== profile.timezone && (
+              <Alert>
+                Workspace timezone is now {profile.timezone}. This form still
+                uses {formTimezone}.
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setConfirmedTimezone(profile.timezone)}
+                >
+                  Keep {formTimezone} for this submission
+                </Button>
+              </Alert>
+            )}
             {primitiveFields.map((field) => (
               <FormField
                 className="space-y-2"
@@ -272,12 +299,19 @@ export default function NewRecordPage() {
                         }
                         value={String(values[field.id] ?? "")}
                         disabled={sourceReadOnly || field.is_deleted}
-                        onChange={(event) =>
+                        onChange={(event) => {
                           setValues((current) => ({
                             ...current,
                             [field.id]: event.target.value,
-                          }))
-                        }
+                          }));
+                          if (field.type === "datetime") {
+                            setOffsets((current) => {
+                              const next = { ...current };
+                              delete next[field.id];
+                              return next;
+                            });
+                          }
+                        }}
                       />
                     }
                   />
@@ -289,9 +323,18 @@ export default function NewRecordPage() {
                     </FieldError>
                   ))}
                   {field.type === "datetime" && (
-                    <FieldDescription>
-                      Your timezone will be included as an ISO datetime.
-                    </FieldDescription>
+                    <DatetimeOffsetChoice
+                      id={field.id}
+                      value={String(values[field.id] ?? "")}
+                      timezone={formTimezone}
+                      offset={offsets[field.id] ?? ""}
+                      onChange={(offset) =>
+                        setOffsets((current) => ({
+                          ...current,
+                          [field.id]: offset,
+                        }))
+                      }
+                    />
                   )}
                 </div>
               </FormField>

@@ -61,7 +61,8 @@ export type Relationship = BaseEntity & {
   visibility: RelationshipVisibility;
   hidden_reasons: RelationshipHiddenReason[];
 };
-export type LifecycleTargetType = "department" | "module" | "field" | "record";
+export type LifecycleTargetType =
+  "department" | "module" | "field" | "record" | "file";
 export type LifecycleOperation = "close" | "purge" | "reopen";
 export type LifecycleBlockerCode =
   | "closed_ancestor"
@@ -71,7 +72,8 @@ export type LifecycleBlockerCode =
   | "schema_invalid"
   | "record_data_invalid"
   | "record_close_unsupported"
-  | "purge_external_schema_dependency";
+  | "purge_external_schema_dependency"
+  | "purge_file_dependency";
 export type LifecycleErrorCode =
   | LifecycleBlockerCode
   | "already_closed"
@@ -97,6 +99,7 @@ export type LifecycleRowState = {
   deleted_at: string | null;
   updated_at: string;
   state_fingerprint: string;
+  byte_count?: number | null;
 };
 export type LifecycleExternalImpact = {
   edge_id: string;
@@ -307,7 +310,11 @@ export async function apiFetch<T>(
   try {
     return (await parseResponse(response)) as T;
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401) {
+    if (
+      error instanceof ApiError &&
+      error.status === 401 &&
+      !init.signal?.aborted
+    ) {
       // This utility has no router instance; hard navigation clears the expired shell.
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination
       if (typeof window !== "undefined") window.location.href = "/login";

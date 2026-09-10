@@ -12,7 +12,7 @@ This document is verified from SQLAlchemy models, Alembic environment/revisions,
 
 - `[Configured]` Supabase supplies PostgreSQL 17, Auth, Realtime, Storage, Studio, and local Mailpit. The application tables are in `public`; `auth.users` is Supabase-managed and is not application-owned.
 - `[Boundary]` Alembic is the sole owner of the application schema. Supabase migrations and seeds are disabled. `supabase/config.toml` exposes only `graphql_public` through the Data API, so FastAPI/SQLAlchemy is the supported application data API; there are no supported direct Data API writes.
-- `[Boundary]` Auth owns identities, invitations, and passwords. `public.users.id` is the Auth UUID and references `auth.users.id`. Auth insert/email-update triggers maintain the local profile. Storage currently provides only the private `openslate-files` bucket foundation; no application file/object tables or object policies are implemented.
+- `[Boundary]` Auth owns identities, invitations, and passwords. `public.users.id` is the Auth UUID and references `auth.users.id`. Auth insert/email-update triggers maintain the local profile. File metadata is application-owned in `public.files`; Storage objects remain private and are addressed only through FastAPI, not browser Storage access.
 - `[Boundary]` Realtime has no application-table publication. The application sends private Broadcast invalidation events after commit; it is not the source of record data.
 - `[Unresolved]` A hosted deployment target, hosted migration procedure, backup/restore runbook, TLS terminator, and production platform topology are not defined in this repository.
 
@@ -67,10 +67,13 @@ The following catalog covers every current application entity, including the aud
 | `records` / `Record`                      | Shared columns; `module_id`; `data JSONB NOT NULL DEFAULT {}`.                                                                                                                                                                | `module_id -> modules.id ON DELETE RESTRICT`; soft-deletable.                                                                                                                                         |
 | `relationship_edges` / `RelationshipEdge` | Shared columns; `field_id`, `source_record_id`, `target_record_id`. Directed, soft-deletable edge.                                                                                                                            | All three FKs are `ON DELETE RESTRICT`. Active edge identity `(field_id, source_record_id, target_record_id)` is unique.                                                                              |
 | `audit_logs` / `AuditLog`                 | Independent UUID PK; `created_at`; nullable actor; `action`; `entity_type varchar(50)`; nullable `entity_id`; nullable JSONB `before`/`after`; nullable request UUID/method/path; nullable `actor_label` and `note`.          | Does **not** inherit `BaseModel`: no `updated_at`, `is_deleted`, or `deleted_at`. `performed_by -> users.id ON DELETE SET NULL`. Immutable at the ORM boundary and not recursively audited.           |
+| `workspace_profiles` / `WorkspaceProfile` | Singleton key; display/legal/contact/address fields; `timezone`; `locale`; revision; optional `logo_file_id`. | The singleton and non-deletion checks are DB-enforced. It is seeded with `OpenSlate`, `UTC`, and `en-US`; current logo FK restricts file deletion. |
+| `saved_views` / `SavedView`               | `module_id`; `owner_id`; name; private/workspace visibility; revision; versioned definition JSONB. | Module/user FKs restrict deletion; owner/module and shared-module indexes support visibility-scoped lists. Definition is audit-redacted. |
+| `files` / `File`                          | Purpose; optional record parent; creator; filename/media metadata; expected/actual size; digest; opaque object key; state/operation/provenance; scan requester, attempts and next-attempt time. | Purpose/parent, size, logo size, ready-verdict, state and nonnegative-attempt checks are DB-enforced. Requester deletion sets NULL, requiring adoption. The due-work partial index covers unclaimed pending scans; other record/creator FKs restrict deletion and object key is unique. |
 
 Sources: [`users/models.py`](../../backend/app/systems/users/models.py), [`departments/models.py`](../../backend/app/systems/departments/models.py), [`modules/models.py`](../../backend/app/systems/modules/models.py), [`fields/models.py`](../../backend/app/systems/fields/models.py), [`records/models.py`](../../backend/app/systems/records/models.py), [`relationships/models.py`](../../backend/app/systems/relationships/models.py), and [`audit/models.py`](../../backend/app/systems/audit/models.py).
 
-The `files`, `reports`, `views`, `businesses`, and `admin` packages are placeholders in the current source tree; they do not contribute current SQLAlchemy persistence entities or tables.
+`reports`, `businesses`, and `admin` remain placeholders. `workspace`, `views`, and `files` contribute the entities above.
 
 ### Lifecycle persistence entities
 
@@ -99,6 +102,10 @@ Source: [`lifecycle/models.py`](../../backend/app/systems/lifecycle/models.py) a
 | `field_id` on `relationship_edges`                             | `fields.id`      | `RESTRICT`                                    |
 | `source_record_id`, `target_record_id` on `relationship_edges` | `records.id`     | `RESTRICT`                                    |
 | `actor_id` on all lifecycle tables                             | `users.id`       | `RESTRICT`                                    |
+| `record_id` on `files`                                         | `records.id`     | `RESTRICT`                                    |
+| `creator_id` on `files`                                        | `users.id`       | `RESTRICT`                                    |
+| `module_id` and `owner_id` on `saved_views`                    | `modules.id`, `users.id` | `RESTRICT`                              |
+| `logo_file_id` on `workspace_profiles`                         | `files.id`       | `RESTRICT`                                    |
 
 The lifecycle service therefore deletes relationship edges first, then records, fields, modules, and departments. This order is explicit and is not delegated to database cascades.
 
@@ -144,6 +151,7 @@ There are no current GIN indexes on JSONB. The legacy users preferences GIN inde
 - `fields.config` — mutable field configuration; relationship fields must have `{}` by a database check.
 - `records.data` — mutable JSONB record payload keyed by field UUID; PostgreSQL stores the JSON but does not interpret its keys or dynamic values, so FastAPI owns field-key/type/required/range/option semantics. Non-null decimal values use canonical JSON strings to preserve exactness; optional values may be JSON `null`.
 - `audit_logs.before` and `audit_logs.after` — minimal redacted snapshots/diffs.
+- `saved_views.definition` — versioned typed record-query definition. It is validated by FastAPI at save and execution, and is redacted from audit snapshots.
 
 `[Implemented]` Python `StrEnum` values are persisted as bounded `varchar`/`String` columns, not PostgreSQL native enum types. Database checks back the following values: `UserStatus` (`pending`, `active`, `disabled`), `FieldType` (the nine field values above), `AuditAction` (`create`, `update`, `delete`), `LifecycleOperation` (`close`, `purge`), and `LifecycleChallengeStatus` (the six challenge states above). `UserRole` (`admin`, `member`) is a Python/application classification only; `roles.role` has no matching DB check. Lifecycle `target_type` is also polymorphic application data, only constrained to non-empty text.
 
@@ -213,19 +221,19 @@ Source: [`audit/listeners.py`](../../backend/app/systems/audit/listeners.py), [`
 
 - `openslate_app` is a `NOLOGIN` privilege role created by revision `0010`.
 - `openslate_runtime` is provisioned separately by [`provision_database_role.py`](../../backend/scripts/provision_database_role.py) as a constrained, inheriting login (`NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, `NOBYPASSRLS`) and is granted a non-delegable membership in `openslate_app`. On catalogs with membership options, that edge requires `INHERIT TRUE` and `SET FALSE`; older catalogs are checked through their available `admin_option`. The script checks the exact recursive membership set and never silently revokes drift.
-- `openslate_app` has `USAGE` on `public`; `SELECT/INSERT/UPDATE/DELETE` on `users`, `roles`, `departments`, `modules`, `fields`, and `records`; `SELECT/INSERT` on `audit_logs`; `SELECT/INSERT/UPDATE` on `relationship_edges` until revision `0014` adds `DELETE`; and all four CRUD privileges on the three lifecycle tables. It can `SELECT` `alembic_version`. UUID keys mean no sequence privilege is required.
+- `openslate_app` has `USAGE` on `public`; CRUD on core domain tables, `saved_views`, and `files`; `SELECT/UPDATE` on the migration-seeded `workspace_profiles`; `SELECT/INSERT` on `audit_logs`; and the documented lifecycle privileges. It can `SELECT` `alembic_version`. UUID keys mean no sequence privilege is required.
 - Policies for `openslate_app` use `USING (true)` / `WITH CHECK (true)` for the granted operations, including audit insert/select, edge delete after `0014`, and lifecycle CRUD. RLS therefore protects the boundary between roles, but is not the domain authorization layer or a tenant filter.
 - `anon`, `authenticated`, and `service_role` effective privileges on application tables/functions are denied by revocations distributed across revisions `0010`, `0011`, and `0013`, together with default-privilege changes. `0013` relies on default privileges rather than an explicit client-role revoke for `lifecycle_rate_limit_failures`. `PUBLIC` loses `CREATE` on `public`. Authenticated Realtime receipt uses the narrowly scoped security-definer profile check rather than direct application-table access.
 
 The effective actor authorization and audit boundary remain in FastAPI: JWT/local-profile validation, capability guards for domain reads/writes, literal-admin guards for management and purge operations, audited individual ORM writes, and lifecycle services. A direct database login bypasses these RBAC assumptions; a leaked login with equivalent owner/bypass capabilities would also bypass the application boundary. The intended runtime login is the provisioned role above.
 
-Sources: [`0010_supabase_cutover.py`](../../backend/migrations/versions/20260819_0010_supabase_cutover.py), [`0011_add_relationship_edges.py`](../../backend/migrations/versions/20260819_0011_add_relationship_edges.py), [`0013_lifecycle_foundation.py`](../../backend/migrations/versions/20260829_0013_lifecycle_foundation.py), [`0014_allow_relationship_edge_purge.py`](../../backend/migrations/versions/20260830_0014_allow_relationship_edge_purge.py), and [`settings.py`](../../backend/app/core/config/settings.py).
+Sources: [`0010_supabase_cutover.py`](../../backend/migrations/versions/20260819_0010_supabase_cutover.py), [`0011_add_relationship_edges.py`](../../backend/migrations/versions/20260819_0011_add_relationship_edges.py), [`0013_lifecycle_foundation.py`](../../backend/migrations/versions/20260829_0013_lifecycle_foundation.py), [`0014_allow_relationship_edge_purge.py`](../../backend/migrations/versions/20260830_0014_allow_relationship_edge_purge.py), [`workspace_profile.py`](../../backend/migrations/versions/e42d4f1e6b41_workspace_profile.py), [`saved_record_views.py`](../../backend/migrations/versions/709412f53ee5_saved_record_views.py), [`private_file_inventory.py`](../../backend/migrations/versions/17cf3df01f7a_private_file_inventory.py), [`workspace_logo_reference.py`](../../backend/migrations/versions/c8a1056a0758_workspace_logo_reference.py), and [`settings.py`](../../backend/app/core/config/settings.py).
 
 ## 8. Migration chain, drift, and delivery
 
 ### Current linear chain
 
-`[Implemented]` The chain is linear, contains 15 revisions, and currently ends at `20260831_0015`:
+`[Implemented]` The chain is linear. The current P6–P8 continuation starts at `fc105d5b6283` and ends at `c8a1056a0758`:
 
 | Revision        | Schema responsibility                                                                                                   |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -244,6 +252,11 @@ Sources: [`0010_supabase_cutover.py`](../../backend/migrations/versions/20260819
 | `20260829_0013` | Lifecycle challenge/rate-limit tables, audit metadata, RLS/grants, and rollout audit reclassification.                  |
 | `20260830_0014` | Runtime `DELETE` grant and RLS policy for relationship-edge purge.                                                      |
 | `20260831_0015` | Converts decimal field config bounds and UUID-keyed record values to canonical JSON strings across active and closed rows; preserves explicit JSON `null` bounds. |
+| `fc105d5b6283` | Adds the field audit-redaction flag; base revision for the current P6–P8 continuation. |
+| `e42d4f1e6b41` | Creates and seeds the singleton workspace profile with its RLS/grants. |
+| `709412f53ee5` | Creates saved views with visibility, revision, definition, indexes, RLS, and grants. |
+| `17cf3df01f7a` | Creates private file metadata, constraints, indexes, RLS, and grants. |
+| `c8a1056a0758` | Adds the restrictive workspace current-logo file reference and removes workspace-profile insert privilege. |
 
 ### Alembic behavior and drift strategy
 
@@ -257,7 +270,7 @@ supabase start
   -> alembic check detects model/database drift
 ```
 
-The local database was verified at head `20260831_0015`, and `uv run alembic check` reported no new upgrade operations during the dynamic-field validation audit. Re-run that check against the intended PostgreSQL database after migrations and before deployment; do not use SQLite or treat a model-only change as delivered schema. Preserve revision order and add a new forward migration for schema changes.
+The expected head is `c8a1056a0758`. Re-run Alembic drift checks against the intended PostgreSQL database after migrations and before deployment; do not use SQLite or treat a model-only change as delivered schema. Preserve revision order and add a new forward migration for schema changes.
 
 ### Deployment prerequisites and compatibility
 

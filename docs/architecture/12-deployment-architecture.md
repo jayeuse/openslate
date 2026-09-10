@@ -45,22 +45,25 @@ flowchart TD
 The corresponding commands are documented in `README.md`:
 
 - `supabase start` starts the local platform.
-- `cd backend && uv sync && uv run alembic upgrade head` installs backend
+- `cd backend && uv sync --locked && uv run alembic upgrade head` installs backend
   dependencies and applies the application schema.
 - `uv run python scripts/provision_database_role.py` uses the owner connection
-  and `OPENSLATE_DATABASE_PASSWORD` to create or update the constrained
+  and the password encoded in `DATABASE_URL` to create or update the constrained
   `openslate_runtime` login and grant membership in `openslate_app`.
-- `uv run python scripts/bootstrap_admin.py --email <email> --username
-<username>` reserves a pending single-use administrator assignment through
+- `uv run python scripts/bootstrap_admin.py` reads `ADMIN_EMAIL` and
+  `ADMIN_USERNAME` from canonical configuration and reserves a pending single-use
+  administrator assignment through
   Supabase Auth invitation delivery and leaves the Auth-created profile `pending`
   until verified post-password acceptance via `/session/password` to private
   `POST /api/auth/invitations/accept`. Outside local environments it also
-  requires `--confirm` or `BOOTSTRAP_ADMIN_CONFIRM`.
-- `uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000` and
-  `npm run dev -- --hostname 127.0.0.1` start the application processes.
+  requires the explicit `--confirm` flag. `ADMIN_PASSWORD` is local sign-in
+  metadata; bootstrap still delivers an invitation and never applies it.
+- `uv run python -m app --reload` and `npm run dev` start the application
+  processes using the configured stack ports. Local npm commands regenerate
+  the frontend allowlist from root `.env`; do not source root secrets into Node.
 
-`backend/migrations/env.py` chooses `MIGRATION_DATABASE_URL` and falls back to
-`DATABASE_URL`, imports the model registry, excludes the external Auth profile
+`backend/migrations/env.py` requires `MIGRATION_DATABASE_URL` without a runtime
+URL fallback, imports the model registry, excludes the external Auth profile
 table placeholder from autogeneration, and runs the linear Alembic chain. The
 checked-in migration chain is resolved dynamically by Alembic (`upgrade head`,
 `check`, or `heads`); release procedures must not hard-code a revision ID.
@@ -72,15 +75,20 @@ chain.
 
 ## Standalone image artifacts — Implemented
 
-| Image    | Build and runtime behavior                                                                                                                                                                                                         | Operational boundary                                                                                                                                                                             |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Backend  | `python:3.13-slim`; copies the pinned `backend/uv.lock`; runs `uv sync --frozen --no-dev`; copies backend source; creates UID 10001 `appuser`; exposes 8000; runs `uvicorn app.main:app --host 0.0.0.0 --port 8000`.               | Does not run Alembic, role provisioning, admin bootstrap, or Supabase startup. `DATABASE_URL` and other runtime settings are supplied externally.                                                |
-| Frontend | Multi-stage `node:24-alpine`; runs `npm ci` and `npm run build` with required `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` build arguments; uses Next standalone output; creates UID 10001 `nextjs`; sets `NODE_ENV=production`, `HOSTNAME=0.0.0.0`, and `PORT=3000`; exposes 3000 and runs `node server.js`. | No database or Supabase platform is bundled. `BACKEND_URL` is runtime-only for the `/bff/*` Route Handler, with the source fallback `http://localhost:8000`. |
+| Image | Build and runtime behavior | Operational boundary |
+| --- | --- | --- |
+| Backend | `python:3.13-slim`, pinned `backend/uv.lock`, `uv sync --frozen --no-dev`, UID 10001. Runs `python -m app` with explicit bind, port, concurrency, and keep-alive settings. Healthcheck reads the same `BACKEND_PORT`. | Requires runtime API configuration with `OPENSLATE_ENV_SOURCE=process`; receives no owner connection or administrator credentials. |
+| Frontend | Multi-stage `node:24-alpine`, `npm ci`, standalone output, UID 10001. Build requires all three public settings: Supabase URL, publishable key, and purge visibility. | Server endpoint, logging, and limits are supplied only at runtime. Bind/port are required inputs; no endpoint or port fallback is baked in. |
 
-The frontend standalone helper `frontend/scripts/start-standalone.mjs` copies
-`.next/static` and `public` into `.next/standalone` before importing the
-generated `server.js`. This supports the local production-style `npm start`
-path and is also reflected in the image layout.
+`frontend/scripts/start-standalone.mjs` validates public/runtime settings before
+importing `server.js` and copies static/public assets for local `npm start`.
+The image uses `--from-process`; local startup regenerates `frontend/.env.local`
+from the root configuration. Public values must match those used during build.
+
+Root Compose uses `scripts/environment.py compose ...` to derive service
+transports and apply explicit per-service environment allowlists. The effective
+environment exists in the Docker child process only; full rendered Compose
+output is secret. See [Configuration](17-configuration.md) for source modes.
 
 Both images are standalone artifacts only. Neither image migrates the application
 schema, provisions the runtime role, bootstraps an administrator, or starts
@@ -114,7 +122,9 @@ or rollback step.
 frontend, frontend-image, Docker-context, and workflow changes. It uses Node 24,
 runs `npm ci`, installs Chromium/Firefox/
 WebKit, then runs formatting, lint, typecheck, build, and Playwright E2E with
-`PLAYWRIGHT_USE_PRODUCTION=1`. It also builds the standalone frontend image with
+`PLAYWRIGHT_USE_PRODUCTION=1`. A separate `npm run test:scanner:coverage` step
+measures scanner UI executable lines using development source maps and enforces
+90%; it does not replace production browser acceptance. It also builds the standalone frontend image with
 the required public Supabase build arguments. It uploads the HTML Playwright
 report always and test results on failure. It has no image publishing or
 deployment step.
@@ -131,7 +141,9 @@ This avoids path-filtered required checks remaining pending.
 For relevant changes, `backend/tests/fullstack_runner.py` creates a fresh
 Supabase stack on dedicated ports, applies the dynamically discovered Alembic
 head and drift check, provisions the runtime role, starts FastAPI, builds and
-starts production Next.js, and runs the dedicated Chromium browser suite. It
+starts production Next.js, and runs the dedicated Chromium browser suite. The
+scanner helper provisions a pinned ClamAV engine with official definitions and
+a serial worker on an internal container network. It
 uses per-run identities and a private temporary fixture, retains only a
 sanitized acceptance summary, and stops the disposable stack without a backup.
 It also runs the read-only operational checker. This is a real
@@ -177,7 +189,7 @@ selections/blockers. No provider-neutral infrastructure is specified here.
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Application migrations | Alembic owns `backend/migrations/`; the 15-revision linear chain is applied explicitly with `uv run alembic upgrade head`.                                                                                                                 | Unknown. Migration 0010 needs owner-capable access to Supabase-managed Realtime metadata and role DDL; its hosted branch fails closed unless that capability exists or is handled by a separately approved owner-capable step. |
 | Drift check            | `uv run alembic check` is run locally and in backend CI.                                                                                                                                                                                   | Unknown. No hosted drift job is defined.                                                                                                                                                                                       |
-| Runtime database role  | `provision_database_role.py` requires `MIGRATION_DATABASE_URL` and `OPENSLATE_DATABASE_PASSWORD`, rejects unsafe attributes, creates/updates `openslate_runtime`, verifies the `openslate_app` role and non-delegable direct membership (including PostgreSQL membership options where available), and fails if any other direct or inherited membership exists; it never silently revokes unknown memberships. | Unknown. No hosted role-delivery or password-rotation workflow is defined. |
+| Runtime database role  | `provision_database_role.py` requires `MIGRATION_DATABASE_URL` and the runtime password encoded in `DATABASE_URL`, rejects unsafe attributes, creates/updates `openslate_runtime`, verifies the `openslate_app` role and non-delegable direct membership (including PostgreSQL membership options where available), and fails if any other direct or inherited membership exists; it never silently revokes unknown memberships. | Unknown. No hosted role-delivery or password-rotation workflow is defined. |
 | First administrator    | `bootstrap_admin.py` checks schema and seeded roles, reserves any non-deleted pending/active admin assignment (only the exact same pending reservation is idempotent), invites through server-side Supabase Auth, and leaves the profile `pending` for verified post-password acceptance; finalization rechecks under the admin-role lock and a concurrent loser remains a pending member with no destructive compensation. | Unknown. The confirmation guard exists, but no hosted bootstrap runbook or environment is defined.                                                                                                                             |
 | Optional sample data   | `seed_sample_data.py` calls the authenticated FastAPI API with an admin access token; it does not write tables directly.                                                                                                                   | Unknown. It is a development utility, not a release step.                                                                                                                                                                      |
 

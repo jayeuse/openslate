@@ -1,5 +1,7 @@
 "use client";
 
+import { useWorkspace } from "@/components/workspace-provider";
+import { canNavigate } from "@/lib/workspace";
 import Link from "next/link";
 import type { Route } from "next";
 import { useEffect, useState } from "react";
@@ -46,6 +48,16 @@ type NavigationGroup = {
 };
 
 const classicLinks = [
+  {
+    href: "/administration/files" as Route,
+    label: "Documents",
+    icon: FolderKanban,
+  },
+  {
+    href: "/settings/workspace" as Route,
+    label: "Workspace settings",
+    icon: Settings,
+  },
   { href: "/departments", label: "Departments", icon: PanelLeft },
   { href: "/sandbox", label: "Sandbox", icon: Workflow },
   { href: "/administration/users", label: "People", icon: Users },
@@ -111,6 +123,8 @@ const groups: NavigationGroup[] = [
     label: "Manage",
     icon: Settings,
     items: [
+      { label: "Documents", href: "/administration/files" as Route },
+      { label: "Workspace settings", href: "/settings/workspace" as Route },
       { label: "Organization", href: "/departments" },
       { label: "Security" },
       { label: "Audit", href: "/administration/audit" },
@@ -134,6 +148,15 @@ export function AppNavigation({
   onNavigate,
   collapsed = false,
 }: AppNavigationProps) {
+  const { user } = useWorkspace();
+  const visibleGroups = groups
+    .filter((group) => group.label !== "Access" || user.role === "admin")
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(
+        (item) => !item.href || canNavigate(user, item.href),
+      ),
+    }));
   const { setOpen } = useSidebar();
   const [openGroups, setOpenGroups] = useState<Set<string>>(
     () =>
@@ -236,21 +259,23 @@ export function AppNavigation({
       <nav aria-label="Main navigation">
         <SidebarMenu>
           {structure === "classic"
-            ? classicLinks.map(({ href, label, icon: Icon }) => (
-                <SidebarMenuItem key={label}>
-                  <SidebarMenuButton
-                    render={<Link href={href} onNavigate={onNavigate} />}
-                    isActive={isCurrent(href)}
-                    aria-current={isCurrent(href) ? "page" : undefined}
-                    aria-label={collapsed ? label : undefined}
-                    title={collapsed ? label : undefined}
-                  >
-                    <Icon aria-hidden="true" />
-                    <span>{label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))
-            : groups.map((group) => {
+            ? classicLinks
+                .filter(({ href }) => canNavigate(user, href))
+                .map(({ href, label, icon: Icon }) => (
+                  <SidebarMenuItem key={label}>
+                    <SidebarMenuButton
+                      render={<Link href={href} onNavigate={onNavigate} />}
+                      isActive={isCurrent(href)}
+                      aria-current={isCurrent(href) ? "page" : undefined}
+                      aria-label={collapsed ? label : undefined}
+                      title={collapsed ? label : undefined}
+                    >
+                      <Icon aria-hidden="true" />
+                      <span>{label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))
+            : visibleGroups.map((group) => {
                 const { label, icon: Icon, future } = group;
                 const active = group.items.some(
                   ({ href, note }) => href && !note && isCurrent(href),

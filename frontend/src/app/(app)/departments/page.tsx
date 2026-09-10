@@ -1,4 +1,6 @@
 "use client";
+import { useWorkspace } from "@/components/workspace-provider";
+import { formatWorkspaceDate } from "@/lib/date-time";
 
 import { useEffect, useState } from "react";
 import {
@@ -23,6 +25,7 @@ import {
 } from "@/lib/api";
 
 export default function DepartmentsPage() {
+  const { profile } = useWorkspace();
   const [items, setItems] = useState<Department[]>([]);
   const [search, setSearch] = useState("");
   const [deleted, setDeleted] = useState("include");
@@ -164,7 +167,7 @@ export default function DepartmentsPage() {
                   {department.department_name}
                 </h2>
                 <p className="text-muted-foreground mt-1 text-xs">
-                  Created {new Date(department.created_at).toLocaleDateString()}
+                  Created {formatWorkspaceDate(department.created_at, profile)}
                 </p>
                 <div className="mt-5 flex flex-wrap items-center gap-3">
                   <a

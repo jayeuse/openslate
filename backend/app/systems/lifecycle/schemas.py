@@ -10,6 +10,7 @@ class LifecycleTargetType(StrEnum):
     MODULE = "module"
     FIELD = "field"
     RECORD = "record"
+    FILE = "file"
 
 
 class LifecycleOperation(StrEnum):
@@ -27,6 +28,7 @@ class LifecycleBlockerCode(StrEnum):
     RECORD_DATA_INVALID = "record_data_invalid"
     RECORD_CLOSE_UNSUPPORTED = "record_close_unsupported"
     PURGE_EXTERNAL_SCHEMA_DEPENDENCY = "purge_external_schema_dependency"
+    PURGE_FILE_DEPENDENCY = "purge_file_dependency"
 
 
 class LifecycleRowState(BaseModel):
@@ -38,6 +40,7 @@ class LifecycleRowState(BaseModel):
     deleted_at: datetime | None
     updated_at: datetime
     state_fingerprint: str = ""
+    byte_count: int | None = None
 
 
 class LifecycleEdgeState(BaseModel):

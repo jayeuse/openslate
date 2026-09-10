@@ -16,6 +16,9 @@ classDiagram
     Field "1" --> "many" RelationshipEdge
     Record "1" --> "many" RelationshipEdge : source
     Record "1" --> "many" RelationshipEdge : target
+    Module "1" --> "many" SavedView
+    Record "0..1" --> "many" File : attachments
+    WorkspaceProfile "0..1" --> "1" File : current logo
     Role "1" --> "many" User
     User "0..1" --> "many" AuditLog : actor
     class Module {
@@ -45,6 +48,9 @@ classDiagram
 | Relationship edge              | Directed link from source record to target record governed by a relationship field | relationships service/router                  | **Implemented**                                  |
 | Audit log                      | Immutable application record of one ORM entity mutation                            | audit listeners only                          | **Implemented**                                  |
 | Lifecycle challenge/rate state | Short-lived confirmation and password-failure state for close/purge                | lifecycle service                             | **Implemented**                                  |
+| Workspace profile              | One deployment-wide organization identity, timezone, locale, revision, and optional current logo | workspace router | **Implemented** |
+| Saved view                     | Versioned query definition owned by a user and private or published to the deployment | views router | **Implemented** |
+| File                           | Private metadata for a record attachment, administrator document, or workspace logo | files router/service | **Implemented / scanner fail closed** |
 
 Persistence definitions: `backend/app/systems/*/models.py`. API schemas and mutation rules live beside each capability.
 
@@ -101,6 +107,18 @@ Field close/reopen invalidates parent schema acceptance inside existing module l
 
 Evidence: `records/router.py:validate_record_mutation`, record schemas, `fields/validation.py`.
 
+### Query definitions and saved views
+
+Record query definitions are versioned, single-module requests with up to 100 primitive columns, 10 AND-connected predicates, and 3 sort keys. The records query compiler validates stable field IDs and expected types before applying typed JSONB comparisons, standard offset pagination, and a UUID tie-breaker. The same definition is used for interactive results and CSV export; export ignores page offset/limit, runs in a repeatable-read snapshot, and bounds output to 10,000 rows and 8 MiB.
+
+A saved view retains its definition, owner, name, revision, and either `private` or `workspace` visibility. A private view is visible only to its owner. Only the literal `admin` role may create or modify a workspace-visible view; publishing creates a separate shared definition. View execution still requires current `records.read`, so a saved definition never grants record access. Incompatible field/type/select changes fail with `view_invalid` rather than removing predicates.
+
+### Workspace profile and files
+
+`WorkspaceProfile` is a non-deletable singleton seeded as `OpenSlate`, `UTC`, and `en-US`. All eligible users may read it; only the literal `admin` role may change it with its revision. The timezone controls frontend date-time entry/display and CSV instant formatting; date-only values remain calendar dates.
+
+`File` has an immutable purpose: `record_attachment` requires a record parent, while `library_document` and `workspace_logo` do not. Attachments follow `records.read`/`records.write`; the document library and logo administration require literal admin. Metadata tracks immutable object identity, digest, processing state, scanner provenance, archive state, scan requester, attempts and next-attempt time. Successful upload schedules the serial worker; unconfigured or unavailable scanning retains quarantine. Claims and publication recheck requester authority, parent state and byte identity. Uncertain execution halts admission until operator recovery. Archiving retains authorized download of ready bytes; purge is a separate administrator/lifecycle flow that records external deletion state. Only the profile's current clean logo is exposed through the workspace-logo route.
+
 ### Relationships
 
 A relationship edge has one field, source record, and target record. The service checks:
@@ -151,5 +169,5 @@ Direct database writers can bypass application-only invariants and audit capture
 ## Domain capabilities not present
 
 - A tenant/business ownership key is **Absent** from current entities; each deployment is one trust domain, with no tenant/RLS isolation.
-- Reports, saved views, and files have package placeholders but no domain model or operational behavior.
+- Aggregate reports/charts are absent. Saved views, typed record querying, bounded CSV export, and private file metadata/transfer are implemented; the `businesses` package remains a tenancy placeholder.
 - Resource ownership checks are **Absent**; authorization is global capability/role based within the deployment, and direct database writers bypass FastAPI RBAC.
