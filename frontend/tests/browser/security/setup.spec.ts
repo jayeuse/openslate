@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../coverage";
 import { testSecret } from "../../helpers/test-secret";
 const validPassword = testSecret();
 

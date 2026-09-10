@@ -1,5 +1,5 @@
 import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../coverage";
 import { testSecret } from "../../helpers/test-secret";
 import {
   DEPARTMENT_ID,

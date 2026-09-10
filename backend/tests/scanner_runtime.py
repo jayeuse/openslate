@@ -120,6 +120,12 @@ class DisposableScanner:
             self._remove_container(name)
 
     def _build(self) -> None:
+        # Keep the installed builder available without importing personal Docker credentials.
+        plugin = Path.home() / ".docker/cli-plugins/docker-buildx"
+        destination = Path(self.env["HOME"]) / ".docker/cli-plugins/docker-buildx"
+        if plugin.is_file() and not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.symlink_to(plugin.resolve())
         context = self.private / "scanner-build"
         (context / "infra/clamav").mkdir(parents=True, exist_ok=True)
         (context / "infra/docker").mkdir(exist_ok=True)

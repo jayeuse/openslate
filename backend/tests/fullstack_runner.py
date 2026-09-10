@@ -25,8 +25,12 @@ import httpx
 from sqlalchemy import create_engine, text
 
 if __package__:
+    from .backend_batches import parse_batch, run_backend_batches
+    from .backend_coverage import run_backend_coverage
     from .scanner_runtime import DisposableScanner
 else:
+    from backend_batches import parse_batch, run_backend_batches
+    from backend_coverage import run_backend_coverage
     from scanner_runtime import DisposableScanner
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -151,15 +155,21 @@ def seed(owner_url, secret_key, run_id):
 
 
 def main(arguments=()):
-    if list(arguments) not in ([], ["--scanner-only"]):
-        raise SystemExit("Usage: fullstack_runner.py [--scanner-only]")
+    batch = parse_batch(arguments, BACKEND)
+    if not batch and list(arguments) not in ([], ["--scanner-only"], ["--backend-coverage-only"]):
+        raise SystemExit("Usage: fullstack_runner.py [--scanner-only | --backend-coverage-only]")
+    backend_only = batch is not None or list(arguments) == ["--backend-coverage-only"]
     scanner_only = list(arguments) == ["--scanner-only"]
+    if not scanner_only and batch is None:
+        output = BACKEND / "test-results/coverage"
+        if output.exists():
+            shutil.rmtree(output)
     for port in (55321, 55322, 55323, 55324, 8008, 3008):
         with socket.socket() as listener:
             try:
                 listener.bind(("127.0.0.1", port))
-            except OSError:
-                print(f"Full-stack preflight failed: dedicated test port {port} is in use.")
+            except OSError as error:
+                print(f"Test port {port} unavailable: {error.strerror or 'cannot bind'}.")
                 return 1
     run_id = uuid4().hex
     private = Path(tempfile.mkdtemp(prefix="openslate-p5-"))
@@ -171,7 +181,9 @@ def main(arguments=()):
     scanner = None
     scanner_observations = {}
     failure_type = failure_message = None
-    summary_path = FRONTEND / "test-results/fullstack-summary.json"
+    summary_path = (BACKEND / "test-results/batches/summary.json" if batch else
+                    BACKEND / "test-results/coverage/summary.json" if backend_only
+                    else FRONTEND / "test-results/fullstack-summary.json")
     base_env = {"PATH": os.environ["PATH"], "OPENSLATE_ENV_SOURCE": "process"}
     # Browser binaries remain in the installer's cache while runtime HOME is private.
     browser_cache = Path.home() / ("Library/Caches" if sys.platform == "darwin" else ".cache")
@@ -270,136 +282,123 @@ def main(arguments=()):
             "SERVER_KEEP_ALIVE_SECONDS": "5",
         }
         if not scanner_only:
-            stage = "backend regression and coverage gate"
+            stage = "backend batch" if batch else "backend regression and coverage gate"
+            execute = run_backend_batches if batch else run_backend_coverage
+            result = execute(run, BACKEND, private, {
+                **api_env, "MIGRATION_DATABASE_URL": owner_url,
+                "TEST_DATABASE_URL": runtime_url, "OPENSLATE_FULLSTACK_RUN_ID": run_id,
+                "E2E_ALLOW_MUTATIONS": "true",
+            }, run_id, *([batch] if batch else []))
+        if backend_only:
+            result = result if batch else 0
+        else:
+            stage = "official scanner generation"
+            scanner = DisposableScanner(ROOT, private, run_id, base_env, log)
+            scanner_observations = scanner.observations
+            scanner.start()
+            stage = "dedicated identities"
+            identities = seed(owner_url, secret_key, run_id)
+            fixture = private / "fixture.json"
+            fixture.write_text(
+                json.dumps(
+                    {
+                        "runId": run_id,
+                        "baseURL": WEB,
+                        "authURL": AUTH,
+                        "mailURL": "http://127.0.0.1:55324",
+                        **identities,
+                    }
+                )
+            )
+            fixture.chmod(0o600)
+            stage = "FastAPI startup"
+            processes.append(
+                subprocess.Popen(
+                    [
+                        sys.executable, "-m", "uvicorn", "app.main:app",
+                        "--host", "127.0.0.1", "--port", "8008",
+                        "--no-access-log",
+                        "--limit-concurrency", "32",
+                    ],
+                    cwd=BACKEND,
+                    env=api_env,
+                    stdout=log,
+                    stderr=log,
+                    start_new_session=True,
+                )
+            )
+            wait_for(API + "/api/ready", processes[-1])
+            stage = "automatic scan worker"
+            scanner.start_worker(api_env)
+            stage = "bounded admission and recovery"
+            admission = measure_admission()
+            frontend_env = {
+                **base_env,
+                "BACKEND_URL": API,
+                "SUPABASE_SERVER_URL": AUTH,
+                "LOG_DIR": str(private / "frontend-logs"),
+                "BFF_REQUEST_BODY_LIMIT_BYTES": "1048576",
+                "BFF_RESPONSE_BODY_LIMIT_BYTES": "8388608",
+                "BFF_REQUEST_DEADLINE_MS": "60000",
+                "NEXT_PUBLIC_SUPABASE_URL": AUTH,
+                "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": publishable,
+                "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED": "false",
+                "PORT": "3008",
+                "HOSTNAME": "localhost",
+            }
+            stage = "production frontend build"
+            run(["npm", "run", "build", "--", "--from-process", "--webpack"],
+                FRONTEND, frontend_env)
+            stage = "production frontend startup"
+            processes.append(
+                subprocess.Popen(
+                    ["npm", "run", "start", "--", "--from-process"],
+                    cwd=FRONTEND,
+                    env=frontend_env,
+                    stdout=log,
+                    stderr=log,
+                    start_new_session=True,
+                )
+            )
+            wait_for(WEB + "/login", processes[-1])
+            stage = "browser acceptance"
+            test_env = {
+                **frontend_env,
+                "OPENSLATE_FULLSTACK_FIXTURE": str(fixture),
+                "OPENSLATE_FULLSTACK_RUN_ID": run_id,
+                "E2E_ALLOW_MUTATIONS": "true",
+                "PLAYWRIGHT_NO_COPY_PROMPT": "1",
+            }
             run(
                 [
-                    sys.executable,
-                    "-m",
-                    "pytest",
-                    "-q",
-                    "--cov=app",
-                    "--cov=scripts.check_operational_health",
-                    "--cov-report=term",
-                    f"--cov-report=json:{private / 'coverage.json'}",
-                    f"--junitxml={private / 'pytest.xml'}",
+                    "npx",
+                    "playwright",
+                    "test",
+                    "--config=playwright.fullstack.config.ts",
+                    *(["workspace-views-files.spec.ts"] if scanner_only else []),
                 ],
-                BACKEND,
-                {
-                    **api_env,
-                    "MIGRATION_DATABASE_URL": owner_url,
-                    "TEST_DATABASE_URL": runtime_url,
-                    "OPENSLATE_FULLSTACK_RUN_ID": run_id,
-                    "E2E_ALLOW_MUTATIONS": "true",
-                },
+                FRONTEND,
+                test_env,
             )
-            coverage = json.loads((private / "coverage.json").read_text())
-            print(f"Backend coverage: {coverage['totals']['percent_covered']:.2f}%", flush=True)
-        stage = "official scanner generation"
-        scanner = DisposableScanner(ROOT, private, run_id, base_env, log)
-        scanner_observations = scanner.observations
-        scanner.start()
-        stage = "dedicated identities"
-        identities = seed(owner_url, secret_key, run_id)
-        fixture = private / "fixture.json"
-        fixture.write_text(
-            json.dumps(
-                {
-                    "runId": run_id,
-                    "baseURL": WEB,
-                    "authURL": AUTH,
-                    "mailURL": "http://127.0.0.1:55324",
-                    **identities,
-                }
-            )
-        )
-        fixture.chmod(0o600)
-        stage = "FastAPI startup"
-        processes.append(
-            subprocess.Popen(
-                [
-                    sys.executable, "-m", "uvicorn", "app.main:app",
-                    "--host", "127.0.0.1", "--port", "8008",
-                    "--no-access-log",
-                    "--limit-concurrency", "32",
-                ],
-                cwd=BACKEND,
-                env=api_env,
-                stdout=log,
-                stderr=log,
-                start_new_session=True,
-            )
-        )
-        wait_for(API + "/api/ready", processes[-1])
-        stage = "automatic scan worker"
-        scanner.start_worker(api_env)
-        stage = "bounded admission and recovery"
-        admission = measure_admission()
-        frontend_env = {
-            **base_env,
-            "BACKEND_URL": API,
-            "SUPABASE_SERVER_URL": AUTH,
-            "LOG_DIR": str(private / "frontend-logs"),
-            "BFF_REQUEST_BODY_LIMIT_BYTES": "1048576",
-            "BFF_RESPONSE_BODY_LIMIT_BYTES": "8388608",
-            "BFF_REQUEST_DEADLINE_MS": "60000",
-            "NEXT_PUBLIC_SUPABASE_URL": AUTH,
-            "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": publishable,
-            "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED": "false",
-            "PORT": "3008",
-            "HOSTNAME": "localhost",
-        }
-        stage = "production frontend build"
-        run(["npm", "run", "build", "--", "--from-process", "--webpack"], FRONTEND, frontend_env)
-        stage = "production frontend startup"
-        processes.append(
-            subprocess.Popen(
-                ["npm", "run", "start", "--", "--from-process"],
-                cwd=FRONTEND,
-                env=frontend_env,
-                stdout=log,
-                stderr=log,
-                start_new_session=True,
-            )
-        )
-        wait_for(WEB + "/login", processes[-1])
-        stage = "browser acceptance"
-        test_env = {
-            **frontend_env,
-            "OPENSLATE_FULLSTACK_FIXTURE": str(fixture),
-            "OPENSLATE_FULLSTACK_RUN_ID": run_id,
-            "E2E_ALLOW_MUTATIONS": "true",
-            "PLAYWRIGHT_NO_COPY_PROMPT": "1",
-        }
-        run(
-            [
-                "npx",
-                "playwright",
-                "test",
-                "--config=playwright.fullstack.config.ts",
-                *(["workspace-views-files.spec.ts"] if scanner_only else []),
-            ],
-            FRONTEND,
-            test_env,
-        )
-        stage = "real worker crash recovery"
-        if __package__:
-            from .scanner_recovery import verify_worker_recovery
-        else:
-            from scanner_recovery import verify_worker_recovery
-        verify_worker_recovery(scanner, api_env, identities["admin"])
-        stage = "read-only operational checker"
-        try:
-            run([sys.executable, "scripts/check_operational_health.py"], BACKEND, api_env)
-            checker_exit = 0
-        except subprocess.CalledProcessError as error:
-            checker_exit = error.returncode
-            if checker_exit != 1:
-                raise
-        result = 0
+            stage = "real worker crash recovery"
+            if __package__:
+                from .scanner_recovery import verify_worker_recovery
+            else:
+                from scanner_recovery import verify_worker_recovery
+            verify_worker_recovery(scanner, api_env, identities["admin"])
+            stage = "read-only operational checker"
+            try:
+                run([sys.executable, "scripts/check_operational_health.py"], BACKEND, api_env)
+                checker_exit = 0
+            except subprocess.CalledProcessError as error:
+                checker_exit = error.returncode
+                if checker_exit != 1:
+                    raise
+            result = 0
     except Exception as error:
         failure_type = type(error).__name__
         failure_message = str(error) if type(error) is RuntimeError else None
-        print(f"Full-stack FAIL at {stage} ({failure_type}). See sanitized fullstack-summary.json.")
+        print(f"Full-stack FAIL at {stage} ({failure_type}). See {summary_path}.")
         result = 1
     finally:
         try:
@@ -431,9 +430,6 @@ def main(arguments=()):
                     print("Disposable stack cleanup failed; operator attention required.")
                     result = 1
             log.close()
-            coverage_path = private / "coverage.json"
-            if coverage_path.exists():
-                shutil.copyfile(coverage_path, BACKEND / "coverage.json")
             browser_results = []
             backend_failures = []
             backend_counts = {}
@@ -472,7 +468,9 @@ def main(arguments=()):
                 json.dumps(
                     {
                         "result": "passed" if result == 0 else "failed",
-                        "scope": "scanner-only" if scanner_only else "full",
+                        "scope": ("backend-batch" if batch else
+                                  "backend-coverage-only" if backend_only
+                                  else "scanner-only" if scanner_only else "full"),
                         "backend_tests_rerun": not scanner_only,
                         "stage": stage,
                         "browser_tests": browser_results,
@@ -492,7 +490,9 @@ def main(arguments=()):
             log.close()
             shutil.rmtree(private)
     if result == 0:
-        print("Full-stack PASS: production browser/Auth/BFF/API/PostgreSQL acceptance.")
+        print("Backend batch session PASS (no coverage gate)." if batch else
+              "Backend coverage PASS." if backend_only else
+              "Full-stack PASS: production browser/Auth/BFF/API/PostgreSQL acceptance.")
     return result
 
 

@@ -1,4 +1,4 @@
-import { test as base } from "@playwright/test";
+import { test as base } from "../coverage";
 import { writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 

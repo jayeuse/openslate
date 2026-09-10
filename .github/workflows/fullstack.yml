@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      coverage_base:
+        description: Git revision for changed-production-line coverage
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -28,19 +33,28 @@ jobs:
       - name: Detect relevant changes
         id: changes
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ inputs.coverage_base || github.event.pull_request.base.sha || github.event.before }}
         run: |
           python3 - <<'PY'
           import os, subprocess
           base = os.environ.get("BASE_SHA", "")
           relevant = True
-          if base and set(base) != {"0"}:
+          if os.environ.get("EVENT_NAME") != "workflow_dispatch" and base and set(base) != {"0"}:
               result = subprocess.run(["git", "diff", "--name-only", base, "HEAD"], capture_output=True, text=True)
               if result.returncode == 0:
-                  relevant = any(p.startswith(("backend/", "frontend/", "supabase/", "infra/", ".github/workflows/")) or p in {".env.example", ".dockerignore", "compose.yaml", "scripts/environment.py"} for p in result.stdout.splitlines())
+                  relevant = any(p.startswith(("backend/", "frontend/", "supabase/", "infra/", ".github/workflows/")) or p in {".env.example", ".dockerignore", "compose.yaml", "scripts/environment.py", "scripts/check_coverage.py", "scripts/test_check_coverage.py"} for p in result.stdout.splitlines())
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               output.write(f"run={'true' if relevant else 'false'}\n")
           PY
+
+      - name: Record coverage comparison base
+        if: steps.changes.outputs.run == 'true'
+        env:
+          BASE_SHA: ${{ inputs.coverage_base || github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          coverage_base=$(git merge-base HEAD "$BASE_SHA")
+          printf 'COVERAGE_BASE_REF=%s\n' "$coverage_base" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
         if: steps.changes.outputs.run == 'true'

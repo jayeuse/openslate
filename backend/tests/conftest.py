@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from collections.abc import Generator
@@ -27,21 +28,58 @@ if os.getenv("TEST_DATABASE_URL") is None and os.getenv("E2E_ALLOW_MUTATIONS") !
 def _guard_integration_database(database_url: str) -> None:
     """Allow integration tests to touch only the disposable local Supabase DB."""
 
-    parsed = urlsplit(database_url)
-    if parsed.scheme not in {"postgresql", "postgresql+psycopg", "postgres"}:
-        raise RuntimeError("TEST_DATABASE_URL must use a PostgreSQL URL")
-    if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        raise RuntimeError("TEST_DATABASE_URL must target loopback")
-    disposable_fullstack = (
-        os.getenv("E2E_ALLOW_MUTATIONS") == "true"
-        and re.fullmatch(r"[a-f0-9]{32}", os.getenv("OPENSLATE_FULLSTACK_RUN_ID", "")) is not None
-        and parsed.hostname == "127.0.0.1"
-        and parsed.port == 55322
-    )
-    if parsed.port != 54322 and not disposable_fullstack:
-        raise RuntimeError("TEST_DATABASE_URL must target the local Supabase port")
-    if parsed.path.rstrip("/") != "/postgres":
-        raise RuntimeError("TEST_DATABASE_URL must target the local disposable postgres DB")
+    run_id = os.getenv("OPENSLATE_FULLSTACK_RUN_ID", "")
+    try:
+        parsed = urlsplit(database_url)
+        manifest_path = Path(os.environ["OPENSLATE_TEST_DATABASE_MANIFEST"])
+        manifest = json.loads(manifest_path.read_text())
+        allowed = (
+            os.getenv("E2E_ALLOW_MUTATIONS") == "true"
+            and re.fullmatch(r"[a-f0-9]{32}", run_id) is not None
+            and parsed.scheme == "postgresql+psycopg"
+            and parsed.hostname == "127.0.0.1" and parsed.port == 55322
+            and parsed.path == "/postgres" and not parsed.query and not parsed.fragment
+            and parsed.username in {"postgres", "openslate_runtime"} and parsed.password
+            and all(
+                database_url != os.getenv(name) or parsed.username == role
+                for name, role in (
+                    ("TEST_DATABASE_URL", "openslate_runtime"),
+                    ("MIGRATION_DATABASE_URL", "postgres"),
+                )
+            )
+            and manifest_path.stat().st_mode & 0o077 == 0
+            and manifest["run_id"] == run_id and database_url in manifest["urls"]
+        )
+    except (KeyError, OSError, ValueError, TypeError):
+        allowed = False
+    if not allowed:
+        raise RuntimeError("Database tests require the runner-owned disposable database manifest")
+
+
+def guarded_create_engine(database_url, **options):
+    """Guard direct test connections as well as shared session fixtures."""
+    _guard_integration_database(database_url)
+    return create_engine(database_url, **options)
+
+
+@pytest.fixture(autouse=True)
+def _guard_direct_database_tests(request):
+    if request.node.get_closest_marker("integration") and os.getenv("TEST_DATABASE_URL"):
+        _guard_integration_database(os.environ["TEST_DATABASE_URL"])
+        _guard_integration_database(os.getenv("MIGRATION_DATABASE_URL", ""))
+
+
+def pytest_collection_modifyitems(session, config, items):
+    if os.getenv("OPENSLATE_REQUIRE_DATABASE_TESTS") == "true":
+        _guard_integration_database(os.getenv("TEST_DATABASE_URL", ""))
+        _guard_integration_database(os.getenv("MIGRATION_DATABASE_URL", ""))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if os.getenv("OPENSLATE_REQUIRE_DATABASE_TESTS") == "true":
+        reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+        if reporter and reporter.stats.get("skipped"):
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 def _assert_alembic_head(connection) -> None:
@@ -70,17 +108,7 @@ def integration_owner_db() -> Generator[Session, None, None]:
     if os.getenv("TEST_DATABASE_URL") is None:
         pytest.skip("Set TEST_DATABASE_URL to run PostgreSQL integration tests")
     database_url = os.getenv("MIGRATION_DATABASE_URL", "")
-    target = urlsplit(database_url)
-    if not (
-        os.getenv("E2E_ALLOW_MUTATIONS") == "true"
-        and re.fullmatch(r"[a-f0-9]{32}", os.getenv("OPENSLATE_FULLSTACK_RUN_ID", ""))
-        and target.hostname == "127.0.0.1"
-        and target.port == 55322
-        and target.path == "/postgres"
-        and target.username == "postgres"
-        and target.password
-    ):
-        raise RuntimeError("Owner fixtures require the authorized disposable full-stack database")
+    _guard_integration_database(database_url)
     yield from _integration_session(database_url)
 
 

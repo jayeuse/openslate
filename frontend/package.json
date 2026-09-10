@@ -21,7 +21,8 @@
     "test:section": "python3 ../scripts/test.py frontend section",
     "test:affected": "python3 ../scripts/test.py frontend affected",
     "test:full": "python3 ../scripts/test.py frontend full",
-    "test:scanner:coverage": "SCANNER_COVERAGE=1 TEST_LAYER=browser BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node scripts/run-playwright.mjs --project=chromium tests/browser/files/library.spec.ts && node scripts/scanner-coverage.mjs"
+    "test:scanner:coverage": "SCANNER_COVERAGE=1 TEST_LAYER=browser BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node scripts/run-playwright.mjs --project=chromium tests/browser/files/library.spec.ts && node scripts/scanner-coverage.mjs",
+    "test:coverage": "node scripts/run-coverage.mjs"
   },
   "dependencies": {
     "@antv/x6": "^3.1.8",
@@ -51,6 +52,7 @@
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.4",
     "istanbul-lib-coverage": "^3.2.2",
+    "monocart-coverage-reports": "^2.13.0",
     "prettier": "^3.6.2",
     "prettier-plugin-tailwindcss": "^0.8.1",
     "tailwindcss": "^4",

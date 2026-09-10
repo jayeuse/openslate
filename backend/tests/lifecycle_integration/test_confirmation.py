@@ -1,0 +1,320 @@
+"""Confirmation persistence contracts using the disposable lifecycle API actor."""
+
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from secrets import token_urlsafe
+from unittest.mock import Mock
+
+import pytest
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+from uuid6 import uuid7
+
+from app.systems.lifecycle.exceptions import (
+    LifecycleActorBlocked,
+    LifecycleActorMismatch,
+    LifecycleChallengeBindingMismatch,
+    LifecycleChallengeExhausted,
+    LifecycleChallengeExpired,
+    LifecycleChallengeNotFound,
+    LifecycleInvalidCredentials,
+    LifecyclePasswordServiceUnavailable,
+    LifecycleUnsupportedOperation,
+    LifecycleVerificationInProgress,
+)
+from app.systems.lifecycle.models import LifecycleChallengeStatus as Status
+from app.systems.lifecycle.models import LifecycleConfirmationChallenge as Challenge
+from app.systems.lifecycle.models import LifecycleRateLimitBucket, LifecycleRateLimitFailure
+from app.systems.lifecycle.service import (
+    begin_verification,
+    consume_challenge,
+    expire_challenge,
+    invalidate_challenge,
+    issue_challenge,
+    record_failure,
+    record_success,
+    verify_challenge,
+)
+
+pytestmark = pytest.mark.integration
+pytest_plugins = ("tests.lifecycle_integration.test_lifecycle_api_integration",)
+NOW = datetime(2026, 9, 10, tzinfo=UTC)
+
+
+def _issue(db, actor_id, *, now=NOW):
+    return issue_challenge(db, actor_id, "close", "module", uuid7(), "impact", now=now)
+
+
+def _reserve(db, issued, *, now=NOW):
+    challenge = issued.challenge
+    return begin_verification(
+        db,
+        issued.token,
+        challenge.actor_id,
+        "close",
+        "module",
+        challenge.target_id,
+        "impact",
+        now=now,
+    )
+
+
+def _verify(db, issued, provider, *, now=NOW):
+    challenge = issued.challenge
+    return verify_challenge(
+        db,
+        issued.token,
+        challenge.actor_id,
+        "close",
+        "module",
+        challenge.target_id,
+        "impact",
+        "actor@example.com",
+        token_urlsafe(32),
+        password_client=provider,
+        now=now,
+    )
+
+
+def _count(db, model, actor_id):
+    return db.scalar(select(func.count()).select_from(model).where(model.actor_id == actor_id))
+
+
+def test_wrong_password_can_retry_same_token_and_then_consume_once(lifecycle_api_client):
+    client = lifecycle_api_client()
+    provider = Mock()
+    provider.verify_password.side_effect = [
+        LifecycleInvalidCredentials("Invalid credentials"),
+        client.actor.id,
+    ]
+    with Session(client.engine) as db:
+        issued = _issue(db, client.actor.id)
+        with pytest.raises(LifecycleInvalidCredentials):
+            _verify(db, issued, provider)
+        completed = _verify(db, issued, provider, now=NOW + timedelta(seconds=1))
+        db.refresh(completed)
+        assert completed.status == Status.CONSUMED
+        assert completed.failed_attempts == 1
+        assert completed.consumed_at == NOW + timedelta(seconds=1)
+        with pytest.raises(LifecycleChallengeNotFound):
+            _verify(db, issued, provider, now=NOW + timedelta(seconds=2))
+        assert _count(db, LifecycleRateLimitFailure, client.actor.id) == 1
+    assert provider.verify_password.call_count == 2
+
+
+def test_fifth_wrong_password_exhausts_token_and_blocks_new_confirmations(lifecycle_api_client):
+    client = lifecycle_api_client()
+    provider = Mock()
+    provider.verify_password.side_effect = LifecycleInvalidCredentials("Invalid credentials")
+    with Session(client.engine) as db:
+        issued = _issue(db, client.actor.id)
+        for attempt in range(5):
+            with pytest.raises(LifecycleInvalidCredentials):
+                _verify(db, issued, provider, now=NOW + timedelta(seconds=attempt))
+        db.refresh(issued.challenge)
+        assert issued.challenge.status == Status.EXHAUSTED
+        assert issued.challenge.failed_attempts == 5
+        assert issued.challenge.consumed_at is None
+        assert issued.challenge.verification_lease_id is None
+        with pytest.raises(LifecycleChallengeExhausted):
+            _verify(db, issued, provider, now=NOW + timedelta(seconds=5))
+        db.rollback()
+        with pytest.raises(LifecycleActorBlocked):
+            _issue(db, client.actor.id, now=NOW + timedelta(seconds=5))
+        assert _count(db, LifecycleRateLimitFailure, client.actor.id) == 5
+    assert provider.verify_password.call_count == 5
+
+
+def test_wrong_password_budget_blocks_new_challenges_then_recovers(lifecycle_api_client):
+    client = lifecycle_api_client()
+    provider = Mock()
+    provider.verify_password.side_effect = LifecycleInvalidCredentials("Invalid credentials")
+    with Session(client.engine) as db:
+        for index in range(5):
+            timestamp = NOW + timedelta(minutes=index * 2)
+            issued = _issue(db, client.actor.id, now=timestamp)
+            with pytest.raises(LifecycleInvalidCredentials):
+                _verify(db, issued, provider, now=timestamp)
+            db.refresh(issued.challenge)
+            assert issued.challenge.failed_attempts == 1
+            assert issued.challenge.consumed_at is None
+        assert _count(db, LifecycleRateLimitFailure, client.actor.id) == 5
+        with pytest.raises(LifecycleActorBlocked):
+            _issue(db, client.actor.id, now=NOW + timedelta(minutes=9))
+        recovered = _issue(db, client.actor.id, now=NOW + timedelta(minutes=24))
+        assert recovered.challenge.status == Status.PENDING
+        bucket = db.scalar(
+            select(LifecycleRateLimitBucket).where(
+                LifecycleRateLimitBucket.actor_id == client.actor.id,
+            )
+        )
+        assert bucket.attempt_count == 0
+        assert bucket.blocked_until is None
+        assert _count(db, LifecycleRateLimitFailure, client.actor.id) == 0
+    assert provider.verify_password.call_count == 5
+
+
+def test_preview_cap_displaces_oldest_pending_but_never_inflight(lifecycle_api_client):
+    client = lifecycle_api_client()
+    with Session(client.engine) as db:
+        first = _issue(db, client.actor.id)
+        reserved = _issue(db, client.actor.id, now=NOW + timedelta(seconds=1))
+        lease = _reserve(db, reserved, now=NOW + timedelta(seconds=2))
+        third = _issue(db, client.actor.id, now=NOW + timedelta(seconds=3))
+        fourth = _issue(db, client.actor.id, now=NOW + timedelta(seconds=4))
+        db.refresh(first.challenge)
+        db.refresh(reserved.challenge)
+        assert first.challenge.status == Status.INVALIDATED
+        assert reserved.challenge.status == Status.VERIFYING
+        assert reserved.challenge.verification_lease_id == lease.lease_id
+        _reserve(db, third, now=NOW + timedelta(seconds=5))
+        _reserve(db, fourth, now=NOW + timedelta(seconds=6))
+        with pytest.raises(LifecycleVerificationInProgress):
+            _issue(db, client.actor.id, now=NOW + timedelta(seconds=7))
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(Challenge)
+                .where(
+                    Challenge.actor_id == client.actor.id,
+                    Challenge.status == Status.VERIFYING,
+                )
+            )
+            == 3
+        )
+        recovered = _issue(db, client.actor.id, now=NOW + timedelta(minutes=6))
+        assert recovered.challenge.status == Status.PENDING
+        assert _count(db, Challenge, client.actor.id) == 1
+
+
+@pytest.mark.parametrize("binding", ["operation", "target_type", "target_id", "impact_digest"])
+def test_wrong_binding_does_not_reserve_confirmation(lifecycle_api_client, binding):
+    client = lifecycle_api_client()
+    with Session(client.engine) as db:
+        issued = _issue(db, client.actor.id)
+        arguments = dict(
+            operation="close",
+            target_type="module",
+            target_id=issued.challenge.target_id,
+            impact_digest="impact",
+        )
+        arguments[binding] = uuid7() if binding == "target_id" else "mismatch"
+        with pytest.raises(LifecycleChallengeBindingMismatch):
+            begin_verification(db, issued.token, client.actor.id, **arguments, now=NOW)
+        db.rollback()
+        db.refresh(issued.challenge)
+        assert issued.challenge.status == Status.PENDING
+        assert issued.challenge.verification_lease_id is None
+        assert issued.challenge.failed_attempts == 0
+        assert _reserve(db, issued).challenge_id == issued.challenge_id
+
+
+@pytest.mark.parametrize("identity", ["malformed", "different"])
+def test_provider_identity_mismatch_never_consumes_confirmation(lifecycle_api_client, identity):
+    client = lifecycle_api_client()
+    provider = Mock()
+    provider.verify_password.return_value = "not-a-uuid" if identity == "malformed" else uuid7()
+    with Session(client.engine) as db:
+        issued = _issue(db, client.actor.id)
+        with pytest.raises(LifecycleActorMismatch):
+            _verify(db, issued, provider)
+        db.refresh(issued.challenge)
+        assert issued.challenge.consumed_at is None
+        assert issued.challenge.failed_attempts == 0
+        assert issued.challenge.verification_lease_id is None
+        assert issued.challenge.status == (
+            Status.PENDING if identity == "malformed" else Status.INVALIDATED
+        )
+        if identity == "malformed":
+            provider.verify_password.return_value = client.actor.id
+            assert _verify(db, issued, provider).status == Status.CONSUMED
+        else:
+            with pytest.raises(LifecycleChallengeNotFound):
+                _reserve(db, issued)
+
+
+def test_provider_outage_releases_lease_without_spending_budget(lifecycle_api_client):
+    client = lifecycle_api_client()
+    provider = Mock()
+    provider.verify_password.side_effect = LifecyclePasswordServiceUnavailable("Unavailable")
+    with Session(client.engine) as db:
+        issued = _issue(db, client.actor.id)
+        with pytest.raises(LifecyclePasswordServiceUnavailable):
+            _verify(db, issued, provider)
+        db.refresh(issued.challenge)
+        assert issued.challenge.status == Status.PENDING
+        assert issued.challenge.failed_attempts == 0
+        assert issued.challenge.verification_lease_id is None
+        assert _count(db, LifecycleRateLimitFailure, client.actor.id) == 0
+        provider.verify_password.side_effect = None
+        provider.verify_password.return_value = client.actor.id
+        assert _verify(db, issued, provider).status == Status.CONSUMED
+
+
+@pytest.mark.parametrize("complete", [record_success, record_failure])
+def test_password_completion_after_expiry_cannot_consume_or_charge(lifecycle_api_client, complete):
+    client = lifecycle_api_client()
+    with Session(client.engine) as db:
+        issued = _issue(db, client.actor.id)
+        lease = _reserve(db, issued)
+        with pytest.raises(LifecycleChallengeExpired):
+            complete(db, lease, now=NOW + timedelta(minutes=5))
+        db.refresh(issued.challenge)
+        assert issued.challenge.status == Status.EXPIRED
+        assert issued.challenge.consumed_at is None
+        assert issued.challenge.failed_attempts == 0
+        assert issued.challenge.verification_lease_id is None
+
+
+def test_stale_lease_and_replay_cannot_complete_another_verification(lifecycle_api_client):
+    client = lifecycle_api_client()
+    with Session(client.engine) as db:
+        issued = _issue(db, client.actor.id)
+        lease = _reserve(db, issued)
+        with pytest.raises(LifecycleVerificationInProgress):
+            consume_challenge(db, replace(lease, lease_id=uuid7()), now=NOW)
+        db.rollback()
+        assert consume_challenge(db, lease, now=NOW).status == Status.CONSUMED
+        with pytest.raises(LifecycleChallengeNotFound):
+            consume_challenge(db, issued.challenge_id, now=NOW)
+        db.rollback()
+        db.refresh(issued.challenge)
+        assert issued.challenge.consumed_at == NOW
+        assert issued.challenge.failed_attempts == 0
+
+
+def test_invalidate_and_expire_preserve_terminal_consumed_state(lifecycle_api_client):
+    client = lifecycle_api_client()
+    with Session(client.engine) as db:
+        issued = _issue(db, client.actor.id)
+        lease = _reserve(db, issued)
+        consume_challenge(db, lease, now=NOW)
+        assert invalidate_challenge(db, issued.challenge_id, now=NOW).status == Status.CONSUMED
+        assert (
+            expire_challenge(db, issued.challenge_id, now=NOW + timedelta(minutes=6)).status
+            == Status.CONSUMED
+        )
+        pending = _issue(db, client.actor.id)
+        assert expire_challenge(db, pending.challenge_id, now=NOW).status == Status.PENDING
+        assert (
+            expire_challenge(db, pending.challenge_id, now=NOW + timedelta(minutes=5)).status
+            == Status.EXPIRED
+        )
+
+
+@pytest.mark.parametrize(
+    "operation", [record_failure, record_success, invalidate_challenge, expire_challenge]
+)
+def test_unknown_confirmation_is_not_found(lifecycle_api_client, operation):
+    client = lifecycle_api_client()
+    with Session(client.engine) as db:
+        with pytest.raises(LifecycleChallengeNotFound):
+            operation(db, uuid7(), now=NOW)
+
+
+def test_unsupported_confirmation_operation_writes_nothing(lifecycle_api_client):
+    client = lifecycle_api_client()
+    with Session(client.engine) as db:
+        with pytest.raises(LifecycleUnsupportedOperation):
+            issue_challenge(db, client.actor.id, "reopen", "module", uuid7(), "impact", now=NOW)
+        assert _count(db, Challenge, client.actor.id) == 0

@@ -1,5 +1,5 @@
 import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "../coverage";
 import {
   baseEntity,
   DEPARTMENT_ID,

@@ -1,4 +1,4 @@
-import { expect } from "@playwright/test";
+import { expect } from "../coverage";
 import { test } from "../files/coverage";
 for (const route of [
   "/modules/m/records",
@@ -330,3 +330,352 @@ for (const route of [
     });
   });
 }
+
+const queryEntity = {
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  is_deleted: false,
+  deleted_at: null,
+  performed_by: null,
+};
+
+async function installQueryAuthoring(page: import("@playwright/test").Page) {
+  const list = (items: unknown[]) => ({
+    items,
+    pagination: {
+      limit: 100,
+      offset: 0,
+      count: items.length,
+      total: items.length,
+      has_more: false,
+    },
+  });
+  const state = {
+    views: [] as import("../../../src/lib/record-query").SavedView[],
+    queries: [] as import("../../../src/lib/record-query").QueryDefinition[],
+    exportFailure: true,
+    archived: false,
+    rejectArchive: false,
+    rejectRestore: false,
+  };
+  await page.route("**/session/status", (r) =>
+    r.fulfill({ json: { authenticated: true } }),
+  );
+  await page.route("**/session/realtime-token", (r) =>
+    r.fulfill({ status: 401, json: {} }),
+  );
+  await page.route("**/bff/**", async (r) => {
+    const path = new URL(r.request().url()).pathname.replace("/bff", "");
+    const method = r.request().method();
+    if (path === "/workspace")
+      return r.fulfill({
+        json: {
+          id: 1,
+          display_name: "OpenSlate",
+          legal_name: null,
+          description: null,
+          contact_email: null,
+          contact_phone: null,
+          postal_address: null,
+          timezone: "America/New_York",
+          locale: "en-US",
+          revision: 1,
+          logo_file_id: null,
+        },
+      });
+    if (path === "/auth/me")
+      return r.fulfill({
+        json: {
+          id: "u",
+          role: "admin",
+          permissions: [
+            "records.read",
+            "records.write",
+            "modules.read",
+            "fields.read",
+            "departments.read",
+          ],
+        },
+      });
+    if (path === "/modules/m")
+      return r.fulfill({
+        json: {
+          ...queryEntity,
+          id: "m",
+          department_id: "d",
+          module_name: "Cases",
+          is_schema_accepted: true,
+        },
+      });
+    if (path === "/departments/d")
+      return r.fulfill({
+        json: { ...queryEntity, id: "d", department_name: "Operations" },
+      });
+    if (path === "/fields")
+      return r.fulfill({
+        json: list(
+          [
+            { id: "number", name: "Count", type: "number" },
+            { id: "boolean", name: "Approved", type: "boolean" },
+            { id: "datetime", name: "Appointment", type: "datetime" },
+            { id: "select", name: "Priority", type: "select" },
+          ].map((f, position) => ({
+            ...queryEntity,
+            ...f,
+            module_id: "m",
+            position,
+            required: false,
+            config: {},
+          })),
+        ),
+      });
+    if (path === "/records/query") {
+      state.queries.push(r.request().postDataJSON().definition);
+      return r.fulfill({
+        json: list([
+          {
+            ...queryEntity,
+            id: "record",
+            module_id: "m",
+            is_deleted: state.archived,
+            data: {
+              number: 3,
+              boolean: true,
+              datetime: "2026-11-01T06:30:00Z",
+              select: "urgent",
+            },
+          },
+        ]),
+      });
+    }
+    if (path === "/records/export")
+      return state.exportFailure
+        ? r.fulfill({
+            status: 403,
+            json: { detail: { message: "Export access was revoked" } },
+          })
+        : r.fulfill({
+            contentType: "text/csv",
+            body: "Count,Approved\n3,true\n",
+          });
+    if (path === "/records/record" && method === "DELETE") {
+      if (state.rejectArchive)
+        return r.fulfill({
+          status: 409,
+          json: { detail: "Record changed; reload before archiving" },
+        });
+      state.archived = true;
+      return r.fulfill({ status: 204 });
+    }
+    if (path === "/records/record/restore") {
+      if (state.rejectRestore)
+        return r.fulfill({
+          status: 422,
+          json: { detail: "Record no longer matches the active schema" },
+        });
+      state.archived = false;
+      return r.fulfill({ json: { ...queryEntity, id: "record" } });
+    }
+    if (path === "/views" && method === "GET")
+      return r.fulfill({ json: list(state.views) });
+    if (path === "/views" && method === "POST") {
+      const body = r.request().postDataJSON();
+      const view = {
+        ...queryEntity,
+        ...body,
+        id: `view-${state.views.length + 1}`,
+        owner_id: "u",
+        revision: 1,
+      };
+      state.views.push(view);
+      return r.fulfill({ status: 201, json: view });
+    }
+    if (path.startsWith("/views/") && method === "PATCH") {
+      const index = state.views.findIndex((v) => path === `/views/${v.id}`);
+      state.views[index] = {
+        ...state.views[index],
+        ...r.request().postDataJSON(),
+        revision: state.views[index].revision + 1,
+      };
+      return r.fulfill({ json: state.views[index] });
+    }
+    if (path.startsWith("/views/") && method === "DELETE") {
+      state.views = state.views.filter((v) => path !== `/views/${v.id}`);
+      return r.fulfill({ status: 204 });
+    }
+    return r.fulfill({ json: list([]) });
+  });
+  return state;
+}
+
+test("query editor submits typed filters, explicit repeated-time offsets and reversible sorting", async ({
+  page,
+}) => {
+  const state = await installQueryAuthoring(page);
+  await page.goto("/modules/m/records");
+  await expect(
+    page.getByRole("cell", { name: "urgent", exact: true }),
+  ).toBeVisible();
+  await page.getByText("Filters, sorting and columns", { exact: true }).click();
+  await page.getByLabel("Filter field", { exact: true }).selectOption("number");
+  await page.getByLabel("Filter operator", { exact: true }).selectOption("gte");
+  await page.getByLabel("Filter value", { exact: true }).fill("2.5");
+  await page.getByRole("button", { name: "Add filter", exact: true }).click();
+  await expect(
+    page.getByText("Count · gte · 2.5", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Filter field", { exact: true })
+    .selectOption("boolean");
+  await page.getByLabel("Filter value", { exact: true }).selectOption("true");
+  await page.getByRole("button", { name: "Add filter", exact: true }).click();
+  await expect(
+    page.getByText("Approved · eq · true", { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Filter field", { exact: true }).selectOption("select");
+  await page.getByLabel("Filter operator", { exact: true }).selectOption("in");
+  await page.getByLabel("Filter value", { exact: true }).fill("urgent, normal");
+  await page.getByRole("button", { name: "Add filter", exact: true }).click();
+  await page
+    .getByLabel("Filter field", { exact: true })
+    .selectOption("datetime");
+  await page
+    .getByLabel("Filter value", { exact: true })
+    .fill("2026-11-01T01:30");
+  await expect(page.getByLabel("Filter UTC offset")).toBeVisible();
+  await page.getByRole("button", { name: "Add filter", exact: true }).click();
+  await expect(
+    page.getByRole("alert").filter({
+      hasText: "This local time occurs twice. Choose its UTC offset.",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Remove filter 4", exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel("Filter UTC offset").selectOption("-05:00");
+  await page.getByRole("button", { name: "Add filter", exact: true }).click();
+  await expect(
+    page.getByRole("alert").filter({
+      hasText: "This local time occurs twice. Choose its UTC offset.",
+    }),
+  ).toHaveCount(0);
+  await page.getByLabel("Add sort field").selectOption("number");
+  await page.getByLabel("Sort direction 1").selectOption("desc");
+  await expect
+    .poll(() => state.queries.at(-1))
+    .toMatchObject({
+      filters: [
+        { field_id: "number", operator: "gte", value: 2.5 },
+        { field_id: "boolean", operator: "eq", value: true },
+        { field_id: "select", operator: "in", value: ["urgent", "normal"] },
+        { field_id: "datetime", operator: "eq", value: "2026-11-01T06:30:00Z" },
+      ],
+      sort: [{ field_id: "number", direction: "desc" }],
+    });
+  await page.getByRole("button", { name: "Remove sort 1" }).click();
+  await page.getByRole("checkbox", { name: "Approved", exact: true }).uncheck();
+  await expect(
+    page.getByRole("columnheader", { name: "Approved", exact: true }),
+  ).toHaveCount(0);
+  await expect.poll(() => state.queries.at(-1)?.sort).toEqual([]);
+});
+
+test("administrators publish, edit and archive shared views and recover export access", async ({
+  page,
+}) => {
+  const state = await installQueryAuthoring(page);
+  await page.goto("/modules/m/records");
+  await expect(
+    page.getByRole("cell", { name: "urgent", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("View name", { exact: true }).fill("Shared priorities");
+  await page
+    .getByRole("button", { name: "Publish shared copy", exact: true })
+    .click();
+  await expect(page.getByLabel("Saved view", { exact: true })).toHaveValue(
+    "view-1",
+  );
+  expect(state.views[0].visibility).toBe("workspace");
+  await page
+    .getByLabel("View name", { exact: true })
+    .fill("Updated priorities");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(
+    page.getByRole("option", {
+      name: "Updated priorities · Shared",
+      exact: true,
+    }),
+  ).toHaveCount(1);
+  expect(state.views[0].revision).toBe(2);
+  await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Export access was revoked" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Reload views", exact: true }).click();
+  await expect(
+    page.getByText("Export access was revoked", { exact: false }),
+  ).toHaveCount(0);
+  state.exportFailure = false;
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+  expect((await download).suggestedFilename()).toBe("records.csv");
+  await page.getByRole("button", { name: "Archive view", exact: true }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Archive view", exact: true })
+    .click();
+  await expect(page.getByLabel("Saved view", { exact: true })).toHaveValue("");
+  await expect(
+    page.getByRole("option", {
+      name: "Updated priorities · Shared",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("cell", { name: "urgent", exact: true }),
+  ).toBeVisible();
+});
+
+test("record archive and restore rejection preserve the visible lifecycle until retry succeeds", async ({
+  page,
+}) => {
+  const state = await installQueryAuthoring(page);
+  state.rejectArchive = true;
+  await page.goto("/modules/m/records");
+  const row = page.getByRole("row").filter({ hasText: "urgent" });
+  await row.getByRole("button", { name: "Archive", exact: true }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Archive", exact: true })
+    .click();
+  await expect(page.getByRole("alertdialog")).not.toBeVisible();
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Record changed; reload before archiving" }),
+  ).toBeVisible();
+  await expect(row).toContainText("Active");
+  state.rejectArchive = false;
+  await row.getByRole("button", { name: "Archive", exact: true }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Archive", exact: true })
+    .click();
+  await expect(row).toContainText("Archived");
+  state.rejectRestore = true;
+  await row.getByRole("button", { name: "Restore", exact: true }).click();
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Record no longer matches the active schema" }),
+  ).toBeVisible();
+  await expect(row).toContainText("Archived");
+  state.rejectRestore = false;
+  await row.getByRole("button", { name: "Restore", exact: true }).click();
+  await expect(row).toContainText("Active");
+  await expect(
+    page.getByText("Record no longer matches the active schema", {
+      exact: false,
+    }),
+  ).toHaveCount(0);
+});

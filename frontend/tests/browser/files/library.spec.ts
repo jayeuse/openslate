@@ -1,4 +1,4 @@
-import { expect } from "@playwright/test";
+import { expect } from "../coverage";
 import { test } from "./coverage";
 test("a pending scan cannot be downloaded and an unavailable scanner preserves that state", async ({
   page,

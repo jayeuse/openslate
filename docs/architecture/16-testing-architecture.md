@@ -4,6 +4,43 @@
 > **Audience:** Developers deciding where and how to verify a change.
 > **Related documents:** [Backend architecture](04-backend-architecture.md), [Frontend architecture](05-frontend-architecture.md), [Security](14-security-architecture.md), [Deployment](12-deployment-architecture.md)
 
+## Mandatory execution order
+
+1. Define the changed behavior, affected sections, and smallest proving layer.
+   For behavior changes, follow the TDD skill's focused red/green rules.
+2. Run focused tests without coverage during edits. On failure, fix and rerun
+   the failing cases, then their feature batch. Finish each batch before moving
+   to the next; expected rejection/error paths must be passing assertions.
+3. Run affected integration checks as batches stabilize. Bring these forward
+   for auth, schema, shared configuration, or framework changes; do not defer
+   boundary failures until push preparation.
+4. Only when preparing to push, after all affected batches pass, run the
+   affected projects' full static, build, test, and coverage gates below,
+   plus required infrastructure/full-stack
+   checks. Local selection never waives CI or release gates.
+5. If a pre-push gate fails, return to focused debugging, then rerun that gate.
+   Retain other passing results only when their source, tests, dependencies,
+   configuration, and relevant shared boundaries remain unchanged.
+
+| Area | Smallest required proof during iteration |
+| --- | --- |
+| Backend | Isolated behavior/API tests; guarded real PostgreSQL for persistence, privileges, transactions, migrations, or concurrency |
+| Frontend | Isolated rules, HTTP routes, or browser interactions according to the changed behavior; mobile/browser variants when relevant |
+| Infrastructure | Affected configuration validation, image/build checks, startup/readiness, and service contracts; real full stack when the changed boundary requires it |
+
+No unexpected failures, skipped required tests, weakened assertions, or retries
+used to conceal flakes are acceptable. Missing required services block acceptance.
+Full suites are not edit, commit, or routine-handoff requirements. Report them
+as deferred until push preparation, never as passed. Keep coverage off routine
+edit loops; pre-push overall and changed-line gates remain
+90%. Never combine stale captures from different code or environment states.
+
+Reuse warm setup only when the runner supports isolation and per-test cleanup;
+never bypass disposable-database guards. Parallel runs need separate ports,
+outputs, and mutable data; choose concurrency from measured resource use.
+Pre-push disposable-stack gates use fresh environments. Local batch commands
+below support owned backend setup reuse and explicit frontend browser selection.
+
 ## Sections and ownership
 
 Tests are grouped by the behavior they protect. Each case has one home;
@@ -18,16 +55,29 @@ changes spanning multiple sections select those sections together.
 | `database` | Migration transitions, catalog privileges, and disposable-database guards |
 | `scripts` | Bootstrap, provisioning, seeding, reset safety, and test-harness checks |
 
-Backend runtime tests live in `backend/tests/runtime/`; audit/request-context
-checks live in `backend/tests/audit/`. Existing capability suites and descriptive
-filenames remain selectable through the section mapping in `scripts/test.py`.
+Backend tests live in capability folders under `backend/tests/`:
+
+| Behavior | Folders |
+| --- | --- |
+| Authentication and accounts | `auth/`, `users/`, `rbac/` |
+| Catalog and records | `catalog/`, `listing/`, `record_queries/`, `views/` |
+| Lifecycle and relationships | `lifecycle/`, `lifecycle_integration/`, `relationships_integration/` |
+| Audit and diagnostics | `audit/`, `security_events/`, `runtime/` |
+| Workspace and files | `workspace/`, `files/` |
+| Setup and database safety | `operations/`, `reset_application_data/`, `migration_0015/`, `migration_0016/` |
+
+Feature-specific helpers live beside their tests. Shared configuration and API
+helpers, root `conftest.py`, and runner entry points stay at the test root.
+Descriptive filenames remain selectable through the section mapping in `scripts/test.py`.
 Section membership does not determine whether a test needs PostgreSQL: the
 `integration` marker supplies that boundary across all sections.
 
 Frontend sections are `public`, `security`, `shell`, `administration`, `audit`,
-`catalog`, `records`, `sandbox`, and `runtime`. Files live under
+`catalog`, `files`, `records`, `sandbox`, and `runtime`. Files live under
 `frontend/tests/<layer>/<section>/`. Shared transport/data fixtures belong under
 `tests/helpers/` or `tests/browser/helpers/`; helpers are not separate journeys.
+Upload-library rules live in `isolated/files/`, and record-query rules in
+`isolated/records/`; `isolated/catalog/` owns field-schema rules.
 
 ## Execution layers
 
@@ -76,6 +126,7 @@ From the repository root:
 ```sh
 python3 scripts/test.py backend section security --layer isolated
 python3 scripts/test.py backend section audit runtime --layer isolated
+python3 scripts/test.py backend section runtime --layer integration --interactive
 python3 scripts/test.py backend affected --layer isolated
 python3 scripts/test.py backend full
 ```
@@ -85,6 +136,7 @@ From `frontend/`:
 ```sh
 npm run test:section -- security --layer isolated
 npm run test:section -- audit --layer browser
+npm run test:section -- public --layer browser --browser mobile-chromium --match "entry point"
 npm run test:affected -- --layer isolated
 npm run test:full
 ```
@@ -101,16 +153,68 @@ unrecognized application code select the broader project suite. This is a
 local iteration aid, not exhaustive import-graph analysis or a replacement for
 CI. No matching tests in a requested section/layer is reported explicitly.
 
-Section/affected backend runs disable the whole-application coverage threshold,
-which is unsuitable for a narrow slice. The full backend `all` run retains the
-configured 80% gate. `--layer integration` selects database tests; `all` includes
-both layers. Without `TEST_DATABASE_URL`, database cases are skipped and the run
-does not establish database correctness.
+Section/affected runs stop at the first failure and accept `--match` (pytest
+name expression or Playwright title regex). Backend isolated batches disable
+coverage. Backend `integration` and `all` batches start their own guarded
+disposable stack, apply migrations, and run only selected tests without coverage;
+required skips fail. Add `--interactive` to keep that stack between batches:
+Enter reruns the selection, test paths/node IDs select another batch, and `quit`
+or EOF cleans up. The layer and name filter remain fixed for the session.
+Failed selections must pass a rerun before the session can exit successfully.
+Schema, runtime configuration, or dependency edits require a fresh session.
+Per-test cleanup remains mandatory; this never reuses the developer database.
+
+For one exact backend file or case, run from `backend/`:
+
+```sh
+uv run python -m tests.fullstack_runner --backend-batch --interactive tests/runtime/test_database_integration.py
+```
+
+Batch timing/results live in `backend/test-results/batches/`; batches neither
+collect coverage nor overwrite existing coverage reports. Earlier coverage is
+not fresh evidence after code changes. The full backend `all` command retains
+its configured 90% gate but needs the documented disposable environment;
+use the pre-push coverage command below for complete PostgreSQL acceptance.
+
+Frontend section/affected batches run Chromium once by default, with isolated
+and HTTP projects included when their layers are selected. Use
+`--browser mobile-chromium` for mobile checks or `--browser all` for the configured
+matrix. `full` rejects local name/browser/interactive filters and preserves the
+full matrix; coverage and CI commands retain their existing gates.
 
 Frontend `all` includes isolated, HTTP, and browser checks. It excludes real
 full-stack journeys. Use `npm run test:e2e:fullstack` for the disposable
 release path. `npm run verify` retains formatting, lint, type checking, build, and
 ordinary production-server tests.
+
+## Pre-push coverage gates
+
+Run these full coverage gates only when preparing to push. Record the comparison
+revision before implementation and pass it as
+`COVERAGE_BASE_REF`. From `backend/`, run
+`uv run python -m tests.fullstack_runner --backend-coverage-only`; from
+`frontend/`, run `npm run test:coverage` alongside `npm run verify`.
+Both projects require 90% overall executable production-line coverage and 90%
+changed executable-line coverage. No changed executable production lines is
+reported as N/A, never as a measured 100%.
+
+Backend coverage includes all `app/` source, with operational-script coverage
+reported separately. Frontend coverage combines Chromium, isolated Node tests,
+and Next server execution using development source maps. A fixed source-line
+inventory includes never-loaded `src/` modules with zero hits; type-only and
+non-executable lines do not count. Static import/re-export declarations and Next
+boundary directives have no independent runtime statement; executable expressions
+sharing their source line remain counted. Dependency side effects are measured
+in the in-scope dependency source. This does not enable production source maps or replace
+production browser acceptance. The scanner subset retains its gate.
+
+`scripts/check_coverage.py` applies both thresholds to source-mapped reports and
+the recorded Git comparison, including new untracked production files. Missing
+source, invalid comparison references, stale captures, and required runtime
+omissions fail measurement. CI uses the pull request merge base or previous push
+revision. Reports and source/run metadata live in ignored test-result folders.
+The full-stack command also requires `COVERAGE_BASE_REF`; a manual full-stack
+workflow dispatch requires its `coverage_base` input instead of guessing a base.
 
 ## Fixtures and maintenance
 
@@ -120,7 +224,9 @@ coverage reports outside version control. Real full-stack identities are created
 only in the disposable stack. Auth-flow traces, screenshots, and video are
 disabled in the full-stack configuration.
 
-PostgreSQL fixtures validate the destination and Alembic head before use. Tests
+PostgreSQL fixtures require the generated run identity, explicit mutation flag,
+private credential manifest, and exact disposable database destination before
+connecting, then validate Alembic head. Required coverage runs reject skips. Tests
 that commit track owned entities and clean up only those entities. Migration
 fixtures exercise transitions with rollback; they do not authorize resetting a
 shared developer database. The disposable runner uses separate ports and a

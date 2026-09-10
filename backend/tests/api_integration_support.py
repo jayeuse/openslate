@@ -1,10 +1,11 @@
 from uuid import UUID
 
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session, joinedload
 from uuid6 import uuid7
 
 from app.systems.users.models import Role, User
+from tests.conftest import guarded_create_engine as create_engine
 
 
 def create_owned_admin(runtime_url: str, owner_url: str, prefix: str) -> User:

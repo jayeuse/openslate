@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 const isCI = Boolean(process.env.CI);
 const useProductionServer =
   process.env.SCANNER_COVERAGE !== "1" &&
+  process.env.FRONTEND_COVERAGE !== "1" &&
   (isCI || process.env.PLAYWRIGHT_USE_PRODUCTION === "1");
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
@@ -59,6 +60,10 @@ const frontendEnvironment: Record<string, string> =
           requiredEnvironment(name),
         ]),
       );
+if (process.env.FRONTEND_COVERAGE === "1") {
+  for (const name of ["NODE_V8_COVERAGE", "NODE_OPTIONS", "FRONTEND_COVERAGE"])
+    frontendEnvironment[name] = requiredEnvironment(name);
+}
 Object.assign(process.env, frontendEnvironment);
 
 function shellQuote(value: string): string {
@@ -76,16 +81,25 @@ function isolatedCommand(command: string): string {
 
 export default defineConfig({
   testDir: "./tests",
+  globalTeardown:
+    process.env.FRONTEND_COVERAGE === "1"
+      ? "./scripts/coverage-teardown.mjs"
+      : undefined,
   testIgnore: ["**/fullstack/**"],
   // Keep ordinary cleanup separate from disposable full-stack results.
   outputDir: "test-results/playwright",
   fullyParallel: true,
+  timeout: process.env.FRONTEND_COVERAGE === "1" ? 60_000 : 30_000,
+  expect: { timeout: process.env.FRONTEND_COVERAGE === "1" ? 15_000 : 5_000 },
   forbidOnly: isCI,
   retries: isCI ? 2 : 0,
   reporter: isCI ? [["list"], ["html", { open: "never" }]] : "html",
   use: {
     baseURL,
-    trace: "on-first-retry",
+    trace:
+      process.env.FRONTEND_COVERAGE === "1"
+        ? "retain-on-failure"
+        : "on-first-retry",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
@@ -108,7 +122,7 @@ export default defineConfig({
             testDir: "./tests/browser",
             use: { ...devices["Pixel 7"] },
           },
-          ...(isCI
+          ...(isCI && process.env.FRONTEND_COVERAGE !== "1"
             ? [
                 {
                   name: "firefox",
@@ -132,11 +146,17 @@ export default defineConfig({
           command: isolatedCommand(
             useProductionServer
               ? "npm run start -- --from-process"
-              : "npm run dev -- --from-process",
+              : process.env.FRONTEND_COVERAGE === "1"
+                ? "npm run dev -- --from-process --webpack"
+                : "npm run dev -- --from-process",
           ),
           url: baseURL,
           env: frontendEnvironment,
-          reuseExistingServer: !isCI,
+          reuseExistingServer: !isCI && process.env.FRONTEND_COVERAGE !== "1",
+          gracefulShutdown:
+            process.env.FRONTEND_COVERAGE === "1"
+              ? { signal: "SIGTERM", timeout: 15_000 }
+              : undefined,
           timeout: 120_000,
         },
 });

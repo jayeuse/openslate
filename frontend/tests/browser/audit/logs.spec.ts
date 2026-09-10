@@ -1,5 +1,5 @@
 import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../coverage";
 import { testSecret } from "../../helpers/test-secret";
 import {
   ACTIVE_ID,
@@ -139,4 +139,162 @@ test("audit governance gives safe authorization and failure retry guidance", asy
       exact: true,
     }),
   ).toBeVisible();
+});
+
+test("security events paginate, correlate operations, reveal details and export bounded JSON", async ({
+  page,
+}) => {
+  await installSessionMocks(page);
+  const operationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const event = {
+    id: ACTIVE_ID,
+    occurred_at: "2026-02-01T10:00:00.000Z",
+    event_type: "session.denied",
+    outcome: "denied",
+    source: "auth",
+    operation_id: operationId,
+    actor_id: ADMIN_ID,
+    subject_id: null,
+    labels: { channel: "browser" },
+    fingerprint: null,
+    reason: "Session expired",
+    request_id: null,
+    request_method: "POST",
+    request_path: "/session/refresh",
+    metadata: {},
+  };
+  const requests: URL[] = [];
+  await page.route("**/bff/**", async (route) => {
+    if (await fulfillWorkspaceRequest(route)) return;
+    const url = new URL(route.request().url());
+    requests.push(url);
+    if (url.pathname.endsWith("/security-events/export"))
+      return json(route, 200, [event]);
+    if (url.pathname.endsWith("/security-events")) {
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? 100);
+      return json(route, 200, {
+        items: [
+          {
+            ...event,
+            event_type: offset ? "session.rejected" : event.event_type,
+          },
+        ],
+        pagination: {
+          offset,
+          limit,
+          count: 1,
+          total: limit + 1,
+          has_more: offset === 0,
+        },
+      });
+    }
+    await json(route, 200, listResponse([]));
+  });
+  await page.goto("/administration/audit");
+  await page.getByRole("tab", { name: "Security events" }).click();
+  await expect(
+    page.getByRole("button", { name: "Previous security events page" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Next security events page" }).click();
+  await expect(
+    page.getByText("session.rejected", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Next security events page" }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Previous security events page" })
+    .click();
+  await page
+    .getByLabel("Search security events", { exact: true })
+    .fill("session");
+  await page.getByLabel("Operation ID", { exact: true }).fill(operationId);
+  await expect
+    .poll(() =>
+      requests.some(
+        (url) =>
+          url.pathname.endsWith("/security-events") &&
+          url.searchParams.get("search") === "session" &&
+          url.searchParams.get("operation_id") === operationId &&
+          url.searchParams.get("offset") === "0",
+      ),
+    )
+    .toBe(true);
+  await page
+    .getByLabel("View details for session.denied", { exact: true })
+    .first()
+    .click();
+  await expect(
+    page.getByText("POST /session/refresh", { exact: true }).first(),
+  ).toBeVisible();
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export JSON" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("security-events.json");
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual([event]);
+  expect(
+    requests
+      .find((url) => url.pathname.endsWith("/security-events/export"))
+      ?.searchParams.get("operation_id"),
+  ).toBe(operationId);
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect(page.getByLabel("Operation ID", { exact: true })).toHaveValue(
+    "",
+  );
+  await expect(
+    page.getByLabel("Search security events", { exact: true }),
+  ).toHaveValue("");
+});
+
+test("audit exports date filters and recovers safely from malformed export data", async ({
+  page,
+}) => {
+  await installSessionMocks(page);
+  let validExport = false;
+  const exports: URL[] = [];
+  await page.route("**/bff/**", async (route) => {
+    if (await fulfillWorkspaceRequest(route)) return;
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/audit-logs/export")) {
+      exports.push(url);
+      return json(
+        route,
+        200,
+        validExport ? [] : [{ private_context: "invalid export response" }],
+      );
+    }
+    await json(route, 200, listResponse([]));
+  });
+  await page.goto("/administration/audit");
+  await page.getByLabel("From date").fill("2026-02-01");
+  await page.getByLabel("To date").fill("2026-02-02");
+  await page.getByRole("button", { name: "Export JSON" }).click();
+  await expect(
+    page.getByText("audit logs could not be exported. Try again.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByText("invalid export response")).toHaveCount(0);
+  expect(exports[0].searchParams.get("created_after")).toBe(
+    "2026-02-01T00:00:00Z",
+  );
+  expect(exports[0].searchParams.get("created_before")).toBe(
+    "2026-02-02T23:59:59.999Z",
+  );
+  validExport = true;
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export JSON" }).click();
+  expect((await downloadPromise).suggestedFilename()).toBe("audit-logs.json");
+  await expect(
+    page.getByText("audit logs could not be exported. Try again.", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect(page.getByLabel("From date")).toHaveValue("");
+  await expect(page.getByLabel("To date")).toHaveValue("");
 });

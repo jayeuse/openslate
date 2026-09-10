@@ -5,6 +5,7 @@ on:
     paths:
       - "backend/**"
       - "scripts/test*.py"
+      - "scripts/check_coverage.py"
       - "infra/docker/backend.Dockerfile"
       - ".dockerignore"
       - "compose.yaml"
@@ -17,6 +18,7 @@ on:
     paths:
       - "backend/**"
       - "scripts/test*.py"
+      - "scripts/check_coverage.py"
       - "infra/docker/backend.Dockerfile"
       - ".dockerignore"
       - "compose.yaml"
@@ -35,145 +37,51 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-    env:
-      OPENSLATE_ENV_SOURCE: process
-      E2E_ALLOW_MUTATIONS: "true"
-      SUPABASE_API_PORT: "55321"
-      SUPABASE_DB_PORT: "55322"
-      SUPABASE_SHADOW_PORT: "55320"
-      SUPABASE_STUDIO_PORT: "55323"
-      SUPABASE_MAIL_PORT: "55324"
-      SUPABASE_POOLER_PORT: "55329"
-      SUPABASE_URL: http://127.0.0.1:55321
-      FRONTEND_URL: http://localhost:3000
-      SUPABASE_AUTH_REDIRECT_URL: http://localhost:3000/auth/callback
-      AUTH_SETUP_URL: http://localhost:3000/auth/setup
-      ENVIRONMENT: test
-      LOG_DIR: /tmp/openslate-api-logs
-      SUPABASE_JWT_ISSUER: http://127.0.0.1:55321/auth/v1
-      SUPABASE_JWKS_URL: http://127.0.0.1:55321/auth/v1/.well-known/jwks.json
-      SUPABASE_JWT_AUDIENCE: authenticated
-      LIFECYCLE_PURGE_ENABLED: "false"
-      CORS_ORIGINS: '["http://localhost:3000"]'
-      REQUEST_BODY_MAX_BYTES: "1048576"
-      DATABASE_POOL_SIZE: "5"
-      DATABASE_MAX_OVERFLOW: "5"
-      DATABASE_POOL_TIMEOUT_SECONDS: "5"
-      DATABASE_CONNECT_TIMEOUT_SECONDS: "3"
-      DATABASE_STATEMENT_TIMEOUT_MS: "15000"
-      READINESS_POOL_TIMEOUT_SECONDS: "0.25"
-      READINESS_CONNECT_TIMEOUT_SECONDS: "1"
-      READINESS_STATEMENT_TIMEOUT_MS: "500"
-      READINESS_CALLER_TIMEOUT_SECONDS: "2"
-      SUPABASE_TIMEOUT_SECONDS: "10"
-      BACKEND_BIND_HOST: 127.0.0.1
-      BACKEND_PORT: "8000"
-      SERVER_MAX_CONCURRENCY: "32"
-      SERVER_KEEP_ALIVE_SECONDS: "5"
     defaults:
       run:
         working-directory: backend
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
+        with:
+          fetch-depth: 0
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
           version: latest
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
-
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@v1
         with:
           version: latest
-
       - name: Install backend dependencies
         run: uv sync --locked
-
-      - name: Configure disposable test namespace
+      - name: Record coverage comparison base
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          run_id="$(python -c 'import uuid; print(uuid.uuid4().hex)')"
-          printf 'OPENSLATE_FULLSTACK_RUN_ID=%s\n' "$run_id" >> "$GITHUB_ENV"
-          printf 'SUPABASE_PROJECT_ID=p5-%s\n' "$run_id" >> "$GITHUB_ENV"
-          unset run_id
-
-      - name: Start local Supabase
-        working-directory: .
-        run: supabase start > /tmp/openslate-supabase-start.log 2>&1
-
-      - name: Configure strict local Supabase identities
-        working-directory: .
-        run: |
-          status_env="$(supabase status -o env)"
-          db_url="$(STATUS_ENV="$status_env" python -c 'import os, shlex; value=next((shlex.split(line)[0].split("=", 1)[1] for line in os.environ["STATUS_ENV"].splitlines() if line.startswith("DB_URL=")), ""); print(value.replace("postgresql://", "postgresql+psycopg://", 1))')"
-          publishable_key="$(STATUS_ENV="$status_env" python -c 'import os, shlex; print(next((shlex.split(line)[0].split("=", 1)[1] for line in os.environ["STATUS_ENV"].splitlines() if line.startswith("PUBLISHABLE_KEY=")), ""))')"
-          secret_key="$(STATUS_ENV="$status_env" python -c 'import os, shlex; print(next((shlex.split(line)[0].split("=", 1)[1] for line in os.environ["STATUS_ENV"].splitlines() if line.startswith("SECRET_KEY=")), ""))')"
-          security_event_key="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-          test -n "$db_url"
-          test -n "$publishable_key"
-          test -n "$secret_key"
-          DB_URL_VALUE="$db_url" SECRET_KEY_VALUE="$secret_key" SECURITY_EVENT_KEY_VALUE="$security_event_key" python - <<'PYMASK'
-          import os
-          from urllib.parse import unquote, urlsplit
-          url = os.environ["DB_URL_VALUE"]
-          password = urlsplit(url).password or ""
-          for value in (url, password, unquote(password), os.environ["SECRET_KEY_VALUE"], os.environ["SECURITY_EVENT_KEY_VALUE"]):
-            if value:
-              escaped = value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-              print(f"::add-mask::{escaped}", flush=True)
-          with open(os.environ["GITHUB_ENV"], "a") as output:
-              output.write(f"MIGRATION_DATABASE_URL={url}\n")
-          PYMASK
-          {
-            printf 'SUPABASE_PUBLISHABLE_KEY=%s\n' "$publishable_key"
-            printf 'SUPABASE_SECRET_KEY=%s\n' "$secret_key"
-            printf 'SECURITY_EVENT_SERVER_KEY=%s\n' "$security_event_key"
-          } >> "$GITHUB_ENV"
-          PUBLISHABLE_KEY_VALUE="$publishable_key" python -c 'import json, os, secrets, urllib.error, urllib.request; request=urllib.request.Request("http://127.0.0.1:55321/auth/v1/signup", data=json.dumps({"email":"ci-public-signup@example.com","password":secrets.token_urlsafe(24)}).encode(), headers={"apikey":os.environ["PUBLISHABLE_KEY_VALUE"],"Content-Type":"application/json"}, method="POST");
-          try: urllib.request.urlopen(request); raise SystemExit("public signup unexpectedly succeeded")
-          except urllib.error.HTTPError as error: assert error.code == 422 and json.loads(error.read()).get("error_code") == "signup_disabled"'
-          unset status_env db_url publishable_key secret_key security_event_key
-
-      - name: Apply Alembic migrations
-        run: uv run alembic upgrade head
-
-      - name: Check Alembic drift
-        run: uv run alembic check
-
-      - name: Provision least-privilege runtime database role
-        run: |
-          runtime_password="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-          runtime_url="postgresql+psycopg://openslate_runtime:${runtime_password}@127.0.0.1:55322/postgres"
-          printf '::add-mask::%s\n' "$runtime_password"
-          printf '::add-mask::%s\n' "$runtime_url"
-          DATABASE_URL="$runtime_url" uv run python scripts/provision_database_role.py --confirm
-          printf 'DATABASE_URL=%s\nTEST_DATABASE_URL=%s\n' "$runtime_url" "$runtime_url" >> "$GITHUB_ENV"
-          unset runtime_password runtime_url
-
+          base=$(git merge-base HEAD "$BASE_REF")
+          printf 'COVERAGE_BASE_REF=%s\n' "$base" >> "$GITHUB_ENV"
       - name: Run Ruff
         run: uv run ruff check .
-
       - name: Run mypy
         run: uv run mypy app scripts
-
       - name: Verify test selection and tooling
         run: uv run python -m unittest discover -s ../scripts -p 'test_*.py'
-
-      - name: Run backend tests, including PostgreSQL integration tests
-        run: uv run pytest
-
+      - name: Complete disposable PostgreSQL tests and 90 percent coverage gates
+        run: uv run python -m tests.fullstack_runner --backend-coverage-only
+      - name: Upload coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/test-results/coverage
+          if-no-files-found: error
       - name: Build backend Docker image
         working-directory: ${{ github.workspace }}
         run: docker build --file infra/docker/backend.Dockerfile --tag openslate-backend:ci .
-
-      - name: Stop local Supabase
-        if: always()
-        working-directory: .
-        run: supabase stop --no-backup > /tmp/openslate-supabase-stop.log 2>&1 || true

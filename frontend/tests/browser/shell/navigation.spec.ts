@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test, type Locator } from "../coverage";
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/bff/files?*", (route) =>
@@ -332,4 +332,69 @@ test("loads the current private logo directly and exposes documents in classic n
       .getByRole("link", { name: "Documents", exact: true })
       .filter({ visible: true }),
   ).toHaveAttribute("href", "/administration/files");
+});
+
+test("desktop sidebar resizes accessibly, persists width, and expands grouped navigation", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route("**/session/status", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  await page.route("**/session/realtime-token", (route) =>
+    route.fulfill({ status: 401, json: {} }),
+  );
+  await page.goto("/settings/appearance");
+  const resize = page.getByRole("separator", {
+    name: "Resize sidebar",
+    exact: true,
+  });
+  await expect(resize).toHaveAttribute("aria-valuenow", "256");
+  await resize.focus();
+  await resize.press("End");
+  await expect(resize).toHaveAttribute("aria-valuenow", "400");
+  await resize.press("ArrowRight");
+  await expect(resize).toHaveAttribute("aria-valuenow", "400");
+  await resize.press("Home");
+  await resize.press("ArrowRight");
+  await expect(resize).toHaveAttribute("aria-valuenow", "272");
+  await resize.press("ArrowLeft");
+  await expect(resize).toHaveAttribute("aria-valuenow", "256");
+  await resize.hover();
+  const bounds = await resize.boundingBox();
+  if (!bounds) throw new Error("Visible sidebar resize control is required");
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 50);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width / 2 + 80, bounds.y + 50, {
+    steps: 5,
+  });
+  await page.mouse.up();
+  await expect(resize).toHaveAttribute("aria-valuenow", "336");
+  await page.reload();
+  await expect(resize).toHaveAttribute("aria-valuenow", "336");
+  await resize.dblclick();
+  await expect(resize).toHaveAttribute("aria-valuenow", "256");
+  await page
+    .getByRole("button", { name: "Collapse sidebar", exact: true })
+    .click();
+  await expect(resize).not.toBeVisible();
+  const sandbox = page.getByRole("button", { name: "Sandbox", exact: true });
+  await sandbox.click();
+  await expect(resize).toBeVisible();
+  await expect(sandbox).toHaveAttribute("aria-expanded", "true");
+  await sandbox.click();
+  await expect(sandbox).toHaveAttribute("aria-expanded", "false");
+  await sandbox.click();
+  await page
+    .getByRole("link", { name: "Organization Designer", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/sandbox$/);
+  await page
+    .getByRole("button", { name: "Expand sidebar", exact: true })
+    .click();
+  await expect(resize).toBeVisible();
+  await page
+    .getByRole("button", { name: "Collapse sidebar", exact: true })
+    .click();
+  await expect(resize).not.toBeVisible();
 });
