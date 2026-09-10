@@ -15,10 +15,13 @@ from uuid6 import uuid7
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession
 from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from tests.config_support import settings_environment
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
 
-os.environ.setdefault("DATABASE_URL", f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test")
+if os.getenv("TEST_DATABASE_URL") is None and os.getenv("E2E_ALLOW_MUTATIONS") != "true":
+    os.environ.update(settings_environment())
+    os.environ["OPENSLATE_ENV_SOURCE"] = "process"
 
 
 def _guard_integration_database(database_url: str) -> None:
@@ -58,6 +61,30 @@ def integration_db() -> Generator[Session, None, None]:
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:
         pytest.skip("Set TEST_DATABASE_URL to run PostgreSQL integration tests")
+    yield from _integration_session(database_url)
+
+
+@pytest.fixture
+def integration_owner_db() -> Generator[Session, None, None]:
+    """Owner-only fixture setup for the explicitly created disposable full-stack DB."""
+    if os.getenv("TEST_DATABASE_URL") is None:
+        pytest.skip("Set TEST_DATABASE_URL to run PostgreSQL integration tests")
+    database_url = os.getenv("MIGRATION_DATABASE_URL", "")
+    target = urlsplit(database_url)
+    if not (
+        os.getenv("E2E_ALLOW_MUTATIONS") == "true"
+        and re.fullmatch(r"[a-f0-9]{32}", os.getenv("OPENSLATE_FULLSTACK_RUN_ID", ""))
+        and target.hostname == "127.0.0.1"
+        and target.port == 55322
+        and target.path == "/postgres"
+        and target.username == "postgres"
+        and target.password
+    ):
+        raise RuntimeError("Owner fixtures require the authorized disposable full-stack database")
+    yield from _integration_session(database_url)
+
+
+def _integration_session(database_url: str) -> Generator[Session, None, None]:
     _guard_integration_database(database_url)
 
     engine = create_engine(database_url)

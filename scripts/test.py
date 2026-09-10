@@ -284,7 +284,9 @@ def main() -> int:
             ]
     else:
         env["TEST_LAYER"] = args.layer
-        command = ["npx", "--no-install", "playwright", "test"]
+        env["BASE_URL"] = "http://127.0.0.1:3104"
+        env["PLAYWRIGHT_CONFIGURATION"] = "synthetic"
+        command = ["node", "scripts/run-playwright.mjs"]
     return subprocess.call([*command, *files], cwd=root / args.project, env=env)
 
 

@@ -1,3 +1,4 @@
+import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
 import { expect, test } from "@playwright/test";
 
 test("retries an initial department detail error before rendering empty and mutation states", async ({
@@ -25,6 +26,7 @@ test("retries an initial department detail error before rendering empty and muta
     route.fulfill({ status: 401, json: {} }),
   );
   await page.route("**/bff/**", async (route) => {
+    if (await fulfillWorkspaceRequest(route)) return;
     const path = new URL(route.request().url()).pathname.replace(/^\/bff/, "");
     if (path === `/departments/${departmentId}`) {
       departmentAttempts += 1;

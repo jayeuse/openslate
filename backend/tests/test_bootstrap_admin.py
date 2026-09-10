@@ -47,3 +47,12 @@ def test_bootstrap_invites_once_and_never_promotes_existing_profiles(
     assert profile.status == "pending"
     auth.delete_user.assert_not_called()
     database.commit.assert_not_called()
+
+
+def test_bootstrap_requires_explicit_confirmation_outside_local_environments() -> None:
+    settings = SimpleNamespace(environment="production")
+
+    with pytest.raises(bootstrap.BootstrapError, match="--confirm"):
+        bootstrap._validate_confirmation(settings, False)
+
+    bootstrap._validate_confirmation(settings, True)

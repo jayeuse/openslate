@@ -1,5 +1,48 @@
 import { expect, test, type Locator } from "@playwright/test";
 
+test.beforeEach(async ({ page }) => {
+  await page.route("**/bff/files?*", (route) =>
+    route.fulfill({
+      json: {
+        items: [],
+        pagination: {
+          offset: 0,
+          limit: 25,
+          count: 0,
+          total: 0,
+          has_more: false,
+        },
+      },
+    }),
+  );
+  await page.route("**/bff/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        id: "user",
+        role: "admin",
+        permissions: ["departments.read", "departments.write", "records.read"],
+      },
+    }),
+  );
+  await page.route("**/bff/workspace", (route) =>
+    route.fulfill({
+      json: {
+        id: 1,
+        display_name: "OpenSlate",
+        legal_name: null,
+        description: null,
+        contact_email: null,
+        contact_phone: null,
+        postal_address: null,
+        timezone: "UTC",
+        locale: "en-US",
+        revision: 1,
+        logo_file_id: null,
+      },
+    }),
+  );
+});
+
 test("navigates from Sandbox to Appearance on desktop and mobile", async ({
   page,
   isMobile,
@@ -116,4 +159,177 @@ test("keeps mobile navigation focused without desktop rail controls", async ({
   ).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
+});
+
+test("keeps administrator navigation hidden for a custom role with every capability", async ({
+  page,
+  isMobile,
+}) => {
+  await page.route("**/session/status", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  await page.route("**/session/realtime-token", (route) =>
+    route.fulfill({ status: 401, json: {} }),
+  );
+  await page.route("**/bff/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        id: "custom",
+        role: "manager",
+        permissions: [
+          "departments.read",
+          "departments.write",
+          "modules.read",
+          "modules.write",
+          "fields.read",
+          "fields.write",
+          "records.read",
+          "records.write",
+          "relationships.read",
+          "relationships.write",
+        ],
+      },
+    }),
+  );
+  await page.goto("/workspace");
+  await expect(
+    page.getByRole("heading", { name: "OpenSlate", exact: true }),
+  ).toBeVisible();
+  if (isMobile)
+    await page
+      .getByRole("button", { name: "Open navigation", exact: true })
+      .click();
+  const navigation = page
+    .getByRole("navigation", { name: "Main navigation" })
+    .filter({ visible: true });
+  await expect(
+    navigation.getByRole("button", { name: "Access", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    navigation.getByRole("link", { name: "Workspace settings" }),
+  ).toHaveCount(0);
+  await page.goto("/settings/workspace");
+  await expect(
+    page.getByText("Administrator access is required to manage the workspace."),
+  ).toBeVisible();
+});
+
+test("saves profile edits with their revision and retains a rejected draft", async ({
+  page,
+}) => {
+  await page.route("**/session/status", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  await page.route("**/session/realtime-token", (route) =>
+    route.fulfill({ status: 401, json: {} }),
+  );
+  let profile = {
+    id: 1,
+    display_name: "OpenSlate",
+    legal_name: null,
+    description: null,
+    contact_email: null,
+    contact_phone: null,
+    postal_address: null,
+    timezone: "UTC",
+    locale: "en-US",
+    revision: 1,
+    logo_file_id: null,
+  };
+  let reject = false;
+  await page.route("**/bff/workspace", async (route) => {
+    if (route.request().method() === "PATCH") {
+      const body = route.request().postDataJSON();
+      expect(body.revision).toBe(profile.revision);
+      if (reject) {
+        await route.fulfill({
+          status: 409,
+          json: { detail: "Workspace changed. Reload before saving." },
+        });
+        return;
+      }
+      profile = { ...profile, ...body, revision: profile.revision + 1 };
+    }
+    await route.fulfill({ json: profile });
+  });
+  await page.goto("/settings/workspace");
+  await page
+    .getByLabel("Display name", { exact: true })
+    .fill("Operations team");
+  await page
+    .getByRole("button", { name: "Save workspace", exact: true })
+    .click();
+  await expect(
+    page.getByText("Workspace saved.", { exact: true }),
+  ).toBeVisible();
+  reject = true;
+  await page
+    .getByLabel("Display name", { exact: true })
+    .fill("Preserved draft");
+  await page
+    .getByRole("button", { name: "Save workspace", exact: true })
+    .click();
+  await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
+    "Preserved draft",
+  );
+  await expect(
+    page.getByText("Workspace changed. Reload before saving."),
+  ).toBeVisible();
+});
+
+test("loads the current private logo directly and exposes documents in classic navigation", async ({
+  page,
+  isMobile,
+}) => {
+  await page.route("**/session/status", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  await page.route("**/session/realtime-token", (route) =>
+    route.fulfill({ status: 401, json: {} }),
+  );
+  await page.route("**/bff/workspace", (route) =>
+    route.fulfill({
+      json: {
+        id: 1,
+        display_name: "Operations",
+        legal_name: null,
+        description: null,
+        contact_email: null,
+        contact_phone: null,
+        postal_address: null,
+        timezone: "UTC",
+        locale: "en-US",
+        revision: 2,
+        logo_file_id: "logo",
+      },
+    }),
+  );
+  await page.route("**/bff/workspace/logo?*", (route) =>
+    route.fulfill({
+      contentType: "image/png",
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC",
+        "base64",
+      ),
+    }),
+  );
+  await page.addInitScript(() =>
+    localStorage.setItem("openslate-navigation-structure", "classic"),
+  );
+  await page.goto("/workspace");
+  await expect(
+    page.getByRole("heading", { name: "Operations", exact: true }),
+  ).toBeVisible();
+  if (isMobile)
+    await page
+      .getByRole("button", { name: "Open navigation", exact: true })
+      .click();
+  await expect(
+    page.locator('img[src*="/bff/workspace/logo"]').filter({ visible: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("link", { name: "Documents", exact: true })
+      .filter({ visible: true }),
+  ).toHaveAttribute("href", "/administration/files");
 });

@@ -1,11 +1,17 @@
 """Provision the least-privilege PostgreSQL login used by FastAPI."""
 
 import argparse
-import os
+import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from psycopg import connect, sql
 from sqlalchemy.engine import make_url
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.core.config import get_provision_settings
 
 RUNTIME_ROLE = "openslate_runtime"
 PRIVILEGE_ROLE = "openslate_app"
@@ -23,18 +29,27 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _required_environment(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise SystemExit(f"{name} is required")
-    return value
-
-
 def _psycopg_url(value: str) -> str:
     url = make_url(value)
     if url.drivername not in {"postgresql", "postgresql+psycopg"}:
         raise SystemExit("MIGRATION_DATABASE_URL must use PostgreSQL")
     return url.set(drivername="postgresql").render_as_string(hide_password=False)
+
+
+def _runtime_password(database_url: str) -> str:
+    try:
+        url = make_url(database_url)
+        if (
+            url.drivername not in {"postgresql", "postgresql+psycopg"}
+            or url.username != RUNTIME_ROLE
+            or not url.password
+        ):
+            raise ValueError
+        return url.password
+    except Exception:
+        raise SystemExit(
+            "DATABASE_URL must use the openslate_runtime login with a password"
+        ) from None
 
 
 def provision(migration_url: str, password: str) -> None:
@@ -182,13 +197,14 @@ def provision(migration_url: str, password: str) -> None:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
-    environment = os.environ.get("ENVIRONMENT", "development").strip().casefold()
+    settings = get_provision_settings()
+    environment = settings.environment.strip().casefold()
     if environment not in LOCAL_ENVIRONMENTS and not args.confirm:
         raise SystemExit("--confirm is required outside development/local environments")
 
     provision(
-        _required_environment("MIGRATION_DATABASE_URL"),
-        _required_environment("OPENSLATE_DATABASE_PASSWORD"),
+        settings.migration_database_url,
+        _runtime_password(settings.database_url),
     )
     print(f"Provisioned database role {RUNTIME_ROLE}")
 

@@ -49,6 +49,21 @@ disposable browser journey covering schema creation, acceptance, record editing,
 and relationship linking/unlinking. Detailed rules stay in the backend/API and
 focused UI suites.
 
+Scanner UI coverage has a dedicated `npm run test:scanner:coverage` command.
+It runs the focused Chromium file journeys with Next development source maps,
+collects V8 coverage and enforces 90% across the five scanner UI files. The
+converter rejects absent/stale maps, incomplete navigation fragments and empty
+measurements, and counts emitted source lines. An optional baseline directory
+produces a changed-line report. This measurement is separate from production
+build/browser acceptance; it does not enable production source maps.
+
+`backend/tests/scanner_runtime.py` supports the disposable full-stack runner's
+real ClamAV engine and serial worker. Official definition updates, clean and
+harmless antivirus detection fixtures, private container settings and exact-byte
+download are distinct evidence from mocked scanner unit tests. PostgreSQL tests
+exercise durable claims, requester revocation, retries, quota locks and operator
+acknowledgement. None of these tests provisions a hosted deployment.
+
 Backend tests use pytest. Direct router-function tests verify function behavior;
 registered-route tests additionally verify dependency wiring, serialization,
 and HTTP error contracts. PostgreSQL tests remain necessary where mocks cannot
@@ -135,8 +150,8 @@ weaken any CI gate.
 These checks do not establish hosted network/TLS controls, aggregate ingress
 limits, alert delivery, backup/restore readiness, or provider-wide session
 revocation. Realtime Broadcast delivery and missing Next.js SecurityEvent
-producers remain separate coverage boundaries. Unimplemented storage/report
-workflows have no implemented acceptance contract yet.
+producers remain separate coverage boundaries. Unimplemented report workflows
+have no implemented acceptance contract yet.
 
 Sources: `scripts/test.py`, `backend/pyproject.toml`, `backend/tests/`,
 `frontend/playwright*.config.ts`, `frontend/tests/`, `.github/workflows/`.

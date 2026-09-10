@@ -1,5 +1,9 @@
 import type { NextConfig } from "next";
 
+import { validatePublicEnvironment } from "./src/lib/environment";
+
+validatePublicEnvironment();
+
 const nextConfig: NextConfig = {
   logging: {
     incomingRequests: {

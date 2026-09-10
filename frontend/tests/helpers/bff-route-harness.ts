@@ -87,11 +87,27 @@ export function createBffHarness(options: {
         URL,
         Uint8Array,
         ArrayBuffer,
+        ReadableStream,
         TextDecoder,
         AbortController,
         crypto,
         Date,
-        process: { env: {}, cwd: () => "/tmp" },
+        process: {
+          env: {
+            BACKEND_URL: "http://backend.invalid",
+            SUPABASE_SERVER_URL: "http://supabase.invalid",
+            LOG_DIR: "/tmp/openslate-logs",
+            BFF_REQUEST_BODY_LIMIT_BYTES: "1048576",
+            BFF_RESPONSE_BODY_LIMIT_BYTES: "8388608",
+            BFF_REQUEST_DEADLINE_MS: "60000",
+            PORT: "3000",
+            HOSTNAME: "127.0.0.1",
+            NEXT_PUBLIC_SUPABASE_URL: "http://supabase.invalid",
+            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "synthetic-publishable-key",
+            NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: "false",
+          },
+          cwd: () => "/tmp",
+        },
         fetch: options.transport,
         console: {
           info: () => undefined,
@@ -124,18 +140,25 @@ export function createBffHarness(options: {
         else jar.set(cookie.name, cookie.value);
       }
     },
-    request: (method = "POST") =>
+    request: (
+      method = "POST",
+      input: { path?: string[]; body?: BodyInit; headers?: HeadersInit } = {},
+    ) =>
       (route[method] as Handler)(
-        new Request("http://localhost/bff/records", {
-          method,
-          headers: {
-            host: "localhost",
-            origin: "http://localhost",
-            "content-type": "application/json",
+        new Request(
+          `http://localhost/bff/${(input.path ?? ["records"]).join("/")}`,
+          {
+            method,
+            headers: {
+              host: "localhost",
+              origin: "http://localhost",
+              "content-type": "application/json",
+              ...Object.fromEntries(new Headers(input.headers).entries()),
+            },
+            ...(method === "GET" ? {} : { body: input.body ?? "{}" }),
           },
-          ...(method === "GET" ? {} : { body: "{}" }),
-        }),
-        { params: Promise.resolve({ path: ["records"] }) },
+        ),
+        { params: Promise.resolve({ path: input.path ?? ["records"] }) },
       ),
   };
 }

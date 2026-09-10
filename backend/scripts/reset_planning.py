@@ -66,7 +66,7 @@ else:
 def required_environment(mapping: Mapping[str, str]) -> tuple[str, str]:
     """Return the required reset settings without falling back to other URLs."""
     values: list[str] = []
-    for name in ("MIGRATION_DATABASE_URL", "SAMPLE_EMAIL"):
+    for name in ("MIGRATION_DATABASE_URL", "ADMIN_EMAIL"):
         value = mapping.get(name, "")
         if not isinstance(value, str) or not value.strip():
             raise ResetError(f"{name} is required")

@@ -9,6 +9,7 @@ from sqlalchemy import Engine
 
 from app.core import readiness
 from app.core.config import Settings
+from tests.config_support import settings_values
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
 
@@ -48,7 +49,9 @@ def test_readiness_engine_has_a_dedicated_bounded_read_only_pool(monkeypatch) ->
     captured: dict[str, object] = {}
     engine = Mock(spec=Engine)
     settings = Settings(
-        database_url=f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test",
+        **settings_values(
+            database_url=f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test"
+        ),
         _env_file=None,
     )
 
@@ -79,8 +82,10 @@ def test_timed_out_readiness_call_does_not_start_a_replacement_and_recovers(
     completed = Event()
     call_count = 0
     settings = Settings(
-        database_url=f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test",
-        readiness_caller_timeout_seconds=0.01,
+        **settings_values(
+            database_url=f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test",
+            readiness_caller_timeout_seconds=0.01,
+        ),
         _env_file=None,
     )
 
@@ -122,8 +127,10 @@ def test_concurrent_timed_out_callers_share_the_same_in_flight_probe(
     gate = Barrier(5)
     call_count = 0
     settings = Settings(
-        database_url=f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test",
-        readiness_caller_timeout_seconds=0.01,
+        **settings_values(
+            database_url=f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test",
+            readiness_caller_timeout_seconds=0.01,
+        ),
         _env_file=None,
     )
 

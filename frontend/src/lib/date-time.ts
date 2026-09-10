@@ -1,14 +1,94 @@
-function pad(value: number): string {
-  return String(value).padStart(2, "0");
+import { Temporal } from "@js-temporal/polyfill";
+
+export type WorkspaceRegion = { timezone: string; locale: string };
+
+export function isSupportedWorkspaceLocale(locale: string): boolean {
+  try {
+    return Intl.DateTimeFormat.supportedLocalesOf(locale).length > 0;
+  } catch {
+    return false;
+  }
 }
 
-export function formatDateTimeLocal(value: unknown): string {
-  if (typeof value !== "string" || value.trim() === "") return "";
+function workspaceLocale(locale: string): string {
+  return isSupportedWorkspaceLocale(locale) ? locale : "en-US";
+}
 
+export function formatDateTimeLocal(value: unknown, timezone = "UTC"): string {
+  if (typeof value !== "string" || !value.trim()) return "";
+  try {
+    return Temporal.Instant.from(value)
+      .toZonedDateTimeISO(timezone)
+      .toPlainDateTime()
+      .toString({ smallestUnit: "minute" });
+  } catch {
+    return "";
+  }
+}
+
+export function datetimeOffsets(value: string, timezone: string): string[] {
+  try {
+    const local = Temporal.PlainDateTime.from(value);
+    const early = local.toZonedDateTime(timezone, {
+      disambiguation: "earlier",
+    });
+    const late = local.toZonedDateTime(timezone, { disambiguation: "later" });
+    return [
+      ...new Set(
+        [early, late]
+          .filter((instant) => instant.toPlainDateTime().equals(local))
+          .map((instant) => instant.offset),
+      ),
+    ];
+  } catch {
+    return [];
+  }
+}
+
+export function datetimeInputToUtc(
+  value: string,
+  timezone: string,
+  offset?: string,
+): string {
+  const offsets = datetimeOffsets(value, timezone);
+  if (!offsets.length)
+    throw new Error(
+      "This local time does not exist in the workspace timezone.",
+    );
+  if (offsets.length > 1 && !offset)
+    throw new Error("This local time occurs twice. Choose its UTC offset.");
+  const selected = offset ?? offsets[0];
+  if (!offsets.includes(selected))
+    throw new Error("Choose a valid UTC offset for this local time.");
+  return Temporal.ZonedDateTime.from(`${value}${selected}[${timezone}]`, {
+    offset: "reject",
+  })
+    .toInstant()
+    .toString();
+}
+
+export function formatWorkspaceDateTime(
+  value: string,
+  region: WorkspaceRegion,
+): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(workspaceLocale(region.locale), {
+    timeZone: region.timezone,
+    dateStyle: "medium",
+    timeStyle: "long",
+  }).format(date);
+}
 
-  return `${String(date.getFullYear()).padStart(4, "0")}-${pad(
-    date.getMonth() + 1,
-  )}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+export function formatWorkspaceDate(
+  value: string,
+  region: WorkspaceRegion,
+): string {
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const date = new Date(dateOnly ? `${value}T00:00:00Z` : value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(workspaceLocale(region.locale), {
+    timeZone: dateOnly ? "UTC" : region.timezone,
+    dateStyle: "medium",
+  }).format(date);
 }

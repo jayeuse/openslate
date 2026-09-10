@@ -101,5 +101,7 @@ flowchart LR
 
 - Each deployment is one trust domain. No tenant key or tenant/RLS isolation exists on users or domain rows; a shared-tenant deployment is not supported by the current architecture.
 - Hosted ingress, TLS, DNS, network policy, secret delivery, and backup systems are **Unknown**.
-- Workers, queues, schedulers, caches, analytics, and external business APIs are **Absent**.
+- The serial file worker uses file rows as a durable queue and a private ClamAV
+  container for scanning. General schedulers, caches, analytics and external
+  business APIs are **Absent**.
 - Files, reports, and views are **Planned / Documented Only** package scaffolds, not external integrations.

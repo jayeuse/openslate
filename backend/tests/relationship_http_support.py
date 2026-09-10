@@ -64,7 +64,7 @@ class RelationshipGraph:
 def _urls() -> tuple[str, str]:
     settings = get_settings()
     runtime_url = settings.database_url
-    owner_url = settings.migration_database_url or os.getenv("MIGRATION_DATABASE_URL")
+    owner_url = os.getenv("MIGRATION_DATABASE_URL")
     if owner_url is None:
         pytest.skip("MIGRATION_DATABASE_URL is required for owned relationship fixtures")
     _guard_integration_database(runtime_url)

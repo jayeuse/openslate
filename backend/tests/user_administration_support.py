@@ -24,12 +24,11 @@ def _guard_database(database_url: str) -> None:
 
 
 def _owner_database_url() -> str:
-    for variable in ("MIGRATION_DATABASE_URL", "TEST_DATABASE_URL"):
-        database_url = os.getenv(variable)
-        if database_url is not None:
-            _guard_database(database_url)
-            return database_url
-    raise RuntimeError("A guarded PostgreSQL URL is required")
+    database_url = os.getenv("MIGRATION_DATABASE_URL")
+    if database_url is None:
+        raise RuntimeError("MIGRATION_DATABASE_URL is required for owner fixture setup")
+    _guard_database(database_url)
+    return database_url
 
 
 class _AdminFixture:

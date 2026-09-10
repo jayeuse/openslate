@@ -17,27 +17,20 @@ COPY frontend/ ./
 COPY contracts/ /contracts/
 RUN test -n "$NEXT_PUBLIC_SUPABASE_URL" \
     && test -n "$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" \
-    && npm run build
+    && test -n "$NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED" \
+    && npm run build -- --from-process
 
 FROM node:24-alpine AS runner
 WORKDIR /app
-ARG NEXT_PUBLIC_SUPABASE_URL
-ARG NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-ARG NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED
 ENV NODE_ENV=production \
-    NEXT_TELEMETRY_DISABLED=1 \
-    HOSTNAME=0.0.0.0 \
-    PORT=3000 \
-    NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
-    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY \
-    NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED=$NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED
+    NEXT_TELEMETRY_DISABLED=1
 
 RUN addgroup --system --gid 10001 nodejs && adduser --system --uid 10001 nextjs
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-RUN mkdir -p /app/logs && chown nextjs:nodejs /app/logs && chmod 700 /app/logs
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/start-standalone.mjs ./scripts/start-standalone.mjs
+COPY --from=builder --chown=nextjs:nodejs /app/src/lib/environment.ts ./src/lib/environment.ts
 USER nextjs
 
-EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["node", "scripts/start-standalone.mjs", "--from-process"]

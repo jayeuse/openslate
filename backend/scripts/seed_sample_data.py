@@ -1,20 +1,26 @@
 """Populate development domain data through the authenticated FastAPI API.
 
 The access token must belong to an existing administrator and is read from the
-``--access-token`` option or the protected ``SUPABASE_ACCESS_TOKEN`` environment
-variable.  It is never printed.  Domain/reference data is seeded by default;
+protected ``SUPABASE_ACCESS_TOKEN`` environment variable. It is never printed.
+Domain/reference data is seeded by default;
 sample users are optional invitations because invitees do not have local
 credentials.
 """
 
 import argparse
 import json
-import os
+import sys
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.core.config import get_seed_settings
 
 if __package__:
     from .seed_sample_data_specs import (  # type: ignore[import-not-found]
@@ -39,22 +45,11 @@ else:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--access-token",
-        help="Supabase access token for an existing administrator (prefer SUPABASE_ACCESS_TOKEN)",
-    )
-    parser.add_argument(
         "--with-sample-users",
         action="store_true",
         help="send invitations for the optional sample users after creating roles",
     )
     return parser
-
-
-def _access_token(option_value: str | None) -> str:
-    token = option_value or os.environ.get("SUPABASE_ACCESS_TOKEN")
-    if not token or not token.strip():
-        raise SystemExit("Provide --access-token or SUPABASE_ACCESS_TOKEN")
-    return token
 
 
 class ApiClient:
@@ -92,9 +87,10 @@ class ApiClient:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
+    settings = get_seed_settings()
     client = ApiClient(
-        os.environ.get("API_BASE_URL", "http://localhost:8000"),
-        token=_access_token(args.access_token),
+        settings.backend_url,
+        token=settings.supabase_access_token.get_secret_value(),
     )
 
     roles_response = client.request("GET", "/api/roles", query={"limit": 100}) or {}

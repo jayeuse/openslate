@@ -2,17 +2,64 @@ import { defineConfig, devices } from "@playwright/test";
 
 const isCI = Boolean(process.env.CI);
 const useProductionServer =
-  isCI || process.env.PLAYWRIGHT_USE_PRODUCTION === "1";
-const frontendEnvironment: Record<string, string> = {};
-for (const name of [
-  "BACKEND_URL",
-  "NEXT_PUBLIC_SUPABASE_URL",
-  "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
-  "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED",
-] as const) {
+  process.env.SCANNER_COVERAGE !== "1" &&
+  (isCI || process.env.PLAYWRIGHT_USE_PRODUCTION === "1");
+function requiredEnvironment(name: string): string {
   const value = process.env[name];
-  if (value !== undefined) frontendEnvironment[name] = value;
+  if (!value) throw new Error(`${name} is required`);
+  return value;
 }
+
+// Editor discovery loads this file directly, without the npm launcher. Its
+// local profile is synthetic test data; explicit process configuration stays strict.
+const hasExplicitConfiguration = [
+  "PLAYWRIGHT_CONFIGURATION",
+  "TEST_LAYER",
+  "BASE_URL",
+].some((name) => process.env[name] !== undefined);
+const localProfile = !isCI && !hasExplicitConfiguration;
+const configurationMode = localProfile
+  ? "synthetic"
+  : requiredEnvironment("PLAYWRIGHT_CONFIGURATION");
+if (!["synthetic", "process"].includes(configurationMode))
+  throw new Error("PLAYWRIGHT_CONFIGURATION must be synthetic or process");
+const testLayer = localProfile ? "all" : requiredEnvironment("TEST_LAYER");
+if (!["all", "isolated", "http", "browser"].includes(testLayer))
+  throw new Error("TEST_LAYER must be all, isolated, http, or browser");
+const baseURL = localProfile
+  ? "http://127.0.0.1:3104"
+  : requiredEnvironment("BASE_URL");
+let target: URL;
+try {
+  target = new URL(baseURL);
+  if (!["http:", "https:"].includes(target.protocol) || !target.port)
+    throw new Error();
+} catch {
+  throw new Error("BASE_URL must be an absolute HTTP(S) URL with a port");
+}
+const syntheticEnvironment = {
+  BACKEND_URL: "http://backend.invalid",
+  SUPABASE_SERVER_URL: "http://supabase.invalid",
+  LOG_DIR: "/tmp/openslate-frontend-logs",
+  BFF_REQUEST_BODY_LIMIT_BYTES: "1048576",
+  BFF_RESPONSE_BODY_LIMIT_BYTES: "8388608",
+  BFF_REQUEST_DEADLINE_MS: "60000",
+  PORT: target.port,
+  HOSTNAME: target.hostname,
+  NEXT_PUBLIC_SUPABASE_URL: "http://supabase.invalid",
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "synthetic-publishable-key",
+  NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: "false",
+};
+const frontendEnvironment: Record<string, string> =
+  configurationMode === "synthetic"
+    ? syntheticEnvironment
+    : Object.fromEntries(
+        Object.keys(syntheticEnvironment).map((name) => [
+          name,
+          requiredEnvironment(name),
+        ]),
+      );
+Object.assign(process.env, frontendEnvironment);
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
@@ -27,11 +74,6 @@ function isolatedCommand(command: string): string {
   return ["env", "-i", ...pathAssignment, ...environment, command].join(" ");
 }
 
-const testLayer = process.env.TEST_LAYER ?? "all";
-if (!["all", "isolated", "http", "browser"].includes(testLayer)) {
-  throw new Error("TEST_LAYER must be all, isolated, http, or browser");
-}
-
 export default defineConfig({
   testDir: "./tests",
   testIgnore: ["**/fullstack/**"],
@@ -42,7 +84,7 @@ export default defineConfig({
   retries: isCI ? 2 : 0,
   reporter: isCI ? [["list"], ["html", { open: "never" }]] : "html",
   use: {
-    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    baseURL,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
@@ -88,9 +130,11 @@ export default defineConfig({
       ? undefined
       : {
           command: isolatedCommand(
-            useProductionServer ? "npm run start" : "npm run dev",
+            useProductionServer
+              ? "npm run start -- --from-process"
+              : "npm run dev -- --from-process",
           ),
-          url: process.env.BASE_URL ?? "http://localhost:3000",
+          url: baseURL,
           env: frontendEnvironment,
           reuseExistingServer: !isCI,
           timeout: 120_000,

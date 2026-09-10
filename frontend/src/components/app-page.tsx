@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { WorkspaceProvider } from "@/components/workspace-provider";
 import { AppShell } from "@/components/app-shell";
 import {
   OPENSLADE_INVALIDATION_EVENT,
@@ -49,11 +50,14 @@ export function AppPage({ children }: AppPageProps) {
   // from the pathname here: record authoring routes (`*/records/new` and
   // `*/records/*/edit`, in both the canonical `/modules/...` shape and the
   // department-alias `/departments/.../modules/...` shape) keep in-progress
-  // form state by skipping the AppShell remount; every other authenticated
+  // form state by skipping the AppShell remount. Records lists also retain
+  // their query drafts and refresh their own data; every other authenticated
   // route remounts the shell on invalidation.
   const preserveStateOnInvalidation =
+    /\/modules\/[^/]+\/records\/?$/.test(pathname) ||
     /\/records\/new\/?$/.test(pathname) ||
-    /\/records\/[^/]+\/edit\/?$/.test(pathname);
+    /\/records\/[^/]+\/edit\/?$/.test(pathname) ||
+    pathname === "/settings/workspace";
 
   useEffect(() => {
     const invalidate = () => {
@@ -78,7 +82,9 @@ export function AppPage({ children }: AppPageProps) {
 
   return (
     <RealtimeProvider>
-      <AppShell key={invalidationGeneration}>{children}</AppShell>
+      <WorkspaceProvider>
+        <AppShell key={invalidationGeneration}>{children}</AppShell>
+      </WorkspaceProvider>
     </RealtimeProvider>
   );
 }

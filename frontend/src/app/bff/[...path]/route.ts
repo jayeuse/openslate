@@ -10,9 +10,12 @@ import {
 } from "@/lib/auth-cookies";
 import { isSameOriginRequest } from "@/lib/request-security";
 import {
+  acquireFileTransfer,
+  fileResponseBody,
+  fileTransferPolicy,
+} from "@/lib/file-transfer-policy";
+import {
   attachRequestId,
-  BFF_REQUEST_BODY_LIMIT_BYTES,
-  BFF_RESPONSE_BODY_LIMIT_BYTES,
   createRequestDeadline,
   createRequestId,
   logSafeEvent,
@@ -23,11 +26,10 @@ import {
   UpstreamResponseTooLargeError,
   withinDeadline,
 } from "@/lib/reliability";
+import { validateRuntimeEnvironment } from "@/lib/environment";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-export const maxDuration = 60;
-
-const backend = process.env.BACKEND_URL ?? "http://localhost:8000";
+export const maxDuration = 120;
 
 const invitationAcceptancePath = "auth/invitations/accept";
 type Params = { params: Promise<{ path: string[] }> };
@@ -81,6 +83,7 @@ function forwardHeaders(request: Request, token: string | undefined) {
 }
 
 async function requestBackend(
+  backendUrl: string,
   request: Request,
   path: string,
   token: string | undefined,
@@ -88,7 +91,7 @@ async function requestBackend(
   signal: AbortSignal,
 ) {
   const headers = forwardHeaders(request, token);
-  return fetch(`${backend}/api/${path}${new URL(request.url).search}`, {
+  return fetch(`${backendUrl}/api/${path}${new URL(request.url).search}`, {
     method: request.method,
     headers,
     body: body?.slice(0),
@@ -98,9 +101,16 @@ async function requestBackend(
 }
 
 async function handle(request: Request, { params }: Params) {
+  const runtime = validateRuntimeEnvironment();
   const requestId = createRequestId();
   const startedAt = Date.now();
-  const deadline = createRequestDeadline(requestDeadlineMilliseconds());
+  const { path } = await params;
+  const transfer = fileTransferPolicy(path, request.method);
+  const deadline = createRequestDeadline(
+    transfer?.deadlineMs ?? requestDeadlineMilliseconds(),
+  );
+  let releaseTransfer: (() => void) | null = null;
+  let deliveryOwnsSlot = false;
   let diagnosticId = requestId;
   let routeTemplate = "unmatched";
   let refreshedSession: Parameters<typeof setAuthCookies>[1] | null = null;
@@ -121,7 +131,6 @@ async function handle(request: Request, { params }: Params) {
   };
 
   try {
-    const { path } = await params;
     routeTemplate = safeLogRoute(`/bff/${path.join("/")}`);
     if (path.join("/") === invitationAcceptancePath)
       return complete(
@@ -135,6 +144,15 @@ async function handle(request: Request, { params }: Params) {
     )
       return complete(safeError("Forbidden", 403), "same_origin_rejected");
 
+    if (transfer) {
+      releaseTransfer = acquireFileTransfer();
+      if (!releaseTransfer)
+        return complete(
+          safeError("File capacity is busy", 503, { "Retry-After": "1" }),
+          "files_busy",
+        );
+    }
+
     const store = await cookies();
     let access = store.get(ACCESS_COOKIE)?.value;
     const backendPath = path
@@ -146,12 +164,13 @@ async function handle(request: Request, { params }: Params) {
         : await readLimitedStream(
             request.body,
             request.headers,
-            BFF_REQUEST_BODY_LIMIT_BYTES,
+            transfer?.requestBytes ?? runtime.requestBodyLimitBytes,
             deadline.signal,
           );
 
     let attemptStartedAt = Date.now();
     let response = await requestBackend(
+      runtime.backendUrl,
       request,
       backendPath,
       access,
@@ -196,6 +215,7 @@ async function handle(request: Request, { params }: Params) {
 
       attemptStartedAt = Date.now();
       response = await requestBackend(
+        runtime.backendUrl,
         request,
         backendPath,
         access,
@@ -226,7 +246,9 @@ async function handle(request: Request, { params }: Params) {
           : await readLimitedStream(
               response.body,
               response.headers,
-              BFF_RESPONSE_BODY_LIMIT_BYTES,
+              response.ok && transfer
+                ? transfer.responseBytes
+                : runtime.responseBodyLimitBytes,
               deadline.signal,
             );
     } catch (error) {
@@ -234,7 +256,12 @@ async function handle(request: Request, { params }: Params) {
         throw new UpstreamResponseTooLargeError();
       throw error;
     }
-    const next = new NextResponse(responseBody, { status: response.status });
+    const deliveredBody =
+      responseBody !== null && releaseTransfer
+        ? fileResponseBody(responseBody, releaseTransfer)
+        : responseBody;
+    const next = new NextResponse(deliveredBody, { status: response.status });
+    deliveryOwnsSlot = responseBody !== null && releaseTransfer !== null;
     for (const name of [
       "cache-control",
       "content-disposition",
@@ -245,6 +272,7 @@ async function handle(request: Request, { params }: Params) {
       "retry-after",
       "vary",
       "www-authenticate",
+      "x-content-type-options",
     ]) {
       const value = response.headers.get(name);
       if (value) next.headers.set(name, value);
@@ -281,6 +309,7 @@ async function handle(request: Request, { params }: Params) {
     );
   } finally {
     deadline.dispose();
+    if (!deliveryOwnsSlot) releaseTransfer?.();
   }
 }
 

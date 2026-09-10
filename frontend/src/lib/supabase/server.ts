@@ -2,20 +2,18 @@ import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
 
+import {
+  currentPublicEnvironment,
+  validateRuntimeEnvironment,
+} from "@/lib/environment";
 import { withRequestSignal } from "@/lib/supabase/request-fetch";
 
-function requiredPublicEnv(
-  name: "NEXT_PUBLIC_SUPABASE_URL" | "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
-) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is not configured`);
-  return value;
-}
-
 export function createSupabaseServerClient(signal?: AbortSignal) {
+  const runtime = validateRuntimeEnvironment();
+  const publicEnvironment = currentPublicEnvironment();
   return createClient(
-    requiredPublicEnv("NEXT_PUBLIC_SUPABASE_URL"),
-    requiredPublicEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"),
+    runtime.supabaseServerUrl,
+    publicEnvironment.supabasePublishableKey,
     {
       auth: {
         persistSession: false,

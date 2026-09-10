@@ -8,13 +8,6 @@ from app.core.config import get_settings
 
 ALLOWED_ALGORITHMS = ["ES256", "RS256"]
 
-# These names intentionally remain module attributes.  They provide a small,
-# useful seam for tests while the production values still come from Settings.
-SUPABASE_JWKS_URL: str | None = None
-SUPABASE_ISSUER: str | None = None
-SUPABASE_AUDIENCE: str | None = None
-
-
 @lru_cache(maxsize=8)
 def _cached_jwks_client(jwks_url: str, factory: Any) -> Any:
     """Cache by URL and factory identity so test seams cannot leak clients."""
@@ -22,19 +15,9 @@ def _cached_jwks_client(jwks_url: str, factory: Any) -> Any:
     return factory(jwks_url)
 
 
-def _verification_settings() -> tuple[str | None, str | None, str | None]:
+def _verification_settings() -> tuple[str, str, str]:
     settings = get_settings()
-    issuer = SUPABASE_ISSUER or settings.supabase_jwt_issuer
-    configured_audience = getattr(
-        settings,
-        "supabase_jwt_audience",
-        getattr(settings, "supabase_audience", "authenticated"),
-    )
-    audience = SUPABASE_AUDIENCE or configured_audience
-    jwks_url = SUPABASE_JWKS_URL or settings.supabase_jwks_url
-    if jwks_url is None and settings.supabase_url:
-        jwks_url = f"{settings.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
-    return jwks_url, issuer, audience
+    return settings.supabase_jwks_url, settings.supabase_jwt_issuer, settings.supabase_jwt_audience
 
 
 def verify_supabase_jwt(token: str) -> dict[str, Any] | None:

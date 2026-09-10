@@ -1,3 +1,4 @@
+import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
 import { expect, test } from "@playwright/test";
 import { testSecret } from "../../helpers/test-secret";
 import {
@@ -33,6 +34,7 @@ test("audit filters requests, reveals details, and switches views by keyboard", 
   };
   const requests: URL[] = [];
   await page.route("**/bff/**", async (route) => {
+    if (await fulfillWorkspaceRequest(route)) return;
     const url = new URL(route.request().url());
     requests.push(url);
     await json(
@@ -82,6 +84,7 @@ test("audit governance gives safe authorization and failure retry guidance", asy
   const emptyAudit = listResponse([]);
   const emptySecurity = listResponse([]);
   await page.route("**/bff/**", async (route) => {
+    if (await fulfillWorkspaceRequest(route)) return;
     const request = route.request();
     const path = pathForRequest(request);
     if (request.method() === "GET" && path === "/audit-logs") {

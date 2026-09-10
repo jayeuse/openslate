@@ -19,9 +19,8 @@ import {
   readLimitedStream,
   withinDeadline,
 } from "@/lib/reliability";
+import { validateRuntimeEnvironment } from "@/lib/environment";
 import { beginSessionRoute } from "@/lib/session-response";
-
-const backend = process.env.BACKEND_URL ?? "http://localhost:8000";
 
 const PasswordSchema = z
   .object({
@@ -34,6 +33,7 @@ const PasswordSchema = z
   });
 
 export async function POST(request: Request) {
+  const runtime = validateRuntimeEnvironment();
   const sessionRoute = beginSessionRoute("/session/password", request.method);
   const { complete, deadline, requestId } = sessionRoute;
   if (!isSameOriginRequest(request))
@@ -105,15 +105,18 @@ export async function POST(request: Request) {
     if (updated.error) throw new Error("password update failed");
 
     backendAttemptStartedAt = Date.now();
-    const accepted = await fetch(`${backend}/api/auth/invitations/accept`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${establishedSession.access_token}`,
-        "X-Request-ID": requestId,
+    const accepted = await fetch(
+      `${runtime.backendUrl}/api/auth/invitations/accept`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${establishedSession.access_token}`,
+          "X-Request-ID": requestId,
+        },
+        cache: "no-store",
+        signal: deadline.signal,
       },
-      cache: "no-store",
-      signal: deadline.signal,
-    });
+    );
     backendRequestId = accepted.headers.get("x-request-id") || undefined;
     logSafeEvent({
       event: "backend_attempt_completed",

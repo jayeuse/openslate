@@ -105,7 +105,10 @@ The browser does not write application data through Supabase's Data API. Next.js
 - Backup/PITR, disaster recovery, monitoring, and alerting services
 - Shared-tenant isolation model
 
-Storage is a boundary case: the private bucket foundation is in the schema, but application file behavior is not implemented.
+Files use the private Storage bucket through FastAPI. Upload, quarantine, durable
+automatic scanning, download and cleanup are implemented; the private ClamAV
+engine and worker require the operator setup described in
+[infrastructure](11-infrastructure.md#automatic-file-scanning--container-operating-procedure).
 
 ## Structure choice
 

@@ -22,9 +22,9 @@
 
 ## Setup and security
 - Require Python `>=3.12,<3.15`, Node `>=24`; use `backend/uv.lock` and `frontend/package-lock.json`.
-- Root startup: `supabase start`, then `supabase status -o env`; treat the full status output as secret.
-- Backend setup: `uv sync --locked`, `uv run alembic upgrade head`, `uv run alembic check`; serve with `uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`.
-- Frontend: use `frontend/.env.local`, never source root `.env` into npm/Next.js; run `npm ci`, then `npm run dev -- --hostname 127.0.0.1`.
+- Root setup: create `.env` from `.env.example` for a new checkout before `supabase start`; `supabase/config.toml` reads the canonical ports/URLs. Treat full `supabase status -o env` output as secret.
+- Backend setup: `uv sync --locked`, `uv run alembic upgrade head`, `uv run alembic check`; serve with `uv run python -m app --reload`, which reads configured bind/port/limits.
+- Frontend: local npm launchers generate an allowlisted `frontend/.env.local` from root `.env`; never source root `.env` into npm/Next.js. Run `npm ci`, then `npm run dev`.
 - Approved destructive reset: root `supabase start`, `supabase db reset`, then backend `uv run alembic upgrade head`; Supabase reset does not restore application schema.
 - `MIGRATION_DATABASE_URL` is Alembic's owner connection; `DATABASE_URL` uses `openslate_runtime`. Never substitute SQLite.
 - Supabase Auth owns identities/passwords/invitations. Browser code uses only the publishable key; private credentials stay on the backend and out of tracked files/reports.

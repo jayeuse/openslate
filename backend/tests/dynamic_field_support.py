@@ -47,13 +47,9 @@ def _database_url() -> str:
     if migration_url is not None and _is_owner_database(migration_url):
         return migration_url
 
-    test_url = os.getenv("TEST_DATABASE_URL")
-    if test_url is not None and _is_owner_database(test_url):
-        return test_url
-
     raise RuntimeError(
         "Dynamic field fixture setup requires an owner-capable "
-        "MIGRATION_DATABASE_URL or TEST_DATABASE_URL"
+        "MIGRATION_DATABASE_URL"
     )
 
 

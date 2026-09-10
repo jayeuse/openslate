@@ -1,179 +1,149 @@
 # Configuration Architecture
 
-> **Scope:** Root, backend, frontend, Supabase CLI, image, test, and operational settings affecting runtime or verification.
-> **Audience:** Developers and operators preparing local environments, CI jobs, images, or configuration reviews.
+> **Scope:** Root, backend, frontend, Supabase CLI, image, test, and operational settings.
+> **Audience:** Developers and operators preparing local environments, CI jobs, and images.
 > **Related documents:** [Infrastructure](11-infrastructure.md), [Deployment](12-deployment-architecture.md), [Observability](18-observability.md), [Architecture index](README.md)
 
-## State classifications and value handling
+## One editable source
 
-- **Implemented** means the setting is read by checked-in code or consumed by checked-in tooling.
-- **Configured** means a static value is present in checked-in configuration.
-- **Derived** means the repository constructs the value from another setting.
-- **Absent** means no example or default is supplied by the repository.
-- **Sensitive** values below are named only; this document contains no real key,
-  password, token, or connection-string value.
+Root `.env` is the canonical local configuration file. `.env.example` groups
+stack ports, URLs, secrets, administrator sign-in details, API limits, frontend
+limits, container settings, and scanner settings. Filled files are ignored by
+Git and excluded from Docker build context. Keep `.env` mode `0600`.
 
-The root `.env` is ignored by Git. `.env.example` contains placeholders only
-and is for backend and migration/operations commands. The frontend must not
-source the root `.env`: copy `frontend/.env.example` to `frontend/.env.local`
-and keep only `BACKEND_URL`, public Supabase values, and the optional purge flag
-there. `npm ci` runs without backend secrets. `supabase status -o env` is the
-local source for generated connection and key names; its output is not a
-configuration file to commit. Backend
-`SettingsConfigDict` reads `../.env` and `.env` from the backend working
-directory and ignores extra variables (`backend/app/core/config/settings.py`).
-The role-provisioning script reads required values directly from its process
-environment and does not load `.env` itself.
+`backend/app/core/config/environment.py:read_environment` reads that exact file
+and expands `${NAME}` references only against keys in the same file. Duplicate
+bindings, malformed entries, missing references, unsupported default-expression
+syntax, and reference cycles are errors. There is no alternate backend dotenv
+file, legacy setting alias, inferred JWKS endpoint, or migration-to-runtime URL
+fallback. Values required by the selected operation must be present and valid;
+errors identify names without printing values.
 
-## Application environment inventory — Implemented
+Backend launchers read root `.env` using an absolute repository path. Local
+shell values do not override the file. CI and containers explicitly select
+`OPENSLATE_ENV_SOURCE=process`, which reads only injected process configuration.
+Administrative, migration, and scanner loaders require their own inputs when
+those operations run; API startup does not require administrator credentials,
+the owner connection, or a scanner manifest.
 
-The required/default column distinguishes a Pydantic default from an
-operational requirement. A setting can be optional in `Settings` and still be
-required by a specific integration path.
+`scripts/environment.py` provides three root commands, run through the backend
+uv environment:
 
-| Setting or alias              | Required/default                                                                                        | Sensitive                                 | Read site and effect                                                                                                                   |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `APP_NAME`                    | Optional; default `OpenSlate API`                                                                       | No                                        | `backend/app/core/config/settings.py:Settings.app_name`; FastAPI title in `backend/app/main.py:create_app`.                            |
-| `ENVIRONMENT`                 | Optional; default `development`                                                                         | No                                        | `Settings.environment`; `provision_database_role.py` and `bootstrap_admin.py` use local-environment checks.                            |
-| `DATABASE_URL`                | Required by `Settings`; no default                                                                      | Yes: database URL may contain credentials | `Settings.database_url`; `backend/app/core/database/session.py:get_engine`; fallback for Alembic when migration URL is absent.         |
-| `MIGRATION_DATABASE_URL`      | Optional in `Settings`; falls back to `DATABASE_URL` for Alembic; required by role provisioning         | Yes: owner connection URL                 | `backend/migrations/env.py`; `provision_database_role.py:_required_environment`.                                                       |
-| `OPENSLATE_DATABASE_PASSWORD` | Required by `provision_database_role.py`; no default                                                    | Yes                                       | `backend/scripts/provision_database_role.py`; used to create or alter `openslate_runtime`, never printed.                              |
-| `SUPABASE_URL`                | Optional in `Settings`; required for configured Supabase Auth/Admin/Realtime operation                  | No                                        | `Settings.supabase_url`; `SupabaseAdminClient`; JWT JWKS fallback; local `.env.example` maps it from CLI `API_URL`.                    |
-| `SUPABASE_PUBLISHABLE_KEY`    | Optional backend field; required by frontend public-key client through its alias                        | No: publishable by design                 | Backend compatibility/config field; root `.env.example` maps CLI `ANON_KEY`; `frontend/.env.local` receives the corresponding public value as `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. |
-| `SUPABASE_ANON_KEY`           | Optional compatibility alias for `SUPABASE_PUBLISHABLE_KEY`                                             | No                                        | `Settings.supabase_publishable_key` via `AliasChoices`; not the preferred example name.                                                |
-| `SUPABASE_SECRET_KEY`         | Optional in `Settings`; required for server-side invitation, Auth administration, and backend Broadcast | Yes: server-only service key              | `backend/app/core/integrations/supabase.py:SupabaseAdminClient`; never passed to browser code.                                         |
-| `SUPABASE_AUTH_REDIRECT_URL`  | Optional in `Settings`; required by `SupabaseAdminClient.invite_user`                                   | No                                        | Invitation `redirect_to` in `backend/app/core/integrations/supabase.py`; local example points to `/auth/callback`.                     |
-| `SUPABASE_JWT_ISSUER`         | Optional in `Settings`; required by JWT verification unless the verification seam supplies one          | No                                        | `backend/app/core/security/supabase.py:_verification_settings`; expected local value is derived from the API URL plus `/auth/v1`.      |
-| `SUPABASE_JWKS_URL`           | Optional; derived as `SUPABASE_URL/auth/v1/.well-known/jwks.json` when absent                           | No                                        | `backend/app/core/security/supabase.py:_verification_settings`; used by PyJWT JWKS lookup.                                             |
-| `SUPABASE_JWT_AUDIENCE`       | Optional; default `authenticated`                                                                       | No                                        | `Settings.supabase_jwt_audience`; JWT verification audience.                                                                           |
-| `SUPABASE_AUDIENCE`           | Optional compatibility alias for `SUPABASE_JWT_AUDIENCE`                                                | No                                        | `Settings.supabase_jwt_audience` via `AliasChoices`.                                                                                   |
-| `LIFECYCLE_PURGE_ENABLED`     | Optional; default `false`                                                                               | No                                        | `Settings.lifecycle_purge_enabled`; backend lifecycle purge behavior. It is not present in `.env.example`.                             |
-| `CORS_ORIGINS`                | Optional; default `['http://localhost:3000']`                                                           | No                                        | `Settings.cors_origins`; `CORSMiddleware` in `backend/app/main.py`. The example supplies a JSON list string.                           |
-| `BOOTSTRAP_ADMIN_CONFIRM`     | Optional; default false                                                                                 | No                                        | `backend/scripts/bootstrap_admin.py:_confirmation_from_environment`; permits non-local bootstrap only when true-like.                  |
-| `SUPABASE_ACCESS_TOKEN`       | Optional only for sample-data seeding; no default; `--access-token` takes precedence                    | Yes: access token                         | `backend/scripts/seed_sample_data.py:_access_token`; the token is sent to the FastAPI API and not printed.                             |
-| `API_BASE_URL`                | Optional; default `http://localhost:8000`                                                               | No                                        | `backend/scripts/seed_sample_data.py:main`; sample-data API destination.                                                               |
-| `TEST_DATABASE_URL`           | Optional; integration tests skip when absent; no default                                                | Yes: database URL may contain credentials | `backend/tests/conftest.py` and PostgreSQL integration tests; guards loopback, port 54322, and database `postgres`.                    |
+```sh
+uv run --directory backend python ../scripts/environment.py check
+uv run --directory backend python ../scripts/environment.py frontend
+uv run --directory backend python ../scripts/environment.py compose config --quiet
+```
 
-`Settings` uses `extra="ignore"`, so variables not listed as fields do not
-become backend settings merely by being placed in `.env`.
+`check` validates local API/frontend settings, port/URL agreement, administrator
+fields, and database URLs. Scanner provisioning is checked when starting the
+scanner. `frontend` atomically writes a mode-`0600` allowlist projection to
+`frontend/.env.local`. `compose` validates inputs and derives a scoped effective
+environment in memory before invoking Docker; it does not write a secret file.
+Treat complete rendered Compose configuration as secret.
 
-### Supabase CLI output mapping — Implemented
+## Canonical root inventory
 
-`supabase status -o env` emits generated local values. The repository uses the
-following names without recording their values:
+Every setting below is explicit in the example; example values are editable
+configuration, not code fallbacks. Empty secret placeholders must be filled for
+the operation that uses them. `APP_NAME` is a code constant, not configuration.
 
-| CLI output name    | Required/default                                        | Sensitive                    | Mapped/read site                                                                      |
-| ------------------ | ------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------- |
-| `API_URL`          | Generated after `supabase start`; no repository default | No                           | Mapped to `SUPABASE_URL` and used to derive frontend public URL and backend JWT URLs. |
-| `DB_URL`           | Generated after `supabase start`; no repository default | Yes: owner database URL      | Mapped to `MIGRATION_DATABASE_URL` with the `postgresql+psycopg` SQLAlchemy scheme.   |
-| `ANON_KEY`         | Generated after `supabase start`; no repository default | No: publishable key          | Mapped to `SUPABASE_PUBLISHABLE_KEY` and the frontend public alias.                   |
-| `SERVICE_ROLE_KEY` | Generated after `supabase start`; no repository default | Yes: server-only service key | Mapped to `SUPABASE_SECRET_KEY`; backend integrations only.                           |
+| Group | Canonical names | Owner and validation |
+| --- | --- | --- |
+| Supabase identity | `SUPABASE_PROJECT_ID`, `SUPABASE_HOST` | CLI project identity and the host used in root URL references. |
+| Platform ports | `SUPABASE_API_PORT`, `SUPABASE_DB_PORT`, `SUPABASE_SHADOW_PORT`, `SUPABASE_STUDIO_PORT`, `SUPABASE_MAIL_PORT`, `SUPABASE_POOLER_PORT` | Direct `env(NAME)` references in `supabase/config.toml`; ports are integers 1–65535. Pooler remains disabled. |
+| Application listeners | `BACKEND_BIND_HOST`, `BACKEND_PORT`, `FRONTEND_BIND_HOST`, `FRONTEND_PORT` | Backend `python -m app` and frontend launchers. No CLI host/port overrides in the frontend wrapper. |
+| Endpoint identities | `FRONTEND_URL`, `BACKEND_URL`, `SUPABASE_URL`, `SUPABASE_AUTH_REDIRECT_URL`, `AUTH_SETUP_URL`, `SUPABASE_JWT_ISSUER`, `SUPABASE_JWKS_URL`, `SUPABASE_JWT_AUDIENCE` | HTTP(S) endpoints and JWT identity. Example URLs explicitly reference canonical ports and base URLs. |
+| Database secrets | `DATABASE_URL`, `MIGRATION_DATABASE_URL` | `postgresql+psycopg` URLs. Runtime uses `openslate_runtime`; owner is restricted to migrations/provisioning/owner operations. Store each encoded password only in its URL. Provisioning extracts the runtime password from `DATABASE_URL`. |
+| Supabase keys | `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` | Public client key versus private Auth/Realtime/Storage credential. Only the publishable key reaches the frontend. |
+| Internal event secret | `SECURITY_EVENT_SERVER_KEY` | Backend internal security-event authentication; never projected to frontend. |
+| Local administrator | `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` | Existing administrator/manual-test sign-in. Bootstrap uses email/username and sends an invitation; it never sets the saved password. Reset preservation uses `ADMIN_EMAIL`. |
+| Optional seed token | `SUPABASE_ACCESS_TOKEN` | Required only for the explicit sample-data seed command; its target is `BACKEND_URL`. |
+| API policy | `ENVIRONMENT`, `LIFECYCLE_PURGE_ENABLED`, `CORS_ORIGINS` | Explicit environment, canonical `true`/`false` flag, and JSON origin list. |
+| API server | `LOG_DIR`, `SERVER_MAX_CONCURRENCY`, `SERVER_KEEP_ALIVE_SECONDS`, `REQUEST_BODY_MAX_BYTES` | Absolute log path and positive listener/request limits. |
+| Database pool | `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW`, `DATABASE_POOL_TIMEOUT_SECONDS`, `DATABASE_CONNECT_TIMEOUT_SECONDS`, `DATABASE_STATEMENT_TIMEOUT_MS` | Positive bounds; overflow may be zero. |
+| Readiness | `READINESS_POOL_TIMEOUT_SECONDS`, `READINESS_CONNECT_TIMEOUT_SECONDS`, `READINESS_STATEMENT_TIMEOUT_MS`, `READINESS_CALLER_TIMEOUT_SECONDS` | Separate positive readiness budgets. |
+| Supabase request budget | `SUPABASE_TIMEOUT_SECONDS` | Positive backend client timeout. |
+| Frontend limits | `FRONTEND_LOG_DIR`, `BFF_REQUEST_BODY_LIMIT_BYTES`, `BFF_RESPONSE_BODY_LIMIT_BYTES`, `BFF_REQUEST_DEADLINE_MS` | Absolute frontend log path and positive integer request/response/deadline limits. |
+| Container transport | `COMPOSE_BIND_HOST`, `CONTAINER_BIND_HOST`, `CONTAINER_LOG_DIR` | Host port publication, container listeners, and absolute container log path. |
+| Engine resources | `CLAMAV_MEMORY_LIMIT`, `CLAMAV_CPUS`, `CLAMAV_PIDS_LIMIT` | Explicit resource bounds in existing Compose configuration. |
+| Scanner | `FILES_CLAMAV_HOST`, `FILES_CLAMAV_PORT`, `SCANNER_DEFINITIONS`, `FILES_CLAMAV_MANIFEST_PATH` | Private engine address/port, immutable definition directory, and matching readable manifest. API startup is independent; a scanner startup with missing configuration fails. |
 
-## Frontend environment inventory — Implemented
+### Supabase-generated values
 
-| Setting                                | Required/default                                                                                 | Sensitive                               | Read site and effect                                                                                                                                                                    |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BACKEND_URL`                          | Optional; default `http://localhost:8000`                                                        | No: internal endpoint, not a credential | `frontend/src/app/bff/[...path]/route.ts`; runtime-only upstream for browser application data under `/bff/*`.                                                                           |
-| `NEXT_PUBLIC_SUPABASE_URL`             | Required by `requiredPublicEnv`; no default                                                      | No                                      | `frontend/src/lib/supabase/server.ts`, `frontend/src/proxy.ts`, and `frontend/src/components/realtime-provider.tsx`; public client endpoint.                                            |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Required by `requiredPublicEnv`; no default                                                      | No: publishable by design               | Same frontend Supabase client and Realtime provider sites; supplied by `frontend/.env.local` from the frontend example.                                                                  |
-| `NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED`  | Optional; effective default false because code checks equality with `"true"`                     | No                                      | `frontend/src/components/lifecycle-dialog.tsx`; optional UI visibility flag supplied only in the frontend environment. It remains off in the supported deployment contract.             |
-| `NODE_ENV`                             | Framework-controlled; development/production behavior, no application default in this repository | No                                      | `frontend/src/lib/auth-cookies.ts` sets `Secure` in production; `frontend/src/proxy.ts` permits development CSP behavior. The image sets `NODE_ENV=production`.                         |
-| `BASE_URL`                             | Optional; default `http://localhost:3000`                                                        | No                                      | `frontend/playwright.config.ts`; Playwright base URL and web-server URL.                                                                                                                |
-| `CI`                                   | Optional; absent behaves as false                                                                | No                                      | `frontend/playwright.config.ts`; enables CI retries, multi-browser projects, list plus HTML reporting, and production server selection.                                                 |
-| `PLAYWRIGHT_USE_PRODUCTION`            | Optional; effective false outside CI, true when exactly `1`                                      | No                                      | `frontend/playwright.config.ts`; selects `npm run start` instead of `npm run dev`.                                                                                                      |
+Run `supabase status -o env` privately after starting the configured platform.
+Map its output to canonical names; do not retain its original names as aliases.
 
-The public aliases do not make the Supabase secret available to the browser. No
-direct Next `/api` or API documentation rewrites are configured; FastAPI is the
-upstream application API behind the BFF.
-The browser-facing code contains no `SUPABASE_SECRET_KEY` read.
+| CLI output | Canonical destination |
+| --- | --- |
+| `API_URL` | Confirm it matches `SUPABASE_URL` and the canonical host/API port. |
+| `DB_URL` | `MIGRATION_DATABASE_URL`, using the `postgresql+psycopg://` scheme. |
+| `ANON_KEY` | `SUPABASE_PUBLISHABLE_KEY`. |
+| `SERVICE_ROLE_KEY` | `SUPABASE_SECRET_KEY`, backend only. |
 
-## Supabase CLI configuration inventory — Configured
+Supabase TOML also reads frontend invitation redirects from the canonical root
+URLs. Fixed platform capabilities and security policy stay in TOML: public and
+anonymous signup remain disabled; the invitation email provider stays enabled;
+password/rate-limit policy is explicit; migrations/seeds, pooler, Edge Runtime,
+analytics, and S3 protocol remain disabled. Alembic owns application schema.
 
-All values in this table are static values in `supabase/config.toml`.
-Sensitive runtime-generated keys are not values in that file and are therefore
-not reproduced here.
+## Frontend projection and builds
 
-| Setting                                   | Configured value / default                                    | Sensitive | Read site and effect                                                                                             |
-| ----------------------------------------- | ------------------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------- |
-| `project_id`                              | `openslate`                                                   | No        | Supabase CLI project identity.                                                                                   |
-| `api.enabled`                             | `true`                                                        | No        | Supabase API gateway is started.                                                                                 |
-| `api.port`                                | `54321`                                                       | No        | Local API/Auth/Realtime/Storage surface.                                                                         |
-| `api.tls.enabled`                         | `false`                                                       | No        | Local API TLS is disabled.                                                                                       |
-| `api.schemas`                             | `['graphql_public']`                                          | No        | Data API exposure is limited to the managed empty GraphQL surface; application tables are not exposed.           |
-| `api.extra_search_path`                   | `['extensions']`                                              | No        | Supabase API search path addition.                                                                               |
-| `api.max_rows`                            | `1000`                                                        | No        | Supabase API row cap.                                                                                            |
-| `db.port`                                 | `54322`                                                       | No        | Local PostgreSQL port.                                                                                           |
-| `db.shadow_port`                          | `54320`                                                       | No        | Supabase CLI shadow database port.                                                                               |
-| `db.health_timeout`                       | `2m`                                                          | No        | Supabase CLI database health wait.                                                                               |
-| `db.major_version`                        | `17`                                                          | No        | Local PostgreSQL major version.                                                                                  |
-| `db.pooler.enabled`                       | `false`                                                       | No        | Connection pooler is not started.                                                                                |
-| `db.pooler.port`                          | `54329` when configured; inactive while disabled              | No        | Reserved pooler setting; no application connection uses it.                                                      |
-| `db.pooler.pool_mode`                     | `transaction` when enabled                                    | No        | Reserved pooler setting.                                                                                         |
-| `db.pooler.default_pool_size`             | `20` when enabled                                             | No        | Reserved pooler setting.                                                                                         |
-| `db.pooler.max_client_conn`               | `100` when enabled                                            | No        | Reserved pooler setting.                                                                                         |
-| `db.migrations.enabled`                   | `false`                                                       | No        | Supabase does not apply application migrations.                                                                  |
-| `db.seed.enabled`                         | `false`                                                       | No        | Supabase does not run seed files.                                                                                |
-| `realtime.enabled`                        | `true`                                                        | No        | Realtime is available for private Broadcast.                                                                     |
-| `studio.enabled`                          | `true`                                                        | No        | Studio is started.                                                                                               |
-| `studio.port`                             | `54323`                                                       | No        | Local Studio port.                                                                                               |
-| `studio.api_url`                          | `http://127.0.0.1:54321`                                      | No        | Studio API endpoint.                                                                                             |
-| `local_smtp.enabled`                      | `true`                                                        | No        | Mailpit local email sink is started.                                                                             |
-| `local_smtp.port`                         | `54324`                                                       | No        | Local Mailpit port.                                                                                              |
-| `storage.enabled`                         | `true`                                                        | No        | Supabase Storage is started.                                                                                     |
-| `storage.file_size_limit`                 | `50MiB`                                                       | No        | Local Storage file-size limit.                                                                                   |
-| `storage.s3_protocol.enabled`             | `false`                                                       | No        | Storage S3 protocol is inactive.                                                                                 |
-| `storage.analytics.enabled`               | `false`                                                       | No        | Storage analytics is inactive.                                                                                   |
-| `storage.vector.enabled`                  | `false`                                                       | No        | Storage vector support is inactive.                                                                              |
-| `auth.enabled`                            | `true`                                                        | No        | Supabase Auth is started.                                                                                        |
-| `auth.site_url`                           | `http://localhost:3000`                                       | No        | Auth site URL for local flows.                                                                                   |
-| `auth.additional_redirect_urls`           | `/auth/callback` and `/auth/setup` on `http://localhost:3000` | No        | Only the two documented invitation-flow redirects are allowed locally.                                           |
-| `auth.jwt_expiry`                         | `3600` seconds                                                | No        | Access-token lifetime.                                                                                           |
-| `auth.enable_refresh_token_rotation`      | `true`                                                        | No        | Auth refresh-token rotation.                                                                                     |
-| `auth.refresh_token_reuse_interval`       | `10`                                                          | No        | Auth refresh-token reuse interval.                                                                               |
-| `auth.enable_signup`                      | `false`                                                       | No        | Global public signup is disabled.                                                                                |
-| `auth.enable_anonymous_sign_ins`          | `false`                                                       | No        | Anonymous sign-in is disabled.                                                                                   |
-| `auth.minimum_password_length`            | `12`                                                          | No        | Auth password minimum.                                                                                           |
-| `auth.password_requirements`              | `lower_upper_letters_digits_symbols`                          | No        | Auth password complexity.                                                                                        |
-| `auth.rate_limit.email_sent`              | `2`                                                           | No        | Local Auth email-send rate limit.                                                                                |
-| `auth.rate_limit.sms_sent`                | `30`                                                          | No        | Local Auth SMS-send rate limit.                                                                                  |
-| `auth.rate_limit.anonymous_users`         | `30`                                                          | No        | Local Auth anonymous-user rate limit.                                                                            |
-| `auth.rate_limit.token_refresh`           | `150`                                                         | No        | Local Auth refresh rate limit.                                                                                   |
-| `auth.rate_limit.sign_in_sign_ups`        | `30`                                                          | No        | Local Auth sign-in/sign-up rate limit.                                                                           |
-| `auth.rate_limit.token_verifications`     | `30`                                                          | No        | Local Auth token-verification rate limit.                                                                        |
-| `auth.rate_limit.web3`                    | `30`                                                          | No        | Local Auth Web3 rate limit.                                                                                      |
-| `auth.email.enable_signup`                | `true` for the email provider                                 | No        | Email login/invitation provider remains available; global signup remains disabled by `auth.enable_signup=false`. |
-| `auth.email.double_confirm_changes`       | `true`                                                        | No        | Email change confirmation.                                                                                       |
-| `auth.email.enable_confirmations`         | `true`                                                        | No        | Email confirmation behavior.                                                                                     |
-| `auth.email.secure_password_change`       | `true`                                                        | No        | Auth password-change protection.                                                                                 |
-| `auth.email.max_frequency`                | `1s`                                                          | No        | Email provider frequency limit.                                                                                  |
-| `auth.email.otp_length`                   | `6`                                                           | No        | Email OTP length.                                                                                                |
-| `auth.email.otp_expiry`                   | `3600` seconds                                                | No        | Email OTP lifetime.                                                                                              |
-| `auth.email.template.invite.subject`      | `You have been invited to OpenSlate`                          | No        | Local invitation subject.                                                                                        |
-| `auth.email.template.invite.content_path` | `./supabase/templates/invite.html`                            | No        | Local invitation template.                                                                                       |
-| `auth.sms.enable_signup`                  | `false`                                                       | No        | SMS signup is inactive.                                                                                          |
-| `auth.sms.enable_confirmations`           | `false`                                                       | No        | SMS confirmations are inactive.                                                                                  |
-| `auth.sms.template`                       | `Your code is {{ .Code }}`                                    | No        | SMS template if the provider is used.                                                                            |
-| `auth.sms.max_frequency`                  | `5s`                                                          | No        | SMS provider frequency limit.                                                                                    |
-| `edge_runtime.enabled`                    | `false`                                                       | No        | Edge functions/runtime are inactive.                                                                             |
-| `analytics.enabled`                       | `false`                                                       | No        | Supabase analytics is inactive.                                                                                  |
+Local `npm run dev`, `npm run build`, and `npm start` regenerate
+`frontend/.env.local`; `frontend/.env.example` documents the generated shape.
+The projection has exactly eleven keys:
 
-## Static build and verification settings — Implemented
+| Generated frontend name | Canonical root source |
+| --- | --- |
+| `BACKEND_URL` | `BACKEND_URL` |
+| `SUPABASE_SERVER_URL` | `SUPABASE_URL` |
+| `LOG_DIR` | `FRONTEND_LOG_DIR` |
+| `BFF_REQUEST_BODY_LIMIT_BYTES` | Same name |
+| `BFF_RESPONSE_BODY_LIMIT_BYTES` | Same name |
+| `BFF_REQUEST_DEADLINE_MS` | Same name |
+| `PORT` | `FRONTEND_PORT` |
+| `HOSTNAME` | `FRONTEND_BIND_HOST` |
+| `NEXT_PUBLIC_SUPABASE_URL` | `SUPABASE_URL` |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | `SUPABASE_PUBLISHABLE_KEY` |
+| `NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED` | `LIFECYCLE_PURGE_ENABLED` |
 
-These are not secrets and are not environment substitutions:
+These are derived process names, not independently editable settings. Never
+source the private root file into npm or Next.js. No owner database URL,
+administrator password, private Supabase key, or security-event key belongs in
+the frontend projection, public build arguments, or browser bundle.
 
-- `backend/pyproject.toml` requires Python `>=3.12,<3.15`, configures pytest
-  coverage failure below 80%, Ruff's 100-character line length and `py312`
-  target, and strict mypy for Python 3.12.
-- `backend/alembic.ini` sends logs to stderr with root and SQLAlchemy level
-  `WARN`, Alembic level `INFO`, and format `%(levelname)-5.5s [%(name)s] %(message)s`.
-- `frontend/next.config.ts` sets standalone output, React strict mode, typed
-  routes, and fixed response security headers; it has no backend or API-docs
-  rewrites.
-- `infra/docker/frontend.Dockerfile` requires public Supabase build arguments,
-  keeps `BACKEND_URL` runtime-only, and sets `NEXT_TELEMETRY_DISABLED=1`,
-  `NODE_ENV=production`, `HOSTNAME=0.0.0.0`, and `PORT=3000` in its build/runtime
-  stages.
-- `infra/docker/backend.Dockerfile` sets `PYTHONDONTWRITEBYTECODE=1`, `PYTHONUNBUFFERED=1`,
-  `UV_COMPILE_BYTECODE=1`, `UV_LINK_MODE=copy`, and the virtualenv `PATH`.
-- `frontend/package.json` requires Node `>=24.0.0`; the frontend workflow and
-  frontend image both use Node 24.
+`frontend/src/lib/environment.ts` validates URLs, positive integers, absolute
+log paths, and canonical boolean strings. The launchers parse only the generated
+file and overwrite corresponding stale shell values. CI/container commands
+explicitly use `--from-process`; all required values must already be injected.
+The three `NEXT_PUBLIC_*` values are inlined during build and must match the
+runtime deployment. Rebuild after changes to them. Server-only BFF values are
+runtime configuration and are not baked into image layers.
+
+For local Compose, the helper rewrites loopback database/Supabase transport
+hosts to `host.docker.internal` and frontend-to-backend requests to the backend
+service name. It preserves encoded credentials and the public JWT issuer.
+Compose passes only each service's allowlisted keys; the ClamAV engine receives
+no application secrets and publishes no port.
+
+## Tests and fixed implementation policy
+
+Playwright editor discovery uses the explicit local synthetic profile in
+`frontend/playwright.config.ts`, so it can discover tests without shell setup.
+The same profile supplies npm test runs. Explicit `PLAYWRIGHT_CONFIGURATION=process`
+still requires every injected value; CI never selects the editor profile.
+
+CI injects complete synthetic or generated configuration and selects process
+mode. `TEST_DATABASE_URL`, `TEST_LAYER`, and `BASE_URL` are explicit test
+controls, not application aliases. Owner fixture setup requires
+`MIGRATION_DATABASE_URL`; it never substitutes a runtime test URL. The disposable
+full-stack runner keeps generated identities and fixed isolated ports as a
+safety contract, rewrites canonical Supabase references in its temporary copy,
+and never loads the developer's root `.env`.
+
+Settings that do not read environment variables remain ordinary code/config
+policy: scanner inspection limits, fixed security headers, library/compiler
+options, language versions, and test-isolation guards. This arrangement does
+not expose them as speculative runtime options. See `backend/pyproject.toml`,
+`frontend/package.json`, `frontend/next.config.ts`, `supabase/config.toml`, and
+`infra/clamav/` for those explicit declarations.

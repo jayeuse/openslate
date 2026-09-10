@@ -1,0 +1,217 @@
+"""Concurrent download readers must cooperate while mutations remain authoritative."""
+
+from hashlib import sha256
+from io import BytesIO
+from threading import Event, Thread
+from typing import Annotated
+from uuid import uuid4
+
+import pytest
+from fastapi import Depends, Request
+from fastapi.testclient import TestClient
+from PIL import Image
+from sqlalchemy import event, inspect, select, text
+from sqlalchemy.orm import joinedload
+
+from app.common.dependencies import get_current_user
+from app.core.database import get_db
+from app.core.database.session import AuditSession
+from app.main import create_app
+from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.files import service
+from app.systems.files.models import File
+from app.systems.files.storage import get_storage
+from app.systems.users.models import Role, User
+from app.systems.workspace.models import WorkspaceProfile
+from app.systems.workspace.router import update_workspace
+from app.systems.workspace.schemas import WorkspaceUpdate
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def committed_logo(guarded_db):
+    # The central guard ran before this engine was obtained. Commit only this owned
+    # fixture so two independent request sessions can observe the same rows.
+    engine = guarded_db.get_bind().engine
+    actor_id, file_id = uuid4(), uuid4()
+    output = BytesIO()
+    Image.new("RGB", (2, 2)).save(output, format="PNG")
+    content = output.getvalue()
+    with AuditSession(engine) as db:
+        db.connection().execute(
+            text("INSERT INTO auth.users (id,email) VALUES (:id,:email)"),
+            {"id": actor_id, "email": f"logo-concurrency-{actor_id}@example.com"},
+        )
+        actor = db.get(User, actor_id)
+        actor.role_id = db.scalar(select(Role.id).where(Role.role == "admin"))
+        actor.status = "active"
+        actor.invitation_sent_at = None
+        file = File(
+            id=file_id,
+            purpose="workspace_logo",
+            creator_id=actor_id,
+            filename="logo.png",
+            expected_size=len(content),
+            actual_size=len(content),
+            media_type="image/png",
+            digest=sha256(content).hexdigest(),
+            object_key=uuid4().hex,
+            state="ready",
+            scanner_version="fixture",
+            signature_version="fixture",
+        )
+        db.add(file)
+        db.flush()
+        profile = db.scalar(select(WorkspaceProfile).with_for_update())
+        profile_snapshot = {
+            column.key: getattr(profile, column.key)
+            for column in inspect(WorkspaceProfile).column_attrs
+        }
+        profile.logo_file_id = file_id
+        db.commit()
+    try:
+        yield engine, actor_id, file_id, content
+    finally:
+        with AuditSession(engine) as db:
+            profile = db.scalar(select(WorkspaceProfile).with_for_update())
+            # Restore the snapshot's actor as well: AuditSession otherwise replaces
+            # performed_by during flush, even when that attribute was assigned explicitly.
+            db.info[AUDIT_CONTEXT_KEY] = AuditContext(
+                performed_by=profile_snapshot["performed_by"],
+                request_id=uuid4(),
+                request_method="TEST",
+                request_path="/test/fixture-cleanup",
+            )
+            for name, value in profile_snapshot.items():
+                setattr(profile, name, value)
+            db.flush()
+            file = db.get(File, file_id)
+            if file is not None:
+                db.delete(file)
+            db.commit()
+            db.refresh(profile)
+            assert {
+                column.key: getattr(profile, column.key)
+                for column in inspect(WorkspaceProfile).column_attrs
+            } == profile_snapshot
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM auth.users WHERE id=:id"), {"id": actor_id})
+
+
+def client_for(engine, actor_id, storage):
+    app = create_app()
+
+    def database(request: Request):
+        with AuditSession(engine) as db:
+            db.info[AUDIT_CONTEXT_KEY] = AuditContext(
+                request_id=uuid4(), request_method="GET", request_path="/api/workspace/logo"
+            )
+
+            def mark_reader(session, transaction, connection):
+                connection.info["logo_reader"] = request.headers.get("x-test-reader")
+
+            event.listen(db, "after_begin", mark_reader)
+            try:
+                yield db
+            finally:
+                event.remove(db, "after_begin", mark_reader)
+
+    def actor(db: Annotated[AuditSession, Depends(get_db)]):
+        return db.scalar(select(User).options(joinedload(User.role)).where(User.id == actor_id))
+
+    app.dependency_overrides[get_db] = database
+    app.dependency_overrides[get_current_user] = actor
+    app.dependency_overrides[get_storage] = lambda: storage
+    return TestClient(app)
+
+
+def test_two_admitted_logo_readers_both_return_exact_content(committed_logo, monkeypatch):
+    engine, actor_id, file_id, content = committed_logo
+    first_in_storage, second_holds_file, release_second = Event(), Event(), Event()
+    first_finished = Event()
+    results = {}
+
+    class Storage:
+        def download(self, key):
+            first_in_storage.set()
+            assert second_holds_file.wait(10), "Second reader never acquired its initial file lock"
+            return content
+
+    def after_sql(connection, cursor, statement, parameters, context, executemany):
+        if (
+            connection.info.get("logo_reader") == "second"
+            and "FROM files" in statement
+            and ("FOR UPDATE" in statement or "FOR SHARE" in statement)
+            and not second_holds_file.is_set()
+        ):
+            second_holds_file.set()
+            assert release_second.wait(10), "Test failed to release the second reader"
+
+    monkeypatch.setattr(service, "append_committed_security_event", lambda payload: None)
+    event.listen(engine, "after_cursor_execute", after_sql)
+    try:
+        with client_for(engine, actor_id, Storage()) as client:
+
+            def get(name):
+                try:
+                    results[name] = client.get(
+                        "/api/workspace/logo", headers={"x-test-reader": name}
+                    )
+                except BaseException as exc:
+                    results[name] = exc
+                finally:
+                    if name == "first":
+                        first_finished.set()
+
+            first = Thread(target=get, args=("first",))
+            second = Thread(target=get, args=("second",))
+            first.start()
+            try:
+                assert first_in_storage.wait(10)
+                second.start()
+                assert second_holds_file.wait(10)
+                assert first_finished.wait(10), "First reader blocked behind another reader"
+                result = results["first"]
+                assert not isinstance(result, BaseException), repr(result)
+                assert result.status_code == 200, result.text
+                assert result.content == content
+            finally:
+                release_second.set()
+                first.join(10)
+                if second.ident is not None:
+                    second.join(10)
+            assert not first.is_alive() and not second.is_alive()
+            assert results["second"].status_code == 200, results["second"].text
+            assert results["second"].content == content
+    finally:
+        release_second.set()
+        event.remove(engine, "after_cursor_execute", after_sql)
+
+
+@pytest.mark.parametrize("mutation", ["archive", "replace"])
+def test_logo_mutation_during_storage_read_prevents_stale_delivery(
+    committed_logo, monkeypatch, mutation
+):
+    engine, actor_id, file_id, content = committed_logo
+
+    class Storage:
+        def download(self, key):
+            with AuditSession(engine) as db:
+                if mutation == "archive":
+                    service.archive(db, actor_id, file_id)
+                else:
+                    profile = db.scalar(select(WorkspaceProfile))
+                    actor = db.scalar(
+                        select(User).options(joinedload(User.role)).where(User.id == actor_id)
+                    )
+                    update_workspace(
+                        WorkspaceUpdate(revision=profile.revision, logo_file_id=None), actor, db
+                    )
+            return content
+
+    monkeypatch.setattr(service, "append_committed_security_event", lambda payload: None)
+    with client_for(engine, actor_id, Storage()) as client:
+        result = client.get("/api/workspace/logo")
+    assert result.status_code == 404, result.text
+    assert result.content != content

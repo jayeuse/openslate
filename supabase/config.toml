@@ -1,11 +1,11 @@
 # Supabase CLI local development configuration.
 # The application schema is owned by Alembic, not by Supabase migrations.
 
-project_id = "openslate"
+project_id = "env(SUPABASE_PROJECT_ID)"
 
 [api]
 enabled = true
-port = 54321
+port = "env(SUPABASE_API_PORT)"
 # Keep the Data API away from the application schema. FastAPI is the only
 # supported application data API; graphql_public is a managed, empty surface.
 schemas = ["graphql_public"]
@@ -16,14 +16,14 @@ max_rows = 1000
 enabled = false
 
 [db]
-port = 54322
-shadow_port = 54320
+port = "env(SUPABASE_DB_PORT)"
+shadow_port = "env(SUPABASE_SHADOW_PORT)"
 health_timeout = "2m"
 major_version = 17
 
 [db.pooler]
 enabled = false
-port = 54329
+port = "env(SUPABASE_POOLER_PORT)"
 pool_mode = "transaction"
 default_pool_size = 20
 max_client_conn = 100
@@ -41,13 +41,13 @@ enabled = true
 
 [studio]
 enabled = true
-port = 54323
-api_url = "http://127.0.0.1:54321"
+port = "env(SUPABASE_STUDIO_PORT)"
+api_url = "env(SUPABASE_URL)"
 
 [local_smtp]
 # Mailpit is the local email sink for Auth invitations and confirmations.
 enabled = true
-port = 54324
+port = "env(SUPABASE_MAIL_PORT)"
 
 [storage]
 enabled = true
@@ -64,11 +64,11 @@ enabled = false
 
 [auth]
 enabled = true
-site_url = "http://localhost:3000"
+site_url = "env(FRONTEND_URL)"
 # These are the only non-site redirects used by the invitation flow.
 additional_redirect_urls = [
-  "http://localhost:3000/auth/callback",
-  "http://localhost:3000/auth/setup",
+  "env(SUPABASE_AUTH_REDIRECT_URL)",
+  "env(AUTH_SETUP_URL)",
 ]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true

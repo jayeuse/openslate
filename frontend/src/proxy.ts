@@ -1,15 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { currentPublicEnvironment } from "@/lib/environment";
+
 function supabaseConnectSources() {
-  const configuredUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!configuredUrl) return "";
-  try {
-    const url = new URL(configuredUrl);
-    const websocketProtocol = url.protocol === "https:" ? "wss:" : "ws:";
-    return `${url.origin} ${websocketProtocol}//${url.host}`;
-  } catch {
-    return "";
-  }
+  const url = new URL(currentPublicEnvironment().supabaseUrl);
+  const websocketProtocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return `${url.origin} ${websocketProtocol}//${url.host}`;
 }
 
 export function proxy(request: NextRequest) {

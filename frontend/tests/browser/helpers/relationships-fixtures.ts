@@ -1,3 +1,4 @@
+import { fulfillWorkspaceRequest } from "./workspace-fixtures";
 import { type Page, type Request, type Route } from "@playwright/test";
 import {
   TARGET_MODULE_ID,
@@ -67,12 +68,17 @@ export async function installMocks(
     fulfill(route, 401, { detail: "Authentication required" }),
   );
   await page.route("**/bff/**", async (route) => {
+    if (await fulfillWorkspaceRequest(route)) return;
     const request = route.request();
     const method = request.method();
     const path = pathFor(request);
     const body = method === "GET" ? {} : requestBody(request);
     requests.push({ method, path, url: request.url(), body });
 
+    if (method === "GET" && path === "/files") {
+      await fulfill(route, 200, listResponse([]));
+      return;
+    }
     if (method === "GET" && path === "/modules") {
       const departmentId = new URL(request.url()).searchParams.get(
         "department_id",

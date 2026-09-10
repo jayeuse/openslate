@@ -1,3 +1,4 @@
+import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 test.use({ viewport: { width: 1440, height: 900 } });
@@ -18,6 +19,9 @@ async function gotoSandbox(page: Page): Promise<void> {
       body: JSON.stringify({ detail: "Authentication required" }),
     }),
   );
+  await page.route("**/bff/**", async (route) => {
+    if (!(await fulfillWorkspaceRequest(route))) await route.continue();
+  });
   await page.goto("/sandbox");
 }
 

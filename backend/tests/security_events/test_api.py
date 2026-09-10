@@ -21,6 +21,7 @@ REJECTED_TOKEN = token_urlsafe(32)
 
 @pytest.fixture
 def api(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+    monkeypatch.setenv("OPENSLATE_ENV_SOURCE", "process")
     monkeypatch.setenv("SECURITY_EVENT_SERVER_KEY", SERVER_KEY)
     get_settings.cache_clear()
     application = create_app()

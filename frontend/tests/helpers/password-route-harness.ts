@@ -33,7 +33,20 @@ export function passwordRouteHarness(transport: typeof fetch) {
     clearTimeout,
     process: {
       cwd: () => "/tmp",
-      env: { NODE_ENV: "test", BACKEND_URL: "http://backend.invalid" },
+      env: {
+        NODE_ENV: "test",
+        BACKEND_URL: "http://backend.invalid",
+        SUPABASE_SERVER_URL: "http://supabase.invalid",
+        LOG_DIR: "/tmp/openslate-logs",
+        BFF_REQUEST_BODY_LIMIT_BYTES: "1048576",
+        BFF_RESPONSE_BODY_LIMIT_BYTES: "8388608",
+        BFF_REQUEST_DEADLINE_MS: "60000",
+        PORT: "3000",
+        HOSTNAME: "127.0.0.1",
+        NEXT_PUBLIC_SUPABASE_URL: "http://supabase.invalid",
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "synthetic-publishable-key",
+        NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: "false",
+      },
     },
     console: {
       info: () => undefined,

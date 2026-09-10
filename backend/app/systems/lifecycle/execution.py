@@ -11,6 +11,7 @@ from app.core.base_model import utc_now
 from app.systems.audit.context import set_audit_actor
 from app.systems.departments.models import Department
 from app.systems.fields.models import Field
+from app.systems.files.models import File
 from app.systems.lifecycle.exceptions import (
     LifecycleError,
     LifecyclePlanDriftError,
@@ -27,6 +28,7 @@ from app.systems.lifecycle.schemas import (
 from app.systems.modules.models import Module
 from app.systems.records.models import Record
 from app.systems.relationships.models import RelationshipEdge
+from app.systems.views.models import SavedView
 
 _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("departments", Department),
@@ -34,6 +36,8 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("fields", Field),
     ("records", Record),
     ("relationship_edges", RelationshipEdge),
+    ("files", File),
+    ("saved_views", SavedView),
 )
 
 
@@ -111,6 +115,8 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
         "modules": Module,
         "fields": Field,
         "records": Record,
+        "files": File,
+        "saved_views": SavedView,
     }
 
     for edge_id in plan.scope_ids.get("relationship_edges", ()):
@@ -128,7 +134,7 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
             record.data = {key: value for key, value in record.data.items() if key != key_strip.key}
             db.flush()
 
-    for entity_type in ("records", "fields", "modules", "departments"):
+    for entity_type in ("files", "saved_views", "records", "fields", "modules", "departments"):
         for row in plan.rows:
             if row.entity_type != entity_type:
                 continue

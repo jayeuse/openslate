@@ -60,9 +60,15 @@ def _mock_jwks_and_decode(
     if jwt_module is not None:
         monkeypatch.setattr(jwt_module, "PyJWKClient", client_factory, raising=False)
         monkeypatch.setattr(jwt_module, "decode", decode, raising=False)
-    monkeypatch.setattr(module, "SUPABASE_JWKS_URL", SUPABASE_JWKS_URL, raising=False)
-    monkeypatch.setattr(module, "SUPABASE_ISSUER", SUPABASE_ISSUER, raising=False)
-    monkeypatch.setattr(module, "SUPABASE_AUDIENCE", SUPABASE_AUDIENCE, raising=False)
+    monkeypatch.setattr(
+        module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            supabase_jwks_url=SUPABASE_JWKS_URL,
+            supabase_jwt_issuer=SUPABASE_ISSUER,
+            supabase_jwt_audience=SUPABASE_AUDIENCE,
+        ),
+    )
     return client, decode
 
 

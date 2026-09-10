@@ -29,32 +29,31 @@ def _guard_integration_database(database_url: str) -> None:
 def _owner_cleanup_database_url() -> str:
     """Select a guarded connection that owns relationship_edges for cleanup."""
 
-    for variable in ("MIGRATION_DATABASE_URL", "TEST_DATABASE_URL"):
-        database_url = os.getenv(variable)
-        if database_url is None:
-            continue
-        _guard_integration_database(database_url)
-        engine = create_engine(database_url)
-        try:
-            with engine.connect() as connection:
-                is_owner = connection.scalar(
-                    text(
-                        """
-                        SELECT current_user = pg_get_userbyid(c.relowner)
-                        FROM pg_class AS c
-                        JOIN pg_namespace AS n ON n.oid = c.relnamespace
-                        WHERE n.nspname = 'public' AND c.relname = 'relationship_edges'
-                        """
-                    )
+    database_url = os.getenv("MIGRATION_DATABASE_URL")
+    if database_url is None:
+        raise RuntimeError("MIGRATION_DATABASE_URL is required for owner fixture setup")
+    _guard_integration_database(database_url)
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            is_owner = connection.scalar(
+                text(
+                    """
+                    SELECT current_user = pg_get_userbyid(c.relowner)
+                    FROM pg_class AS c
+                    JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'public' AND c.relname = 'relationship_edges'
+                    """
                 )
-                if is_owner is True:
-                    return database_url
-        finally:
-            engine.dispose()
+            )
+            if is_owner is True:
+                return database_url
+    finally:
+        engine.dispose()
 
     raise RuntimeError(
         "No owner-capable relationship cleanup URL exists; set "
-        "MIGRATION_DATABASE_URL or use an owner-capable TEST_DATABASE_URL"
+        "MIGRATION_DATABASE_URL"
     )
 
 
@@ -216,6 +215,5 @@ def _edge_audit_rows(db: Session, *entity_ids: UUID) -> list[AuditLog]:
             .order_by(AuditLog.created_at, AuditLog.id)
         ).all()
     )
-
 
 

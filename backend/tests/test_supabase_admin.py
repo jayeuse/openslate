@@ -1,4 +1,6 @@
 from secrets import token_urlsafe
+from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock, Mock
 from uuid import UUID
 
@@ -13,6 +15,7 @@ from app.core.integrations.supabase import (
     SupabaseAdminClient,
     SupabaseAdminError,
 )
+from tests.config_support import settings_values
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
 
@@ -21,11 +24,23 @@ USER_ID = UUID("00000000-0000-0000-0000-000000000123")
 
 
 def settings(*, redirect_url: str | None = "http://localhost:3000/auth/callback") -> Settings:
+    if redirect_url is None:
+        return cast(
+            Settings,
+            SimpleNamespace(
+                supabase_url="https://example.supabase.co/",
+                supabase_secret_key=SecretStr(SECRET),
+                supabase_auth_redirect_url=None,
+            ),
+        )
     return Settings(
-        database_url=f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test",
-        supabase_url="https://example.supabase.co/",
-        supabase_secret_key=SecretStr(SECRET),
-        supabase_auth_redirect_url=redirect_url,
+        **settings_values(
+            database_url=f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test",
+            supabase_url="https://example.supabase.co/",
+            supabase_secret_key=SecretStr(SECRET),
+            supabase_auth_redirect_url=redirect_url,
+        ),
+        _env_file=None,
     )
 
 
@@ -46,21 +61,17 @@ def response_with_json(payload: object) -> Mock:
 def test_client_requires_url_and_secret_configuration() -> None:
     with pytest.raises(SupabaseAdminError, match="not configured"):
         SupabaseAdminClient(
-            settings=Settings(
-                database_url="postgresql://localhost/test",
-                supabase_url=None,
-                supabase_secret_key=None,
-                _env_file=None,
+            settings=cast(
+                Settings,
+                SimpleNamespace(supabase_url=None, supabase_secret_key=None),
             )
         )
 
     with pytest.raises(SupabaseAdminError, match="not configured"):
         SupabaseAdminClient(
-            settings=Settings(
-                database_url="postgresql://localhost/test",
-                supabase_url=None,
-                supabase_secret_key=SecretStr(SECRET),
-                _env_file=None,
+            settings=cast(
+                Settings,
+                SimpleNamespace(supabase_url=None, supabase_secret_key=SecretStr(SECRET)),
             )
         )
 

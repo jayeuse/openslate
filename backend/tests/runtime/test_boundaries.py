@@ -1,4 +1,5 @@
 import asyncio
+import os
 from secrets import token_urlsafe
 from unittest.mock import Mock
 
@@ -13,6 +14,7 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from app.core.config import Settings
 from app.core.database import session as database_session
 from app.main import _read_bounded_body, create_app
+from tests.config_support import settings_values
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
 
@@ -26,6 +28,7 @@ def clean_engine_cache():
 
 def test_every_application_response_has_a_server_generated_request_id() -> None:
     app = create_app()
+
     @app.get("/api/test-unhandled-error")
     def test_unhandled_error() -> None:
         raise RuntimeError("sensitive internal error")
@@ -105,6 +108,38 @@ def test_incremental_body_limit_stops_reading_after_the_first_overflow() -> None
     assert seen == [b"a" * 3, b"b" * 3]
 
 
+def test_file_content_limit_is_scoped_to_real_uuid_transfer_paths() -> None:
+    client = TestClient(create_app())
+    body = b"x" * (1024 * 1024 + 1)
+    valid = client.put(
+        "/api/files/019c0000-0000-7000-8000-000000000001/content",
+        content=body,
+        headers={"content-type": "application/octet-stream"},
+    )
+    assert valid.status_code == 401
+    forged = client.put("/api/files/not-an-id/content", content=body)
+    assert forged.status_code == 413
+    ordinary = client.post("/api/records/query", content=body)
+    assert ordinary.status_code == 413
+
+
+def test_file_capacity_is_acquired_before_buffering_and_released_on_denial() -> None:
+    from app.systems.files.providers import transfer_slot
+
+    client = TestClient(create_app())
+    url = "/api/files/019c0000-0000-7000-8000-000000000001/content"
+    with transfer_slot(), transfer_slot():
+        busy = client.get(url)
+        assert busy.status_code == 503
+        assert busy.json()["detail"]["code"] == "files_busy"
+        assert client.get("/api/health").status_code == 200
+        # Enqueue is metadata: it reaches authentication while binary slots are busy.
+        assert client.post(url.replace("/content", "/scan")).status_code == 401
+    assert client.get(url).status_code == 401
+    assert client.get(url).status_code == 401
+    assert client.get(url).status_code == 401
+
+
 def test_readiness_returns_generic_status_and_disables_caching(monkeypatch) -> None:
     import app.main as main
 
@@ -124,7 +159,9 @@ def test_runtime_engine_uses_bounded_connection_settings(monkeypatch) -> None:
         return Mock(spec=Engine)
 
     settings = Settings(
-        database_url=f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test",
+        **settings_values(
+            database_url=f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test"
+        ),
         _env_file=None,
     )
     monkeypatch.setattr(database_session, "get_settings", lambda: settings)
@@ -186,17 +223,17 @@ def test_health_returns_service_status() -> None:
 @pytest.mark.parametrize(
     ("environment_name", "invalid_value", "expected_field"),
     [
-        ("REQUEST_BODY_MAX_BYTES", "0", "request_body_max_bytes"),
-        ("DATABASE_POOL_SIZE", "0", "database_pool_size"),
-        ("DATABASE_MAX_OVERFLOW", "-1", "database_max_overflow"),
-        ("DATABASE_POOL_TIMEOUT_SECONDS", "0", "database_pool_timeout_seconds"),
-        ("DATABASE_CONNECT_TIMEOUT_SECONDS", "0", "database_connect_timeout_seconds"),
-        ("DATABASE_STATEMENT_TIMEOUT_MS", "0", "database_statement_timeout_ms"),
-        ("READINESS_POOL_TIMEOUT_SECONDS", "0", "readiness_pool_timeout_seconds"),
-        ("READINESS_CONNECT_TIMEOUT_SECONDS", "0", "readiness_connect_timeout_seconds"),
-        ("READINESS_STATEMENT_TIMEOUT_MS", "0", "readiness_statement_timeout_ms"),
-        ("READINESS_CALLER_TIMEOUT_SECONDS", "nan", "readiness_caller_timeout_seconds"),
-        ("SUPABASE_TIMEOUT_SECONDS", "inf", "supabase_timeout_seconds"),
+        ("REQUEST_BODY_MAX_BYTES", "0", "REQUEST_BODY_MAX_BYTES"),
+        ("DATABASE_POOL_SIZE", "0", "DATABASE_POOL_SIZE"),
+        ("DATABASE_MAX_OVERFLOW", "-1", "DATABASE_MAX_OVERFLOW"),
+        ("DATABASE_POOL_TIMEOUT_SECONDS", "0", "DATABASE_POOL_TIMEOUT_SECONDS"),
+        ("DATABASE_CONNECT_TIMEOUT_SECONDS", "0", "DATABASE_CONNECT_TIMEOUT_SECONDS"),
+        ("DATABASE_STATEMENT_TIMEOUT_MS", "0", "DATABASE_STATEMENT_TIMEOUT_MS"),
+        ("READINESS_POOL_TIMEOUT_SECONDS", "0", "READINESS_POOL_TIMEOUT_SECONDS"),
+        ("READINESS_CONNECT_TIMEOUT_SECONDS", "0", "READINESS_CONNECT_TIMEOUT_SECONDS"),
+        ("READINESS_STATEMENT_TIMEOUT_MS", "0", "READINESS_STATEMENT_TIMEOUT_MS"),
+        ("READINESS_CALLER_TIMEOUT_SECONDS", "nan", "READINESS_CALLER_TIMEOUT_SECONDS"),
+        ("SUPABASE_TIMEOUT_SECONDS", "inf", "SUPABASE_TIMEOUT_SECONDS"),
     ],
 )
 def test_runtime_limit_environment_values_must_preserve_their_bounds(
@@ -205,10 +242,25 @@ def test_runtime_limit_environment_values_must_preserve_their_bounds(
     invalid_value: str,
     expected_field: str,
 ) -> None:
-    monkeypatch.setenv("DATABASE_URL", f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test")
+    monkeypatch.setenv(
+        "DATABASE_URL", f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test"
+    )
     monkeypatch.setenv(environment_name, invalid_value)
 
     with pytest.raises(ValidationError) as error:
-        Settings(_env_file=None)
+        Settings.model_validate(dict(os.environ))
 
     assert expected_field in str(error.value)
+
+
+def test_settings_reject_legacy_publishable_key_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY")
+    monkeypatch.setenv(
+        "DATABASE_URL", f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test"
+    )
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "legacy-key")
+
+    with pytest.raises(ValidationError) as error:
+        Settings.model_validate(dict(os.environ))
+
+    assert "SUPABASE_PUBLISHABLE_KEY" in str(error.value)

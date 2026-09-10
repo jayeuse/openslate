@@ -9,10 +9,16 @@ dependencies = [
     "httpx>=0.28.1",
     "psycopg[binary]>=3.2.10",
     "pydantic-settings>=2.10.1",
+    "python-dotenv>=1.2.3",
     "pyjwt[crypto]>=2.10.1",
     "sqlalchemy>=2.0.43",
     "uvicorn[standard]>=0.35.0",
     "uuid6>=2024.7.10",
+    "babel>=2.17,<3",
+    "pillow>=11,<13",
+    "pypdf>=6,<7",
+    "defusedxml>=0.7,<1",
+    "clamdpy==0.2.0",
 ]
 
 [dependency-groups]
@@ -21,6 +27,7 @@ dev = [
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
     "ruff>=0.12.11",
+    "types-defusedxml>=0.7.0.20260504",
 ]
 
 [tool.uv]

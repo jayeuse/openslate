@@ -1,3 +1,4 @@
+import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
 import { expect, test, type Page } from "@playwright/test";
 import {
   baseEntity,
@@ -74,6 +75,7 @@ async function installSchemaBuilderMocks(
     notifyFieldReloadStarted = resolve;
   });
   await page.route("**/bff/**", async (route) => {
+    if (await fulfillWorkspaceRequest(route)) return;
     const request = route.request();
     const path = pathFor(route);
     if (request.method() === "GET" && path === `/modules/${MODULE_ID}`) {

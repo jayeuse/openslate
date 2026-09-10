@@ -32,94 +32,138 @@ Data API operations, and external clients are outside the application audit
 boundary. Bulk and raw ORM mutation statements remain unsupported because they
 cannot produce reliable per-record snapshots.
 
+## Environment configuration
+
+Edit only the ignored root `.env`, using `.env.example` as its structure. It
+contains secrets, the existing administrator's local sign-in details, stack
+ports, endpoints, and runtime limits. `${NAME}` references keep shared values
+and ports in one place. Missing, blank, invalid, duplicate, or unresolved
+configuration fails with the variable name; application code supplies no
+replacement values or legacy aliases.
+
+`frontend/.env.local` is generated from a fixed allowlist by local `npm run dev`,
+`npm run build`, and `npm start`. Do not edit it or source root `.env` into
+Next.js. Administrator credentials, owner database credentials, and private
+Supabase keys are excluded. Public frontend settings are baked in at build
+time, so changing them requires a rebuild. See the
+[configuration inventory](docs/architecture/17-configuration.md) for ownership.
+
+Validate configuration from the repository root after installing backend
+dependencies:
+
+```bash
+uv run --directory backend python ../scripts/environment.py check
+```
+
 ## Local setup
 
-Run these commands from the repository root unless a `cd` is shown.
+Run these commands from the repository root unless a directory is shown.
 
-1. Start the Supabase local platform:
-
-   ```bash
-   supabase start
-   ```
-
-2. Create the local backend and migration environment file:
+1. For a new checkout, copy `.env.example` to `.env` and restrict its access.
+   Keep an existing configured `.env`. Review the stack ports before starting
+   Supabase; `supabase/config.toml` reads them directly from root `.env`.
 
    ```bash
    cp .env.example .env
-   ```
-
-3. Retrieve local connection values without committing them:
-
-   ```bash
+   chmod 600 .env
+   supabase start
    supabase status -o env
    ```
 
-    Fill the root `.env` using only these mappings from that output. This file is
-    for the backend and migration/operations commands; do not source it into the
-    frontend process:
+2. Fill the blank secret and administrator fields in root `.env`. Treat the
+   complete Supabase status output as secret. Map `DB_URL` to
+   `MIGRATION_DATABASE_URL`, using the `postgresql+psycopg://` scheme; map
+   `ANON_KEY` to `SUPABASE_PUBLISHABLE_KEY` and `SERVICE_ROLE_KEY` to
+   `SUPABASE_SECRET_KEY`. Confirm `API_URL` agrees with the configured
+   `SUPABASE_URL`. Keep the example's port references in connection URLs.
+   Generate a private `SECURITY_EVENT_SERVER_KEY`. Choose the runtime login's
+   password once and URL-encode it only in `DATABASE_URL`, whose username is
+   `openslate_runtime`.
 
-   | `.env` setting | Supabase CLI value |
-   | --- | --- |
-   | `MIGRATION_DATABASE_URL` | `DB_URL`, with the SQLAlchemy `postgresql+psycopg://` scheme |
-   | `SUPABASE_URL` | `API_URL` |
-   | `SUPABASE_PUBLISHABLE_KEY` | `ANON_KEY` |
-   | `SUPABASE_SECRET_KEY` | `SERVICE_ROLE_KEY` (backend only) |
+   `ADMIN_EMAIL`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD` describe the existing
+   local administrator/test account. Saving these values does not create an
+   account or change its password. `SUPABASE_ACCESS_TOKEN` is needed only for
+   the optional sample-data seed command.
 
-   `SUPABASE_JWT_ISSUER` is the local API URL plus `/auth/v1`, and
-   `SUPABASE_JWKS_URL` is that issuer plus
-   `/.well-known/jwks.json`. Keep all values from `supabase status -o env`
-   private; do not paste the complete command output into the repository.
-
-4. Apply the application schema with Alembic. Supabase migrations and seeds
-   are disabled in `supabase/config.toml`:
+3. Install backend dependencies, apply the schema using the owner connection,
+   and provision the runtime login using the password in `DATABASE_URL`:
 
    ```bash
-   cd backend
-   uv sync
+   # backend/
+   uv sync --locked
    uv run alembic upgrade head
-   ```
-
-5. Generate a separate application-database password, set
-   `OPENSLATE_DATABASE_PASSWORD`, URL-encode it in `DATABASE_URL`, and provision
-   the least-privilege runtime login:
-
-   ```bash
+   uv run alembic check
    uv run python scripts/provision_database_role.py
    ```
 
-6. Create the first administrator through the Supabase invitation flow. Open
-   the invitation in local Mailpit and set the account password in the app:
+4. For an installation without an administrator, run the invitation bootstrap
+   using `ADMIN_EMAIL` and `ADMIN_USERNAME`. Open the invitation in Mailpit and
+   set the password in the app. Bootstrap does not apply `ADMIN_PASSWORD`:
 
    ```bash
-   uv run python scripts/bootstrap_admin.py --email <email> --username <username>
+   # backend/
+   uv run python scripts/bootstrap_admin.py
    ```
 
-7. Configure and run the host services in separate terminals. The frontend has
-   its own environment file. From `frontend/`, copy `.env.example` to
-   `.env.local` and fill only `BACKEND_URL`, the two public Supabase values, and,
-   if explicitly needed, `NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED`. Do not source the
-   root `.env`; `npm ci` does not need backend secrets:
+5. Start host services in separate terminals. Their bind addresses and ports
+   come from root `.env`:
 
    ```bash
-   # terminal: backend/
-   uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+   # backend/
+   uv run python -m app --reload
 
-    # terminal: frontend/
-    cp .env.example .env.local
-    npm ci
-    npm run dev -- --hostname 127.0.0.1
+   # frontend/
+   npm ci
+   npm run dev
    ```
 
-The app is at <http://localhost:3000> and the FastAPI docs are at
-<http://localhost:8000/docs>. Supabase Studio is at
-<http://127.0.0.1:54323>; Mailpit is at
-<http://127.0.0.1:54324>. The Supabase API and database use the ports shown by
-`supabase status` (normally `54321` and `54322`).
+With the example ports, the app is at [localhost:3000](http://localhost:3000),
+FastAPI docs at [localhost:8000/docs](http://localhost:8000/docs), Studio at
+[127.0.0.1:54323](http://127.0.0.1:54323), and Mailpit at
+[127.0.0.1:54324](http://127.0.0.1:54324). Supabase API/database ports are
+`SUPABASE_API_PORT` and `SUPABASE_DB_PORT`. Verify local platform bindings with
+`supabase status` before use. Do not apply PostgreSQL network restrictions that
+block Supabase's internal service connections.
 
-Supabase CLI manages the local service bindings. Verify that the URLs in
-`supabase status` and the published ports are loopback-only before using the
-stack. Do not add PostgreSQL network restrictions to achieve this: Supabase
-service-to-service connections need the local Docker network.
+## Local containers with Compose
+
+The existing root `compose.yaml` can run the backend, frontend, and ClamAV
+independently. Supabase remains CLI-managed; migrations and account setup stay
+separate. Use the environment helper for every Compose command. It validates
+root `.env`, derives Docker-reachable service URLs in memory, and passes only
+each service's allowed settings. JWT issuer identity stays unchanged. No second
+database URL or generated Compose secret file is needed.
+
+From the repository root:
+
+```bash
+uv run --directory backend python ../scripts/environment.py compose config --quiet
+uv run --directory backend python ../scripts/environment.py compose up -d --build backend frontend
+uv run --directory backend python ../scripts/environment.py compose ps
+uv run --directory backend python ../scripts/environment.py compose logs -f backend frontend
+uv run --directory backend python ../scripts/environment.py compose down
+```
+
+Stop any host servers using the configured application ports before starting
+their containers. Repeat `up -d --build` after source or public frontend setting
+changes. `down` leaves Supabase and its data intact; use `supabase stop`
+separately. Full rendered Compose configuration contains secrets; use
+`config --quiet` for routine validation.
+
+Before starting `clamav`, set `SCANNER_DEFINITIONS` to an existing absolute path
+containing verified immutable definitions, following the
+[scanner provisioning procedure](docs/architecture/11-infrastructure.md#daily-definition-maintenance-and-first-provisioning).
+Compose mounts definitions read-only and does not refresh them. The separate
+scanner worker also requires `FILES_CLAMAV_HOST`, `FILES_CLAMAV_PORT`, and the
+matching readable `FILES_CLAMAV_MANIFEST_PATH`; starting the engine alone does
+not process uploads.
+
+The app ports use `COMPOSE_BIND_HOST`; ClamAV has no published port and uses an
+internal network. All three services run as non-root with read-only roots and
+dropped capabilities. Logs use `CONTAINER_LOG_DIR` in temporary container
+storage. This Compose path targets local Docker Desktop; Linux deployments must
+make the Supabase host ports reachable through the Docker host gateway without
+publishing them publicly.
 
 ## Stop and reset
 
@@ -144,10 +188,6 @@ administrator usable, stop the FastAPI and frontend processes, keep the local
 Supabase stack running, and run the guarded reset utility from `backend/`:
 
 ```bash
-set -a
-source ../.env
-set +a
-
 # Read-only plan: review the preserved administrator and per-table counts.
 uv run python scripts/reset_application_data.py
 
@@ -157,8 +197,8 @@ uv run python scripts/reset_application_data.py --execute
 
 The utility accepts only the loopback Supabase database at
 `127.0.0.1:54322/postgres`, requires `MIGRATION_DATABASE_URL` and
-`SAMPLE_EMAIL`, verifies the running Supabase project and Alembic head, and
-fails closed on schema drift. Every application profile except `SAMPLE_EMAIL`'s
+`ADMIN_EMAIL`, verifies the running Supabase project and Alembic head, and
+fails closed on schema drift. Every application profile except `ADMIN_EMAIL`'s
 matching profile is deleted, along with all domain, relationship, audit, and
 lifecycle rows and every custom role. The utility refuses to run when another
 effective administrator exists; pending, disabled, and soft-deleted

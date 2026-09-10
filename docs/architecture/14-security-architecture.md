@@ -68,7 +68,7 @@ The confirmed boundary is that a provisioned `openslate_runtime` connection can 
 ### Realtime, Storage, containers, and CI
 
 - Realtime uses a private Broadcast topic with opaque invalidation payloads and no application-table publication.
-- The Storage bucket is private, but file behavior is not operational.
+- File objects are private and FastAPI mediates metadata and object transfer. Purpose-specific authorization distinguishes record attachments from literal-admin library/logo operations; the generic file API does not expose historical workspace logos. A serial worker verifies stored digest/size before streaming through `clamdpy` to a private ClamAV engine. Publication rechecks the claim, requester authority and parent/file state. Uncertain execution blocks admission across restart until an operator confirms engine replacement; absent/stale/mismatched definitions fail closed. The engine has no database or Storage credentials and uses read-only definitions. Infrastructure artifacts do not establish production provisioning or operational readiness.
 - Backend and frontend images run as non-root users; `.env` is excluded from Docker build context.
 - CI uses read-only repository permissions and disposable local Supabase services.
 
@@ -82,7 +82,7 @@ The confirmed boundary is that a provisioned `openslate_runtime` connection can 
 | Request body limits/general API rate limits | **Absent in repository**    | BFF buffers full bodies; only Supabase Auth and lifecycle password controls have scoped limits.                                                               |
 | Hosted TLS/HSTS/network policy              | **Unknown**                 | Images serve HTTP and no ingress is checked in.                                                                                                               |
 | Per-service hosted secret delivery/rotation | **Unknown**                 | Only process environment consumption is defined.                                                                                                              |
-| File security controls                      | **Partially Implemented**   | No ownership policy, upload checks, malware scan, MIME validation, retention, or API exists.                                                                  |
+| File security controls                      | **Implemented / fail closed** | Private addressing, purpose checks, bounded validation, durable scan claims, immutable-definition checks, serialized quarantine admission, archive/reconciliation and no-store downloads exist. The private engine and worker need operator provisioning, daily definition maintenance and explicit uncertain-execution recovery. |
 | Dependency/SBOM/image scanning              | **Absent**                  | Lockfiles exist; CI does not run dedicated supply-chain security checks.                                                                                      |
 | Monitoring/alerting/forensic sink           | **Absent / Unknown hosted** | No metrics, tracing, alerts, DB audit, or external immutable audit sink.                                                                                      |
 | Backup/PITR/restore testing                 | **Absent / Unknown hosted** | No policy or runbook is checked in.                                                                                                                           |

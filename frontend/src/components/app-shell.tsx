@@ -1,5 +1,7 @@
 "use client";
+import { useWorkspace } from "@/components/workspace-provider";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { Route } from "next";
@@ -89,6 +91,7 @@ export function useAppShellNavigation() {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const { profile } = useWorkspace();
   const pathname = usePathname();
   const router = useRouter();
   const { invalidate } = useRealtime();
@@ -347,10 +350,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                   onNavigate={closeMobileNavigation}
                   className="flex min-w-0 items-center gap-2.5 font-semibold"
                 >
-                  <span className="bg-foreground text-background grid size-8 shrink-0 place-items-center rounded-md text-[10px] font-bold">
-                    OS
-                  </span>
-                  <span>OpenSlate</span>
+                  <WorkspaceMark />
+                  <span>{profile.display_name}</span>
                 </Link>
                 <button
                   ref={mobileCloseRef}
@@ -429,20 +430,21 @@ function AppSidebarHeader({
   collapsed: boolean;
   isSandboxPage: boolean;
 }) {
+  const { profile } = useWorkspace();
   return (
     <SidebarHeader className="h-14 shrink-0 flex-row items-center gap-3 border-b px-4">
       <Link
         href="/workspace"
-        aria-label="OpenSlate workspace"
+        aria-label={`${profile.display_name} workspace`}
         className={cn(
           "flex min-w-0 items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2",
         )}
       >
-        <span className="bg-foreground text-background grid size-8 shrink-0 place-items-center rounded-md text-[10px] font-bold">
-          OS
-        </span>
+        <WorkspaceMark />
         {!collapsed ? (
-          <span className="truncate text-sm font-semibold">OpenSlate</span>
+          <span className="truncate text-sm font-semibold">
+            {profile.display_name}
+          </span>
         ) : null}
       </Link>
       {isSandboxPage && !collapsed ? (
@@ -552,5 +554,28 @@ function AppSidebarFooter({
         </SidebarMenuItem>
       </SidebarMenu>
     </SidebarFooter>
+  );
+}
+
+function WorkspaceMark() {
+  const { profile } = useWorkspace();
+  const [failedId, setFailedId] = useState<string | null>(null);
+  return profile.logo_file_id && profile.logo_file_id !== failedId ? (
+    <Image
+      src={`/bff/workspace/logo?revision=${profile.revision}`}
+      alt=""
+      width={32}
+      height={32}
+      unoptimized
+      className="size-8 shrink-0 rounded-md object-contain"
+      onError={() => setFailedId(profile.logo_file_id)}
+    />
+  ) : (
+    <span
+      className="bg-foreground text-background grid size-8 shrink-0 place-items-center rounded-md text-[10px] font-bold"
+      aria-hidden="true"
+    >
+      OS
+    </span>
   );
 }

@@ -27,7 +27,7 @@ from app.systems.users.models import Role, User, UserRole, UserStatus
 def _guarded_urls() -> tuple[str, str]:
     settings = get_settings()
     runtime_url = settings.database_url
-    owner_url = settings.migration_database_url or os.getenv("MIGRATION_DATABASE_URL")
+    owner_url = os.getenv("MIGRATION_DATABASE_URL")
     if owner_url is None:
         pytest.skip("A migration owner database URL is required")
     from tests.conftest import _guard_integration_database
