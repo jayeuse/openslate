@@ -41,21 +41,22 @@
 
 ## Codex orchestration
 - For implementation, troubleshooting, multi-agent work, or explicit evaluation, read `.agents/orchestration/PROTOCOL.md`; apply refresh-context → act → inspect-evidence → evaluate. If missing, report it and follow this guide without claiming full setup.
-- Inherit the global Astra-high primary and approval settings. Shared workers live in `~/.codex/agents/`; optional project overrides live in `.codex/agents/`; skills live in `.agents/skills/`. Read only relevant skills; repository rules/commands override mismatched generic examples.
+- Inherit the global parent `gpt-6-astra` / `medium` and approval settings; default subagent fallback is `gpt-5.6-luna` / `max`. Shared workers live in `~/.codex/agents/`; optional project overrides live in `.codex/agents/`; skills live in `.agents/skills/`. Read only relevant skills; repository rules/commands override mismatched generic examples.
 - Handle small tasks directly; automatically delegate substantial bounded work when it improves quality or time. Do not duplicate verified discovery or assign the same investigation without distinct responsibilities.
 - Planning-only requests produce investigation and a plan, not implementation. Parent owns decomposition, dependencies, integration, conflict resolution, and final review.
-- Choose a shared role by responsibility and complexity; include domain ownership and the applicable skill paths below in each assignment. Difficult escalations, integration, final review, and re-verification remain with the Astra-high parent.
+- Choose a shared role by responsibility and complexity; include domain ownership and the applicable skill paths below in each assignment. Difficult escalations, integration, final review, and re-verification remain with the Astra-medium parent.
 
 ### Worker routing
 
-| Work | Worker |
-| --- | --- |
-| Exact searches, inventories, prescribed checks | `utility` |
-| Repository exploration and behavior tracing | `explore` |
-| Routine changes and straightforward test authoring | `general` |
-| Assigned live-browser reproduction and acceptance | `browser` |
-| Substantial implementation and complex regression-test design | `implement` |
-| Difficult debugging, architecture planning, security first pass (one mode) | `analyst` |
+| Work | Worker | Model | Effort |
+| --- | --- | --- | --- |
+| Exact searches, inventories, prescribed checks | `utility` | `gpt-5.6-luna` | `max` |
+| Repository exploration and behavior tracing | `explore` | `gpt-5.6-luna` | `max` |
+| Assigned live-browser reproduction and acceptance | `browser` | `gpt-5.6-luna` | `max` |
+| All implementation and test authoring, routine or substantial | `implement` | `gpt-6-astra` | `medium` |
+| Difficult debugging, architecture planning, security first pass (one mode) | `analyst` | `gpt-6-astra` | `medium` |
+
+Use these exact configured role names; `explorer` is not an alias for `explore`. `general` is retired: `implement` owns all delegated editing and test authoring. Preserve named-role model/effort settings unless the user requests an override.
 
 ### Project skill routing
 Resolve these skill paths from the repository root. Select only the skills relevant to the assignment; workers read and report them themselves.
@@ -67,7 +68,7 @@ Resolve these skill paths from the repository root. Select only the skills relev
 | Schema, persistence, database evidence | `.agents/skills/postgres-patterns/SKILL.md`; `.agents/skills/supabase-postgres-best-practices/SKILL.md` |
 | Supabase products or integration | `.agents/skills/supabase/SKILL.md` |
 | Infrastructure/tooling setup | `.agents/skills/project-tooling/SKILL.md` |
-| Live browser checks (browser); test authoring (general/implement) | `.agents/skills/playwright-e2e-testing/SKILL.md` |
+| Live browser checks (browser); test authoring (implement) | `.agents/skills/playwright-e2e-testing/SKILL.md` |
 | Security decisions and review | `.agents/skills/webapp-security-review/SKILL.md` |
 | Behavior changes and regression-test design | `.agents/skills/tdd-workflow/SKILL.md` |
 | Meaningful completion verification | `.agents/skills/verification-loop/SKILL.md` |

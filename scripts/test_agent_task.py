@@ -81,7 +81,7 @@ class WorkflowCheckTests(unittest.TestCase):
         self.assertEqual(agent_task.check_workspace(self.root, self.codex_home), [])
 
     def test_all_routed_global_workers_are_effective(self):
-        names = ("utility", "explore", "general", "browser", "implement", "analyst")
+        names = ("utility", "explore", "browser", "implement", "analyst")
         self.write(
             "AGENTS.md",
             "### Worker routing\n"
