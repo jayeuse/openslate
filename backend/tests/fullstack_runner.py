@@ -49,7 +49,6 @@ _DISPOSABLE_VALUES = {
 }
 _PORT_REFERENCES = tuple(name for name in _DISPOSABLE_VALUES if name.endswith("_PORT"))
 
-
 def rewrite_disposable_config(source, run_id):
     values = {"SUPABASE_PROJECT_ID": f"p5-{run_id}", **_DISPOSABLE_VALUES}
     missing = [name for name in values if f"env({name})" not in source]
@@ -241,6 +240,7 @@ def main(arguments=()):
             "SUPABASE_AUTH_REDIRECT_URL": WEB + "/auth/callback",
             "SUPABASE_JWT_ISSUER": AUTH + "/auth/v1",
             "SUPABASE_JWKS_URL": AUTH + "/auth/v1/.well-known/jwks.json",
+            "SUPABASE_JWT_AUDIENCE": "authenticated",
             "ENVIRONMENT": "test",
             "LIFECYCLE_PURGE_ENABLED": "false",
             "SECURITY_EVENT_SERVER_KEY": secrets.token_urlsafe(32),
