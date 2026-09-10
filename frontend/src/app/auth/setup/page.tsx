@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, KeyRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -16,6 +16,8 @@ import {
 
 export default function AuthSetupPage() {
   const router = useRouter();
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [mismatch, setMismatch] = useState(false);
@@ -84,6 +86,7 @@ export default function AuthSetupPage() {
                 <Input
                   id="password"
                   type="password"
+                  disabled={!hydrated}
                   autoComplete="new-password"
                   minLength={12}
                   required
@@ -102,6 +105,7 @@ export default function AuthSetupPage() {
                   aria-invalid={mismatch}
                   aria-describedby={mismatch ? "confirmation-error" : undefined}
                   type="password"
+                  disabled={!hydrated}
                   autoComplete="new-password"
                   minLength={12}
                   required
@@ -116,7 +120,7 @@ export default function AuthSetupPage() {
               </FieldError>
             )}
           </Field>
-          <Button className="w-full" size="lg" disabled={pending}>
+          <Button className="w-full" size="lg" disabled={!hydrated || pending}>
             {pending ? (
               "Saving…"
             ) : (

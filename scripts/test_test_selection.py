@@ -1,11 +1,14 @@
 """Section selection must not silently omit affected safety checks."""
 
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location(
     "section_runner", Path(__file__).with_name("test.py")
@@ -16,6 +19,79 @@ spec.loader.exec_module(runner)
 
 
 class TestSelectionTests(unittest.TestCase):
+    def test_fullstack_manual_dispatch_runs_even_without_application_changes(self):
+        workflow = Path(__file__).resolve().parents[1] / ".github/workflows/fullstack.yml"
+        source = workflow.read_text().split("python3 - <<'PY'\n", 1)[1]
+        program = textwrap.dedent(source.split("          PY\n", 1)[0])
+        for event, changed, expected in (
+            ("workflow_dispatch", "", "true"),
+            ("workflow_dispatch", "docs/example.md\n", "true"),
+            ("pull_request", "docs/example.md\n", "false"),
+            ("push", "frontend/src/example.ts\n", "true"),
+        ):
+            with self.subTest(event=event, changed=changed), tempfile.TemporaryDirectory() as folder:
+                output = Path(folder) / "output"
+                with patch.dict(os.environ, {
+                    "EVENT_NAME": event, "BASE_SHA": "comparison-revision",
+                    "GITHUB_OUTPUT": str(output),
+                }), patch("subprocess.run", return_value=subprocess.CompletedProcess(
+                    [], 0, stdout=changed,
+                )):
+                    exec(compile(program, str(workflow), "exec"), {})  # noqa: S102 -- Repository-owned workflow under test.
+                self.assertEqual(output.read_text(), f"run={expected}\n")
+
+    def invoke(self, *arguments):
+        with patch.object(sys, "argv", ["test.py", *arguments]), patch.object(
+            runner.subprocess, "call", return_value=0
+        ) as call:
+            self.assertEqual(runner.main(), 0)
+            return call.call_args
+
+    def test_local_frontend_batch_runs_desktop_once_and_keeps_other_layers(self):
+        call = self.invoke("frontend", "section", "security")
+        command = call.args[0]
+        self.assertIn("--project=chromium", command)
+        self.assertIn("--project=isolated", command)
+        self.assertIn("--project=http", command)
+        self.assertNotIn("--project=mobile-chromium", command)
+
+    def test_mobile_batch_and_named_case_can_be_selected(self):
+        call = self.invoke("frontend", "section", "security", "--layer", "browser",
+                           "--browser", "mobile-chromium", "--match", "setup")
+        self.assertIn("--project=mobile-chromium", call.args[0])
+        self.assertNotIn("--project=chromium", call.args[0])
+        self.assertIn("--grep=setup", call.args[0])
+
+    def test_full_frontend_preserves_configured_matrix(self):
+        call = self.invoke("frontend", "full")
+        self.assertFalse(any(arg.startswith("--project=") for arg in call.args[0]))
+        self.assertIn("tests/browser/files/library.spec.ts", call.args[0])
+
+    def test_backend_named_case_disables_coverage_and_stops_at_failure(self):
+        call = self.invoke("backend", "section", "security", "--layer", "isolated",
+                           "--match", "invitation")
+        self.assertIn("--no-cov", call.args[0])
+        self.assertIn("-x", call.args[0])
+        self.assertEqual(call.args[0][call.args[0].index("-k") + 1], "invitation")
+
+    def test_full_mode_rejects_local_filters(self):
+        with (
+            patch.object(sys, "argv", ["test.py", "frontend", "full", "--match", "login"]),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            runner.main()
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_backend_integration_batch_owns_its_database_and_can_stay_warm(self):
+        call = self.invoke("backend", "section", "runtime", "--layer", "integration",
+                           "--interactive", "--match", "readiness")
+        command = call.args[0]
+        self.assertEqual(command[:5], ["uv", "run", "python", "-m", "tests.fullstack_runner"])
+        self.assertIn("--backend-batch", command)
+        self.assertIn("--interactive", command)
+        self.assertIn("--layer=integration", command)
+        self.assertIn("--match=readiness", command)
+
     def test_backend_auth_change_includes_security_audit_and_api(self):
         self.assertEqual(
             runner.affected_sections(
@@ -160,7 +236,8 @@ class TestSelectionTests(unittest.TestCase):
             for path in [
                 "tests/runtime/test_readiness.py",
                 "tests/migration_0015/test_static.py",
-                "tests/test_legacy_delete_api.py",
+                "tests/catalog/test_legacy_delete_api.py",
+                "tests/operations/test_disposable_database_guard.py",
             ]:
                 file = root / "backend" / path
                 file.parent.mkdir(parents=True, exist_ok=True)
@@ -171,7 +248,14 @@ class TestSelectionTests(unittest.TestCase):
             )
             self.assertEqual(
                 runner.select_files(root, "backend", {"database"}, "all"),
-                ["tests/migration_0015/test_static.py"],
+                [
+                    "tests/migration_0015/test_static.py",
+                    "tests/operations/test_disposable_database_guard.py",
+                ],
+            )
+            self.assertEqual(
+                runner.select_files(root, "backend", {"api"}, "all"),
+                ["tests/catalog/test_legacy_delete_api.py"],
             )
 
 

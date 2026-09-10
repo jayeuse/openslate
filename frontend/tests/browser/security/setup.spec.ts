@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../coverage";
 import { testSecret } from "../../helpers/test-secret";
 const validPassword = testSecret();
 
@@ -95,4 +95,51 @@ test("rejects password setup when the session or token is missing", async ({
     status: 401,
     body: { detail: "Authentication required" },
   });
+});
+
+test("waits for hydration before accepting invited-account password input", async ({
+  page,
+}) => {
+  let releaseScripts!: () => void;
+  const scriptsHeld = new Promise<void>((resolve) => {
+    releaseScripts = resolve;
+  });
+  await page.route("**/_next/static/**/*.js", async (route) => {
+    await scriptsHeld;
+    await route.continue();
+  });
+  let requests = 0;
+  await page.route("**/session/password", async (route) => {
+    requests += 1;
+    await route.fulfill({
+      status: 400,
+      json: { detail: "upstream invitation details" },
+    });
+  });
+  try {
+    await page.goto("/auth/setup", { waitUntil: "commit" });
+    const password = page.getByLabel("Password", { exact: true });
+    const confirmation = page.getByLabel("Confirm password", { exact: true });
+    const submit = page.getByRole("button", { name: "Continue", exact: true });
+    await expect(password).toBeDisabled();
+    await expect(confirmation).toBeDisabled();
+    await expect(submit).toBeDisabled();
+    releaseScripts();
+    await expect(password).toBeEnabled();
+    await expect(confirmation).toBeEnabled();
+    await expect(submit).toBeEnabled();
+    await password.fill(validPassword);
+    await confirmation.fill(validPassword);
+    await expect(password).toHaveValue(validPassword);
+    await submit.click();
+    await expect(page.getByRole("status")).toContainText(
+      "We could not set up your password. The invitation may have expired.",
+    );
+    await expect(password).toHaveValue(validPassword);
+    await expect(confirmation).toHaveValue(validPassword);
+    await expect(submit).toBeEnabled();
+    expect(requests).toBe(1);
+  } finally {
+    releaseScripts();
+  }
 });

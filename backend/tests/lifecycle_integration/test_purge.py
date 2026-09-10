@@ -17,7 +17,7 @@ from app.systems.lifecycle.schemas import LifecycleBlockerCode, LifecycleTargetT
 from app.systems.lifecycle.service import purge_lifecycle
 from app.systems.modules.models import Module
 from app.systems.records.models import Record
-from tests.lifecycle_integration_support import (
+from tests.lifecycle_integration.lifecycle_integration_support import (
     _close_rows,
     _item,
 )

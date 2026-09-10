@@ -10,7 +10,7 @@ from uuid import UUID
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from uuid6 import uuid7
 
@@ -24,6 +24,7 @@ from app.systems.records import export as export_service
 from app.systems.records.models import Record
 from app.systems.users.models import User
 from tests.api_integration_support import create_owned_admin, delete_owned_admin
+from tests.conftest import guarded_create_engine as create_engine
 
 pytestmark = pytest.mark.integration
 

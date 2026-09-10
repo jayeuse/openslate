@@ -16,6 +16,7 @@ SECTIONS = {
         "administration",
         "audit",
         "catalog",
+        "files",
         "records",
         "sandbox",
         "runtime",
@@ -230,7 +231,18 @@ def main() -> int:
         action="store_true",
         help="Show selection without starting tests or services",
     )
+    parser.add_argument("--match", help="Focused pytest name expression or Playwright title regex")
+    parser.add_argument("--browser", choices=("chromium", "mobile-chromium", "all"),
+                        help="Local browser batch target (default: chromium)")
+    parser.add_argument("--interactive", action="store_true",
+                        help="Keep a disposable backend batch stack until quit or EOF")
     args = parser.parse_args()
+    if args.mode == "full" and (args.match or args.browser or args.interactive):
+        parser.error("local filters are not accepted by full mode")
+    if args.browser and (args.project != "frontend" or args.layer not in {"all", "browser"}):
+        parser.error("--browser requires the frontend browser or all layer")
+    if args.interactive and (args.project != "backend" or args.layer == "isolated"):
+        parser.error("--interactive requires a backend integration or all batch")
     valid_layers = (
         {"isolated", "integration", "all"}
         if args.project == "backend"
@@ -268,15 +280,29 @@ def main() -> int:
     if not files:
         print("No tests selected for these changes/sections and this layer.")
         return 0
+    if args.project == "frontend" and args.mode != "full":
+        print(f"browser target={args.browser or 'chromium'}; focused batch, not a full gate",
+              flush=True)
+    if args.match:
+        print(f"case filter={args.match}", flush=True)
     if args.list:
         print("\n".join(files))
         print(f"{len(files)} test files; selection only, no tests executed.")
         return 0
     env = os.environ.copy()
-    if args.project == "backend":
+    if args.project == "backend" and args.mode != "full" and args.layer != "isolated":
+        command = ["uv", "run", "python", "-m", "tests.fullstack_runner",
+                   "--backend-batch", f"--layer={args.layer}"]
+        if args.interactive:
+            command.append("--interactive")
+        if args.match:
+            command.append(f"--match={args.match}")
+    elif args.project == "backend":
         command = ["uv", "run", "pytest"]
         if args.mode != "full" or args.layer != "all":
-            command.append("--no-cov")
+            command += ["--no-cov", "-x"]
+        if args.match:
+            command += ["-k", args.match]
         if args.layer != "all":
             command += [
                 "-m",
@@ -287,6 +313,16 @@ def main() -> int:
         env["BASE_URL"] = "http://127.0.0.1:3104"
         env["PLAYWRIGHT_CONFIGURATION"] = "synthetic"
         command = ["node", "scripts/run-playwright.mjs"]
+        if args.mode != "full":
+            command += ["--max-failures=1", "--reporter=line"]
+            if args.browser != "all":
+                projects = [group for group in ("isolated", "http")
+                            if args.layer in {"all", group}]
+                if args.layer in {"all", "browser"}:
+                    projects.append(args.browser or "chromium")
+                command += [f"--project={project}" for project in projects]
+        if args.match:
+            command.append(f"--grep={args.match}")
     return subprocess.call([*command, *files], cwd=root / args.project, env=env)
 
 

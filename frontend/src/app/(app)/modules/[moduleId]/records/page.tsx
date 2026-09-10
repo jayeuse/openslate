@@ -173,7 +173,6 @@ function ModuleRecords({ moduleId }: { moduleId: string }) {
     try {
       await apiFetch(`/records/${record.id}`, { method: "DELETE" });
       await load();
-      setArchiveTarget(null);
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -182,6 +181,7 @@ function ModuleRecords({ moduleId }: { moduleId: string }) {
       );
     } finally {
       setPending(false);
+      setArchiveTarget(null);
     }
   }
   return (

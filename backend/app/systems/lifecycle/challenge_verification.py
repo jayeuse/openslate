@@ -54,6 +54,8 @@ def record_failure(
     challenge.failed_attempts += 1
     if challenge.failed_attempts >= 5:
         challenge.status = LifecycleChallengeStatus.EXHAUSTED
+    else:
+        challenge.status = LifecycleChallengeStatus.PENDING
     challenge.verification_lease_id = None
     challenge.verification_lease_expires_at = None
     challenge.updated_at = timestamp

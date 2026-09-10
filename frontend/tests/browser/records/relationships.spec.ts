@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../coverage";
 import {
   CONTACTS_FIELD_ID,
   CONTACT_EDGE_ID,

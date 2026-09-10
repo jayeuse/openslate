@@ -9,6 +9,8 @@ on:
       - ".env.example"
       - "compose.yaml"
       - "scripts/environment.py"
+      - "scripts/check_coverage.py"
+      - "scripts/test_check_coverage.py"
       - "supabase/config.toml"
       - ".github/workflows/frontend.yml"
   push:
@@ -20,6 +22,8 @@ on:
       - ".env.example"
       - "compose.yaml"
       - "scripts/environment.py"
+      - "scripts/check_coverage.py"
+      - "scripts/test_check_coverage.py"
       - "supabase/config.toml"
       - ".github/workflows/frontend.yml"
 
@@ -30,7 +34,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     permissions:
       contents: read
     defaults:
@@ -39,6 +43,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -111,6 +117,31 @@ jobs:
 
       - name: Run end-to-end tests
         run: PLAYWRIGHT_USE_PRODUCTION=1 PLAYWRIGHT_CONFIGURATION=process node scripts/run-playwright.mjs --max-failures=5
+
+      - name: Record coverage comparison base
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          test -n "$EVENT_BASE"
+          git rev-parse --verify "$EVENT_BASE^{commit}"
+          printf 'COVERAGE_BASE_REF=%s\n' "$(git merge-base HEAD "$EVENT_BASE")" >> "$GITHUB_ENV"
+
+      - name: Verify overall and changed executable coverage
+        run: npm run test:coverage
+
+      - name: Upload executable coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: |
+            frontend/coverage/latest.json
+            frontend/coverage/*/metadata.json
+            frontend/coverage/*/gate.json
+            frontend/coverage/*/tests.json
+            frontend/coverage/*/playwright/
+            frontend/coverage/*/report/
+          if-no-files-found: error
 
       - name: Verify scanner UI executable coverage
         run: npm run test:scanner:coverage

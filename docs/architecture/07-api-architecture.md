@@ -12,7 +12,7 @@
 | Resource list contract         | **Implemented**     | `backend/app/common/listing/schemas.py` and `query.py` provide the shared envelope, filters, ordering, count, and `has_more`. |
 | Endpoint versioning            | **Documented Only** | No version segment or separate version negotiation is present in the reviewed route registration.                             |
 | Conditional mutation semantics | **Unknown**         | The BFF forwards `If-Match`, but reviewed backend route signatures do not consume it; no backend ETag contract is evidenced.  |
-| CRUD close-required responses  | **Implemented**     | Department, module, and field `DELETE` handlers return and document `409 close_required`; the registered-route/OpenAPI contract is covered by `backend/tests/test_legacy_delete_api.py`. |
+| CRUD close-required responses  | **Implemented**     | Department, module, and field `DELETE` handlers return and document `409 close_required`; the registered-route/OpenAPI contract is covered by `backend/tests/catalog/test_legacy_delete_api.py`. |
 
 ## Route registration and endpoint inventory
 

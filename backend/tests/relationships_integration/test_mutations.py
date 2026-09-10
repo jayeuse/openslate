@@ -20,7 +20,7 @@ from app.systems.relationships.service import (
     create_relationship,
     list_relationships,
 )
-from tests.relationships_integration_support import (
+from tests.relationships_integration.relationships_integration_support import (
     _add_edge,
     _edge_audit_rows,
     _seed_committed_graph,

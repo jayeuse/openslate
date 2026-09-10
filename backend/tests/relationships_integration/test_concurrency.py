@@ -2,7 +2,7 @@ import os
 from uuid import UUID
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
@@ -14,7 +14,8 @@ from app.systems.relationships.service import (
     RelationshipUnavailable,
     create_relationship,
 )
-from tests.relationships_integration_support import (
+from tests.conftest import guarded_create_engine as create_engine
+from tests.relationships_integration.relationships_integration_support import (
     _guard_integration_database,
     _seed_committed_graph,
     _set_request,

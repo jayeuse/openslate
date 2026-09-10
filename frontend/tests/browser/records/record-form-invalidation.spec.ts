@@ -1,4 +1,4 @@
-import { expect, type Page, type Request, type Route } from "@playwright/test";
+import { expect, type Page, type Request, type Route } from "../coverage";
 import { test } from "../files/coverage";
 
 const DEPARTMENT_ID = "11111111-1111-4111-8111-111111111111";

@@ -1,5 +1,12 @@
 import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../coverage";
+import {
+  DEPARTMENT_ID,
+  SOURCE_MODULE_ID,
+  makeState,
+  baseEntity,
+} from "../helpers/relationships-data";
+import { installMocks, fulfill } from "../helpers/relationships-fixtures";
 
 test("retries an initial department detail error before rendering empty and mutation states", async ({
   page,
@@ -93,4 +100,145 @@ test("retries an initial department detail error before rendering empty and muta
       .filter({ hasText: "Department is temporarily unavailable" }),
   ).toHaveCount(0);
   expect(departmentAttempts).toBeGreaterThanOrEqual(2);
+});
+
+test("module detail retries a failed load before showing empty schema guidance and scoped links", async ({
+  page,
+}) => {
+  const state = makeState();
+  const moduleItem = state.modules.find(
+    (item) => item.id === SOURCE_MODULE_ID,
+  )!;
+  moduleItem.is_schema_accepted = false;
+  state.fields = [];
+  await installMocks(page, state);
+  let available = false;
+  await page.route(`**/bff/modules/${SOURCE_MODULE_ID}`, async (route) => {
+    if (available) return route.fallback();
+    await fulfill(route, 503, { detail: "Module is temporarily unavailable" });
+  });
+  await page.goto(`/modules/${SOURCE_MODULE_ID}`);
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Module is temporarily unavailable" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open schema builder" }),
+  ).toHaveCount(0);
+  available = true;
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(
+    page.getByRole("heading", {
+      level: 1,
+      name: moduleItem.module_name,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Add at least one field, then accept the schema before adding records.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Records blocked", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open schema builder", exact: true }),
+  ).toHaveAttribute(
+    "href",
+    `/departments/${DEPARTMENT_ID}/modules/${SOURCE_MODULE_ID}/schema`,
+  );
+  await expect(
+    page.getByRole("link", { name: "Open records", exact: true }),
+  ).toHaveAttribute(
+    "href",
+    `/departments/${DEPARTMENT_ID}/modules/${SOURCE_MODULE_ID}/records`,
+  );
+  await expect(
+    page.getByRole("link", { name: "Back", exact: true }),
+  ).toHaveAttribute("href", `/departments/${DEPARTMENT_ID}`);
+  await expect(
+    page.getByRole("button", { name: "Try again", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("module detail becomes ready for records after accepting its populated schema", async ({
+  page,
+}) => {
+  const state = makeState();
+  state.modules.find(
+    (item) => item.id === SOURCE_MODULE_ID,
+  )!.is_schema_accepted = false;
+  await installMocks(page, state);
+  await page.goto(`/modules/${SOURCE_MODULE_ID}`);
+  await expect(
+    page.getByText("Accept the schema before adding records.", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("link", { name: "Open schema builder", exact: true })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(
+      `/departments/${DEPARTMENT_ID}/modules/${SOURCE_MODULE_ID}/schema$`,
+    ),
+  );
+  await page
+    .getByRole("button", { name: "Accept Schema", exact: true })
+    .click();
+  await expect(
+    page.getByText("Schema is accepted", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Back to module", exact: true }).click();
+  await expect(
+    page.getByText("Ready for records", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Schema accepted", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Open records", exact: true }).click();
+  await expect(page).toHaveURL(
+    new RegExp(
+      `/departments/${DEPARTMENT_ID}/modules/${SOURCE_MODULE_ID}/records$`,
+    ),
+  );
+  await expect(
+    page.getByRole("link", { name: "Add record", exact: true }),
+  ).toHaveAttribute(
+    "href",
+    `/departments/${DEPARTMENT_ID}/modules/${SOURCE_MODULE_ID}/records/new`,
+  );
+});
+
+test("a closed parent disables module schema changes while keeping record review available", async ({
+  page,
+}) => {
+  const state = makeState();
+  await installMocks(page, state);
+  await page.route(`**/bff/departments/${DEPARTMENT_ID}`, (route) =>
+    fulfill(route, 200, {
+      ...baseEntity(DEPARTMENT_ID, true),
+      department_name: "Operations",
+    }),
+  );
+  await page.goto(`/modules/${SOURCE_MODULE_ID}`);
+  await expect(
+    page.getByRole("button", {
+      name: "Schema changes disabled while closed",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("link", { name: "Open schema builder", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("link", { name: "Open records", exact: true }).click();
+  await expect(page).toHaveURL(
+    new RegExp(
+      `/departments/${DEPARTMENT_ID}/modules/${SOURCE_MODULE_ID}/records$`,
+    ),
+  );
+  await expect(
+    page.getByRole("button", { name: "Add record", exact: true }),
+  ).toBeDisabled();
 });

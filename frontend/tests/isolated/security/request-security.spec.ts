@@ -183,3 +183,42 @@ test.describe("same-origin request security", () => {
     });
   }
 });
+
+test("same-origin validation accepts bracketed IPv6 authority but rejects malformed variants", () => {
+  expect(
+    isSameOriginRequest(
+      requestWithHeaders("http://internal/bff", {
+        host: "[::1]:3104",
+        origin: "http://[::1]:3104",
+      }),
+    ),
+  ).toBe(true);
+  expect(
+    isSameOriginRequest(
+      requestWithHeaders("http://internal/bff", {
+        host: "[::1]",
+        origin: "http://[::1]",
+      }),
+    ),
+  ).toBe(true);
+  for (const host of ["[::1", "[::1]suffix", "::1", "[invalid]:3104"]) {
+    expect(
+      isSameOriginRequest(
+        requestWithHeaders("http://internal/bff", {
+          host,
+          origin: "http://[::1]:3104",
+        }),
+      ),
+      host,
+    ).toBe(false);
+  }
+});
+
+test("same-origin validation fails closed on malformed request URL or Referer", () => {
+  expect(sameOriginRequest({ origin: EXPECTED_ORIGIN }, "not-a-url")).toBe(
+    false,
+  );
+  expect(
+    sameOriginRequest({ origin: EXPECTED_ORIGIN, referer: "not-a-url" }),
+  ).toBe(false);
+});

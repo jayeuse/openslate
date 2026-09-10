@@ -34,7 +34,7 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
-addopts = "--cov=app --cov-report=term-missing --cov-fail-under=80"
+addopts = "--cov=app --cov-report=term-missing --cov-fail-under=90"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = ["integration: requires a PostgreSQL test database"]

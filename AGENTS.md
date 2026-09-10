@@ -34,10 +34,19 @@
 
 ## Verification and completion
 - Run the narrowest existing checks proving the change; extend the nearest test before adding files, and add tests only for changed behavior, known regression risk, or explicit requests.
-- Backend checks: `uv run ruff check .`, `uv run mypy app scripts`, `TEST_DATABASE_URL="$DATABASE_URL" uv run pytest`, `uv run alembic check`; frontend: `npm run verify`. Focus runs when sufficient.
+- Backend pre-push checks: `uv run ruff check .`, `uv run mypy app scripts`, and `COVERAGE_BASE_REF=<base-ref> uv run python -m tests.fullstack_runner --backend-coverage-only` (includes disposable PostgreSQL and Alembic checks); frontend: `npm run verify` plus `COVERAGE_BASE_REF=<base-ref> npm run test:coverage`. Record the base revision before implementation.
 - Verify rendered UI behavior in a browser when runnable; static checks and worker claims do not prove runtime behavior. Missing services are environment blockers, not application defects.
 - Inspect the final diff; remove debug/dead code, backups, scratch files, and unrelated changes. Update the smallest existing document only when documented behavior changes.
 - Continue until requested behavior, acceptance criteria, relevant checks, and diff scope pass, or a concrete blocker needs input. Report commands/results, assumptions, limitations, and unverified runtime behavior.
+
+### Non-negotiable test workflow
+- Apply [Testing Architecture](docs/architecture/16-testing-architecture.md) across backend, frontend, and infrastructure: focused test → feature batch → affected integration → pre-push gates. Full suites run only when preparing to push, not for edits, commits, or routine handoffs.
+- Fix a failing case, rerun that case, then its affected batch. Close a batch only when required cases pass; expected errors must be asserted by passing tests. Never hide failures with skips, weaker assertions, or repeated retries.
+- Test at the lowest layer that proves the behavior. Use real PostgreSQL for database guarantees and browsers for rendered interactions; check affected boundaries early for auth, schema, shared configuration, or framework changes.
+- Keep coverage collection off routine edit loops. Only when preparing to push, run the affected projects' full suites and required coverage gates after batches stabilize; preserve 90% overall and changed-line thresholds and all required CI checks.
+- After a pre-push gate failure, debug narrowly, then rerun the affected gate. Reuse passing evidence only while its source, tests, dependencies, configuration, and relevant shared boundaries remain unchanged.
+- Reuse setup only through supported runner isolation; never bypass database guards. Parallel runs require separate ports, outputs, and mutable test data; pre-push disposable-stack gates start fresh.
+- Report selected scope, results, and blockers. Missing required services or skipped required tests block the applicable check; missing required coverage blocks push readiness. Before push preparation, report full gates as deferred, not passed.
 
 ## Codex orchestration
 - For implementation, troubleshooting, multi-agent work, or explicit evaluation, read `.agents/orchestration/PROTOCOL.md`; apply refresh-context → act → inspect-evidence → evaluate. If missing, report it and follow this guide without claiming full setup.

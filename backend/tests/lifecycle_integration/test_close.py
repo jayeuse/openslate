@@ -14,7 +14,7 @@ from app.systems.lifecycle.planner import plan_lifecycle
 from app.systems.lifecycle.schemas import LifecycleBlockerCode, LifecycleTargetType
 from app.systems.lifecycle.service import close_lifecycle, reopen_lifecycle
 from app.systems.modules.models import Module
-from tests.lifecycle_integration_support import _item  # noqa: F401
+from tests.lifecycle_integration.lifecycle_integration_support import _item  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
