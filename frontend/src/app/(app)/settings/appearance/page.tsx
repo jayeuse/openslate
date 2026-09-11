@@ -2,8 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Check, Moon, Sun } from "lucide-react";
-import { useAppShellNavigation } from "@/components/app-shell";
-import { Select, SelectItem } from "@/components/ui/select";
 import { PageHeader } from "@/components/page-header";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,7 +30,6 @@ const densities = ["comfortable", "compact"] as const;
 const radii = ["square", "subtle", "rounded"] as const;
 
 export default function AppearancePage() {
-  const { structure, setStructure } = useAppShellNavigation();
   const [preferences, setPreferences] = useState<AppearancePreferences>(
     DEFAULT_APPEARANCE_PREFERENCES,
   );
@@ -52,31 +49,9 @@ export default function AppearancePage() {
       <PageHeader
         eyebrow="Settings"
         title="Appearance"
-        description="Choose how your workspace looks and how navigation is organized."
+        description="Choose how your workspace looks and feels."
       />
       <div className="grid max-w-4xl gap-5 md:grid-cols-2">
-        <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle>Navigation structure</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <p className="text-muted-foreground text-sm">
-              Choose grouped OpenSlate navigation or a simple Classic list.
-            </p>
-            <div className="max-w-sm">
-              <Select
-                aria-label="Navigation structure"
-                value={structure}
-                onValueChange={(value) =>
-                  setStructure(value === "classic" ? "classic" : "structured")
-                }
-              >
-                <SelectItem value="structured">OpenSlate</SelectItem>
-                <SelectItem value="classic">Classic</SelectItem>
-              </Select>
-            </div>
-          </CardContent>
-        </Card>
         <Card>
           <CardHeader>
             <CardTitle>Theme</CardTitle>

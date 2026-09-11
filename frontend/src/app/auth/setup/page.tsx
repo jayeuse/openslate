@@ -42,7 +42,7 @@ export default function AuthSetupPage() {
         body: JSON.stringify({ password, confirmation }),
       });
       if (!response.ok) throw new Error("Password setup failed");
-      router.replace("/workspace");
+      router.replace("/openview");
     } catch {
       setError(
         "We could not set up your password. The invitation may have expired.",

@@ -3,12 +3,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { WorkspaceProvider } from "@/components/workspace-provider";
 import { AppShell } from "@/components/app-shell";
-import {
-  OPENSLADE_INVALIDATION_EVENT,
-  RealtimeProvider,
-} from "@/components/realtime-provider";
 
 type AppPageProps = {
   children: ReactNode;
@@ -18,7 +13,6 @@ export function AppPage({ children }: AppPageProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [checking, setChecking] = useState(true);
-  const [invalidationGeneration, setInvalidationGeneration] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -45,31 +39,6 @@ export function AppPage({ children }: AppPageProps) {
     };
   }, [router, pathname]);
 
-  // The (app) group layout takes no per-page props, so the preserve-state
-  // mapping formerly expressed via `preserveStateOnInvalidation` is derived
-  // from the pathname here: record authoring routes (`*/records/new` and
-  // `*/records/*/edit`, in both the canonical `/modules/...` shape and the
-  // department-alias `/departments/.../modules/...` shape) keep in-progress
-  // form state by skipping the AppShell remount. Records lists also retain
-  // their query drafts and refresh their own data; every other authenticated
-  // route remounts the shell on invalidation.
-  const preserveStateOnInvalidation =
-    /\/modules\/[^/]+\/records\/?$/.test(pathname) ||
-    /\/records\/new\/?$/.test(pathname) ||
-    /\/records\/[^/]+\/edit\/?$/.test(pathname) ||
-    pathname === "/settings/workspace";
-
-  useEffect(() => {
-    const invalidate = () => {
-      if (!preserveStateOnInvalidation) {
-        setInvalidationGeneration((current) => current + 1);
-      }
-    };
-    window.addEventListener(OPENSLADE_INVALIDATION_EVENT, invalidate);
-    return () =>
-      window.removeEventListener(OPENSLADE_INVALIDATION_EVENT, invalidate);
-  }, [preserveStateOnInvalidation]);
-
   if (checking) {
     return (
       <main className="bg-background text-foreground grid min-h-screen place-items-center">
@@ -80,11 +49,5 @@ export function AppPage({ children }: AppPageProps) {
     );
   }
 
-  return (
-    <RealtimeProvider>
-      <WorkspaceProvider>
-        <AppShell key={invalidationGeneration}>{children}</AppShell>
-      </WorkspaceProvider>
-    </RealtimeProvider>
-  );
+  return <AppShell>{children}</AppShell>;
 }

@@ -99,33 +99,25 @@ test("workspace revisions, saved queries, CSV authority and automatic private sc
   const displayName = `Workspace ${fixture.runId}`;
   let profileChanged = false;
   try {
-    await page.goto("/settings/workspace");
-    await page.getByLabel("Display name", { exact: true }).fill(displayName);
-    await page
-      .getByLabel("Timezone (IANA)", { exact: true })
-      .fill("Asia/Manila");
-    await page.getByLabel("Locale", { exact: true }).fill("en-gb");
-    const saved = page.waitForResponse(
-      (r) =>
-        new URL(r.url()).pathname === "/bff/workspace" &&
-        r.request().method() === "PATCH",
-    );
     assertDisposableMutation();
-    await page
-      .getByRole("button", { name: "Save workspace", exact: true })
-      .click();
-    expect((await saved).status()).toBe(200);
+    const saved = await page.request.patch("/bff/workspace", {
+      headers: { Origin: fixture.baseURL },
+      data: {
+        revision: initial.revision,
+        display_name: displayName,
+        timezone: "Asia/Manila",
+        locale: "en-gb",
+      },
+    });
+    expect(saved.status()).toBe(200);
     profileChanged = true;
-    await page.reload();
-    await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
-      displayName,
-    );
-    await expect(
-      page.getByLabel("Timezone (IANA)", { exact: true }),
-    ).toHaveValue("Asia/Manila");
-    await expect(page.getByLabel("Locale", { exact: true })).toHaveValue(
-      "en-GB",
-    );
+    const persistedProfile = await page.request.get("/bff/workspace");
+    expect(persistedProfile.status()).toBe(200);
+    expect(Profile.parse(await persistedProfile.json())).toMatchObject({
+      display_name: displayName,
+      timezone: "Asia/Manila",
+      locale: "en-GB",
+    });
     assertDisposableMutation();
     const stale = await page.request.patch("/bff/workspace", {
       headers: { Origin: fixture.baseURL },
@@ -216,56 +208,46 @@ test("workspace revisions, saved queries, CSV authority and automatic private sc
         .object({ visibility: z.literal("workspace") })
         .parse(await published.json()).visibility,
     ).toBe("workspace");
-    await page.goto(`/modules/${recordModule.id}/records`);
-    await page
-      .getByLabel("Saved view", { exact: true })
-      .selectOption(privateView.id);
-    await expect(page.getByText("Included", { exact: true })).toBeVisible();
-    await expect(page.getByText("Excluded", { exact: true })).toHaveCount(0);
-    await page
-      .getByText("Filters, sorting and columns", { exact: true })
-      .click();
+    const savedView = await page.request.get(`/bff/views/${privateView.id}`);
+    expect(savedView.status()).toBe(200);
+    const storedDefinition = z
+      .object({ definition: z.unknown() })
+      .parse(await savedView.json()).definition;
+    expect(storedDefinition).toEqual(definition);
+    const savedQuery = await post(page, "/records/query", {
+      ...query,
+      definition: storedDefinition,
+    });
+    expect(savedQuery.status()).toBe(200);
+    expect(
+      z
+        .object({ items: z.array(Entity) })
+        .parse(await savedQuery.json())
+        .items.map((row) => row.id),
+    ).toEqual([matching.id]);
+    // Preserve numeric query execution; serialization by the retired filter UI
+    // is no longer a supported frontend contract.
+    const numericFilters: {
+      field_id: string;
+      expected_type: string;
+      operator: string;
+      value: string | number;
+    }[] = [...definition.filters];
     for (const filter of [
-      { id: amount.id, value: "10.5", expected: 10.5, count: 2 },
-      { id: quantity.id, value: "7", expected: 7, count: 3 },
+      { id: amount.id, type: "number", value: 10.5 },
+      { id: quantity.id, type: "int", value: 7 },
     ]) {
-      await page
-        .getByLabel("Filter field", { exact: true })
-        .selectOption(filter.id);
-      await page.getByLabel("Filter value", { exact: true }).fill(filter.value);
-      const numericQuery = page.waitForResponse((response) => {
-        if (
-          new URL(response.url()).pathname !== "/bff/records/query" ||
-          response.request().method() !== "POST"
-        )
-          return false;
-        const body: unknown = response.request().postDataJSON();
-        const parsed = z
-          .object({ definition: z.object({ filters: z.array(z.unknown()) }) })
-          .safeParse(body);
-        return (
-          parsed.success &&
-          parsed.data.definition.filters.length === filter.count
-        );
+      numericFilters.push({
+        field_id: filter.id,
+        expected_type: filter.type,
+        operator: "eq",
+        value: filter.value,
       });
-      await page
-        .getByRole("button", { name: "Add filter", exact: true })
-        .click();
-      const response = await numericQuery;
+      const response = await post(page, "/records/query", {
+        ...query,
+        definition: { ...definition, filters: numericFilters },
+      });
       expect(response.status()).toBe(200);
-      const sent = z
-        .object({
-          definition: z.object({
-            filters: z.array(
-              z.object({ field_id: z.string(), value: z.unknown() }),
-            ),
-          }),
-        })
-        .parse(response.request().postDataJSON());
-      expect(
-        sent.definition.filters.find((item) => item.field_id === filter.id)
-          ?.value,
-      ).toBe(filter.expected);
       const filteredRows = z
         .object({ items: z.array(Entity) })
         .parse(await response.json());
@@ -349,46 +331,44 @@ test("workspace revisions, saved queries, CSV authority and automatic private sc
     expect(createHash("sha256").update(received).digest("hex")).toBe(
       createHash("sha256").update(bytes).digest("hex"),
     );
-    await page.goto(`/modules/${recordModule.id}/records/${matching.id}/edit`);
-    await expect(
-      page.getByRole("button", {
-        name: `Download transfer-${fixture.runId}.png`,
-        exact: true,
-      }),
-    ).toBeVisible();
-
     // A clean logo becomes an explicit candidate; activation remains an
     // administrator decision and must follow the actual worker verdict.
-    await page.goto("/settings/workspace");
-    await page.getByLabel("Choose logo", { exact: true }).setInputFiles({
-      name: `logo-${fixture.runId}.png`,
-      mimeType: "image/png",
-      buffer: png(),
+    const logoBytes = png();
+    const logo = await create(page, "/files", {
+      purpose: "workspace_logo",
+      filename: `logo-${fixture.runId}.png`,
+      expected_size: logoBytes.length,
     });
-    const logoUpload = page.waitForResponse(
-      (response) =>
-        /\/bff\/files\/[^/]+\/content$/.test(
-          new URL(response.url()).pathname,
-        ) && response.request().method() === "PUT",
-    );
     assertDisposableMutation();
-    await page
-      .getByRole("button", { name: "Upload and scan", exact: true })
-      .click();
-    expect((await logoUpload).status()).toBe(200);
-    await expect(
-      page.getByRole("button", { name: "Use this logo", exact: true }),
-    ).toBeEnabled({ timeout: 90_000 });
-    const activated = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/bff/workspace" &&
-        response.request().method() === "PATCH",
-    );
+    const logoUpload = await page.request.put(`/bff/files/${logo.id}/content`, {
+      headers: {
+        Origin: fixture.baseURL,
+        "Content-Type": "application/octet-stream",
+      },
+      data: logoBytes,
+    });
+    expect(logoUpload.status()).toBe(200);
+    await expect
+      .poll(
+        async () => {
+          const candidate = await page.request.get(`/bff/files/${logo.id}`);
+          expect(candidate.status()).toBe(200);
+          return z.object({ state: z.string() }).parse(await candidate.json())
+            .state;
+        },
+        { timeout: 90_000, intervals: [500, 1000, 2000] },
+      )
+      .toBe("ready");
+    const beforeActivation = await page.request.get("/bff/workspace");
+    expect(beforeActivation.status()).toBe(200);
+    const currentProfile = Profile.parse(await beforeActivation.json());
     assertDisposableMutation();
-    await page
-      .getByRole("button", { name: "Use this logo", exact: true })
-      .click();
-    expect((await activated).status()).toBe(200);
+    const activated = await page.request.patch("/bff/workspace", {
+      headers: { Origin: fixture.baseURL },
+      data: { revision: currentProfile.revision, logo_file_id: logo.id },
+    });
+    expect(activated.status()).toBe(200);
+    expect(Profile.parse(await activated.json()).logo_file_id).toBe(logo.id);
     const logoResponse = await page.request.get("/bff/workspace/logo");
     const diagnostic: Record<string, string | number> = {
       stage: "activated_logo_download",

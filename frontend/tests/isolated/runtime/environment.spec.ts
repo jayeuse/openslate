@@ -73,7 +73,6 @@ function loadSupabaseWrappers(values: Record<string, string | undefined>) {
     return exports;
   };
   return {
-    browser: load(resolve(root, "lib/supabase/browser.ts")),
     environment: load(resolve(root, "lib/environment.ts")),
     server: load(resolve(root, "lib/supabase/server.ts")),
     calls,
@@ -146,26 +145,19 @@ test("public environment exposes canonical inline browser fields", () => {
   });
 });
 
-test("Supabase wrappers keep browser and server origins distinct", () => {
+test("Supabase authentication uses the server origin", () => {
   const values = {
     ...environment,
     NEXT_PUBLIC_SUPABASE_URL: "https://browser.supabase.test",
     SUPABASE_SERVER_URL: "http://supabase-internal.test",
   };
   const wrappers = loadSupabaseWrappers(values);
-  const browser = wrappers.browser.getSupabaseBrowserClient as () => unknown;
   const server = wrappers.server.createSupabaseServerClient as () => unknown;
 
-  browser();
   server();
 
-  expect(wrappers.calls).toHaveLength(2);
+  expect(wrappers.calls).toHaveLength(1);
   expect(wrappers.calls[0]).toMatchObject([
-    "https://browser.supabase.test",
-    "synthetic-publishable-key",
-    { auth: { persistSession: false } },
-  ]);
-  expect(wrappers.calls[1]).toMatchObject([
     "http://supabase-internal.test",
     "synthetic-publishable-key",
     { auth: { persistSession: false } },

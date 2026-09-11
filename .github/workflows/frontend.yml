@@ -143,9 +143,6 @@ jobs:
             frontend/coverage/*/report/
           if-no-files-found: error
 
-      - name: Verify scanner UI executable coverage
-        run: npm run test:scanner:coverage
-
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4

@@ -166,11 +166,11 @@ export function SandboxInspector({
   function commitEdit(id: string, currentValue: string): void {
     const nextValue = editingValue.trim();
     if (nextValue.length > 0 && nextValue !== currentValue) {
-      if (id.startsWith("department-")) {
+      if (state.departments.some((item) => item.id === id)) {
         onRenameDepartment(id, nextValue);
-      } else if (id.startsWith("module-")) {
+      } else if (state.modules.some((item) => item.id === id)) {
         onRenameModule(id, nextValue);
-      } else if (id.startsWith("field-")) {
+      } else if (state.fields.some((item) => item.id === id)) {
         onUpdateField(id, { name: nextValue });
       }
     }

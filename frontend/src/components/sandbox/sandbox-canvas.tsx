@@ -8,7 +8,15 @@ import {
   type MutableRefObject,
 } from "react";
 
-import { Graph, History, Selection, Snapline, type Node } from "@antv/x6";
+import {
+  Graph,
+  History,
+  Selection,
+  Snapline,
+  Point,
+  routerPresets,
+  type Node,
+} from "@antv/x6";
 
 import {
   FIELD_TYPE_META,
@@ -32,7 +40,13 @@ import {
   toCells,
 } from "@/lib/sandbox/x6-adapter";
 
+export type SandboxCanvasLayout = Record<
+  string,
+  { x: number; y: number; width: number; height: number }
+>;
+
 export interface SandboxCanvasApi {
+  getLayout: () => SandboxCanvasLayout;
   zoomIn: () => void;
   zoomOut: () => void;
   fit: () => void;
@@ -49,6 +63,10 @@ export type SandboxDropKind = "department" | "module" | "field";
 
 export interface SandboxCanvasProps {
   state: SandboxState;
+  /** Optional geometry owner; omitted preserves graph-local positioning. */
+  layout?: SandboxCanvasLayout;
+  /** Emits a full snapshot after a user geometry action settles, never on sync. */
+  onLayoutChange?: (layout: SandboxCanvasLayout) => void;
   onSelect: (cellId: string | null) => void;
   onRenameDepartment: (departmentId: string, name: string) => void;
   onRenameModule: (moduleId: string, name: string) => void;
@@ -70,6 +88,7 @@ interface SandboxCanvasRuntime {
 }
 
 interface SandboxCanvasCallbacks {
+  onLayoutChange?: SandboxCanvasProps["onLayoutChange"];
   onSelect: (cellId: string | null) => void;
   onRenameDepartment: SandboxCanvasProps["onRenameDepartment"];
   onRenameModule: SandboxCanvasProps["onRenameModule"];
@@ -283,6 +302,14 @@ function updateDepartmentSizeAttrs(node: Node): void {
   });
 }
 
+function readLayout(graph: Graph): SandboxCanvasLayout {
+  return Object.fromEntries(
+    graph
+      .getNodes()
+      .map((node) => [node.id, { ...node.getPosition(), ...node.getSize() }]),
+  );
+}
+
 function nodeKindOf(node: Node): string | null {
   const data = node.getData() as { kind?: unknown };
   return typeof data.kind === "string" ? data.kind : null;
@@ -437,6 +464,8 @@ function resolveDrop(
 
 export function SandboxCanvas({
   state,
+  layout,
+  onLayoutChange,
   onSelect,
   onRenameDepartment,
   onRenameModule,
@@ -452,6 +481,7 @@ export function SandboxCanvas({
   const pendingPositionsRef = useRef<Map<string, CanvasPosition>>(new Map());
   const freeMoveRef = useRef(false);
   const syncingRef = useRef(false);
+  const appliedLayoutRef = useRef<SandboxCanvasLayout | undefined>(undefined);
   const [editor, setEditor] = useState<CanvasEditor | null>(null);
   const editorRef = useRef<CanvasEditor | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -460,6 +490,7 @@ export function SandboxCanvas({
     useState<SandboxDropKind | null>(null);
   const [movingNodeId, setMovingNodeId] = useState<string | null>(null);
   const callbacksRef = useRef<SandboxCanvasCallbacks>({
+    onLayoutChange,
     onSelect,
     onRenameDepartment,
     onRenameModule,
@@ -479,6 +510,7 @@ export function SandboxCanvas({
   }, [editor]);
   useEffect(() => {
     callbacksRef.current = {
+      onLayoutChange,
       onSelect,
       onRenameDepartment,
       onRenameModule,
@@ -501,6 +533,33 @@ export function SandboxCanvas({
     const history = new History();
     graph.use(history);
     runtimeRef.current = { graph, history };
+    appliedLayoutRef.current = undefined;
+    const emitLayout = (): void => {
+      if (syncingRef.current || !callbacksRef.current.onLayoutChange) return;
+      const enabled = history.isEnabled();
+      history.disable();
+      fitDepartmentFrames(graph);
+      if (enabled) history.enable();
+      const next = readLayout(graph);
+      const previous = appliedLayoutRef.current;
+      if (
+        previous &&
+        Object.keys(next).length === Object.keys(previous).length &&
+        Object.entries(next).every(([id, box]) => {
+          const before = previous[id];
+          return (
+            before &&
+            before.x === box.x &&
+            before.y === box.y &&
+            before.width === box.width &&
+            before.height === box.height
+          );
+        })
+      )
+        return;
+      appliedLayoutRef.current = next;
+      callbacksRef.current.onLayoutChange(next);
+    };
 
     const updateGridVisual = (): void => {
       const grid = gridRef.current;
@@ -699,6 +758,7 @@ export function SandboxCanvas({
 
     if (graphRef) {
       graphRef.current = {
+        getLayout: () => readLayout(graph),
         zoomIn: () => {
           graph.zoom(0.1);
         },
@@ -717,6 +777,7 @@ export function SandboxCanvas({
           history.disable();
           fitDepartmentFrames(graph);
           history.enable();
+          emitLayout();
         },
         redo: () => {
           history.redo();
@@ -724,6 +785,7 @@ export function SandboxCanvas({
           history.disable();
           fitDepartmentFrames(graph);
           history.enable();
+          emitLayout();
         },
         canUndo: () => history.canUndo(),
         canRedo: () => history.canRedo(),
@@ -732,6 +794,7 @@ export function SandboxCanvas({
           const cell = graph.getCellById(nodeId);
           if (cell !== null && cell.isNode()) {
             cell.setPosition(snappedPosition);
+            emitLayout();
             return;
           }
           pendingPositionsRef.current.set(nodeId, snappedPosition);
@@ -878,6 +941,7 @@ export function SandboxCanvas({
         resizeGesture.node.setSize(resizeGesture.width, resizeGesture.height);
       resizeGesture = null;
       graph.stopBatch("department-resize");
+      emitLayout();
     };
     const resizeKeyDown = (event: KeyboardEvent): void => {
       if (
@@ -912,6 +976,7 @@ export function SandboxCanvas({
         // Keyboard deltas are exact; only pointer resizing snaps to the grid.
         true,
       );
+      emitLayout();
     };
     const swallowResizeMouse = (event: MouseEvent): void => {
       if (
@@ -1033,7 +1098,9 @@ export function SandboxCanvas({
       updateDragSnap(false);
       setMovingNodeId(null);
       setDropTargetId(null);
-      if (syncingRef.current || nodeKindOf(node) !== "module") {
+      if (syncingRef.current) return;
+      if (nodeKindOf(node) !== "module") {
+        emitLayout();
         return;
       }
       const currentParent = node.getParent();
@@ -1051,12 +1118,14 @@ export function SandboxCanvas({
         if (currentParent.id !== sandboxModule.departmentId) {
           callbacksRef.current.onMove(node.id, currentParent.id);
         }
+        emitLayout();
         return;
       }
       // X6 removes a module from its department on a blank drop but emits no
       // `node:embedded` event. Restore the canonical parent without adding a
       // second history entry, preserving the exact dragged coordinates.
       restoreCanonicalParent(node);
+      emitLayout();
     });
     graph.on("edge:connected", ({ edge, isNew }) => {
       if (!isNew || syncingRef.current) {
@@ -1373,23 +1442,46 @@ export function SandboxCanvas({
         }
       }
 
+      // Apply external restores once. Selection/rename and in-flight drag
+      // feedback must never reset a node to the last persisted coordinates.
+      if (layout !== undefined && layout !== appliedLayoutRef.current) {
+        for (const [id, box] of Object.entries(layout)) {
+          const node = graph.getCellById(id);
+          if (!node?.isNode()) continue;
+          // Child positions are absolute, so restore frames without translating children.
+          node.setPosition(box.x, box.y, { deep: false });
+          if (nodeKindOf(node) === "department")
+            node.setSize(box.width, box.height);
+        }
+        appliedLayoutRef.current = layout;
+      }
       if (movingNodeId === null) fitDepartmentFrames(graph);
 
-      const relationshipRouter = {
-        name: "manhattan",
-        args: {
-          padding: 24,
-          startDirections: ["right"],
-          endDirections: ["left"],
-          excludeNodes: state.departments.map((department) => department.id),
-        },
-      };
       for (const link of state.links) {
         const sourceNode = moduleNodes.get(link.sourceModuleId);
         const targetNode = moduleNodes.get(link.targetModuleId);
         if (sourceNode === undefined || targetNode === undefined) {
           continue;
         }
+        const relationshipRouter = {
+          name: "manhattan",
+          args: {
+            // A 24px halo on both cards closes the compact 48px corridor.
+            padding: 12,
+            startDirections: ["right"],
+            endDirections: ["left"],
+            excludeNodes: state.departments.map((department) => department.id),
+            // Overlapping cards have no obstacle-free route. X6's route-level
+            // fallback handles that normal editing state before its warning.
+            fallbackRoute: () => {
+              const view = graph.findViewByCell(link.id);
+              if (!view?.isEdgeView()) return [];
+              return routerPresets.orth
+                .call(view, [], { padding: 12 }, view)
+                .map((point) => Point.create(point));
+            },
+          },
+        };
         const source = {
           cell: link.sourceModuleId,
           port: `${link.sourceModuleId}-out`,
@@ -1472,7 +1564,7 @@ export function SandboxCanvas({
       history.enable();
       syncingRef.current = false;
     }
-  }, [dropTargetId, movingNodeId, state]);
+  }, [dropTargetId, layout, movingNodeId, state]);
 
   function commitEditor(value: string): void {
     const activeEditor = editorRef.current;

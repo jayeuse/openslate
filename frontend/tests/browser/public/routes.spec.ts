@@ -70,8 +70,11 @@ test("sign in keeps a rejected draft, blocks duplicate submission, and enters th
   await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
     password,
   );
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(/\/workspace$/);
+  await Promise.all([
+    page.waitForURL(/\/openview$/),
+    page.getByRole("button", { name: "Sign in", exact: true }).click(),
+  ]);
+  await expect(page).toHaveURL(/\/openview$/);
   expect(attempts).toHaveLength(2);
 });
 

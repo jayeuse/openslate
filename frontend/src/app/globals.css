@@ -2,30 +2,30 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #20242c;
+  --foreground: #202124;
   --card: #ffffff;
-  --card-foreground: #20242c;
+  --card-foreground: #202124;
   --popover: #ffffff;
-  --popover-foreground: #20242c;
-  --primary: #2563eb;
+  --popover-foreground: #202124;
+  --primary: #242527;
   --primary-foreground: #ffffff;
-  --secondary: #f1f3f6;
-  --secondary-foreground: #313843;
-  --muted: #f5f6f8;
-  --muted-foreground: #6b7480;
-  --accent: #edf3ff;
-  --accent-foreground: #1d4ed8;
+  --secondary: #f1f1f2;
+  --secondary-foreground: #353638;
+  --muted: #f5f5f6;
+  --muted-foreground: #686b72;
+  --accent: #eeeeef;
+  --accent-foreground: #242527;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
   --success: #15803d;
   --warning: #b45309;
-  --border: #e4e7ec;
-  --input: #d1d7e0;
-  --ring: #7da7f5;
-  --sidebar: #f5f6f8;
-  --sidebar-foreground: #29313d;
-  --sidebar-muted: #6b7480;
-  --sidebar-accent: #e7ebf0;
+  --border: #e5e5e7;
+  --input: #d2d3d5;
+  --ring: #777b83;
+  --sidebar: #f5f5f6;
+  --sidebar-foreground: #292b2f;
+  --sidebar-muted: #686b72;
+  --sidebar-accent: #e7e7e9;
   --density-space: 1rem;
   --density-control-height: 2.5rem;
   --canvas-background: #ffffff;
@@ -34,7 +34,7 @@
   --canvas-grid: #d8dde5;
   --canvas-grid-major: #bac3cf;
   --sandbox-node-border: #9da8b8;
-  --sandbox-field-stripe: #f1f3f6;
+  --sandbox-field-stripe: #f1f1f2;
   --radius: 0.65rem;
 }
 
@@ -45,21 +45,21 @@
   --card-foreground: #f1f3f5;
   --popover: #1d2024;
   --popover-foreground: #f1f3f5;
-  --primary: #77a9ff;
-  --primary-foreground: #111827;
+  --primary: #f1f1f2;
+  --primary-foreground: #171819;
   --secondary: #272b30;
   --secondary-foreground: #e5e7eb;
   --muted: #22262b;
   --muted-foreground: #aeb6c0;
-  --accent: #253653;
-  --accent-foreground: #c6d8ff;
+  --accent: #2c2e31;
+  --accent-foreground: #f1f1f2;
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
   --success: #4ade80;
   --warning: #fbbf24;
   --border: #30343b;
   --input: #3a414b;
-  --ring: #8cb4ff;
+  --ring: #aeb1b8;
   --sidebar: #17191c;
   --sidebar-foreground: #eef1f4;
   --sidebar-muted: #a8b0ba;
@@ -73,6 +73,18 @@
   --sandbox-field-stripe: #22262b;
 }
 
+[data-accent="cobalt"] {
+  --primary: #2563eb;
+  --primary-foreground: #fff;
+  --accent: #edf3ff;
+  --accent-foreground: #1d4ed8;
+}
+.dark[data-accent="cobalt"] {
+  --primary: #77a9ff;
+  --primary-foreground: #111827;
+  --accent: #253653;
+  --accent-foreground: #c6d8ff;
+}
 [data-accent="indigo"] {
   --primary: #4f46e5;
   --accent: #eef2ff;
@@ -96,15 +108,15 @@
   --accent-foreground: #a9f3d3;
 }
 [data-accent="neutral"] {
-  --primary: #334155;
-  --accent: #f1f5f9;
-  --accent-foreground: #334155;
+  --primary: #242527;
+  --accent: #eeeeef;
+  --accent-foreground: #242527;
 }
 .dark[data-accent="neutral"] {
-  --primary: #c1cad6;
-  --primary-foreground: #1c2128;
-  --accent: #343a43;
-  --accent-foreground: #edf1f5;
+  --primary: #f1f1f2;
+  --primary-foreground: #171819;
+  --accent: #2c2e31;
+  --accent-foreground: #f1f1f2;
 }
 [data-density="compact"] {
   --density-space: 0.75rem;
@@ -206,14 +218,14 @@ textarea:focus-visible {
 
 /* Keep canvas editor contrast and interaction feedback local to the sandbox. */
 .sandbox-ui {
-  --background: #e4e9ef;
-  --card: #e9edf2;
-  --popover: #e9edf2;
-  --muted: #dce1e8;
-  --secondary: #dce1e8;
-  --sandbox-field-stripe: #d5dde6;
-  --border: #b8c1ce;
-  --input: #a5b0c0;
+  --background: #f3f3f4;
+  --card: #f8f8f9;
+  --popover: #f8f8f9;
+  --muted: #ebebed;
+  --secondary: #ebebed;
+  --sandbox-field-stripe: #eeeeef;
+  --border: #d0d1d3;
+  --input: #b7b9bc;
 }
 
 .dark .sandbox-ui {
@@ -323,4 +335,26 @@ textarea:focus-visible {
     [data-slot="sidebar-menu-button"]
   ) {
   transition: none;
+}
+
+/* Shared studio chrome: quiet surfaces and consistently reachable controls. */
+.app-shell [data-slot="sidebar-menu-button"] {
+  min-height: 2.75rem;
+}
+.app-shell [data-slot="sidebar-menu-button"][data-active="true"] {
+  font-weight: 600;
+}
+.app-shell [data-slot="sidebar-menu-button"] svg {
+  stroke-width: 1.65;
+}
+@media (max-width: 639px) {
+  .app-shell
+    :is(
+      button,
+      [role="button"],
+      select,
+      input:not([type="checkbox"]):not([type="radio"])
+    ) {
+    min-height: 2.75rem;
+  }
 }
