@@ -86,13 +86,20 @@ test("uses only the new six-pillar workspace even with a saved classic preferenc
   ).toBeVisible();
 });
 
-test("offers one keyboard-accessible account menu with real sign out", async ({
+test("failed sign out clears sample session data and still reaches login", async ({
   page,
 }) => {
   let logoutMethod = "";
+  await page.addInitScript(() => {
+    sessionStorage.setItem(
+      "openslate.sample.v1",
+      JSON.stringify({ workspace: "synthetic" }),
+    );
+    sessionStorage.setItem("openslate-unrelated-preference", "preserve-me");
+  });
   await page.route("**/session/logout", async (route) => {
     logoutMethod = route.request().method();
-    await route.fulfill({ json: { authenticated: false } });
+    await route.fulfill({ status: 503, json: { detail: "Unavailable" } });
   });
   await page.goto("/openview");
   const account = page.getByRole("button", { name: "Account", exact: true });
@@ -120,6 +127,14 @@ test("offers one keyboard-accessible account menu with real sign out", async ({
   await menu.getByRole("menuitem", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
   expect(logoutMethod).toBe("POST");
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        sample: sessionStorage.getItem("openslate.sample.v1"),
+        unrelated: sessionStorage.getItem("openslate-unrelated-preference"),
+      })),
+    )
+    .toEqual({ sample: null, unrelated: "preserve-me" });
 });
 
 test("mobile navigation restores focus and reaches appearance without legacy rail controls", async ({

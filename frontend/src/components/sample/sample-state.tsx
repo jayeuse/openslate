@@ -29,6 +29,14 @@ type SampleContextValue = {
 };
 const SampleContext = createContext<SampleContextValue | null>(null);
 
+export function clearSampleSessionSnapshot(): void {
+  try {
+    sessionStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Signing out remains available when browser storage is unavailable.
+  }
+}
+
 class SampleRecovery extends Component<
   { children: ReactNode; onReset: (opener: HTMLButtonElement) => void },
   { failed: boolean }

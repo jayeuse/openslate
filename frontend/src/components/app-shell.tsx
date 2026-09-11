@@ -24,6 +24,8 @@ import {
 
 import { AppNavigation } from "@/components/app-navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
+import { releaseAllLocalAttachments } from "@/components/sample/comms/local-attachments";
+import { clearSampleSessionSnapshot } from "@/components/sample/sample-state";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
   DropdownMenu,
@@ -143,6 +145,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         credentials: "same-origin",
       });
     } finally {
+      clearSampleSessionSnapshot();
+      releaseAllLocalAttachments();
       router.replace("/login");
     }
   }

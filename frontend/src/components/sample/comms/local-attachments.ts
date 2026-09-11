@@ -14,6 +14,18 @@ export function localAttachmentUrl(id: string): string | undefined {
 
 export function releaseLocalAttachment(id: string): void {
   const url = attachmentUrls.get(id);
-  if (url) URL.revokeObjectURL(url);
   attachmentUrls.delete(id);
+  if (url) URL.revokeObjectURL(url);
+}
+
+export function releaseAllLocalAttachments(): void {
+  const urls = [...attachmentUrls.values()];
+  attachmentUrls.clear();
+  for (const url of urls) {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      // Continue revoking the remaining in-memory attachments during sign out.
+    }
+  }
 }
