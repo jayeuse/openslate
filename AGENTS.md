@@ -40,13 +40,16 @@
 - Continue until requested behavior, acceptance criteria, relevant checks, and diff scope pass, or a concrete blocker needs input. Report commands/results, assumptions, limitations, and unverified runtime behavior.
 
 ### Non-negotiable test workflow
-- Apply [Testing Architecture](docs/architecture/16-testing-architecture.md) across backend, frontend, and infrastructure: focused test → feature batch → affected integration → pre-push gates. Full suites run only when preparing to push, not for edits, commits, or routine handoffs.
+- Do not run unnecessary or duplicate tests. During development, run only the smallest focused check needed to prove the changed behavior. Expand to a feature batch or affected integration only when a concrete failure or changed boundary requires it; do not mechanically run every testing tier after each edit.
+- Full suites and coverage belong exclusively to the configured pre-push gate. Do not run extra copies before that gate, after passing evidence, for documentation-only changes, or for routine commits and handoffs. Reuse valid passing evidence; parent review does not require repeating a worker's verified checks.
+- An explicit user instruction to skip tests or push without tests overrides local testing requirements for that action. Stop active test runs, do not start replacements, and proceed with the authorized commit/push. Report omitted checks accurately without claiming they passed; do not disable persistent hooks or CI configuration.
+- Apply [Testing Architecture](docs/architecture/16-testing-architecture.md) with the scope limits above: focused test → justified feature batch or affected integration → pre-push gate. This is an escalation path, not a mandatory sequence for every change.
 - Fix a failing case, rerun that case, then its affected batch. Close a batch only when required cases pass; expected errors must be asserted by passing tests. Never hide failures with skips, weaker assertions, or repeated retries.
 - Test at the lowest layer that proves the behavior. Use real PostgreSQL for database guarantees and browsers for rendered interactions; check affected boundaries early for auth, schema, shared configuration, or framework changes.
 - Keep coverage collection off routine edit loops. Only when preparing to push, run the affected projects' full suites and required coverage gates after batches stabilize; preserve 90% overall and changed-line thresholds and all required CI checks.
 - After a pre-push gate failure, debug narrowly, then rerun the affected gate. Reuse passing evidence only while its source, tests, dependencies, configuration, and relevant shared boundaries remain unchanged.
 - Reuse setup only through supported runner isolation; never bypass database guards. Parallel runs require separate ports, outputs, and mutable test data; pre-push disposable-stack gates start fresh.
-- Report selected scope, results, and blockers. Missing required services or skipped required tests block the applicable check; missing required coverage blocks push readiness. Before push preparation, report full gates as deferred, not passed.
+- Report selected scope, results, and blockers. Missing required services or skipped required tests leave the applicable check unverified; missing required coverage blocks normal push readiness unless the user explicitly directs publication without it. Before push preparation, report full gates as deferred, not passed.
 
 ## Codex orchestration
 - For implementation, troubleshooting, multi-agent work, or explicit evaluation, read `.agents/orchestration/PROTOCOL.md`; apply refresh-context → act → inspect-evidence → evaluate. If missing, report it and follow this guide without claiming full setup.
