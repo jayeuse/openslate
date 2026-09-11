@@ -9,18 +9,7 @@ from pathlib import Path
 
 SECTIONS = {
     "backend": ("security", "audit", "api", "runtime", "database", "scripts"),
-    "frontend": (
-        "public",
-        "security",
-        "shell",
-        "administration",
-        "audit",
-        "catalog",
-        "files",
-        "records",
-        "sandbox",
-        "runtime",
-    ),
+    "frontend": ("public", "security", "shell", "sample", "sandbox", "runtime"),
 }
 FRONTEND_LAYERS = ("isolated", "http", "browser")
 
@@ -66,6 +55,8 @@ def frontend_section(path: str) -> str | None:
     for layer in FRONTEND_LAYERS:
         if layer in parts:
             index = parts.index(layer) + 1
+            if index < len(parts) and parts[index] == "comms":
+                return "sample"
             if index < len(parts) and parts[index] in SECTIONS["frontend"]:
                 return parts[index]
     return None
@@ -121,20 +112,9 @@ def affected_sections(project: str, paths: list[str]) -> set[str]:
                     selected.update(("api", "audit", "database", "security"))
                 else:
                     return all_sections
-            elif system in {
-                "departments",
-                "modules",
-                "fields",
-                "records",
-                "relationships",
-                "lifecycle",
-            }:
-                selected.update(("catalog", "records", "audit"))
-            elif system == "audit":
-                selected.add("audit")
-            elif system in {"auth", "users", "roles"}:
-                selected.update(("security", "administration", "audit"))
             else:
+                # Backend contracts can affect the BFF, session boundary and
+                # workspace entry points. Keep a conservative cross-stack batch.
                 return all_sections
             continue
         if project == "backend":
@@ -142,18 +122,26 @@ def affected_sections(project: str, paths: list[str]) -> set[str]:
                 return all_sections
             continue
         if path.startswith("frontend/src/"):
-            if "/lib/field-schema" in path or "/components/record" in path:
-                selected.update(("catalog", "records"))
+            if "/components/sample/" in path or "/app/(app)/(workspace)/" in path:
+                # Shared people, permissions and state connect every sample
+                # pillar, including the canvas interaction suite.
+                selected.update(("sample", "sandbox"))
             elif "/sandbox/" in path or "/lib/sandbox" in path:
-                selected.add("sandbox")
-            elif "/administration/audit/" in path:
-                selected.add("audit")
-            elif "/administration/" in path:
-                selected.update(("administration", "security"))
+                selected.update(("sample", "sandbox"))
+            elif any(
+                route in path
+                for route in (
+                    "/app/(app)/departments/",
+                    "/app/(app)/modules/",
+                    "/app/(app)/administration/",
+                    "/app/(app)/settings/workspace/",
+                    "/app/(app)/onboarding/",
+                    "/app/(app)/workspace/",
+                )
+            ):
+                selected.update(("sample", "shell"))
             elif "/app/login/" in path or "/app/auth/" in path or "/app/setup/" in path:
                 selected.update(("security", "public"))
-            elif "/app/(app)/departments/" in path or "/app/(app)/modules/" in path:
-                selected.update(("catalog", "records", "audit"))
             else:
                 return all_sections
         elif path.startswith("frontend/"):

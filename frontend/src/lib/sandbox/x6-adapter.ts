@@ -208,7 +208,8 @@ export function moduleTableAttrs(
       role: field === undefined ? "presentation" : "button",
       "data-field-id": field?.id ?? "",
       "data-selected": selected ? "true" : "false",
-      "aria-selected": selected ? "true" : "false",
+      "aria-pressed":
+        field === undefined ? undefined : selected ? "true" : "false",
       "data-feedback": selected ? "selected" : "",
       "aria-label":
         field === undefined

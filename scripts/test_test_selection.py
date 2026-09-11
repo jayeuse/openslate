@@ -29,7 +29,10 @@ class TestSelectionTests(unittest.TestCase):
             ("pull_request", "docs/example.md\n", "false"),
             ("push", "frontend/src/example.ts\n", "true"),
         ):
-            with self.subTest(event=event, changed=changed), tempfile.TemporaryDirectory() as folder:
+            with (
+                self.subTest(event=event, changed=changed),
+                tempfile.TemporaryDirectory() as folder,
+            ):
                 output = Path(folder) / "output"
                 with patch.dict(os.environ, {
                     "EVENT_NAME": event, "BASE_SHA": "comparison-revision",
@@ -65,7 +68,16 @@ class TestSelectionTests(unittest.TestCase):
     def test_full_frontend_preserves_configured_matrix(self):
         call = self.invoke("frontend", "full")
         self.assertFalse(any(arg.startswith("--project=") for arg in call.args[0]))
-        self.assertIn("tests/browser/files/library.spec.ts", call.args[0])
+        self.assertIn("tests/browser/sample/workspace.spec.ts", call.args[0])
+        self.assertIn("tests/browser/sandbox/sandbox.spec.ts", call.args[0])
+        self.assertNotIn("tests/browser/files/library.spec.ts", call.args[0])
+        root = Path(__file__).resolve().parents[1] / "frontend" / "tests"
+        expected = {
+            path.relative_to(root.parent).as_posix()
+            for layer in runner.FRONTEND_LAYERS
+            for path in (root / layer).rglob("*.spec.ts")
+        }
+        self.assertEqual({arg for arg in call.args[0] if arg.endswith(".spec.ts")}, expected)
 
     def test_backend_named_case_disables_coverage_and_stops_at_failure(self):
         call = self.invoke("backend", "section", "security", "--layer", "isolated",
@@ -100,11 +112,44 @@ class TestSelectionTests(unittest.TestCase):
             {"security", "audit", "api"},
         )
 
-    def test_field_change_includes_record_consumers(self):
-        self.assertEqual(
-            runner.affected_sections("frontend", ["frontend/src/lib/field-schema.ts"]),
-            {"catalog", "records"},
-        )
+    def test_sample_changes_include_connected_workspace_and_canvas_checks(self):
+        for path in [
+            "frontend/src/components/sample/access/model.ts",
+            "frontend/src/components/sample/comms/message-policy.ts",
+            "frontend/src/components/sample/sandbox/index.tsx",
+            "frontend/src/app/(app)/(workspace)/[pillar]/page.tsx",
+            "frontend/src/components/sandbox/sandbox-canvas.tsx",
+            "frontend/src/lib/sandbox/model.ts",
+        ]:
+            with self.subTest(path=path):
+                self.assertEqual(
+                    runner.affected_sections("frontend", [path]),
+                    {"sample", "sandbox"},
+                )
+                selected = runner.select_files(
+                    Path(__file__).resolve().parents[1],
+                    "frontend",
+                    runner.affected_sections("frontend", [path]),
+                    "all",
+                )
+                self.assertTrue({
+                    f"tests/isolated/comms/{name}.spec.ts"
+                    for name in ("notifications", "configuration", "tools", "message-policy")
+                }.issubset(selected))
+
+    def test_retained_redirects_include_workspace_and_navigation_checks(self):
+        for path in [
+            "frontend/src/app/(app)/departments/[...legacyPath]/page.tsx",
+            "frontend/src/app/(app)/modules/[...legacyPath]/page.tsx",
+            "frontend/src/app/(app)/administration/[...legacyPath]/page.tsx",
+            "frontend/src/app/(app)/settings/workspace/page.tsx",
+            "frontend/src/app/(app)/workspace/page.tsx",
+        ]:
+            with self.subTest(path=path):
+                self.assertEqual(
+                    runner.affected_sections("frontend", [path]),
+                    {"sample", "shell"},
+                )
 
     def test_shared_and_unknown_application_changes_select_every_section(self):
         for path in [
@@ -123,9 +168,9 @@ class TestSelectionTests(unittest.TestCase):
     def test_test_changes_stay_with_their_section(self):
         self.assertEqual(
             runner.affected_sections(
-                "frontend", ["frontend/tests/browser/audit/logs.spec.ts"]
+                "frontend", ["frontend/tests/browser/sample/access-manage.spec.ts"]
             ),
-            {"audit"},
+            {"sample"},
         )
         self.assertEqual(
             runner.affected_sections(
@@ -174,7 +219,7 @@ class TestSelectionTests(unittest.TestCase):
             runner.affected_sections(
                 "frontend", ["backend/app/systems/fields/validation.py"]
             ),
-            {"catalog", "records", "audit"},
+            set(runner.SECTIONS["frontend"]),
         )
 
     def test_login_and_setup_changes_include_public_route_checks(self):

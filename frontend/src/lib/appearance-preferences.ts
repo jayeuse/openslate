@@ -1,6 +1,6 @@
 export const DEFAULT_APPEARANCE_PREFERENCES = {
   theme: "light",
-  accent: "cobalt",
+  accent: "neutral",
   density: "comfortable",
   radius: "subtle",
 } as const;

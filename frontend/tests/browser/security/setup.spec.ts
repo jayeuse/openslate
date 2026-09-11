@@ -1,5 +1,6 @@
 import { expect, test } from "../coverage";
 import { testSecret } from "../../helpers/test-secret";
+import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
 const validPassword = testSecret();
 
 const differentPassword = testSecret();
@@ -7,6 +8,13 @@ const differentPassword = testSecret();
 test("rejects mismatched invited-account passwords before sending a request", async ({
   page,
 }) => {
+  await page.route("**/bff/**", async (route) => {
+    if (!(await fulfillWorkspaceRequest(route)))
+      await route.fulfill({ status: 404, json: { detail: "Not found" } });
+  });
+  await page.route("**/session/realtime-token", (route) =>
+    route.fulfill({ status: 401, json: { detail: "Unavailable" } }),
+  );
   let passwordRequests = 0;
   await page.route("**/session/password", async (route) => {
     passwordRequests += 1;
@@ -42,7 +50,7 @@ test("rejects mismatched invited-account passwords before sending a request", as
 
   await page.getByLabel("Confirm password").fill(validPassword);
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.waitForURL("**/workspace");
+  await page.waitForURL("**/openview");
   expect(passwordRequests).toBe(1);
 });
 

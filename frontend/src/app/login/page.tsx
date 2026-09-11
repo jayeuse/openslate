@@ -40,7 +40,7 @@ export default function LoginPage() {
             : "Sign in failed";
         throw new Error(detail);
       }
-      router.push("/workspace");
+      router.push("/openview");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Sign in failed");
     } finally {
