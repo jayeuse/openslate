@@ -1,5 +1,5 @@
 # Official ClamAV 1.4.6 LTS, Linux amd64; no bundled signatures or updater daemon.
-FROM --platform=linux/amd64 clamav/clamav@sha256:aeac907bb9445b12c1dd76f9283415272d8dcd596d402245ed13729d7181bb8a
+FROM --platform=linux/amd64 clamav/clamav@sha256:488ff88a78d9769efa7e1bac7028419b696d54cecdae1b696c6c7cd670b3bb4b
 
 ENV TZ=UTC
 

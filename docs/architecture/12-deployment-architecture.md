@@ -77,7 +77,7 @@ chain.
 
 | Image | Build and runtime behavior | Operational boundary |
 | --- | --- | --- |
-| Backend | `python:3.13-slim`, pinned `backend/uv.lock`, `uv sync --frozen --no-dev`, UID 10001. Runs `python -m app` with explicit bind, port, concurrency, and keep-alive settings. Healthcheck reads the same `BACKEND_PORT`. | Requires runtime API configuration with `OPENSLATE_ENV_SOURCE=process`; receives no owner connection or administrator credentials. |
+| Backend | `python:3.14-slim`, pinned `backend/uv.lock`, `uv sync --frozen --no-dev`, UID 10001. Runs `python -m app` with explicit bind, port, concurrency, and keep-alive settings. Healthcheck reads the same `BACKEND_PORT`. | Requires runtime API configuration with `OPENSLATE_ENV_SOURCE=process`; receives no owner connection or administrator credentials. |
 | Frontend | Multi-stage `node:24-alpine`, `npm ci`, standalone output, UID 10001. Build requires all three public settings: Supabase URL, publishable key, and purge visibility. | Server endpoint, logging, and limits are supplied only at runtime. Bind/port are required inputs; no endpoint or port fallback is baked in. |
 
 `frontend/scripts/start-standalone.mjs` validates public/runtime settings before
