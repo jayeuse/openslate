@@ -42,7 +42,7 @@ test("the security deep link manages structured sessions without ending the curr
     .getByRole("button", { name: "End session · Eli", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Confirm end sample session", exact: true })
+    .getByRole("button", { name: "Confirm end session", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "End session · Eli", exact: true }),

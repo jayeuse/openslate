@@ -20,7 +20,9 @@ test.beforeEach(async ({ page }) => {
 });
 
 async function chooseGlobalCreate(page: Page, name: string) {
-  await page.getByLabel("Create", { exact: true }).click();
+  await page
+    .locator('button[aria-label="Create"][aria-haspopup="menu"]')
+    .click();
   await page.getByRole("menuitem", { name, exact: true }).click();
 }
 

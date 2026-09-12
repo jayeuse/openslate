@@ -276,6 +276,26 @@ Destination: `/openview`. Source: [`src/components/sample/openview/`](src/compon
 
 Destination: `/manage`. Source: [`src/components/sample/manage/`](src/components/sample/manage/).
 
+Manage is an interactive, tab-local administration sample. Security policies,
+maintenance, and licensing do not operate live services. Saved settings and
+unfinished section drafts survive same-tab navigation/reload when browser storage
+is available; the page explains storage failures. Each form saves or discards its
+own draft. Section navigation is URL-addressable and works with browser history,
+keyboard tabs, and a mobile selector.
+
+Configuration snapshots include Manage organization, security, backup preferences,
+demo version/rollback, and license settings only. They exclude drafts, sessions,
+activity history, records, people, roles, messages, and files. Restore/reset previews
+changes and keeps a recovery snapshot; affected drafts require an explicit discard
+decision. Reset changes Manage settings only. Schedule/retention are previews, with
+an explicit user-triggered backup simulation and no unattended job or deletion.
+
+Activity combines marked fictional examples with successful local Manage actions.
+Search, filters, ordering, and pagination govern the list; CSV export includes all
+matching entries, not only the visible page. Invalid date ranges block export.
+CSV and configuration JSON can be downloaded locally. Configuration import stays
+outside Manage; related Access and Sandbox workflows are linked to their owners.
+
 **Organization**
 
 - 166. Set the organization name
@@ -289,12 +309,16 @@ Destination: `/manage`. Source: [`src/components/sample/manage/`](src/components
 - 171. Set the session timeout
 - 172. View active sessions
 - 173. End a session
+- End all remote sample sessions, retaining the current session; changes remain
+  consistent with Access without invoking real sign-out.
 - 174. Configure two-factor authentication
 - 175. Configure an IP allow list
 
 **Audit**
 
 - 176. View the audit log
+- Search, sort, and page through explicitly synthetic activity, including local
+  Manage changes and before/after details.
 - 177. Filter the audit log by user
 - 178. Filter the audit log by date
 - 179. Filter the audit log by entity
@@ -310,6 +334,8 @@ Destination: `/manage`. Source: [`src/components/sample/manage/`](src/components
 - 186. Restore a backup
 - 187. Set the backup retention period
 - 188. Download a backup file
+- Name, rename, and delete selected configuration snapshots; preview restore
+  differences and retention candidates; reset Manage configuration safely.
 
 **Updates**
 
@@ -326,6 +352,13 @@ Destination: `/manage`. Source: [`src/components/sample/manage/`](src/components
 - 196. View the license usage against the tier limit
 - 197. Renew a license
 - 198. View the license expiration date
+- Compare bundled sample tiers, distinguish Access-derived seat usage from
+  illustrative storage, and open sample terms through a button.
+
+Manage acceptance uses `tests/browser/sample/access-manage.spec.ts`,
+`manage-security.spec.ts`, and `manage-controls.spec.ts`, plus focused isolated
+state tests. Browser checks cover narrow layouts, light/dark themes, keyboard and
+dialog focus, field errors, downloads, storage failure, and lack of service writes.
 
 ### Platform-Level Controls
 

@@ -1,5 +1,16 @@
 import { expect, test } from "../coverage";
 import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
+import type { Page } from "../coverage";
+
+async function openSection(page: Page, name: string) {
+  if ((page.viewportSize()?.width ?? 1280) < 768) {
+    await page
+      .getByLabel("Manage section", { exact: true })
+      .selectOption(name.toLowerCase());
+  } else {
+    await page.getByRole("tab", { name, exact: true }).click();
+  }
+}
 test.beforeEach(async ({ page }) => {
   await page.route("**/session/status", (route) =>
     route.fulfill({ json: { authenticated: true } }),
@@ -13,7 +24,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("sample maintenance restores a selected backup and applies then rolls back an update locally", async ({
+test("maintenance restores a selected backup and applies then rolls back an update locally", async ({
   page,
 }) => {
   const mutations: string[] = [];
@@ -29,28 +40,26 @@ test("sample maintenance restores a selected backup and applies then rolls back 
     path: `/tmp/access-manage-manage-${test.info().project.name}.png`,
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Backup", exact: true }).click();
-  await page.getByRole("button", { name: "Create sample backup" }).click();
+  await openSection(page, "Backup");
+  await page.getByRole("button", { name: "Create backup" }).click();
   await expect(
     page.getByText("Manual snapshot", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Restore Manual snapshot" }).click();
-  await page.getByRole("button", { name: "Confirm sample restore" }).click();
-  await expect(page.getByRole("status")).toContainText(
-    "Restored sample snapshot",
-  );
-  await page.getByRole("button", { name: "Updates", exact: true }).click();
+  await page.getByRole("button", { name: "Confirm restore" }).click();
+  await expect(page.getByRole("status")).toContainText("Restored snapshot");
+  await openSection(page, "Updates");
   await page.getByRole("button", { name: "Check for updates" }).click();
-  await page.getByRole("button", { name: "Apply sample update" }).click();
-  await page.getByRole("button", { name: "Confirm sample update" }).click();
+  await page.getByRole("button", { name: "Apply update" }).click();
+  await page.getByRole("button", { name: "Confirm update" }).click();
   await expect(page.getByText("Current version · 1.5.0")).toBeVisible();
   await page.getByRole("button", { name: "Roll back update" }).click();
-  await page.getByRole("button", { name: "Confirm sample rollback" }).click();
+  await page.getByRole("button", { name: "Confirm rollback" }).click();
   await expect(page.getByText("Current version · 1.4.2")).toBeVisible();
   expect(mutations).toEqual([]);
 });
 
-test("sample organization settings persist and audit filters constrain export previews", async ({
+test("organization settings persist and audit filters constrain export previews", async ({
   page,
 }) => {
   await page.goto("/manage");
@@ -58,13 +67,13 @@ test("sample organization settings persist and audit filters constrain export pr
     .getByLabel("Organization name", { exact: true })
     .fill("Northstar Dispatch");
   await page.getByLabel("Currency", { exact: true }).selectOption("USD");
-  await page.getByRole("button", { name: "Save sample settings" }).click();
+  await page.getByRole("button", { name: "Save settings" }).click();
   await page.reload();
   await expect(
     page.getByLabel("Organization name", { exact: true }),
   ).toHaveValue("Northstar Dispatch");
   await expect(page.getByLabel("Currency", { exact: true })).toHaveValue("USD");
-  await page.getByRole("button", { name: "Audit", exact: true }).click();
+  await openSection(page, "Audit");
   await page.getByLabel("Audit user").selectOption("Eli Cruz");
   await expect(
     page.getByRole("button", { name: "View audit EQ-0028" }),
@@ -77,58 +86,59 @@ test("sample organization settings persist and audit filters constrain export pr
   await expect(page.getByRole("dialog")).not.toContainText("WO-1042");
 });
 
-test("sample security and licensing changes are reviewable local settings", async ({
+test("security and licensing changes are reviewable local settings", async ({
   page,
 }) => {
   await page.goto("/manage");
-  await page.getByRole("button", { name: "Security", exact: true }).click();
+  await openSection(page, "Security");
   await page
     .getByLabel("Two-factor authentication", { exact: true })
     .selectOption("Required for everyone");
   await page
-    .getByLabel("Sample IP allow list", { exact: true })
+    .getByLabel("IP allow list", { exact: true })
     .fill("not-an-address");
-  await page.getByRole("button", { name: "Save sample settings" }).click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText(
-    "example IPv4 addresses",
-  );
-  await page
-    .getByLabel("Sample IP allow list", { exact: true })
-    .fill("192.0.2.4");
-  await page.getByRole("button", { name: "Save sample settings" }).click();
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await expect(
+    page.getByRole("tabpanel", { name: "Security" }).getByRole("alert"),
+  ).toContainText("documentation IPv4 addresses");
+  await expect(
+    page.getByLabel("IP allow list", { exact: true }),
+  ).toHaveAttribute("aria-invalid", "true");
+  await page.getByLabel("IP allow list", { exact: true }).fill("192.0.2.4");
+  await page.getByRole("button", { name: "Save settings" }).click();
   await page
     .getByRole("button", { name: "End session · Eli", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Confirm end sample session", exact: true })
+    .getByRole("button", { name: "Confirm end session", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "End session · Eli", exact: true }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Licensing", exact: true }).click();
+  await openSection(page, "Licensing");
   await page
-    .getByLabel("Bundled dummy license key", { exact: true })
+    .getByLabel("Bundled license key", { exact: true })
     .selectOption("SAMPLE-BUSINESS-2026");
   await page
-    .getByRole("button", { name: "Activate sample license", exact: true })
+    .getByRole("button", { name: "Activate license", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Confirm sample activation", exact: true })
+    .getByRole("button", { name: "Confirm activation", exact: true })
     .click();
   await expect(
     page.getByRole("heading", { name: "Business", exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Renew sample license", exact: true })
+    .getByRole("button", { name: "Renew license", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Confirm sample renewal", exact: true })
+    .getByRole("button", { name: "Confirm renewal", exact: true })
     .click();
   await expect(
     page.getByText("Expires 2028-09-11", { exact: true }),
   ).toBeVisible();
   await page.reload();
-  await page.getByRole("button", { name: "Security", exact: true }).click();
+  await openSection(page, "Security");
   await expect(
     page.getByLabel("Two-factor authentication", { exact: true }),
   ).toHaveValue("Required for everyone");

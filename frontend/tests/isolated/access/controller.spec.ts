@@ -293,7 +293,11 @@ test("session revocation projects back to the shared manage-sessions source and 
   if (!eliResult.ok) return;
   expect(
     projectManageSessions(eliResult.state.sessions, initialManageSessions),
-  ).toEqual([initialManageSessions[0]]);
+  ).toEqual(
+    initialManageSessions.filter(
+      (session) => session.personId !== "sample-eli",
+    ),
+  );
 });
 
 test("bulk updates report impact and apply no partial change when they remove the last administrator", () => {
