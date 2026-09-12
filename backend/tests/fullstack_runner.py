@@ -155,12 +155,16 @@ def seed(owner_url, secret_key, run_id):
 
 
 def main(arguments=()):
+    arguments = tuple(arguments)
     batch = parse_batch(arguments, BACKEND)
-    if not batch and list(arguments) not in ([], ["--scanner-only"], ["--backend-coverage-only"]):
-        raise SystemExit("Usage: fullstack_runner.py [--scanner-only | --backend-coverage-only]")
-    backend_only = batch is not None or list(arguments) == ["--backend-coverage-only"]
-    scanner_only = list(arguments) == ["--scanner-only"]
-    if not scanner_only and batch is None:
+    if not batch and arguments not in (
+        (), ("--scanner-only",), ("--backend-coverage-only",), ("--acceptance-only",)
+    ):
+        raise SystemExit("Usage: fullstack_runner.py [mode]")
+    backend_only = batch is not None or arguments == ("--backend-coverage-only",)
+    scanner_only = arguments == ("--scanner-only",)
+    acceptance_only = arguments == ("--acceptance-only",)
+    if not scanner_only and batch is None and not acceptance_only:
         output = BACKEND / "test-results/coverage"
         if output.exists():
             shutil.rmtree(output)
@@ -177,8 +181,7 @@ def main(arguments=()):
     stage = "prepare"
     started = False
     result = 1
-    admission, checker_exit = {}, None
-    scanner = None
+    admission, checker_exit, scanner = {}, None, None
     scanner_observations = {}
     failure_type = failure_message = None
     summary_path = (BACKEND / "test-results/batches/summary.json" if batch else
@@ -253,8 +256,7 @@ def main(arguments=()):
         api_env = {
             **base_env,
             "DATABASE_URL": runtime_url,
-            "SUPABASE_URL": AUTH,
-            "SUPABASE_PUBLISHABLE_KEY": publishable,
+            "SUPABASE_URL": AUTH, "SUPABASE_PUBLISHABLE_KEY": publishable,
             "SUPABASE_SECRET_KEY": secret_key,
             "SUPABASE_AUTH_REDIRECT_URL": WEB + "/auth/callback",
             "SUPABASE_JWT_ISSUER": AUTH + "/auth/v1",
@@ -276,12 +278,10 @@ def main(arguments=()):
             "READINESS_STATEMENT_TIMEOUT_MS": "500",
             "READINESS_CALLER_TIMEOUT_SECONDS": "2",
             "SUPABASE_TIMEOUT_SECONDS": "10",
-            "BACKEND_BIND_HOST": "127.0.0.1",
-            "BACKEND_PORT": "8008",
-            "SERVER_MAX_CONCURRENCY": "32",
-            "SERVER_KEEP_ALIVE_SECONDS": "5",
+            "BACKEND_BIND_HOST": "127.0.0.1", "BACKEND_PORT": "8008",
+            "SERVER_MAX_CONCURRENCY": "32", "SERVER_KEEP_ALIVE_SECONDS": "5",
         }
-        if not scanner_only:
+        if not scanner_only and not acceptance_only:
             stage = "backend batch" if batch else "backend regression and coverage gate"
             execute = run_backend_batches if batch else run_backend_coverage
             result = execute(run, BACKEND, private, {
@@ -470,8 +470,9 @@ def main(arguments=()):
                         "result": "passed" if result == 0 else "failed",
                         "scope": ("backend-batch" if batch else
                                   "backend-coverage-only" if backend_only
+                                  else "acceptance-only" if acceptance_only
                                   else "scanner-only" if scanner_only else "full"),
-                        "backend_tests_rerun": not scanner_only,
+                        "backend_tests_rerun": not scanner_only and not acceptance_only,
                         "stage": stage,
                         "browser_tests": browser_results,
                         "backend_failures": backend_failures,
@@ -491,8 +492,7 @@ def main(arguments=()):
             shutil.rmtree(private)
     if result == 0:
         print("Backend batch session PASS (no coverage gate)." if batch else
-              "Backend coverage PASS." if backend_only else
-              "Full-stack PASS: production browser/Auth/BFF/API/PostgreSQL acceptance.")
+              "Backend coverage PASS." if backend_only else "Full-stack PASS.")
     return result
 
 

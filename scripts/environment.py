@@ -20,33 +20,74 @@ sys.path.insert(0, str(ROOT / "backend"))
 from app.core.config.environment import ConfigurationError, read_environment  # noqa: E402
 
 API_KEYS = (
-    "ENVIRONMENT", "LOG_DIR", "DATABASE_URL", "SUPABASE_URL",
-    "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY", "SUPABASE_AUTH_REDIRECT_URL",
-    "SUPABASE_JWT_ISSUER", "SUPABASE_JWKS_URL", "SUPABASE_JWT_AUDIENCE",
-    "SECURITY_EVENT_SERVER_KEY", "LIFECYCLE_PURGE_ENABLED", "CORS_ORIGINS",
-    "REQUEST_BODY_MAX_BYTES", "DATABASE_POOL_SIZE", "DATABASE_MAX_OVERFLOW",
-    "DATABASE_POOL_TIMEOUT_SECONDS", "DATABASE_CONNECT_TIMEOUT_SECONDS",
-    "DATABASE_STATEMENT_TIMEOUT_MS", "READINESS_POOL_TIMEOUT_SECONDS",
-    "READINESS_CONNECT_TIMEOUT_SECONDS", "READINESS_STATEMENT_TIMEOUT_MS",
-    "READINESS_CALLER_TIMEOUT_SECONDS", "SUPABASE_TIMEOUT_SECONDS",
-    "BACKEND_BIND_HOST", "BACKEND_PORT", "SERVER_MAX_CONCURRENCY", "SERVER_KEEP_ALIVE_SECONDS",
+    "ENVIRONMENT",
+    "LOG_DIR",
+    "DATABASE_URL",
+    "SUPABASE_URL",
+    "SUPABASE_PUBLISHABLE_KEY",
+    "SUPABASE_SECRET_KEY",
+    "SUPABASE_AUTH_REDIRECT_URL",
+    "SUPABASE_JWT_ISSUER",
+    "SUPABASE_JWKS_URL",
+    "SUPABASE_JWT_AUDIENCE",
+    "SECURITY_EVENT_SERVER_KEY",
+    "LIFECYCLE_PURGE_ENABLED",
+    "CORS_ORIGINS",
+    "REQUEST_BODY_MAX_BYTES",
+    "DATABASE_POOL_SIZE",
+    "DATABASE_MAX_OVERFLOW",
+    "DATABASE_POOL_TIMEOUT_SECONDS",
+    "DATABASE_CONNECT_TIMEOUT_SECONDS",
+    "DATABASE_STATEMENT_TIMEOUT_MS",
+    "READINESS_POOL_TIMEOUT_SECONDS",
+    "READINESS_CONNECT_TIMEOUT_SECONDS",
+    "READINESS_STATEMENT_TIMEOUT_MS",
+    "READINESS_CALLER_TIMEOUT_SECONDS",
+    "SUPABASE_TIMEOUT_SECONDS",
+    "BACKEND_BIND_HOST",
+    "BACKEND_PORT",
+    "SERVER_MAX_CONCURRENCY",
+    "SERVER_KEEP_ALIVE_SECONDS",
 )
 FRONTEND_LIMITS = (
-    "BFF_REQUEST_BODY_LIMIT_BYTES", "BFF_RESPONSE_BODY_LIMIT_BYTES", "BFF_REQUEST_DEADLINE_MS",
+    "BFF_REQUEST_BODY_LIMIT_BYTES",
+    "BFF_RESPONSE_BODY_LIMIT_BYTES",
+    "BFF_REQUEST_DEADLINE_MS",
 )
 PORT_KEYS = (
-    "FRONTEND_PORT", "BACKEND_PORT", "SUPABASE_API_PORT", "SUPABASE_DB_PORT",
-    "SUPABASE_SHADOW_PORT", "SUPABASE_STUDIO_PORT", "SUPABASE_MAIL_PORT",
-    "SUPABASE_POOLER_PORT", "FILES_CLAMAV_PORT",
+    "FRONTEND_PORT",
+    "BACKEND_PORT",
+    "SUPABASE_API_PORT",
+    "SUPABASE_DB_PORT",
+    "SUPABASE_SHADOW_PORT",
+    "SUPABASE_STUDIO_PORT",
+    "SUPABASE_MAIL_PORT",
+    "SUPABASE_POOLER_PORT",
+    "FILES_CLAMAV_PORT",
 )
-LEGACY_KEYS = frozenset({
-    "SUPABASE_ANON_KEY", "SUPABASE_AUDIENCE", "COMPOSE_DATABASE_URL",
-    "OPENSLATE_DATABASE_PASSWORD", "ADMIN_BOOTSTRAP_USERNAME", "ADMIN_BOOTSTRAP_PASSWORD",
-    "SAMPLE_EMAIL", "SAMPLE_PASSWORD", "APP_PORT", "POSTGRES_PORT", "POSTGRES_DB",
-    "POSTGRES_USER", "POSTGRES_PASSWORD", "SECRET_KEY", "API_BASE_URL",
-    "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
-    "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED", "BOOTSTRAP_ADMIN_CONFIRM",
-})
+LEGACY_KEYS = frozenset(
+    {
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_AUDIENCE",
+        "COMPOSE_DATABASE_URL",
+        "OPENSLATE_DATABASE_PASSWORD",
+        "ADMIN_BOOTSTRAP_USERNAME",
+        "ADMIN_BOOTSTRAP_PASSWORD",
+        "SAMPLE_EMAIL",
+        "SAMPLE_PASSWORD",
+        "APP_PORT",
+        "POSTGRES_PORT",
+        "POSTGRES_DB",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "SECRET_KEY",
+        "API_BASE_URL",
+        "NEXT_PUBLIC_SUPABASE_URL",
+        "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+        "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED",
+        "BOOTSTRAP_ADMIN_CONFIRM",
+    }
+)
 
 
 def required(values: dict[str, str], name: str) -> str:
@@ -71,7 +112,7 @@ def http_url(values: dict[str, str], name: str) -> str:
             raise ValueError
         if parsed.username or parsed.password or parsed.fragment:
             raise ValueError
-        parsed.port
+        _ = parsed.port
     except ValueError:
         raise ConfigurationError(f"Invalid HTTP URL configuration: {name}") from None
     return value
@@ -145,8 +186,12 @@ def compose_environment(values: dict[str, str]) -> dict[str, str]:
     for name in ("BACKEND_PORT", "FRONTEND_PORT", "FILES_CLAMAV_PORT"):
         result[name] = str(port(values, name))
     for name in (
-        "SERVER_MAX_CONCURRENCY", "SERVER_KEEP_ALIVE_SECONDS", "COMPOSE_BIND_HOST",
-        "CLAMAV_MEMORY_LIMIT", "CLAMAV_CPUS", "CLAMAV_PIDS_LIMIT",
+        "SERVER_MAX_CONCURRENCY",
+        "SERVER_KEEP_ALIVE_SECONDS",
+        "COMPOSE_BIND_HOST",
+        "CLAMAV_MEMORY_LIMIT",
+        "CLAMAV_CPUS",
+        "CLAMAV_PIDS_LIMIT",
     ):
         result[name] = required(values, name)
     result["SCANNER_DEFINITIONS"] = absolute_path(values, "SCANNER_DEFINITIONS")
@@ -163,8 +208,11 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
     for name in PORT_KEYS:
         port(values, name)
     for name in (
-        "BACKEND_BIND_HOST", "SERVER_MAX_CONCURRENCY", "SERVER_KEEP_ALIVE_SECONDS",
-        "SUPABASE_PROJECT_ID", "SUPABASE_HOST",
+        "BACKEND_BIND_HOST",
+        "SERVER_MAX_CONCURRENCY",
+        "SERVER_KEEP_ALIVE_SECONDS",
+        "SUPABASE_PROJECT_ID",
+        "SUPABASE_HOST",
     ):
         required(values, name)
     if operations:
@@ -180,7 +228,7 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
     ):
         if urlsplit(http_url(values, url_name)).port != port(values, port_name):
             raise ConfigurationError(f"Configuration disagrees: {url_name} and {port_name}")
-    for name in (("DATABASE_URL", "MIGRATION_DATABASE_URL") if operations else ("DATABASE_URL",)):
+    for name in ("DATABASE_URL", "MIGRATION_DATABASE_URL") if operations else ("DATABASE_URL",):
         try:
             parsed = urlsplit(required(values, name))
             valid = parsed.scheme == "postgresql+psycopg" and parsed.hostname and parsed.username
@@ -189,8 +237,9 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
             valid = False
         if not valid:
             raise ConfigurationError(f"Invalid database configuration: {name}")
-    from app.core.config import Settings
     from pydantic import ValidationError
+
+    from app.core.config import Settings
 
     inputs: dict[str, object] = {name.lower(): values[name] for name in API_KEYS}
     try:
@@ -198,7 +247,9 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
         Settings(_env_file=None, **inputs)
     except (ValidationError, ValueError) as error:
         if isinstance(error, ValidationError):
-            names = sorted({str(item["loc"][0]).upper() for item in error.errors(include_input=False)})
+            names = sorted(
+                {str(item["loc"][0]).upper() for item in error.errors(include_input=False)}
+            )
             raise ConfigurationError("Invalid configuration: " + ", ".join(names)) from None
         raise ConfigurationError("Invalid configuration: CORS_ORIGINS") from None
 
@@ -208,7 +259,12 @@ def write_environment(path: Path, values: dict[str, str]) -> None:
     temporary = path.with_name(path.name + ".tmp")
     lines = ["# Generated from the root .env; do not edit this file."]
     for name, value in values.items():
-        quoted = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+        quoted = (
+            value.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+        )
         lines.append(f'{name}="{quoted}"')
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
@@ -245,7 +301,9 @@ def main(argv: list[str] | None = None) -> int:
         child_env.update(projected)
         return subprocess.run(
             ["docker", "compose", "--env-file", os.devnull, *args.arguments],
-            cwd=ROOT, env=child_env, check=False,
+            cwd=ROOT,
+            env=child_env,
+            check=False,
         ).returncode
     except (ConfigurationError, OSError) as error:
         if isinstance(error, ConfigurationError):

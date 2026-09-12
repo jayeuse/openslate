@@ -1,4 +1,11 @@
-import { readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
+import { availableParallelism } from "node:os";
 import { resolve, relative } from "node:path";
 import { createHash } from "node:crypto";
 import ts from "typescript";
@@ -8,6 +15,17 @@ import istanbul from "istanbul-lib-coverage";
 export const root = resolve(import.meta.dirname, "..");
 export const hash = (source) =>
   createHash("sha256").update(source).digest("hex");
+export function boundedCoverageWorkers(parallelism = availableParallelism()) {
+  return Math.min(4, Math.max(1, Math.max(1, parallelism) - 1));
+}
+export function coverageRuntimeRequirements(projects) {
+  const names = new Set(projects);
+  return {
+    browser: names.has("chromium") || names.has("mobile-chromium"),
+    server: [...names].some((name) => name !== "isolated"),
+    isolated: names.has("isolated"),
+  };
+}
 export function inventory(directory = resolve(root, "src")) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = resolve(directory, entry.name);
@@ -17,6 +35,173 @@ export function inventory(directory = resolve(root, "src")) {
         ? [relative(root, path)]
         : [];
   });
+}
+
+function manifestKey(projectName, id) {
+  return JSON.stringify([projectName, id]);
+}
+
+export function collectCoverageManifest(
+  value,
+  { requireAllProjects = true } = {},
+) {
+  if (!value || value.errors?.length || !Array.isArray(value.suites))
+    throw new Error("Incomplete coverage test report");
+  const projects = value.config?.projects?.map((project) => project.name);
+  if (!projects?.length || new Set(projects).size !== projects.length)
+    throw new Error("Incomplete coverage projects");
+  const tests = new Map();
+  function visit(suites) {
+    for (const suite of suites) {
+      for (const spec of suite.specs ?? []) {
+        for (const test of spec.tests ?? []) {
+          const key = manifestKey(test.projectName, spec.id);
+          if (!projects.includes(test.projectName) || tests.has(key))
+            throw new Error("Unknown or duplicate coverage test");
+          tests.set(key, { ...test, id: spec.id });
+        }
+      }
+      visit(suite.suites ?? []);
+    }
+  }
+  visit(value.suites);
+  if (
+    requireAllProjects &&
+    projects.some(
+      (name) => ![...tests.values()].some((test) => test.projectName === name),
+    )
+  )
+    throw new Error("Missing coverage project tests");
+  return { projects, tests };
+}
+
+function sortedManifestTests(manifest) {
+  return [...manifest.tests.values()]
+    .map(({ projectName, id }) => ({ projectName, id }))
+    .sort((left, right) =>
+      manifestKey(left.projectName, left.id).localeCompare(
+        manifestKey(right.projectName, right.id),
+      ),
+    );
+}
+
+function assertCoveragePlanShape(plan) {
+  if (!plan || plan.version !== 1)
+    throw new Error("Unsupported coverage plan version");
+  if (!plan.baseRevision || !plan.headRevision)
+    throw new Error("Coverage plan revisions are required");
+  if (!plan.sources || typeof plan.sources !== "object")
+    throw new Error("Coverage plan sources are required");
+  const sourcePaths = Object.keys(plan.sources).sort();
+  if (!sourcePaths.length)
+    throw new Error("Coverage plan source inventory is empty");
+  if (
+    JSON.stringify(plan.sourceInventory ?? sourcePaths) !==
+    JSON.stringify(sourcePaths)
+  )
+    throw new Error("Coverage plan source inventory mismatch");
+  if (
+    !Array.isArray(plan.projects) ||
+    new Set(plan.projects).size !== plan.projects.length
+  )
+    throw new Error("Coverage plan projects are invalid");
+  if (!Array.isArray(plan.tests) || !plan.tests.length)
+    throw new Error("Coverage plan tests are empty");
+  const expectedKeys = new Set();
+  for (const test of plan.tests) {
+    if (
+      !test ||
+      !plan.projects.includes(test.projectName) ||
+      typeof test.id !== "string" ||
+      expectedKeys.has(manifestKey(test.projectName, test.id))
+    )
+      throw new Error("Coverage plan tests are invalid");
+    expectedKeys.add(manifestKey(test.projectName, test.id));
+  }
+  if (!Array.isArray(plan.shards) || !plan.shards.length)
+    throw new Error("Coverage plan shards are empty");
+  const seen = new Set();
+  for (const [position, shard] of plan.shards.entries()) {
+    if (
+      !shard ||
+      shard.index !== position + 1 ||
+      shard.count !== plan.shards.length ||
+      !Array.isArray(shard.tests)
+    )
+      throw new Error("Coverage plan shard assignments are invalid");
+    for (const test of shard.tests) {
+      const key = manifestKey(test.projectName, test.id);
+      if (!expectedKeys.has(key) || seen.has(key))
+        throw new Error("Coverage plan shard assignments are incomplete");
+      seen.add(key);
+    }
+  }
+  if (seen.size !== expectedKeys.size)
+    throw new Error("Coverage plan shard assignments are incomplete");
+  if (plan.denominator !== undefined) {
+    if (!plan.denominator || typeof plan.denominator !== "object")
+      throw new Error("Coverage plan denominator is invalid");
+    for (const path of sourcePaths) {
+      const lines = plan.denominator[path];
+      if (
+        !Array.isArray(lines) ||
+        lines.some((line) => !Number.isInteger(line) || line < 1) ||
+        new Set(lines).size !== lines.length
+      )
+        throw new Error(`Coverage plan denominator is invalid: ${path}`);
+    }
+    if (
+      Object.keys(plan.denominator).some((path) => !sourcePaths.includes(path))
+    )
+      throw new Error("Coverage plan denominator has an unexpected source");
+  }
+  return { sourcePaths, expectedKeys };
+}
+
+export function validateCoveragePlan(plan) {
+  assertCoveragePlanShape(plan);
+  return true;
+}
+
+export function createCoveragePlan({
+  baseRevision,
+  headRevision,
+  sources,
+  denominator,
+  discovery,
+  shardDiscoveries = [],
+}) {
+  const full = collectCoverageManifest(discovery);
+  const discoveries = shardDiscoveries.length ? shardDiscoveries : [discovery];
+  const plan = {
+    version: 1,
+    baseRevision,
+    headRevision,
+    sources: Object.fromEntries(
+      Object.entries(sources).sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    ),
+    sourceInventory: Object.keys(sources).sort(),
+    projects: [...full.projects].sort(),
+    tests: sortedManifestTests(full),
+    shards: discoveries.map((value, index) => ({
+      index: index + 1,
+      count: discoveries.length,
+      tests: sortedManifestTests(
+        collectCoverageManifest(value, { requireAllProjects: false }),
+      ),
+    })),
+  };
+  if (denominator !== undefined)
+    plan.denominator = Object.fromEntries(
+      Object.entries(denominator).map(([path, lines]) => [
+        path,
+        [...lines].sort((a, b) => a - b),
+      ]),
+    );
+  validateCoveragePlan(plan);
+  return plan;
 }
 export function canonical(path) {
   const decoded = decodeURIComponent(path).replaceAll("\\", "/");
@@ -182,38 +367,40 @@ export function validateCaptureIds(expectedIds, capturedIds) {
   )
     throw new Error("Missing or duplicate browser test captures");
 }
-export function validateCaptureManifest(directory, report, discovery) {
-  function collect(value) {
-    if (!value || value.errors?.length || !Array.isArray(value.suites))
-      throw new Error("Incomplete coverage test report");
-    const projects = value.config?.projects?.map((project) => project.name);
-    if (!projects?.length || new Set(projects).size !== projects.length)
-      throw new Error("Incomplete coverage projects");
-    const tests = new Map();
-    function visit(suites) {
-      for (const suite of suites) {
-        for (const spec of suite.specs ?? [])
-          for (const test of spec.tests) {
-            const key = JSON.stringify([test.projectName, spec.id]);
-            if (!projects.includes(test.projectName) || tests.has(key))
-              throw new Error("Unknown or duplicate coverage test");
-            tests.set(key, { ...test, id: spec.id });
-          }
-        visit(suite.suites ?? []);
-      }
-    }
-    visit(value.suites);
-    if (
-      projects.some(
-        (name) =>
-          ![...tests.values()].some((test) => test.projectName === name),
-      )
+
+function browserCaptureIds(directory) {
+  const browserDirectory = resolve(directory, "browser");
+  if (!existsSync(browserDirectory)) return [];
+  return readdirSync(browserDirectory)
+    .filter((file) => file.endsWith(".json") && !file.startsWith("source-"))
+    .map(
+      (file) =>
+        JSON.parse(readFileSync(resolve(browserDirectory, file))).testId,
+    );
+}
+
+export function validateBrowserCaptureIds(directory, manifestOrReport) {
+  const manifest = manifestOrReport.tests
+    ? manifestOrReport
+    : collectCoverageManifest(manifestOrReport, { requireAllProjects: false });
+  const expected = [...manifest.tests.values()]
+    .filter((test) =>
+      ["chromium", "mobile-chromium"].includes(test.projectName),
     )
-      throw new Error("Missing coverage project tests");
-    return { projects, tests };
+    .map((test) => test.id);
+  const captured = browserCaptureIds(directory);
+  if (!expected.length) {
+    if (captured.length) throw new Error("Unexpected browser test captures");
+    return;
   }
-  const required = collect(discovery);
-  const actual = collect(report);
+  if (!existsSync(resolve(directory, "browser")))
+    throw new Error("Missing browser captures");
+  validateCaptureIds(expected, captured);
+}
+
+export function validateCaptureManifest(directory, report, discovery) {
+  const required = collectCoverageManifest(discovery);
+  const actual = collectCoverageManifest(report);
   if (
     JSON.stringify([...required.projects].sort()) !==
       JSON.stringify([...actual.projects].sort()) ||
@@ -221,7 +408,6 @@ export function validateCaptureManifest(directory, report, discovery) {
     [...required.tests.keys()].some((key) => !actual.tests.has(key))
   )
     throw new Error("Partial coverage test report");
-  const expected = [];
   for (const test of actual.tests.values()) {
     if (
       test.expectedStatus !== "passed" ||
@@ -232,41 +418,295 @@ export function validateCaptureManifest(directory, report, discovery) {
       throw new Error(
         `Incomplete coverage test: ${test.projectName}/${test.id}`,
       );
-    if (["chromium", "mobile-chromium"].includes(test.projectName))
-      expected.push(test.id);
   }
-  const browserDirectory = resolve(directory, "browser");
-  const captured = readdirSync(browserDirectory).map(
-    (file) => JSON.parse(readFileSync(resolve(browserDirectory, file))).testId,
-  );
-  validateCaptureIds(expected, captured);
+  validateBrowserCaptureIds(directory, actual);
 }
 
-export async function generate(directory, expected) {
+function readJson(path, label) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    throw new Error(`Missing or invalid ${label}: ${path}`, { cause: error });
+  }
+}
+
+function keysEqual(left, right) {
+  return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+}
+
+function recordsEqual(left, right) {
+  return (
+    JSON.stringify(Object.entries(left).sort()) ===
+    JSON.stringify(Object.entries(right).sort())
+  );
+}
+
+function validateShardTestManifest(plan, report, shard) {
+  const actual = collectCoverageManifest(report, { requireAllProjects: false });
+  const expected = new Map(
+    shard.tests.map((test) => [manifestKey(test.projectName, test.id), test]),
+  );
+  if (!keysEqual(actual.tests.keys(), expected.keys()))
+    throw new Error(
+      `Missing or unexpected coverage tests in shard ${shard.index}`,
+    );
+  for (const [key, test] of actual.tests) {
+    if (test.results?.length !== 1)
+      throw new Error(`Retried coverage test: ${key}`);
+    if (
+      test.expectedStatus !== "passed" ||
+      test.status !== "expected" ||
+      test.results[0]?.status !== "passed"
+    )
+      throw new Error(`Failed or skipped coverage test: ${key}`);
+  }
+  return actual;
+}
+
+export function validateCoverageShard(plan, report, shardIndex, directory) {
+  const { sourcePaths } = assertCoveragePlanShape(plan);
+  if (
+    !Number.isInteger(shardIndex) ||
+    shardIndex < 1 ||
+    shardIndex > plan.shards.length
+  )
+    throw new Error("Coverage shard index is invalid");
+  const shard = plan.shards[shardIndex - 1];
+  const manifest = validateShardTestManifest(plan, report, shard);
+  if (directory) validateBrowserCaptureIds(directory, manifest);
+  return { sourcePaths, shard };
+}
+
+function validateRuntimeMetadata(metadata, shard) {
+  if (metadata.status !== "passed")
+    throw new Error(`Coverage shard ${shard.index} did not pass`);
+  const runtime = metadata.runtime ?? {};
+  const requirements = coverageRuntimeRequirements([
+    ...new Set(shard.tests.map((test) => test.projectName)),
+  ]);
+  if (
+    runtime.requirements &&
+    JSON.stringify(runtime.requirements) !== JSON.stringify(requirements)
+  )
+    throw new Error(
+      `Coverage runtime requirements mismatch in shard ${shard.index}`,
+    );
+  const requiredCounts = {
+    browserCaptures: requirements.browser,
+    serverEntries: requirements.server,
+    isolatedEntries: requirements.isolated,
+  };
+  if (!Number.isInteger(runtime.nodeEntries) || runtime.nodeEntries < 1)
+    throw new Error(`Missing nodeEntries coverage in shard ${shard.index}`);
+  for (const [key, required] of Object.entries(requiredCounts)) {
+    if (required && (!Number.isInteger(runtime[key]) || runtime[key] < 1))
+      throw new Error(`Missing ${key} coverage in shard ${shard.index}`);
+  }
+  if (runtime.sourceMapsValidated !== true)
+    throw new Error(`Missing source-map validation in shard ${shard.index}`);
+  return { runtime, requirements };
+}
+
+function validateCanonicalReport(plan, data, shardIndex) {
+  const { sourcePaths } = assertCoveragePlanShape(plan);
+  if (!data || typeof data !== "object" || Array.isArray(data))
+    throw new Error(`Invalid coverage report in shard ${shardIndex}`);
+  if (!keysEqual(Object.keys(data), sourcePaths))
+    throw new Error(`Coverage denominator mismatch in shard ${shardIndex}`);
+  for (const path of sourcePaths) {
+    const entry = data[path];
+    const statementMap = entry?.statementMap;
+    const counts = entry?.s;
+    if (
+      !statementMap ||
+      !counts ||
+      !keysEqual(Object.keys(statementMap), Object.keys(counts))
+    )
+      throw new Error(`Coverage denominator mismatch for ${path}`);
+    const lines = Object.values(statementMap).map(
+      (statement) => statement.start.line,
+    );
+    if (new Set(lines).size !== lines.length)
+      throw new Error(`Coverage denominator mismatch for ${path}`);
+    if (
+      plan.denominator &&
+      JSON.stringify([...lines].sort((a, b) => a - b)) !==
+        JSON.stringify(plan.denominator[path])
+    )
+      throw new Error(`Coverage denominator mismatch for ${path}`);
+  }
+  return data;
+}
+
+export function mergeCoverageReports({
+  plan,
+  shardDirectories,
+  outputDirectory,
+  currentRevision,
+  currentSources,
+}) {
+  const { sourcePaths } = assertCoveragePlanShape(plan);
+  if (
+    currentRevision !== undefined &&
+    (currentRevision !== plan.headRevision ||
+      currentSources === undefined ||
+      !recordsEqual(currentSources, plan.sources))
+  )
+    throw new Error("Coverage plan does not match the current checkout");
+  if (
+    !Array.isArray(shardDirectories) ||
+    shardDirectories.length !== plan.shards.length
+  )
+    throw new Error("Coverage merge requires every shard");
+  const seenShards = new Set();
+  const reports = [];
+  const runtimeCoverage = [];
+  for (const directory of shardDirectories) {
+    const metadata = readJson(
+      resolve(directory, "metadata.json"),
+      "coverage shard metadata",
+    );
+    const shard = metadata.shard;
+    if (
+      !shard ||
+      shard.count !== plan.shards.length ||
+      !Number.isInteger(shard.index) ||
+      shard.index < 1 ||
+      shard.index > plan.shards.length ||
+      seenShards.has(shard.index)
+    )
+      throw new Error("Missing or duplicate coverage shard");
+    seenShards.add(shard.index);
+    if (
+      metadata.revision !== plan.headRevision ||
+      metadata.baseRef !== plan.baseRevision ||
+      JSON.stringify(metadata.sources) !== JSON.stringify(plan.sources)
+    )
+      throw new Error(
+        `Mixed coverage revisions or source hashes in shard ${shard.index}`,
+      );
+    runtimeCoverage.push(
+      validateRuntimeMetadata(metadata, plan.shards[shard.index - 1]),
+    );
+    const testReport = readJson(
+      resolve(directory, "tests.json"),
+      "coverage shard tests",
+    );
+    validateShardTestManifest(plan, testReport, plan.shards[shard.index - 1]);
+    const report = readJson(
+      resolve(directory, "report", "coverage-final.json"),
+      "coverage shard report",
+    );
+    reports.push({
+      shard,
+      report: validateCanonicalReport(plan, report, shard.index),
+    });
+  }
+  if (seenShards.size !== plan.shards.length)
+    throw new Error("Missing or duplicate coverage shard");
+  const requiredUnion = coverageRuntimeRequirements([
+    ...new Set(
+      plan.shards.flatMap((shard) =>
+        shard.tests.map((test) => test.projectName),
+      ),
+    ),
+  ]);
+  const runtimeField = {
+    browser: "browserCaptures",
+    server: "serverEntries",
+    isolated: "isolatedEntries",
+  };
+  for (const [category, required] of Object.entries(requiredUnion)) {
+    if (
+      required &&
+      !runtimeCoverage.some(
+        ({ requirements, runtime }) =>
+          requirements[category] &&
+          Number.isInteger(runtime[runtimeField[category]]) &&
+          runtime[runtimeField[category]] > 0,
+      )
+    )
+      throw new Error(`Missing ${category} coverage across shard union`);
+  }
+  reports.sort((left, right) => left.shard.index - right.shard.index);
+  const merged = structuredClone(reports[0].report);
+  for (const { report } of reports.slice(1)) {
+    for (const path of sourcePaths) {
+      const target = merged[path];
+      const source = report[path];
+      if (
+        JSON.stringify(target.statementMap) !==
+        JSON.stringify(source.statementMap)
+      )
+        throw new Error(`Coverage denominator mismatch for ${path}`);
+      for (const key of Object.keys(target.s))
+        target.s[key] = Math.max(target.s[key], source.s[key]);
+    }
+  }
+  mkdirSync(outputDirectory, { recursive: true });
+  const output = resolve(outputDirectory, "coverage-final.json");
+  writeFileSync(output, JSON.stringify(merged));
+  return { shards: reports.length, files: sourcePaths.length, report: output };
+}
+
+export async function generate(directory, expected, options = {}) {
+  const runtimeRequirements =
+    options.requirements ??
+    coverageRuntimeRequirements(
+      options.projects ?? ["isolated", "http", "chromium", "mobile-chromium"],
+    );
   const entries = [];
   const browserDirectory = resolve(directory, "browser");
-  if (!existsSync(browserDirectory))
+  const browserFiles = runtimeRequirements.browser
+    ? existsSync(browserDirectory)
+      ? readdirSync(browserDirectory).filter(
+          (file) => file.endsWith(".json") && !file.startsWith("source-"),
+        )
+      : []
+    : [];
+  if (runtimeRequirements.browser && !browserFiles.length)
     throw new Error("Missing browser captures");
-  const browserFiles = readdirSync(browserDirectory);
-  if (!browserFiles.length) throw new Error("Missing browser captures");
+  const browserSources = new Map();
+  for (const file of runtimeRequirements.browser && existsSync(browserDirectory)
+    ? readdirSync(browserDirectory).filter((name) => name.startsWith("source-"))
+    : []) {
+    const source = JSON.parse(readFileSync(resolve(browserDirectory, file)));
+    if (
+      typeof source.sourceHash !== "string" ||
+      typeof source.source !== "string"
+    )
+      throw new Error(`Invalid browser source body: ${file}`);
+    if (
+      browserSources.has(source.sourceHash) &&
+      browserSources.get(source.sourceHash) !== source.source
+    )
+      throw new Error(`Ambiguous browser source body: ${source.sourceHash}`);
+    browserSources.set(source.sourceHash, source.source);
+  }
   for (const file of browserFiles) {
     const capture = JSON.parse(readFileSync(resolve(browserDirectory, file)));
     if (capture.status !== "passed")
       throw new Error(`Incomplete browser capture: ${capture.testId}`);
     for (const entry of capture.entries) {
       if (!expected[canonical(entry.url)]) continue;
-      const map =
+      const source =
         typeof entry.source === "string"
-          ? sourceMap(entry.source, entry.url)
-          : undefined;
+          ? entry.source
+          : browserSources.get(entry.sourceHash);
+      if (typeof source !== "string")
+        throw new Error(`Missing browser source body: ${entry.url}`);
+      const map =
+        typeof source === "string" ? sourceMap(source, entry.url) : undefined;
       if (!map) throw new Error(`Missing browser source map: ${entry.url}`);
       if (!includesSource(map, expected))
         throw new Error(`Missing browser application mapping: ${entry.url}`);
       validateMap(map, expected);
-      entries.push({ ...entry, sourceMap: map });
+      entries.push({ ...entry, source, sourceMap: map });
     }
   }
   const nodeDirectory = resolve(directory, "node");
+  if (!existsSync(nodeDirectory))
+    throw new Error("Missing Node coverage captures");
   const files = readdirSync(nodeDirectory);
   const servers = files.filter(
     (file) =>
@@ -276,16 +716,17 @@ export async function generate(directory, expected) {
       ).entrypoint?.endsWith("next/dist/server/lib/start-server.js"),
   );
   if (
-    !servers.length ||
-    servers.some(
-      (file) =>
-        !existsSync(
-          resolve(
-            nodeDirectory,
-            file.replace("process-", "flushed-").replace(".json", ""),
+    runtimeRequirements.server &&
+    (!servers.length ||
+      servers.some(
+        (file) =>
+          !existsSync(
+            resolve(
+              nodeDirectory,
+              file.replace("process-", "flushed-").replace(".json", ""),
+            ),
           ),
-        ),
-    )
+      ))
   )
     throw new Error("Missing completed Next server flush");
   const workers = new Set(
@@ -301,12 +742,34 @@ export async function generate(directory, expected) {
   );
   const capturedProcesses = new Set();
   const sources = new Map();
+  const sourceBodies = new Map();
   for (const file of files.filter((file) => file.startsWith("source-"))) {
     const entry = JSON.parse(readFileSync(resolve(nodeDirectory, file)));
+    if (entry.pid !== undefined && entry.scriptId !== undefined) {
+      const key = `${entry.pid}:${entry.scriptId}`;
+      if (sources.has(key) && sources.get(key) !== entry.source)
+        throw new Error(`Ambiguous executed source: ${entry.url}`);
+      sources.set(key, entry.source);
+    } else if (entry.sourceHash && typeof entry.source === "string") {
+      if (
+        sourceBodies.has(entry.sourceHash) &&
+        sourceBodies.get(entry.sourceHash) !== entry.source
+      )
+        throw new Error(
+          `Ambiguous content-addressed source: ${entry.sourceHash}`,
+        );
+      sourceBodies.set(entry.sourceHash, entry.source);
+    }
+  }
+  for (const file of files.filter((file) => file.startsWith("script-"))) {
+    const entry = JSON.parse(readFileSync(resolve(nodeDirectory, file)));
+    const source = sourceBodies.get(entry.sourceHash);
+    if (source === undefined)
+      throw new Error(`Missing executed Node source: ${entry.url}`);
     const key = `${entry.pid}:${entry.scriptId}`;
-    if (sources.has(key) && sources.get(key) !== entry.source)
+    if (sources.has(key) && sources.get(key) !== source)
       throw new Error(`Ambiguous executed source: ${entry.url}`);
-    sources.set(key, entry.source);
+    sources.set(key, source);
   }
   let nodeEntries = 0;
   let serverEntries = 0;
@@ -354,7 +817,7 @@ export async function generate(directory, expected) {
         isolatedEntries++;
     }
   }
-  for (const file of servers) {
+  for (const file of runtimeRequirements.server ? servers : []) {
     const pid = file.replace("process-", "").replace(".json", "");
     if (!capturedProcesses.has(pid))
       throw new Error(`Missing Next server coverage: ${pid}`);
@@ -362,7 +825,11 @@ export async function generate(directory, expected) {
   for (const pid of workers)
     if (!capturedProcesses.has(pid))
       throw new Error(`Missing Playwright worker coverage: ${pid}`);
-  if (!nodeEntries || !serverEntries || !isolatedEntries)
+  if (
+    !nodeEntries ||
+    (runtimeRequirements.server && !serverEntries) ||
+    (runtimeRequirements.isolated && !isolatedEntries)
+  )
     throw new Error("Missing server or isolated Node captures");
   const { complete, discardedFragments } = selectCompleteEntries(entries);
   const report = new CoverageReport({
@@ -435,6 +902,7 @@ export async function generate(directory, expected) {
     nodeEntries,
     serverEntries,
     isolatedEntries,
+    requirements: runtimeRequirements,
     discardedFragments,
     uncreditedBootstrap: [...uncreditedBootstrap],
   };

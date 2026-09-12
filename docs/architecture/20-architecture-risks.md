@@ -156,10 +156,11 @@ Keep the page concise and aligned with the README and scripts.
 
 **Current design:** Default frontend domain Playwright tests still mock many
 sessions/BFF/backend interactions. `.github/workflows/fullstack.yml` runs the stable
-**Full-stack release gate** through `backend/tests/fullstack_runner.py` for
-relevant changes. The harness creates an isolated Supabase stack, runs the
-current Alembic head and backend suite, and tests production Next.js, BFF,
-FastAPI, PostgreSQL, and local Auth with disposable identities.
+**Full-stack release gate** through `backend/tests/fullstack_runner.py
+--acceptance-only` for relevant changes. The harness creates an isolated Supabase
+stack, runs the current Alembic head, and tests production Next.js, BFF, FastAPI,
+PostgreSQL, and local Auth with disposable identities. The complete backend suite
+and coverage gates run once in the backend workflow instead of being duplicated.
 
 **Problem:** The disposable release gate does not verify Realtime delivery or
 hosted ingress, network, secret, backup, recovery, aggregate rate limiting,

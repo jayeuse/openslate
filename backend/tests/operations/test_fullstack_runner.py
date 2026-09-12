@@ -282,6 +282,97 @@ def test_backend_only_runs_suite_and_cleans_stack_without_browser_or_scanner(tmp
     assert summary["result"] == "passed"
 
 
+def test_acceptance_only_runs_real_stack_without_backend_regression_or_coverage(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(runner.socket, "socket", MagicMock())
+    monkeypatch.setattr(runner, "FRONTEND", tmp_path / "frontend")
+    coverage = MagicMock()
+    monkeypatch.setattr(runner, "run_backend_coverage", coverage)
+    batches = MagicMock()
+    monkeypatch.setattr(runner, "run_backend_batches", batches)
+    scanner_class = MagicMock()
+    scanner_class.return_value.observations = {"ready": True}
+    monkeypatch.setattr(runner, "DisposableScanner", scanner_class)
+    identities = MagicMock(return_value={
+        "admin": {"email": "admin@example.com", "password": "password", "id": "admin"},
+        "member": {"email": "member@example.com", "password": "password", "id": "member"},
+    })
+    monkeypatch.setattr(runner, "seed", identities)
+    monkeypatch.setattr(runner, "wait_for", MagicMock())
+    monkeypatch.setattr(runner, "measure_admission", MagicMock(return_value={"recovered": True}))
+    recovery = MagicMock()
+    monkeypatch.setattr("tests.scanner_recovery.verify_worker_recovery", recovery)
+    popen = MagicMock()
+    popen.return_value.poll.return_value = 0
+    monkeypatch.setattr(runner.subprocess, "Popen", popen)
+    coverage_output = runner.BACKEND / "test-results/coverage"
+    coverage_output.mkdir(parents=True)
+    coverage_evidence = coverage_output / "coverage.json"
+    coverage_evidence.write_text('{"coverage": "preserve"}')
+
+    commands = []
+    browser_titles = [
+        "real login, expiry refresh, identity, logout and boundary enforcement",
+        "local capability and disabled-account checks survive real provider sessions",
+        "real invitation email callback and password acceptance",
+        "schema, record edits and relationship changes persist through the authenticated BFF",
+        (
+            "workspace revisions, saved queries, CSV authority and automatic private scanning "
+            "survive the real stack"
+        ),
+    ]
+    status = {
+        "DB_URL": "postgresql://postgres:test@127.0.0.1:55322/postgres",
+        "API_URL": runner.AUTH,
+        "PUBLISHABLE_KEY": "test-publishable-key",
+        "SECRET_KEY": "test-secret-key",
+    }
+
+    def command(command, **kwargs):
+        commands.append(command)
+        if command[:2] == ["supabase", "status"]:
+            return subprocess.CompletedProcess(command, 0, stdout=json.dumps(status))
+        if command and command[0] == "npx":
+            for title in browser_titles:
+                kwargs["stdout"].write(json.dumps({"test": title, "status": "passed"}) + "\n")
+        return subprocess.CompletedProcess(command, 0, stdout="")
+
+    monkeypatch.setattr(runner.subprocess, "run", command)
+    assert runner.main(["--acceptance-only"]) == 0
+
+    coverage.assert_not_called()
+    batches.assert_not_called()
+    scanner_class.return_value.start.assert_called_once()
+    scanner_class.return_value.start_worker.assert_called_once()
+    scanner_class.return_value.stop.assert_called_once()
+    identities.assert_called_once()
+    recovery.assert_called_once()
+    assert popen.call_count == 2
+    assert ["supabase", "start"] in commands
+    assert [sys.executable, "-m", "alembic", "upgrade", "head"] in commands
+    assert [sys.executable, "-m", "alembic", "check"] in commands
+    assert [sys.executable, "scripts/provision_database_role.py", "--confirm"] in commands
+    assert ["npm", "run", "build", "--", "--from-process", "--webpack"] in commands
+    assert [sys.executable, "scripts/check_operational_health.py"] in commands
+    assert ["supabase", "stop", "--no-backup"] in commands
+    browser_command = next(command for command in commands if command and command[0] == "npx")
+    assert browser_command == [
+        "npx", "playwright", "test", "--config=playwright.fullstack.config.ts"
+    ]
+    assert not any(
+        command[0] in {sys.executable, "pytest"} and "pytest" in command
+        for command in commands
+    )
+
+    summary = json.loads((tmp_path / "frontend/test-results/fullstack-summary.json").read_text())
+    assert summary["scope"] == "acceptance-only"
+    assert summary["backend_tests_rerun"] is False
+    assert summary["result"] == "passed"
+    assert [entry["test"] for entry in summary["browser_tests"]] == browser_titles
+    assert coverage_evidence.read_text() == '{"coverage": "preserve"}'
+
+
 @pytest.mark.parametrize(("skipped", "checker_error"), [(0, False), (1, False), (0, True)])
 def test_backend_capture_replaces_stale_artifacts_and_rejects_missing_tests(
     tmp_path, monkeypatch, skipped, checker_error

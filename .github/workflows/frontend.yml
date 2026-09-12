@@ -2,109 +2,105 @@ name: Frontend
 
 on:
   pull_request:
-    paths:
-      - "frontend/**"
-      - "infra/docker/frontend.Dockerfile"
-      - ".dockerignore"
-      - ".env.example"
-      - "compose.yaml"
-      - "scripts/environment.py"
-      - "scripts/check_coverage.py"
-      - "scripts/test_check_coverage.py"
-      - "supabase/config.toml"
-      - ".github/workflows/frontend.yml"
   push:
     branches: [main]
-    paths:
-      - "frontend/**"
-      - "infra/docker/frontend.Dockerfile"
-      - ".dockerignore"
-      - ".env.example"
-      - "compose.yaml"
-      - "scripts/environment.py"
-      - "scripts/check_coverage.py"
-      - "scripts/test_check_coverage.py"
-      - "supabase/config.toml"
-      - ".github/workflows/frontend.yml"
 
 concurrency:
   group: frontend-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  OPENSLATE_ENV_SOURCE: process
+  TEST_LAYER: all
+  BASE_URL: http://127.0.0.1:3104
+  PLAYWRIGHT_CONFIGURATION: process
+  BACKEND_URL: http://backend.invalid
+  SUPABASE_SERVER_URL: http://supabase.invalid
+  LOG_DIR: /tmp/openslate-frontend-logs
+  BFF_REQUEST_BODY_LIMIT_BYTES: "1048576"
+  BFF_RESPONSE_BODY_LIMIT_BYTES: "8388608"
+  BFF_REQUEST_DEADLINE_MS: "60000"
+  PORT: "3104"
+  HOSTNAME: 127.0.0.1
+  NEXT_PUBLIC_SUPABASE_URL: http://supabase.invalid
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: synthetic-publishable-key
+  NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: "false"
+
 jobs:
-  verify:
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
+    outputs:
+      base: ${{ steps.scope.outputs.base }}
+      run_frontend: ${{ steps.scope.outputs.run_frontend }}
+      run_frontend_container: ${{ steps.scope.outputs.run_frontend_container }}
+      reason_frontend: ${{ steps.scope.outputs.reason_frontend }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: scope
+        name: Classify changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 scripts/ci_scope.py --base "$BASE_SHA" --github-output "$GITHUB_OUTPUT"
+
+  quality:
+    needs: changes
+    if: needs.changes.outputs.run_frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
 
-      - name: Install dependencies
+  production:
+    needs: changes
+    if: needs.changes.outputs.run_frontend_container == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
         run: npm ci
-
-      - name: Install Playwright browsers
+      - name: Install supported browsers
+        working-directory: frontend
         run: npx playwright install --with-deps chromium firefox webkit
-
-      - name: Check formatting
-        run: npm run format:check
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Configure strict test environment
-        run: |
-          test_key="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("base64url"))')"
-          printf '::add-mask::%s\n' "$test_key"
-          {
-            printf 'OPENSLATE_ENV_SOURCE=process\n'
-            printf 'TEST_LAYER=all\nBASE_URL=http://127.0.0.1:3000\n'
-            printf 'BACKEND_URL=http://backend.invalid\nSUPABASE_SERVER_URL=http://supabase.invalid\n'
-            printf 'LOG_DIR=/tmp/openslate-frontend-logs\n'
-            printf 'BFF_REQUEST_BODY_LIMIT_BYTES=1048576\nBFF_RESPONSE_BODY_LIMIT_BYTES=8388608\nBFF_REQUEST_DEADLINE_MS=60000\n'
-            printf 'PORT=3000\nHOSTNAME=127.0.0.1\n'
-            printf 'NEXT_PUBLIC_SUPABASE_URL=http://supabase.invalid\n'
-            printf 'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=%s\n' "$test_key"
-            printf 'NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED=false\n'
-          } >> "$GITHUB_ENV"
-          unset test_key
-
-      - name: Type check
-        run: npm run typecheck
-
-      - name: Build
-        run: npm run build -- --from-process --webpack
-
-      - name: Build frontend Docker image
-        working-directory: ${{ github.workspace }}
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ env.NEXT_PUBLIC_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
-          NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: ${{ env.NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED }}
-        run: >-
-          docker build
-          --build-arg NEXT_PUBLIC_SUPABASE_URL="$NEXT_PUBLIC_SUPABASE_URL"
-          --build-arg NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"
-          --build-arg NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED="$NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED"
-          --file infra/docker/frontend.Dockerfile
-          --tag openslate-frontend:ci
-          .
-
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the production frontend image once
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/frontend.Dockerfile
+          load: true
+          push: false
+          tags: openslate-frontend:ci
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=http://supabase.invalid
+            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=synthetic-publishable-key
+            NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED=false
+          cache-from: type=gha,scope=openslate-frontend
+          cache-to: type=gha,mode=max,scope=openslate-frontend
       - name: Assert frontend image environment boundary
-        working-directory: ${{ github.workspace }}
         run: >-
           docker run --rm --entrypoint /bin/sh openslate-frontend:ci -c
           'test -z "${BACKEND_URL+x}" && test -z "${SUPABASE_SERVER_URL+x}" &&
@@ -114,47 +110,217 @@ jobs:
           test -z "${NEXT_PUBLIC_SUPABASE_URL+x}" &&
           test -z "${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY+x}" &&
           test -z "${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED+x}"'
-
-      - name: Run end-to-end tests
-        run: PLAYWRIGHT_USE_PRODUCTION=1 PLAYWRIGHT_CONFIGURATION=process node scripts/run-playwright.mjs --max-failures=5
-
-      - name: Record coverage comparison base
-        env:
-          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+      - name: Start the production frontend image
         run: |
-          test -n "$EVENT_BASE"
-          git rev-parse --verify "$EVENT_BASE^{commit}"
-          printf 'COVERAGE_BASE_REF=%s\n' "$(git merge-base HEAD "$EVENT_BASE")" >> "$GITHUB_ENV"
+          docker run --detach --name openslate-frontend-ci \
+            --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --publish 127.0.0.1:3104:3000 \
+            --env BACKEND_URL=http://backend.invalid \
+            --env SUPABASE_SERVER_URL=http://supabase.invalid \
+            --env LOG_DIR=/tmp/openslate-frontend-logs \
+            --env BFF_REQUEST_BODY_LIMIT_BYTES=1048576 \
+            --env BFF_RESPONSE_BODY_LIMIT_BYTES=8388608 \
+            --env BFF_REQUEST_DEADLINE_MS=60000 \
+            --env PORT=3000 --env HOSTNAME=0.0.0.0 \
+            --env NEXT_PUBLIC_SUPABASE_URL=http://supabase.invalid \
+            --env NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=synthetic-publishable-key \
+            --env NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED=false \
+            openslate-frontend:ci
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3104/login >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs --tail 200 openslate-frontend-ci
+          exit 1
+      - name: Run the complete production browser matrix
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_EXTERNAL_SERVER: "1"
+        run: node scripts/run-playwright.mjs --max-failures=5
+      - name: Preserve browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-browser-failures
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Stop the production frontend image
+        if: always()
+        run: |
+          if docker container inspect openslate-frontend-ci >/dev/null 2>&1; then
+            if [ "${{ job.status }}" != "success" ]; then
+              docker logs --tail 200 openslate-frontend-ci
+            fi
+            docker rm --force openslate-frontend-ci
+          fi
 
-      - name: Verify overall and changed executable coverage
-        run: npm run test:coverage
+  coverage-plan:
+    needs: changes
+    if: needs.changes.outputs.run_frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Discover the exact coverage plan
+        env:
+          COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}
+        run: npm run test:coverage:plan -- --output=coverage/coverage-plan.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: frontend-coverage-plan
+          path: frontend/coverage/coverage-plan.json
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Upload executable coverage report
+  coverage-shards:
+    needs: [changes, coverage-plan]
+    if: needs.changes.outputs.run_frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - uses: actions/download-artifact@v7
+        with:
+          name: frontend-coverage-plan
+          path: frontend/coverage
+      - name: Run coverage shard
+        env:
+          COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}
+        run: >-
+          npm run test:coverage:shard --
+          --plan=coverage/coverage-plan.json
+          --shard=${{ matrix.shard }}/3
+          --output=coverage/shard-${{ matrix.shard }}-of-3
+      - name: Upload compact shard evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-coverage-shard-${{ matrix.shard }}
+          path: frontend/coverage/shard-${{ matrix.shard }}-of-3
+          if-no-files-found: ignore
+          retention-days: 7
+
+  coverage-merge:
+    needs: [changes, coverage-plan, coverage-shards]
+    if: ${{ always() && needs.changes.outputs.run_frontend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - uses: actions/download-artifact@v7
+        with:
+          name: frontend-coverage-plan
+          path: frontend/coverage
+      - uses: actions/download-artifact@v7
+        with:
+          name: frontend-coverage-shard-1
+          path: frontend/coverage/shard-1-of-3
+      - uses: actions/download-artifact@v7
+        with:
+          name: frontend-coverage-shard-2
+          path: frontend/coverage/shard-2-of-3
+      - uses: actions/download-artifact@v7
+        with:
+          name: frontend-coverage-shard-3
+          path: frontend/coverage/shard-3-of-3
+      - name: Merge and enforce coverage once
+        run: >-
+          npm run test:coverage:merge --
+          --plan=coverage/coverage-plan.json
+          --shards=coverage
+          --output=coverage/merged
+      - name: Upload compact coverage evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage
-          path: |
-            frontend/coverage/latest.json
-            frontend/coverage/*/metadata.json
-            frontend/coverage/*/gate.json
-            frontend/coverage/*/tests.json
-            frontend/coverage/*/playwright/
-            frontend/coverage/*/report/
-          if-no-files-found: error
-
-      - name: Upload Playwright report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-report
-          path: frontend/playwright-report/
+          path: frontend/coverage/merged
           if-no-files-found: ignore
+          retention-days: 14
 
-      - name: Upload Playwright test artifacts
-        if: failure() || cancelled()
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-test-results
-          path: frontend/test-results/
-          if-no-files-found: ignore
+  verify:
+    needs:
+      [
+        changes,
+        quality,
+        production,
+        coverage-plan,
+        coverage-shards,
+        coverage-merge,
+      ]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Preserve the Frontend required check
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RUN_FRONTEND: ${{ needs.changes.outputs.run_frontend }}
+          RUN_CONTAINER: ${{ needs.changes.outputs.run_frontend_container }}
+          QUALITY: ${{ needs.quality.result }}
+          PRODUCTION: ${{ needs.production.result }}
+          COVERAGE_PLAN: ${{ needs.coverage-plan.result }}
+          COVERAGE_SHARDS: ${{ needs.coverage-shards.result }}
+          COVERAGE_MERGE: ${{ needs.coverage-merge.result }}
+          REASON: ${{ needs.changes.outputs.reason_frontend }}
+        run: |
+          test "$CHANGES" = "success"
+          if [ "$RUN_FRONTEND" = "true" ]; then
+            test "$QUALITY" = "success"
+            test "$COVERAGE_PLAN" = "success"
+            test "$COVERAGE_SHARDS" = "success"
+            test "$COVERAGE_MERGE" = "success"
+          else
+            test "$QUALITY" = "skipped"
+            test "$COVERAGE_PLAN" = "skipped"
+            test "$COVERAGE_SHARDS" = "skipped"
+            test "$COVERAGE_MERGE" = "skipped"
+            printf 'Frontend checks skipped: %s\n' "$REASON"
+          fi
+          if [ "$RUN_CONTAINER" = "true" ]; then
+            test "$PRODUCTION" = "success"
+          else
+            test "$PRODUCTION" = "skipped"
+          fi

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       coverage_base:
-        description: Git revision for changed-production-line coverage
+        description: Git revision used to classify the requested run
         required: true
         type: string
 
@@ -36,66 +36,55 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ inputs.coverage_base || github.event.pull_request.base.sha || github.event.before }}
         run: |
-          python3 - <<'PY'
-          import os, subprocess
-          base = os.environ.get("BASE_SHA", "")
-          relevant = True
-          if os.environ.get("EVENT_NAME") != "workflow_dispatch" and base and set(base) != {"0"}:
-              result = subprocess.run(["git", "diff", "--name-only", base, "HEAD"], capture_output=True, text=True)
-              if result.returncode == 0:
-                  relevant = any(p.startswith(("backend/", "frontend/", "supabase/", "infra/", ".github/workflows/")) or p in {".env.example", ".dockerignore", "compose.yaml", "scripts/environment.py", "scripts/check_coverage.py", "scripts/test_check_coverage.py"} for p in result.stdout.splitlines())
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              output.write(f"run={'true' if relevant else 'false'}\n")
-          PY
-
-      - name: Record coverage comparison base
-        if: steps.changes.outputs.run == 'true'
-        env:
-          BASE_SHA: ${{ inputs.coverage_base || github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          coverage_base=$(git merge-base HEAD "$BASE_SHA")
-          printf 'COVERAGE_BASE_REF=%s\n' "$coverage_base" >> "$GITHUB_ENV"
+          python3 scripts/ci_scope.py --base "$BASE_SHA" --github-output "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            printf 'run_fullstack=true\n' >> "$GITHUB_OUTPUT"
+            printf 'reason_fullstack=Manual full-stack dispatch\n' >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-python@v7
-        if: steps.changes.outputs.run == 'true'
+        if: steps.changes.outputs.run_fullstack == 'true'
         with:
           python-version: "3.14"
 
       - uses: astral-sh/setup-uv@v10.1.0
-        if: steps.changes.outputs.run == 'true'
+        if: steps.changes.outputs.run_fullstack == 'true'
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
 
       - uses: actions/setup-node@v7
-        if: steps.changes.outputs.run == 'true'
+        if: steps.changes.outputs.run_fullstack == 'true'
         with:
-          node-version: "24"
+          node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - uses: supabase/setup-cli@v3
-        if: steps.changes.outputs.run == 'true'
+        if: steps.changes.outputs.run_fullstack == 'true'
         with:
           version: latest
 
       - name: Install locked dependencies
-        if: steps.changes.outputs.run == 'true'
+        if: steps.changes.outputs.run_fullstack == 'true'
         run: |
           (cd backend && uv sync --locked)
           (cd frontend && npm ci && npx playwright install --with-deps chromium)
 
-      - name: Verify the disposable production stack
-        if: steps.changes.outputs.run == 'true'
+      - name: Verify the disposable production stack without duplicate regression
+        if: steps.changes.outputs.run_fullstack == 'true'
         working-directory: backend
-        run: uv run python -m tests.fullstack_runner
+        run: uv run python -m tests.fullstack_runner --acceptance-only
 
       - name: No relevant application changes
-        if: steps.changes.outputs.run != 'true'
-        run: echo "Full-stack gate satisfied; no relevant application changes."
+        if: steps.changes.outputs.run_fullstack != 'true'
+        env:
+          REASON: ${{ steps.changes.outputs.reason_fullstack }}
+        run: |
+          printf 'Full-stack gate satisfied without provisioning: %s\n' "$REASON"
 
       - name: Preserve sanitized acceptance summary
-        if: always() && steps.changes.outputs.run == 'true'
+        if: always() && steps.changes.outputs.run_fullstack == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: fullstack-summary

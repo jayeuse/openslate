@@ -213,7 +213,7 @@ for (const preflight of ["missing-base", "invalid-base"]) {
         fs.mkdirSync(path.join(directory,'coverage'));
         fs.writeFileSync(path.join(directory,'coverage/latest.json'),JSON.stringify({status:'passed',runId:'old'}));
         fs.copyFileSync('scripts/run-coverage.mjs',path.join(directory,'run-coverage.mjs'));
-        fs.writeFileSync(path.join(directory,'coverage-report.mjs'),'export const root='+JSON.stringify(directory)+'; export const hash=()=>""; export const inventory=()=>[]; export const generate=()=>{throw Error("Unexpected coverage run")}; export const validateCaptureManifest=()=>{};');
+        fs.writeFileSync(path.join(directory,'coverage-report.mjs'),'export const root='+JSON.stringify(directory)+'; export const hash=()=>""; export const inventory=()=>[]; export const generate=()=>{throw Error("Unexpected coverage run")}; export const generateDenominator=()=>{}; export const validateCaptureManifest=()=>{}; export const validateCoveragePlan=()=>{}; export const validateCoverageShard=()=>{}; export const mergeCoverageReports=()=>{}; export const createCoveragePlan=()=>{}; export const boundedCoverageWorkers=()=>2;');
         const setup=spawnSync('git',['init','--quiet',directory]);if(setup.status!==0)throw Error('Fixture Git initialization failed');
         const env={...process.env,NODE_OPTIONS:'',NODE_V8_COVERAGE:''};
         if(${JSON.stringify(preflight)}==='missing-base')delete env.COVERAGE_BASE_REF;else env.COVERAGE_BASE_REF='missing-coverage-base-reference';

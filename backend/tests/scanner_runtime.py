@@ -24,7 +24,7 @@ from pypdf import PdfWriter
 
 from app.core.config import Settings
 
-BASE_IMAGE_DIGEST = "sha256:aeac907bb9445b12c1dd76f9283415272d8dcd596d402245ed13729d7181bb8a"
+BASE_IMAGE_DIGEST = "sha256:488ff88a78d9769efa7e1bac7028419b696d54cecdae1b696c6c7cd670b3bb4b"
 MANIFEST = "/run/scanner-manifest.json"
 
 

@@ -22,16 +22,18 @@ spec.loader.exec_module(environment)
 
 def fixture():
     values = environment.read_environment(environment.ROOT / ".env.example")
-    values.update({
-        "SUPABASE_PUBLISHABLE_KEY": "test-public-key",
-        "SUPABASE_SECRET_KEY": "private-service-canary",
-        "SECURITY_EVENT_SERVER_KEY": "private-security-canary",
-        "DATABASE_URL": "postgresql+psycopg://openslate_runtime:encoded%40private@127.0.0.1:54322/postgres",
-        "MIGRATION_DATABASE_URL": "postgresql+psycopg://postgres:owner-private@127.0.0.1:54322/postgres",
-        "ADMIN_EMAIL": "admin@example.test",
-        "ADMIN_USERNAME": "local-admin",
-        "ADMIN_PASSWORD": "private-admin-canary",
-    })
+    values.update(
+        {
+            "SUPABASE_PUBLISHABLE_KEY": "test-public-key",
+            "SUPABASE_SECRET_KEY": "private-service-canary",
+            "SECURITY_EVENT_SERVER_KEY": "private-security-canary",
+            "DATABASE_URL": "postgresql+psycopg://openslate_runtime:encoded%40private@127.0.0.1:54322/postgres",
+            "MIGRATION_DATABASE_URL": "postgresql+psycopg://postgres:owner-private@127.0.0.1:54322/postgres",
+            "ADMIN_EMAIL": "admin@example.test",
+            "ADMIN_USERNAME": "local-admin",
+            "ADMIN_PASSWORD": "private-admin-canary",
+        }
+    )
     return values
 
 
@@ -39,24 +41,43 @@ class EnvironmentProjectionTests(unittest.TestCase):
     def test_frontend_receives_exact_allowlist_and_no_private_values(self):
         values = fixture()
         result = environment.frontend_environment(values)
-        self.assertEqual(set(result), {
-            "BACKEND_URL", "SUPABASE_SERVER_URL", "LOG_DIR", "PORT", "HOSTNAME",
-            "BFF_REQUEST_BODY_LIMIT_BYTES", "BFF_RESPONSE_BODY_LIMIT_BYTES",
-            "BFF_REQUEST_DEADLINE_MS", "NEXT_PUBLIC_SUPABASE_URL",
-            "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED",
-        })
-        for name in ("ADMIN_PASSWORD", "DATABASE_URL", "MIGRATION_DATABASE_URL", "SUPABASE_SECRET_KEY"):
+        self.assertEqual(
+            set(result),
+            {
+                "BACKEND_URL",
+                "SUPABASE_SERVER_URL",
+                "LOG_DIR",
+                "PORT",
+                "HOSTNAME",
+                "BFF_REQUEST_BODY_LIMIT_BYTES",
+                "BFF_RESPONSE_BODY_LIMIT_BYTES",
+                "BFF_REQUEST_DEADLINE_MS",
+                "NEXT_PUBLIC_SUPABASE_URL",
+                "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+                "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED",
+            },
+        )
+        for name in (
+            "ADMIN_PASSWORD",
+            "DATABASE_URL",
+            "MIGRATION_DATABASE_URL",
+            "SUPABASE_SECRET_KEY",
+        ):
             self.assertNotIn(name, result)
             self.assertNotIn(values[name], result.values())
         self.assertEqual(result["PORT"], values["FRONTEND_PORT"])
-        self.assertEqual(result["NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED"], values["LIFECYCLE_PURGE_ENABLED"])
+        self.assertEqual(
+            result["NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED"], values["LIFECYCLE_PURGE_ENABLED"]
+        )
 
     def test_frontend_missing_and_invalid_values_name_the_key_without_leaking_values(self):
         for name, value in [
-            ("BACKEND_URL", ""), ("SUPABASE_URL", "invalid-private-url"),
+            ("BACKEND_URL", ""),
+            ("SUPABASE_URL", "invalid-private-url"),
             ("BFF_REQUEST_DEADLINE_MS", "12trailing-private"),
             ("LIFECYCLE_PURGE_ENABLED", "not-boolean-private"),
-            ("FRONTEND_PORT", "70000"), ("FRONTEND_LOG_DIR", "relative-private"),
+            ("FRONTEND_PORT", "70000"),
+            ("FRONTEND_LOG_DIR", "relative-private"),
         ]:
             with self.subTest(name=name):
                 values = {**fixture(), name: value}
@@ -131,7 +152,9 @@ class EnvironmentProjectionTests(unittest.TestCase):
             environment.write_environment(root / ".env", fixture())
             with (
                 patch.object(environment, "ROOT", root),
-                patch.dict(os.environ, {"DATABASE_URL": "stale", "ADMIN_PASSWORD": "stale-private"}),
+                patch.dict(
+                    os.environ, {"DATABASE_URL": "stale", "ADMIN_PASSWORD": "stale-private"}
+                ),
                 patch.object(environment.subprocess, "run") as run,
                 redirect_stdout(io.StringIO()),
             ):

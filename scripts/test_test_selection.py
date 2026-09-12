@@ -1,11 +1,9 @@
 """Section selection must not silently omit affected safety checks."""
 
 import importlib.util
-import os
 import subprocess
 import sys
 import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -19,30 +17,6 @@ spec.loader.exec_module(runner)
 
 
 class TestSelectionTests(unittest.TestCase):
-    def test_fullstack_manual_dispatch_runs_even_without_application_changes(self):
-        workflow = Path(__file__).resolve().parents[1] / ".github/workflows/fullstack.yml"
-        source = workflow.read_text().split("python3 - <<'PY'\n", 1)[1]
-        program = textwrap.dedent(source.split("          PY\n", 1)[0])
-        for event, changed, expected in (
-            ("workflow_dispatch", "", "true"),
-            ("workflow_dispatch", "docs/example.md\n", "true"),
-            ("pull_request", "docs/example.md\n", "false"),
-            ("push", "frontend/src/example.ts\n", "true"),
-        ):
-            with (
-                self.subTest(event=event, changed=changed),
-                tempfile.TemporaryDirectory() as folder,
-            ):
-                output = Path(folder) / "output"
-                with patch.dict(os.environ, {
-                    "EVENT_NAME": event, "BASE_SHA": "comparison-revision",
-                    "GITHUB_OUTPUT": str(output),
-                }), patch("subprocess.run", return_value=subprocess.CompletedProcess(
-                    [], 0, stdout=changed,
-                )):
-                    exec(compile(program, str(workflow), "exec"), {})  # noqa: S102 -- Repository-owned workflow under test.
-                self.assertEqual(output.read_text(), f"run={expected}\n")
-
     def invoke(self, *arguments):
         with patch.object(sys, "argv", ["test.py", *arguments]), patch.object(
             runner.subprocess, "call", return_value=0

@@ -21,7 +21,10 @@
     "test:section": "python3 ../scripts/test.py frontend section",
     "test:affected": "python3 ../scripts/test.py frontend affected",
     "test:full": "python3 ../scripts/test.py frontend full",
-    "test:coverage": "node scripts/run-coverage.mjs"
+    "test:coverage": "node scripts/run-coverage.mjs",
+    "test:coverage:plan": "node scripts/run-coverage.mjs --plan",
+    "test:coverage:shard": "node scripts/run-coverage.mjs",
+    "test:coverage:merge": "node scripts/run-coverage.mjs --merge"
   },
   "dependencies": {
     "@antv/x6": "^3.1.8",

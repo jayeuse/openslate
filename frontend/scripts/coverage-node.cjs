@@ -27,15 +27,27 @@ if (directory) {
       (error, result) => {
         if (error) throw error;
         const source = result.scriptSource;
-        const id = crypto
+        const sourceHash = crypto
+          .createHash("sha256")
+          .update(source)
+          .digest("hex");
+        const sourcePath = path.join(directory, `source-${sourceHash}.json`);
+        try {
+          fs.writeFileSync(sourcePath, JSON.stringify({ sourceHash, source }), {
+            flag: "wx",
+          });
+        } catch (writeError) {
+          if (writeError.code !== "EEXIST") throw writeError;
+        }
+        const scriptId = crypto
           .createHash("sha1")
-          .update(process.pid + params.scriptId + params.url + source)
+          .update(String(params.scriptId))
           .digest("hex");
         fs.writeFileSync(
-          path.join(directory, `source-${id}.json`),
+          path.join(directory, `script-${process.pid}-${scriptId}.json`),
           JSON.stringify({
             url: params.url,
-            source,
+            sourceHash,
             pid: process.pid,
             scriptId: params.scriptId,
           }),

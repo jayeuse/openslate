@@ -5,6 +5,7 @@ const useProductionServer =
   process.env.SCANNER_COVERAGE !== "1" &&
   process.env.FRONTEND_COVERAGE !== "1" &&
   (isCI || process.env.PLAYWRIGHT_USE_PRODUCTION === "1");
+const useExternalServer = process.env.PLAYWRIGHT_EXTERNAL_SERVER === "1";
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
@@ -89,19 +90,16 @@ export default defineConfig({
   // Keep ordinary cleanup separate from disposable full-stack results.
   outputDir: "test-results/playwright",
   fullyParallel: true,
-  timeout: process.env.FRONTEND_COVERAGE === "1" ? 60_000 : 30_000,
+  timeout: process.env.FRONTEND_COVERAGE === "1" ? 120_000 : 30_000,
   expect: { timeout: process.env.FRONTEND_COVERAGE === "1" ? 15_000 : 5_000 },
   forbidOnly: isCI,
   retries: isCI ? 2 : 0,
   reporter: isCI ? [["list"], ["html", { open: "never" }]] : "html",
   use: {
     baseURL,
-    trace:
-      process.env.FRONTEND_COVERAGE === "1"
-        ? "retain-on-failure"
-        : "on-first-retry",
+    trace: process.env.FRONTEND_COVERAGE === "1" ? "off" : "on-first-retry",
     screenshot: "only-on-failure",
-    video: "retain-on-failure",
+    video: process.env.FRONTEND_COVERAGE === "1" ? "off" : "retain-on-failure",
   },
   projects: [
     ...(testLayer === "all" || testLayer === "isolated"
@@ -140,7 +138,7 @@ export default defineConfig({
       : []),
   ],
   webServer:
-    testLayer === "isolated"
+    testLayer === "isolated" || useExternalServer
       ? undefined
       : {
           command: isolatedCommand(

@@ -55,7 +55,9 @@ def frontend_section(path: str) -> str | None:
     for layer in FRONTEND_LAYERS:
         if layer in parts:
             index = parts.index(layer) + 1
-            if index < len(parts) and parts[index] == "comms":
+            if index < len(parts) and parts[index] in {"access", "comms"}:
+                return "sample"
+            if index < len(parts) and parts[index] == "manage-state.spec.ts":
                 return "sample"
             if index < len(parts) and parts[index] in SECTIONS["frontend"]:
                 return parts[index]

@@ -22,10 +22,10 @@
    Retain other passing results only when their source, tests, dependencies,
    configuration, and relevant shared boundaries remain unchanged.
 
-| Area | Smallest required proof during iteration |
-| --- | --- |
-| Backend | Isolated behavior/API tests; guarded real PostgreSQL for persistence, privileges, transactions, migrations, or concurrency |
-| Frontend | Isolated rules, HTTP routes, or browser interactions according to the changed behavior; mobile/browser variants when relevant |
+| Area           | Smallest required proof during iteration                                                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Backend        | Isolated behavior/API tests; guarded real PostgreSQL for persistence, privileges, transactions, migrations, or concurrency                             |
+| Frontend       | Isolated rules, HTTP routes, or browser interactions according to the changed behavior; mobile/browser variants when relevant                          |
 | Infrastructure | Affected configuration validation, image/build checks, startup/readiness, and service contracts; real full stack when the changed boundary requires it |
 
 No unexpected failures, skipped required tests, weakened assertions, or retries
@@ -46,25 +46,25 @@ below support owned backend setup reuse and explicit frontend browser selection.
 Tests are grouped by the behavior they protect. Each case has one home;
 changes spanning multiple sections select those sections together.
 
-| Backend section | Responsibility |
-| --- | --- |
-| `security` | JWT verification, eligibility, capabilities, users, invitations, and Supabase adapters |
-| `audit` | Request attribution, snapshots, listeners, listing, and SecurityEvent behavior |
-| `api` | Domain validation, lifecycle, relationships, HTTP contracts, and shared listing |
-| `runtime` | Health, readiness, request/database bounds, diagnostics, and recovery |
-| `database` | Migration transitions, catalog privileges, and disposable-database guards |
-| `scripts` | Bootstrap, provisioning, seeding, reset safety, and test-harness checks |
+| Backend section | Responsibility                                                                         |
+| --------------- | -------------------------------------------------------------------------------------- |
+| `security`      | JWT verification, eligibility, capabilities, users, invitations, and Supabase adapters |
+| `audit`         | Request attribution, snapshots, listeners, listing, and SecurityEvent behavior         |
+| `api`           | Domain validation, lifecycle, relationships, HTTP contracts, and shared listing        |
+| `runtime`       | Health, readiness, request/database bounds, diagnostics, and recovery                  |
+| `database`      | Migration transitions, catalog privileges, and disposable-database guards              |
+| `scripts`       | Bootstrap, provisioning, seeding, reset safety, and test-harness checks                |
 
 Backend tests live in capability folders under `backend/tests/`:
 
-| Behavior | Folders |
-| --- | --- |
-| Authentication and accounts | `auth/`, `users/`, `rbac/` |
-| Catalog and records | `catalog/`, `listing/`, `record_queries/`, `views/` |
-| Lifecycle and relationships | `lifecycle/`, `lifecycle_integration/`, `relationships_integration/` |
-| Audit and diagnostics | `audit/`, `security_events/`, `runtime/` |
-| Workspace and files | `workspace/`, `files/` |
-| Setup and database safety | `operations/`, `reset_application_data/`, `migration_0015/`, `migration_0016/` |
+| Behavior                    | Folders                                                                        |
+| --------------------------- | ------------------------------------------------------------------------------ |
+| Authentication and accounts | `auth/`, `users/`, `rbac/`                                                     |
+| Catalog and records         | `catalog/`, `listing/`, `record_queries/`, `views/`                            |
+| Lifecycle and relationships | `lifecycle/`, `lifecycle_integration/`, `relationships_integration/`           |
+| Audit and diagnostics       | `audit/`, `security_events/`, `runtime/`                                       |
+| Workspace and files         | `workspace/`, `files/`                                                         |
+| Setup and database safety   | `operations/`, `reset_application_data/`, `migration_0015/`, `migration_0016/` |
 
 Feature-specific helpers live beside their tests. Shared configuration and API
 helpers, root `conftest.py`, and runner entry points stay at the test root.
@@ -81,14 +81,14 @@ Upload-library rules live in `isolated/files/`, and record-query rules in
 
 ## Execution layers
 
-| Layer | What runs | Requirements |
-| --- | --- | --- |
-| Backend `isolated` | Schemas, services, mocked dependencies, and in-process HTTP contracts; excludes `integration` | Python dependencies |
-| Backend `integration` | Actual database constraints, transactions, locks, RLS, migrations, and recovery | Guarded disposable PostgreSQL at current Alembic head |
-| Frontend `isolated` | Pure rules and handlers with replaced I/O | Node dependencies; no Next.js server or live credentials |
-| Frontend `http` | Requests to actual Next.js session/BFF routes | Next.js server; runs once per case |
-| Frontend `browser` | User interactions, rendering, accessibility, and failure states | Next.js plus browser; Chromium/mobile locally, additional Firefox/WebKit in CI |
-| Disposable full stack | Browser sessions through Next.js, FastAPI, Supabase Auth, and PostgreSQL | Dedicated temporary Supabase stack and generated identities |
+| Layer                 | What runs                                                                                     | Requirements                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Backend `isolated`    | Schemas, services, mocked dependencies, and in-process HTTP contracts; excludes `integration` | Python dependencies                                                            |
+| Backend `integration` | Actual database constraints, transactions, locks, RLS, migrations, and recovery               | Guarded disposable PostgreSQL at current Alembic head                          |
+| Frontend `isolated`   | Pure rules and handlers with replaced I/O                                                     | Node dependencies; no Next.js server or live credentials                       |
+| Frontend `http`       | Requests to actual Next.js session/BFF routes                                                 | Next.js server; runs once per case                                             |
+| Frontend `browser`    | User interactions, rendering, accessibility, and failure states                               | Next.js plus browser; Chromium/mobile locally, additional Firefox/WebKit in CI |
+| Disposable full stack | Browser sessions through Next.js, FastAPI, Supabase Auth, and PostgreSQL                      | Dedicated temporary Supabase stack and generated identities                    |
 
 Playwright runs the frontend layers; no additional unit-test runner is needed.
 `TEST_LAYER=isolated` omits application startup. Ordinary domain browser tests
@@ -189,18 +189,22 @@ ordinary production-server tests.
 
 ## Pre-push coverage gates
 
-Run these full coverage gates only when preparing to push. Record the comparison
-revision before implementation and pass it as
-`COVERAGE_BASE_REF`. From `backend/`, run
-`uv run python -m tests.fullstack_runner --backend-coverage-only`; from
-`frontend/`, run `npm run test:coverage` alongside `npm run verify`.
+Run the full gate only when preparing to push. Record the comparison revision
+before implementation, then run `python3 scripts/prepush.py --base <revision>`
+from the repository root. The fail-closed classifier selects the applicable
+backend, frontend, container, and full-stack lanes. `--list` prints the plan
+without starting a service. Lower-level project commands remain available for
+focused repair but are not repeated after the canonical gate passes.
 Both projects require 90% overall executable production-line coverage and 90%
 changed executable-line coverage. No changed executable production lines is
 reported as N/A, never as a measured 100%.
 
 Backend coverage includes all `app/` source, with operational-script coverage
 reported separately. Frontend coverage combines Chromium, isolated Node tests,
-and Next server execution using development source maps. A fixed source-line
+and Next server execution using development source maps. Local coverage uses a
+bounded worker count. CI creates one revision/source/test plan, runs three
+deterministic shards, rejects an incomplete or mixed union, and enforces coverage
+once after merging compact line reports. A fixed source-line
 inventory includes never-loaded `src/` modules with zero hits; type-only and
 non-executable lines do not count. Static import/re-export declarations and Next
 boundary directives have no independent runtime statement; executable expressions
@@ -213,8 +217,9 @@ the recorded Git comparison, including new untracked production files. Missing
 source, invalid comparison references, stale captures, and required runtime
 omissions fail measurement. CI uses the pull request merge base or previous push
 revision. Reports and source/run metadata live in ignored test-result folders.
-The full-stack command also requires `COVERAGE_BASE_REF`; a manual full-stack
-workflow dispatch requires its `coverage_base` input instead of guessing a base.
+The backend and frontend coverage lanes receive the verified comparison base.
+A manual full-stack workflow dispatch retains its `coverage_base` input for
+explicit change classification rather than guessing a base.
 
 ## Fixtures and maintenance
 
@@ -241,12 +246,13 @@ behavior. Backend handwritten files remain limited to 500 lines by
 
 ## CI and remaining boundaries
 
-The backend workflow starts disposable Supabase, checks blocked public signup,
-applies migrations, runs Alembic drift detection, provisions the runtime role,
-and executes tooling checks plus pytest with PostgreSQL and coverage. The
-frontend workflow runs static/build checks and the ordinary test layers. The
-separate full-stack workflow starts its own stack and production applications;
-only sanitized acceptance diagnostics are retained.
+Backend quality, disposable coverage, and container builds run as independent
+jobs behind one stable aggregator. Frontend quality and production-image browser
+acceptance run independently from the three-shard coverage plan/merge pipeline.
+Successful frontend coverage keeps compact reports instead of raw V8 captures.
+The separate full-stack workflow starts its own stack and production applications
+with `--acceptance-only`; it retains five real-stack scenarios but does not repeat
+the backend regression suite. Only sanitized acceptance diagnostics are retained.
 
 The full-stack workflow uses internal relevant-change detection and a stable
 check name. Repository branch protection must require that check separately;
