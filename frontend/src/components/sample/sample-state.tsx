@@ -27,9 +27,16 @@ import {
 
 const STORAGE_KEY = "openslate.sample.v1";
 type Snapshot = Record<string, unknown>;
+export type SampleTransactionDraft = {
+  update<T>(key: string, initial: T, action: SetStateAction<T>): void;
+};
+export type SampleTransactionRecipe = (
+  transaction: SampleTransactionDraft,
+) => void;
 type SampleContextValue = {
   values: Snapshot;
   update: (key: string, action: (previous: unknown) => unknown) => void;
+  transact: (recipe: SampleTransactionRecipe) => void;
   resetKeys: (keys: readonly string[]) => void;
   storageUnavailable: boolean;
 };
@@ -108,6 +115,23 @@ export function decodeSampleStoredValue<T>(
   return compatible(value, initial) ? value : initial;
 }
 
+export function applySampleTransaction(
+  previous: Readonly<Snapshot>,
+  recipe: SampleTransactionRecipe,
+): Snapshot {
+  const next: Snapshot = { ...previous };
+  recipe({
+    update<T>(key: string, initial: T, action: SetStateAction<T>) {
+      const current = decodeSampleStoredValue(key, next[key], initial);
+      next[key] =
+        typeof action === "function"
+          ? (action as (value: T) => T)(current)
+          : action;
+    },
+  });
+  return next;
+}
+
 export function SampleProvider({ children }: { children: ReactNode }) {
   const [values, setValues] = useState<Snapshot>({});
   const [ready, setReady] = useState(false);
@@ -154,6 +178,9 @@ export function SampleProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
+  const transact = useCallback((recipe: SampleTransactionRecipe) => {
+    setValues((previous) => applySampleTransaction(previous, recipe));
+  }, []);
   const resetKeys = useCallback((keys: readonly string[]) => {
     setValues((previous) =>
       Object.fromEntries(
@@ -163,7 +190,7 @@ export function SampleProvider({ children }: { children: ReactNode }) {
   }, []);
   return (
     <SampleContext.Provider
-      value={{ values, update, resetKeys, storageUnavailable }}
+      value={{ values, update, transact, resetKeys, storageUnavailable }}
     >
       {storageUnavailable && (
         <p role="status" className="shrink-0 border-b px-4 py-2 text-sm">
@@ -256,4 +283,12 @@ export function useSampleStorage(): Pick<
     resetKeys: context.resetKeys,
     storageUnavailable: context.storageUnavailable,
   };
+}
+
+export function useSampleTransaction(): (
+  recipe: SampleTransactionRecipe,
+) => void {
+  const context = useContext(SampleContext);
+  if (!context) throw new Error("Sample transaction requires SampleProvider");
+  return context.transact;
 }

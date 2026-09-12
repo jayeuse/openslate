@@ -1,6 +1,7 @@
 import { expect, test } from "../coverage";
 import type { Locator, Page } from "@playwright/test";
 import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
+import { initialSandboxHistory } from "../../../src/components/sample/sandbox/model";
 
 type StoredField = {
   id: string;
@@ -61,12 +62,12 @@ async function openField(page: Page, name: string): Promise<Locator> {
 }
 
 async function storedSnapshot(page: Page): Promise<StoredSnapshot> {
-  return page.evaluate(() => {
+  return page.evaluate((fallback) => {
     const root = JSON.parse(
       sessionStorage.getItem("openslate.sample.v1") ?? "{}",
     ) as Record<string, unknown>;
-    return root["sandbox.design"] as StoredSnapshot;
-  });
+    return (root["sandbox.design"] ?? fallback) as StoredSnapshot;
+  }, initialSandboxHistory);
 }
 
 async function storedField(

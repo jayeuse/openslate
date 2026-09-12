@@ -31,14 +31,18 @@ import {
 } from "@/components/sample/sample-data";
 import SampleAnalytics from "./analytics";
 
-type ViewConfig = {
+export type ViewConfig = {
   type: string;
   search: string;
   status: string;
   sort: string;
   group: string;
 };
-type SavedView = ViewConfig & { id: string; name: string; audience: string };
+export type SavedView = ViewConfig & {
+  id: string;
+  name: string;
+  audience: string;
+};
 const savedViewSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -49,13 +53,22 @@ const savedViewSchema = z.object({
   sort: z.string(),
   group: z.string(),
 });
-const initial: ViewConfig = {
+export function normalizeSavedViews(raw: unknown): SavedView[] {
+  return Array.isArray(raw)
+    ? raw.flatMap((value) => {
+        const result = savedViewSchema.safeParse(value);
+        return result.success ? [result.data] : [];
+      })
+    : [];
+}
+export const initialViewConfig: ViewConfig = {
   type: "Table",
   search: "",
   status: "All statuses",
   sort: "title",
   group: "None",
 };
+export const initialSavedViews: SavedView[] = [];
 const modes = [
   { name: "Table", icon: Table2 },
   { name: "Grid", icon: LayoutGrid },
@@ -87,16 +100,13 @@ function OpenViewContent() {
   const [people] = useSampleState("access-people", initialPeople);
   const [storedConfig, setStoredConfig] = useSampleState<ViewConfig>(
     "views-current",
-    initial,
+    initialViewConfig,
   );
   const [storedSaved, setSaved] = useSampleState<SavedView[]>(
     "views-saved",
-    [],
+    initialSavedViews,
   );
-  const saved = storedSaved.flatMap((value) => {
-    const result = savedViewSchema.safeParse(value);
-    return result.success ? [result.data] : [];
-  });
+  const saved = normalizeSavedViews(storedSaved);
   const [defaultId, setDefaultId] = useSampleState("views-default", "");
   const [storedView, setStoredView] = useSampleState("views-selected", "");
   const [selectedView, setCurrentView] = useState(defaultId || storedView);

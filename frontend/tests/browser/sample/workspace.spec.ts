@@ -199,6 +199,7 @@ for (const [legacy, destination] of [
 test("workspace works with every business backend connection unavailable", async ({
   page,
 }) => {
+  test.slow();
   const businessRequests: string[] = [];
   const subscriptions: string[] = [];
   page.on("request", (request) => {

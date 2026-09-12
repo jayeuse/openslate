@@ -8,10 +8,6 @@ import {
 } from "../../../src/components/sample/comms/model";
 import { INITIAL_RECORDS } from "../../../src/components/sample/sample-data";
 import { createCommsConfiguration } from "../../../src/components/sample/comms/configuration";
-import {
-  initialPeople,
-  initialRoles,
-} from "../../../src/components/sample/access/model";
 
 test.beforeEach(async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -103,6 +99,54 @@ test("settings modals retain one size while navigating and changing controls", a
   await expect
     .poll(async () => (await page.getByRole("dialog").boundingBox())!.height)
     .toBe(baseline!.height);
+});
+
+test("central Access rules project a role decision into the native OpenComms channel owner", async ({
+  page,
+}) => {
+  await page.goto("/access?view=rules");
+  await page.getByLabel("Subject type", { exact: true }).selectOption("role");
+  await page
+    .getByLabel("Subject", { exact: true })
+    .selectOption("sample-member");
+  await page
+    .getByLabel("Scope type", { exact: true })
+    .selectOption("comms-channel");
+  await page
+    .getByLabel("Resource scope", { exact: true })
+    .selectOption({ label: "operations" });
+  await page.getByLabel("Search permissions").fill("Reply in threads");
+  await page
+    .getByRole("group", { name: "Reply in threads decision", exact: true })
+    .getByRole("button", { name: "Deny", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Review impact", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Apply 1 draft choice", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Confirm and apply", exact: true })
+    .click();
+
+  await page.goto("/comms");
+  await page
+    .getByRole("button", { name: "Channel actions: operations", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Channel settings", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog
+    .getByRole("tab", { name: "Advanced Permissions", exact: true })
+    .click();
+  await dialog
+    .getByLabel("Permissions for", { exact: true })
+    .selectOption("role:sample-member");
+  await expect(
+    dialog.getByLabel("Reply to messages", { exact: true }),
+  ).toHaveValue("deny");
 });
 
 test("local join requests can be accepted and appear in the membership preview", async ({
@@ -337,53 +381,6 @@ test("membership preview evaluates joining and defaults without changing permiss
     JSON.parse(sessionStorage.getItem("openslate.sample.v1")!),
   );
   expect(snapshot["comms-configuration"]?.invites ?? []).toEqual([]);
-});
-
-test("Access summary links to the same Comms permission editor and preserves other grants", async ({
-  page,
-}) => {
-  const config = createCommsConfiguration();
-  config.workspace.permissions.everyone = { post: "deny" };
-  await page.addInitScript(
-    (configuration) =>
-      sessionStorage.setItem(
-        "openslate.sample.v1",
-        JSON.stringify({ "comms-configuration": configuration }),
-      ),
-    config,
-  );
-  await page.goto("/access");
-  await page.getByRole("button", { name: "Permissions", exact: true }).click();
-  await page
-    .getByRole("combobox", { name: "Permission role", exact: true })
-    .selectOption("sample-member");
-  const summary = page.getByRole("region", { name: "OpenComms permissions" });
-  const memberCount = initialPeople.filter(
-    (person) => person.role === "sample-member",
-  ).length;
-  await expect(summary).toContainText(`Post: 1/${memberCount}`);
-  await summary
-    .getByRole("link", { name: "Configure #operations", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog");
-  await expect(
-    dialog.getByLabel("Permissions for", { exact: true }),
-  ).toHaveValue("role:sample-member");
-  await dialog
-    .getByLabel("Reply to messages", { exact: true })
-    .selectOption("deny");
-  await dialog
-    .getByRole("button", { name: "Save changes", exact: true })
-    .click();
-  const saved = await page.evaluate(() =>
-    JSON.parse(sessionStorage.getItem("openslate.sample.v1")!),
-  );
-  expect(saved["access-roles"] ?? initialRoles).toEqual(initialRoles);
-  expect(
-    saved["comms-configuration"].channels[CHANNELS[0].id].permissions[
-      "role:sample-member"
-    ].reply,
-  ).toBe("deny");
 });
 
 test("sample examples augment saved conversations without replacing records threads or drafts", async ({

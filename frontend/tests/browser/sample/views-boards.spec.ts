@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "../coverage";
 import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
+import { initialRoles } from "../../../src/components/sample/access/model";
+import { initialBoards } from "../../../src/components/sample/boards";
+import { initialViewConfig } from "../../../src/components/sample/openview";
+import { initialReport } from "../../../src/components/sample/openview/analytics";
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/session/status", (route) =>
@@ -24,6 +28,127 @@ async function openViewOptions(page: Page) {
       await button.click();
   }
 }
+
+test("an Access role rename reaches Boards and OpenView audience owners atomically", async ({
+  page,
+}) => {
+  const customRole = {
+    id: "role:dispatch-lead",
+    name: "Dispatch lead",
+    description: "Coordinate dispatch work.",
+    builtin: false,
+    grants: ["Action · read"],
+  };
+  await page.addInitScript(
+    ({ roles, boards, view, report, role }) => {
+      const key = "openslate.sample.v1";
+      if (!sessionStorage.getItem(key))
+        sessionStorage.setItem(
+          key,
+          JSON.stringify({
+            "access-roles": [...roles, role],
+            "boards-list": boards.map((board) => ({
+              ...board,
+              roles: [role.name],
+            })),
+            "views-saved": [
+              {
+                ...view,
+                id: "saved:dispatch",
+                name: "Dispatch view",
+                audience: `Role: ${role.name}`,
+              },
+            ],
+            "views-report-draft": {
+              ...report,
+              audience: `Role: ${role.name}`,
+            },
+            "views-report-templates": [
+              {
+                ...report,
+                name: "Dispatch report",
+                audience: `Role: ${role.name}`,
+              },
+            ],
+          }),
+        );
+    },
+    {
+      roles: initialRoles,
+      boards: initialBoards,
+      view: initialViewConfig,
+      report: initialReport,
+      role: customRole,
+    },
+  );
+
+  await page.goto("/access?view=roles");
+  if ((page.viewportSize()?.width ?? 1440) < 768) {
+    await page
+      .getByRole("heading", { name: "Dispatch lead", exact: true })
+      .locator("xpath=ancestor::section[1]")
+      .getByRole("button", { name: "Edit", exact: true })
+      .click();
+  } else {
+    await page.getByRole("button", { name: /^Dispatch lead/ }).click();
+  }
+  const editor = page.getByRole("dialog");
+  await editor.getByLabel("Role name", { exact: true }).fill("Operations lead");
+  await editor.getByRole("button", { name: "Save role", exact: true }).click();
+  await page
+    .getByRole("alertdialog", { name: "Apply role changes?" })
+    .getByRole("button", { name: "Apply changes", exact: true })
+    .click();
+  if ((page.viewportSize()?.width ?? 1440) < 768)
+    await expect(
+      page.getByRole("heading", { name: "Operations lead", exact: true }),
+    ).toBeVisible();
+  else
+    await expect(
+      page.getByRole("button", { name: /^Operations lead/ }),
+    ).toBeVisible();
+  const projected = await page.evaluate(() =>
+    JSON.parse(sessionStorage.getItem("openslate.sample.v1") ?? "{}"),
+  );
+  expect(projected["boards-list"][0].roles).toEqual(["Operations lead"]);
+  expect(projected["views-saved"][0].audience).toBe("Role: Operations lead");
+  expect(projected["views-report-draft"].audience).toBe(
+    "Role: Operations lead",
+  );
+
+  await page.goto("/boards");
+  await page
+    .getByRole("button", { name: "Board settings", exact: true })
+    .click();
+  const boardSettings = page.getByRole("region", { name: "Board settings" });
+  await expect(
+    boardSettings.getByRole("checkbox", {
+      name: "Operations lead",
+      exact: true,
+    }),
+  ).toBeChecked();
+  await expect(
+    boardSettings.getByRole("checkbox", { name: "Dispatch lead", exact: true }),
+  ).toHaveCount(0);
+
+  await page.goto("/openview");
+  await openViewOptions(page);
+  await page
+    .getByLabel("Saved view", { exact: true })
+    .selectOption("saved:dispatch");
+  await page.getByRole("button", { name: "Share view", exact: true }).click();
+  await expect(
+    page.getByRole("combobox", {
+      name: "Share with user or role",
+      exact: true,
+    }),
+  ).toHaveValue("Role: Operations lead");
+
+  await page.getByRole("button", { name: "Reports", exact: true }).click();
+  await expect(
+    page.getByRole("combobox", { name: "Share report with", exact: true }),
+  ).toHaveValue("Role: Operations lead");
+});
 
 test("sample views retain saved filters and provide honest export previews", async ({
   page,

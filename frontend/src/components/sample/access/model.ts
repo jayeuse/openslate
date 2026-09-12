@@ -10,6 +10,9 @@ export type Person = {
   primary: string;
   title: string;
   activity: string[];
+  accessStatus?: "active" | "pending" | "disabled" | "revoked" | "suspended";
+  groupIds?: string[];
+  expiresAt?: string;
 };
 const basePeople: Person[] = [
   {
@@ -21,10 +24,7 @@ const basePeople: Person[] = [
     departments: ["Operations", "Finance"],
     primary: "Operations",
     title: "Operations director",
-    activity: [
-      "Created the sample organization",
-      "Published dispatch workflow",
-    ],
+    activity: ["Created the organization", "Published dispatch workflow"],
   },
   {
     id: "sample-eli",
@@ -46,7 +46,7 @@ const basePeople: Person[] = [
     departments: ["Customer service"],
     primary: "Customer service",
     title: "Customer specialist",
-    activity: ["Sample account deactivated"],
+    activity: ["Account deactivated"],
   },
 ];
 
@@ -63,13 +63,14 @@ export const initialPeople: Person[] = [
       departments: ["Operations"],
       primary: "Operations",
       title: "Field specialist",
-      activity: ["Assigned to sample service records"],
+      activity: ["Assigned to service records"],
     })),
 ];
 
 export type Role = {
   id: string;
   name: string;
+  description?: string;
   builtin: boolean;
   grants: string[];
 };

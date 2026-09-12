@@ -17,7 +17,7 @@ import {
 } from "../openview/widgets";
 import { BoardAnnouncements, BoardCalendar } from "./board-editors";
 
-type Board = {
+export type SampleBoard = {
   id: string;
   name: string;
   department: string;
@@ -25,7 +25,7 @@ type Board = {
   permission: string;
   widgets: SampleWidget[];
 };
-const initialBoards: Board[] = [
+export const initialBoards: SampleBoard[] = [
   {
     id: "sample-board-organization",
     name: "Organization board",
@@ -54,7 +54,7 @@ const initialBoards: Board[] = [
 ];
 export default function SampleBoards() {
   const [section, setSection] = useSampleState("boards-section", "Overview");
-  const [boards, setBoards] = useSampleState<Board[]>(
+  const [boards, setBoards] = useSampleState<SampleBoard[]>(
     "boards-list",
     initialBoards,
   );
@@ -75,7 +75,7 @@ export default function SampleBoards() {
     boards.find((item) => item.id === selected) ??
     boards[0] ??
     initialBoards[0];
-  function update(change: Partial<Board>) {
+  function update(change: Partial<SampleBoard>) {
     setBoards(
       (boards.length ? boards : initialBoards).map((item) =>
         item.id === board.id ? { ...item, ...change } : item,

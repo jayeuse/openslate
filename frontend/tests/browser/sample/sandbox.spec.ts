@@ -600,14 +600,30 @@ test("revoking module access in Access removes it from role preview", async ({
   await expect(
     page.getByRole("heading", { name: "Equipment", exact: true }),
   ).toHaveCount(0);
-  await page.goto("/access");
-  await page.getByRole("button", { name: "Permissions", exact: true }).click();
+  await page.goto("/access?view=rules");
+  await page.getByLabel("Subject type", { exact: true }).selectOption("role");
   await page
-    .getByRole("combobox", { name: "Permission role", exact: true })
+    .getByLabel("Subject", { exact: true })
     .selectOption("sample-member");
+  await page.getByLabel("Scope type", { exact: true }).selectOption("module");
   await page
-    .getByRole("checkbox", { name: "Module · Service requests", exact: true })
-    .uncheck();
+    .getByLabel("Resource scope", { exact: true })
+    .selectOption({ label: "Service requests" });
+  await page.getByLabel("Search permissions").fill("View scoped resource");
+  await page
+    .getByRole("group", {
+      name: "View scoped resource decision",
+      exact: true,
+    })
+    .getByRole("button", { name: "Deny", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Review impact", exact: true })
+    .click();
+  await page.getByRole("button", { name: /Apply 1 draft choice/ }).click();
+  await page
+    .getByRole("button", { name: "Confirm and apply", exact: true })
+    .click();
   await page.goto("/sandbox");
   await page.getByRole("tab", { name: "Preview", exact: true }).click();
   await page.getByLabel("Preview role", { exact: true }).selectOption("Member");

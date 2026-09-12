@@ -381,6 +381,44 @@ Destination: `/platform`. Source: [`src/components/sample/platform/`](src/compon
 - 226. Follow a record for future updates
 - 227. Assign a record to a user
 
+### Access Control Center
+
+Destination: `/access`. Source: [`src/components/sample/access/`](src/components/sample/access/).
+
+**P0 — identity and policy safety**
+
+- 228. Navigate seven URL-addressable Access views with invalid-view fallback
+- 229. Preserve a valid `user` deep link only while viewing Identities
+- 230. Create and manage internal, guest, and service-metadata identities
+- 231. Protect the final active Administrator and built-in roles
+- 232. Review bulk identity impact before applying a local change
+- 233. Revoke an active session without exposing session tokens
+- 234. Stage multiple access-rule choices before applying them
+- 235. Preview policy impact and resolve same-permission conflicts explicitly
+- 236. Simulate allow and deny decisions with an ordered explanation trace
+- 237. Block access-review completion while decisions remain unresolved
+- 238. Keep Access interactions local with no non-GET BFF or session requests
+- 239. Exclude tokens, secrets, credentials, identity data, sessions, and history from policy exports
+
+**P1 — administration and governance**
+
+- 240. Filter, sort, search, and page the unified identity directory
+- 241. Resend or revoke an invitation and inspect invitation status
+- 242. Disable, restore, revoke, or permanently delete an eligible identity
+- 243. Start a role from a template, create a role, and compare selected roles
+- 244. Create and edit non-nested manual groups with internal or guest members only
+- 245. Review the department organization chart and open group-scoped rules
+- 246. Configure safe defaults for new identities
+- 247. Validate and preview a versioned policy import before merge or replacement
+- 248. Review access activity and preview a policy-only history restore
+- 249. Open Manage security from the Access overview
+
+**P2 — usability and inspection**
+
+- 250. Use desktop tabs or the mobile Access-view selector in a viewport-contained page without document overflow
+- 251. Review access health, counts, defaults, and recent changes in a compact overview
+- 252. Run relevant accessibility scans across Access views and dialogs
+
 ## Service boundary
 
 Only authentication remains connected: sign-in, session validation/refresh, logout, and the existing account-setup flow. Workspace branding, permissions, and all business interactions are local; workspace screens make no business API requests or realtime subscriptions. Existing service endpoints remain unused by the workspace UI. Legacy business screens and their exclusive helpers have been removed. New business workflows continue to use tab-local sample data; this cleanup does not connect them to live backend operations.

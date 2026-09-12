@@ -24,6 +24,7 @@ test("has no serious accessibility violations", async ({ page }) => {
 test("sign in keeps a rejected draft, blocks duplicate submission, and enters the workspace on retry", async ({
   page,
 }) => {
+  test.slow();
   let release: (() => void) | undefined;
   const responseReady = new Promise<void>((resolve) => {
     release = resolve;

@@ -47,3 +47,17 @@ export function CardContent({
 }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("p-5", className)} {...props} />;
 }
+export function CardFooter({
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      className={cn(
+        "border-border flex items-center gap-2 border-t p-5",
+        className,
+      )}
+      {...props}
+    />
+  );
+}

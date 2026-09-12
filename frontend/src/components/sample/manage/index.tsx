@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ShieldCheck, Building2, HardDrive, ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSampleState } from "@/components/sample/sample-state";
@@ -14,6 +15,7 @@ import {
 } from "../access/primitives";
 import SampleAudit from "./audit";
 import { initialPeople, type Person } from "../access/model";
+import { initialManageSessions, type ManageSession } from "./sessions";
 
 type Settings = {
   name: string;
@@ -35,6 +37,22 @@ type Settings = {
   expiry: string;
 };
 type Snapshot = { id: string; name: string; date: string; settings: Settings };
+const manageTabs = [
+  "Organization",
+  "Security",
+  "Audit",
+  "Backup",
+  "Updates",
+  "Licensing",
+] as const;
+type ManageTab = (typeof manageTabs)[number];
+
+function manageTabFromQuery(value: string | null): ManageTab {
+  const normalized = value?.toLowerCase();
+  return (
+    manageTabs.find((tab) => tab.toLowerCase() === normalized) ?? "Organization"
+  );
+}
 const initial: Settings = {
   name: "Riverside Services",
   logo: "RS",
@@ -55,6 +73,16 @@ const initial: Settings = {
   expiry: "2027-09-11",
 };
 export default function SampleManage() {
+  return (
+    <Suspense fallback={<p role="status">Opening management settings…</p>}>
+      <SampleManageContent />
+    </Suspense>
+  );
+}
+
+function SampleManageContent() {
+  const searchParams = useSearchParams();
+  const requestedTab = manageTabFromQuery(searchParams.get("view"));
   const [people] = useSampleState<Person[]>("access-people", initialPeople);
   const activeUsers = people.filter((person) => person.active).length;
   const [settings, setSettings] = useSampleState<Settings>(
@@ -69,14 +97,14 @@ export default function SampleManage() {
       settings: initial,
     },
   ]);
-  const [sessions, setSessions] = useSampleState<string[]>("manage-sessions", [
-    "Mara · Desktop Chrome · Manila",
-    "Eli · Mobile · Quezon City",
-  ]);
+  const [sessions, setSessions] = useSampleState<ManageSession[]>(
+    "manage-sessions",
+    initialManageSessions,
+  );
   const [history, setHistory] = useSampleState<string[]>("manage-history", [
     "Installed sample version 1.4.2",
   ]);
-  const [tab, setTab] = useState("Organization");
+  const [tab, setTab] = useState<ManageTab>(requestedTab);
   const [draft, setDraft] = useState<Settings | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -146,17 +174,10 @@ export default function SampleManage() {
         </p>
       </header>
       <Tabs
-        names={[
-          "Organization",
-          "Security",
-          "Audit",
-          "Backup",
-          "Updates",
-          "Licensing",
-        ]}
+        names={[...manageTabs]}
         current={tab}
         set={(name) => {
-          setTab(name);
+          setTab(name as ManageTab);
           setDraft(null);
           setError("");
         }}
@@ -310,26 +331,41 @@ export default function SampleManage() {
             <div className={`${panel} space-y-4`}>
               <h3 className="font-semibold">Active sample sessions</h3>
               {sessions.map((session) => (
-                <div key={session} className="space-y-3 border-b py-3">
-                  <p className="text-sm">{session}</p>
-                  <Button
-                    variant="outline"
-                    className="min-h-11"
-                    onClick={() =>
-                      setConfirm({
-                        title: "End sample session",
-                        description: `${session} will be removed from this sample session list. Your real session stays active.`,
-                        action: () => {
-                          setSessions((items) =>
-                            items.filter((item) => item !== session),
-                          );
-                          setNotice("Sample session ended.");
-                        },
-                      })
-                    }
-                  >
-                    End session · {session.split(" · ")[0]}
-                  </Button>
+                <div key={session.id} className="space-y-3 border-b py-3">
+                  <div className="space-y-1 text-sm">
+                    <p>
+                      {session.personName} · {session.device} ·{" "}
+                      {session.browser}
+                      {" · "}
+                      {session.location}
+                    </p>
+                    <p className="text-muted-foreground text-xs">
+                      Last seen {session.lastSeen}
+                    </p>
+                    {session.current && (
+                      <p className="text-xs font-medium">Current session</p>
+                    )}
+                  </div>
+                  {!session.current && (
+                    <Button
+                      variant="outline"
+                      className="min-h-11"
+                      onClick={() =>
+                        setConfirm({
+                          title: "End sample session",
+                          description: `${session.personName}'s ${session.device} ${session.browser} session in ${session.location} will be removed from this sample session list. Your real session stays active.`,
+                          action: () => {
+                            setSessions((items) =>
+                              items.filter((item) => item.id !== session.id),
+                            );
+                            setNotice("Sample session ended.");
+                          },
+                        })
+                      }
+                    >
+                      End session · {session.personName}
+                    </Button>
+                  )}
                 </div>
               ))}
               {!sessions.length && (

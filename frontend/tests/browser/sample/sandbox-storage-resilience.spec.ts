@@ -179,6 +179,12 @@ test("corrupt sandbox history recovers defaults without clearing unrelated sampl
   page,
 }) => {
   const writes = captureBffWrites(context);
+  await expect(
+    page.getByRole("button", {
+      name: "Select department Operations",
+      exact: true,
+    }),
+  ).toBeVisible();
   await page.evaluate((key) => {
     const stored = JSON.parse(sessionStorage.getItem(key) ?? "{}") as Record<
       string,

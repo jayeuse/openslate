@@ -13,55 +13,6 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("sample access protects the final administrator and persists role permission changes", async ({
-  page,
-}) => {
-  const mutations: string[] = [];
-  page.on("request", (request) => {
-    if (/\/bff\/|\/session\//.test(request.url()) && request.method() !== "GET")
-      mutations.push(request.url());
-  });
-  await page.goto("/access");
-  await expect(
-    page.getByRole("button", { name: "Manage Mara Santos" }),
-  ).toBeVisible();
-  await page.screenshot({
-    path: `/tmp/access-manage-access-${test.info().project.name}.png`,
-    fullPage: true,
-  });
-  await page.getByRole("button", { name: "Manage Mara Santos" }).click();
-  await page.getByRole("button", { name: "Delete user", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "last active administrator",
-  );
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await page.getByRole("button", { name: "Roles", exact: true }).click();
-  await page.getByRole("button", { name: "Create role", exact: true }).click();
-  await page.getByLabel("Role name", { exact: true }).fill("Dispatch lead");
-  await page.getByRole("button", { name: "Save role", exact: true }).click();
-  await page.getByRole("button", { name: "Permissions", exact: true }).click();
-  await page
-    .getByLabel("Permission role")
-    .selectOption({ label: "Dispatch lead" });
-  await page.getByLabel("Department · Operations", { exact: true }).check();
-  await page.getByLabel("Action · create", { exact: true }).check();
-  await page
-    .getByRole("button", { name: "Preview effective permissions" })
-    .click();
-  await expect(
-    page.getByRole("region", { name: "Effective permissions" }),
-  ).toContainText("Department · Operations");
-  await page.reload();
-  await page.getByRole("button", { name: "Permissions", exact: true }).click();
-  await page
-    .getByLabel("Permission role")
-    .selectOption({ label: "Dispatch lead" });
-  await expect(
-    page.getByLabel("Action · create", { exact: true }),
-  ).toBeChecked();
-  expect(mutations).toEqual([]);
-});
-
 test("sample maintenance restores a selected backup and applies then rolls back an update locally", async ({
   page,
 }) => {
@@ -97,44 +48,6 @@ test("sample maintenance restores a selected backup and applies then rolls back 
   await page.getByRole("button", { name: "Confirm sample rollback" }).click();
   await expect(page.getByText("Current version · 1.4.2")).toBeVisible();
   expect(mutations).toEqual([]);
-});
-
-test("sample membership supports multiple departments and protects built-in roles", async ({
-  page,
-}) => {
-  await page.goto("/access");
-  await page.getByRole("button", { name: "Manage Eli Cruz" }).click();
-  await page.getByLabel("Finance", { exact: true }).check();
-  await page
-    .getByLabel("Primary department", { exact: true })
-    .selectOption("Finance");
-  await page.getByLabel("Job title").fill("Finance coordinator");
-  await page.getByRole("button", { name: "Save user", exact: true }).click();
-  await page.getByRole("button", { name: "Membership", exact: true }).click();
-  await expect(
-    page.getByRole("button", {
-      name: "Eli Cruz Finance coordinator · Primary",
-    }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Roles", exact: true }).click();
-  await page.getByRole("button", { name: "Edit Member", exact: true }).click();
-  await page.getByRole("button", { name: "Delete role", exact: true }).click();
-  await expect(page.getByRole("alert")).toHaveText(
-    "Built-in roles cannot be deleted.",
-  );
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Edit Administrator", exact: true })
-    .click();
-  await page
-    .getByLabel("Permission set", { exact: true })
-    .selectOption("No access");
-  await expect(page.getByRole("alert")).toContainText(
-    "Administrator retains full access",
-  );
-  await expect(page.getByLabel("Permission set", { exact: true })).toHaveValue(
-    "Full access",
-  );
 });
 
 test("sample organization settings persist and audit filters constrain export previews", async ({
@@ -219,14 +132,4 @@ test("sample security and licensing changes are reviewable local settings", asyn
   await expect(
     page.getByLabel("Two-factor authentication", { exact: true }),
   ).toHaveValue("Required for everyone");
-});
-
-test("sample person deep link opens the connected record assignee", async ({
-  page,
-}) => {
-  await page.goto("/access?user=sample-person-morgan-kim");
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.getByLabel("Full name", { exact: true })).toHaveValue(
-    "Morgan Kim",
-  );
 });
