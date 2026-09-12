@@ -45,16 +45,20 @@ export type SandboxCanvasLayout = Record<
   { x: number; y: number; width: number; height: number }
 >;
 
+export interface SandboxCanvasViewState {
+  zoom: number;
+  gridVisible: boolean;
+  snapEnabled: boolean;
+}
+
 export interface SandboxCanvasApi {
   getLayout: () => SandboxCanvasLayout;
+  getViewState: () => SandboxCanvasViewState;
   zoomIn: () => void;
   zoomOut: () => void;
+  resetZoom: () => void;
   fit: () => void;
   center: () => void;
-  undo: () => void;
-  redo: () => void;
-  canUndo: () => boolean;
-  canRedo: () => boolean;
   /** Places a newly-created node, or queues its position until it is rendered. */
   placeNode: (nodeId: string, position: { x: number; y: number }) => void;
 }
@@ -67,6 +71,9 @@ export interface SandboxCanvasProps {
   layout?: SandboxCanvasLayout;
   /** Emits a full snapshot after a user geometry action settles, never on sync. */
   onLayoutChange?: (layout: SandboxCanvasLayout) => void;
+  gridVisible?: boolean;
+  snapEnabled?: boolean;
+  onViewChange?: (view: SandboxCanvasViewState) => void;
   onSelect: (cellId: string | null) => void;
   onRenameDepartment: (departmentId: string, name: string) => void;
   onRenameModule: (moduleId: string, name: string) => void;
@@ -89,6 +96,7 @@ interface SandboxCanvasRuntime {
 
 interface SandboxCanvasCallbacks {
   onLayoutChange?: SandboxCanvasProps["onLayoutChange"];
+  onViewChange?: SandboxCanvasProps["onViewChange"];
   onSelect: (cellId: string | null) => void;
   onRenameDepartment: SandboxCanvasProps["onRenameDepartment"];
   onRenameModule: SandboxCanvasProps["onRenameModule"];
@@ -466,6 +474,9 @@ export function SandboxCanvas({
   state,
   layout,
   onLayoutChange,
+  gridVisible = true,
+  snapEnabled = true,
+  onViewChange,
   onSelect,
   onRenameDepartment,
   onRenameModule,
@@ -480,6 +491,8 @@ export function SandboxCanvas({
   const runtimeRef = useRef<SandboxCanvasRuntime | null>(null);
   const pendingPositionsRef = useRef<Map<string, CanvasPosition>>(new Map());
   const freeMoveRef = useRef(false);
+  const gridVisibleRef = useRef(gridVisible);
+  const snapEnabledRef = useRef(snapEnabled);
   const syncingRef = useRef(false);
   const appliedLayoutRef = useRef<SandboxCanvasLayout | undefined>(undefined);
   const [editor, setEditor] = useState<CanvasEditor | null>(null);
@@ -491,6 +504,7 @@ export function SandboxCanvas({
   const [movingNodeId, setMovingNodeId] = useState<string | null>(null);
   const callbacksRef = useRef<SandboxCanvasCallbacks>({
     onLayoutChange,
+    onViewChange,
     onSelect,
     onRenameDepartment,
     onRenameModule,
@@ -511,6 +525,7 @@ export function SandboxCanvas({
   useEffect(() => {
     callbacksRef.current = {
       onLayoutChange,
+      onViewChange,
       onSelect,
       onRenameDepartment,
       onRenameModule,
@@ -521,6 +536,18 @@ export function SandboxCanvas({
     };
     stateRef.current = state;
   });
+  useEffect(() => {
+    gridVisibleRef.current = gridVisible;
+    snapEnabledRef.current = snapEnabled;
+    const graph = runtimeRef.current?.graph;
+    if (graph === undefined) return;
+    graph.setGridSize(snapEnabled ? SANDBOX_GRID_SIZE : 1);
+    callbacksRef.current.onViewChange?.({
+      zoom: graph.zoom(),
+      gridVisible,
+      snapEnabled,
+    });
+  }, [gridVisible, snapEnabled]);
   // Single Graph owner: create once, dispose on unmount (StrictMode-safe).
   useEffect(() => {
     const container = containerRef.current;
@@ -561,6 +588,13 @@ export function SandboxCanvas({
       callbacksRef.current.onLayoutChange(next);
     };
 
+    const emitViewState = (): void => {
+      callbacksRef.current.onViewChange?.({
+        zoom: graph.zoom(),
+        gridVisible: gridVisibleRef.current,
+        snapEnabled: snapEnabledRef.current,
+      });
+    };
     const updateGridVisual = (): void => {
       const grid = gridRef.current;
       if (grid === null) {
@@ -587,7 +621,12 @@ export function SandboxCanvas({
       grid.dataset.translate = `${offsetX},${offsetY}`;
     };
     updateGridVisual();
-    graph.on("scale", updateGridVisual);
+    emitViewState();
+    const updateScale = (): void => {
+      updateGridVisual();
+      emitViewState();
+    };
+    graph.on("scale", updateScale);
     graph.on("translate", updateGridVisual);
 
     const updateDragSnap = (freeMove: boolean): void => {
@@ -595,7 +634,9 @@ export function SandboxCanvas({
         return;
       }
       freeMoveRef.current = freeMove;
-      graph.setGridSize(freeMove ? 1 : SANDBOX_GRID_SIZE);
+      graph.setGridSize(
+        freeMove || !snapEnabledRef.current ? 1 : SANDBOX_GRID_SIZE,
+      );
     };
 
     // Set precision before X6 normalizes the initial pointer coordinates.
@@ -631,28 +672,6 @@ export function SandboxCanvas({
         if (historyWasEnabled) {
           history.enable();
         }
-      }
-    };
-
-    const reconcileModuleParents = (): void => {
-      for (const node of graph.getNodes()) {
-        if (nodeKindOf(node) !== "module") {
-          continue;
-        }
-        const sandboxModule = stateRef.current.modules.find(
-          (item) => item.id === node.id,
-        );
-        const actualParent = node.getParent();
-        if (
-          sandboxModule === undefined ||
-          actualParent === null ||
-          !actualParent.isNode() ||
-          nodeKindOf(actualParent) !== "department" ||
-          actualParent.id === sandboxModule.departmentId
-        ) {
-          continue;
-        }
-        callbacksRef.current.onMove(node.id, actualParent.id);
       }
     };
 
@@ -759,11 +778,19 @@ export function SandboxCanvas({
     if (graphRef) {
       graphRef.current = {
         getLayout: () => readLayout(graph),
+        getViewState: () => ({
+          zoom: graph.zoom(),
+          gridVisible: gridVisibleRef.current,
+          snapEnabled: snapEnabledRef.current,
+        }),
         zoomIn: () => {
-          graph.zoom(0.1);
+          graph.zoom(0.1, { minScale: 0.25, maxScale: 2 });
         },
         zoomOut: () => {
-          graph.zoom(-0.1);
+          graph.zoom(-0.1, { minScale: 0.25, maxScale: 2 });
+        },
+        resetZoom: () => {
+          graph.zoom(1, { absolute: true });
         },
         fit: () => {
           graph.zoomToFit({ padding: 24, maxScale: 1 });
@@ -771,24 +798,6 @@ export function SandboxCanvas({
         center: () => {
           graph.centerContent();
         },
-        undo: () => {
-          history.undo();
-          reconcileModuleParents();
-          history.disable();
-          fitDepartmentFrames(graph);
-          history.enable();
-          emitLayout();
-        },
-        redo: () => {
-          history.redo();
-          reconcileModuleParents();
-          history.disable();
-          fitDepartmentFrames(graph);
-          history.enable();
-          emitLayout();
-        },
-        canUndo: () => history.canUndo(),
-        canRedo: () => history.canRedo(),
         placeNode: (nodeId, position) => {
           const snappedPosition = position;
           const cell = graph.getCellById(nodeId);
@@ -958,7 +967,8 @@ export function SandboxCanvas({
       event.preventDefault();
       event.stopImmediatePropagation();
       const size = view.cell.getSize();
-      const step = event.altKey ? 1 : SANDBOX_GRID_SIZE;
+      const step =
+        event.altKey || !snapEnabledRef.current ? 1 : SANDBOX_GRID_SIZE;
       resizeDepartment(
         view.cell,
         size.width +
@@ -1164,6 +1174,37 @@ export function SandboxCanvas({
           event.preventDefault();
           openEditorForSelection(stateRef.current.selectedCellId);
         }
+        return;
+      }
+      if (
+        ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+      ) {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (target.closest("[data-field-id]") !== null) return;
+        const selectedId = stateRef.current.selectedCellId;
+        if (selectedId === null) return;
+        const node = graph.getCellById(selectedId);
+        if (node === null || !node.isNode()) return;
+        const kind = nodeKindOf(node);
+        if (kind !== "department" && kind !== "module") return;
+        event.preventDefault();
+        const step =
+          event.altKey || !snapEnabledRef.current ? 1 : SANDBOX_GRID_SIZE;
+        node.translate(
+          event.key === "ArrowRight"
+            ? step
+            : event.key === "ArrowLeft"
+              ? -step
+              : 0,
+          event.key === "ArrowDown"
+            ? step
+            : event.key === "ArrowUp"
+              ? -step
+              : 0,
+          { ui: true },
+        );
+        emitLayout();
         return;
       }
       if (event.key !== "Enter" && event.key !== " ") {
@@ -1622,7 +1663,7 @@ export function SandboxCanvas({
       rawKind,
       resolution.parentId,
       fieldType,
-      event.altKey
+      event.altKey || !snapEnabledRef.current
         ? { x: point.x, y: point.y }
         : snapSandboxPosition({ x: point.x, y: point.y }),
     );
@@ -1665,8 +1706,6 @@ export function SandboxCanvas({
   return (
     <div
       data-testid="sandbox-canvas"
-      role="application"
-      aria-label="Sandbox organization canvas. Select a node to inspect it."
       className="relative h-full w-full overflow-hidden"
       style={{ backgroundColor: CANVAS_BACKGROUND }}
       onDragOver={handleCanvasDragOver}
@@ -1679,6 +1718,7 @@ export function SandboxCanvas({
         data-grid-size={SANDBOX_GRID_SIZE}
         data-grid-major-size={SANDBOX_GRID_MAJOR_SIZE}
         aria-hidden="true"
+        hidden={!gridVisible}
         className="pointer-events-none absolute inset-0"
         style={{
           backgroundImage: [
@@ -1698,9 +1738,16 @@ export function SandboxCanvas({
       />
       <div
         ref={containerRef}
+        role="region"
+        aria-label="Organization canvas"
+        aria-describedby="sandbox-canvas-keyboard-alternative"
         tabIndex={0}
-        className="absolute inset-0 outline-none"
+        className="focus:ring-ring absolute inset-0 outline-none focus:ring-2 focus:ring-inset"
       />
+      <p id="sandbox-canvas-keyboard-alternative" className="sr-only">
+        Select canvas items with a pointer or their field controls. Use the
+        Structure panel for complete keyboard editing.
+      </p>
       {paletteDragKind !== null || dropError !== null ? (
         <div
           aria-live="polite"

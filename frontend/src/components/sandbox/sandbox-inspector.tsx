@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode, type DragEvent } from "react";
+import { useRef, useState, type ReactNode, type DragEvent } from "react";
 
 import {
   FIELD_TYPE_META,
@@ -8,12 +8,38 @@ import {
   type SandboxState,
   type UpdateSandboxFieldPatch,
 } from "@/lib/sandbox/model";
-import { Pencil, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Pencil,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectItem } from "@/components/ui/select";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 export type SandboxInspectorTargetKind =
   "department" | "module" | "field" | "link";
@@ -39,6 +65,8 @@ export interface SandboxInspectorProps {
   onSelect: (cellId: string) => void;
   onEdit?: (cellId: string) => void;
   onAddRelationship?: () => void;
+  onDuplicate?: (target: SandboxInspectorTarget) => void;
+  onToggleLifecycle?: (target: SandboxInspectorTarget) => void;
 }
 
 const FIELD_TYPES = Object.keys(FIELD_TYPE_META) as SandboxFieldType[];
@@ -99,7 +127,7 @@ function OutlineName({
             onCancel();
           }
         }}
-        className="h-8 min-w-0 px-2 text-xs"
+        className="h-11 min-w-0 px-2 text-xs xl:h-8"
       />
     );
   }
@@ -137,10 +165,23 @@ export function SandboxInspector({
   onSelect,
   onEdit,
   onAddRelationship,
+  onDuplicate,
+  onToggleLifecycle,
 }: SandboxInspectorProps) {
   const { selectedCellId } = state;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
+  const [structureQuery, setStructureQuery] = useState("");
+  const [openContextMenu, setOpenContextMenu] = useState<string | null>(null);
+  const [contextMenuAnchor, setContextMenuAnchor] =
+    useState<HTMLElement | null>(null);
+  const [collapsedDepartments, setCollapsedDepartments] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [collapsedModules, setCollapsedModules] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const outlineRef = useRef<HTMLDivElement>(null);
 
   const department = state.departments.find(
     (item) => item.id === selectedCellId,
@@ -186,19 +227,65 @@ export function SandboxInspector({
     });
   }
 
-  function rowActions(
-    kind: SandboxInspectorTargetKind,
+  function rowContextMenu(
+    kind: "department" | "module" | "field",
     id: string,
     name: string,
   ) {
-    const label = kind === "link" ? "relationship" : kind;
+    const closed =
+      state.departments.some((item) => item.id === id && item.closed) ||
+      state.modules.some((item) => item.id === id && item.closed) ||
+      state.fields.some((item) => item.id === id && item.closed);
+    return (
+      <>
+        <ContextMenuGroup>
+          <ContextMenuItem
+            className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+            onClick={() => beginEdit(id, name)}
+          >
+            <Pencil aria-hidden="true" />
+            Rename {kind}
+          </ContextMenuItem>
+          {onToggleLifecycle ? (
+            <ContextMenuItem
+              className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+              onClick={() => onToggleLifecycle({ kind, id })}
+            >
+              {closed ? "Reopen" : "Close"} {kind}
+            </ContextMenuItem>
+          ) : null}
+          {onDuplicate ? (
+            <ContextMenuItem
+              className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+              onClick={() => onDuplicate({ kind, id })}
+            >
+              Duplicate {kind}
+            </ContextMenuItem>
+          ) : null}
+        </ContextMenuGroup>
+        <ContextMenuSeparator />
+        <ContextMenuGroup>
+          <ContextMenuItem
+            className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+            variant="destructive"
+            onClick={() => onDeleteSelected({ kind, id })}
+          >
+            <Trash2 aria-hidden="true" />
+            Delete {kind}
+          </ContextMenuItem>
+        </ContextMenuGroup>
+      </>
+    );
+  }
+
+  function relationshipActions(id: string, name: string) {
     return (
       <>
         <Button
           variant="ghost"
           size="icon"
-          className="size-8 shrink-0"
-          aria-label={`Edit ${label} ${name}`}
+          className="size-11 shrink-0 xl:size-8"
+          aria-label={`Edit relationship ${name}`}
           onClick={() => onEdit?.(id)}
         >
           <Pencil className="size-3.5" aria-hidden="true" />
@@ -206,14 +293,43 @@ export function SandboxInspector({
         <Button
           variant="ghost"
           size="icon"
-          className="text-muted-foreground hover:text-destructive size-8 shrink-0"
-          aria-label={`Delete ${label} ${name}`}
-          onClick={() => onDeleteSelected({ kind, id })}
+          className="text-muted-foreground hover:text-destructive size-11 shrink-0 xl:size-8"
+          aria-label={`Delete relationship ${name}`}
+          onClick={() => onDeleteSelected({ kind: "link", id })}
         >
           <Trash2 className="size-3.5" aria-hidden="true" />
         </Button>
       </>
     );
+  }
+
+  function jumpToSelection(): void {
+    if (!selectedCellId) return;
+    setStructureQuery("");
+    const selectedModuleId = sandboxModule?.id ?? selectedFieldModule?.id;
+    const selectedDepartmentId =
+      department?.id ??
+      sandboxModule?.departmentId ??
+      selectedFieldModule?.departmentId;
+    if (selectedDepartmentId)
+      setCollapsedDepartments((current) => {
+        const next = new Set(current);
+        next.delete(selectedDepartmentId);
+        return next;
+      });
+    if (selectedModuleId)
+      setCollapsedModules((current) => {
+        const next = new Set(current);
+        next.delete(selectedModuleId);
+        return next;
+      });
+    requestAnimationFrame(() => {
+      const selected = outlineRef.current?.querySelector<HTMLElement>(
+        `[data-outline-id="${CSS.escape(selectedCellId)}"]`,
+      );
+      selected?.scrollIntoView({ block: "nearest" });
+      selected?.focus();
+    });
   }
 
   function dragPayload(
@@ -257,7 +373,7 @@ export function SandboxInspector({
               ? onAddModule(parentId!)
               : onAddField(parentId!, "text")
         }
-        className="text-muted-foreground hover:text-foreground mt-1 h-9 w-full justify-start px-2 text-xs font-normal"
+        className="text-muted-foreground hover:text-foreground mt-1 h-11 w-full justify-start px-2 text-xs font-normal xl:h-9"
       >
         Add{" "}
         {kind === "department"
@@ -271,11 +387,12 @@ export function SandboxInspector({
 
   function itemRow(
     kind: "department" | "module" | "field",
-    item: { id: string; name: string },
+    item: { id: string; name: string; closed?: boolean },
     selected: boolean,
   ) {
+    const menuId = `${kind}:${item.id}`;
     return (
-      <div className="flex min-w-0 items-center gap-0.5">
+      <div className="min-w-0">
         {editingId === item.id ? (
           <OutlineName
             id={item.id}
@@ -289,22 +406,72 @@ export function SandboxInspector({
             onCancel={() => setEditingId(null)}
           />
         ) : (
-          <button
-            type="button"
-            data-testid={`inspector-outline-${kind}-select`}
-            aria-current={selected ? "true" : undefined}
-            aria-label={`Select ${kind} ${item.name}`}
-            onClick={() => onSelect(item.id)}
-            onDoubleClick={() => beginEdit(item.id, item.name)}
-            className={`flex min-h-9 min-w-0 flex-1 items-center gap-1 rounded-[var(--radius)] px-2 text-left text-xs ${kind === "department" ? "font-semibold" : ""} ${selectedClasses(selected)}`}
+          <ContextMenu
+            open={openContextMenu === menuId}
+            onOpenChange={(open) => {
+              if (open) {
+                onSelect(item.id);
+                setOpenContextMenu(menuId);
+              } else {
+                setOpenContextMenu((current) =>
+                  current === menuId ? null : current,
+                );
+                setContextMenuAnchor(null);
+              }
+            }}
           >
-            {kind !== "field" ? <span aria-hidden="true">▾</span> : null}
-            <span className="min-w-0 flex-1 truncate" title={item.name}>
-              {item.name}
-            </span>
-          </button>
+            <ContextMenuTrigger
+              render={
+                <button
+                  type="button"
+                  data-testid={`inspector-outline-${kind}-select`}
+                  data-outline-id={item.id}
+                  aria-current={selected ? "true" : undefined}
+                  aria-label={`Select ${kind} ${item.name}`}
+                />
+              }
+              onClick={() => onSelect(item.id)}
+              onDoubleClick={() => beginEdit(item.id, item.name)}
+              onContextMenu={() => {
+                setContextMenuAnchor(null);
+                onSelect(item.id);
+              }}
+              onKeyDown={(event) => {
+                if (
+                  event.key === "ContextMenu" ||
+                  (event.shiftKey && event.key === "F10")
+                ) {
+                  event.preventDefault();
+                  onSelect(item.id);
+                  setContextMenuAnchor(event.currentTarget);
+                  setOpenContextMenu(menuId);
+                }
+              }}
+              className={`flex min-h-11 w-full min-w-0 items-center gap-1 rounded-[var(--radius)] px-2 text-left text-xs xl:min-h-9 ${kind === "department" ? "font-semibold" : ""} ${selectedClasses(selected)}`}
+            >
+              <span className="min-w-0 flex-1 truncate" title={item.name}>
+                {item.name}
+              </span>
+              {item.closed ? (
+                <Badge variant="secondary" className="text-[10px]">
+                  Closed
+                </Badge>
+              ) : null}
+            </ContextMenuTrigger>
+            <ContextMenuContent
+              data-sandbox-portal
+              anchor={contextMenuAnchor ?? undefined}
+              aria-label={`Actions for ${kind} ${item.name}`}
+              finalFocus={() =>
+                outlineRef.current?.querySelector<HTMLElement>(
+                  `[data-outline-id="${CSS.escape(item.id)}"]`,
+                ) ?? null
+              }
+            >
+              {rowContextMenu(kind, item.id, item.name)}
+            </ContextMenuContent>
+          </ContextMenu>
         )}
-        {rowActions(kind, item.id, item.name)}
       </div>
     );
   }
@@ -312,52 +479,146 @@ export function SandboxInspector({
   function renderDepartment(
     departmentItem: SandboxState["departments"][number],
   ) {
-    const departmentModules = departmentItem.moduleIds.flatMap(
+    const allDepartmentModules = departmentItem.moduleIds.flatMap(
       (id) => state.modules.find((item) => item.id === id) ?? [],
     );
+    const query = structureQuery.trim().toLocaleLowerCase();
+    const departmentMatches = departmentItem.name
+      .toLocaleLowerCase()
+      .includes(query);
+    const departmentModules = allDepartmentModules.filter(
+      (moduleItem) =>
+        query.length === 0 ||
+        departmentMatches ||
+        moduleItem.name.toLocaleLowerCase().includes(query) ||
+        fieldsForModule(moduleItem.id, moduleItem.fieldIds).some((fieldItem) =>
+          fieldItem.name.toLocaleLowerCase().includes(query),
+        ),
+    );
+    if (query && !departmentMatches && departmentModules.length === 0)
+      return null;
+    const departmentExpanded =
+      query.length > 0 || !collapsedDepartments.has(departmentItem.id);
     return (
       <li key={departmentItem.id} data-testid="inspector-outline-department">
-        {itemRow(
-          "department",
-          departmentItem,
-          selectedCellId === departmentItem.id ||
-            sandboxModule?.departmentId === departmentItem.id ||
-            selectedFieldModule?.departmentId === departmentItem.id,
-        )}
-        <ul className="border-border mt-1 ml-2 flex flex-col gap-2 border-l pl-2">
-          {departmentModules.map((moduleItem) => (
-            <li key={moduleItem.id} data-testid="inspector-outline-module">
-              {itemRow(
-                "module",
-                moduleItem,
-                selectedCellId === moduleItem.id ||
-                  field?.moduleId === moduleItem.id,
-              )}
-              <ul className="sandbox-field-list border-border mt-1 ml-2 flex flex-col gap-1 border-l pl-2">
-                {fieldsForModule(moduleItem.id, moduleItem.fieldIds).map(
-                  (fieldItem) => (
-                    <li
-                      key={fieldItem.id}
-                      data-testid="inspector-outline-field"
-                    >
-                      {itemRow(
-                        "field",
-                        fieldItem,
-                        selectedCellId === fieldItem.id,
-                      )}
-                    </li>
-                  ),
-                )}
-              </ul>
-              <div className="ml-4">
-                {addRow("field", moduleItem.id, moduleItem.name)}
-              </div>
-            </li>
-          ))}
-        </ul>
-        <div className="ml-2">
-          {addRow("module", departmentItem.id, departmentItem.name)}
+        <div className="flex min-w-0 items-center gap-0.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-11 shrink-0 xl:size-8"
+            aria-label={`${departmentExpanded ? "Collapse" : "Expand"} department ${departmentItem.name}`}
+            aria-expanded={departmentExpanded}
+            onClick={() =>
+              setCollapsedDepartments((current) => {
+                const next = new Set(current);
+                if (next.has(departmentItem.id)) next.delete(departmentItem.id);
+                else next.add(departmentItem.id);
+                return next;
+              })
+            }
+          >
+            {departmentExpanded ? (
+              <ChevronDown aria-hidden="true" />
+            ) : (
+              <ChevronRight aria-hidden="true" />
+            )}
+          </Button>
+          <div className="min-w-0 flex-1">
+            {itemRow(
+              "department",
+              departmentItem,
+              selectedCellId === departmentItem.id ||
+                sandboxModule?.departmentId === departmentItem.id ||
+                selectedFieldModule?.departmentId === departmentItem.id,
+            )}
+          </div>
         </div>
+        {departmentExpanded ? (
+          <ul className="border-border mt-1 ml-6 flex flex-col gap-2 border-l pl-2">
+            {departmentModules.map((moduleItem) => (
+              <li key={moduleItem.id} data-testid="inspector-outline-module">
+                {(() => {
+                  const moduleExpanded =
+                    query.length > 0 || !collapsedModules.has(moduleItem.id);
+                  const visibleFields = fieldsForModule(
+                    moduleItem.id,
+                    moduleItem.fieldIds,
+                  ).filter(
+                    (fieldItem) =>
+                      !query ||
+                      departmentMatches ||
+                      moduleItem.name.toLocaleLowerCase().includes(query) ||
+                      fieldItem.name.toLocaleLowerCase().includes(query),
+                  );
+                  return (
+                    <>
+                      <div className="flex min-w-0 items-center gap-0.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-11 shrink-0 xl:size-8"
+                          aria-label={`${moduleExpanded ? "Collapse" : "Expand"} module ${moduleItem.name}`}
+                          aria-expanded={moduleExpanded}
+                          onClick={() =>
+                            setCollapsedModules((current) => {
+                              const next = new Set(current);
+                              if (next.has(moduleItem.id))
+                                next.delete(moduleItem.id);
+                              else next.add(moduleItem.id);
+                              return next;
+                            })
+                          }
+                        >
+                          {moduleExpanded ? (
+                            <ChevronDown aria-hidden="true" />
+                          ) : (
+                            <ChevronRight aria-hidden="true" />
+                          )}
+                        </Button>
+                        <div className="min-w-0 flex-1">
+                          {itemRow(
+                            "module",
+                            moduleItem,
+                            selectedCellId === moduleItem.id ||
+                              field?.moduleId === moduleItem.id,
+                          )}
+                        </div>
+                      </div>
+                      {moduleExpanded ? (
+                        <ul className="sandbox-field-list border-border mt-1 ml-6 flex flex-col gap-1 border-l pl-2">
+                          {visibleFields.map((fieldItem) => (
+                            <li
+                              key={fieldItem.id}
+                              data-testid="inspector-outline-field"
+                            >
+                              {itemRow(
+                                "field",
+                                fieldItem,
+                                selectedCellId === fieldItem.id,
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {moduleExpanded && !query ? (
+                        <div className="ml-8">
+                          {addRow("field", moduleItem.id, moduleItem.name)}
+                        </div>
+                      ) : null}
+                    </>
+                  );
+                })()}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {departmentExpanded && !query ? (
+          <div className="ml-6">
+            {addRow("module", departmentItem.id, departmentItem.name)}
+          </div>
+        ) : null}
       </li>
     );
   }
@@ -412,70 +673,156 @@ export function SandboxInspector({
       className="flex flex-col gap-4"
     >
       {showOutline ? (
-        <Card data-testid="inspector-outline" className="border-0 p-0">
-          <div className="flex flex-col gap-3">
-            <div>
-              <SectionTitle>Structure</SectionTitle>
-              <p className="text-muted-foreground mt-1 text-[11px]">
-                Select an item or use Edit for its settings. Double-click a name
-                to rename it.
-              </p>
+        <div ref={outlineRef}>
+          <Card data-testid="inspector-outline" className="border-0 p-0">
+            <div className="flex flex-col gap-3">
+              <div>
+                <SectionTitle>Structure</SectionTitle>
+                <p className="text-muted-foreground mt-1 text-[11px]">
+                  Select an item for settings. Right-click or press Shift+F10
+                  for actions. Double-click a name to rename it.
+                </p>
+              </div>
+              <div className="flex min-w-0 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-11 min-w-0 flex-1 xl:min-h-8"
+                  aria-label="Expand all"
+                  onClick={() => {
+                    setCollapsedDepartments(new Set());
+                    setCollapsedModules(new Set());
+                  }}
+                >
+                  Expand all
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-11 min-w-0 flex-1 xl:min-h-8"
+                  aria-label="Collapse all"
+                  onClick={() => {
+                    setCollapsedDepartments(
+                      new Set(state.departments.map((item) => item.id)),
+                    );
+                    setCollapsedModules(
+                      new Set(state.modules.map((item) => item.id)),
+                    );
+                  }}
+                >
+                  Collapse all
+                </Button>
+              </div>
+              <div className="relative">
+                <Search
+                  aria-hidden="true"
+                  className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+                />
+                <Input
+                  type="search"
+                  aria-label="Search structure"
+                  placeholder="Search structure"
+                  value={structureQuery}
+                  onChange={(event) => setStructureQuery(event.target.value)}
+                  className="h-11 pl-8 xl:h-9"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-11 xl:min-h-8"
+                disabled={!selectedCellId}
+                onClick={jumpToSelection}
+              >
+                Jump to selection
+              </Button>
             </div>
-          </div>
 
-          {state.departments.length > 0 ? (
-            <ul className="mt-3 flex flex-col gap-3">
-              {state.departments.map(renderDepartment)}
-            </ul>
-          ) : (
-            <p className="text-muted-foreground mt-3 rounded-[var(--radius)] border border-dashed p-3 text-xs">
-              No departments yet. Add one to start your sandbox.
-            </p>
-          )}
-          {addRow("department")}
-          <div className="border-border mt-4 border-t pt-3">
-            <SectionTitle>Relationships</SectionTitle>
-            <ul className="mt-2 flex flex-col gap-1">
-              {state.links.map((item) => {
-                const name =
-                  item.label ||
-                  `${state.modules.find((m) => m.id === item.sourceModuleId)?.name ?? "Module"} to ${state.modules.find((m) => m.id === item.targetModuleId)?.name ?? "Module"}`;
+            {state.departments.length > 0 &&
+            (!structureQuery.trim() ||
+              state.departments.some((departmentItem) => {
+                const query = structureQuery.trim().toLocaleLowerCase();
                 return (
-                  <li key={item.id} className="flex min-w-0 items-center">
-                    <button
-                      type="button"
-                      className={`min-h-9 min-w-0 flex-1 truncate rounded px-2 text-left text-xs ${selectedClasses(selectedCellId === item.id)}`}
-                      onClick={() => onSelect(item.id)}
-                      aria-current={
-                        selectedCellId === item.id ? "true" : undefined
-                      }
-                      aria-label={`Select relationship ${name}`}
-                      title={name}
-                    >
-                      {name}
-                    </button>
-                    {rowActions("link", item.id, name)}
-                  </li>
+                  departmentItem.name.toLocaleLowerCase().includes(query) ||
+                  departmentItem.moduleIds.some((moduleId) => {
+                    const moduleItem = state.modules.find(
+                      (item) => item.id === moduleId,
+                    );
+                    return (
+                      moduleItem !== undefined &&
+                      (moduleItem.name.toLocaleLowerCase().includes(query) ||
+                        fieldsForModule(
+                          moduleItem.id,
+                          moduleItem.fieldIds,
+                        ).some((fieldItem) =>
+                          fieldItem.name.toLocaleLowerCase().includes(query),
+                        ))
+                    );
+                  })
                 );
-              })}
-            </ul>
-            <Button
-              variant="ghost"
-              size="sm"
-              data-testid="inspector-add-relationship"
-              disabled={state.modules.length < 2}
-              onClick={onAddRelationship}
-              className="text-muted-foreground mt-1 w-full justify-start px-2 text-xs font-normal"
-            >
-              Add Relationship
-            </Button>
-            {state.modules.length < 2 ? (
-              <p className="text-muted-foreground px-2 text-[11px]">
-                Add two modules to connect them.
-              </p>
-            ) : null}
-          </div>
-        </Card>
+              })) ? (
+              <ul className="mt-3 flex flex-col gap-3">
+                {state.departments.map(renderDepartment)}
+              </ul>
+            ) : (
+              <Empty className="mt-3 items-start gap-1 border p-3 text-left">
+                <EmptyHeader className="items-start">
+                  <EmptyDescription className="text-xs">
+                    {structureQuery.trim()
+                      ? "No structure items match."
+                      : "No departments yet. Add one to start your sandbox."}
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            )}
+            {!structureQuery.trim() ? addRow("department") : null}
+            <div className="border-border mt-4 border-t pt-3">
+              <SectionTitle>Relationships</SectionTitle>
+              <ul className="mt-2 flex flex-col gap-1">
+                {state.links.map((item) => {
+                  const name =
+                    item.label ||
+                    `${state.modules.find((m) => m.id === item.sourceModuleId)?.name ?? "Module"} to ${state.modules.find((m) => m.id === item.targetModuleId)?.name ?? "Module"}`;
+                  return (
+                    <li key={item.id} className="flex min-w-0 items-center">
+                      <button
+                        type="button"
+                        className={`min-h-11 min-w-0 flex-1 truncate rounded px-2 text-left text-xs xl:min-h-9 ${selectedClasses(selectedCellId === item.id)}`}
+                        onClick={() => onSelect(item.id)}
+                        aria-current={
+                          selectedCellId === item.id ? "true" : undefined
+                        }
+                        aria-label={`Select relationship ${name}`}
+                        title={name}
+                      >
+                        {name}
+                      </button>
+                      {relationshipActions(item.id, name)}
+                    </li>
+                  );
+                })}
+              </ul>
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="inspector-add-relationship"
+                disabled={state.modules.length < 2}
+                onClick={onAddRelationship}
+                className="text-muted-foreground mt-1 min-h-11 w-full justify-start px-2 text-xs font-normal xl:min-h-9"
+              >
+                Add Relationship
+              </Button>
+              {state.modules.length < 2 ? (
+                <p className="text-muted-foreground px-2 text-[11px]">
+                  Add two modules to connect them.
+                </p>
+              ) : null}
+            </div>
+          </Card>
+        </div>
       ) : null}
 
       {showProperties ? (
@@ -499,9 +846,12 @@ export function SandboxInspector({
                 >
                   {selectedName}
                 </p>
-                <span className="text-muted-foreground shrink-0 text-[10px] font-medium tracking-[0.12em] uppercase">
+                <Badge
+                  variant="outline"
+                  className="shrink-0 text-[10px] tracking-[0.12em] uppercase"
+                >
                   {selectedType}
-                </span>
+                </Badge>
               </div>
               <p className="text-muted-foreground text-xs">
                 {selectedLocation}
@@ -518,8 +868,8 @@ export function SandboxInspector({
               className="flex flex-col gap-3"
             >
               <SectionTitle>Basics</SectionTitle>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="inspector-dept-name">Name</Label>
+              <Field>
+                <FieldLabel htmlFor="inspector-dept-name">Name</FieldLabel>
                 <Input
                   id="inspector-dept-name"
                   data-testid="inspector-dept-name"
@@ -528,7 +878,7 @@ export function SandboxInspector({
                     onRenameDepartment(department.id, event.target.value)
                   }
                 />
-              </div>
+              </Field>
               <div className="border-border flex items-center justify-between gap-3 border-b pb-3">
                 <div>
                   <p className="text-xs font-medium">Contained modules</p>
@@ -560,8 +910,8 @@ export function SandboxInspector({
           ) : sandboxModule !== undefined ? (
             <div data-testid="inspector-module" className="flex flex-col gap-3">
               <SectionTitle>Basics</SectionTitle>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="inspector-module-name">Name</Label>
+              <Field>
+                <FieldLabel htmlFor="inspector-module-name">Name</FieldLabel>
                 <Input
                   id="inspector-module-name"
                   data-testid="inspector-module-name"
@@ -570,26 +920,29 @@ export function SandboxInspector({
                     onRenameModule(sandboxModule.id, event.target.value)
                   }
                 />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="inspector-module-dept">Parent department</Label>
-                <Select
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="inspector-module-dept">
+                  Parent department
+                </FieldLabel>
+                <NativeSelect
                   id="inspector-module-dept"
                   data-testid="inspector-module-dept"
                   aria-label="Parent department"
+                  className="w-full [&_select]:h-11 xl:[&_select]:h-8"
                   value={sandboxModule.departmentId}
                   disabled={onMoveModule === undefined}
-                  onValueChange={(value) =>
-                    onMoveModule?.(sandboxModule.id, value)
+                  onChange={(event) =>
+                    onMoveModule?.(sandboxModule.id, event.target.value)
                   }
                 >
                   {state.departments.map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
+                    <NativeSelectOption key={item.id} value={item.id}>
                       {item.name}
-                    </SelectItem>
+                    </NativeSelectOption>
                   ))}
-                </Select>
-              </div>
+                </NativeSelect>
+              </Field>
               <div className="border-border border-t pt-3">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
@@ -633,9 +986,13 @@ export function SandboxInspector({
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-muted-foreground rounded-[var(--radius)] border border-dashed p-3 text-xs">
-                    No fields yet. Add one to describe this module.
-                  </p>
+                  <Empty className="items-start gap-1 border p-3 text-left">
+                    <EmptyHeader className="items-start">
+                      <EmptyDescription className="text-xs">
+                        No fields yet. Add one to describe this module.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
                 )}
               </div>
               <DestructiveAction
@@ -647,8 +1004,8 @@ export function SandboxInspector({
             </div>
           ) : field !== undefined ? (
             <div data-testid="inspector-field" className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="inspector-field-name">Name</Label>
+              <Field>
+                <FieldLabel htmlFor="inspector-field-name">Name</FieldLabel>
                 <Input
                   id="inspector-field-name"
                   data-testid="inspector-field-name"
@@ -657,45 +1014,46 @@ export function SandboxInspector({
                     onUpdateField(field.id, { name: event.target.value })
                   }
                 />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="inspector-field-type">Type</Label>
-                <Select
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="inspector-field-type">Type</FieldLabel>
+                <NativeSelect
                   id="inspector-field-type"
                   data-testid="inspector-field-type"
                   aria-label="Field type"
+                  className="w-full [&_select]:h-11 xl:[&_select]:h-8"
                   value={field.type}
-                  onValueChange={(value) => {
+                  onChange={(event) => {
+                    const { value } = event.target;
                     if (isSandboxFieldType(value)) {
                       onUpdateField(field.id, { type: value });
                     }
                   }}
                 >
                   {FIELD_TYPES.map((type) => (
-                    <SelectItem key={type} value={type}>
+                    <NativeSelectOption key={type} value={type}>
                       {FIELD_TYPE_META[type].label}
-                    </SelectItem>
+                    </NativeSelectOption>
                   ))}
-                </Select>
-              </div>
-              <label
-                htmlFor="inspector-field-required"
-                className="flex items-center gap-2 text-sm"
-              >
-                <input
+                </NativeSelect>
+              </Field>
+              <Field className="min-h-11 min-w-11 flex-row items-center gap-2 xl:min-h-0 xl:min-w-0">
+                <Checkbox
                   id="inspector-field-required"
                   data-testid="inspector-field-required"
-                  type="checkbox"
                   checked={field.required}
-                  onChange={(event) =>
-                    onUpdateField(field.id, { required: event.target.checked })
+                  onCheckedChange={(checked) =>
+                    onUpdateField(field.id, { required: checked })
                   }
-                  className="size-4 accent-[var(--primary)]"
                 />
-                Required
-              </label>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="inspector-field-description">Description</Label>
+                <FieldLabel htmlFor="inspector-field-required">
+                  Required
+                </FieldLabel>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="inspector-field-description">
+                  Description
+                </FieldLabel>
                 <Input
                   id="inspector-field-description"
                   data-testid="inspector-field-description"
@@ -705,7 +1063,7 @@ export function SandboxInspector({
                     onUpdateField(field.id, { description: event.target.value })
                   }
                 />
-              </div>
+              </Field>
               <div className="border-border border-t pt-3">
                 <p className="text-muted-foreground mb-1 text-[10px] font-medium tracking-[0.12em] uppercase">
                   Parent module
@@ -750,8 +1108,8 @@ export function SandboxInspector({
                     ?.name ?? "Unknown module"}
                 </span>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="inspector-link-label">Label</Label>
+              <Field>
+                <FieldLabel htmlFor="inspector-link-label">Label</FieldLabel>
                 <Input
                   id="inspector-link-label"
                   data-testid="inspector-link-label"
@@ -761,62 +1119,72 @@ export function SandboxInspector({
                     onUpdateLinkLabel(link.id, event.target.value)
                   }
                 />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="inspector-link-type">Direction</Label>
-                <Select
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="inspector-link-type">Direction</FieldLabel>
+                <NativeSelect
                   id="inspector-link-type"
                   data-testid="inspector-link-type"
                   aria-label="Relationship type"
+                  className="w-full [&_select]:h-11 xl:[&_select]:h-8"
                   value={link.relationshipType ?? "directed"}
                   disabled
-                  onValueChange={() => undefined}
                 >
-                  <SelectItem value="directed">
+                  <NativeSelectOption value="directed">
                     Directed · source to target
-                  </SelectItem>
-                </Select>
-              </div>
+                  </NativeSelectOption>
+                </NativeSelect>
+              </Field>
               <DestructiveAction
                 label="Delete relationship"
                 onClick={() => onDeleteSelected({ kind: "link", id: link.id })}
               />
             </div>
           ) : (
-            <div data-testid="inspector-empty" className="flex flex-col gap-3">
-              <p className="text-muted-foreground text-xs">
-                Select a department, module, field, or relationship on the
-                canvas or in the Structure panel to edit it here.
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="inspector-empty-add-department"
-                onClick={onAddDepartment}
-                className="w-full"
-              >
-                + Add first department
-              </Button>
-              <dl className="border-border bg-muted grid grid-cols-2 gap-2 rounded-[var(--radius)] border p-3 text-xs">
-                <div>
-                  <dt className="text-muted-foreground">Departments</dt>
-                  <dd className="font-semibold">{state.departments.length}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Modules</dt>
-                  <dd className="font-semibold">{state.modules.length}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Fields</dt>
-                  <dd className="font-semibold">{state.fields.length}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Relationships</dt>
-                  <dd className="font-semibold">{state.links.length}</dd>
-                </div>
-              </dl>
-            </div>
+            <Empty
+              data-testid="inspector-empty"
+              className="items-stretch gap-3 border-0 p-0 text-left"
+            >
+              <EmptyHeader className="max-w-none items-start">
+                <EmptyTitle>Nothing selected</EmptyTitle>
+                <EmptyDescription className="text-xs">
+                  Select a department, module, field, or relationship on the
+                  canvas or in the Structure panel to edit it here.
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent className="max-w-none items-stretch">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="inspector-empty-add-department"
+                  onClick={onAddDepartment}
+                  className="w-full"
+                >
+                  + Add first department
+                </Button>
+                <dl className="border-border bg-muted grid grid-cols-2 gap-2 rounded-[var(--radius)] border p-3 text-xs">
+                  <div>
+                    <dt className="text-muted-foreground">Departments</dt>
+                    <dd className="font-semibold">
+                      {state.departments.length}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Modules</dt>
+                    <dd className="font-semibold">{state.modules.length}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Fields</dt>
+                    <dd className="font-semibold">{state.fields.length}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Relationships</dt>
+                    <dd className="font-semibold">{state.links.length}</dd>
+                  </div>
+                </dl>
+              </EmptyContent>
+            </Empty>
           )}
         </div>
       ) : null}

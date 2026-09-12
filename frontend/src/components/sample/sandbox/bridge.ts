@@ -3,7 +3,7 @@ import type {
   SandboxState,
   UpdateSandboxFieldPatch,
 } from "@/lib/sandbox/model";
-import type { Design, Field } from "./model";
+import { normalizeField, type Design, type Field } from "./model";
 
 export const canvasFieldId = (moduleId: string, fieldId: string) =>
   `sample-field:${encodeURIComponent(moduleId)}:${encodeURIComponent(fieldId)}`;
@@ -18,20 +18,26 @@ export function sampleField(design: Design, projectedId: string) {
 }
 export const sampleTypes: Record<SandboxFieldType, string> = {
   text: "Text",
+  "long-text": "Long text",
   int: "Integer",
   decimal: "Number",
   boolean: "Checkbox",
   date: "Date",
-  datetime: "Date time",
+  datetime: "Date/Time",
   select: "Select",
+  email: "Email",
+  url: "URL",
 };
 function canvasType(type: string): SandboxFieldType {
+  if (type === "Long text") return "long-text";
   if (type === "Integer") return "int";
   if (type === "Number" || type === "Decimal") return "decimal";
   if (type === "Checkbox") return "boolean";
   if (type === "Date") return "date";
-  if (type === "Date time") return "datetime";
+  if (type === "Date time" || type === "Date/Time") return "datetime";
   if (type === "Select") return "select";
+  if (type === "Email") return "email";
+  if (type === "URL") return "url";
   return "text";
 }
 export function projectDesign(
@@ -46,12 +52,14 @@ export function projectDesign(
       moduleIds: design.modules
         .filter((module) => module.department === item.id)
         .map((module) => module.id),
+      closed: item.closed,
     })),
     modules: design.modules.map((item) => ({
       id: item.id,
       name: item.name,
       departmentId: item.department,
       fieldIds: item.fields.map((field) => canvasFieldId(item.id, field.id)),
+      closed: item.closed,
     })),
     fields: design.modules.flatMap((item) =>
       item.fields.map((field) => ({
@@ -61,6 +69,7 @@ export function projectDesign(
         type: canvasType(field.type),
         required: field.required,
         description: field.description ?? "",
+        closed: field.closed,
       })),
     ),
     links: design.relationships.map((item) => ({
@@ -84,17 +93,28 @@ export function updateProjectedField(
   if (patch.name !== undefined) metadata.name = patch.name;
   if (patch.required !== undefined) metadata.required = patch.required;
   if (patch.description !== undefined) metadata.description = patch.description;
-  if (patch.type !== undefined && patch.type !== canvasType(target.field.type))
-    metadata.type = sampleTypes[patch.type];
+  const nextType = patch.type === undefined ? null : sampleTypes[patch.type];
+  const typeChanged =
+    nextType !== null && patch.type !== canvasType(target.field.type);
+  if (typeChanged) metadata.type = nextType;
   return {
     ...design,
     modules: design.modules.map((item) =>
       item.id === target.moduleId
         ? {
             ...item,
-            fields: item.fields.map((field) =>
-              field.id === target.field.id ? { ...field, ...metadata } : field,
-            ),
+            fields: item.fields.map((field) => {
+              if (field.id !== target.field.id) return field;
+              const updated = { ...field, ...metadata };
+              return typeChanged
+                ? normalizeField({
+                    ...updated,
+                    value: "",
+                    options: "",
+                    config: undefined,
+                  })
+                : updated;
+            }),
           }
         : item,
     ),

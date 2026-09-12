@@ -52,6 +52,124 @@ test("old Sandbox URL opens only the new sample Designer", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("canvas view controls expose zoom, grid, snap, help, and a focusable region", async ({
+  page,
+}) => {
+  await gotoSandbox(page);
+
+  const toolbar = page.getByRole("toolbar", {
+    name: "Canvas view controls",
+    exact: true,
+  });
+  const zoom = toolbar.getByRole("status", {
+    name: "Canvas zoom",
+    exact: true,
+  });
+  await expect(toolbar.getByRole("button", { name: "Zoom out" })).toBeVisible();
+  await expect(toolbar.getByRole("button", { name: "Zoom in" })).toBeVisible();
+  await expect(
+    toolbar.getByRole("button", { name: "Fit canvas" }),
+  ).toBeVisible();
+  await expect(
+    toolbar.getByRole("button", { name: "Center canvas" }),
+  ).toBeVisible();
+
+  const view = toolbar.getByRole("button", { name: "View canvas" });
+  await view.click();
+  await page.getByRole("menuitem", { name: "Reset zoom" }).click();
+  await expect(zoom).toHaveText("100%");
+  await toolbar.getByRole("button", { name: "Zoom out" }).click();
+  await expect(zoom).toHaveText("90%");
+  await toolbar.getByRole("button", { name: "Zoom in" }).click();
+  await expect(zoom).toHaveText("100%");
+
+  await view.click();
+  const grid = page.getByRole("menuitemcheckbox", { name: /Grid/ });
+  await expect(grid).toHaveAttribute("aria-checked", "true");
+  await expect(grid).toContainText("On");
+  await grid.click();
+  await expect(page.getByTestId("sandbox-grid")).toBeHidden();
+
+  await view.click();
+  const snap = page.getByRole("menuitemcheckbox", { name: /Snap/ });
+  await expect(snap).toHaveAttribute("aria-checked", "true");
+  await expect(snap).toContainText("On");
+  await snap.click();
+
+  await toolbar.getByRole("button", { name: "Center canvas" }).click();
+  const department = node(page, "Operations");
+  await page
+    .getByRole("button", {
+      name: "Select department Operations",
+      exact: true,
+    })
+    .click();
+  const departmentFrame = department
+    .locator("xpath=ancestor::*[@data-cell-id][1]")
+    .locator("rect")
+    .first();
+  const resizeGrip = canvas(page)
+    .getByRole("button", { name: "Resize department", exact: true })
+    .first();
+  const initialWidth = Number(await departmentFrame.getAttribute("width"));
+  await resizeGrip.focus();
+  await resizeGrip.press("ArrowRight");
+  await expect(departmentFrame).toHaveAttribute(
+    "width",
+    String(initialWidth + 1),
+  );
+
+  await view.click();
+  await page.getByRole("menuitemcheckbox", { name: /Snap/ }).click();
+  await resizeGrip.focus();
+  await resizeGrip.press("ArrowRight");
+  await expect(departmentFrame).toHaveAttribute(
+    "width",
+    String(initialWidth + 25),
+  );
+  await resizeGrip.press("Alt+ArrowRight");
+  await expect(departmentFrame).toHaveAttribute(
+    "width",
+    String(initialWidth + 26),
+  );
+
+  const actionStatus = page.getByRole("status", {
+    name: "Canvas action",
+    exact: true,
+  });
+  await toolbar.getByRole("button", { name: "Center canvas" }).click();
+  await expect(actionStatus).toHaveText("Canvas centered.");
+  await toolbar.getByRole("button", { name: "Fit canvas" }).click();
+  await expect(actionStatus).toHaveText("Canvas fitted.");
+
+  await view.click();
+  await page.getByRole("menuitem", { name: "Canvas help" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Canvas controls", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Use the visible Undo and Redo controls for design changes. Use Structure for complete keyboard editing.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+
+  const canvasRegion = canvas(page).getByRole("region", {
+    name: "Organization canvas",
+    exact: true,
+  });
+  await canvasRegion.focus();
+  await expect(canvasRegion).toBeFocused();
+  await expect
+    .poll(() =>
+      canvasRegion.evaluate(
+        (element) => getComputedStyle(element).boxShadow !== "none",
+      ),
+    )
+    .toBe(true);
+  await expect(canvas(page).getByRole("application")).toHaveCount(0);
+});
+
 test("shared canvas supports F2 names field types and cancelled edits in Designer", async ({
   page,
 }) => {
@@ -108,9 +226,10 @@ test("shared canvas supports F2 names field types and cancelled edits in Designe
     }),
   ).toBeVisible();
   await expect(
-    page
-      .getByRole("complementary", { name: "Design inspector" })
-      .getByLabel("Serial number field type", { exact: true }),
+    page.getByRole("combobox", {
+      name: "Serial number field type",
+      exact: true,
+    }),
   ).toHaveValue("Integer");
 });
 
@@ -186,8 +305,8 @@ test("roundtrips embedded Designer geometry through undo, redo, and remount", as
   await expect(undo).toBeDisabled();
   await redo.click();
   await expect(frame).toHaveAttribute("width", resizedWidth);
-  await page.getByRole("button", { name: "Automation", exact: true }).click();
-  await page.getByRole("button", { name: "Designer", exact: true }).click();
+  await page.getByRole("tab", { name: "Automation", exact: true }).click();
+  await page.getByRole("tab", { name: "Designer", exact: true }).click();
   await expect(frame).toHaveAttribute("width", resizedWidth);
 });
 
@@ -222,8 +341,19 @@ test("undoes an embedded Designer reparent and its geometry in one action", asyn
     name: "Resize department",
     exact: true,
   });
-  await resizeGrip.focus();
-  for (let step = 0; step < 15; step += 1) await resizeGrip.press("ArrowRight");
+  const resizeBounds = await resizeGrip.boundingBox();
+  if (!resizeBounds) throw new Error("Commercial resize grip is missing");
+  await page.mouse.move(
+    resizeBounds.x + resizeBounds.width / 2,
+    resizeBounds.y + resizeBounds.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    resizeBounds.x + resizeBounds.width / 2 + 360,
+    resizeBounds.y + resizeBounds.height / 2,
+    { steps: 5 },
+  );
+  await page.mouse.up();
   await page.getByRole("button", { name: "Fit canvas", exact: true }).click();
   const historyStatus = page.getByText(
     /^Tab-local draft · \d+ undo steps available$/,

@@ -13,7 +13,7 @@
 - FastAPI owns application data access; never write application data through Supabase Data API. Alembic owns application schema; no application migrations/seeds under `supabase/`.
 - Backend `app/core/` owns infrastructure, `app/common/` shared application code, and `app/systems/<capability>/` domain behavior.
 - Active capabilities: auth, users, roles, departments, modules, fields, records, relationships, lifecycle, audit. Other systems remain placeholders until requested.
-- Read scoped guides in `backend/`, `backend/migrations/`, `frontend/`, `infra/`, `supabase/`, and `docs/`; deeper architecture starts at `docs/architecture/README.md`.
+- Read the nearest scoped guides for files in scope; read additional guides only when the task crosses those boundaries. Use `docs/architecture/README.md` to locate relevant architecture details when needed.
 
 ## Task scope and approval
 - Before editing, define outcome, non-goals, expected files, and narrowest proof; inspect relevant implementation, tests, configuration, and instructions.
@@ -49,20 +49,20 @@ Pre-push gate requirements (not additional manual runs):
 
 ## Codex orchestration
 - For implementation, troubleshooting, multi-agent work, or explicit evaluation, read `.agents/orchestration/PROTOCOL.md`; apply refresh-context → act → inspect-evidence → evaluate. If missing, report it and follow this guide without claiming full setup.
-- Inherit the global parent `gpt-6-astra` / `medium` and approval settings; default subagent fallback is `gpt-5.6-luna` / `max`. Shared workers live in `~/.codex/agents/`; optional project overrides live in `.codex/agents/`; skills live in `.agents/skills/`. Read only relevant skills; repository rules/commands override mismatched generic examples.
+- Inherit parent model, effort, fallback, and approval settings from the active configuration; do not override them from this guide. Shared workers live in `~/.codex/agents/`; optional project overrides live in `.codex/agents/`; skills live in `.agents/skills/`. Read only relevant skills; repository rules/commands override mismatched generic examples.
 - Handle small tasks directly; automatically delegate substantial bounded work when it improves quality or time. Do not duplicate verified discovery or assign the same investigation without distinct responsibilities.
 - Planning-only requests produce investigation and a plan, not implementation. Parent owns decomposition, dependencies, integration, conflict resolution, and final review.
-- Choose a shared role by responsibility and complexity; include domain ownership and the applicable skill paths below in each assignment. Difficult escalations, integration, final review, and re-verification remain with the Astra-medium parent.
+- Choose a shared role by responsibility and complexity; include domain ownership and the applicable skill paths below in each assignment. Difficult escalations, integration, final review, and re-verification remain with the parent.
 
 ### Worker routing
 
-| Work | Worker | Model | Effort |
-| --- | --- | --- | --- |
-| Exact searches, inventories, prescribed checks | `utility` | `gpt-5.6-luna` | `max` |
-| Repository exploration and behavior tracing | `explore` | `gpt-5.6-luna` | `max` |
-| Assigned live-browser reproduction and acceptance | `browser` | `gpt-5.6-luna` | `max` |
-| All implementation and test authoring, routine or substantial | `implement` | `gpt-6-astra` | `medium` |
-| Difficult debugging, architecture planning, security first pass (one mode) | `analyst` | `gpt-6-astra` | `medium` |
+| Work | Worker |
+| --- | --- |
+| Exact searches, inventories, prescribed checks | `utility` |
+| Repository exploration and behavior tracing | `explore` |
+| Assigned live-browser reproduction and acceptance | `browser` |
+| All implementation and test authoring, routine or substantial | `implement` |
+| Difficult debugging, architecture planning, security first pass (one mode) | `analyst` |
 
 Use these exact configured role names; `explorer` is not an alias for `explore`. `general` is retired: `implement` owns all delegated editing and test authoring. Preserve named-role model/effort settings unless the user requests an override.
 
