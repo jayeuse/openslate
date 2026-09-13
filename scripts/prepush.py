@@ -65,16 +65,83 @@ class PrepushPlan:
         }
 
 
-def _add_frontend_steps(steps: list[Step]) -> None:
-    steps.extend(
-        (
+def _frontend_boundary_check() -> str:
+    return (
+        "test -z \"${BACKEND_URL+x}\" && "
+        "test -z \"${SUPABASE_SERVER_URL+x}\" && "
+        "test -z \"${DATABASE_URL+x}\" && "
+        "test -z \"${MIGRATION_DATABASE_URL+x}\" && "
+        "test -z \"${SUPABASE_SECRET_KEY+x}\" && "
+        "test -z \"${SECURITY_EVENT_SERVER_KEY+x}\" && "
+        "test -z \"${LOG_DIR+x}\" && "
+        "test -z \"${NEXT_PUBLIC_SUPABASE_URL+x}\" && "
+        "test -z \"${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY+x}\" && "
+        "test -z \"${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED+x}\""
+    )
+
+
+def _add_frontend_steps(
+    steps: list[Step], *, frontend_checks: bool, container_build: bool
+) -> None:
+    if frontend_checks:
+        steps.append(
             Step(
                 name="frontend-check",
                 gate="frontend",
                 phase="fast",
                 cwd="frontend",
                 command=("npm", "run", "check"),
-            ),
+            )
+        )
+    if container_build:
+        steps.extend(
+            (
+                Step(
+                    name="frontend-container-build",
+                    gate="containers",
+                    phase="resource",
+                    cwd=".",
+                    command=(
+                        "python3",
+                        "scripts/build_frontend_image.py",
+                        "--env-file",
+                        "frontend/.env.local",
+                        "--tag",
+                        "openslate-frontend:ci",
+                        "--runtime-output",
+                        "frontend/test-results/frontend-runtime.tgz",
+                    ),
+                    lane="frontend",
+                ),
+                Step(
+                    name="frontend-container-boundary",
+                    gate="containers",
+                    phase="resource",
+                    cwd=".",
+                    command=(
+                        "docker",
+                        "run",
+                        "--rm",
+                        "--entrypoint",
+                        "/bin/sh",
+                        "openslate-frontend:ci",
+                        "-c",
+                        _frontend_boundary_check(),
+                    ),
+                    lane="frontend",
+                ),
+                Step(
+                    name="frontend-runtime-restore",
+                    gate="frontend",
+                    phase="resource",
+                    cwd="frontend",
+                    command=("tar", "-xzf", "test-results/frontend-runtime.tgz"),
+                    lane="frontend",
+                ),
+            )
+        )
+    else:
+        steps.append(
             Step(
                 name="frontend-build",
                 gate="frontend",
@@ -82,7 +149,9 @@ def _add_frontend_steps(steps: list[Step]) -> None:
                 cwd="frontend",
                 command=("npm", "run", "build"),
                 lane="frontend",
-            ),
+            )
+        )
+    steps.append(
             Step(
                 name="frontend-browser",
                 gate="frontend",
@@ -91,12 +160,15 @@ def _add_frontend_steps(steps: list[Step]) -> None:
                 command=(
                     "npm",
                     "run",
-                    "test:e2e:production",
+                    "test:e2e:smoke:production",
                     "--",
                     "--workers=2",
                 ),
                 lane="frontend",
-            ),
+            )
+    )
+    if frontend_checks:
+        steps.append(
             Step(
                 name="frontend-coverage-plan",
                 gate="frontend",
@@ -111,9 +183,8 @@ def _add_frontend_steps(steps: list[Step]) -> None:
                 ),
                 lane="frontend",
                 needs_base=True,
-            ),
+            )
         )
-    )
 
 
 def _add_backend_steps(steps: list[Step]) -> None:
@@ -205,55 +276,7 @@ def _add_fullstack_step(steps: list[Step]) -> None:
 def _add_container_steps(
     steps: list[Step], *, frontend_container: bool, backend_container: bool
 ) -> None:
-    boundary_check = (
-        "test -z \"${BACKEND_URL+x}\" && "
-        "test -z \"${SUPABASE_SERVER_URL+x}\" && "
-        "test -z \"${DATABASE_URL+x}\" && "
-        "test -z \"${MIGRATION_DATABASE_URL+x}\" && "
-        "test -z \"${SUPABASE_SECRET_KEY+x}\" && "
-        "test -z \"${SECURITY_EVENT_SERVER_KEY+x}\" && "
-        "test -z \"${LOG_DIR+x}\" && "
-        "test -z \"${NEXT_PUBLIC_SUPABASE_URL+x}\" && "
-        "test -z \"${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY+x}\" && "
-        "test -z \"${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED+x}\""
-    )
-    if frontend_container:
-        steps.extend(
-            (
-                Step(
-                    name="frontend-container-build",
-                    gate="containers",
-                    phase="resource",
-                    cwd=".",
-                    command=(
-                        "python3",
-                        "scripts/build_frontend_image.py",
-                        "--env-file",
-                        "frontend/.env.local",
-                        "--tag",
-                        "openslate-frontend:ci",
-                    ),
-                    lane="frontend",
-                ),
-                Step(
-                    name="frontend-container-boundary",
-                    gate="containers",
-                    phase="resource",
-                    cwd=".",
-                    command=(
-                        "docker",
-                        "run",
-                        "--rm",
-                        "--entrypoint",
-                        "/bin/sh",
-                        "openslate-frontend:ci",
-                        "-c",
-                        boundary_check,
-                    ),
-                    lane="frontend",
-                ),
-            )
-        )
+    del frontend_container  # Frontend image preparation belongs before its smoke run.
     if backend_container:
         steps.append(
             Step(
@@ -280,8 +303,14 @@ def build_plan(scope: ChangeScope, root: Path) -> PrepushPlan:
 
     del root  # The plan uses repository-relative working directories.
     steps: list[Step] = []
-    if scope.decisions["frontend"].run:
-        _add_frontend_steps(steps)
+    frontend_checks = scope.decisions["frontend"].run
+    frontend_container = scope.decisions["frontend_container"].run
+    if frontend_checks or frontend_container:
+        _add_frontend_steps(
+            steps,
+            frontend_checks=frontend_checks,
+            container_build=frontend_container,
+        )
     if scope.decisions["backend"].run:
         _add_backend_steps(steps)
     if scope.decisions["fullstack"].run:

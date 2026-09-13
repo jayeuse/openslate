@@ -56,8 +56,9 @@ class CiScopeTests(unittest.TestCase):
         )
 
         self.assertTrue(scope.decisions["frontend"].run)
-        self.assertTrue(scope.decisions["containers"].run)
-        self.assertTrue(scope.decisions["frontend_container"].run)
+        self.assertFalse(scope.decisions["containers"].run)
+        self.assertFalse(scope.decisions["frontend_container"].run)
+        self.assertTrue(scope.decisions["frontend_mobile"].run)
         self.assertFalse(scope.decisions["backend_container"].run)
         self.assertFalse(scope.decisions["backend"].run)
         self.assertFalse(scope.decisions["fullstack"].run)
@@ -106,12 +107,58 @@ class CiScopeTests(unittest.TestCase):
         backend_dockerfile = ci_scope.classify_paths(
             ["infra/docker/backend.Dockerfile"], base_ref="base"
         )
-        for scope in (frontend, frontend_dockerfile):
-            self.assertTrue(scope.decisions["frontend_container"].run)
-            self.assertFalse(scope.decisions["backend_container"].run)
+        self.assertFalse(frontend.decisions["frontend_container"].run)
+        self.assertFalse(frontend.decisions["backend_container"].run)
+        self.assertTrue(frontend.decisions["frontend_mobile"].run)
+        self.assertTrue(frontend_dockerfile.decisions["frontend_container"].run)
+        self.assertFalse(frontend_dockerfile.decisions["backend_container"].run)
         for scope in (backend, backend_dockerfile):
             self.assertFalse(scope.decisions["frontend_container"].run)
             self.assertTrue(scope.decisions["backend_container"].run)
+
+    def test_frontend_container_inputs_are_narrow_and_explicit(self):
+        for path in (
+            "frontend/package-lock.json",
+            "frontend/next.config.ts",
+            "frontend/scripts/start-standalone.mjs",
+            "frontend/src/lib/environment.ts",
+        ):
+            with self.subTest(path=path):
+                scope = ci_scope.classify_paths([path], base_ref="base")
+                self.assertTrue(scope.decisions["frontend_container"].run)
+                self.assertTrue(scope.decisions["containers"].run)
+
+        scope = ci_scope.classify_paths(
+            ["frontend/src/lib/sandbox/model.ts"], base_ref="base"
+        )
+        self.assertFalse(scope.decisions["frontend_container"].run)
+        self.assertFalse(scope.decisions["containers"].run)
+
+    def test_mobile_and_extended_frontend_decisions_are_independent(self):
+        layout = ci_scope.classify_paths(
+            ["frontend/src/components/app-shell.tsx"], base_ref="base"
+        )
+        logic = ci_scope.classify_paths(
+            ["frontend/src/lib/sandbox/model.ts"], base_ref="base"
+        )
+        extended = ci_scope.classify_paths(
+            ["frontend/tests/browser/sample/sandbox-storage-resilience.spec.ts"],
+            base_ref="base",
+        )
+        new_browser_spec = ci_scope.classify_paths(
+            ["frontend/tests/browser/new-feature.test.tsx"], base_ref="base"
+        )
+
+        self.assertTrue(layout.decisions["frontend_mobile"].run)
+        self.assertFalse(logic.decisions["frontend_mobile"].run)
+        backend_style = ci_scope.classify_paths(
+            ["backend/app/static/internal.css"], base_ref="base"
+        )
+        self.assertFalse(backend_style.decisions["frontend_mobile"].run)
+        self.assertTrue(extended.decisions["frontend_mobile"].run)
+        self.assertTrue(extended.decisions["frontend_extended"].run)
+        self.assertTrue(new_browser_spec.decisions["frontend_extended"].run)
+        self.assertFalse(layout.decisions["frontend_extended"].run)
 
     def test_shared_docker_context_rebuilds_both_images(self):
         scope = ci_scope.classify_paths([".dockerignore"], base_ref="base")
@@ -179,6 +226,10 @@ class CiScopeTests(unittest.TestCase):
                     "reason_containers",
                     "run_frontend_container",
                     "reason_frontend_container",
+                    "run_frontend_mobile",
+                    "reason_frontend_mobile",
+                    "run_frontend_extended",
+                    "reason_frontend_extended",
                     "run_backend_container",
                     "reason_backend_container",
                     "run_fullstack",

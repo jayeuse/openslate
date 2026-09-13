@@ -119,13 +119,15 @@ or rollback step.
 ### Frontend workflow
 
 `.github/workflows/frontend.yml` always reports its stable required-check
-aggregator. For relevant changes it runs quality checks, builds the standalone
-frontend image once with safe public build arguments and BuildKit caching, then
-tests that image across Chromium, mobile Chromium, Firefox, and WebKit. A separate
-coverage plan runs three deterministic Chromium-backed shards and applies the 90%
-overall and changed-line gates once after a fail-closed merge. Successful uploads
-contain compact reports rather than raw V8 captures. The workflow does not publish
-an image or deploy the application.
+aggregator. For relevant changes it runs quality checks and creates one reusable
+standalone runtime through either the native or conditional image-build path.
+Fixed desktop/mobile smoke and conditional mobile/extended acceptance consume that
+runtime. One isolated/HTTP part plus three duration-balanced desktop-Chromium parts
+apply the 90% overall and changed-line gates once after a fail-closed merge.
+Firefox and WebKit run on `main`; nightly compatibility adds Chromium and mobile
+Chromium and reports failures through a repository issue. Successful uploads contain
+only bounded runtime and compact coverage evidence. Neither workflow publishes an
+image or deploys the application.
 
 ### Full-stack release-gate workflow
 

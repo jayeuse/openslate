@@ -7,6 +7,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -106,6 +107,7 @@ def build_image(
     env_file: Path,
     tag: str,
     *,
+    runtime_output: Path | None = None,
     run: CommandRunner | None = None,
 ) -> int:
     """Ensure projection exists, then build the image and preserve Docker's status."""
@@ -125,7 +127,72 @@ def build_image(
     except OSError as error:
         print(f"Docker build could not run: {error}", file=sys.stderr)
         return 127
-    return int(result.returncode)
+    status = int(result.returncode)
+    if status != 0 or runtime_output is None:
+        return status
+    return export_runtime(root, tag, runtime_output, run=command_runner)
+
+
+def export_runtime(
+    root: Path,
+    tag: str,
+    destination: Path,
+    *,
+    run: CommandRunner | None = None,
+) -> int:
+    """Export one created image into the frontend's normalized runtime archive."""
+
+    command_runner = run or subprocess.run
+    container_id = ""
+    try:
+        created = command_runner(
+            ["docker", "create", tag],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if int(created.returncode) != 0:
+            return int(created.returncode)
+        container_id = str(created.stdout or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", container_id):
+            print("Docker returned an invalid container identifier", file=sys.stderr)
+            return 2
+        with tempfile.TemporaryDirectory(prefix="openslate-frontend-runtime-") as directory:
+            source = Path(directory) / "container-root"
+            source.mkdir()
+            copied = command_runner(
+                ["docker", "cp", f"{container_id}:/app/.", str(source)],
+                cwd=root,
+                check=False,
+            )
+            if int(copied.returncode) != 0:
+                return int(copied.returncode)
+            packaged = command_runner(
+                [
+                    "node",
+                    "frontend/scripts/package-runtime.cjs",
+                    "--mode=container",
+                    f"--source={source}",
+                    f"--output={destination}",
+                ],
+                cwd=root,
+                check=False,
+            )
+            return int(packaged.returncode)
+    except OSError as error:
+        print(f"Frontend runtime export could not run: {error}", file=sys.stderr)
+        return 127
+    finally:
+        if container_id:
+            try:
+                command_runner(
+                    ["docker", "rm", "-f", container_id],
+                    cwd=root,
+                    check=False,
+                )
+            except OSError:
+                pass
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -137,10 +204,23 @@ def main(argv: list[str] | None = None) -> int:
         help="Generated frontend dotenv projection",
     )
     parser.add_argument("--tag", default="openslate-frontend:ci")
+    parser.add_argument(
+        "--runtime-output",
+        type=Path,
+        help="Optional normalized runtime archive exported from the built image",
+    )
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
     env_file = args.env_file if args.env_file.is_absolute() else root / args.env_file
-    return build_image(root, env_file, args.tag)
+    runtime_output = args.runtime_output
+    if runtime_output is not None and not runtime_output.is_absolute():
+        runtime_output = root / runtime_output
+    return build_image(
+        root,
+        env_file,
+        args.tag,
+        runtime_output=runtime_output,
+    )
 
 
 if __name__ == "__main__":

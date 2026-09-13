@@ -27,6 +27,9 @@ export const DEFAULT_NEW_TEST_DURATION_MS = 60_000;
 export const MAX_COVERAGE_TEST_DURATION_MS = 600_000;
 export const MAX_COVERAGE_TIMING_RECORDS = 10_000;
 export const PR_CHROMIUM_PART_COUNT = 3;
+export const MAX_PREDICTED_PART_IMBALANCE_PERCENT = 15;
+export const DEGRADED_PART_IMBALANCE_PERCENT = 25;
+export const DEGRADED_PART_RUN_LIMIT = 3;
 export const COVERAGE_PROFILES = Object.freeze({
   pr: Object.freeze({
     projects: Object.freeze(["isolated", "http", "chromium"]),
@@ -136,11 +139,16 @@ export function normalizeDurationProfile(profile) {
     return {
       version: COVERAGE_TIMING_VERSION,
       window: COVERAGE_TIMING_WINDOW,
+      degradedRuns: 0,
       tests: [],
     };
   if (
     typeof profile !== "object" ||
     profile.version !== COVERAGE_TIMING_VERSION ||
+    (profile.degradedRuns !== undefined &&
+      (!Number.isInteger(profile.degradedRuns) ||
+        profile.degradedRuns < 0 ||
+        profile.degradedRuns > DEGRADED_PART_RUN_LIMIT)) ||
     !Array.isArray(profile.tests) ||
     profile.tests.length > MAX_COVERAGE_TIMING_RECORDS
   )
@@ -155,6 +163,7 @@ export function normalizeDurationProfile(profile) {
   return {
     version: COVERAGE_TIMING_VERSION,
     window: COVERAGE_TIMING_WINDOW,
+    degradedRuns: profile.degradedRuns ?? 0,
     tests: [...records.values()].sort((left, right) =>
       timingRecordKey(left).localeCompare(timingRecordKey(right)),
     ),
@@ -213,6 +222,7 @@ export function updateDurationProfile(previous, observations) {
   return {
     version: COVERAGE_TIMING_VERSION,
     window: COVERAGE_TIMING_WINDOW,
+    degradedRuns: base.degradedRuns,
     tests: [...records.values()].sort((left, right) =>
       timingRecordKey(left).localeCompare(timingRecordKey(right)),
     ),
@@ -407,7 +417,13 @@ function assertCoveragePlanShape(plan) {
     !plan.timing ||
     plan.timing.version !== COVERAGE_TIMING_VERSION ||
     !Number.isInteger(plan.timing.defaultDurationMs) ||
-    plan.timing.defaultDurationMs < 1
+    plan.timing.defaultDurationMs < 1 ||
+    !Array.isArray(plan.timing.predictedChromiumDurationsMs) ||
+    plan.timing.predictedChromiumDurationsMs.length !==
+      profile.chromiumPartCount ||
+    plan.timing.predictedChromiumDurationsMs.some(
+      (duration) => !Number.isInteger(duration) || duration < 1,
+    )
   )
     throw new Error("Coverage plan timing metadata is invalid");
   if (!plan.timingProfile)
@@ -538,6 +554,17 @@ export function createCoverageParts(
         manifestKey(right.projectName, right.id),
       ),
     );
+  const predictedDurations = chromiumParts.map(
+    (part) => part.estimatedDurationMs,
+  );
+  const predictedMaximum = Math.max(...predictedDurations);
+  const predictedMinimum = Math.min(...predictedDurations);
+  const predictedImbalancePercent =
+    ((predictedMaximum - predictedMinimum) / predictedMaximum) * 100;
+  if (predictedImbalancePercent > MAX_PREDICTED_PART_IMBALANCE_PERCENT)
+    throw new Error(
+      `Coverage part plan is ${predictedImbalancePercent.toFixed(1)}% imbalanced; split slow tests or refresh trusted timing history`,
+    );
   return [...parts, ...chromiumParts];
 }
 
@@ -620,6 +647,9 @@ export function createCoveragePlan({
           ?.durationMs ?? DEFAULT_NEW_TEST_DURATION_MS,
       knownTests: normalizedTiming.tests.length,
       matchedTests,
+      predictedChromiumDurationsMs: parts
+        .filter((part) => part.kind === "chromium")
+        .map((part) => part.estimatedDurationMs),
     },
     timingProfile: normalizedTiming,
   };

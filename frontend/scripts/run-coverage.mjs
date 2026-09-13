@@ -565,9 +565,14 @@ async function runMerge(root, options) {
   });
   const observations = [];
   const observationKeys = new Set();
-  for (const directory of partDirectories) {
+  const observedPartDurationsMs = {};
+  for (const [index, directory] of partDirectories.entries()) {
     const partTimings = normalizeDurationProfile(
       readJson(resolve(directory, "timings.json"), "coverage part timings"),
+    );
+    observedPartDurationsMs[plan.parts[index].id] = partTimings.tests.reduce(
+      (total, observation) => total + observation.durationMs,
+      0,
     );
     for (const observation of partTimings.tests) {
       const key = JSON.stringify([observation.projectName, observation.id]);
@@ -577,8 +582,36 @@ async function runMerge(root, options) {
       observations.push(observation);
     }
   }
-  const timingProfile = updateDurationProfile(plan.timingProfile, observations);
+  const chromiumDurations = plan.parts
+    .filter((part) => part.kind === "chromium")
+    .map((part) => observedPartDurationsMs[part.id]);
+  const sortedChromiumDurations = [...chromiumDurations].sort(
+    (left, right) => left - right,
+  );
+  const medianChromiumDuration =
+    sortedChromiumDurations[Math.floor(sortedChromiumDurations.length / 2)];
+  const slowestChromiumDuration = Math.max(...chromiumDurations);
+  const observedImbalancePercent =
+    ((slowestChromiumDuration - medianChromiumDuration) /
+      medianChromiumDuration) *
+    100;
+  const previousTimingProfile = normalizeDurationProfile(plan.timingProfile);
+  const degraded = observedImbalancePercent > 25;
+  const degradedRuns = degraded
+    ? Math.min(3, previousTimingProfile.degradedRuns + 1)
+    : 0;
+  const timingProfile = {
+    ...updateDurationProfile(plan.timingProfile, observations),
+    degradedRuns,
+  };
   writeJson(resolve(outputDirectory, "timing-profile.json"), timingProfile);
+  writeJson(resolve(outputDirectory, "timing-summary.json"), {
+    predictedChromiumDurationsMs: plan.timing.predictedChromiumDurationsMs,
+    observedPartDurationsMs,
+    observedImbalancePercent: Number(observedImbalancePercent.toFixed(2)),
+    degraded,
+    degradedRuns,
+  });
   const gate = spawnSync(
     "python3",
     [
@@ -609,6 +642,7 @@ async function runMerge(root, options) {
       "plan.json",
       "tests.json",
       "timing-profile.json",
+      "timing-summary.json",
     ],
   };
   writeJson(resolve(outputDirectory, "plan.json"), plan);

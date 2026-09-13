@@ -200,17 +200,19 @@ changed executable-line coverage. No changed executable production lines is
 reported as N/A, never as a measured 100%.
 
 Backend coverage includes all `app/` source, with operational-script coverage
-reported separately. Frontend coverage combines Chromium, isolated Node tests,
-and Next server execution using development source maps. Local coverage uses a
-bounded worker count. CI creates one revision/source/test plan, runs three
-deterministic shards, rejects an incomplete or mixed union, and enforces coverage
-once after merging compact line reports. A fixed source-line
+reported separately. Frontend coverage combines desktop Chromium, isolated Node
+tests, and Next server execution using development source maps. Local coverage
+uses a bounded worker count. CI creates one revision/source/test plan, runs one
+isolated/HTTP part and three desktop-Chromium parts balanced by trusted historical
+duration, rejects an incomplete or mixed union, and enforces coverage once after
+merging compact line reports. A fixed source-line
 inventory includes never-loaded `src/` modules with zero hits; type-only and
 non-executable lines do not count. Static import/re-export declarations and Next
 boundary directives have no independent runtime statement; executable expressions
 sharing their source line remain counted. Dependency side effects are measured
-in the in-scope dependency source. This does not enable production source maps or replace
-production browser acceptance. The scanner subset retains its gate.
+in the in-scope dependency source. This does not enable production source maps.
+A fixed desktop/mobile smoke validates the reusable production runtime; full
+mobile runs for mobile-sensitive pull requests. The scanner subset retains its gate.
 
 `scripts/check_coverage.py` applies both thresholds to source-mapped reports and
 the recorded Git comparison, including new untracked production files. Missing
@@ -247,9 +249,18 @@ behavior. Backend handwritten files remain limited to 500 lines by
 ## CI and remaining boundaries
 
 Backend quality, disposable coverage, and container builds run as independent
-jobs behind one stable aggregator. Frontend quality and production-image browser
-acceptance run independently from the three-shard coverage plan/merge pipeline.
+jobs behind one stable aggregator. Frontend quality, one native-or-container
+production runtime, smoke, conditional mobile/extended acceptance, and the
+four-part coverage merge feed the stable frontend aggregator. The reduced PR
+profile preserves the 90% overall and changed-line contract and must prove 92%
+overall migration headroom. Its three desktop Chromium parts must be predicted
+within 15%; observed deviation above 25% increments a trusted `main` streak, and
+three consecutive degraded runs open or update one timing issue. Any changed
+browser specification triggers the extended tier, avoiding a filename allowlist.
 Successful frontend coverage keeps compact reports instead of raw V8 captures.
+Complete Firefox and WebKit run on `main`; nightly compatibility adds Chromium
+and mobile Chromium. Compatibility failures open or update one repository issue
+and successful recovery closes it.
 The separate full-stack workflow starts its own stack and production applications
 with `--acceptance-only`; it retains five real-stack scenarios but does not repeat
 the backend regression suite. Only sanitized acceptance diagnostics are retained.

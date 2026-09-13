@@ -165,6 +165,28 @@ test("coverage parts use deterministic longest-processing-time balancing and con
   ]);
 });
 
+test("coverage planning fails closed when historical part loads exceed 15 percent", () => {
+  const result = probe(String.raw`
+    import {createCoverageParts} from './scripts/coverage-report.mjs';
+    const tests=[
+      {projectName:'isolated',id:'isolated',file:'isolated/test.spec.ts',line:1},
+      {projectName:'http',id:'http',file:'http/test.spec.ts',line:1},
+      ...['slow','a','b'].map((id,index)=>({projectName:'chromium',id,file:'browser/test.spec.ts',line:index+1})),
+    ];
+    let error='';
+    try {
+      createCoverageParts(tests,{version:1,tests:[
+        {projectName:'chromium',id:'slow',durationMs:100_000},
+        {projectName:'chromium',id:'a',durationMs:10_000},
+        {projectName:'chromium',id:'b',durationMs:10_000},
+      ]});
+    } catch (caught) { error=caught.message; }
+    console.log(JSON.stringify({error}));
+  `);
+
+  expect(result.error).toContain("imbalanced");
+});
+
 test("timing profiles keep a five-run history and report compact observations", () => {
   const result = probe(String.raw`
     import {collectCoverageDurations,updateDurationProfile} from './scripts/coverage-report.mjs';
@@ -214,6 +236,7 @@ test("timing profiles keep a five-run history and report compact observations", 
       line: 8,
     },
   ]);
+  expect(result.profile.degradedRuns).toBe(0);
 });
 
 test("coverage merge accepts every named part and rejects retries", () => {
@@ -235,7 +258,7 @@ test("coverage merge accepts every named part and rejects retries", () => {
     });
     const discovery=reportFor(tests);
     const sources={'src/one.ts':hash('one'),'src/two.ts':hash('two')};
-    const plan=createCoveragePlan({baseRevision:'base-revision',headRevision:'head-revision',sources,denominator:{'src/one.ts':[1,2],'src/two.ts':[1]},discovery,timingProfile:{version:1,tests:tests.filter(test=>test.projectName==='chromium').map((test,index)=>({...test,durationMs:(index+1)*10}))}});
+    const plan=createCoveragePlan({baseRevision:'base-revision',headRevision:'head-revision',sources,denominator:{'src/one.ts':[1,2],'src/two.ts':[1]},discovery,timingProfile:{version:1,tests:tests.filter(test=>test.projectName==='chromium').map(test=>({...test,durationMs:10}))}});
     const root=fs.mkdtempSync(path.join(os.tmpdir(),'openslate-coverage-merge-'));
     const writePart=(part, hits, reportOverride=undefined) => {
       const directory=path.join(root,'part-'+part.id);fs.mkdirSync(path.join(directory,'report'),{recursive:true});
