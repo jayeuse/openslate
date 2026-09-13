@@ -187,7 +187,7 @@ def _add_frontend_steps(
         )
 
 
-def _add_backend_steps(steps: list[Step]) -> None:
+def _add_backend_steps(steps: list[Step], *, include_coverage: bool = True) -> None:
     steps.extend(
         (
             Step(
@@ -231,6 +231,10 @@ def _add_backend_steps(steps: list[Step]) -> None:
                     "test_*.py",
                 ),
             ),
+        )
+    )
+    if include_coverage:
+        steps.append(
             Step(
                 name="backend-coverage",
                 gate="backend",
@@ -247,28 +251,36 @@ def _add_backend_steps(steps: list[Step]) -> None:
                 lane="backend",
                 serial_group=SERIAL_BACKEND_STACK,
                 needs_base=True,
-            ),
+            )
         )
-    )
 
 
-def _add_fullstack_step(steps: list[Step]) -> None:
+def _add_fullstack_step(steps: list[Step], *, include_backend_coverage: bool) -> None:
     steps.append(
         Step(
-            name="fullstack",
+            name=(
+                "backend-coverage-and-fullstack"
+                if include_backend_coverage
+                else "fullstack"
+            ),
             gate="fullstack",
             phase="resource",
             cwd="backend",
             command=(
-                "uv",
-                "run",
-                "python",
-                "-m",
-                "tests.fullstack_runner",
-                "--acceptance-only",
+                ("uv", "run", "python", "-m", "tests.fullstack_runner")
+                if include_backend_coverage
+                else (
+                    "uv",
+                    "run",
+                    "python",
+                    "-m",
+                    "tests.fullstack_runner",
+                    "--acceptance-only",
+                )
             ),
             lane="backend",
             serial_group=SERIAL_BACKEND_STACK,
+            needs_base=include_backend_coverage,
         )
     )
 
@@ -311,10 +323,12 @@ def build_plan(scope: ChangeScope, root: Path) -> PrepushPlan:
             frontend_checks=frontend_checks,
             container_build=frontend_container,
         )
-    if scope.decisions["backend"].run:
-        _add_backend_steps(steps)
-    if scope.decisions["fullstack"].run:
-        _add_fullstack_step(steps)
+    backend_run = scope.decisions["backend"].run
+    fullstack_run = scope.decisions["fullstack"].run
+    if backend_run:
+        _add_backend_steps(steps, include_coverage=not fullstack_run)
+    if fullstack_run:
+        _add_fullstack_step(steps, include_backend_coverage=backend_run)
     if scope.decisions["containers"].run:
         _add_container_steps(
             steps,

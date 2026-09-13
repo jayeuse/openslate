@@ -26,8 +26,9 @@ class PrepushTests(unittest.TestCase):
         self.assertEqual(phases, sorted(phases, key=("fast", "resource").index))
         self.assertLess(names.index("frontend-check"), names.index("frontend-container-build"))
         self.assertNotIn("frontend-build", names)
-        self.assertLess(names.index("backend-ruff"), names.index("backend-coverage"))
-        self.assertLess(names.index("backend-mypy"), names.index("backend-coverage"))
+        combined = "backend-coverage-and-fullstack"
+        self.assertLess(names.index("backend-ruff"), names.index(combined))
+        self.assertLess(names.index("backend-mypy"), names.index(combined))
         self.assertIn("../scripts", plan.steps[names.index("backend-ruff")].command)
         self.assertIn("../scripts/ci_scope.py", plan.steps[names.index("backend-mypy")].command)
         self.assertEqual(
@@ -51,20 +52,20 @@ class PrepushTests(unittest.TestCase):
             plan.steps[names.index("frontend-container-build")].command[:2],
             ("python3", "scripts/build_frontend_image.py"),
         )
-        self.assertLess(names.index("backend-coverage"), names.index("fullstack"))
         self.assertEqual(
-            plan.steps[names.index("backend-coverage")].serial_group,
-            "backend-supabase",
-        )
-        self.assertEqual(
-            plan.steps[names.index("fullstack")].serial_group,
+            plan.steps[names.index(combined)].serial_group,
             "backend-supabase",
         )
         backend_lane = [step.name for step in plan.steps if step.lane == "backend"]
-        self.assertLess(backend_lane.index("backend-coverage"), backend_lane.index("fullstack"))
         self.assertLess(
-            backend_lane.index("fullstack"), backend_lane.index("backend-container-build")
+            backend_lane.index(combined), backend_lane.index("backend-container-build")
         )
+        combined_step = plan.steps[names.index(combined)]
+        self.assertEqual(
+            combined_step.command,
+            ("uv", "run", "python", "-m", "tests.fullstack_runner"),
+        )
+        self.assertTrue(combined_step.needs_base)
 
     def test_plan_builds_only_the_changed_application_image(self):
         frontend_scope = ci_scope.classify_paths(
