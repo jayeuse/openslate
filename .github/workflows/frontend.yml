@@ -67,11 +67,14 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
 
-  production:
+  production-build:
     needs: changes
-    if: needs.changes.outputs.run_frontend_container == 'true'
+    if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -79,14 +82,73 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install frontend dependencies
+      - run: npm ci
+      - name: Build the production frontend once
+        run: npm run build -- --from-process
+      - uses: actions/upload-artifact@v7
+        with:
+          name: frontend-production-build
+          path: |
+            frontend/.next/standalone/
+            frontend/.next/static/
+          if-no-files-found: error
+          retention-days: 1
+
+  browser:
+    needs: [changes, production-build]
+    if: needs.changes.outputs.run_frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium, mobile-chromium, firefox, webkit]
+    defaults:
+      run:
         working-directory: frontend
-        run: npm ci
-      - name: Install supported browsers
-        working-directory: frontend
-        run: npx playwright install --with-deps chromium firefox webkit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Install the assigned browser
+        run: >-
+          npx playwright install --with-deps
+          ${{ matrix.project == 'mobile-chromium' && 'chromium' || matrix.project }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: frontend-production-build
+          path: frontend/.next
+      - name: Run production browser acceptance
+        env:
+          PLAYWRIGHT_USE_PRODUCTION: "1"
+        run: >-
+          node scripts/run-playwright.mjs
+          --project=${{ matrix.project }}
+          --max-failures=5
+      - name: Preserve browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-browser-${{ matrix.project }}-failures
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  container:
+    needs: changes
+    if: needs.changes.outputs.run_frontend_container == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
-      - name: Build the production frontend image once
+      - name: Build the production frontend image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -110,54 +172,6 @@ jobs:
           test -z "${NEXT_PUBLIC_SUPABASE_URL+x}" &&
           test -z "${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY+x}" &&
           test -z "${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED+x}"'
-      - name: Start the production frontend image
-        run: |
-          docker run --detach --name openslate-frontend-ci \
-            --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-            --publish 127.0.0.1:3104:3000 \
-            --env BACKEND_URL=http://backend.invalid \
-            --env SUPABASE_SERVER_URL=http://supabase.invalid \
-            --env LOG_DIR=/tmp/openslate-frontend-logs \
-            --env BFF_REQUEST_BODY_LIMIT_BYTES=1048576 \
-            --env BFF_RESPONSE_BODY_LIMIT_BYTES=8388608 \
-            --env BFF_REQUEST_DEADLINE_MS=60000 \
-            --env PORT=3000 --env HOSTNAME=0.0.0.0 \
-            --env NEXT_PUBLIC_SUPABASE_URL=http://supabase.invalid \
-            --env NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=synthetic-publishable-key \
-            --env NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED=false \
-            openslate-frontend:ci
-          for attempt in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:3104/login >/dev/null; then
-              exit 0
-            fi
-            sleep 1
-          done
-          docker logs --tail 200 openslate-frontend-ci
-          exit 1
-      - name: Run the complete production browser matrix
-        working-directory: frontend
-        env:
-          PLAYWRIGHT_EXTERNAL_SERVER: "1"
-        run: node scripts/run-playwright.mjs --max-failures=5
-      - name: Preserve browser failure evidence
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: frontend-browser-failures
-          path: |
-            frontend/playwright-report/
-            frontend/test-results/
-          if-no-files-found: ignore
-          retention-days: 7
-      - name: Stop the production frontend image
-        if: always()
-        run: |
-          if docker container inspect openslate-frontend-ci >/dev/null 2>&1; then
-            if [ "${{ job.status }}" != "success" ]; then
-              docker logs --tail 200 openslate-frontend-ci
-            fi
-            docker rm --force openslate-frontend-ci
-          fi
 
   coverage-plan:
     needs: changes
@@ -196,7 +210,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6]
     defaults:
       run:
         working-directory: frontend
@@ -221,14 +235,14 @@ jobs:
         run: >-
           npm run test:coverage:shard --
           --plan=coverage/coverage-plan.json
-          --shard=${{ matrix.shard }}/3
-          --output=coverage/shard-${{ matrix.shard }}-of-3
+          --shard=${{ matrix.shard }}/6
+          --output=coverage/shard-${{ matrix.shard }}-of-6
       - name: Upload compact shard evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage-shard-${{ matrix.shard }}
-          path: frontend/coverage/shard-${{ matrix.shard }}-of-3
+          path: frontend/coverage/shard-${{ matrix.shard }}-of-6
           if-no-files-found: ignore
           retention-days: 7
 
@@ -257,15 +271,27 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: frontend-coverage-shard-1
-          path: frontend/coverage/shard-1-of-3
+          path: frontend/coverage/shard-1-of-6
       - uses: actions/download-artifact@v7
         with:
           name: frontend-coverage-shard-2
-          path: frontend/coverage/shard-2-of-3
+          path: frontend/coverage/shard-2-of-6
       - uses: actions/download-artifact@v7
         with:
           name: frontend-coverage-shard-3
-          path: frontend/coverage/shard-3-of-3
+          path: frontend/coverage/shard-3-of-6
+      - uses: actions/download-artifact@v7
+        with:
+          name: frontend-coverage-shard-4
+          path: frontend/coverage/shard-4-of-6
+      - uses: actions/download-artifact@v7
+        with:
+          name: frontend-coverage-shard-5
+          path: frontend/coverage/shard-5-of-6
+      - uses: actions/download-artifact@v7
+        with:
+          name: frontend-coverage-shard-6
+          path: frontend/coverage/shard-6-of-6
       - name: Merge and enforce coverage once
         run: >-
           npm run test:coverage:merge --
@@ -286,7 +312,9 @@ jobs:
       [
         changes,
         quality,
-        production,
+        production-build,
+        browser,
+        container,
         coverage-plan,
         coverage-shards,
         coverage-merge,
@@ -300,7 +328,9 @@ jobs:
           RUN_FRONTEND: ${{ needs.changes.outputs.run_frontend }}
           RUN_CONTAINER: ${{ needs.changes.outputs.run_frontend_container }}
           QUALITY: ${{ needs.quality.result }}
-          PRODUCTION: ${{ needs.production.result }}
+          PRODUCTION_BUILD: ${{ needs.production-build.result }}
+          BROWSER: ${{ needs.browser.result }}
+          CONTAINER: ${{ needs.container.result }}
           COVERAGE_PLAN: ${{ needs.coverage-plan.result }}
           COVERAGE_SHARDS: ${{ needs.coverage-shards.result }}
           COVERAGE_MERGE: ${{ needs.coverage-merge.result }}
@@ -309,18 +339,22 @@ jobs:
           test "$CHANGES" = "success"
           if [ "$RUN_FRONTEND" = "true" ]; then
             test "$QUALITY" = "success"
+            test "$PRODUCTION_BUILD" = "success"
+            test "$BROWSER" = "success"
             test "$COVERAGE_PLAN" = "success"
             test "$COVERAGE_SHARDS" = "success"
             test "$COVERAGE_MERGE" = "success"
           else
             test "$QUALITY" = "skipped"
+            test "$PRODUCTION_BUILD" = "skipped"
+            test "$BROWSER" = "skipped"
             test "$COVERAGE_PLAN" = "skipped"
             test "$COVERAGE_SHARDS" = "skipped"
             test "$COVERAGE_MERGE" = "skipped"
             printf 'Frontend checks skipped: %s\n' "$REASON"
           fi
           if [ "$RUN_CONTAINER" = "true" ]; then
-            test "$PRODUCTION" = "success"
+            test "$CONTAINER" = "success"
           else
-            test "$PRODUCTION" = "skipped"
+            test "$CONTAINER" = "skipped"
           fi

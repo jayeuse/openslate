@@ -48,6 +48,16 @@ function owners(): FederatedAccessOwners {
   };
   return {
     boards: structuredClone(initialBoards),
+    announcements: [
+      {
+        id: "announcement:dispatch",
+        title: "Dispatch briefing",
+        body: "Review the active route plan.",
+        audience: `Role: ${customRole.name}`,
+        expires: "",
+        pinned: true,
+      },
+    ],
     savedViews: [
       {
         id: "saved:dispatch",
@@ -98,6 +108,7 @@ test("role rename updates every label owner while preserving stable OpenComms ro
   expect(federatedRoleReferences(before, customRole)).toEqual(
     expect.arrayContaining([
       "boards-list",
+      "boards-announcements",
       "views-saved",
       "views-dashboards",
       "views-report-draft",
@@ -118,6 +129,7 @@ test("role rename updates every label owner while preserving stable OpenComms ro
 
   expect(projected.boards[0].roles).toContain("Field Dispatch");
   expect(projected.boards[0].widgets[0].permission).toBe("Field Dispatch");
+  expect(projected.announcements[0].audience).toBe("Role: Field Dispatch");
   expect(projected.savedViews[0].audience).toBe("Role: Field Dispatch");
   expect(projected.dashboards[0].permission).toBe("Field Dispatch");
   expect(projected.dashboards[0].widgets[0].permission).toBe("Field Dispatch");
@@ -305,6 +317,7 @@ test("federated command execution atomically projects role rename and blocks ref
     renamed.state.roles.find((role) => role.id === customRole.id)?.name,
   ).toBe("Field Dispatch");
   expect(renamed.owners.boards[0].roles).toContain("Field Dispatch");
+  expect(renamed.owners.announcements[0].audience).toBe("Role: Field Dispatch");
   expect(renamed.owners.savedViews[0].audience).toBe("Role: Field Dispatch");
 
   const blocked = executeFederatedAccessCommand(

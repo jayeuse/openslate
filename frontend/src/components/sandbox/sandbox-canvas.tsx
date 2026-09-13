@@ -542,6 +542,8 @@ export function SandboxCanvas({
     const graph = runtimeRef.current?.graph;
     if (graph === undefined) return;
     graph.setGridSize(snapEnabled ? SANDBOX_GRID_SIZE : 1);
+    if (gridRef.current)
+      gridRef.current.dataset.snapSize = `${graph.getGridSize()}`;
     callbacksRef.current.onViewChange?.({
       zoom: graph.zoom(),
       gridVisible,
@@ -554,7 +556,12 @@ export function SandboxCanvas({
     if (container === null) {
       return;
     }
-    const graph = new Graph({ container, ...graphOptions() });
+    const graph = new Graph({
+      container,
+      ...graphOptions(snapEnabledRef.current ? SANDBOX_GRID_SIZE : 1),
+    });
+    if (gridRef.current)
+      gridRef.current.dataset.snapSize = `${graph.getGridSize()}`;
     graph.use(new Selection({ enabled: true }));
     graph.use(new Snapline());
     const history = new History();
@@ -637,6 +644,8 @@ export function SandboxCanvas({
       graph.setGridSize(
         freeMove || !snapEnabledRef.current ? 1 : SANDBOX_GRID_SIZE,
       );
+      if (gridRef.current)
+        gridRef.current.dataset.snapSize = `${graph.getGridSize()}`;
     };
 
     // Set precision before X6 normalizes the initial pointer coordinates.

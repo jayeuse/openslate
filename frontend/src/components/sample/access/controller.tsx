@@ -50,6 +50,10 @@ import {
 } from "./controller-utils";
 import { initialManageSessions, type ManageSession } from "../manage/sessions";
 import { initialBoards, type SampleBoard } from "../boards";
+import {
+  initialAnnouncements,
+  type Announcement,
+} from "../boards/announcements";
 import { initialSavedViews, normalizeSavedViews } from "../openview";
 import {
   initialDashboards,
@@ -171,6 +175,10 @@ export function useAccessController() {
     { version: 1, items: initialAccessHistory },
   );
   const [boards] = useSampleState<SampleBoard[]>("boards-list", initialBoards);
+  const [announcements] = useSampleState<Announcement[]>(
+    "boards-announcements",
+    initialAnnouncements,
+  );
   const [rawSavedViews] = useSampleState<unknown>(
     "views-saved",
     initialSavedViews,
@@ -200,6 +208,7 @@ export function useAccessController() {
 
   const owners: FederatedAccessOwners = {
     boards,
+    announcements,
     savedViews: normalizeSavedViews(rawSavedViews),
     dashboards,
     reportDraft,
@@ -257,6 +266,11 @@ export function useAccessController() {
         { version: 1, items: next.rules },
       );
       update("boards-list", initialBoards, result.owners.boards);
+      update(
+        "boards-announcements",
+        initialAnnouncements,
+        result.owners.announcements,
+      );
       update("views-saved", initialSavedViews, result.owners.savedViews);
       update("views-dashboards", initialDashboards, result.owners.dashboards);
       update("views-report-draft", initialReport, result.owners.reportDraft);

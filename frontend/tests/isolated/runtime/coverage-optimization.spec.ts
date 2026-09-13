@@ -35,7 +35,7 @@ test("coverage mode disables raw trace and video recording", () => {
   );
 });
 
-test("coverage plan CLI discovers one complete deterministic three-shard plan", () => {
+test("coverage plan CLI discovers one complete deterministic six-shard plan", () => {
   const result = probe(String.raw`
     import fs from 'node:fs';
     import os from 'node:os';
@@ -58,7 +58,7 @@ test("coverage plan CLI discovers one complete deterministic three-shard plan", 
     } finally {fs.rmSync(directory,{recursive:true,force:true});}
   `);
 
-  expect(result.shards).toBe(3);
+  expect(result.shards).toBe(6);
   expect(result.tests).toBeGreaterThan(0);
   expect(result.assigned).toBe(result.tests);
   expect(result.sources).toBeGreaterThan(0);

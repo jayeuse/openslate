@@ -381,7 +381,9 @@ export function getModulePorts(
  * zoom-on-modifier mousewheel, department-embeds-module nesting, and
  * orthogonal edge connections without blank drops.
  */
-export function graphOptions(): GraphManual {
+export function graphOptions(
+  gridSize: number = SANDBOX_GRID_SIZE,
+): GraphManual {
   return {
     // X6 3.x renders through a job queue flushed on rAF by default. The canvas
     // rebuilds cells on every state change (clear + re-add with the same ids),
@@ -394,7 +396,7 @@ export function graphOptions(): GraphManual {
     },
     // The visible mesh is rendered by SandboxCanvas so Alt/Option can switch
     // the drag snap precision without hiding or resizing the world grid.
-    grid: { size: SANDBOX_GRID_SIZE, visible: false },
+    grid: { size: gridSize, visible: false },
     panning: { enabled: true },
     mousewheel: { enabled: true, modifiers: ["ctrl", "meta"] },
     translating: { autoOffset: false },

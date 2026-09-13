@@ -1,4 +1,5 @@
 import type { SampleBoard } from "../boards";
+import type { Announcement } from "../boards/announcements";
 import {
   emptyCommsScope,
   getCommsScope,
@@ -28,6 +29,7 @@ import type {
 
 export type FederatedAccessOwners = {
   boards: SampleBoard[];
+  announcements: Announcement[];
   savedViews: SavedView[];
   dashboards: Dashboard[];
   reportDraft: Report;
@@ -39,6 +41,7 @@ export type FederatedAccessOwners = {
 
 export type FederatedOwnerKey =
   | "boards-list"
+  | "boards-announcements"
   | "views-saved"
   | "views-dashboards"
   | "views-report-draft"
@@ -140,6 +143,10 @@ export function projectFederatedRoleChange(
       permission: replaceAudience(widget.permission, previous.name, next.name),
     })),
   }));
+  projected.announcements = projected.announcements.map((announcement) => ({
+    ...announcement,
+    audience: replaceAudience(announcement.audience, previous.name, next.name),
+  }));
   projected.savedViews = projected.savedViews.map((view) => ({
     ...view,
     audience: replaceAudience(view.audience, previous.name, next.name),
@@ -182,6 +189,12 @@ export function federatedRoleReferences(
     )
   )
     references.add("boards-list");
+  if (
+    owners.announcements.some((announcement) =>
+      audienceReferencesRole(announcement.audience, role),
+    )
+  )
+    references.add("boards-announcements");
   if (
     owners.savedViews.some((view) =>
       audienceReferencesRole(view.audience, role),

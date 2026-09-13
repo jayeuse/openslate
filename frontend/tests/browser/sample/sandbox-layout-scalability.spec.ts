@@ -115,6 +115,46 @@ test("view menu preferences normalize safely and persist for the tab", async ({
   });
 });
 
+test("restored Snap Off applies to the first pointer drag", async ({
+  page,
+}) => {
+  test.skip((page.viewportSize()?.width ?? 0) < 1280, "Desktop contract");
+  await page.getByRole("button", { name: "Fit canvas", exact: true }).click();
+  const cell = page
+    .getByTestId("sandbox-canvas")
+    .locator('[data-cell-id="sample-requests"]');
+  const position = () =>
+    cell.evaluate((element) => {
+      const transform = element.getAttribute("transform") ?? "";
+      const match = /translate\(([-\d.]+),\s*([-\d.]+)\)/.exec(transform);
+      if (!match) throw new Error(`Missing node translation: ${transform}`);
+      return { x: Number(match[1]), y: Number(match[2]) };
+    });
+  const before = await position();
+  await expect(page.getByTestId("sandbox-grid")).toHaveAttribute(
+    "data-snap-size",
+    "1",
+  );
+  const heading = cell.getByText("Service requests", { exact: true });
+  const start = await heading.boundingBox();
+  if (!start) throw new Error("Module geometry missing");
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    start.x + start.width / 2 + 35,
+    start.y + start.height / 2 + 29,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+
+  await expect.poll(async () => (await position()).x).not.toBe(before.x);
+  await expect.poll(async () => (await position()).y).not.toBe(before.y);
+  await expect(page.getByTestId("sandbox-grid")).toHaveAttribute(
+    "data-snap-size",
+    "1",
+  );
+});
+
 test("desktop panels keep readable minimum widths and only collapse the inspector explicitly", async ({
   page,
 }) => {

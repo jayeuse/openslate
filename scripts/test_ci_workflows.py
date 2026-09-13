@@ -13,27 +13,29 @@ class CiWorkflowContractTests(unittest.TestCase):
     def source(self, name: str) -> str:
         return (ROOT / ".github/workflows" / name).read_text()
 
-    def test_frontend_keeps_verify_aggregator_and_three_coverage_shards(self):
+    def test_frontend_keeps_verify_aggregator_and_six_coverage_shards(self):
         source = self.source("frontend.yml")
 
         self.assertRegex(source, r"(?m)^  verify:\n")
         self.assertRegex(source, r"(?m)^    if: \$\{\{ always\(\) \}\}\n")
         self.assertIn("coverage-merge", source)
         self.assertIn("matrix:", source)
-        self.assertRegex(source, r"shard:\s*\[1, 2, 3\]")
+        self.assertRegex(source, r"shard:\s*\[1, 2, 3, 4, 5, 6\]")
         self.assertIn("fail-fast: false", source)
         self.assertNotIn("coverage/*/playwright/", source)
         self.assertNotIn("coverage/*/node/", source)
         self.assertNotIn("coverage/*/browser/", source)
 
-    def test_frontend_builds_one_cached_image_for_browser_acceptance(self):
+    def test_frontend_reuses_one_build_across_parallel_browser_acceptance(self):
         source = self.source("frontend.yml")
 
-        self.assertIn("docker/setup-buildx-action@", source)
-        self.assertIn("docker/build-push-action@", source)
-        self.assertIn("load: true", source)
+        self.assertRegex(source, r"(?m)^  production-build:\n")
+        self.assertRegex(source, r"(?m)^  browser:\n")
+        self.assertRegex(source, r"project:\s*\[chromium, mobile-chromium, firefox, webkit\]")
+        self.assertIn("frontend-production-build", source)
+        self.assertIn("--project=${{ matrix.project }}", source)
+        self.assertRegex(source, r"(?m)^  container:\n")
         self.assertIn("scope=openslate-frontend", source)
-        self.assertIn('PLAYWRIGHT_EXTERNAL_SERVER: "1"', source)
 
     def test_backend_parallel_gates_feed_stable_verify_aggregator(self):
         source = self.source("backend.yml")

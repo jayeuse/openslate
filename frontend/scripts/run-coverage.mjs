@@ -27,6 +27,8 @@ import {
   validateCoverageShard,
 } from "./coverage-report.mjs";
 
+const COVERAGE_SHARD_COUNT = 6;
+
 export function parseCoverageArguments(argumentsList) {
   const options = {
     mode: "run",
@@ -235,14 +237,14 @@ async function runPlan(root, options) {
       "discovery.json",
     );
     const shardDiscoveries = [];
-    for (let index = 1; index <= 3; index++)
+    for (let index = 1; index <= COVERAGE_SHARD_COUNT; index++)
       shardDiscoveries.push(
         await discover(
           root,
           environment,
           directory,
           `discovery-${index}.json`,
-          { index, count: 3 },
+          { index, count: COVERAGE_SHARD_COUNT },
         ),
       );
     const denominator = await generateDenominator(
@@ -272,7 +274,13 @@ async function runPlan(root, options) {
       options.outputPath ?? "coverage/coverage-plan.json",
     );
     writeJson(output, plan);
-    console.log(JSON.stringify({ mode: "plan", output, shards: 3 }, null, 2));
+    console.log(
+      JSON.stringify(
+        { mode: "plan", output, shards: COVERAGE_SHARD_COUNT },
+        null,
+        2,
+      ),
+    );
     return 0;
   } finally {
     rmSync(directory, { recursive: true, force: true });

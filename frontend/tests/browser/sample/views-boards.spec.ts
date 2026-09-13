@@ -2,6 +2,7 @@ import { expect, test, type Page } from "../coverage";
 import { fulfillWorkspaceRequest } from "../helpers/workspace-fixtures";
 import { initialRoles } from "../../../src/components/sample/access/model";
 import { initialBoards } from "../../../src/components/sample/boards";
+import { initialAnnouncements } from "../../../src/components/sample/boards/announcements";
 import { initialViewConfig } from "../../../src/components/sample/openview";
 import { initialReport } from "../../../src/components/sample/openview/analytics";
 
@@ -40,7 +41,7 @@ test("an Access role rename reaches Boards and OpenView audience owners atomical
     grants: ["Action · read"],
   };
   await page.addInitScript(
-    ({ roles, boards, view, report, role }) => {
+    ({ roles, boards, announcements, view, report, role }) => {
       const key = "openslate.sample.v1";
       if (!sessionStorage.getItem(key))
         sessionStorage.setItem(
@@ -50,6 +51,10 @@ test("an Access role rename reaches Boards and OpenView audience owners atomical
             "boards-list": boards.map((board) => ({
               ...board,
               roles: [role.name],
+            })),
+            "boards-announcements": announcements.map((announcement) => ({
+              ...announcement,
+              audience: `Role: ${role.name}`,
             })),
             "views-saved": [
               {
@@ -76,6 +81,7 @@ test("an Access role rename reaches Boards and OpenView audience owners atomical
     {
       roles: initialRoles,
       boards: initialBoards,
+      announcements: initialAnnouncements,
       view: initialViewConfig,
       report: initialReport,
       role: customRole,
@@ -111,6 +117,9 @@ test("an Access role rename reaches Boards and OpenView audience owners atomical
     JSON.parse(sessionStorage.getItem("openslate.sample.v1") ?? "{}"),
   );
   expect(projected["boards-list"][0].roles).toEqual(["Operations lead"]);
+  expect(projected["boards-announcements"][0].audience).toBe(
+    "Role: Operations lead",
+  );
   expect(projected["views-saved"][0].audience).toBe("Role: Operations lead");
   expect(projected["views-report-draft"].audience).toBe(
     "Role: Operations lead",
@@ -130,6 +139,12 @@ test("an Access role rename reaches Boards and OpenView audience owners atomical
   await expect(
     boardSettings.getByRole("checkbox", { name: "Dispatch lead", exact: true }),
   ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Announcements", exact: true })
+    .click();
+  await expect(
+    page.getByText("Pinned / Role: Operations lead", { exact: true }),
+  ).toBeVisible();
 
   await page.goto("/openview");
   await openViewOptions(page);
