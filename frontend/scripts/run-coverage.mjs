@@ -20,22 +20,28 @@ import {
   generateDenominator,
   hash,
   inventory,
+  collectCoverageDurations,
+  coverageProfile,
+  formatCoverageTestList,
   mergeCoverageReports,
+  normalizeDurationProfile,
   root,
   validateCaptureManifest,
   validateCoveragePlan,
-  validateCoverageShard,
+  validateCoveragePart,
+  updateDurationProfile,
 } from "./coverage-report.mjs";
-
-const COVERAGE_SHARD_COUNT = 6;
 
 export function parseCoverageArguments(argumentsList) {
   const options = {
     mode: "run",
+    profile: "pr",
     planPath: null,
     outputPath: null,
-    shardsPath: null,
-    shard: null,
+    partsPath: null,
+    part: null,
+    timingsPath: null,
+    timingOutputPath: null,
   };
   for (const argument of argumentsList) {
     if (argument === "--plan") {
@@ -46,6 +52,11 @@ export function parseCoverageArguments(argumentsList) {
       options.mode = "merge";
       continue;
     }
+    if (argument.startsWith("--profile=")) {
+      options.profile = argument.slice("--profile=".length);
+      coverageProfile(options.profile);
+      continue;
+    }
     if (argument.startsWith("--plan=")) {
       options.planPath = argument.slice("--plan=".length);
       continue;
@@ -54,27 +65,39 @@ export function parseCoverageArguments(argumentsList) {
       options.outputPath = argument.slice("--output=".length);
       continue;
     }
-    if (argument.startsWith("--shards=")) {
-      options.shardsPath = argument.slice("--shards=".length);
+    if (argument.startsWith("--parts=")) {
+      options.partsPath = argument.slice("--parts=".length);
       continue;
     }
-    if (argument.startsWith("--shard=")) {
-      const match = argument.slice("--shard=".length).match(/^(\d+)\/(\d+)$/);
-      if (!match || Number(match[1]) < 1 || Number(match[1]) > Number(match[2]))
-        throw new Error("--shard must use a valid 1-based index, such as 1/3");
-      options.shard = { index: Number(match[1]), count: Number(match[2]) };
+    if (argument.startsWith("--part=")) {
+      const part = argument.slice("--part=".length);
+      if (!/^(?:core|chromium-[1-3])$/.test(part))
+        throw new Error("--part must be core or chromium-1 through chromium-3");
+      options.part = part;
+      continue;
+    }
+    if (argument.startsWith("--timings=")) {
+      options.timingsPath = argument.slice("--timings=".length);
+      continue;
+    }
+    if (argument.startsWith("--timing-output=")) {
+      options.timingOutputPath = argument.slice("--timing-output=".length);
       continue;
     }
     throw new Error(`Unknown coverage option: ${argument}`);
   }
-  if (options.mode === "plan" && options.shard)
-    throw new Error("--plan cannot be combined with --shard");
-  if (options.mode === "merge" && options.shard)
-    throw new Error("--merge cannot be combined with --shard");
-  if (options.mode === "run" && options.planPath && !options.shard)
-    throw new Error("A plan can only be supplied with --shard or --merge");
-  if ((options.shard || options.mode === "merge") && !options.planPath)
-    throw new Error("--plan=<path> is required for shard and merge modes");
+  if (options.mode === "plan" && options.part)
+    throw new Error("--plan cannot be combined with --part");
+  if (options.mode === "merge" && options.part)
+    throw new Error("--merge cannot be combined with --part");
+  if (options.mode === "run" && options.planPath && !options.part)
+    throw new Error("A plan can only be supplied with --part or --merge");
+  if ((options.part || options.mode === "merge") && !options.planPath)
+    throw new Error("--plan=<path> is required for part and merge modes");
+  if (options.mode === "plan" && options.partsPath)
+    throw new Error("--parts cannot be combined with --plan");
+  if (options.mode !== "run" && options.timingOutputPath)
+    throw new Error("--timing-output is only valid when running a part");
   return options;
 }
 
@@ -156,6 +179,7 @@ function compactArtifacts(tempDirectory, outputDirectory) {
     ["tests.json", "tests.json"],
     ["discovery.json", "discovery.json"],
     ["gate.json", "gate.json"],
+    ["timings.json", "timings.json"],
     ["report/coverage-final.json", "report/coverage-final.json"],
     ["report/lcov.info", "report/lcov.info"],
   ];
@@ -195,12 +219,16 @@ function discoveryEnvironment(environment, directory, outputPath) {
   };
 }
 
+function projectArguments(projects) {
+  return (projects ?? []).flatMap((project) => [`--project=${project}`]);
+}
+
 async function discover(
   root,
   environment,
   directory,
   outputPath,
-  shard,
+  projects,
   setActive,
 ) {
   const argumentsList = [
@@ -209,7 +237,7 @@ async function discover(
     "--reporter=json",
     "--forbid-only",
   ];
-  if (shard) argumentsList.push(`--shard=${shard.index}/${shard.count}`);
+  argumentsList.push(...projectArguments(projects));
   const result = await runChild(
     root,
     argumentsList,
@@ -224,9 +252,18 @@ async function discover(
 async function runPlan(root, options) {
   if (!process.env.COVERAGE_BASE_REF)
     throw new Error("COVERAGE_BASE_REF is required");
+  const profile = coverageProfile(options.profile);
   const baseRevision = revision(root, process.env.COVERAGE_BASE_REF);
   const headRevision = revision(root, "HEAD");
   const sources = sourceHashes(root);
+  const timingProfile = options.timingsPath
+    ? normalizeDurationProfile(
+        readJson(
+          resolveFromRoot(root, options.timingsPath),
+          "coverage timing profile",
+        ),
+      )
+    : normalizeDurationProfile();
   const directory = mkdtempSync(join(tmpdir(), "openslate-coverage-plan-"));
   const environment = coverageEnvironment(root, directory);
   try {
@@ -235,18 +272,8 @@ async function runPlan(root, options) {
       environment,
       directory,
       "discovery.json",
+      profile.projects,
     );
-    const shardDiscoveries = [];
-    for (let index = 1; index <= COVERAGE_SHARD_COUNT; index++)
-      shardDiscoveries.push(
-        await discover(
-          root,
-          environment,
-          directory,
-          `discovery-${index}.json`,
-          { index, count: COVERAGE_SHARD_COUNT },
-        ),
-      );
     const denominator = await generateDenominator(
       Object.keys(sources).map((path) => ({
         url: path,
@@ -267,7 +294,8 @@ async function runPlan(root, options) {
         ]),
       ),
       discovery,
-      shardDiscoveries,
+      profile: options.profile,
+      timingProfile,
     });
     const output = resolveFromRoot(
       root,
@@ -276,7 +304,16 @@ async function runPlan(root, options) {
     writeJson(output, plan);
     console.log(
       JSON.stringify(
-        { mode: "plan", output, shards: COVERAGE_SHARD_COUNT },
+        {
+          mode: "plan",
+          profile: options.profile,
+          output,
+          parts: plan.parts.map((part) => ({
+            id: part.id,
+            tests: part.tests.length,
+            estimatedDurationMs: part.estimatedDurationMs,
+          })),
+        },
         null,
         2,
       ),
@@ -298,18 +335,19 @@ async function runCoverage(root, options) {
   );
   const metadata = {
     runId,
+    profile: options.profile,
     revision: null,
     baseRef: process.env.COVERAGE_BASE_REF ?? null,
     status: "preflight-failed",
     sources: {},
-    ...(options.shard ? { shard: options.shard } : {}),
+    ...(options.part ? { part: { id: options.part } } : {}),
   };
   mkdirSync(outputDirectory, { recursive: true });
   let activeChild = null;
   let interrupted = false;
   const save = () => {
     writeJson(resolve(outputDirectory, "metadata.json"), metadata);
-    if (!options.shard)
+    if (!options.part)
       writeJson(resolve(root, "coverage", "latest.json"), {
         directory: outputDirectory,
         ...metadata,
@@ -333,30 +371,43 @@ async function runCoverage(root, options) {
     metadata.revision = revision(root, "HEAD");
     metadata.sources = sourceHashes(root);
     let plan;
-    if (options.shard) {
+    let part;
+    let timingProfile = normalizeDurationProfile();
+    if (options.part) {
       plan = readJson(resolveFromRoot(root, options.planPath), "coverage plan");
       validateCoveragePlan(plan);
       if (
+        plan.profile !== options.profile ||
         plan.baseRevision !== metadata.baseRef ||
         plan.headRevision !== metadata.revision ||
-        JSON.stringify(plan.sources) !== JSON.stringify(metadata.sources) ||
-        plan.shards.length !== options.shard.count
+        JSON.stringify(plan.sources) !== JSON.stringify(metadata.sources)
       )
         throw new Error(
           "Coverage plan does not match this revision or source tree",
+        );
+      part = plan.parts.find((candidate) => candidate.id === options.part);
+      if (!part) throw new Error(`Coverage part is invalid: ${options.part}`);
+      if (options.timingsPath)
+        timingProfile = normalizeDurationProfile(
+          readJson(
+            resolveFromRoot(root, options.timingsPath),
+            "coverage timing profile",
+          ),
         );
     }
     metadata.status = "running";
     save();
     const environment = coverageEnvironment(root, tempDirectory);
     const discoveryPath = "discovery.json";
-    if (!options.shard) {
+    const selectedProjects =
+      part?.projects ?? coverageProfile(options.profile).projects;
+    if (!part) {
       const discovery = await discover(
         root,
         environment,
         tempDirectory,
         discoveryPath,
-        undefined,
+        selectedProjects,
         (child) => {
           activeChild = child;
         },
@@ -373,10 +424,12 @@ async function runCoverage(root, options) {
       "--forbid-only",
       `--output=${resolve(tempDirectory, "playwright")}`,
     ];
-    if (options.shard)
-      argumentsList.push(
-        `--shard=${options.shard.index}/${options.shard.count}`,
-      );
+    argumentsList.push(...projectArguments(selectedProjects));
+    if (part) {
+      const testListPath = resolve(tempDirectory, "coverage-tests.list");
+      writeFileSync(testListPath, formatCoverageTestList(part.tests));
+      argumentsList.push(`--test-list=${testListPath}`);
+    }
     const run = await runChild(root, argumentsList, environment, (child) => {
       activeChild = child;
     });
@@ -392,34 +445,34 @@ async function runCoverage(root, options) {
       resolve(tempDirectory, "tests.json"),
       "coverage test report",
     );
-    if (options.shard)
-      validateCoverageShard(
-        plan,
-        testReport,
-        options.shard.index,
-        tempDirectory,
-      );
+    if (part) validateCoveragePart(plan, testReport, part.id, tempDirectory);
     else
       validateCaptureManifest(
         tempDirectory,
         testReport,
         readJson(resolve(tempDirectory, discoveryPath), "coverage discovery"),
+        { projectFilter: selectedProjects },
       );
-    const captures = await generate(
-      tempDirectory,
-      metadata.sources,
-      options.shard
-        ? {
-            projects: plan.shards[options.shard.index - 1].tests.map(
-              (test) => test.projectName,
-            ),
-          }
-        : undefined,
-    );
+    const captures = await generate(tempDirectory, metadata.sources, {
+      projects: selectedProjects,
+    });
     if (interrupted) throw new Error("Coverage measurement interrupted");
     metadata.runtime = { ...captures, sourceMapsValidated: true };
     metadata.tests = testReport.stats;
-    if (options.shard) {
+    const observations = collectCoverageDurations(testReport);
+    const updatedTimings = updateDurationProfile(timingProfile, observations);
+    metadata.timing = {
+      version: updatedTimings.version,
+      observedTests: observations.length,
+      knownTests: updatedTimings.tests.length,
+    };
+    if (options.timingOutputPath)
+      writeJson(
+        resolveFromRoot(root, options.timingOutputPath),
+        updatedTimings,
+      );
+    else writeJson(resolve(tempDirectory, "timings.json"), updatedTimings);
+    if (part) {
       metadata.status = "passed";
       exitCode = 0;
     } else {
@@ -484,6 +537,10 @@ async function runMerge(root, options) {
   const planPath = resolveFromRoot(root, options.planPath);
   const plan = readJson(planPath, "coverage plan");
   validateCoveragePlan(plan);
+  if (plan.profile !== options.profile)
+    throw new Error(
+      "Coverage plan profile does not match the requested profile",
+    );
   const currentRevision = revision(root, "HEAD");
   const currentSources = sourceHashes(root);
   if (
@@ -491,9 +548,9 @@ async function runMerge(root, options) {
     !recordsEqual(plan.sources, currentSources)
   )
     throw new Error("Coverage plan does not match the current checkout");
-  const shardsRoot = resolveFromRoot(root, options.shardsPath ?? "coverage");
-  const shardDirectories = plan.shards.map((shard) =>
-    resolve(shardsRoot, `shard-${shard.index}-of-${shard.count}`),
+  const partsRoot = resolveFromRoot(root, options.partsPath ?? "coverage");
+  const partDirectories = plan.parts.map((part) =>
+    resolve(partsRoot, `part-${part.id}`),
   );
   const outputDirectory = resolveFromRoot(
     root,
@@ -501,11 +558,27 @@ async function runMerge(root, options) {
   );
   const merged = mergeCoverageReports({
     plan,
-    shardDirectories,
+    partDirectories,
     outputDirectory,
     currentRevision,
     currentSources,
   });
+  const observations = [];
+  const observationKeys = new Set();
+  for (const directory of partDirectories) {
+    const partTimings = normalizeDurationProfile(
+      readJson(resolve(directory, "timings.json"), "coverage part timings"),
+    );
+    for (const observation of partTimings.tests) {
+      const key = JSON.stringify([observation.projectName, observation.id]);
+      if (observationKeys.has(key))
+        throw new Error("Duplicate coverage timing observation");
+      observationKeys.add(key);
+      observations.push(observation);
+    }
+  }
+  const timingProfile = updateDurationProfile(plan.timingProfile, observations);
+  writeJson(resolve(outputDirectory, "timing-profile.json"), timingProfile);
   const gate = spawnSync(
     "python3",
     [
@@ -524,18 +597,25 @@ async function runMerge(root, options) {
   const result = JSON.parse(gate.stdout || "{}");
   const metadata = {
     runId: randomUUID(),
+    profile: plan.profile,
     revision: plan.headRevision,
     baseRef: plan.baseRevision,
     status: gate.status === 0 ? "passed" : "threshold-failed",
     sources: plan.sources,
-    shard: { count: plan.shards.length },
-    artifacts: ["coverage-final.json", "gate.json", "plan.json", "tests.json"],
+    parts: plan.parts.map((part) => part.id),
+    artifacts: [
+      "coverage-final.json",
+      "gate.json",
+      "plan.json",
+      "tests.json",
+      "timing-profile.json",
+    ],
   };
   writeJson(resolve(outputDirectory, "plan.json"), plan);
   writeJson(resolve(outputDirectory, "tests.json"), {
     projects: plan.projects,
     tests: plan.tests,
-    shards: plan.shards,
+    parts: plan.parts,
   });
   if (result.error) {
     metadata.status = "measurement-failed";

@@ -15,7 +15,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/sandbox");
 });
 
-test("structure row context menus expose entity actions without crowded action buttons", async ({
+test("structure row context menus expose entity actions without crowded action buttons @extended", async ({
   page,
 }) => {
   const structure = page.getByRole("complementary", {
@@ -77,7 +77,7 @@ test("structure row context menus expose entity actions without crowded action b
   await rename.press("Escape");
 });
 
-test("department duplication deeply clones children with unique ids and copy names", async ({
+test("department duplication deeply clones children with unique ids and copy names @extended", async ({
   page,
 }) => {
   const history = page.getByText(/Tab-local draft/);
@@ -173,7 +173,7 @@ test("department duplication deeply clones children with unique ids and copy nam
   await expect(history).toContainText("1 undo steps available");
 });
 
-test("module and field duplication clone field configuration in one undo step each", async ({
+test("module and field duplication clone field configuration in one undo step each @extended", async ({
   page,
 }) => {
   test.skip((page.viewportSize()?.width ?? 0) < 1280, "Desktop contract");
@@ -294,13 +294,15 @@ test("module and field duplication clone field configuration in one undo step ea
   ).toHaveCount(0);
 });
 
-test("Designer shortcuts have visible equivalents and ignore editable or dialog targets", async ({
+test("Designer shortcuts have visible equivalents and ignore editable or dialog targets @extended", async ({
   page,
 }) => {
   const structure = page.getByRole("complementary", {
     name: "Organization structure",
   });
-  const search = structure.getByRole("searchbox", { name: "Search structure" });
+  const search = structure.getByRole("searchbox", {
+    name: "Search structure",
+  });
   await search.focus();
   await search.press("0");
   await expect(search).toHaveValue("0");

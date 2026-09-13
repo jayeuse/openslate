@@ -32,7 +32,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/sandbox");
 });
 
-test("structure search and disclosure make large outlines navigable", async ({
+test("structure search and disclosure make large outlines navigable @extended", async ({
   page,
 }) => {
   const structure = page.getByRole("complementary", {
@@ -68,7 +68,7 @@ test("structure search and disclosure make large outlines navigable", async ({
   await expect(structure.getByText("No structure items match.")).toBeVisible();
 });
 
-test("view menu preferences normalize safely and persist for the tab", async ({
+test("view menu preferences normalize safely and persist for the tab @extended", async ({
   page,
 }) => {
   if ((page.viewportSize()?.width ?? 0) < 1280)
@@ -115,7 +115,7 @@ test("view menu preferences normalize safely and persist for the tab", async ({
   });
 });
 
-test("restored Snap Off applies to the first pointer drag", async ({
+test("restored Snap Off applies to the first pointer drag @extended", async ({
   page,
 }) => {
   test.skip((page.viewportSize()?.width ?? 0) < 1280, "Desktop contract");
@@ -155,7 +155,7 @@ test("restored Snap Off applies to the first pointer drag", async ({
   );
 });
 
-test("desktop panels keep readable minimum widths and only collapse the inspector explicitly", async ({
+test("desktop panels keep readable minimum widths and only collapse the inspector explicitly @extended", async ({
   page,
 }) => {
   test.skip((page.viewportSize()?.width ?? 0) < 1280, "Desktop contract");
@@ -274,7 +274,9 @@ test("desktop panels keep readable minimum widths and only collapse the inspecto
   ).toBe(true);
 });
 
-test("mobile restores the last active designer pane", async ({ page }) => {
+test("mobile restores the last active designer pane @extended", async ({
+  page,
+}) => {
   test.skip((page.viewportSize()?.width ?? 0) >= 1280, "Mobile contract");
   await page.getByRole("tab", { name: "Canvas", exact: true }).click();
   await expect(
@@ -291,7 +293,7 @@ test("mobile restores the last active designer pane", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("auto-arrange and reset layout each add one undoable history action", async ({
+test("auto-arrange and reset layout each add one undoable history action @extended", async ({
   page,
 }) => {
   test.skip((page.viewportSize()?.width ?? 0) < 1280, "Desktop contract");

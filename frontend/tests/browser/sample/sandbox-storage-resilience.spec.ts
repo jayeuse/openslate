@@ -48,7 +48,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/sandbox");
 });
 
-test("sandbox drafts remain isolated to their originating tab", async ({
+test("sandbox drafts remain isolated to their originating tab @extended", async ({
   context,
   page,
 }) => {
@@ -97,7 +97,7 @@ test("sandbox drafts remain isolated to their originating tab", async ({
   expect(writes).toEqual([]);
 });
 
-test("storage write denial keeps editing, undo, and JSON export available in memory", async ({
+test("storage write denial keeps editing, undo, and JSON export available in memory @extended", async ({
   context,
   page,
 }) => {
@@ -174,7 +174,7 @@ test("storage write denial keeps editing, undo, and JSON export available in mem
   expect(writes).toEqual([]);
 });
 
-test("corrupt sandbox history recovers defaults without clearing unrelated sample data", async ({
+test("corrupt sandbox history recovers defaults without clearing unrelated sample data @extended", async ({
   context,
   page,
 }) => {

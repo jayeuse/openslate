@@ -27,15 +27,11 @@ test("coverage workers stay bounded while leaving capacity for the host", () => 
 
 test("coverage mode disables raw trace and video recording", () => {
   const config = readFileSync("playwright.config.ts", "utf8");
-  expect(config).toContain(
-    'trace: process.env.FRONTEND_COVERAGE === "1" ? "off" : "on-first-retry"',
-  );
-  expect(config).toContain(
-    'video: process.env.FRONTEND_COVERAGE === "1" ? "off" : "retain-on-failure"',
-  );
+  expect(config).toMatch(/trace:\s+isCoverage\s+\?\s+"off"/);
+  expect(config).toMatch(/video:\s+"off"/);
 });
 
-test("coverage plan CLI discovers one complete deterministic six-shard plan", () => {
+test("coverage plan CLI emits the PR profile with named parts", () => {
   const result = probe(String.raw`
     import fs from 'node:fs';
     import os from 'node:os';
@@ -44,230 +40,250 @@ test("coverage plan CLI discovers one complete deterministic six-shard plan", ()
     const directory=fs.mkdtempSync(path.join(os.tmpdir(),'openslate-coverage-plan-cli-'));
     try {
       const output=path.join(directory,'plan.json');
-      const run=spawnSync(process.execPath,['scripts/run-coverage.mjs','--plan','--output='+output],{
+      const run=spawnSync(process.execPath,['scripts/run-coverage.mjs','--plan','--profile=pr','--output='+output],{
         cwd:process.cwd(),encoding:'utf8',env:{...process.env,COVERAGE_BASE_REF:'HEAD',NODE_OPTIONS:'',NODE_V8_COVERAGE:''},
       });
       if(run.status!==0)throw Error(run.stderr || run.stdout);
       const plan=JSON.parse(fs.readFileSync(output,'utf8'));
       console.log(JSON.stringify({
-        shards:plan.shards.length,
+        version:plan.version,
+        profile:plan.profile,
+        parts:plan.parts.map(part=>({id:part.id,projects:part.projects,tests:part.tests.length})),
+        projects:plan.projects,
         tests:plan.tests.length,
-        assigned:plan.shards.flatMap(shard=>shard.tests).length,
+        assigned:plan.parts.flatMap(part=>part.tests).length,
         sources:plan.sourceInventory.length,
       }));
     } finally {fs.rmSync(directory,{recursive:true,force:true});}
   `);
 
-  expect(result.shards).toBe(6);
-  expect(result.tests).toBeGreaterThan(0);
+  expect(result.version).toBe(2);
+  expect(result.profile).toBe("pr");
+  expect(result.projects).toEqual(["chromium", "http", "isolated"]);
+  expect(result.parts.map((part: { id: string }) => part.id)).toEqual([
+    "core",
+    "chromium-1",
+    "chromium-2",
+    "chromium-3",
+  ]);
+  expect(result.parts[0].projects.sort()).toEqual(["http", "isolated"]);
+  expect(
+    result.parts
+      .slice(1)
+      .every(
+        (part: { projects: string[] }) => part.projects.join() === "chromium",
+      ),
+  ).toBe(true);
   expect(result.assigned).toBe(result.tests);
   expect(result.sources).toBeGreaterThan(0);
 });
 
-test("coverage CLI exposes explicit plan, shard, and merge modes", () => {
+test("coverage CLI exposes explicit PR part and timing modes", () => {
   const result = probe(String.raw`
     import {parseCoverageArguments} from './scripts/run-coverage.mjs';
     const parsed=[
-      parseCoverageArguments([]),
-      parseCoverageArguments(['--plan','--output=plan.json']),
-      parseCoverageArguments(['--shard=2/3','--plan=plan.json','--output=shard']),
-      parseCoverageArguments(['--merge','--plan=plan.json','--shards=shards','--output=merged']),
+      parseCoverageArguments(['--plan','--profile=pr','--timings=timings.json','--output=plan.json']),
+      parseCoverageArguments(['--profile=pr','--part=chromium-2','--plan=plan.json','--timing-output=timings.json','--output=part']),
+      parseCoverageArguments(['--merge','--profile=pr','--plan=plan.json','--parts=parts','--output=merged']),
     ];
-    let invalid='';try {parseCoverageArguments(['--shard=0/3'])} catch(error) {invalid=error.message;}
+    let invalid='';try {parseCoverageArguments(['--part=chromium-4','--plan=plan.json'])} catch(error) {invalid=error.message;}
     console.log(JSON.stringify({parsed,invalid}));
   `);
 
   expect(result.parsed).toEqual([
     {
-      mode: "run",
-      planPath: null,
-      outputPath: null,
-      shardsPath: null,
-      shard: null,
-    },
-    {
       mode: "plan",
+      profile: "pr",
       planPath: null,
       outputPath: "plan.json",
-      shardsPath: null,
-      shard: null,
+      partsPath: null,
+      part: null,
+      timingsPath: "timings.json",
+      timingOutputPath: null,
     },
     {
       mode: "run",
+      profile: "pr",
       planPath: "plan.json",
-      outputPath: "shard",
-      shardsPath: null,
-      shard: { index: 2, count: 3 },
+      outputPath: "part",
+      partsPath: null,
+      part: "chromium-2",
+      timingsPath: null,
+      timingOutputPath: "timings.json",
     },
     {
       mode: "merge",
+      profile: "pr",
       planPath: "plan.json",
       outputPath: "merged",
-      shardsPath: "shards",
-      shard: null,
+      partsPath: "parts",
+      part: null,
+      timingsPath: null,
+      timingOutputPath: null,
     },
   ]);
-  expect(result.invalid).toContain("valid 1-based index");
+  expect(result.invalid).toContain("core or chromium-1 through chromium-3");
 });
 
-test("coverage plans preserve deterministic shard assignments and merge compact reports", () => {
+test("coverage parts use deterministic longest-processing-time balancing and conservative new-test weights", () => {
+  const result = probe(String.raw`
+    import {createCoverageParts,DEFAULT_NEW_TEST_DURATION_MS,normalizeDurationProfile} from './scripts/coverage-report.mjs';
+    const tests=[
+      {projectName:'isolated',id:'isolated',file:'isolated/test.spec.ts',line:1},
+      {projectName:'http',id:'http',file:'http/test.spec.ts',line:1},
+      ...['a','b','c','d','e','f'].map((id,index)=>({projectName:'chromium',id,file:'browser/test.spec.ts',line:index+1})),
+    ];
+    const parts=createCoverageParts(tests,normalizeDurationProfile({version:1,tests:[
+      {projectName:'chromium',id:'a',durationMs:90_000},
+      {projectName:'chromium',id:'b',durationMs:80_000},
+      {projectName:'chromium',id:'c',durationMs:70_000},
+      {projectName:'chromium',id:'d',durationMs:60_000},
+      {projectName:'chromium',id:'e',durationMs:50_000},
+    ]}));
+    console.log(JSON.stringify({
+      ids:parts.slice(1).map(part=>part.tests.map(test=>test.id)),
+      durations:parts.slice(1).map(part=>part.estimatedDurationMs),
+      newWeight:parts.slice(1).flatMap(part=>part.tests).find(test=>test.id==='f').durationMs,
+      sources:parts.slice(1).flatMap(part=>part.tests).map(test=>test.durationSource),
+    }));
+  `);
+
+  expect(result.ids).toEqual([
+    ["a", "e"],
+    ["b", "c"],
+    ["d", "f"],
+  ]);
+  expect(result.durations).toEqual([140_000, 150_000, 140_000]);
+  expect(result.newWeight).toBe(80_000);
+  expect(result.sources).toEqual([
+    "historical",
+    "historical",
+    "historical",
+    "historical",
+    "historical",
+    "conservative-default",
+  ]);
+});
+
+test("timing profiles keep a five-run history and report compact observations", () => {
+  const result = probe(String.raw`
+    import {collectCoverageDurations,updateDurationProfile} from './scripts/coverage-report.mjs';
+    const report={config:{projects:[{name:'chromium'}]},errors:[],suites:[{specs:[
+      {id:'one',file:'browser/test.spec.ts',line:4,tests:[{projectName:'chromium',results:[{duration:20,status:'passed'}]}]},
+      {id:'two',file:'browser/test.spec.ts',line:8,tests:[{projectName:'chromium',results:[{duration:40,status:'passed'}]}]},
+    ]}]};
+    let profile={version:1,tests:[{projectName:'chromium',id:'one',samples:[1,2,3,4,5]}]};
+    const observations=collectCoverageDurations(report);
+    profile=updateDurationProfile(profile,observations);
+    console.log(JSON.stringify({observations,profile}));
+  `);
+
+  expect(result.observations).toEqual([
+    {
+      projectName: "chromium",
+      id: "one",
+      samples: [20],
+      durationMs: 20,
+      file: "browser/test.spec.ts",
+      line: 4,
+    },
+    {
+      projectName: "chromium",
+      id: "two",
+      samples: [40],
+      durationMs: 40,
+      file: "browser/test.spec.ts",
+      line: 8,
+    },
+  ]);
+  expect(result.profile.tests).toEqual([
+    {
+      projectName: "chromium",
+      id: "one",
+      samples: [2, 3, 4, 5, 20],
+      durationMs: 4,
+      file: "browser/test.spec.ts",
+      line: 4,
+    },
+    {
+      projectName: "chromium",
+      id: "two",
+      samples: [40],
+      durationMs: 40,
+      file: "browser/test.spec.ts",
+      line: 8,
+    },
+  ]);
+});
+
+test("coverage merge accepts every named part and rejects retries", () => {
   const result = probe(String.raw`
     import fs from 'node:fs';
     import os from 'node:os';
     import path from 'node:path';
-    import {
-      createCoveragePlan,
-      hash,
-      mergeCoverageReports,
-      validateCoveragePlan,
-    } from './scripts/coverage-report.mjs';
-
-    const projects=['isolated','http','chromium','mobile-chromium'];
-    const tests=projects.flatMap(projectName => [0,1,2].map(index => ({projectName,id:projectName+'-'+index})));
+    import {createCoveragePlan,hash,mergeCoverageReports} from './scripts/coverage-report.mjs';
+    const projects=['isolated','http','chromium'];
+    const tests=projects.flatMap(projectName => [0,1,2].map(index => ({projectName,id:projectName+'-'+index,file:projectName+'/test.spec.ts',line:index+1})));
     const reportFor=(items, options={}) => ({
       config:{projects:projects.map(name=>({name}))}, errors:[],
-      suites:[{specs:items.map(({projectName,id})=>({id,tests:[{
-        projectName,
+      suites:[{specs:items.map(item=>({id:item.id,file:item.file,line:item.line,tests:[{
+        projectName:item.projectName,
         expectedStatus:options.expectedStatus ?? 'passed',
         status:options.status ?? 'expected',
         results:options.results ?? [{status:'passed'}],
       }]}))}],
     });
     const discovery=reportFor(tests);
-    const shardDiscoveries=[0,1,2].map(index => reportFor(tests.filter((_,testIndex)=>testIndex%3===index)));
     const sources={'src/one.ts':hash('one'),'src/two.ts':hash('two')};
-    const plan=createCoveragePlan({
-      baseRevision:'base-revision',
-      headRevision:'head-revision',
-      sources,
-      denominator:{'src/one.ts':[1,2],'src/two.ts':[1]},
-      discovery,
-      shardDiscoveries,
-    });
-    validateCoveragePlan(plan);
-
+    const plan=createCoveragePlan({baseRevision:'base-revision',headRevision:'head-revision',sources,denominator:{'src/one.ts':[1,2],'src/two.ts':[1]},discovery,timingProfile:{version:1,tests:tests.filter(test=>test.projectName==='chromium').map((test,index)=>({...test,durationMs:(index+1)*10}))}});
     const root=fs.mkdtempSync(path.join(os.tmpdir(),'openslate-coverage-merge-'));
-    const writeShard=(index, hits, metadataOverrides={}, reportOverride=undefined) => {
-      const directory=path.join(root,'shard-'+index+'-of-3');
-      fs.mkdirSync(path.join(directory,'report'),{recursive:true});
-      fs.writeFileSync(path.join(directory,'metadata.json'),JSON.stringify({
-        status:'passed', revision:'head-revision', baseRef:'base-revision', sources,
-        shard:{index,count:3}, runtime:{browserCaptures:1,nodeEntries:2,serverEntries:1,isolatedEntries:1,sourceMapsValidated:true},
-        ...metadataOverrides,
-      }));
-      fs.writeFileSync(path.join(directory,'tests.json'),JSON.stringify(reportOverride ?? reportFor(plan.shards[index-1].tests)));
+    const writePart=(part, hits, reportOverride=undefined) => {
+      const directory=path.join(root,'part-'+part.id);fs.mkdirSync(path.join(directory,'report'),{recursive:true});
+      fs.writeFileSync(path.join(directory,'metadata.json'),JSON.stringify({status:'passed',revision:'head-revision',baseRef:'base-revision',sources:plan.sources,part:{id:part.id},runtime:{browserCaptures:part.projects.includes('chromium')?1:0,nodeEntries:2,serverEntries:1,isolatedEntries:part.projects.includes('isolated')?1:0,sourceMapsValidated:true}}));
+      fs.writeFileSync(path.join(directory,'tests.json'),JSON.stringify(reportOverride ?? reportFor(part.tests)));
       fs.writeFileSync(path.join(directory,'report','coverage-final.json'),JSON.stringify({
         'src/one.ts':{path:'src/one.ts',statementMap:{0:{start:{line:1,column:0},end:{line:1,column:1}},1:{start:{line:2,column:0},end:{line:2,column:1}}},s:{0:hits[0],1:hits[1]},fnMap:{},f:{},branchMap:{},b:{}},
         'src/two.ts':{path:'src/two.ts',statementMap:{0:{start:{line:1,column:0},end:{line:1,column:1}}},s:{0:hits[2]},fnMap:{},f:{},branchMap:{},b:{}},
       }));
-    };
-    try {
-      writeShard(1,[1,0,0]);
-      writeShard(2,[0,1,0]);
-      writeShard(3,[0,0,1]);
-      const output=path.join(root,'merged');
-      const merged=mergeCoverageReports({plan,shardDirectories:[
-        path.join(root,'shard-1-of-3'),path.join(root,'shard-2-of-3'),path.join(root,'shard-3-of-3'),
-      ],outputDirectory:output});
-      const report=JSON.parse(fs.readFileSync(path.join(output,'coverage-final.json')));
-      const retryReport=reportFor(plan.shards[0].tests,{results:[{status:'passed'},{status:'passed'}]});
-      writeShard(1,[1,0,0],{},retryReport);
-      let retryError='';try {mergeCoverageReports({plan,shardDirectories:[
-        path.join(root,'shard-1-of-3'),path.join(root,'shard-2-of-3'),path.join(root,'shard-3-of-3'),
-      ],outputDirectory:path.join(root,'retry')});} catch(error) {retryError=error.message;}
-      console.log(JSON.stringify({
-        shards:plan.shards.map(shard=>shard.tests),
-        merged,
-        lines:[report['src/one.ts'].s,report['src/two.ts'].s],
-        retryError,
-      }));
-    } finally {fs.rmSync(root,{recursive:true,force:true});}
-  `);
-
-  expect(result.shards).toHaveLength(3);
-  expect(
-    new Set(
-      result.shards
-        .flat()
-        .map(
-          (item: { projectName: string; id: string }) =>
-            `${item.projectName}/${item.id}`,
-        ),
-    ).size,
-  ).toBe(12);
-  expect(result.merged).toMatchObject({ shards: 3, files: 2 });
-  expect(result.lines).toEqual([{ "0": 1, "1": 1 }, { "0": 1 }]);
-  expect(result.retryError).toContain("Retried");
-});
-
-test("coverage merge rejects a denominator that shrinks in one shard", () => {
-  const result = probe(String.raw`
-    import fs from 'node:fs';
-    import os from 'node:os';
-    import path from 'node:path';
-    import {createCoveragePlan,hash,mergeCoverageReports} from './scripts/coverage-report.mjs';
-    const projects=['isolated'];
-    const testReport={config:{projects:[{name:'isolated'}]},errors:[],suites:[{specs:[{id:'one',tests:[{projectName:'isolated',expectedStatus:'passed',status:'expected',results:[{status:'passed'}]}]}]}]};
-    const sources={'src/one.ts':hash('one')};
-    const plan=createCoveragePlan({baseRevision:'base',headRevision:'head',sources,denominator:{'src/one.ts':[1,2]},discovery:testReport,shardDiscoveries:[testReport]});
-    const root=fs.mkdtempSync(path.join(os.tmpdir(),'openslate-coverage-denominator-'));const directory=path.join(root,'shard-1-of-1');
-    fs.mkdirSync(path.join(directory,'report'),{recursive:true});
-    fs.writeFileSync(path.join(directory,'metadata.json'),JSON.stringify({status:'passed',revision:'head',baseRef:'base',sources,shard:{index:1,count:1},runtime:{browserCaptures:1,nodeEntries:1,serverEntries:1,isolatedEntries:1,sourceMapsValidated:true}}));
-    fs.writeFileSync(path.join(directory,'tests.json'),JSON.stringify(testReport));
-    fs.writeFileSync(path.join(directory,'report','coverage-final.json'),JSON.stringify({'src/one.ts':{path:'src/one.ts',statementMap:{0:{start:{line:1,column:0},end:{line:1,column:1}}},s:{0:1},fnMap:{},f:{},branchMap:{},b:{}}}));
-    let message='';try {mergeCoverageReports({plan,shardDirectories:[directory],outputDirectory:path.join(root,'merged')});} catch(error) {message=error.message;}
-    fs.rmSync(root,{recursive:true,force:true});
-    console.log(JSON.stringify({message}));
-  `);
-
-  expect(result.message).toContain("denominator");
-});
-
-test("coverage runtime requirements follow the projects assigned to each shard", () => {
-  const result = probe(String.raw`
-    import fs from 'node:fs';
-    import os from 'node:os';
-    import path from 'node:path';
-    import {createCoveragePlan,hash,mergeCoverageReports} from './scripts/coverage-report.mjs';
-    const projects=['isolated','chromium'];
-    const reportFor=items=>({config:{projects:projects.map(name=>({name}))},errors:[],suites:[{specs:items.map(({projectName,id})=>({id,tests:[{projectName,expectedStatus:'passed',status:'expected',results:[{status:'passed'}]}]}))}]});
-    const discovery=reportFor([{projectName:'isolated',id:'isolated-test'},{projectName:'chromium',id:'browser-test'}]);
-    const plan=createCoveragePlan({baseRevision:'base',headRevision:'head',sources:{'src/one.ts':hash('one')},denominator:{'src/one.ts':[1]},discovery,shardDiscoveries:[
-      reportFor([{projectName:'isolated',id:'isolated-test'}]),
-      reportFor([{projectName:'chromium',id:'browser-test'}]),
-    ]});
-    const root=fs.mkdtempSync(path.join(os.tmpdir(),'openslate-coverage-runtime-'));
-    const writeShard=(index,runtime)=>{
-      const directory=path.join(root,'shard-'+index+'-of-2');fs.mkdirSync(path.join(directory,'report'),{recursive:true});
-      fs.writeFileSync(path.join(directory,'metadata.json'),JSON.stringify({status:'passed',revision:'head',baseRef:'base',sources:plan.sources,shard:{index,count:2},runtime:{...runtime,sourceMapsValidated:true}}));
-      fs.writeFileSync(path.join(directory,'tests.json'),JSON.stringify(plan.shards[index-1].tests.length===1?reportFor(plan.shards[index-1].tests):discovery));
-      fs.writeFileSync(path.join(directory,'report','coverage-final.json'),JSON.stringify({'src/one.ts':{path:'src/one.ts',statementMap:{0:{start:{line:1,column:0},end:{line:1,column:1}}},s:{0:1},fnMap:{},f:{},branchMap:{},b:{}}}));
-      if(index===2){fs.mkdirSync(path.join(directory,'browser'));fs.writeFileSync(path.join(directory,'browser','browser.json'),JSON.stringify({testId:'browser-test'}));}
+      if(part.projects.includes('chromium'))for(const test of part.tests){fs.mkdirSync(path.join(directory,'browser'),{recursive:true});fs.writeFileSync(path.join(directory,'browser',test.id+'.json'),JSON.stringify({testId:test.id}));}
       return directory;
     };
     try {
-      const directories=[writeShard(1,{browserCaptures:0,nodeEntries:1,serverEntries:0,isolatedEntries:1}),writeShard(2,{browserCaptures:1,nodeEntries:1,serverEntries:1,isolatedEntries:0})];
-      let message='';try {mergeCoverageReports({plan,shardDirectories:directories,outputDirectory:path.join(root,'merged')});} catch(error) {message=error.message;}
-      console.log(JSON.stringify({message}));
+      const directories=plan.parts.map((part,index)=>writePart(part,[index===0?1:0,index===1?1:0,index===2?1:0]));
+      const output=path.join(root,'merged');
+      const merged=mergeCoverageReports({plan,partDirectories:directories,outputDirectory:output});
+      const retryReport=reportFor(plan.parts[0].tests,{results:[{status:'passed'},{status:'passed'}]});
+      writePart(plan.parts[0],[1,0,0],retryReport);
+      let retryError='';try {mergeCoverageReports({plan,partDirectories:directories,outputDirectory:path.join(root,'retry')});} catch(error) {retryError=error.message;}
+      console.log(JSON.stringify({parts:merged.parts,files:merged.files,retryError}));
     } finally {fs.rmSync(root,{recursive:true,force:true});}
   `);
 
-  expect(result.message).toBe("");
+  expect(result.parts).toBe(4);
+  expect(result.files).toBe(2);
+  expect(result.retryError).toContain("Retried");
 });
 
-test("coverage shard validation rejects a missing capture for an assigned browser test", () => {
+test("coverage merge rejects a missing named part and missing browser capture", () => {
   const result = probe(String.raw`
-    import fs from 'node:fs';
-    import os from 'node:os';
-    import path from 'node:path';
-    import {createCoveragePlan,hash,validateCoverageShard} from './scripts/coverage-report.mjs';
-    const report={config:{projects:[{name:'chromium'}]},errors:[],suites:[{specs:[{id:'browser-test',tests:[{projectName:'chromium',expectedStatus:'passed',status:'expected',results:[{status:'passed'}]}]}]}]};
-    const plan=createCoveragePlan({baseRevision:'base',headRevision:'head',sources:{'src/one.ts':hash('one')},denominator:{'src/one.ts':[1]},discovery:report,shardDiscoveries:[report]});
-    const directory=fs.mkdtempSync(path.join(os.tmpdir(),'openslate-coverage-browser-capture-'));
-    let message='';try {validateCoverageShard(plan,report,1,directory);} catch(error) {message=error.message;} finally {fs.rmSync(directory,{recursive:true,force:true});}
-    console.log(JSON.stringify({message}));
+    import {createCoveragePlan,hash,validateCoveragePart} from './scripts/coverage-report.mjs';
+    const report={config:{projects:[{name:'isolated'},{name:'http'},{name:'chromium'}]},errors:[],suites:[{specs:[
+      {id:'core',file:'isolated/test.spec.ts',line:1,tests:[{projectName:'isolated',expectedStatus:'passed',status:'expected',results:[{status:'passed'}]}]},
+      {id:'http',file:'http/test.spec.ts',line:1,tests:[{projectName:'http',expectedStatus:'passed',status:'expected',results:[{status:'passed'}]}]},
+      ...['browser-1','browser-2','browser-3'].map((id,index)=>({id,file:'browser/test.spec.ts',line:index+1,tests:[{projectName:'chromium',expectedStatus:'passed',status:'expected',results:[{status:'passed'}]}]})),
+    ]}]};
+    const plan=createCoveragePlan({baseRevision:'base',headRevision:'head',sources:{'src/one.ts':hash('one')},denominator:{'src/one.ts':[1]},discovery:report});
+    const partReport={...report,suites:[{specs:plan.parts[1].tests.map(test=>({id:test.id,file:test.file,line:test.line,tests:[{projectName:test.projectName,expectedStatus:'passed',status:'expected',results:[{status:'passed'}]}]}))}]};
+    let message='';try {validateCoveragePart(plan,partReport,'chromium-1','/tmp/openslate-missing-capture-'+Date.now());} catch(error) {message=error.message;}
+    console.log(JSON.stringify({message,partIds:plan.parts.map(part=>part.id)}));
   `);
 
+  expect(result.partIds).toEqual([
+    "core",
+    "chromium-1",
+    "chromium-2",
+    "chromium-3",
+  ]);
   expect(result.message).toContain("Missing browser captures");
 });
 
@@ -281,10 +297,14 @@ test("coverage merge CLI rejects a coherent plan that is stale for the checkout"
     const directory=fs.mkdtempSync(path.join(os.tmpdir(),'openslate-coverage-stale-plan-'));
     try {
       const sources=Object.fromEntries(inventory().map(source=>[source,hash(fs.readFileSync(source))]));
-      const report={config:{projects:[{name:'isolated'}]},errors:[],suites:[{specs:[{id:'isolated-test',tests:[{projectName:'isolated',expectedStatus:'passed',status:'expected',results:[{status:'passed'}]}]}]}]};
-      const plan=createCoveragePlan({baseRevision:'base',headRevision:'stale-head',sources,denominator:Object.fromEntries(Object.keys(sources).map(source=>[source,[1]])),discovery:report,shardDiscoveries:[report]});
+      const report={config:{projects:[{name:'isolated'},{name:'http'},{name:'chromium'}]},errors:[],suites:[{specs:[
+        {id:'isolated-test',file:'isolated/test.spec.ts',line:1,tests:[{projectName:'isolated',expectedStatus:'passed',status:'expected',results:[{status:'passed'}]}]},
+        {id:'http-test',file:'http/test.spec.ts',line:1,tests:[{projectName:'http',expectedStatus:'passed',status:'expected',results:[{status:'passed'}]}]},
+        ...['browser-1','browser-2','browser-3'].map((id,index)=>({id,file:'browser/test.spec.ts',line:index+1,tests:[{projectName:'chromium',expectedStatus:'passed',status:'expected',results:[{status:'passed'}]}]})),
+      ]}]};
+      const plan=createCoveragePlan({baseRevision:'base',headRevision:'stale-head',sources,denominator:Object.fromEntries(Object.keys(sources).map(source=>[source,[1]])),discovery:report});
       const planPath=path.join(directory,'plan.json');fs.writeFileSync(planPath,JSON.stringify(plan));
-      const run=spawnSync(process.execPath,['scripts/run-coverage.mjs','--merge','--plan='+planPath,'--shards='+directory,'--output='+path.join(directory,'merged')],{cwd:process.cwd(),encoding:'utf8',env:{...process.env,NODE_OPTIONS:'',NODE_V8_COVERAGE:''}});
+      const run=spawnSync(process.execPath,['scripts/run-coverage.mjs','--merge','--profile=pr','--plan='+planPath,'--parts='+directory,'--output='+path.join(directory,'merged')],{cwd:process.cwd(),encoding:'utf8',env:{...process.env,NODE_OPTIONS:'',NODE_V8_COVERAGE:''}});
       console.log(JSON.stringify({status:run.status,output:(run.stderr||'')+(run.stdout||'')}));
     } finally {fs.rmSync(directory,{recursive:true,force:true});}
   `);

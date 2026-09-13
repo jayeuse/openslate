@@ -15,6 +15,32 @@ import istanbul from "istanbul-lib-coverage";
 export const root = resolve(import.meta.dirname, "..");
 export const hash = (source) =>
   createHash("sha256").update(source).digest("hex");
+
+// Coverage is intentionally planned as a profile rather than as a collection
+// of homogeneous Playwright shards.  The PR profile keeps the complete
+// isolated/HTTP suite together and balances desktop Chromium tests by the
+// duration profile supplied by CI.
+export const COVERAGE_PLAN_VERSION = 2;
+export const COVERAGE_TIMING_VERSION = 1;
+export const COVERAGE_TIMING_WINDOW = 5;
+export const DEFAULT_NEW_TEST_DURATION_MS = 60_000;
+export const MAX_COVERAGE_TEST_DURATION_MS = 600_000;
+export const MAX_COVERAGE_TIMING_RECORDS = 10_000;
+export const PR_CHROMIUM_PART_COUNT = 3;
+export const COVERAGE_PROFILES = Object.freeze({
+  pr: Object.freeze({
+    projects: Object.freeze(["isolated", "http", "chromium"]),
+    coreProjects: Object.freeze(["isolated", "http"]),
+    chromiumPartCount: PR_CHROMIUM_PART_COUNT,
+  }),
+});
+
+export function coverageProfile(name = "pr") {
+  const profile = COVERAGE_PROFILES[name];
+  if (!profile) throw new Error(`Unsupported coverage profile: ${name}`);
+  return profile;
+}
+
 export function boundedCoverageWorkers(parallelism = availableParallelism()) {
   return Math.min(4, Math.max(1, Math.max(1, parallelism) - 1));
 }
@@ -37,31 +63,212 @@ export function inventory(directory = resolve(root, "src")) {
   });
 }
 
-function manifestKey(projectName, id) {
+export function coverageManifestKey(projectName, id) {
   return JSON.stringify([projectName, id]);
+}
+
+function manifestKey(projectName, id) {
+  return coverageManifestKey(projectName, id);
+}
+
+function validDuration(value) {
+  return (
+    Number.isFinite(value) &&
+    Number.isInteger(value) &&
+    value > 0 &&
+    value <= MAX_COVERAGE_TEST_DURATION_MS
+  );
+}
+
+function median(values) {
+  const sorted = [...values].sort((left, right) => left - right);
+  if (!sorted.length) return DEFAULT_NEW_TEST_DURATION_MS;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[middle]
+    : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+}
+
+function timingRecordKey(record) {
+  return coverageManifestKey(record.projectName, record.id);
+}
+
+function normalizeTimingRecord(record) {
+  if (
+    !record ||
+    typeof record.projectName !== "string" ||
+    !record.projectName ||
+    typeof record.id !== "string" ||
+    !record.id
+  )
+    throw new Error("Coverage timing records are invalid");
+  const samples = record.samples ?? [record.durationMs];
+  if (
+    !Array.isArray(samples) ||
+    !samples.length ||
+    samples.some((sample) => !validDuration(sample))
+  )
+    throw new Error(
+      `Coverage timing duration is invalid: ${record.projectName}/${record.id}`,
+    );
+  const normalized = {
+    projectName: record.projectName,
+    id: record.id,
+    samples: samples
+      .map((sample) => Math.round(sample))
+      .slice(-COVERAGE_TIMING_WINDOW),
+  };
+  normalized.durationMs = median(normalized.samples);
+  if (typeof record.file === "string") normalized.file = record.file;
+  if (Number.isInteger(record.line) && record.line > 0)
+    normalized.line = record.line;
+  return normalized;
+}
+
+/**
+ * Normalize the compact timing cache exchanged by the CI workflow.
+ *
+ * The cache deliberately contains only one median and at most five samples
+ * per test.  It is a performance hint, never coverage evidence.
+ */
+export function normalizeDurationProfile(profile) {
+  if (profile === undefined || profile === null)
+    return {
+      version: COVERAGE_TIMING_VERSION,
+      window: COVERAGE_TIMING_WINDOW,
+      tests: [],
+    };
+  if (
+    typeof profile !== "object" ||
+    profile.version !== COVERAGE_TIMING_VERSION ||
+    !Array.isArray(profile.tests) ||
+    profile.tests.length > MAX_COVERAGE_TIMING_RECORDS
+  )
+    throw new Error("Unsupported coverage timing profile");
+  const records = new Map();
+  for (const record of profile.tests) {
+    const normalized = normalizeTimingRecord(record);
+    const key = timingRecordKey(normalized);
+    if (records.has(key)) throw new Error("Duplicate coverage timing record");
+    records.set(key, normalized);
+  }
+  return {
+    version: COVERAGE_TIMING_VERSION,
+    window: COVERAGE_TIMING_WINDOW,
+    tests: [...records.values()].sort((left, right) =>
+      timingRecordKey(left).localeCompare(timingRecordKey(right)),
+    ),
+  };
+}
+
+/**
+ * Convert a successful Playwright JSON report into compact observations.
+ * Coverage runs reject failures/retries before this function is used.
+ */
+export function collectCoverageDurations(report) {
+  const manifest = collectCoverageManifest(report, {
+    requireAllProjects: false,
+  });
+  const records = new Map();
+  for (const test of manifest.tests.values()) {
+    const duration = test.results?.[0]?.duration;
+    if (!validDuration(duration)) continue;
+    const record = normalizeTimingRecord({
+      projectName: test.projectName,
+      id: test.id,
+      durationMs: Math.round(duration),
+      file: test.file,
+      line: test.line,
+    });
+    const key = timingRecordKey(record);
+    if (records.has(key)) throw new Error("Duplicate coverage timing record");
+    records.set(key, record);
+  }
+  return [...records.values()].sort((left, right) =>
+    timingRecordKey(left).localeCompare(timingRecordKey(right)),
+  );
+}
+
+/**
+ * Append one successful run to the rolling duration profile.  Unobserved
+ * records are retained so a partial run cannot erase useful history.
+ */
+export function updateDurationProfile(previous, observations) {
+  const base = normalizeDurationProfile(previous);
+  if (!Array.isArray(observations))
+    throw new Error("Coverage timing observations are invalid");
+  const records = new Map(
+    base.tests.map((record) => [timingRecordKey(record), record]),
+  );
+  for (const observation of observations) {
+    const current = normalizeTimingRecord(observation);
+    const key = timingRecordKey(current);
+    const history = records.get(key)?.samples ?? [];
+    const next = normalizeTimingRecord({
+      ...current,
+      samples: [...history, current.durationMs].slice(-COVERAGE_TIMING_WINDOW),
+    });
+    records.set(key, next);
+  }
+  return {
+    version: COVERAGE_TIMING_VERSION,
+    window: COVERAGE_TIMING_WINDOW,
+    tests: [...records.values()].sort((left, right) =>
+      timingRecordKey(left).localeCompare(timingRecordKey(right)),
+    ),
+  };
 }
 
 export function collectCoverageManifest(
   value,
-  { requireAllProjects = true } = {},
+  { requireAllProjects = true, projectFilter } = {},
 ) {
   if (!value || value.errors?.length || !Array.isArray(value.suites))
     throw new Error("Incomplete coverage test report");
-  const projects = value.config?.projects?.map((project) => project.name);
-  if (!projects?.length || new Set(projects).size !== projects.length)
+  const configuredProjects = value.config?.projects?.map(
+    (project) => project.name,
+  );
+  if (
+    !configuredProjects?.length ||
+    new Set(configuredProjects).size !== configuredProjects.length
+  )
     throw new Error("Incomplete coverage projects");
+  const projects = projectFilter ? [...projectFilter] : configuredProjects;
+  if (
+    !projects.length ||
+    new Set(projects).size !== projects.length ||
+    projects.some((project) => !configuredProjects.includes(project))
+  )
+    throw new Error("Coverage project filter is invalid");
   const tests = new Map();
-  function visit(suites) {
+  function visit(suites, ancestors = []) {
     for (const suite of suites) {
+      const suiteTitles =
+        typeof suite.title === "string" && suite.title !== suite.file
+          ? [...ancestors, suite.title]
+          : ancestors;
       for (const spec of suite.specs ?? []) {
         for (const test of spec.tests ?? []) {
           const key = manifestKey(test.projectName, spec.id);
-          if (!projects.includes(test.projectName) || tests.has(key))
+          if (!configuredProjects.includes(test.projectName))
             throw new Error("Unknown or duplicate coverage test");
-          tests.set(key, { ...test, id: spec.id });
+          if (!projects.includes(test.projectName)) continue;
+          if (tests.has(key))
+            throw new Error("Unknown or duplicate coverage test");
+          tests.set(key, {
+            ...test,
+            id: spec.id,
+            file: typeof spec.file === "string" ? spec.file : suite.file,
+            line: Number.isInteger(spec.line) ? spec.line : suite.line,
+            column: Number.isInteger(spec.column) ? spec.column : suite.column,
+            title: spec.title,
+            titlePath: [...suiteTitles, spec.title].filter(
+              (title) => typeof title === "string" && title.length,
+            ),
+          });
         }
       }
-      visit(suite.suites ?? []);
+      visit(suite.suites ?? [], suiteTitles);
     }
   }
   visit(value.suites);
@@ -77,7 +284,18 @@ export function collectCoverageManifest(
 
 function sortedManifestTests(manifest) {
   return [...manifest.tests.values()]
-    .map(({ projectName, id }) => ({ projectName, id }))
+    .map((test) => {
+      const normalized = { projectName: test.projectName, id: test.id };
+      if (typeof test.file === "string") normalized.file = test.file;
+      if (Number.isInteger(test.line) && test.line > 0)
+        normalized.line = test.line;
+      if (Number.isInteger(test.column) && test.column > 0)
+        normalized.column = test.column;
+      if (typeof test.title === "string") normalized.title = test.title;
+      if (Array.isArray(test.titlePath) && test.titlePath.length)
+        normalized.titlePath = [...test.titlePath];
+      return normalized;
+    })
     .sort((left, right) =>
       manifestKey(left.projectName, left.id).localeCompare(
         manifestKey(right.projectName, right.id),
@@ -86,8 +304,10 @@ function sortedManifestTests(manifest) {
 }
 
 function assertCoveragePlanShape(plan) {
-  if (!plan || plan.version !== 1)
+  if (!plan || plan.version !== COVERAGE_PLAN_VERSION)
     throw new Error("Unsupported coverage plan version");
+  if (typeof plan.profile !== "string" || !COVERAGE_PROFILES[plan.profile])
+    throw new Error("Coverage plan profile is invalid");
   if (!plan.baseRevision || !plan.headRevision)
     throw new Error("Coverage plan revisions are required");
   if (!plan.sources || typeof plan.sources !== "object")
@@ -113,31 +333,86 @@ function assertCoveragePlanShape(plan) {
       !test ||
       !plan.projects.includes(test.projectName) ||
       typeof test.id !== "string" ||
+      typeof test.file !== "string" ||
+      !test.file ||
+      !Number.isInteger(test.line) ||
+      test.line < 1 ||
       expectedKeys.has(manifestKey(test.projectName, test.id))
     )
       throw new Error("Coverage plan tests are invalid");
     expectedKeys.add(manifestKey(test.projectName, test.id));
   }
-  if (!Array.isArray(plan.shards) || !plan.shards.length)
-    throw new Error("Coverage plan shards are empty");
+  const profile = coverageProfile(plan.profile);
+  const expectedProjects = [...profile.projects].sort();
+  if (
+    JSON.stringify([...plan.projects].sort()) !==
+    JSON.stringify(expectedProjects)
+  )
+    throw new Error("Coverage plan projects do not match profile");
+  if (
+    !Array.isArray(plan.parts) ||
+    plan.parts.length !== 1 + profile.chromiumPartCount
+  )
+    throw new Error("Coverage plan parts are incomplete");
+  const expectedPartIds = [
+    "core",
+    ...Array.from(
+      { length: profile.chromiumPartCount },
+      (_, index) => `chromium-${index + 1}`,
+    ),
+  ];
+  if (
+    JSON.stringify(plan.parts.map((part) => part.id)) !==
+    JSON.stringify(expectedPartIds)
+  )
+    throw new Error("Coverage plan part IDs are invalid");
   const seen = new Set();
-  for (const [position, shard] of plan.shards.entries()) {
+  for (const [position, part] of plan.parts.entries()) {
     if (
-      !shard ||
-      shard.index !== position + 1 ||
-      shard.count !== plan.shards.length ||
-      !Array.isArray(shard.tests)
+      !part ||
+      typeof part.id !== "string" ||
+      !Array.isArray(part.projects) ||
+      !Array.isArray(part.tests) ||
+      !Number.isInteger(part.estimatedDurationMs) ||
+      part.estimatedDurationMs < 1
     )
-      throw new Error("Coverage plan shard assignments are invalid");
-    for (const test of shard.tests) {
+      throw new Error("Coverage plan part assignments are invalid");
+    const expectedPartProjects =
+      position === 0 ? [...profile.coreProjects].sort() : ["chromium"];
+    if (
+      JSON.stringify([...part.projects].sort()) !==
+      JSON.stringify(expectedPartProjects)
+    )
+      throw new Error(`Coverage plan projects are invalid for ${part.id}`);
+    let estimatedDurationMs = 0;
+    for (const test of part.tests) {
       const key = manifestKey(test.projectName, test.id);
-      if (!expectedKeys.has(key) || seen.has(key))
-        throw new Error("Coverage plan shard assignments are incomplete");
+      if (
+        !expectedKeys.has(key) ||
+        seen.has(key) ||
+        !part.projects.includes(test.projectName) ||
+        !Number.isInteger(test.durationMs) ||
+        test.durationMs < 1
+      )
+        throw new Error("Coverage plan part assignments are incomplete");
       seen.add(key);
+      estimatedDurationMs += test.durationMs;
     }
+    if (estimatedDurationMs !== part.estimatedDurationMs)
+      throw new Error(`Coverage plan duration is invalid for ${part.id}`);
   }
   if (seen.size !== expectedKeys.size)
-    throw new Error("Coverage plan shard assignments are incomplete");
+    throw new Error("Coverage plan part assignments are incomplete");
+  if (
+    !plan.timing ||
+    plan.timing.version !== COVERAGE_TIMING_VERSION ||
+    !Number.isInteger(plan.timing.defaultDurationMs) ||
+    plan.timing.defaultDurationMs < 1
+  )
+    throw new Error("Coverage plan timing metadata is invalid");
+  if (!plan.timingProfile)
+    throw new Error("Coverage plan timing profile is missing");
+  normalizeDurationProfile(plan.timingProfile);
   if (plan.denominator !== undefined) {
     if (!plan.denominator || typeof plan.denominator !== "object")
       throw new Error("Coverage plan denominator is invalid");
@@ -163,18 +438,167 @@ export function validateCoveragePlan(plan) {
   return true;
 }
 
+function testDuration(test, timingByKey, defaultDurationMs) {
+  const timing = timingByKey.get(manifestKey(test.projectName, test.id));
+  return timing
+    ? { durationMs: timing.durationMs, durationSource: "historical" }
+    : {
+        durationMs: defaultDurationMs,
+        durationSource: "conservative-default",
+      };
+}
+
+/**
+ * Build the stable `core` part and duration-balanced Chromium parts.
+ * Longest-processing-time assignment is deterministic: durations are sorted
+ * descending and ties resolve by the project/test manifest key.
+ */
+export function createCoverageParts(
+  tests,
+  timingProfile,
+  {
+    chromiumPartCount = PR_CHROMIUM_PART_COUNT,
+    coreProjects = ["isolated", "http"],
+  } = {},
+) {
+  if (!Array.isArray(tests) || !tests.length)
+    throw new Error("Coverage part tests are empty");
+  const timing = normalizeDurationProfile(timingProfile);
+  const timingByKey = new Map(
+    timing.tests.map((record) => [timingRecordKey(record), record]),
+  );
+  const knownDurations = timing.tests
+    .map((record) => record.durationMs)
+    .sort((left, right) => left - right);
+  const defaultDurationMs = knownDurations.length
+    ? knownDurations[Math.max(0, Math.ceil(knownDurations.length * 0.75) - 1)]
+    : DEFAULT_NEW_TEST_DURATION_MS;
+  const core = [];
+  const chromium = [];
+  for (const test of tests) {
+    if (coreProjects.includes(test.projectName)) core.push(test);
+    else if (test.projectName === "chromium") chromium.push(test);
+    else
+      throw new Error(`Unsupported PR coverage project: ${test.projectName}`);
+  }
+  if (!core.length || !chromium.length)
+    throw new Error("Coverage profile is missing core or Chromium tests");
+  const weighted = (items) =>
+    items.map((test) => ({
+      ...test,
+      ...testDuration(test, timingByKey, defaultDurationMs),
+    }));
+  const coreTests = weighted(core).sort((left, right) =>
+    manifestKey(left.projectName, left.id).localeCompare(
+      manifestKey(right.projectName, right.id),
+    ),
+  );
+  const parts = [
+    {
+      id: "core",
+      kind: "core",
+      projects: [...coreProjects].sort(),
+      estimatedDurationMs: coreTests.reduce(
+        (total, test) => total + test.durationMs,
+        0,
+      ),
+      tests: coreTests,
+    },
+  ];
+  const chromiumParts = Array.from(
+    { length: chromiumPartCount },
+    (_, index) => ({
+      id: `chromium-${index + 1}`,
+      kind: "chromium",
+      projects: ["chromium"],
+      estimatedDurationMs: 0,
+      tests: [],
+    }),
+  );
+  weighted(chromium)
+    .sort(
+      (left, right) =>
+        right.durationMs - left.durationMs ||
+        manifestKey(left.projectName, left.id).localeCompare(
+          manifestKey(right.projectName, right.id),
+        ),
+    )
+    .forEach((test) => {
+      const part = chromiumParts.reduce((lightest, candidate) =>
+        candidate.estimatedDurationMs < lightest.estimatedDurationMs
+          ? candidate
+          : lightest,
+      );
+      part.tests.push(test);
+      part.estimatedDurationMs += test.durationMs;
+    });
+  for (const part of chromiumParts)
+    part.tests.sort((left, right) =>
+      manifestKey(left.projectName, left.id).localeCompare(
+        manifestKey(right.projectName, right.id),
+      ),
+    );
+  return [...parts, ...chromiumParts];
+}
+
+export function formatCoverageTestList(tests) {
+  if (!Array.isArray(tests) || !tests.length)
+    throw new Error("Coverage test list is empty");
+  return `${tests
+    .map((test) => {
+      if (
+        typeof test.projectName !== "string" ||
+        typeof test.file !== "string" ||
+        !Number.isInteger(test.line) ||
+        test.line < 1
+      )
+        throw new Error("Coverage tests are missing locations");
+      if (
+        test.file.startsWith("/") ||
+        test.file.includes("\\") ||
+        test.file.split("/").includes("..")
+      )
+        throw new Error(`Coverage test location is invalid: ${test.file}`);
+      const titles = Array.isArray(test.titlePath)
+        ? test.titlePath
+        : typeof test.title === "string"
+          ? [test.title]
+          : [];
+      return `[${test.projectName}] > ${test.file}:${test.line}${titles
+        .map((title) => ` > ${title}`)
+        .join("")}`;
+    })
+    .join("\n")}\n`;
+}
+
 export function createCoveragePlan({
   baseRevision,
   headRevision,
   sources,
   denominator,
   discovery,
-  shardDiscoveries = [],
+  profile = "pr",
+  timingProfile,
 }) {
-  const full = collectCoverageManifest(discovery);
-  const discoveries = shardDiscoveries.length ? shardDiscoveries : [discovery];
+  const selectedProfile = coverageProfile(profile);
+  const full = collectCoverageManifest(discovery, {
+    projectFilter: selectedProfile.projects,
+  });
+  const tests = sortedManifestTests(full);
+  const parts = createCoverageParts(tests, timingProfile, {
+    chromiumPartCount: selectedProfile.chromiumPartCount,
+    coreProjects: selectedProfile.coreProjects,
+  });
+  const normalizedTiming = normalizeDurationProfile(timingProfile);
+  const matchedTiming = new Set(
+    normalizedTiming.tests.map((record) => timingRecordKey(record)),
+  );
+  const matchedTests = tests.filter((test) =>
+    matchedTiming.has(manifestKey(test.projectName, test.id)),
+  ).length;
   const plan = {
-    version: 1,
+    version: COVERAGE_PLAN_VERSION,
+    profile,
     baseRevision,
     headRevision,
     sources: Object.fromEntries(
@@ -184,14 +608,20 @@ export function createCoveragePlan({
     ),
     sourceInventory: Object.keys(sources).sort(),
     projects: [...full.projects].sort(),
-    tests: sortedManifestTests(full),
-    shards: discoveries.map((value, index) => ({
-      index: index + 1,
-      count: discoveries.length,
-      tests: sortedManifestTests(
-        collectCoverageManifest(value, { requireAllProjects: false }),
-      ),
-    })),
+    tests,
+    parts,
+    timing: {
+      version: COVERAGE_TIMING_VERSION,
+      window: COVERAGE_TIMING_WINDOW,
+      defaultDurationMs:
+        parts
+          .flatMap((part) => part.tests)
+          .find((test) => test.durationSource === "conservative-default")
+          ?.durationMs ?? DEFAULT_NEW_TEST_DURATION_MS,
+      knownTests: normalizedTiming.tests.length,
+      matchedTests,
+    },
+    timingProfile: normalizedTiming,
   };
   if (denominator !== undefined)
     plan.denominator = Object.fromEntries(
@@ -398,9 +828,14 @@ export function validateBrowserCaptureIds(directory, manifestOrReport) {
   validateCaptureIds(expected, captured);
 }
 
-export function validateCaptureManifest(directory, report, discovery) {
-  const required = collectCoverageManifest(discovery);
-  const actual = collectCoverageManifest(report);
+export function validateCaptureManifest(
+  directory,
+  report,
+  discovery,
+  { projectFilter } = {},
+) {
+  const required = collectCoverageManifest(discovery, { projectFilter });
+  const actual = collectCoverageManifest(report, { projectFilter });
   if (
     JSON.stringify([...required.projects].sort()) !==
       JSON.stringify([...actual.projects].sort()) ||
@@ -441,15 +876,13 @@ function recordsEqual(left, right) {
   );
 }
 
-function validateShardTestManifest(plan, report, shard) {
+function validatePartTestManifest(plan, report, part) {
   const actual = collectCoverageManifest(report, { requireAllProjects: false });
   const expected = new Map(
-    shard.tests.map((test) => [manifestKey(test.projectName, test.id), test]),
+    part.tests.map((test) => [manifestKey(test.projectName, test.id), test]),
   );
   if (!keysEqual(actual.tests.keys(), expected.keys()))
-    throw new Error(
-      `Missing or unexpected coverage tests in shard ${shard.index}`,
-    );
+    throw new Error(`Missing or unexpected coverage tests in part ${part.id}`);
   for (const [key, test] of actual.tests) {
     if (test.results?.length !== 1)
       throw new Error(`Retried coverage test: ${key}`);
@@ -463,33 +896,28 @@ function validateShardTestManifest(plan, report, shard) {
   return actual;
 }
 
-export function validateCoverageShard(plan, report, shardIndex, directory) {
+export function validateCoveragePart(plan, report, partId, directory) {
   const { sourcePaths } = assertCoveragePlanShape(plan);
-  if (
-    !Number.isInteger(shardIndex) ||
-    shardIndex < 1 ||
-    shardIndex > plan.shards.length
-  )
-    throw new Error("Coverage shard index is invalid");
-  const shard = plan.shards[shardIndex - 1];
-  const manifest = validateShardTestManifest(plan, report, shard);
+  const part = plan.parts.find((candidate) => candidate.id === partId);
+  if (!part) throw new Error(`Coverage part is invalid: ${partId}`);
+  const manifest = validatePartTestManifest(plan, report, part);
   if (directory) validateBrowserCaptureIds(directory, manifest);
-  return { sourcePaths, shard };
+  return { sourcePaths, part };
 }
 
-function validateRuntimeMetadata(metadata, shard) {
+function validateRuntimeMetadata(metadata, part) {
   if (metadata.status !== "passed")
-    throw new Error(`Coverage shard ${shard.index} did not pass`);
+    throw new Error(`Coverage part ${part.id} did not pass`);
   const runtime = metadata.runtime ?? {};
   const requirements = coverageRuntimeRequirements([
-    ...new Set(shard.tests.map((test) => test.projectName)),
+    ...new Set(part.tests.map((test) => test.projectName)),
   ]);
   if (
     runtime.requirements &&
     JSON.stringify(runtime.requirements) !== JSON.stringify(requirements)
   )
     throw new Error(
-      `Coverage runtime requirements mismatch in shard ${shard.index}`,
+      `Coverage runtime requirements mismatch in part ${part.id}`,
     );
   const requiredCounts = {
     browserCaptures: requirements.browser,
@@ -497,22 +925,22 @@ function validateRuntimeMetadata(metadata, shard) {
     isolatedEntries: requirements.isolated,
   };
   if (!Number.isInteger(runtime.nodeEntries) || runtime.nodeEntries < 1)
-    throw new Error(`Missing nodeEntries coverage in shard ${shard.index}`);
+    throw new Error(`Missing nodeEntries coverage in part ${part.id}`);
   for (const [key, required] of Object.entries(requiredCounts)) {
     if (required && (!Number.isInteger(runtime[key]) || runtime[key] < 1))
-      throw new Error(`Missing ${key} coverage in shard ${shard.index}`);
+      throw new Error(`Missing ${key} coverage in part ${part.id}`);
   }
   if (runtime.sourceMapsValidated !== true)
-    throw new Error(`Missing source-map validation in shard ${shard.index}`);
+    throw new Error(`Missing source-map validation in part ${part.id}`);
   return { runtime, requirements };
 }
 
-function validateCanonicalReport(plan, data, shardIndex) {
+function validateCanonicalReport(plan, data, partId) {
   const { sourcePaths } = assertCoveragePlanShape(plan);
   if (!data || typeof data !== "object" || Array.isArray(data))
-    throw new Error(`Invalid coverage report in shard ${shardIndex}`);
+    throw new Error(`Invalid coverage report in part ${partId}`);
   if (!keysEqual(Object.keys(data), sourcePaths))
-    throw new Error(`Coverage denominator mismatch in shard ${shardIndex}`);
+    throw new Error(`Coverage denominator mismatch in part ${partId}`);
   for (const path of sourcePaths) {
     const entry = data[path];
     const statementMap = entry?.statementMap;
@@ -540,7 +968,7 @@ function validateCanonicalReport(plan, data, shardIndex) {
 
 export function mergeCoverageReports({
   plan,
-  shardDirectories,
+  partDirectories,
   outputDirectory,
   currentRevision,
   currentSources,
@@ -553,62 +981,51 @@ export function mergeCoverageReports({
       !recordsEqual(currentSources, plan.sources))
   )
     throw new Error("Coverage plan does not match the current checkout");
-  if (
-    !Array.isArray(shardDirectories) ||
-    shardDirectories.length !== plan.shards.length
-  )
-    throw new Error("Coverage merge requires every shard");
-  const seenShards = new Set();
+  const directories = partDirectories;
+  if (!Array.isArray(directories) || directories.length !== plan.parts.length)
+    throw new Error("Coverage merge requires every part");
+  const seenParts = new Set();
   const reports = [];
   const runtimeCoverage = [];
-  for (const directory of shardDirectories) {
+  for (const directory of directories) {
     const metadata = readJson(
       resolve(directory, "metadata.json"),
-      "coverage shard metadata",
+      "coverage part metadata",
     );
-    const shard = metadata.shard;
-    if (
-      !shard ||
-      shard.count !== plan.shards.length ||
-      !Number.isInteger(shard.index) ||
-      shard.index < 1 ||
-      shard.index > plan.shards.length ||
-      seenShards.has(shard.index)
-    )
-      throw new Error("Missing or duplicate coverage shard");
-    seenShards.add(shard.index);
+    const partId = metadata.part?.id ?? metadata.partId;
+    const partIndex = plan.parts.findIndex((part) => part.id === partId);
+    if (partIndex < 0 || seenParts.has(partId))
+      throw new Error("Missing or duplicate coverage part");
+    const part = plan.parts[partIndex];
+    seenParts.add(partId);
     if (
       metadata.revision !== plan.headRevision ||
       metadata.baseRef !== plan.baseRevision ||
       JSON.stringify(metadata.sources) !== JSON.stringify(plan.sources)
     )
       throw new Error(
-        `Mixed coverage revisions or source hashes in shard ${shard.index}`,
+        `Mixed coverage revisions or source hashes in part ${part.id}`,
       );
-    runtimeCoverage.push(
-      validateRuntimeMetadata(metadata, plan.shards[shard.index - 1]),
-    );
+    runtimeCoverage.push(validateRuntimeMetadata(metadata, part));
     const testReport = readJson(
       resolve(directory, "tests.json"),
-      "coverage shard tests",
+      "coverage part tests",
     );
-    validateShardTestManifest(plan, testReport, plan.shards[shard.index - 1]);
+    validatePartTestManifest(plan, testReport, part);
     const report = readJson(
       resolve(directory, "report", "coverage-final.json"),
-      "coverage shard report",
+      "coverage part report",
     );
     reports.push({
-      shard,
-      report: validateCanonicalReport(plan, report, shard.index),
+      part,
+      report: validateCanonicalReport(plan, report, part.id),
     });
   }
-  if (seenShards.size !== plan.shards.length)
-    throw new Error("Missing or duplicate coverage shard");
+  if (seenParts.size !== plan.parts.length)
+    throw new Error("Missing or duplicate coverage part");
   const requiredUnion = coverageRuntimeRequirements([
     ...new Set(
-      plan.shards.flatMap((shard) =>
-        shard.tests.map((test) => test.projectName),
-      ),
+      plan.parts.flatMap((part) => part.tests.map((test) => test.projectName)),
     ),
   ]);
   const runtimeField = {
@@ -626,9 +1043,12 @@ export function mergeCoverageReports({
           runtime[runtimeField[category]] > 0,
       )
     )
-      throw new Error(`Missing ${category} coverage across shard union`);
+      throw new Error(`Missing ${category} coverage across part union`);
   }
-  reports.sort((left, right) => left.shard.index - right.shard.index);
+  reports.sort(
+    (left, right) =>
+      plan.parts.indexOf(left.part) - plan.parts.indexOf(right.part),
+  );
   const merged = structuredClone(reports[0].report);
   for (const { report } of reports.slice(1)) {
     for (const path of sourcePaths) {
@@ -646,7 +1066,7 @@ export function mergeCoverageReports({
   mkdirSync(outputDirectory, { recursive: true });
   const output = resolve(outputDirectory, "coverage-final.json");
   writeFileSync(output, JSON.stringify(merged));
-  return { shards: reports.length, files: sourcePaths.length, report: output };
+  return { parts: reports.length, files: sourcePaths.length, report: output };
 }
 
 export async function generate(directory, expected, options = {}) {

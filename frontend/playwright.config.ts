@@ -1,9 +1,32 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const isCI = Boolean(process.env.CI);
+const isCoverage = process.env.FRONTEND_COVERAGE === "1";
+const profile = process.env.PLAYWRIGHT_PROFILE ?? "default";
+if (!["default", "smoke", "extended", "compatibility"].includes(profile))
+  throw new Error(
+    "PLAYWRIGHT_PROFILE must be default, smoke, extended, or compatibility",
+  );
+const extendedSelection =
+  process.env.PLAYWRIGHT_EXTENDED ??
+  (isCoverage
+    ? "exclude"
+    : profile === "extended"
+      ? "only"
+      : profile === "compatibility"
+        ? "include"
+        : "exclude");
+if (!["include", "exclude", "only"].includes(extendedSelection))
+  throw new Error("PLAYWRIGHT_EXTENDED must be include, exclude, or only");
+const isSmoke = profile === "smoke";
+const isStrictProfile =
+  isCoverage ||
+  isSmoke ||
+  profile === "extended" ||
+  profile === "compatibility";
 const useProductionServer =
   process.env.SCANNER_COVERAGE !== "1" &&
-  process.env.FRONTEND_COVERAGE !== "1" &&
+  !isCoverage &&
   (isCI || process.env.PLAYWRIGHT_USE_PRODUCTION === "1");
 const useExternalServer = process.env.PLAYWRIGHT_EXTERNAL_SERVER === "1";
 function requiredEnvironment(name: string): string {
@@ -67,6 +90,11 @@ if (process.env.FRONTEND_COVERAGE === "1") {
 }
 Object.assign(process.env, frontendEnvironment);
 
+const browserTestDir = isSmoke ? "./tests/browser/smoke" : "./tests/browser";
+const extendedGrep = extendedSelection === "only" ? /@extended/ : undefined;
+const extendedGrepInvert =
+  extendedSelection === "exclude" ? /@extended/ : undefined;
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -82,24 +110,32 @@ function isolatedCommand(command: string): string {
 
 export default defineConfig({
   testDir: "./tests",
-  globalTeardown:
-    process.env.FRONTEND_COVERAGE === "1"
-      ? "./scripts/coverage-teardown.mjs"
-      : undefined,
-  testIgnore: ["**/fullstack/**"],
+  globalTeardown: isCoverage ? "./scripts/coverage-teardown.mjs" : undefined,
+  testIgnore: [
+    "**/fullstack/**",
+    ...(isSmoke && !isCoverage ? [] : ["**/browser/smoke/**"]),
+  ],
   // Keep ordinary cleanup separate from disposable full-stack results.
   outputDir: "test-results/playwright",
   fullyParallel: true,
-  timeout: process.env.FRONTEND_COVERAGE === "1" ? 120_000 : 30_000,
-  expect: { timeout: process.env.FRONTEND_COVERAGE === "1" ? 15_000 : 5_000 },
+  timeout: isCoverage ? 120_000 : 30_000,
+  expect: { timeout: isCoverage ? 15_000 : 5_000 },
   forbidOnly: isCI,
-  retries: isCI ? 2 : 0,
-  reporter: isCI ? [["list"], ["html", { open: "never" }]] : "html",
+  retries: isStrictProfile ? 0 : isCI ? 2 : 0,
+  maxFailures: isSmoke ? 3 : 0,
+  grep: extendedGrep,
+  grepInvert: extendedGrepInvert,
+  reporter:
+    isStrictProfile || isSmoke
+      ? "line"
+      : isCI
+        ? [["list"], ["html", { open: "never" }]]
+        : "html",
   use: {
     baseURL,
-    trace: process.env.FRONTEND_COVERAGE === "1" ? "off" : "on-first-retry",
+    trace: isCoverage ? "off" : "retain-on-failure",
     screenshot: "only-on-failure",
-    video: process.env.FRONTEND_COVERAGE === "1" ? "off" : "retain-on-failure",
+    video: "off",
   },
   projects: [
     ...(testLayer === "all" || testLayer === "isolated"
@@ -112,24 +148,24 @@ export default defineConfig({
       ? [
           {
             name: "chromium",
-            testDir: "./tests/browser",
+            testDir: browserTestDir,
             use: { ...devices["Desktop Chrome"] },
           },
           {
             name: "mobile-chromium",
-            testDir: "./tests/browser",
+            testDir: browserTestDir,
             use: { ...devices["Pixel 7"] },
           },
-          ...(isCI && process.env.FRONTEND_COVERAGE !== "1"
+          ...(isCI && !isCoverage && !isSmoke
             ? [
                 {
                   name: "firefox",
-                  testDir: "./tests/browser",
+                  testDir: browserTestDir,
                   use: { ...devices["Desktop Firefox"] },
                 },
                 {
                   name: "webkit",
-                  testDir: "./tests/browser",
+                  testDir: browserTestDir,
                   use: { ...devices["Desktop Safari"] },
                 },
               ]
@@ -144,17 +180,16 @@ export default defineConfig({
           command: isolatedCommand(
             useProductionServer
               ? "npm run start -- --from-process"
-              : process.env.FRONTEND_COVERAGE === "1"
+              : isCoverage
                 ? "npm run dev -- --from-process --webpack"
                 : "npm run dev -- --from-process",
           ),
           url: baseURL,
           env: frontendEnvironment,
-          reuseExistingServer: !isCI && process.env.FRONTEND_COVERAGE !== "1",
-          gracefulShutdown:
-            process.env.FRONTEND_COVERAGE === "1"
-              ? { signal: "SIGTERM", timeout: 15_000 }
-              : undefined,
+          reuseExistingServer: !isCI && !isCoverage,
+          gracefulShutdown: isCoverage
+            ? { signal: "SIGTERM", timeout: 15_000 }
+            : undefined,
           timeout: 120_000,
         },
 });

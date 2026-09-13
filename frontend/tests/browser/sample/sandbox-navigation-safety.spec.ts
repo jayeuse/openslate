@@ -62,7 +62,7 @@ async function seedNavigationIssues(page: Page) {
     .toEqual(["Unsupported", "Unsupported"]);
 }
 
-test("validation issues route exact authoring targets and preserve the rule URL contract", async ({
+test("validation issues route exact authoring targets and preserve the rule URL contract @extended", async ({
   page,
 }) => {
   await seedNavigationIssues(page);
@@ -119,7 +119,7 @@ test("validation issues route exact authoring targets and preserve the rule URL 
   ).toHaveAttribute("aria-selected", "true");
 });
 
-test("entity deletion names the target, reports retained-reference impact, restores focus, and stays one undo step", async ({
+test("entity deletion names the target, reports retained-reference impact, restores focus, and stays one undo step @extended", async ({
   page,
 }) => {
   const structure = page.getByRole("complementary", {
@@ -217,7 +217,7 @@ test("entity deletion names the target, reports retained-reference impact, resto
   ).toContainText("Undo restores the complete change");
 });
 
-test("Clear Sandbox data offers one in-memory recovery while storage stays cleared", async ({
+test("Clear Sandbox data offers one in-memory recovery while storage stays cleared @extended", async ({
   page,
 }) => {
   await page.getByLabel("Create", { exact: true }).click();
@@ -317,7 +317,10 @@ test("Clear Sandbox data offers one in-memory recovery while storage stays clear
   await expect(page.getByRole("button", { name: "Undo clear" })).toHaveCount(0);
   await page.getByRole("tab", { name: "Versions", exact: true }).click();
   await expect(
-    page.getByRole("article", { name: "Recoverable checkpoint", exact: true }),
+    page.getByRole("article", {
+      name: "Recoverable checkpoint",
+      exact: true,
+    }),
   ).toBeVisible();
   await page.getByRole("tab", { name: "Simulation", exact: true }).click();
   await expect(
@@ -376,7 +379,7 @@ test("Clear Sandbox data offers one in-memory recovery while storage stays clear
   await expect(page.getByRole("button", { name: "Undo clear" })).toHaveCount(0);
 });
 
-test("a view-preference change expires Clear Sandbox recovery", async ({
+test("a view-preference change expires Clear Sandbox recovery @extended", async ({
   page,
 }) => {
   await page
@@ -400,7 +403,7 @@ test("a view-preference change expires Clear Sandbox recovery", async ({
   await expect(page.getByRole("button", { name: "Undo clear" })).toHaveCount(0);
 });
 
-test("mobile command, dialog, workflow, and field controls meet touch sizing", async ({
+test("mobile command, dialog, workflow, and field controls meet touch sizing @extended", async ({
   page,
 }) => {
   test.skip((page.viewportSize()?.width ?? 0) >= 1280, "Mobile contract");
@@ -463,7 +466,7 @@ test("mobile command, dialog, workflow, and field controls meet touch sizing", a
   await expectTouchHeight(page.getByLabel("Status name", { exact: true }));
 });
 
-test("Structure bulk disclosure preserves search state and mobile controls meet touch sizing without overflow", async ({
+test("Structure bulk disclosure preserves search state and mobile controls meet touch sizing without overflow @extended", async ({
   page,
 }) => {
   const structure = page.getByRole("complementary", {
@@ -478,10 +481,15 @@ test("Structure bulk disclosure preserves search state and mobile controls meet 
       exact: true,
     }),
   ).toHaveCount(0);
-  const search = structure.getByRole("searchbox", { name: "Search structure" });
+  const search = structure.getByRole("searchbox", {
+    name: "Search structure",
+  });
   await search.fill("Status");
   await expect(
-    structure.getByRole("button", { name: "Select field Status", exact: true }),
+    structure.getByRole("button", {
+      name: "Select field Status",
+      exact: true,
+    }),
   ).toHaveCount(3);
   await search.fill("");
   await expect(
@@ -524,7 +532,7 @@ test("Structure bulk disclosure preserves search state and mobile controls meet 
   ).toBeLessThanOrEqual(await page.evaluate(() => window.innerWidth));
 });
 
-test("Canvas help documents every supported direct manipulation and keyboard path", async ({
+test("Canvas help documents every supported direct manipulation and keyboard path @extended", async ({
   page,
 }) => {
   if ((page.viewportSize()?.width ?? 0) < 1280)

@@ -106,7 +106,7 @@ async function saveAndExpectOneStep(
   return storedField(page, "sample-requests", "sample-field-Title");
 }
 
-test("new field creation retains invalid typed defaults without changing the design", async ({
+test("new field creation retains invalid typed defaults without changing the design @extended", async ({
   page,
 }) => {
   const historyStatus = page.getByText(/Tab-local draft/);
@@ -128,7 +128,7 @@ test("new field creation retains invalid typed defaults without changing the des
   await expect(historyStatus).toContainText("0 undo steps available");
 });
 
-test("Designer saves all ten canonical field types with their native controls and defaults", async ({
+test("Designer saves all ten canonical field types with their native controls and defaults @extended", async ({
   page,
 }) => {
   const editor = await openField(page, "Title");
@@ -265,7 +265,7 @@ test("Designer saves all ten canonical field types with their native controls an
   });
 });
 
-test("invalid typed drafts remain visible without creating a history step", async ({
+test("invalid typed drafts remain visible without creating a history step @extended", async ({
   page,
 }) => {
   const editor = await openField(page, "Title");
@@ -429,7 +429,7 @@ test("invalid typed drafts remain visible without creating a history step", asyn
   ).toMatchObject({ type: "Text", required: false, value: "", options: "" });
 });
 
-test("saved type changes remove stale configuration and one Undo restores it", async ({
+test("saved type changes remove stale configuration and one Undo restores it @extended", async ({
   page,
 }) => {
   const editor = await openField(page, "Status");
