@@ -1,35 +1,24 @@
-import { defineConfig, devices } from "@playwright/test";
+import { defineConfig } from "@playwright/test";
 
 const isCI = Boolean(process.env.CI);
-const useProductionServer =
-  process.env.SCANNER_COVERAGE !== "1" &&
-  process.env.FRONTEND_COVERAGE !== "1" &&
-  (isCI || process.env.PLAYWRIGHT_USE_PRODUCTION === "1");
-function requiredEnvironment(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required`);
-  return value;
-}
-
-// Editor discovery loads this file directly, without the npm launcher. Its
-// local profile is synthetic test data; explicit process configuration stays strict.
-const hasExplicitConfiguration = [
+const explicitConfiguration = [
   "PLAYWRIGHT_CONFIGURATION",
   "TEST_LAYER",
   "BASE_URL",
 ].some((name) => process.env[name] !== undefined);
-const localProfile = !isCI && !hasExplicitConfiguration;
+const localProfile = !isCI && !explicitConfiguration;
 const configurationMode = localProfile
   ? "synthetic"
-  : requiredEnvironment("PLAYWRIGHT_CONFIGURATION");
-if (!["synthetic", "process"].includes(configurationMode))
+  : process.env.PLAYWRIGHT_CONFIGURATION;
+if (!configurationMode || !["synthetic", "process"].includes(configurationMode))
   throw new Error("PLAYWRIGHT_CONFIGURATION must be synthetic or process");
-const testLayer = localProfile ? "all" : requiredEnvironment("TEST_LAYER");
-if (!["all", "isolated", "http", "browser"].includes(testLayer))
-  throw new Error("TEST_LAYER must be all, isolated, http, or browser");
-const baseURL = localProfile
-  ? "http://127.0.0.1:3104"
-  : requiredEnvironment("BASE_URL");
+
+const testLayer = localProfile ? "all" : process.env.TEST_LAYER;
+if (!testLayer || !["all", "isolated", "http"].includes(testLayer))
+  throw new Error("TEST_LAYER must be all, isolated, or http");
+
+const baseURL = localProfile ? "http://127.0.0.1:3104" : process.env.BASE_URL;
+if (!baseURL) throw new Error("BASE_URL is required");
 let target: URL;
 try {
   target = new URL(baseURL);
@@ -38,6 +27,13 @@ try {
 } catch {
   throw new Error("BASE_URL must be an absolute HTTP(S) URL with a port");
 }
+
+function requiredEnvironment(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 const syntheticEnvironment = {
   BACKEND_URL: "http://backend.invalid",
   SUPABASE_SERVER_URL: "http://supabase.invalid",
@@ -60,10 +56,6 @@ const frontendEnvironment: Record<string, string> =
           requiredEnvironment(name),
         ]),
       );
-if (process.env.FRONTEND_COVERAGE === "1") {
-  for (const name of ["NODE_V8_COVERAGE", "NODE_OPTIONS", "FRONTEND_COVERAGE"])
-    frontendEnvironment[name] = requiredEnvironment(name);
-}
 Object.assign(process.env, frontendEnvironment);
 
 function shellQuote(value: string): string {
@@ -81,28 +73,14 @@ function isolatedCommand(command: string): string {
 
 export default defineConfig({
   testDir: "./tests",
-  globalTeardown:
-    process.env.FRONTEND_COVERAGE === "1"
-      ? "./scripts/coverage-teardown.mjs"
-      : undefined,
-  testIgnore: ["**/fullstack/**"],
-  // Keep ordinary cleanup separate from disposable full-stack results.
   outputDir: "test-results/playwright",
   fullyParallel: true,
-  timeout: process.env.FRONTEND_COVERAGE === "1" ? 60_000 : 30_000,
-  expect: { timeout: process.env.FRONTEND_COVERAGE === "1" ? 15_000 : 5_000 },
+  timeout: 30_000,
+  expect: { timeout: 5_000 },
   forbidOnly: isCI,
-  retries: isCI ? 2 : 0,
-  reporter: isCI ? [["list"], ["html", { open: "never" }]] : "html",
-  use: {
-    baseURL,
-    trace:
-      process.env.FRONTEND_COVERAGE === "1"
-        ? "retain-on-failure"
-        : "on-first-retry",
-    screenshot: "only-on-failure",
-    video: "retain-on-failure",
-  },
+  retries: 0,
+  reporter: "line",
+  use: { baseURL },
   projects: [
     ...(testLayer === "all" || testLayer === "isolated"
       ? [{ name: "isolated", testDir: "./tests/isolated" }]
@@ -110,53 +88,15 @@ export default defineConfig({
     ...(testLayer === "all" || testLayer === "http"
       ? [{ name: "http", testDir: "./tests/http" }]
       : []),
-    ...(testLayer === "all" || testLayer === "browser"
-      ? [
-          {
-            name: "chromium",
-            testDir: "./tests/browser",
-            use: { ...devices["Desktop Chrome"] },
-          },
-          {
-            name: "mobile-chromium",
-            testDir: "./tests/browser",
-            use: { ...devices["Pixel 7"] },
-          },
-          ...(isCI && process.env.FRONTEND_COVERAGE !== "1"
-            ? [
-                {
-                  name: "firefox",
-                  testDir: "./tests/browser",
-                  use: { ...devices["Desktop Firefox"] },
-                },
-                {
-                  name: "webkit",
-                  testDir: "./tests/browser",
-                  use: { ...devices["Desktop Safari"] },
-                },
-              ]
-            : []),
-        ]
-      : []),
   ],
   webServer:
     testLayer === "isolated"
       ? undefined
       : {
-          command: isolatedCommand(
-            useProductionServer
-              ? "npm run start -- --from-process"
-              : process.env.FRONTEND_COVERAGE === "1"
-                ? "npm run dev -- --from-process --webpack"
-                : "npm run dev -- --from-process",
-          ),
+          command: isolatedCommand("npm run dev -- --from-process"),
           url: baseURL,
           env: frontendEnvironment,
-          reuseExistingServer: !isCI && process.env.FRONTEND_COVERAGE !== "1",
-          gracefulShutdown:
-            process.env.FRONTEND_COVERAGE === "1"
-              ? { signal: "SIGTERM", timeout: 15_000 }
-              : undefined,
+          reuseExistingServer: !isCI,
           timeout: 120_000,
         },
 });

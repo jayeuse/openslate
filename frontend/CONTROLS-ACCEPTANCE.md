@@ -5,8 +5,8 @@ Source: `.todo/CONTROLS.md`. This checklist tracks the approved frontend impleme
 ## Verification boundary
 
 - Sample workflows use synthetic tab-local state. No messages, invitations, credentials, files, scheduled jobs, backups, updates, or permission changes are sent to live services.
-- Browser feature batches cover representative workflows, responsive layout, negative paths, and isolation. A checklist entry is not a claim of an individually automated test.
-- Full production and coverage gates are deferred until push preparation. The obsolete scanner UI coverage step was removed with its source; overall and changed-line coverage gates remain.
+- Isolated tests cover meaningful rules, state transitions, negative paths, and data isolation. A checklist entry is not a claim of an individually automated test.
+- Frontend push readiness uses static checks, the retained isolated/HTTP tests, and one production build. Browser E2E and frontend line-coverage gates are intentionally absent.
 
 ## Control map
 
@@ -276,6 +276,26 @@ Destination: `/openview`. Source: [`src/components/sample/openview/`](src/compon
 
 Destination: `/manage`. Source: [`src/components/sample/manage/`](src/components/sample/manage/).
 
+Manage is an interactive, tab-local administration sample. Security policies,
+maintenance, and licensing do not operate live services. Saved settings and
+unfinished section drafts survive same-tab navigation/reload when browser storage
+is available; the page explains storage failures. Each form saves or discards its
+own draft. Section navigation is URL-addressable and works with browser history,
+keyboard tabs, and a mobile selector.
+
+Configuration snapshots include Manage organization, security, backup preferences,
+demo version/rollback, and license settings only. They exclude drafts, sessions,
+activity history, records, people, roles, messages, and files. Restore/reset previews
+changes and keeps a recovery snapshot; affected drafts require an explicit discard
+decision. Reset changes Manage settings only. Schedule/retention are previews, with
+an explicit user-triggered backup simulation and no unattended job or deletion.
+
+Activity combines marked fictional examples with successful local Manage actions.
+Search, filters, ordering, and pagination govern the list; CSV export includes all
+matching entries, not only the visible page. Invalid date ranges block export.
+CSV and configuration JSON can be downloaded locally. Configuration import stays
+outside Manage; related Access and Sandbox workflows are linked to their owners.
+
 **Organization**
 
 - 166. Set the organization name
@@ -289,12 +309,16 @@ Destination: `/manage`. Source: [`src/components/sample/manage/`](src/components
 - 171. Set the session timeout
 - 172. View active sessions
 - 173. End a session
+- End all remote sample sessions, retaining the current session; changes remain
+  consistent with Access without invoking real sign-out.
 - 174. Configure two-factor authentication
 - 175. Configure an IP allow list
 
 **Audit**
 
 - 176. View the audit log
+- Search, sort, and page through explicitly synthetic activity, including local
+  Manage changes and before/after details.
 - 177. Filter the audit log by user
 - 178. Filter the audit log by date
 - 179. Filter the audit log by entity
@@ -310,6 +334,8 @@ Destination: `/manage`. Source: [`src/components/sample/manage/`](src/components
 - 186. Restore a backup
 - 187. Set the backup retention period
 - 188. Download a backup file
+- Name, rename, and delete selected configuration snapshots; preview restore
+  differences and retention candidates; reset Manage configuration safely.
 
 **Updates**
 
@@ -326,6 +352,12 @@ Destination: `/manage`. Source: [`src/components/sample/manage/`](src/components
 - 196. View the license usage against the tier limit
 - 197. Renew a license
 - 198. View the license expiration date
+- Compare bundled sample tiers, distinguish Access-derived seat usage from
+  illustrative storage, and open sample terms through a button.
+
+Manage acceptance is represented by the retained isolated state and policy tests.
+The control inventory remains a product checklist rather than a claim of browser,
+responsive-layout, or visual automation.
 
 ### Platform-Level Controls
 
@@ -381,10 +413,48 @@ Destination: `/platform`. Source: [`src/components/sample/platform/`](src/compon
 - 226. Follow a record for future updates
 - 227. Assign a record to a user
 
+### Access Control Center
+
+Destination: `/access`. Source: [`src/components/sample/access/`](src/components/sample/access/).
+
+**P0 — identity and policy safety**
+
+- 228. Navigate seven URL-addressable Access views with invalid-view fallback
+- 229. Preserve a valid `user` deep link only while viewing Identities
+- 230. Create and manage internal, guest, and service-metadata identities
+- 231. Protect the final active Administrator and built-in roles
+- 232. Review bulk identity impact before applying a local change
+- 233. Revoke an active session without exposing session tokens
+- 234. Stage multiple access-rule choices before applying them
+- 235. Preview policy impact and resolve same-permission conflicts explicitly
+- 236. Simulate allow and deny decisions with an ordered explanation trace
+- 237. Block access-review completion while decisions remain unresolved
+- 238. Keep Access interactions local with no non-GET BFF or session requests
+- 239. Exclude tokens, secrets, credentials, identity data, sessions, and history from policy exports
+
+**P1 — administration and governance**
+
+- 240. Filter, sort, search, and page the unified identity directory
+- 241. Resend or revoke an invitation and inspect invitation status
+- 242. Disable, restore, revoke, or permanently delete an eligible identity
+- 243. Start a role from a template, create a role, and compare selected roles
+- 244. Create and edit non-nested manual groups with internal or guest members only
+- 245. Review the department organization chart and open group-scoped rules
+- 246. Configure safe defaults for new identities
+- 247. Validate and preview a versioned policy import before merge or replacement
+- 248. Review access activity and preview a policy-only history restore
+- 249. Open Manage security from the Access overview
+
+**P2 — usability and inspection**
+
+- 250. Use desktop tabs or the mobile Access-view selector in a viewport-contained page without document overflow
+- 251. Review access health, counts, defaults, and recent changes in a compact overview
+- 252. Run relevant accessibility scans across Access views and dialogs
+
 ## Service boundary
 
 Only authentication remains connected: sign-in, session validation/refresh, logout, and the existing account-setup flow. Workspace branding, permissions, and all business interactions are local; workspace screens make no business API requests or realtime subscriptions. Existing service endpoints remain unused by the workspace UI. Legacy business screens and their exclusive helpers have been removed. New business workflows continue to use tab-local sample data; this cleanup does not connect them to live backend operations.
 
 ## Acceptance evidence
 
-See `tests/browser/sample/` for the current feature and entrypoint checks, `tests/browser/sandbox/` for shared canvas interactions, and `tests/browser/shell/` for the new-only navigation and appearance controls. Public and security suites cover sign-in and account setup. The retained real-stack service tests use authenticated BFF requests rather than deleted UI controls; they require the disposable runner and are not claimed as executed by this cleanup.
+See `tests/isolated/` for retained product, policy, state, and security checks and `tests/http/` for the Next.js request boundary. The acceptance checklist documents implemented controls; it does not claim browser automation for each control.

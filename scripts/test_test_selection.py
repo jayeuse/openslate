@@ -1,11 +1,9 @@
 """Section selection must not silently omit affected safety checks."""
 
 import importlib.util
-import os
 import subprocess
 import sys
 import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -19,30 +17,6 @@ spec.loader.exec_module(runner)
 
 
 class TestSelectionTests(unittest.TestCase):
-    def test_fullstack_manual_dispatch_runs_even_without_application_changes(self):
-        workflow = Path(__file__).resolve().parents[1] / ".github/workflows/fullstack.yml"
-        source = workflow.read_text().split("python3 - <<'PY'\n", 1)[1]
-        program = textwrap.dedent(source.split("          PY\n", 1)[0])
-        for event, changed, expected in (
-            ("workflow_dispatch", "", "true"),
-            ("workflow_dispatch", "docs/example.md\n", "true"),
-            ("pull_request", "docs/example.md\n", "false"),
-            ("push", "frontend/src/example.ts\n", "true"),
-        ):
-            with (
-                self.subTest(event=event, changed=changed),
-                tempfile.TemporaryDirectory() as folder,
-            ):
-                output = Path(folder) / "output"
-                with patch.dict(os.environ, {
-                    "EVENT_NAME": event, "BASE_SHA": "comparison-revision",
-                    "GITHUB_OUTPUT": str(output),
-                }), patch("subprocess.run", return_value=subprocess.CompletedProcess(
-                    [], 0, stdout=changed,
-                )):
-                    exec(compile(program, str(workflow), "exec"), {})  # noqa: S102 -- Repository-owned workflow under test.
-                self.assertEqual(output.read_text(), f"run={expected}\n")
-
     def invoke(self, *arguments):
         with patch.object(sys, "argv", ["test.py", *arguments]), patch.object(
             runner.subprocess, "call", return_value=0
@@ -50,32 +24,26 @@ class TestSelectionTests(unittest.TestCase):
             self.assertEqual(runner.main(), 0)
             return call.call_args
 
-    def test_local_frontend_batch_runs_desktop_once_and_keeps_other_layers(self):
+    def test_local_frontend_batch_runs_only_retained_layers(self):
         call = self.invoke("frontend", "section", "security")
         command = call.args[0]
-        self.assertIn("--project=chromium", command)
         self.assertIn("--project=isolated", command)
         self.assertIn("--project=http", command)
-        self.assertNotIn("--project=mobile-chromium", command)
-
-    def test_mobile_batch_and_named_case_can_be_selected(self):
-        call = self.invoke("frontend", "section", "security", "--layer", "browser",
-                           "--browser", "mobile-chromium", "--match", "setup")
-        self.assertIn("--project=mobile-chromium", call.args[0])
-        self.assertNotIn("--project=chromium", call.args[0])
-        self.assertIn("--grep=setup", call.args[0])
+        self.assertFalse(any("chromium" in argument for argument in command))
 
     def test_full_frontend_preserves_configured_matrix(self):
         call = self.invoke("frontend", "full")
         self.assertFalse(any(arg.startswith("--project=") for arg in call.args[0]))
-        self.assertIn("tests/browser/sample/workspace.spec.ts", call.args[0])
-        self.assertIn("tests/browser/sandbox/sandbox.spec.ts", call.args[0])
-        self.assertNotIn("tests/browser/files/library.spec.ts", call.args[0])
+        self.assertIn("tests/isolated/manage-state.spec.ts", call.args[0])
+        self.assertIn("tests/http/security/session-routes.spec.ts", call.args[0])
+        self.assertFalse(any("tests/browser/" in arg for arg in call.args[0]))
         root = Path(__file__).resolve().parents[1] / "frontend" / "tests"
         expected = {
             path.relative_to(root.parent).as_posix()
             for layer in runner.FRONTEND_LAYERS
             for path in (root / layer).rglob("*.spec.ts")
+            if runner.frontend_section(path.relative_to(root.parent).as_posix())
+            in runner.SECTIONS["frontend"]
         }
         self.assertEqual({arg for arg in call.args[0] if arg.endswith(".spec.ts")}, expected)
 
@@ -168,7 +136,7 @@ class TestSelectionTests(unittest.TestCase):
     def test_test_changes_stay_with_their_section(self):
         self.assertEqual(
             runner.affected_sections(
-                "frontend", ["frontend/tests/browser/sample/access-manage.spec.ts"]
+                "frontend", ["frontend/tests/isolated/access/controller.spec.ts"]
             ),
             {"sample"},
         )
@@ -255,14 +223,12 @@ class TestSelectionTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 2)
 
-    def test_frontend_selection_respects_layer_and_excludes_fullstack(self):
+    def test_frontend_selection_respects_the_two_retained_layers(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             paths = [
                 "frontend/tests/isolated/security/request-security.spec.ts",
                 "frontend/tests/http/security/session-routes.spec.ts",
-                "frontend/tests/browser/security/setup.spec.ts",
-                "frontend/tests/fullstack/auth.spec.ts",
             ]
             for path in paths:
                 file = root / path
@@ -273,7 +239,7 @@ class TestSelectionTests(unittest.TestCase):
                 selected, ["tests/isolated/security/request-security.spec.ts"]
             )
             selected = runner.select_files(root, "frontend", {"security"}, "all")
-            self.assertEqual(len(selected), 3)
+            self.assertEqual(len(selected), 2)
 
     def test_backend_selection_assigns_runtime_and_migrations(self):
         with tempfile.TemporaryDirectory() as directory:

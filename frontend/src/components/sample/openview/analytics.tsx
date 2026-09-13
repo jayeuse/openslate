@@ -11,14 +11,14 @@ import { initialRoles, initialPeople } from "../access/model";
 import type { SampleRecord } from "@/components/sample/sample-data";
 import { WidgetSurface, newWidget, type SampleWidget } from "./widgets";
 
-type Dashboard = {
+export type Dashboard = {
   id: string;
   name: string;
   permission: string;
   refresh: string;
   widgets: SampleWidget[];
 };
-type Report = {
+export type Report = {
   name: string;
   fields: string[];
   grouping: string;
@@ -36,7 +36,15 @@ const reportSchema = z.object({
   schedule: z.string(),
   audience: z.string(),
 });
-const initialReport: Report = {
+export function normalizeReports(raw: unknown): Report[] {
+  return Array.isArray(raw)
+    ? raw.flatMap((value) => {
+        const result = reportSchema.safeParse(value);
+        return result.success ? [result.data] : [];
+      })
+    : [];
+}
+export const initialReport: Report = {
   name: "Weekly service review",
   fields: ["title", "status", "assignee"],
   grouping: "status",
@@ -44,6 +52,33 @@ const initialReport: Report = {
   schedule: "Manual",
   audience: "Only me",
 };
+export const initialDashboards: Dashboard[] = [
+  {
+    id: "sample-dashboard-operations",
+    name: "Operations pulse",
+    permission: "Everyone",
+    refresh: "Manual",
+    widgets: [
+      {
+        id: "sample-widget-summary",
+        type: "Summary",
+        size: "Full",
+        permission: "Everyone",
+        refresh: "Manual",
+        pinned: false,
+      },
+      {
+        id: "sample-widget-workload",
+        type: "Workload",
+        size: "Half",
+        permission: "Everyone",
+        refresh: "Manual",
+        pinned: false,
+      },
+    ],
+  },
+];
+export const initialReportTemplates: Report[] = [];
 const fieldNames: Record<string, string> = {
   title: "Request",
   customer: "Customer",
@@ -110,32 +145,7 @@ function Dashboards({ records }: { records: SampleRecord[] }) {
   const [roles] = useSampleState("access-roles", initialRoles);
   const [dashboards, setDashboards] = useSampleState<Dashboard[]>(
     "views-dashboards",
-    [
-      {
-        id: "sample-dashboard-operations",
-        name: "Operations pulse",
-        permission: "Everyone",
-        refresh: "Manual",
-        widgets: [
-          {
-            id: "sample-widget-summary",
-            type: "Summary",
-            size: "Full",
-            permission: "Everyone",
-            refresh: "Manual",
-            pinned: false,
-          },
-          {
-            id: "sample-widget-workload",
-            type: "Workload",
-            size: "Half",
-            permission: "Everyone",
-            refresh: "Manual",
-            pinned: false,
-          },
-        ],
-      },
-    ],
+    initialDashboards,
   );
   const [selected, setSelected] = useSampleState(
     "views-dashboard-selected",
@@ -543,12 +553,9 @@ function Reports({ records }: { records: SampleRecord[] }) {
   );
   const [storedTemplates, setTemplates] = useSampleState<Report[]>(
     "views-report-templates",
-    [],
+    initialReportTemplates,
   );
-  const templates = storedTemplates.flatMap((value) => {
-    const result = reportSchema.safeParse(value);
-    return result.success ? [result.data] : [];
-  });
+  const templates = normalizeReports(storedTemplates);
   const [format, setFormat] = useState("PDF");
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState(false);

@@ -7,7 +7,7 @@ import pytest
 from tests import fullstack_runner as runner
 
 
-@pytest.mark.parametrize("mode", ["coverage", "batch", "full", "scanner"])
+@pytest.mark.parametrize("mode", ["coverage", "batch", "acceptance", "full", "scanner"])
 @pytest.mark.parametrize("occupied_port", [55322, 8008, 3008])
 def test_runner_requires_only_ports_used_by_selected_mode(
     tmp_path, monkeypatch, mode, occupied_port
@@ -19,6 +19,7 @@ def test_runner_requires_only_ports_used_by_selected_mode(
     arguments = {
         "coverage": ["--backend-coverage-only"],
         "batch": ["--backend-batch", "tests/test_sample.py"],
+        "acceptance": ["--acceptance-only"],
         "full": [],
         "scanner": ["--scanner-only"],
     }[mode]

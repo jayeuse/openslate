@@ -5,12 +5,22 @@
  */
 
 export type SandboxFieldType =
-  "text" | "int" | "decimal" | "boolean" | "date" | "datetime" | "select";
+  | "text"
+  | "long-text"
+  | "int"
+  | "decimal"
+  | "boolean"
+  | "date"
+  | "datetime"
+  | "select"
+  | "email"
+  | "url";
 
 export interface SandboxDepartment {
   id: string;
   name: string;
   moduleIds: string[];
+  closed?: boolean;
 }
 
 export interface SandboxModule {
@@ -18,6 +28,7 @@ export interface SandboxModule {
   departmentId: string;
   name: string;
   fieldIds: string[];
+  closed?: boolean;
 }
 
 export interface SandboxField {
@@ -27,6 +38,7 @@ export interface SandboxField {
   type: SandboxFieldType;
   required: boolean;
   description: string;
+  closed?: boolean;
 }
 
 export interface SandboxLink {
@@ -54,12 +66,15 @@ export interface SandboxFieldTypeMeta {
 
 export const FIELD_TYPE_META: Record<SandboxFieldType, SandboxFieldTypeMeta> = {
   text: { label: "Text", icon: "Type" },
+  "long-text": { label: "Long text", icon: "AlignLeft" },
   int: { label: "Integer", icon: "Hash" },
   decimal: { label: "Decimal", icon: "Calculator" },
   boolean: { label: "Boolean", icon: "ToggleLeft" },
   date: { label: "Date", icon: "Calendar" },
   datetime: { label: "Date/Time", icon: "CalendarClock" },
   select: { label: "Select", icon: "List" },
+  email: { label: "Email", icon: "Mail" },
+  url: { label: "URL", icon: "Link" },
 };
 
 export function createSandboxId(prefix: string): string {

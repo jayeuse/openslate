@@ -13,18 +13,18 @@
 
 ## Deployment state map
 
-| Area                                      | Classification       | Verified repository state                                                                   |
-| ----------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------- |
-| Local development platform                | Implemented          | Supabase CLI plus host-run FastAPI and Next.js; see `README.md` and `supabase/config.toml`. |
-| Backend image                             | Implemented artifact | `infra/docker/backend.Dockerfile` builds a standalone non-root image.                       |
-| Frontend image                            | Implemented artifact | `infra/docker/frontend.Dockerfile` builds a standalone Next.js image.                       |
-| Pull-request and main-branch verification | Implemented          | `.github/workflows/backend.yml`, `frontend.yml`, and `fullstack.yml` verify code, images, and the disposable production-style release gate. |
-| Branch-protection enforcement              | Maintainer action    | The stable `Full-stack release gate` check exists, but repository branch protection is not represented in source; a maintainer must require it after landing. |
-| Image registry and image publishing       | Absent               | No registry, `docker push`, release tag, or image-publishing step is checked in.            |
-| Hosted application target                 | Unknown              | No provider, cluster, VM, service definition, DNS, or environment manifest is present.      |
-| Hosted ingress/TLS                        | Unknown              | No hosted ingress or TLS termination configuration is present.                              |
-| Hosted secrets/configuration delivery     | Unknown              | Only local `.env.example` and process environment consumption are defined.                  |
-| Hosted deployment trigger                 | Absent               | GitHub Actions verify; neither workflow deploys.                                            |
+| Area                                      | Classification       | Verified repository state                                                                                                                           |
+| ----------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Local development platform                | Implemented          | Supabase CLI plus host-run FastAPI and Next.js; see `README.md` and `supabase/config.toml`.                                                         |
+| Backend image                             | Implemented artifact | `infra/docker/backend.Dockerfile` builds a standalone non-root image.                                                                               |
+| Frontend image                            | Implemented artifact | `infra/docker/frontend.Dockerfile` builds a standalone Next.js image.                                                                               |
+| Pull-request and main-branch verification | Implemented          | `.github/workflows/backend.yml` and `frontend.yml` verify their owned code and conditional images.                                                  |
+| Branch-protection enforcement             | Maintainer action    | Stable backend and `Frontend / verify` checks exist, but repository branch protection is not represented in source; a maintainer must configure it. |
+| Image registry and image publishing       | Absent               | No registry, `docker push`, release tag, or image-publishing step is checked in.                                                                    |
+| Hosted application target                 | Unknown              | No provider, cluster, VM, service definition, DNS, or environment manifest is present.                                                              |
+| Hosted ingress/TLS                        | Unknown              | No hosted ingress or TLS termination configuration is present.                                                                                      |
+| Hosted secrets/configuration delivery     | Unknown              | Only local `.env.example` and process environment consumption are defined.                                                                          |
+| Hosted deployment trigger                 | Absent               | GitHub Actions verify; neither workflow deploys.                                                                                                    |
 
 ## Implemented local release flow
 
@@ -75,10 +75,10 @@ chain.
 
 ## Standalone image artifacts — Implemented
 
-| Image | Build and runtime behavior | Operational boundary |
-| --- | --- | --- |
-| Backend | `python:3.13-slim`, pinned `backend/uv.lock`, `uv sync --frozen --no-dev`, UID 10001. Runs `python -m app` with explicit bind, port, concurrency, and keep-alive settings. Healthcheck reads the same `BACKEND_PORT`. | Requires runtime API configuration with `OPENSLATE_ENV_SOURCE=process`; receives no owner connection or administrator credentials. |
-| Frontend | Multi-stage `node:24-alpine`, `npm ci`, standalone output, UID 10001. Build requires all three public settings: Supabase URL, publishable key, and purge visibility. | Server endpoint, logging, and limits are supplied only at runtime. Bind/port are required inputs; no endpoint or port fallback is baked in. |
+| Image    | Build and runtime behavior                                                                                                                                                                                            | Operational boundary                                                                                                                        |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backend  | `python:3.14-slim`, pinned `backend/uv.lock`, `uv sync --frozen --no-dev`, UID 10001. Runs `python -m app` with explicit bind, port, concurrency, and keep-alive settings. Healthcheck reads the same `BACKEND_PORT`. | Requires runtime API configuration with `OPENSLATE_ENV_SOURCE=process`; receives no owner connection or administrator credentials.          |
+| Frontend | Multi-stage `node:24-alpine`, `npm ci`, standalone output, UID 10001. Build requires all three public settings: Supabase URL, publishable key, and purge visibility.                                                  | Server endpoint, logging, and limits are supplied only at runtime. Bind/port are required inputs; no endpoint or port fallback is baked in. |
 
 `frontend/scripts/start-standalone.mjs` validates public/runtime settings before
 importing `server.js` and copies static/public assets for local `npm start`.
@@ -118,41 +118,14 @@ or rollback step.
 
 ### Frontend workflow
 
-`.github/workflows/frontend.yml` runs on pull requests and pushes to `main` for
-frontend, frontend-image, Docker-context, and workflow changes. It uses Node 24,
-runs `npm ci`, installs Chromium/Firefox/
-WebKit, then runs formatting, lint, typecheck, build, and Playwright E2E with
-`PLAYWRIGHT_USE_PRODUCTION=1`. A separate `npm run test:scanner:coverage` step
-measures scanner UI executable lines using development source maps and enforces
-90%; it does not replace production browser acceptance. It also builds the standalone frontend image with
-the required public Supabase build arguments. It uploads the HTML Playwright
-report always and test results on failure. It has no image publishing or
-deployment step.
-
-### Full-stack release-gate workflow
-
-`.github/workflows/fullstack.yml` supplies one stable check named **Full-stack
-release gate** for pull requests and pushes to `main`. Its internal
-relevant-change detection runs the substantive job for backend, frontend,
-Supabase, infrastructure, environment-example, Docker-ignore, and workflow
-changes; otherwise the same check completes with a no-relevant-change result.
-This avoids path-filtered required checks remaining pending.
-
-For relevant changes, `backend/tests/fullstack_runner.py` creates a fresh
-Supabase stack on dedicated ports, applies the dynamically discovered Alembic
-head and drift check, provisions the runtime role, starts FastAPI, builds and
-starts production Next.js, and runs the dedicated Chromium browser suite. The
-scanner helper provisions a pinned ClamAV engine with official definitions and
-a serial worker on an internal container network. It
-uses per-run identities and a private temporary fixture, retains only a
-sanitized acceptance summary, and stops the disposable stack without a backup.
-It also runs the read-only operational checker. This is a real
-Supabase → Next.js → FastAPI → PostgreSQL release gate, not evidence that a
-hosted deployment is production-ready.
-
-The workflow definition alone does not enforce merge protection. After landing,
-a repository maintainer must configure branch protection to require the stable
-**Full-stack release gate** check.
+`.github/workflows/frontend.yml` always reports its stable required-check
+job. For relevant changes it installs dependencies once, runs formatting,
+ESLint, TypeScript, 181 isolated product/security tests, three HTTP boundary
+tests, and one production build. Frontend container inputs substitute one
+conditional image build and environment-boundary check for the native build.
+The workflow installs no browser, runs no browser or full-stack journeys,
+collects no frontend line coverage, and uploads no artifacts. It does not publish
+an image or deploy the application.
 
 ## Approved hosted deployment contract — implementation still blocked
 
@@ -185,26 +158,26 @@ selections/blockers. No provider-neutral infrastructure is specified here.
 
 ## Schema, provisioning, and bootstrap operations
 
-| Operation              | Implemented behavior                                                                                                                                                                                                                       | Hosted state                                                                                                                                                                                                                   |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Application migrations | Alembic owns `backend/migrations/`; the 15-revision linear chain is applied explicitly with `uv run alembic upgrade head`.                                                                                                                 | Unknown. Migration 0010 needs owner-capable access to Supabase-managed Realtime metadata and role DDL; its hosted branch fails closed unless that capability exists or is handled by a separately approved owner-capable step. |
-| Drift check            | `uv run alembic check` is run locally and in backend CI.                                                                                                                                                                                   | Unknown. No hosted drift job is defined.                                                                                                                                                                                       |
-| Runtime database role  | `provision_database_role.py` requires `MIGRATION_DATABASE_URL` and the runtime password encoded in `DATABASE_URL`, rejects unsafe attributes, creates/updates `openslate_runtime`, verifies the `openslate_app` role and non-delegable direct membership (including PostgreSQL membership options where available), and fails if any other direct or inherited membership exists; it never silently revokes unknown memberships. | Unknown. No hosted role-delivery or password-rotation workflow is defined. |
-| First administrator    | `bootstrap_admin.py` checks schema and seeded roles, reserves any non-deleted pending/active admin assignment (only the exact same pending reservation is idempotent), invites through server-side Supabase Auth, and leaves the profile `pending` for verified post-password acceptance; finalization rechecks under the admin-role lock and a concurrent loser remains a pending member with no destructive compensation. | Unknown. The confirmation guard exists, but no hosted bootstrap runbook or environment is defined.                                                                                                                             |
-| Optional sample data   | `seed_sample_data.py` calls the authenticated FastAPI API with an admin access token; it does not write tables directly.                                                                                                                   | Unknown. It is a development utility, not a release step.                                                                                                                                                                      |
+| Operation              | Implemented behavior                                                                                                                                                                                                                                                                                                                                                                                                             | Hosted state                                                                                                                                                                                                                   |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Application migrations | Alembic owns `backend/migrations/`; the 15-revision linear chain is applied explicitly with `uv run alembic upgrade head`.                                                                                                                                                                                                                                                                                                       | Unknown. Migration 0010 needs owner-capable access to Supabase-managed Realtime metadata and role DDL; its hosted branch fails closed unless that capability exists or is handled by a separately approved owner-capable step. |
+| Drift check            | `uv run alembic check` is run locally and in backend CI.                                                                                                                                                                                                                                                                                                                                                                         | Unknown. No hosted drift job is defined.                                                                                                                                                                                       |
+| Runtime database role  | `provision_database_role.py` requires `MIGRATION_DATABASE_URL` and the runtime password encoded in `DATABASE_URL`, rejects unsafe attributes, creates/updates `openslate_runtime`, verifies the `openslate_app` role and non-delegable direct membership (including PostgreSQL membership options where available), and fails if any other direct or inherited membership exists; it never silently revokes unknown memberships. | Unknown. No hosted role-delivery or password-rotation workflow is defined.                                                                                                                                                     |
+| First administrator    | `bootstrap_admin.py` checks schema and seeded roles, reserves any non-deleted pending/active admin assignment (only the exact same pending reservation is idempotent), invites through server-side Supabase Auth, and leaves the profile `pending` for verified post-password acceptance; finalization rechecks under the admin-role lock and a concurrent loser remains a pending member with no destructive compensation.      | Unknown. The confirmation guard exists, but no hosted bootstrap runbook or environment is defined.                                                                                                                             |
+| Optional sample data   | `seed_sample_data.py` calls the authenticated FastAPI API with an admin access token; it does not write tables directly.                                                                                                                                                                                                                                                                                                         | Unknown. It is a development utility, not a release step.                                                                                                                                                                      |
 
 ## Update, rollback, backup, and recovery state
 
-| Concern                           | Classification        | Repository-defined behavior                                                                                                                                                                                            |
-| --------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Local update                      | Implemented           | Start/update Supabase, synchronize backend/frontend dependencies, apply Alembic head, provision the runtime role if needed, and restart host processes or run the standalone image paths. No automatic updater exists. |
-| Hosted update                     | Contract defined; implementation unknown | The approved release order is defined above, but no hosted service, provider, deployment command, or migration gate is checked in.                                                                    |
-| Local rollback                    | Partially implemented | `supabase db reset` is a destructive reset followed by Alembic upgrade; it is not an application release rollback. Several migrations are intentionally forward-only.                                                  |
-| Migration downgrade               | Partially implemented | Revisions including 0010 explicitly raise `NotImplementedError` and direct operators to restore a database backup. Revision 0015 has a preflighted downgrade from canonical decimal strings to JSON numbers; invalid intervening values fail before mutation. There is no checked-in downgrade runbook. |
-| Release rollback                  | Forward-only contract; automation absent | No versioned deployment manifest, previous-image selection, traffic switch, or rollback workflow is present. Recovery is a forward fix or coordinated restore.                                                   |
-| Backup                            | Required gate; implementation absent | A pre-migration backup is required by the approved release order, but no scheduler, snapshot policy, export command, retention setting, or hosted backup integration is checked in. CI cleanup explicitly uses `supabase stop --no-backup`. |
-| Local disposable reconstruction   | Implemented procedure | `supabase start`, `supabase db reset`, `uv run alembic upgrade head`, role provisioning, and, where needed, administrator bootstrap reconstruct the documented disposable local stack; this is not release or disaster recovery. |
-| Hosted recovery/disaster recovery | Unknown               | No restore source, recovery point/objective, Auth recovery procedure, Storage recovery procedure, or failover topology is defined.                                                                                     |
+| Concern                           | Classification                           | Repository-defined behavior                                                                                                                                                                                                                                                                             |
+| --------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Local update                      | Implemented                              | Start/update Supabase, synchronize backend/frontend dependencies, apply Alembic head, provision the runtime role if needed, and restart host processes or run the standalone image paths. No automatic updater exists.                                                                                  |
+| Hosted update                     | Contract defined; implementation unknown | The approved release order is defined above, but no hosted service, provider, deployment command, or migration gate is checked in.                                                                                                                                                                      |
+| Local rollback                    | Partially implemented                    | `supabase db reset` is a destructive reset followed by Alembic upgrade; it is not an application release rollback. Several migrations are intentionally forward-only.                                                                                                                                   |
+| Migration downgrade               | Partially implemented                    | Revisions including 0010 explicitly raise `NotImplementedError` and direct operators to restore a database backup. Revision 0015 has a preflighted downgrade from canonical decimal strings to JSON numbers; invalid intervening values fail before mutation. There is no checked-in downgrade runbook. |
+| Release rollback                  | Forward-only contract; automation absent | No versioned deployment manifest, previous-image selection, traffic switch, or rollback workflow is present. Recovery is a forward fix or coordinated restore.                                                                                                                                          |
+| Backup                            | Required gate; implementation absent     | A pre-migration backup is required by the approved release order, but no scheduler, snapshot policy, export command, retention setting, or hosted backup integration is checked in. CI cleanup explicitly uses `supabase stop --no-backup`.                                                             |
+| Local disposable reconstruction   | Implemented procedure                    | `supabase start`, `supabase db reset`, `uv run alembic upgrade head`, role provisioning, and, where needed, administrator bootstrap reconstruct the documented disposable local stack; this is not release or disaster recovery.                                                                        |
+| Hosted recovery/disaster recovery | Unknown                                  | No restore source, recovery point/objective, Auth recovery procedure, Storage recovery procedure, or failover topology is defined.                                                                                                                                                                      |
 
 The Auth cutover migration does not map existing local identities. It refuses a
 non-empty `public.users` table before the destructive cutover and describes

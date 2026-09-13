@@ -20,7 +20,7 @@ architecture:
 
 ## Runtime entry and rendering model
 
-The frontend is a Next.js 16.3.1 App Router application under
+The frontend is a Next.js 16.3.5 App Router application under
 `frontend/src/`. `frontend/src/app/layout.tsx:RootLayout` is the only layout. It loads
 the Geist fonts and `globals.css`, renders the null-rendering
 `ThemeProvider`, sets metadata, and awaits `connection()` so the per-request
@@ -379,7 +379,7 @@ or frontend design-token service.
 
 ## Build, environment, and Next.js Proxy
 
-`frontend/package.json` pins Next.js 16.3.1, React 19.2.8, TypeScript, Tailwind
+`frontend/package.json` pins Next.js 16.3.5, React 19.3.0, TypeScript, Tailwind
 CSS 4, Supabase JS, Zod, and Playwright. `next.config.ts` enables
 `output: "standalone"`, `reactStrictMode`, and `typedRoutes`; it has no backend
 or API-documentation rewrites. Its response headers add `nosniff`, frame,

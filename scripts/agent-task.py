@@ -26,9 +26,9 @@ def load_json(path: Path) -> dict:
     try:
         return json.loads(path.read_text())
     except FileNotFoundError:
-        raise SystemExit(f"Missing file: {path}")
+        raise SystemExit(f"Missing file: {path}") from None
     except json.JSONDecodeError as exc:
-        raise SystemExit(f"Invalid JSON in {path}: {exc}")
+        raise SystemExit(f"Invalid JSON in {path}: {exc}") from exc
 
 
 def write_json(path: Path, data: dict) -> None:
@@ -116,11 +116,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
             if dependency not in ids:
                 errors.append(f"{item_id} depends on unknown task: {dependency}")
 
-    graph = {
-        item.get("id"): item.get("depends_on", [])
-        for item in tasks
-        if item.get("id")
-    }
+    graph = {item.get("id"): item.get("depends_on", []) for item in tasks if item.get("id")}
     visiting: set[str] = set()
     visited: set[str] = set()
 
@@ -256,28 +252,24 @@ def _routed_roles(instructions: str) -> set[str]:
             end += 1
         normalized = [value.strip("`").lower() for value in header]
         role_indexes = [
-            position
-            for position, value in enumerate(normalized)
-            if value in role_headers
+            position for position, value in enumerate(normalized) if value in role_headers
         ]
         if role_indexes:
             row_start = index + 1
             separator = cells(lines[row_start]) if row_start < end else None
-            if separator is not None and separator and all(
-                set(value) <= {"-", ":", " "} for value in separator
+            if (
+                separator is not None
+                and separator
+                and all(set(value) <= {"-", ":", " "} for value in separator)
             ):
                 row_start += 1
             for row in lines[row_start:end]:
                 values = cells(row)
-                if values is None or all(
-                    set(value) <= {"-", ":", " "} for value in values
-                ):
+                if values is None or all(set(value) <= {"-", ":", " "} for value in values):
                     continue
                 for position in role_indexes:
                     if position < len(values):
-                        roles.update(
-                            re.findall(r"`([a-z]+(?:-[a-z]+)*)`", values[position])
-                        )
+                        roles.update(re.findall(r"`([a-z]+(?:-[a-z]+)*)`", values[position]))
         index = end
     return roles
 

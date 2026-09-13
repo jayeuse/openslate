@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useSampleState } from "@/components/sample/sample-state";
 import type { SampleRecord } from "@/components/sample/sample-data";
+import { initialAnnouncements, type Announcement } from "./announcements";
 
 type CalendarEvent = {
   id: string;
@@ -15,14 +16,6 @@ type CalendarEvent = {
   visibility: string;
   recurrence: string;
   recordId: string;
-};
-type Announcement = {
-  id: string;
-  title: string;
-  body: string;
-  audience: string;
-  expires: string;
-  pinned: boolean;
 };
 type Notice = { id: string; title: string; recordId?: string; read: boolean };
 const blankEvent: CalendarEvent = {
@@ -302,16 +295,7 @@ export function BoardAnnouncements() {
   const [roles] = useSampleState("access-roles", initialRoles);
   const [announcements, setAnnouncements] = useSampleState<Announcement[]>(
     "boards-announcements",
-    [
-      {
-        id: "sample-announcement-welcome",
-        title: "A clearer week starts here.",
-        body: "Use this board to keep everyone aligned on priorities, upcoming work, and important changes.",
-        audience: "Everyone",
-        expires: "",
-        pinned: true,
-      },
-    ],
+    initialAnnouncements,
   );
   const [draft, setDraft] = useState<Announcement | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);

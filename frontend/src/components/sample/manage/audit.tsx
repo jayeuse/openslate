@@ -1,177 +1,667 @@
 "use client";
-import { useState } from "react";
+
+import { Download, FileSearch, Search } from "lucide-react";
+import { useRef, useState, type ChangeEvent } from "react";
+
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Choice, Editor, Field, Section } from "../access/primitives";
-const entries = [
-  {
-    id: "sample-audit-1",
-    user: "Mara Santos",
-    date: "2026-09-11",
-    entity: "Work orders",
-    action: "Update",
-    target: "WO-1042",
-    before: "Status: Assigned",
-    after: "Status: In progress",
-  },
-  {
-    id: "sample-audit-2",
-    user: "Eli Cruz",
-    date: "2026-09-10",
-    entity: "Equipment",
-    action: "Create",
-    target: "EQ-0028",
-    before: "No equipment record",
-    after: "Pump · North depot · Active",
-  },
-  {
-    id: "sample-audit-3",
-    user: "Mara Santos",
-    date: "2026-09-09",
-    entity: "Users",
-    action: "Close",
-    target: "Nina Reyes",
-    before: "User: Active",
-    after: "User: Deactivated",
-  },
-];
-export default function SampleAudit() {
-  const [user, setUser] = useState("All users");
-  const [entity, setEntity] = useState("All entities");
-  const [action, setAction] = useState("All actions");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [selected, setSelected] = useState<(typeof entries)[number] | null>(
-    null,
-  );
-  const [exporting, setExporting] = useState(false);
-  const visible = entries.filter(
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import type { ManageActivityEntry } from "./state";
+
+const PAGE_SIZE = 5;
+
+type ManageAuditProps = {
+  entries: ManageActivityEntry[];
+};
+
+type ActivityOrder = "newest" | "oldest";
+
+type ActivityFilters = {
+  query: string;
+  user: string;
+  entity: string;
+  action: string;
+  from: string;
+  to: string;
+  order: ActivityOrder;
+};
+
+const initialFilters: ActivityFilters = {
+  query: "",
+  user: "All users",
+  entity: "All entities",
+  action: "All actions",
+  from: "",
+  to: "",
+  order: "newest",
+};
+
+function uniqueValues(
+  entries: ManageActivityEntry[],
+  key: keyof ManageActivityEntry,
+) {
+  return [
+    ...new Set(
+      entries
+        .map((entry) => String(entry[key]))
+        .filter((value) => value.length > 0),
+    ),
+  ].sort((left, right) => left.localeCompare(right));
+}
+
+function dateOnly(value: string): string {
+  const datePrefix = /^(\d{4}-\d{2}-\d{2})/.exec(value)?.[1];
+  if (datePrefix) return datePrefix;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp)
+    ? new Date(timestamp).toISOString().slice(0, 10)
+    : value;
+}
+
+function timestamp(value: string): number | null {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function compareDates(left: string, right: string): number {
+  const leftTimestamp = timestamp(left);
+  const rightTimestamp = timestamp(right);
+  if (leftTimestamp !== null && rightTimestamp !== null)
+    return leftTimestamp - rightTimestamp;
+  if (leftTimestamp !== null) return 1;
+  if (rightTimestamp !== null) return -1;
+  return left.localeCompare(right);
+}
+
+function matchesSearch(entry: ManageActivityEntry, query: string): boolean {
+  if (!query) return true;
+  return [
+    entry.user,
+    entry.entity,
+    entry.action,
+    entry.target,
+    entry.before,
+    entry.after,
+  ].some((value) => value.toLowerCase().includes(query));
+}
+
+/**
+ * Quote CSV values and neutralize spreadsheet formula prefixes. The leading
+ * apostrophe is intentional: spreadsheet applications treat the value as
+ * text instead of executing a value beginning with =, +, -, or @.
+ */
+export function quoteActivityCsvCell(value: string): string {
+  const safeValue = /^\s*[=+\-@]/.test(value) ? `'${value}` : value;
+  return `"${safeValue.replaceAll('"', '""')}"`;
+}
+
+export function buildActivityCsv(entries: ManageActivityEntry[]): string {
+  const header = [
+    "Date",
+    "User",
+    "Entity",
+    "Action",
+    "Target",
+    "Before",
+    "After",
+    "Source",
+  ];
+  const rows = entries.map((entry) => [
+    entry.date,
+    entry.user,
+    entry.entity,
+    entry.action,
+    entry.target,
+    entry.before,
+    entry.after,
+    entry.source === "manage" ? "Manage change" : "Recorded activity",
+  ]);
+  return [header, ...rows]
+    .map((row) => row.map(quoteActivityCsvCell).join(","))
+    .join("\r\n");
+}
+
+function downloadActivityCsv(entries: ManageActivityEntry[]): void {
+  const blob = new Blob([buildActivityCsv(entries)], {
+    type: "text/csv;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "openslate-audit.csv";
+  anchor.hidden = true;
+  document.body.append(anchor);
+  try {
+    anchor.click();
+  } finally {
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+}
+
+function sourceLabel(source: ManageActivityEntry["source"]): string {
+  return source === "manage" ? "Manage change" : "Recorded activity";
+}
+
+function sourceVariant(
+  source: ManageActivityEntry["source"],
+): "secondary" | "outline" {
+  return source === "manage" ? "secondary" : "outline";
+}
+
+export default function ManageAudit({ entries }: ManageAuditProps) {
+  const [filters, setFilters] = useState<ActivityFilters>(initialFilters);
+  const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<ManageActivityEntry | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [notice, setNotice] = useState("");
+  const detailTrigger = useRef<HTMLButtonElement | null>(null);
+  const exportTrigger = useRef<HTMLButtonElement | null>(null);
+
+  const users = uniqueValues(entries, "user");
+  const entities = uniqueValues(entries, "entity");
+  const actions = uniqueValues(entries, "action");
+  const dateRangeError =
+    filters.from && filters.to && filters.from > filters.to
+      ? "The end date must be on or after the start date."
+      : "";
+  const normalizedQuery = filters.query.trim().toLowerCase();
+  const filtered = entries.filter(
     (entry) =>
-      (user === "All users" || entry.user === user) &&
-      (entity === "All entities" || entry.entity === entity) &&
-      (action === "All actions" || entry.action === action) &&
-      (!from || entry.date >= from) &&
-      (!to || entry.date <= to),
+      matchesSearch(entry, normalizedQuery) &&
+      (filters.user === "All users" || entry.user === filters.user) &&
+      (filters.entity === "All entities" || entry.entity === filters.entity) &&
+      (filters.action === "All actions" || entry.action === filters.action) &&
+      (!filters.from || dateOnly(entry.date) >= filters.from) &&
+      (!filters.to || dateOnly(entry.date) <= filters.to),
   );
+  const sorted = [...filtered].sort((left, right) => {
+    const dateComparison = compareDates(left.date, right.date);
+    if (dateComparison !== 0)
+      return filters.order === "newest" ? -dateComparison : dateComparison;
+    return left.id.localeCompare(right.id);
+  });
+  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const visible = sorted.slice(
+    (safePage - 1) * PAGE_SIZE,
+    safePage * PAGE_SIZE,
+  );
+  const firstVisible = sorted.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
+  const lastVisible = Math.min(safePage * PAGE_SIZE, sorted.length);
+
+  function updateFilter<Key extends keyof ActivityFilters>(
+    key: Key,
+    value: ActivityFilters[Key],
+  ) {
+    setFilters((current) => ({ ...current, [key]: value }));
+    setPage(1);
+    setNotice("");
+  }
+
+  function handleSearch(event: ChangeEvent<HTMLInputElement>) {
+    updateFilter("query", event.target.value);
+  }
+
+  function clearFilters() {
+    setFilters(initialFilters);
+    setPage(1);
+    setNotice("");
+  }
+
+  function openExport() {
+    if (dateRangeError) return;
+    setExportOpen(true);
+  }
+
+  function downloadFilteredCsv() {
+    if (dateRangeError) return;
+    downloadActivityCsv(sorted);
+    setExportOpen(false);
+    setNotice(
+      `Downloaded ${sorted.length} filtered audit ${sorted.length === 1 ? "entry" : "entries"}.`,
+    );
+  }
+
   return (
-    <Section
-      title="Audit trail"
-      description="A readable history of fictional workspace activity. Filters apply to the export preview too."
+    <section
+      aria-labelledby="audit-heading"
+      className="flex min-w-0 flex-col gap-3"
     >
-      <div className="grid gap-4 rounded-lg border p-4 sm:grid-cols-2 lg:grid-cols-5">
-        <Choice
-          label="Audit user"
-          value={user}
-          options={["All users", "Mara Santos", "Eli Cruz"]}
-          onChange={setUser}
-        />
-        <Choice
-          label="Audit entity"
-          value={entity}
-          options={["All entities", "Work orders", "Equipment", "Users"]}
-          onChange={setEntity}
-        />
-        <Choice
-          label="Audit action"
-          value={action}
-          options={["All actions", "Create", "Update", "Close"]}
-          onChange={setAction}
-        />
-        <Field
-          label="From date"
-          type="date"
-          value={from}
-          onChange={(event) => setFrom(event.target.value)}
-        />
-        <Field
-          label="To date"
-          type="date"
-          value={to}
-          min={from}
-          onChange={(event) => setTo(event.target.value)}
-        />
-      </div>
-      {from && to && from > to && (
-        <p role="alert" className="text-destructive text-sm">
-          The end date must be on or after the start date.
+      <header>
+        <h2 id="audit-heading" className="text-xl font-semibold tracking-tight">
+          Activity history
+        </h2>
+        <p className="text-muted-foreground mt-1 text-sm md:sr-only">
+          Review workspace activity. Filters apply to the CSV export as well as
+          the table.
         </p>
-      )}
-      <div className="flex flex-wrap justify-between gap-3">
-        <p className="text-muted-foreground self-center text-sm">
-          {visible.length} entries
-        </p>
-        <div className="flex gap-2">
-          <Button
-            variant="ghost"
-            className="min-h-11"
-            onClick={() => {
-              setUser("All users");
-              setEntity("All entities");
-              setAction("All actions");
-              setFrom("");
-              setTo("");
-            }}
-          >
-            Clear filters
-          </Button>
-          <Button
-            variant="outline"
-            className="min-h-11"
-            onClick={() => setExporting(true)}
-          >
-            Export audit preview
-          </Button>
-        </div>
-      </div>
-      <div className="divide-y rounded-lg border">
-        {visible.map((entry) => (
-          <button
-            key={entry.id}
-            className="hover:bg-muted focus-visible:outline-ring grid min-h-11 w-full gap-2 p-4 text-left sm:grid-cols-[120px_1fr_1fr_auto]"
-            onClick={() => setSelected(entry)}
-            aria-label={`View audit ${entry.target}`}
-          >
-            <span className="text-muted-foreground text-sm">{entry.date}</span>
-            <span className="text-sm font-medium">{entry.user}</span>
-            <span className="text-muted-foreground text-sm">
-              {entry.action} · {entry.entity}
-            </span>
-            <span className="text-sm">{entry.target}</span>
-          </button>
-        ))}
-        {!visible.length && (
-          <p className="text-muted-foreground p-8 text-center text-sm">
-            No audit entries match these filters.
-          </p>
-        )}
-      </div>
-      <Editor
-        title="Audit entry detail"
-        open={selected !== null}
-        onClose={() => setSelected(null)}
-      >
-        {selected && (
-          <div className="space-y-5">
-            <p className="text-muted-foreground text-sm">
-              {selected.user} · {selected.date} · {selected.action}
-            </p>
-            <h3 className="font-semibold">{selected.target}</h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-md border p-4">
-                <p className="text-muted-foreground mb-2 text-xs uppercase">
-                  Before
-                </p>
-                <p className="text-sm">{selected.before}</p>
+      </header>
+
+      <Card aria-label="Activity filters" className="w-full min-w-0">
+        <CardContent className="p-3">
+          <h3 className="sr-only">Filter activity</h3>
+          <FieldGroup className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-[minmax(14rem,2fr)_repeat(6,minmax(7rem,1fr))]">
+            <Field className="gap-1.5 sm:col-span-2 lg:col-span-2 xl:col-span-1">
+              <FieldLabel className="md:sr-only" htmlFor="search-activity">
+                Search activity
+              </FieldLabel>
+              <div className="relative">
+                <Search
+                  aria-hidden="true"
+                  className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+                />
+                <Input
+                  id="search-activity"
+                  type="search"
+                  value={filters.query}
+                  onChange={handleSearch}
+                  placeholder="Search activity"
+                  className="min-h-11 pl-8 md:h-8 md:min-h-8"
+                />
               </div>
-              <div className="bg-muted rounded-md border p-4">
-                <p className="text-muted-foreground mb-2 text-xs uppercase">
-                  After
+              <FieldDescription className="sr-only">
+                Matches users, entities, actions, targets, and before/after
+                details.
+              </FieldDescription>
+            </Field>
+
+            <Field className="gap-1.5">
+              <FieldLabel className="md:sr-only" htmlFor="audit-user">
+                Audit user
+              </FieldLabel>
+              <NativeSelect
+                id="audit-user"
+                value={filters.user}
+                className="w-full [&>select]:min-h-11 md:[&>select]:h-8 md:[&>select]:min-h-8"
+                onChange={(event) => updateFilter("user", event.target.value)}
+              >
+                <NativeSelectOption value="All users">
+                  All users
+                </NativeSelectOption>
+                {users.map((value) => (
+                  <NativeSelectOption key={value} value={value}>
+                    {value}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+
+            <Field className="gap-1.5">
+              <FieldLabel className="md:sr-only" htmlFor="audit-entity">
+                Audit entity
+              </FieldLabel>
+              <NativeSelect
+                id="audit-entity"
+                value={filters.entity}
+                className="w-full [&>select]:min-h-11 md:[&>select]:h-8 md:[&>select]:min-h-8"
+                onChange={(event) => updateFilter("entity", event.target.value)}
+              >
+                <NativeSelectOption value="All entities">
+                  All entities
+                </NativeSelectOption>
+                {entities.map((value) => (
+                  <NativeSelectOption key={value} value={value}>
+                    {value}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+
+            <Field className="gap-1.5">
+              <FieldLabel className="md:sr-only" htmlFor="audit-action">
+                Audit action
+              </FieldLabel>
+              <NativeSelect
+                id="audit-action"
+                value={filters.action}
+                className="w-full [&>select]:min-h-11 md:[&>select]:h-8 md:[&>select]:min-h-8"
+                onChange={(event) => updateFilter("action", event.target.value)}
+              >
+                <NativeSelectOption value="All actions">
+                  All actions
+                </NativeSelectOption>
+                {actions.map((value) => (
+                  <NativeSelectOption key={value} value={value}>
+                    {value}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+
+            <Field className="gap-1.5" data-invalid={Boolean(dateRangeError)}>
+              <FieldLabel className="md:sr-only" htmlFor="from-date">
+                From date
+              </FieldLabel>
+              <Input
+                id="from-date"
+                type="date"
+                value={filters.from}
+                aria-invalid={Boolean(dateRangeError) || undefined}
+                onChange={(event) => updateFilter("from", event.target.value)}
+                className="min-h-11 md:h-8 md:min-h-8"
+              />
+            </Field>
+
+            <Field className="gap-1.5" data-invalid={Boolean(dateRangeError)}>
+              <FieldLabel className="md:sr-only" htmlFor="to-date">
+                To date
+              </FieldLabel>
+              <Input
+                id="to-date"
+                type="date"
+                min={filters.from || undefined}
+                value={filters.to}
+                aria-invalid={Boolean(dateRangeError) || undefined}
+                onChange={(event) => updateFilter("to", event.target.value)}
+                className="min-h-11 md:h-8 md:min-h-8"
+              />
+              <FieldError>{dateRangeError}</FieldError>
+            </Field>
+
+            <Field className="gap-1.5">
+              <FieldLabel className="md:sr-only" htmlFor="activity-order">
+                Activity order
+              </FieldLabel>
+              <NativeSelect
+                id="activity-order"
+                value={filters.order}
+                className="w-full [&>select]:min-h-11 md:[&>select]:h-8 md:[&>select]:min-h-8"
+                onChange={(event) =>
+                  updateFilter("order", event.target.value as ActivityOrder)
+                }
+              >
+                <NativeSelectOption value="newest">
+                  Newest first
+                </NativeSelectOption>
+                <NativeSelectOption value="oldest">
+                  Oldest first
+                </NativeSelectOption>
+              </NativeSelect>
+            </Field>
+          </FieldGroup>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t pt-2">
+            <p className="text-muted-foreground text-xs">
+              {sorted.length === 0
+                ? "No matching entries"
+                : `Showing ${firstVisible}–${lastVisible} of ${sorted.length} ${
+                    sorted.length === 1 ? "entry" : "entries"
+                  }`}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              <Button
+                variant="ghost"
+                className="min-h-11 px-2.5 md:h-8 md:min-h-8"
+                onClick={clearFilters}
+                disabled={
+                  filters.query === "" &&
+                  filters.user === "All users" &&
+                  filters.entity === "All entities" &&
+                  filters.action === "All actions" &&
+                  filters.from === "" &&
+                  filters.to === "" &&
+                  filters.order === "newest"
+                }
+              >
+                Clear filters
+              </Button>
+              <Button
+                ref={exportTrigger}
+                variant="outline"
+                aria-label="Export audit preview"
+                className="min-h-11 px-2.5 md:h-8 md:min-h-8"
+                onClick={openExport}
+                disabled={Boolean(dateRangeError)}
+              >
+                <Download data-icon="inline-start" /> Export
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {dateRangeError ? (
+        <Alert role="alert" variant="destructive">
+          {dateRangeError}
+        </Alert>
+      ) : null}
+      {notice ? <Alert variant="success">{notice}</Alert> : null}
+
+      {sorted.length === 0 ? (
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FileSearch aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle>No audit entries match these filters</EmptyTitle>
+            <EmptyDescription>
+              Clear a filter or search for another activity entry.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <Card aria-label="Activity history table" className="w-full min-w-0">
+          <CardContent className="p-0">
+            <Table aria-label="Activity history">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="h-8 py-1 text-xs">Date</TableHead>
+                  <TableHead className="h-8 py-1 text-xs">User</TableHead>
+                  <TableHead className="h-8 py-1 text-xs">Activity</TableHead>
+                  <TableHead className="h-8 py-1 text-xs">Target</TableHead>
+                  <TableHead className="h-8 py-1 text-xs">Source</TableHead>
+                  <TableHead className="h-8 py-1 text-right text-xs">
+                    Details
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visible.map((entry) => (
+                  <TableRow key={entry.id}>
+                    <TableCell className="py-1.5">
+                      <time dateTime={entry.date}>{entry.date}</time>
+                    </TableCell>
+                    <TableCell className="py-1.5 font-medium">
+                      {entry.user}
+                    </TableCell>
+                    <TableCell className="py-1.5">
+                      <span className="font-medium">{entry.action}</span>
+                      <span className="text-muted-foreground">
+                        {" "}
+                        · {entry.entity}
+                      </span>
+                    </TableCell>
+                    <TableCell className="py-1.5">{entry.target}</TableCell>
+                    <TableCell className="py-1.5">
+                      <Badge variant={sourceVariant(entry.source)}>
+                        {sourceLabel(entry.source)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="py-1 text-right">
+                      <Button
+                        variant="ghost"
+                        className="min-h-11 px-2.5 md:h-8 md:min-h-8"
+                        onClick={(event) => {
+                          detailTrigger.current = event.currentTarget;
+                          setSelected(entry);
+                        }}
+                        aria-label={`View audit ${entry.target}`}
+                      >
+                        View details
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+          {pageCount > 1 ? (
+            <CardFooter className="flex-wrap justify-between gap-2 p-2.5">
+              <p className="text-muted-foreground text-xs">
+                Page {safePage} of {pageCount}
+              </p>
+              <Pagination
+                aria-label="Activity pages"
+                className="mx-0 w-auto justify-start sm:justify-end"
+              >
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      href="#activity-history"
+                      aria-disabled={safePage === 1}
+                      tabIndex={safePage === 1 ? -1 : undefined}
+                      className={
+                        safePage === 1
+                          ? "pointer-events-none opacity-50 md:min-h-8"
+                          : "md:min-h-8"
+                      }
+                      onClick={(event) => {
+                        event.preventDefault();
+                        if (safePage > 1) setPage(safePage - 1);
+                      }}
+                    />
+                  </PaginationItem>
+                  <PaginationItem>
+                    <PaginationLink
+                      href="#activity-history"
+                      size="default"
+                      isActive
+                      className="md:min-h-8"
+                      aria-label={`Page ${safePage} of ${pageCount}`}
+                      onClick={(event) => event.preventDefault()}
+                    >
+                      {safePage} / {pageCount}
+                    </PaginationLink>
+                  </PaginationItem>
+                  <PaginationItem>
+                    <PaginationNext
+                      href="#activity-history"
+                      aria-disabled={safePage === pageCount}
+                      tabIndex={safePage === pageCount ? -1 : undefined}
+                      className={
+                        safePage === pageCount
+                          ? "pointer-events-none opacity-50 md:min-h-8"
+                          : "md:min-h-8"
+                      }
+                      onClick={(event) => {
+                        event.preventDefault();
+                        if (safePage < pageCount) setPage(safePage + 1);
+                      }}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            </CardFooter>
+          ) : null}
+        </Card>
+      )}
+
+      <Dialog
+        open={selected !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelected(null);
+        }}
+      >
+        <DialogContent
+          className="sm:max-w-xl"
+          finalFocus={() => detailTrigger.current}
+        >
+          <DialogHeader>
+            <DialogTitle>Audit entry detail</DialogTitle>
+            <DialogDescription>
+              {selected
+                ? `${selected.user} · ${selected.date} · ${selected.action} · ${sourceLabel(selected.source)}`
+                : "Review the recorded activity change."}
+            </DialogDescription>
+          </DialogHeader>
+          {selected ? (
+            <div className="flex flex-col gap-5">
+              <div>
+                <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                  Target
                 </p>
-                <p className="text-sm">{selected.after}</p>
+                <p className="mt-1 text-lg font-semibold">{selected.target}</p>
+                <p className="text-muted-foreground mt-1 text-sm">
+                  {selected.action} · {selected.entity}
+                </p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Card className="w-full min-w-0">
+                  <CardHeader className="p-4">
+                    <CardTitle className="text-sm">Before</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 pt-0 text-sm whitespace-pre-wrap">
+                    {selected.before}
+                  </CardContent>
+                </Card>
+                <Card className="w-full min-w-0">
+                  <CardHeader className="p-4">
+                    <CardTitle className="text-sm">After</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 pt-0 text-sm whitespace-pre-wrap">
+                    {selected.after}
+                  </CardContent>
+                </Card>
+              </div>
+              <div className="flex items-center gap-3">
+                <Badge variant={sourceVariant(selected.source)}>
+                  {sourceLabel(selected.source)}
+                </Badge>
               </div>
             </div>
-            <p className="text-muted-foreground text-xs">
-              Synthetic entry · {selected.id}
-            </p>
+          ) : null}
+          <DialogFooter>
             <Button
               variant="outline"
               className="min-h-11"
@@ -179,35 +669,54 @@ export default function SampleAudit() {
             >
               Close detail
             </Button>
-          </div>
-        )}
-      </Editor>
-      <Editor
-        title="Audit export preview"
-        open={exporting}
-        onClose={() => setExporting(false)}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={exportOpen}
+        onOpenChange={(open) => {
+          if (!open) setExportOpen(false);
+        }}
       >
-        <p className="text-muted-foreground mb-4 text-sm">
-          {visible.length} filtered entries · CSV preview only. No file was
-          downloaded.
-        </p>
-        <pre className="bg-muted overflow-auto rounded-md p-4 text-xs">
-          {[
-            "Date,User,Entity,Action,Target",
-            ...visible.map(
-              (entry) =>
-                `${entry.date},${entry.user},${entry.entity},${entry.action},${entry.target}`,
-            ),
-          ].join("\n")}
-        </pre>
-        <Button
-          variant="outline"
-          className="mt-4 min-h-11"
-          onClick={() => setExporting(false)}
+        <DialogContent
+          className="sm:max-w-3xl"
+          finalFocus={() => exportTrigger.current}
         >
-          Close preview
-        </Button>
-      </Editor>
-    </Section>
+          <DialogHeader>
+            <DialogTitle>Audit export preview</DialogTitle>
+            <DialogDescription>
+              {sorted.length} filtered{" "}
+              {sorted.length === 1 ? "entry" : "entries"} · the download
+              includes every filtered entry across all pages.
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea
+            className="max-h-[50dvh] rounded-md"
+            viewportProps={{
+              className: "max-h-[50dvh]",
+              tabIndex: 0,
+              "aria-label": "CSV preview",
+            }}
+          >
+            <pre className="bg-muted rounded-md p-4 text-xs leading-relaxed wrap-anywhere whitespace-pre-wrap">
+              {buildActivityCsv(sorted)}
+            </pre>
+          </ScrollArea>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setExportOpen(false)}
+            >
+              Close preview
+            </Button>
+            <Button className="min-h-11" onClick={downloadFilteredCsv}>
+              <Download data-icon="inline-start" /> Download CSV
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </section>
   );
 }

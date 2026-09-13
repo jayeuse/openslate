@@ -249,7 +249,7 @@ uv run pytest
 npm run lint
 npm run typecheck
 npm run build
-npm run test:e2e
+npm test
 ```
 
 From the repository root, run a backend section with

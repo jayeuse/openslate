@@ -2,86 +2,147 @@ name: Backend
 
 on:
   pull_request:
-    paths:
-      - "backend/**"
-      - "scripts/test*.py"
-      - "scripts/check_coverage.py"
-      - "infra/docker/backend.Dockerfile"
-      - ".dockerignore"
-      - "compose.yaml"
-      - "scripts/environment.py"
-      - "supabase/**"
-      - ".env.example"
-      - ".github/workflows/backend.yml"
   push:
     branches: [main]
-    paths:
-      - "backend/**"
-      - "scripts/test*.py"
-      - "scripts/check_coverage.py"
-      - "infra/docker/backend.Dockerfile"
-      - ".dockerignore"
-      - "compose.yaml"
-      - "scripts/environment.py"
-      - "supabase/**"
-      - ".env.example"
-      - ".github/workflows/backend.yml"
 
 concurrency:
   group: backend-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  verify:
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
+    outputs:
+      base: ${{ steps.scope.outputs.base }}
+      run_backend: ${{ steps.scope.outputs.run_backend }}
+      run_backend_container: ${{ steps.scope.outputs.run_backend_container }}
+      reason_backend: ${{ steps.scope.outputs.reason_backend }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: scope
+        name: Classify changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 scripts/ci_scope.py --base "$BASE_SHA" --github-output "$GITHUB_OUTPUT"
+
+  quality:
+    needs: changes
+    if: needs.changes.outputs.run_backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           version: latest
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
-      - name: Set up Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: latest
-      - name: Install backend dependencies
-        run: uv sync --locked
-      - name: Record coverage comparison base
-        env:
-          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          base=$(git merge-base HEAD "$BASE_REF")
-          printf 'COVERAGE_BASE_REF=%s\n' "$base" >> "$GITHUB_ENV"
+      - run: uv sync --locked
       - name: Run Ruff
-        run: uv run ruff check .
+        run: uv run ruff check . ../scripts
       - name: Run mypy
-        run: uv run mypy app scripts
+        run: uv run mypy app scripts ../scripts/ci_scope.py ../scripts/prepush.py
       - name: Verify test selection and tooling
         run: uv run python -m unittest discover -s ../scripts -p 'test_*.py'
-      - name: Complete disposable PostgreSQL tests and 90 percent coverage gates
+
+  coverage:
+    needs: changes
+    if: needs.changes.outputs.run_backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: latest
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - uses: supabase/setup-cli@v3
+        with:
+          version: latest
+      - run: uv sync --locked
+      - name: Complete disposable PostgreSQL tests and coverage gates
+        env:
+          COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}
         run: uv run python -m tests.fullstack_runner --backend-coverage-only
-      - name: Upload coverage evidence
+      - name: Upload compact backend coverage evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-coverage
-          path: backend/test-results/coverage
-          if-no-files-found: error
-      - name: Build backend Docker image
-        working-directory: ${{ github.workspace }}
-        run: docker build --file infra/docker/backend.Dockerfile --tag openslate-backend:ci .
+          path: |
+            backend/test-results/coverage/coverage.json
+            backend/test-results/coverage/coverage.xml
+            backend/test-results/coverage/metadata.json
+            backend/test-results/coverage/gate.json
+            backend/test-results/coverage/operational-coverage.json
+            backend/test-results/coverage/summary.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  container:
+    needs: changes
+    if: needs.changes.outputs.run_backend_container == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/backend.Dockerfile
+          push: false
+          tags: openslate-backend:ci
+          cache-from: type=gha,scope=openslate-backend
+          cache-to: type=gha,mode=max,scope=openslate-backend
+
+  verify:
+    needs: [changes, quality, coverage, container]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Preserve the Backend required check
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RUN_BACKEND: ${{ needs.changes.outputs.run_backend }}
+          RUN_CONTAINER: ${{ needs.changes.outputs.run_backend_container }}
+          QUALITY: ${{ needs.quality.result }}
+          COVERAGE: ${{ needs.coverage.result }}
+          CONTAINER: ${{ needs.container.result }}
+          REASON: ${{ needs.changes.outputs.reason_backend }}
+        run: |
+          test "$CHANGES" = "success"
+          if [ "$RUN_BACKEND" = "true" ]; then
+            test "$QUALITY" = "success"
+            test "$COVERAGE" = "success"
+          else
+            test "$QUALITY" = "skipped"
+            test "$COVERAGE" = "skipped"
+            printf 'Backend checks skipped: %s\n' "$REASON"
+          fi
+          if [ "$RUN_CONTAINER" = "true" ]; then
+            test "$CONTAINER" = "success"
+          else
+            test "$CONTAINER" = "skipped"
+          fi

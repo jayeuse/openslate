@@ -28,18 +28,18 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Data access and auth
 
+- Workspace screens currently use local sample business data and interaction state, as described in `frontend/README.md`. Preserve that data flow for UI work; do not reconnect business APIs or realtime merely because backend helpers exist. Existing-account sign-in, session validation/refresh, logout, and protected invitation acceptance remain connected.
 - Authenticated pages live under `src/app/(app)/`, whose layout mounts `AppPage` (auth gate + shell) once for the group; do not wrap pages individually or implement a second cookie/auth gate. `proxy.ts` sets CSP and security headers only — it is not auth.
-- All domain requests go through `apiFetch()` to `/bff/[...path]`; the BFF converts cookies to a Bearer token and refreshes the Supabase session on a backend 401. Never call `BACKEND_URL` or Supabase directly from pages.
+- When a feature uses authorized backend integration, domain requests go through `apiFetch()` to `/bff/[...path]`; the BFF converts cookies to a Bearer token and refreshes the Supabase session on a backend 401. Never call `BACKEND_URL` or Supabase directly from pages.
 - Sessions use HttpOnly `openslate_access`/`openslate_refresh` cookies managed by the `/session/*` route handlers; the browser never sees tokens.
-- Fetch with `useEffect` + local `useState` — the app-wide convention. TanStack Query and React Hook Form are not installed; do not add them without a demonstrated need.
+- For client-side backend fetches, use the established `useEffect` + local `useState` convention. Local sample screens use their existing state/provider and derive filtered results without adding fetch effects. TanStack Query and React Hook Form are not installed; do not add them without a demonstrated need.
 
 ## Features
 
-- Use `listQuery()` for list parameters (`limit=100`, follow `has_more` via offset); use `listAllModuleFields()` when every field is needed.
-- Record `data` is keyed by field UUID and validated with the dynamic Zod schemas in `lib/field-schema.ts`; relationships are managed by `RelationshipManager` and never stored inside primitive record data.
-- Close/reopen/purge flows use the `LifecycleAction` dialog (`components/lifecycle-dialog.tsx`), not ordinary CRUD controls.
-- Canonical routes live under `modules/[moduleId]`; department-scoped aliases (`departments/[departmentId]/modules/...`) are thin re-export pages — keep them that way.
-- Realtime is private Broadcast invalidation only: `RealtimeProvider` → `/session/realtime-token` → `openslate:invalidation`; record authoring routes (`*/records/new`, `*/records/*/edit`) keep in-progress form state via the pathname-derived rule in `AppPage`.
+- Current workspace routes are `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`; their screens live under `src/components/sample/`. Inspect the target screen and state provider before choosing a pattern.
+- Legacy module, department, administration, and workspace routes redirect to the current workspace. Do not restore retired pages or components to satisfy an older example.
+- For backend list integration, use `listQuery()` (`limit=100`, follow `has_more` via offset) and `listAllModuleFields()` when all fields are required; preserve the server's field-UUID, relationship, and lifecycle contracts.
+- Workspace screens currently do not subscribe to realtime. Any explicitly requested integration must preserve private Broadcast invalidation without row snapshots and avoid discarding in-progress form state.
 
 ## Styling
 
@@ -48,13 +48,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Tests and verification
 
-- Follow the root non-negotiable test workflow: focused case, passing feature batch, affected HTTP/browser integration, then pre-push gates. Run full suites only when preparing to push; edits, commits, and routine handoffs use focused checks.
-- Playwright is the only test runner, including pure-library tests, under `tests/isolated/`, `tests/http/`, and `tests/browser/`. In mocked browser tests, mock `**/session/status` (authenticated) and `**/bff/**` (JSON fixtures); assert user-visible behavior with roles/labels/text and relevant failure and accessibility paths.
-- Real-stack tests (`tests/fullstack/`) run through `npm run test:e2e:fullstack` with a disposable Supabase stack and generated identities; they are excluded from ordinary runs and `verify`.
-- Run `npm run verify` (format, lint, typecheck, build, production E2E) only when preparing to push. Local npm commands generate `frontend/.env.local` from canonical root `.env`; never source the root `.env` into npm or Next.
+- Follow the root test workflow: focused case, passing feature batch, then the lean frontend gate. Run all retained frontend tests only when the work unit stabilizes or before push.
+- Playwright Test is the lightweight runner for `tests/isolated/` and `tests/http/`; no browser binaries or browser projects are used. Add isolated tests for rules and state, and HTTP tests only for a real Next.js request boundary.
+- When preparing to push, use the root `python3 scripts/prepush.py --base <base-ref>` command. Its frontend lane runs formatting, lint, type checking, all 184 retained tests, and one native-or-container production build. Use `npm run verify` to repair a failed frontend gate. Local npm commands generate `frontend/.env.local` from canonical root `.env`; never source the root `.env` into npm or Next.
 
-## TDD and coverage
+## TDD and acceptance
 
-- Before creating/extending tests, changing behavior, fixing bugs, or refactoring, read and follow [tdd-workflow](../.agents/skills/tdd-workflow/SKILL.md). It owns test admission, sequencing, and exceptions; this guide owns project runners and coverage thresholds.
+- Before creating/extending tests, changing behavior, fixing bugs, or refactoring, read and follow [tdd-workflow](../.agents/skills/tdd-workflow/SKILL.md). It owns test admission, sequencing, and exceptions; this guide owns project runners.
 - Workers must report the skill path actually read and the focused failing/passing test evidence, or the applicable exception. A reference or announcement alone does not prove TDD execution.
-- Require **90% overall executable production-line coverage** for `src/` and **90% changed executable production-line coverage** against the task's recorded base revision. When preparing to push, run `COVERAGE_BASE_REF=<base-ref> npm run test:coverage` in addition to `npm run verify`. Coverage combines browser, isolated-test, and Next server execution against a complete source inventory; the scanner subset retains its separate 90% gate. Missing measurement or a failed gate is **NOT READY TO PUSH** under the skill's exception policy.
+- Frontend acceptance is formatting, ESLint, TypeScript, 181 isolated tests, three HTTP tests, and one production build. There is no frontend browser suite or numerical line-coverage requirement. Backend coverage policy is unchanged.

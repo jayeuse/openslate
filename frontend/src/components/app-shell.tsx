@@ -62,6 +62,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isComms = pathname === "/comms";
+  const isAccess = pathname === "/access";
+  const isManage = pathname === "/manage";
   const [savedSidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [commsSidebarCollapsed, setCommsSidebarCollapsed] = useState(true);
   const sidebarCollapsed = isComms
@@ -161,7 +163,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       <SidebarProvider
         open={!sidebarCollapsed}
         onOpenChange={setSidebarOpen}
-        className="app-shell bg-background text-foreground min-h-screen"
+        className={cn(
+          "app-shell bg-background text-foreground",
+          isAccess
+            ? "fixed inset-0 h-screen min-h-0 overflow-hidden"
+            : "min-h-screen",
+        )}
         style={sidebarStyle}
         data-sidebar-resizing={resizing || undefined}
       >
@@ -305,7 +312,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           </SheetContent>
         </Sheet>
 
-        <div className="min-h-screen min-w-0 flex-1">
+        <div
+          className={cn(
+            "min-w-0 flex-1",
+            isComms || isAccess ? "h-screen min-h-0" : "min-h-screen",
+          )}
+        >
           <header className="border-border bg-background sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5">
             <div className="flex min-w-0 items-center gap-2.5">
               <Button
@@ -377,9 +389,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           <main
             id="main-content"
             className={cn(
-              isComms
+              isComms || isAccess
                 ? "flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden"
-                : "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7",
+                : isManage
+                  ? "min-h-[calc(100vh-3.5rem)] p-3 sm:px-5 sm:py-3"
+                  : "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7",
             )}
           >
             {children}
