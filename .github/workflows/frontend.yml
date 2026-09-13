@@ -85,12 +85,14 @@ jobs:
       - run: npm ci
       - name: Build the production frontend once
         run: npm run build -- --from-process
+      - name: Pack the reusable production build
+        run: >-
+          tar -czf frontend-production-build.tgz
+          .next/standalone .next/static
       - uses: actions/upload-artifact@v7
         with:
           name: frontend-production-build
-          path: |
-            frontend/.next/standalone/
-            frontend/.next/static/
+          path: frontend/frontend-production-build.tgz
           if-no-files-found: error
           retention-days: 1
 
@@ -121,7 +123,9 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: frontend-production-build
-          path: frontend/.next
+          path: frontend
+      - name: Restore the reusable production build
+        run: tar -xzf frontend-production-build.tgz
       - name: Run production browser acceptance
         env:
           PLAYWRIGHT_USE_PRODUCTION: "1"

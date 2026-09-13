@@ -33,6 +33,8 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertRegex(source, r"(?m)^  browser:\n")
         self.assertRegex(source, r"project:\s*\[chromium, mobile-chromium, firefox, webkit\]")
         self.assertIn("frontend-production-build", source)
+        self.assertIn("tar -czf frontend-production-build.tgz", source)
+        self.assertIn("tar -xzf frontend-production-build.tgz", source)
         self.assertIn("--project=${{ matrix.project }}", source)
         self.assertRegex(source, r"(?m)^  container:\n")
         self.assertIn("scope=openslate-frontend", source)
