@@ -113,6 +113,8 @@ test("seven URL-addressable views stay viewport-contained and omit placeholder c
   page,
 }, testInfo) => {
   test.setTimeout(90_000);
+  if (testInfo.project.name !== "mobile-chromium")
+    await page.setViewportSize({ width: 1280, height: 700 });
   await page.goto("/access?view=overview");
   await expect(
     page.getByRole("heading", { name: "Access", exact: true }),
@@ -130,6 +132,18 @@ test("seven URL-addressable views stay viewport-contained and omit placeholder c
     path: `/tmp/access-control-center-${testInfo.project.name}.png`,
     fullPage: true,
   });
+  if ((page.viewportSize()?.width ?? 0) >= 1024) {
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const panel =
+            document.querySelector<HTMLElement>('[role="tabpanel"]');
+          return Boolean(panel && panel.scrollHeight <= panel.clientHeight + 1);
+        }),
+      )
+      .toBe(true);
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
 
   for (const [id, heading] of views) {
     await selectView(

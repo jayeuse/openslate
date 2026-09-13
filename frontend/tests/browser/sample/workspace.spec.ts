@@ -306,13 +306,16 @@ test("OpenComms fits the viewport and keeps its compact navigation preference se
 
 test("workspace navigation avoids unused font preloads and resource warnings", async ({
   page,
+  browserName,
 }) => {
   const warnings: string[] = [];
-  const devtools = await page.context().newCDPSession(page);
-  await devtools.send("Log.enable");
-  devtools.on("Log.entryAdded", (event: { entry: { text: string } }) =>
-    warnings.push(event.entry.text),
-  );
+  if (browserName === "chromium") {
+    const devtools = await page.context().newCDPSession(page);
+    await devtools.send("Log.enable");
+    devtools.on("Log.entryAdded", (event: { entry: { text: string } }) =>
+      warnings.push(event.entry.text),
+    );
+  }
   page.on("console", (message) => {
     if (message.type() === "warning" || message.type() === "error")
       warnings.push(message.text());

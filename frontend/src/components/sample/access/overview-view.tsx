@@ -123,8 +123,11 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
       ?.name ?? "Unknown role";
 
   return (
-    <div className="space-y-2">
-      <section aria-labelledby="access-snapshot-heading" className="space-y-2">
+    <div className="space-y-1.5">
+      <section
+        aria-labelledby="access-snapshot-heading"
+        className="space-y-1.5"
+      >
         <div>
           <h2 id="access-snapshot-heading" className="text-lg font-semibold">
             Access overview
@@ -133,16 +136,18 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
             Current workspace policy at a glance.
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
           {counts.map(({ label, value, detail, icon: Icon, destination }) => (
             <Card key={label} className="w-full">
-              <CardContent className="flex items-start justify-between gap-2 p-3">
+              <CardContent className="flex items-start justify-between gap-2 p-2.5">
                 <div>
                   <p className="text-muted-foreground text-sm">{label}</p>
-                  <p className="mt-1 text-2xl font-semibold tabular-nums">
+                  <p className="mt-0.5 text-xl font-semibold tabular-nums">
                     {value}
                   </p>
-                  <p className="text-muted-foreground mt-1 text-xs">{detail}</p>
+                  <p className="text-muted-foreground mt-0.5 text-xs">
+                    {detail}
+                  </p>
                 </div>
                 <Button
                   variant="ghost"
@@ -160,12 +165,12 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
         </div>
       </section>
 
-      <div className="grid items-start gap-4 lg:grid-cols-2 xl:grid-cols-[minmax(0,1.35fr)_minmax(15rem,0.65fr)_minmax(15rem,0.65fr)]">
+      <div className="grid items-start gap-3 lg:grid-cols-2 xl:grid-cols-[minmax(0,1.35fr)_minmax(15rem,0.65fr)_minmax(15rem,0.65fr)]">
         <Card className="w-full">
-          <CardHeader className="flex-row items-start justify-between gap-3 py-4">
+          <CardHeader className="flex-row items-start justify-between gap-3 py-3">
             <div>
               <CardTitle>Needs attention</CardTitle>
-              <CardDescription>
+              <CardDescription className="text-xs">
                 Conditions worth reviewing before granting more access.
               </CardDescription>
             </div>
@@ -189,7 +194,7 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
                 {findings.map((finding) => (
                   <li
                     key={finding.id}
-                    className="flex items-start gap-3 px-4 py-3"
+                    className="flex items-start gap-3 px-3 py-2"
                   >
                     <CircleAlert
                       className={
@@ -200,7 +205,7 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
                     />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium">{finding.label}</p>
-                      <p className="text-muted-foreground mt-0.5 text-sm">
+                      <p className="text-muted-foreground mt-0.5 text-xs leading-tight">
                         {finding.detail}
                       </p>
                     </div>
@@ -222,13 +227,13 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
         </Card>
 
         <Card className="w-full">
-          <CardHeader className="py-4">
+          <CardHeader className="py-3">
             <CardTitle>Workspace defaults</CardTitle>
-            <CardDescription>
+            <CardDescription className="text-xs">
               Applied when a new identity is created.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3 pb-4">
+          <CardContent className="space-y-2 pb-3">
             <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1.5 text-sm">
               <dt className="text-muted-foreground">Default role</dt>
               <dd className="font-medium">{defaultRole}</dd>
@@ -254,15 +259,15 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
         </Card>
 
         <Card className="w-full">
-          <CardHeader className="py-4">
+          <CardHeader className="py-3">
             <CardTitle>Recent changes</CardTitle>
-            <CardDescription>
+            <CardDescription className="text-xs">
               Latest access-management activity.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             {recentHistory.length === 0 ? (
-              <p className="text-muted-foreground p-5 text-sm">
+              <p className="text-muted-foreground p-4 text-sm">
                 Changes will appear here after you edit access.
               </p>
             ) : (
