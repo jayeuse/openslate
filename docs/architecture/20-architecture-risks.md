@@ -152,22 +152,18 @@ command requires both email and username.
 
 Keep the page concise and aligned with the README and scripts.
 
-## R12 — Hosted-control gaps remain after the disposable full-stack release gate
+## R12 — Hosted-control gaps remain without frontend full-stack automation
 
-**Current design:** Default frontend domain Playwright tests still mock many
-sessions/BFF/backend interactions. `.github/workflows/fullstack.yml` runs the stable
-**Full-stack release gate** through `backend/tests/fullstack_runner.py
---acceptance-only` for relevant changes. The harness creates an isolated Supabase
-stack, runs the current Alembic head, and tests production Next.js, BFF, FastAPI,
-PostgreSQL, and local Auth with disposable identities. The complete backend suite
-and coverage gates run once in the backend workflow instead of being duplicated.
+**Current design:** Frontend CI uses static checks, isolated product/security
+tests, three HTTP boundary tests, and one production build. It does not run a
+browser or a frontend full-stack journey. Backend behavior, database integration,
+coverage, scanner behavior, and container checks remain owned by backend and
+infrastructure suites.
 
-**Problem:** The disposable release gate does not verify Realtime delivery or
-hosted ingress, network, secret, backup, recovery, aggregate rate limiting,
-log collection, or alert delivery. Branch protection is also a maintainer
-configuration step, not a checked-in enforcement mechanism. Concurrent
-last-administrator mutations and broader multi-worker/load scenarios remain
-uncovered.
+**Problem:** CI does not verify browser rendering, hydration, responsive layout,
+cross-browser behavior, or a complete Next.js → BFF → FastAPI → PostgreSQL user
+journey. Hosted ingress, network, secret, backup, recovery, aggregate rate
+limiting, log collection, and alert delivery also remain operational checks.
 
 **Consequence:** CI may pass individual layers while selected integrated, hosted, or operational workflows still regress.
 

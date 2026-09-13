@@ -48,13 +48,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Tests and verification
 
-- Follow the root non-negotiable test workflow: focused case, passing feature batch, affected HTTP/browser integration, then pre-push gates. Run full suites only when preparing to push; edits, commits, and routine handoffs use focused checks.
-- Playwright is the only test runner, including pure-library tests, under `tests/isolated/`, `tests/http/`, and `tests/browser/`. In mocked browser tests, mock `**/session/status` (authenticated) and any `**/bff/**` requests the target actually makes. Use existing local fixtures for sample screens; do not add backend traffic solely to make a mock meaningful. Assert user-visible behavior with roles/labels/text and relevant failure and accessibility paths.
-- Real-stack tests (`tests/fullstack/`) run through `npm run test:e2e:fullstack` with a disposable Supabase stack and generated identities; they are excluded from ordinary runs and `verify`.
-- When preparing to push, use the root `python3 scripts/prepush.py --base <base-ref>` command. Its frontend lane runs the existing format, lint, typecheck, production build/E2E, container boundary, and coverage commands exactly once. Use `npm run verify` only to repair a failed frontend gate. Local npm commands generate `frontend/.env.local` from canonical root `.env`; never source the root `.env` into npm or Next.
+- Follow the root test workflow: focused case, passing feature batch, then the lean frontend gate. Run all retained frontend tests only when the work unit stabilizes or before push.
+- Playwright Test is the lightweight runner for `tests/isolated/` and `tests/http/`; no browser binaries or browser projects are used. Add isolated tests for rules and state, and HTTP tests only for a real Next.js request boundary.
+- When preparing to push, use the root `python3 scripts/prepush.py --base <base-ref>` command. Its frontend lane runs formatting, lint, type checking, all 184 retained tests, and one native-or-container production build. Use `npm run verify` to repair a failed frontend gate. Local npm commands generate `frontend/.env.local` from canonical root `.env`; never source the root `.env` into npm or Next.
 
-## TDD and coverage
+## TDD and acceptance
 
-- Before creating/extending tests, changing behavior, fixing bugs, or refactoring, read and follow [tdd-workflow](../.agents/skills/tdd-workflow/SKILL.md). It owns test admission, sequencing, and exceptions; this guide owns project runners and coverage thresholds.
+- Before creating/extending tests, changing behavior, fixing bugs, or refactoring, read and follow [tdd-workflow](../.agents/skills/tdd-workflow/SKILL.md). It owns test admission, sequencing, and exceptions; this guide owns project runners.
 - Workers must report the skill path actually read and the focused failing/passing test evidence, or the applicable exception. A reference or announcement alone does not prove TDD execution.
-- Require **90% overall executable production-line coverage** for `src/` and **90% changed executable production-line coverage** against the task's recorded base revision. Local pre-push validates the exact plan and fixed production smoke without replaying instrumented coverage. CI runs one isolated/HTTP part plus three duration-balanced desktop-Chromium parts, validates their exact union, and enforces the gate once. Full mobile runs on mobile-sensitive changes; Firefox, WebKit, broader mobile, and extended compatibility remain on `main` and nightly. `npm run test:coverage` remains available for focused coverage debugging. Missing, mixed, stale, partial, retried, or failed hosted measurement is **NOT READY TO MERGE**.
+- Frontend acceptance is formatting, ESLint, TypeScript, 181 isolated tests, three HTTP tests, and one production build. There is no frontend browser suite or numerical line-coverage requirement. Backend coverage policy is unchanged.

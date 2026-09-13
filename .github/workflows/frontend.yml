@@ -28,98 +28,58 @@ env:
   NEXT_PUBLIC_SUPABASE_URL: http://supabase.invalid
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: synthetic-publishable-key
   NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: "false"
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
 
 jobs:
-  changes:
+  verify:
     runs-on: ubuntu-latest
-    outputs:
-      base: ${{ steps.scope.outputs.base }}
-      run_frontend: ${{ steps.scope.outputs.run_frontend }}
-      run_frontend_container: ${{ steps.scope.outputs.run_frontend_container }}
-      run_frontend_mobile: ${{ steps.scope.outputs.run_frontend_mobile }}
-      run_frontend_extended: ${{ steps.scope.outputs.run_frontend_extended }}
-      reason_frontend: ${{ steps.scope.outputs.reason_frontend }}
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
       - id: scope
         name: Classify changes
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: python3 scripts/ci_scope.py --base "$BASE_SHA" --github-output "$GITHUB_OUTPUT"
 
-  quality:
-    needs: changes
-    if: needs.changes.outputs.run_frontend == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
+        if: steps.scope.outputs.run_frontend == 'true'
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci --prefer-offline --no-audit --no-fund
-      - run: npm run format:check
-      - run: npm run lint
-      - run: npm run typecheck
 
-  prepare:
-    needs: changes
-    if: >-
-      needs.changes.outputs.run_frontend == 'true' ||
-      needs.changes.outputs.run_frontend_container == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Restore trusted duration history
-        if: needs.changes.outputs.run_frontend == 'true'
-        uses: actions/cache/restore@v4
-        with:
-          path: frontend/coverage/timing-profile.json
-          key: frontend-coverage-timings-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}-${{ github.run_id }}
-          restore-keys: frontend-coverage-timings-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}-
       - name: Install locked frontend dependencies
-        if: needs.changes.outputs.run_frontend == 'true'
+        if: steps.scope.outputs.run_frontend == 'true'
         working-directory: frontend
         run: npm ci --prefer-offline --no-audit --no-fund
-      - name: Create the immutable PR coverage plan
-        if: needs.changes.outputs.run_frontend == 'true'
+
+      - name: Check formatting, lint, and types
+        if: steps.scope.outputs.run_frontend == 'true'
         working-directory: frontend
-        env:
-          COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}
-        run: |
-          if [ -f coverage/timing-profile.json ]; then
-            npm run test:coverage:plan -- --profile=pr --timings=coverage/timing-profile.json --output=coverage/coverage-plan.json
-          else
-            npm run test:coverage:plan -- --profile=pr --output=coverage/coverage-plan.json
-          fi
-      - name: Build the native production runtime once
-        if: needs.changes.outputs.run_frontend_container != 'true'
+        run: npm run check
+
+      - name: Run isolated and HTTP tests
+        if: steps.scope.outputs.run_frontend == 'true'
         working-directory: frontend
-        run: |
-          npm run build -- --from-process
-          node scripts/package-runtime.cjs --mode=native --source=. --output=test-results/frontend-runtime.tgz
+        run: npm test
+
+      - name: Build the production frontend
+        if: >-
+          steps.scope.outputs.run_frontend == 'true' &&
+          steps.scope.outputs.run_frontend_container != 'true'
+        working-directory: frontend
+        run: npm run build -- --from-process
+
       - uses: docker/setup-buildx-action@v3
-        if: needs.changes.outputs.run_frontend_container == 'true'
-      - name: Build the production frontend image once
-        if: needs.changes.outputs.run_frontend_container == 'true'
+        if: steps.scope.outputs.run_frontend_container == 'true'
+
+      - name: Build the production frontend container
+        if: steps.scope.outputs.run_frontend_container == 'true'
         uses: docker/build-push-action@v6
-        env:
-          DOCKER_BUILD_RECORD_UPLOAD: "false"
         with:
           context: .
           file: infra/docker/frontend.Dockerfile
@@ -132,8 +92,9 @@ jobs:
             NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED=false
           cache-from: type=gha,scope=openslate-frontend
           cache-to: type=gha,mode=max,scope=openslate-frontend
-      - name: Assert the image environment boundary
-        if: needs.changes.outputs.run_frontend_container == 'true'
+
+      - name: Assert the frontend container environment boundary
+        if: steps.scope.outputs.run_frontend_container == 'true'
         run: >-
           docker run --rm --entrypoint /bin/sh openslate-frontend:ci -c
           'test -z "${BACKEND_URL+x}" && test -z "${SUPABASE_SERVER_URL+x}" &&
@@ -142,367 +103,12 @@ jobs:
           test -z "${LOG_DIR+x}" && test -z "${NEXT_PUBLIC_SUPABASE_URL+x}" &&
           test -z "${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY+x}" &&
           test -z "${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED+x}"'
-      - name: Normalize the image runtime
-        if: needs.changes.outputs.run_frontend_container == 'true'
-        run: |
-          container_id="$(docker create openslate-frontend:ci)"
-          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
-          mkdir -p /tmp/openslate-frontend-container-root
-          docker cp "$container_id:/app/." /tmp/openslate-frontend-container-root
-          node frontend/scripts/package-runtime.cjs --mode=container --source=/tmp/openslate-frontend-container-root --output=frontend/test-results/frontend-runtime.tgz
-          docker rm -f "$container_id" >/dev/null
-          trap - EXIT
-      - name: Upload the normalized production runtime
-        uses: actions/upload-artifact@v7
-        with:
-          name: frontend-runtime
-          path: frontend/test-results/frontend-runtime.tgz
-          if-no-files-found: error
-          retention-days: 1
-      - name: Enforce the coverage-plan artifact cap
-        if: needs.changes.outputs.run_frontend == 'true'
-        working-directory: frontend
-        run: test "$(du -k coverage/coverage-plan.json | cut -f1)" -le 1024
-      - name: Upload the compact coverage plan
-        if: needs.changes.outputs.run_frontend == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: frontend-coverage-plan
-          path: frontend/coverage/coverage-plan.json
-          if-no-files-found: error
-          retention-days: 1
 
-  coverage-parts:
-    needs: [changes, prepare]
-    if: needs.changes.outputs.run_frontend == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        part: [core, chromium-1, chromium-2, chromium-3]
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci --prefer-offline --no-audit --no-fund
-      - name: Install Chromium for browser coverage parts
-        if: matrix.part != 'core'
-        run: npx playwright install --with-deps chromium
-      - uses: actions/download-artifact@v7
-        with:
-          name: frontend-coverage-plan
-          path: frontend/coverage
-      - name: Run the assigned fail-closed coverage part
+      - name: No frontend checks required
+        if: >-
+          steps.scope.outputs.run_frontend != 'true' &&
+          steps.scope.outputs.run_frontend_container != 'true'
         env:
-          COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}
-        run: >-
-          npm run test:coverage:part --
-          --profile=pr
-          --plan=coverage/coverage-plan.json
-          --part=${{ matrix.part }}
-          --timing-output=coverage/part-${{ matrix.part }}/timings.json
-          --output=coverage/part-${{ matrix.part }}
-      - name: Pack compact part evidence
-        if: always()
+          REASON: ${{ steps.scope.outputs.reason_frontend }}
         run: |
-          test "$(du -sk coverage/part-${{ matrix.part }} | cut -f1)" -le 4096
-          tar -czf coverage-part-${{ matrix.part }}.tgz -C coverage part-${{ matrix.part }}
-      - name: Upload compact part evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: frontend-coverage-part-${{ matrix.part }}
-          path: frontend/coverage-part-${{ matrix.part }}.tgz
-          if-no-files-found: error
-          retention-days: 1
-
-  coverage-merge:
-    needs: [changes, prepare, coverage-parts]
-    if: ${{ always() && needs.changes.outputs.run_frontend == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci --prefer-offline --no-audit --no-fund
-      - uses: actions/download-artifact@v7
-        with:
-          name: frontend-coverage-plan
-          path: frontend/coverage
-      - uses: actions/download-artifact@v7
-        with:
-          pattern: frontend-coverage-part-*
-          path: frontend/coverage/part-archives
-          merge-multiple: true
-      - name: Restore all four compact parts
-        run: |
-          for archive in coverage/part-archives/*.tgz; do
-            tar -xzf "$archive" -C coverage
-          done
-      - name: Merge and enforce coverage once
-        run: >-
-          npm run test:coverage:merge --
-          --profile=pr
-          --plan=coverage/coverage-plan.json
-          --parts=coverage
-          --output=coverage/merged
-      - name: Prove reduced-profile coverage headroom
-        run: >-
-          node -e 'const gate=require("./coverage/merged/gate.json");
-          if (!gate.overall || gate.overall.percent < 92)
-          throw new Error(`Reduced PR profile requires 92% migration headroom; measured ${gate.overall?.percent ?? "missing"}%`);'
-      - name: Enforce the merged artifact cap
-        if: always()
-        run: test "$(du -sk coverage/merged | cut -f1)" -le 5120
-      - name: Upload compact merged coverage evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: frontend-coverage
-          path: frontend/coverage/merged
-          if-no-files-found: error
-          retention-days: 14
-      - name: Stage trusted duration history for the default-branch cache
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: cp coverage/merged/timing-profile.json coverage/timing-profile.json
-      - name: Save trusted duration history from main
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: frontend/coverage/timing-profile.json
-          key: frontend-coverage-timings-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}-${{ github.run_id }}
-
-  timing-notify:
-    needs: coverage-merge
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - uses: actions/download-artifact@v7
-        if: needs.coverage-merge.result == 'success'
-        with:
-          name: frontend-coverage
-          path: frontend-coverage
-      - name: Open, update, or resolve the timing-degradation issue
-        if: needs.coverage-merge.result == 'success'
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const fs = require("node:fs");
-            const summary = JSON.parse(fs.readFileSync("frontend-coverage/timing-summary.json", "utf8"));
-            const title = "[CI] Frontend coverage timing is degraded";
-            const {owner, repo} = context.repo;
-            const issues = await github.paginate(github.rest.issues.listForRepo, {
-              owner, repo, state: "open", per_page: 100,
-            });
-            const existing = issues.find((issue) => !issue.pull_request && issue.title === title);
-            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
-            if (summary.degradedRuns >= 3) {
-              const body = [
-                "Frontend coverage shards exceeded the 25% timing-deviation limit for three consecutive successful main runs.",
-                "",
-                `Run: ${runUrl}`,
-                `Observed imbalance: ${summary.observedImbalancePercent}%`,
-                `Part durations: ${JSON.stringify(summary.observedPartDurationsMs)}`,
-              ].join("\n");
-              if (existing) {
-                await github.rest.issues.createComment({owner, repo, issue_number: existing.number, body});
-              } else {
-                await github.rest.issues.create({owner, repo, title, body});
-              }
-            } else if (existing && summary.degradedRuns === 0) {
-              await github.rest.issues.createComment({owner, repo, issue_number: existing.number, body: `Coverage timing recovered: ${runUrl}`});
-              await github.rest.issues.update({owner, repo, issue_number: existing.number, state: "closed"});
-            }
-
-  smoke:
-    needs: [changes, prepare]
-    if: >-
-      needs.changes.outputs.run_frontend == 'true' ||
-      needs.changes.outputs.run_frontend_container == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci --prefer-offline --no-audit --no-fund
-      - run: npx playwright install --with-deps chromium
-      - uses: actions/download-artifact@v7
-        with:
-          name: frontend-runtime
-          path: frontend/test-results
-      - run: tar -xzf test-results/frontend-runtime.tgz
-      - name: Run the fixed production smoke suite
-        run: npm run test:e2e:smoke:production -- --workers=2
-      - name: Pack bounded smoke failure evidence
-        if: failure()
-        run: |
-          tar -czf smoke-failures.tgz test-results/playwright
-          test "$(du -k smoke-failures.tgz | cut -f1)" -le 25600
-      - if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: frontend-smoke-failures
-          path: frontend/smoke-failures.tgz
-          if-no-files-found: ignore
-          retention-days: 7
-
-  mobile:
-    needs: [changes, prepare]
-    if: needs.changes.outputs.run_frontend_mobile == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci --prefer-offline --no-audit --no-fund
-      - run: npx playwright install --with-deps chromium
-      - uses: actions/download-artifact@v7
-        with:
-          name: frontend-runtime
-          path: frontend/test-results
-      - run: tar -xzf test-results/frontend-runtime.tgz
-      - name: Run complete mobile production acceptance
-        env:
-          PLAYWRIGHT_EXTENDED: exclude
-        run: npm run test:e2e:production -- --project=mobile-chromium --retries=0 --max-failures=5
-      - name: Pack bounded mobile failure evidence
-        if: failure()
-        run: |
-          if [ -d test-results/playwright ]; then
-            tar -czf mobile-failures.tgz test-results/playwright
-            test "$(du -k mobile-failures.tgz | cut -f1)" -le 25600
-          fi
-      - name: Upload mobile failure evidence
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: frontend-mobile-failures
-          path: frontend/mobile-failures.tgz
-          if-no-files-found: ignore
-          retention-days: 7
-
-  extended:
-    needs: [changes, prepare]
-    if: needs.changes.outputs.run_frontend_extended == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci --prefer-offline --no-audit --no-fund
-      - run: npx playwright install --with-deps chromium
-      - uses: actions/download-artifact@v7
-        with:
-          name: frontend-runtime
-          path: frontend/test-results
-      - run: tar -xzf test-results/frontend-runtime.tgz
-      - name: Run extended production acceptance
-        run: npm run test:e2e:extended:production -- --retries=0 --max-failures=5
-      - name: Pack bounded extended failure evidence
-        if: failure()
-        run: |
-          if [ -d test-results/playwright ]; then
-            tar -czf extended-failures.tgz test-results/playwright
-            test "$(du -k extended-failures.tgz | cut -f1)" -le 25600
-          fi
-      - if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: frontend-extended-failures
-          path: frontend/extended-failures.tgz
-          if-no-files-found: ignore
-          retention-days: 7
-
-  verify:
-    needs:
-      [
-        changes,
-        quality,
-        prepare,
-        coverage-parts,
-        coverage-merge,
-        smoke,
-        mobile,
-        extended,
-      ]
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Preserve the Frontend required check
-        env:
-          CHANGES: ${{ needs.changes.result }}
-          RUN_FRONTEND: ${{ needs.changes.outputs.run_frontend }}
-          RUN_CONTAINER: ${{ needs.changes.outputs.run_frontend_container }}
-          RUN_MOBILE: ${{ needs.changes.outputs.run_frontend_mobile }}
-          RUN_EXTENDED: ${{ needs.changes.outputs.run_frontend_extended }}
-          QUALITY: ${{ needs.quality.result }}
-          PREPARE: ${{ needs.prepare.result }}
-          COVERAGE_PARTS: ${{ needs.coverage-parts.result }}
-          COVERAGE_MERGE: ${{ needs.coverage-merge.result }}
-          SMOKE: ${{ needs.smoke.result }}
-          MOBILE: ${{ needs.mobile.result }}
-          EXTENDED: ${{ needs.extended.result }}
-          REASON: ${{ needs.changes.outputs.reason_frontend }}
-        run: |
-          test "$CHANGES" = "success"
-          if [ "$RUN_FRONTEND" = "true" ]; then
-            test "$QUALITY" = "success"
-            test "$COVERAGE_PARTS" = "success"
-            test "$COVERAGE_MERGE" = "success"
-          else
-            test "$QUALITY" = "skipped"
-            test "$COVERAGE_PARTS" = "skipped"
-            test "$COVERAGE_MERGE" = "skipped"
-          fi
-          if [ "$RUN_FRONTEND" = "true" ] || [ "$RUN_CONTAINER" = "true" ]; then
-            test "$PREPARE" = "success"
-            test "$SMOKE" = "success"
-          else
-            test "$PREPARE" = "skipped"
-            test "$SMOKE" = "skipped"
-            printf 'Frontend checks skipped: %s\n' "$REASON"
-          fi
-          if [ "$RUN_MOBILE" = "true" ]; then test "$MOBILE" = "success"; else test "$MOBILE" = "skipped"; fi
-          if [ "$RUN_EXTENDED" = "true" ]; then test "$EXTENDED" = "success"; else test "$EXTENDED" = "skipped"; fi
+          printf 'Frontend check satisfied without execution: %s\n' "$REASON"

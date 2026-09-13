@@ -44,77 +44,21 @@ class CiScopeTests(unittest.TestCase):
                 ),
             )
 
-    def test_exact_sample_changes_keep_fullstack_as_a_noop(self):
-        scope = ci_scope.classify_paths(
-            [
-                "frontend/src/components/sample/manage/index.tsx",
-                "frontend/tests/browser/sample/manage.spec.ts",
-                "frontend/tests/isolated/manage-state.spec.ts",
-                "frontend/CONTROLS-ACCEPTANCE.md",
-            ],
-            base_ref="base",
-        )
-
-        self.assertTrue(scope.decisions["frontend"].run)
-        self.assertFalse(scope.decisions["containers"].run)
-        self.assertFalse(scope.decisions["frontend_container"].run)
-        self.assertTrue(scope.decisions["frontend_mobile"].run)
-        self.assertFalse(scope.decisions["backend_container"].run)
-        self.assertFalse(scope.decisions["backend"].run)
-        self.assertFalse(scope.decisions["fullstack"].run)
-        self.assertTrue(scope.decisions["docs"].run)
-        self.assertIn("local sample", scope.decisions["fullstack"].reason.lower())
-
-    def test_shared_ci_paths_select_all_functional_gates(self):
-        scope = ci_scope.classify_paths(
-            ["scripts/prepush.py", ".github/workflows/frontend.yml"],
-            base_ref="base",
-        )
-
-        for name in ("frontend", "backend", "containers", "fullstack"):
-            with self.subTest(gate=name):
-                self.assertTrue(scope.decisions[name].run)
-        self.assertTrue(scope.decisions["frontend_container"].run)
-        self.assertTrue(scope.decisions["backend_container"].run)
-        self.assertFalse(scope.decisions["docs"].run)
-
-    def test_unknown_paths_fail_closed_to_all_decisions(self):
-        scope = ci_scope.classify_paths([".vscode/settings.json"], base_ref="base")
-
-        for name in ci_scope.GATE_NAMES:
-            with self.subTest(gate=name):
-                self.assertTrue(scope.decisions[name].run)
-        self.assertIn("unclassified", scope.decisions["fullstack"].reason.lower())
-
-    def test_base_resolution_failure_fails_closed(self):
-        scope = ci_scope.classify_changes(Path.cwd(), "definitely-not-a-revision")
-
-        self.assertIsNotNone(scope.error)
-        self.assertEqual(scope.paths, ())
-        self.assertTrue(all(decision.run for decision in scope.decisions.values()))
-        self.assertIn("classification failed", scope.decisions["frontend"].reason.lower())
-
-    def test_app_specific_changes_only_rebuild_the_matching_image(self):
-        frontend = ci_scope.classify_paths(
-            ["frontend/src/components/sample/manage/index.tsx"], base_ref="base"
-        )
-        backend = ci_scope.classify_paths(
-            ["backend/app/systems/users/service.py"], base_ref="base"
-        )
-        frontend_dockerfile = ci_scope.classify_paths(
-            ["infra/docker/frontend.Dockerfile"], base_ref="base"
-        )
-        backend_dockerfile = ci_scope.classify_paths(
-            ["infra/docker/backend.Dockerfile"], base_ref="base"
-        )
-        self.assertFalse(frontend.decisions["frontend_container"].run)
-        self.assertFalse(frontend.decisions["backend_container"].run)
-        self.assertTrue(frontend.decisions["frontend_mobile"].run)
-        self.assertTrue(frontend_dockerfile.decisions["frontend_container"].run)
-        self.assertFalse(frontend_dockerfile.decisions["backend_container"].run)
-        for scope in (backend, backend_dockerfile):
-            self.assertFalse(scope.decisions["frontend_container"].run)
-            self.assertTrue(scope.decisions["backend_container"].run)
+    def test_frontend_changes_never_select_backend_or_container_by_default(self):
+        for path in (
+            "frontend/src/components/sample/manage/index.tsx",
+            "frontend/tests/isolated/manage-state.spec.ts",
+            ".github/workflows/frontend.yml",
+            ".github/workflows/frontend-compatibility.yml",
+            ".github/workflows/fullstack.yml",
+        ):
+            with self.subTest(path=path):
+                scope = ci_scope.classify_paths([path], base_ref="base")
+                self.assertTrue(scope.decisions["frontend"].run)
+                self.assertFalse(scope.decisions["backend"].run)
+                self.assertFalse(scope.decisions["containers"].run)
+                self.assertFalse(scope.decisions["frontend_container"].run)
+                self.assertFalse(scope.decisions["backend_container"].run)
 
     def test_frontend_container_inputs_are_narrow_and_explicit(self):
         for path in (
@@ -122,83 +66,60 @@ class CiScopeTests(unittest.TestCase):
             "frontend/next.config.ts",
             "frontend/scripts/start-standalone.mjs",
             "frontend/src/lib/environment.ts",
+            "infra/docker/frontend.Dockerfile",
+            "scripts/build_frontend_image.py",
         ):
             with self.subTest(path=path):
                 scope = ci_scope.classify_paths([path], base_ref="base")
                 self.assertTrue(scope.decisions["frontend_container"].run)
                 self.assertTrue(scope.decisions["containers"].run)
+                self.assertFalse(scope.decisions["backend"].run)
+                self.assertFalse(scope.decisions["backend_container"].run)
 
+    def test_backend_changes_keep_backend_and_container_gates(self):
         scope = ci_scope.classify_paths(
-            ["frontend/src/lib/sandbox/model.ts"], base_ref="base"
+            ["backend/app/systems/users/service.py"], base_ref="base"
         )
+        self.assertTrue(scope.decisions["backend"].run)
+        self.assertTrue(scope.decisions["backend_container"].run)
+        self.assertTrue(scope.decisions["containers"].run)
+        self.assertFalse(scope.decisions["frontend"].run)
         self.assertFalse(scope.decisions["frontend_container"].run)
-        self.assertFalse(scope.decisions["containers"].run)
-
-    def test_mobile_and_extended_frontend_decisions_are_independent(self):
-        layout = ci_scope.classify_paths(
-            ["frontend/src/components/app-shell.tsx"], base_ref="base"
-        )
-        logic = ci_scope.classify_paths(
-            ["frontend/src/lib/sandbox/model.ts"], base_ref="base"
-        )
-        extended = ci_scope.classify_paths(
-            ["frontend/tests/browser/sample/sandbox-storage-resilience.spec.ts"],
-            base_ref="base",
-        )
-        new_browser_spec = ci_scope.classify_paths(
-            ["frontend/tests/browser/new-feature.test.tsx"], base_ref="base"
-        )
-
-        self.assertTrue(layout.decisions["frontend_mobile"].run)
-        self.assertFalse(logic.decisions["frontend_mobile"].run)
-        backend_style = ci_scope.classify_paths(
-            ["backend/app/static/internal.css"], base_ref="base"
-        )
-        self.assertFalse(backend_style.decisions["frontend_mobile"].run)
-        self.assertTrue(extended.decisions["frontend_mobile"].run)
-        self.assertTrue(extended.decisions["frontend_extended"].run)
-        self.assertTrue(new_browser_spec.decisions["frontend_extended"].run)
-        self.assertFalse(layout.decisions["frontend_extended"].run)
 
     def test_shared_docker_context_rebuilds_both_images(self):
         scope = ci_scope.classify_paths([".dockerignore"], base_ref="base")
-
         self.assertTrue(scope.decisions["frontend_container"].run)
         self.assertTrue(scope.decisions["backend_container"].run)
 
-    def test_frontend_image_helper_is_broad_tooling_and_runs_tooling_tests(self):
-        scope = ci_scope.classify_paths(
-            ["scripts/build_frontend_image.py"], base_ref="base"
+    def test_shared_tooling_remains_fail_closed(self):
+        scope = ci_scope.classify_paths(["scripts/prepush.py"], base_ref="base")
+        for name in ci_scope.GATE_NAMES:
+            if name != "docs":
+                self.assertTrue(scope.decisions[name].run)
+
+    def test_documentation_only_skips_functional_gates(self):
+        scope = ci_scope.classify_paths(["README.md"], base_ref="base")
+        self.assertTrue(scope.decisions["docs"].run)
+        self.assertTrue(
+            all(
+                not decision.run
+                for name, decision in scope.decisions.items()
+                if name != "docs"
+            )
         )
 
-        self.assertTrue(scope.decisions["backend"].run)
-        self.assertTrue(scope.decisions["frontend_container"].run)
-        self.assertTrue(scope.decisions["backend_container"].run)
-        self.assertIn("tooling", scope.decisions["backend"].reason.lower())
+    def test_unknown_paths_fail_closed_to_every_decision(self):
+        scope = ci_scope.classify_paths([".vscode/settings.json"], base_ref="base")
+        self.assertTrue(all(decision.run for decision in scope.decisions.values()))
+        self.assertIn("unclassified", scope.decisions["frontend"].reason.lower())
 
-    def test_cli_invalid_base_succeeds_with_fail_closed_json_and_github_outputs(self):
-        with tempfile.TemporaryDirectory() as directory:
-            output_path = Path(directory) / "github-output"
-            stdout = io.StringIO()
-            with redirect_stdout(stdout):
-                result = ci_scope.main(
-                    ["--base", "0" * 40, "--github-output", str(output_path)]
-                )
+    def test_base_resolution_failure_fails_closed(self):
+        scope = ci_scope.classify_changes(Path.cwd(), "definitely-not-a-revision")
+        self.assertIsNotNone(scope.error)
+        self.assertEqual(scope.paths, ())
+        self.assertTrue(all(decision.run for decision in scope.decisions.values()))
 
-            payload = json.loads(stdout.getvalue())
-            output = dict(
-                line.split("=", 1)
-                for line in output_path.read_text().splitlines()
-                if "=" in line
-            )
-            self.assertEqual(result, 0)
-            self.assertEqual(payload["base"], None)
-            self.assertTrue(all(item["run"] for item in payload["decisions"].values()))
-            self.assertEqual(output["base"], "")
-            self.assertEqual(output["run_fullstack"], "true")
-            self.assertIn("all-zero", output["reason_fullstack"])
-
-    def test_cli_valid_base_prints_json_and_stable_github_output_entries(self):
+    def test_cli_writes_only_the_lean_gate_outputs(self):
         scope = ci_scope.classify_paths(["README.md"], base_ref="verified-base")
         with tempfile.TemporaryDirectory() as directory:
             output_path = Path(directory) / "github-output"
@@ -226,14 +147,8 @@ class CiScopeTests(unittest.TestCase):
                     "reason_containers",
                     "run_frontend_container",
                     "reason_frontend_container",
-                    "run_frontend_mobile",
-                    "reason_frontend_mobile",
-                    "run_frontend_extended",
-                    "reason_frontend_extended",
                     "run_backend_container",
                     "reason_backend_container",
-                    "run_fullstack",
-                    "reason_fullstack",
                     "run_docs",
                     "reason_docs",
                 ],

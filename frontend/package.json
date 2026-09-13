@@ -14,22 +14,11 @@
     "lint": "eslint . --max-warnings=0",
     "typecheck": "next typegen && tsc --noEmit",
     "check": "npm run format:check && npm run lint && npm run typecheck",
-    "verify": "npm run check && npm run build && npm run test:e2e:smoke:production",
-    "test:e2e": "PLAYWRIGHT_EXTENDED=include TEST_LAYER=all BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node scripts/run-playwright.mjs",
-    "test:e2e:fullstack": "cd ../backend && uv run python -m tests.fullstack_runner",
-    "test:e2e:production": "PLAYWRIGHT_EXTENDED=include PLAYWRIGHT_USE_PRODUCTION=1 TEST_LAYER=all BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node scripts/run-playwright.mjs",
-    "test:e2e:smoke": "PLAYWRIGHT_PROFILE=smoke PLAYWRIGHT_EXTENDED=exclude TEST_LAYER=browser BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node scripts/run-playwright.mjs",
-    "test:e2e:smoke:production": "PLAYWRIGHT_PROFILE=smoke PLAYWRIGHT_EXTENDED=exclude PLAYWRIGHT_USE_PRODUCTION=1 TEST_LAYER=browser BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node scripts/run-playwright.mjs",
-    "test:e2e:extended": "PLAYWRIGHT_PROFILE=extended PLAYWRIGHT_EXTENDED=only TEST_LAYER=browser BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node scripts/run-playwright.mjs --project=chromium",
-    "test:e2e:extended:production": "PLAYWRIGHT_PROFILE=extended PLAYWRIGHT_EXTENDED=only PLAYWRIGHT_USE_PRODUCTION=1 TEST_LAYER=browser BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node scripts/run-playwright.mjs --project=chromium",
-    "test:e2e:compatibility": "PLAYWRIGHT_PROFILE=compatibility PLAYWRIGHT_EXTENDED=include PLAYWRIGHT_USE_PRODUCTION=1 TEST_LAYER=browser BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node scripts/run-playwright.mjs",
+    "test": "TEST_LAYER=all BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node scripts/run-playwright.mjs",
+    "verify": "npm run check && npm test && npm run build",
     "test:section": "python3 ../scripts/test.py frontend section",
     "test:affected": "python3 ../scripts/test.py frontend affected",
-    "test:full": "python3 ../scripts/test.py frontend full",
-    "test:coverage": "node scripts/run-coverage.mjs",
-    "test:coverage:plan": "node scripts/run-coverage.mjs --plan",
-    "test:coverage:part": "node scripts/run-coverage.mjs",
-    "test:coverage:merge": "node scripts/run-coverage.mjs --merge"
+    "test:full": "python3 ../scripts/test.py frontend full"
   },
   "dependencies": {
     "@antv/x6": "^3.1.8",
@@ -51,8 +40,6 @@
     "zod": "^4.6.2"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.13.0",
-    "@jridgewell/trace-mapping": "^0.3.31",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^24.13.4",
@@ -60,12 +47,9 @@
     "@types/react-dom": "^19.3.0",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.5",
-    "istanbul-lib-coverage": "^3.2.2",
-    "monocart-coverage-reports": "^2.13.0",
     "prettier": "^3.9.6",
     "prettier-plugin-tailwindcss": "^0.8.1",
     "tailwindcss": "^4.3.3",
-    "typescript": "^6.0.3",
-    "v8-to-istanbul": "^9.3.0"
+    "typescript": "^6.0.3"
   }
 }

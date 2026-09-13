@@ -11,7 +11,7 @@ SECTIONS = {
     "backend": ("security", "audit", "api", "runtime", "database", "scripts"),
     "frontend": ("public", "security", "shell", "sample", "sandbox", "runtime"),
 }
-FRONTEND_LAYERS = ("isolated", "http", "browser")
+FRONTEND_LAYERS = ("isolated", "http")
 
 
 def backend_section(path: str) -> str:
@@ -209,7 +209,7 @@ def main() -> int:
     parser.add_argument("sections", nargs="*", help="Section names (section mode only)")
     parser.add_argument(
         "--layer",
-        choices=("isolated", "integration", "http", "browser", "all"),
+        choices=("isolated", "integration", "http", "all"),
         default="all",
     )
     parser.add_argument(
@@ -222,21 +222,17 @@ def main() -> int:
         help="Show selection without starting tests or services",
     )
     parser.add_argument("--match", help="Focused pytest name expression or Playwright title regex")
-    parser.add_argument("--browser", choices=("chromium", "mobile-chromium", "all"),
-                        help="Local browser batch target (default: chromium)")
     parser.add_argument("--interactive", action="store_true",
                         help="Keep a disposable backend batch stack until quit or EOF")
     args = parser.parse_args()
-    if args.mode == "full" and (args.match or args.browser or args.interactive):
+    if args.mode == "full" and (args.match or args.interactive):
         parser.error("local filters are not accepted by full mode")
-    if args.browser and (args.project != "frontend" or args.layer not in {"all", "browser"}):
-        parser.error("--browser requires the frontend browser or all layer")
     if args.interactive and (args.project != "backend" or args.layer == "isolated"):
         parser.error("--interactive requires a backend integration or all batch")
     valid_layers = (
         {"isolated", "integration", "all"}
         if args.project == "backend"
-        else {"isolated", "http", "browser", "all"}
+        else {"isolated", "http", "all"}
     )
     if args.layer not in valid_layers:
         parser.error(
@@ -270,9 +266,6 @@ def main() -> int:
     if not files:
         print("No tests selected for these changes/sections and this layer.")
         return 0
-    if args.project == "frontend" and args.mode != "full":
-        print(f"browser target={args.browser or 'chromium'}; focused batch, not a full gate",
-              flush=True)
     if args.match:
         print(f"case filter={args.match}", flush=True)
     if args.list:
@@ -305,12 +298,10 @@ def main() -> int:
         command = ["node", "scripts/run-playwright.mjs"]
         if args.mode != "full":
             command += ["--max-failures=1", "--reporter=line"]
-            if args.browser != "all":
-                projects = [group for group in ("isolated", "http")
-                            if args.layer in {"all", group}]
-                if args.layer in {"all", "browser"}:
-                    projects.append(args.browser or "chromium")
-                command += [f"--project={project}" for project in projects]
+            projects = [
+                group for group in FRONTEND_LAYERS if args.layer in {"all", group}
+            ]
+            command += [f"--project={project}" for project in projects]
         if args.match:
             command.append(f"--grep={args.match}")
     return subprocess.call([*command, *files], cwd=root / args.project, env=env)

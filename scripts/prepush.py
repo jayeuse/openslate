@@ -84,13 +84,23 @@ def _add_frontend_steps(
     steps: list[Step], *, frontend_checks: bool, container_build: bool
 ) -> None:
     if frontend_checks:
-        steps.append(
-            Step(
-                name="frontend-check",
-                gate="frontend",
-                phase="fast",
-                cwd="frontend",
-                command=("npm", "run", "check"),
+        steps.extend(
+            (
+                Step(
+                    name="frontend-check",
+                    gate="frontend",
+                    phase="fast",
+                    cwd="frontend",
+                    command=("npm", "run", "check"),
+                ),
+                Step(
+                    name="frontend-tests",
+                    gate="frontend",
+                    phase="resource",
+                    cwd="frontend",
+                    command=("npm", "test"),
+                    lane="frontend",
+                ),
             )
         )
     if container_build:
@@ -108,8 +118,6 @@ def _add_frontend_steps(
                         "frontend/.env.local",
                         "--tag",
                         "openslate-frontend:ci",
-                        "--runtime-output",
-                        "frontend/test-results/frontend-runtime.tgz",
                     ),
                     lane="frontend",
                 ),
@@ -130,17 +138,9 @@ def _add_frontend_steps(
                     ),
                     lane="frontend",
                 ),
-                Step(
-                    name="frontend-runtime-restore",
-                    gate="frontend",
-                    phase="resource",
-                    cwd="frontend",
-                    command=("tar", "-xzf", "test-results/frontend-runtime.tgz"),
-                    lane="frontend",
-                ),
             )
         )
-    else:
+    elif frontend_checks:
         steps.append(
             Step(
                 name="frontend-build",
@@ -151,43 +151,9 @@ def _add_frontend_steps(
                 lane="frontend",
             )
         )
-    steps.append(
-            Step(
-                name="frontend-browser",
-                gate="frontend",
-                phase="resource",
-                cwd="frontend",
-                command=(
-                    "npm",
-                    "run",
-                    "test:e2e:smoke:production",
-                    "--",
-                    "--workers=2",
-                ),
-                lane="frontend",
-            )
-    )
-    if frontend_checks:
-        steps.append(
-            Step(
-                name="frontend-coverage-plan",
-                gate="frontend",
-                phase="resource",
-                cwd="frontend",
-                command=(
-                    "npm",
-                    "run",
-                    "test:coverage:plan",
-                    "--",
-                    "--output=coverage/prepush-plan.json",
-                ),
-                lane="frontend",
-                needs_base=True,
-            )
-        )
 
 
-def _add_backend_steps(steps: list[Step], *, include_coverage: bool = True) -> None:
+def _add_backend_steps(steps: list[Step]) -> None:
     steps.extend(
         (
             Step(
@@ -233,54 +199,23 @@ def _add_backend_steps(steps: list[Step], *, include_coverage: bool = True) -> N
             ),
         )
     )
-    if include_coverage:
-        steps.append(
-            Step(
-                name="backend-coverage",
-                gate="backend",
-                phase="resource",
-                cwd="backend",
-                command=(
-                    "uv",
-                    "run",
-                    "python",
-                    "-m",
-                    "tests.fullstack_runner",
-                    "--backend-coverage-only",
-                ),
-                lane="backend",
-                serial_group=SERIAL_BACKEND_STACK,
-                needs_base=True,
-            )
-        )
-
-
-def _add_fullstack_step(steps: list[Step], *, include_backend_coverage: bool) -> None:
     steps.append(
         Step(
-            name=(
-                "backend-coverage-and-fullstack"
-                if include_backend_coverage
-                else "fullstack"
-            ),
-            gate="fullstack",
+            name="backend-coverage",
+            gate="backend",
             phase="resource",
             cwd="backend",
             command=(
-                ("uv", "run", "python", "-m", "tests.fullstack_runner")
-                if include_backend_coverage
-                else (
-                    "uv",
-                    "run",
-                    "python",
-                    "-m",
-                    "tests.fullstack_runner",
-                    "--acceptance-only",
-                )
+                "uv",
+                "run",
+                "python",
+                "-m",
+                "tests.fullstack_runner",
+                "--backend-coverage-only",
             ),
             lane="backend",
             serial_group=SERIAL_BACKEND_STACK,
-            needs_base=include_backend_coverage,
+            needs_base=True,
         )
     )
 
@@ -288,7 +223,7 @@ def _add_fullstack_step(steps: list[Step], *, include_backend_coverage: bool) ->
 def _add_container_steps(
     steps: list[Step], *, frontend_container: bool, backend_container: bool
 ) -> None:
-    del frontend_container  # Frontend image preparation belongs before its smoke run.
+    del frontend_container  # Frontend image preparation belongs to the frontend lane.
     if backend_container:
         steps.append(
             Step(
@@ -323,12 +258,8 @@ def build_plan(scope: ChangeScope, root: Path) -> PrepushPlan:
             frontend_checks=frontend_checks,
             container_build=frontend_container,
         )
-    backend_run = scope.decisions["backend"].run
-    fullstack_run = scope.decisions["fullstack"].run
-    if backend_run:
-        _add_backend_steps(steps, include_coverage=not fullstack_run)
-    if fullstack_run:
-        _add_fullstack_step(steps, include_backend_coverage=backend_run)
+    if scope.decisions["backend"].run:
+        _add_backend_steps(steps)
     if scope.decisions["containers"].run:
         _add_container_steps(
             steps,

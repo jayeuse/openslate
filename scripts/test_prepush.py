@@ -18,54 +18,39 @@ def all_gate_scope() -> ci_scope.ChangeScope:
 
 
 class PrepushTests(unittest.TestCase):
-    def test_plan_runs_fast_checks_before_resource_gates_and_serializes_backend_stack(self):
+    def test_plan_keeps_frontend_lean_and_backend_independent(self):
         plan = prepush.build_plan(all_gate_scope(), Path("/repo"))
         names = [step.name for step in plan.steps]
         phases = [step.phase for step in plan.steps]
 
         self.assertEqual(phases, sorted(phases, key=("fast", "resource").index))
-        self.assertLess(names.index("frontend-check"), names.index("frontend-container-build"))
+        self.assertLess(names.index("frontend-check"), names.index("frontend-tests"))
+        self.assertLess(names.index("frontend-tests"), names.index("frontend-container-build"))
         self.assertNotIn("frontend-build", names)
-        combined = "backend-coverage-and-fullstack"
-        self.assertLess(names.index("backend-ruff"), names.index(combined))
-        self.assertLess(names.index("backend-mypy"), names.index(combined))
+        self.assertLess(names.index("backend-ruff"), names.index("backend-coverage"))
+        self.assertLess(names.index("backend-mypy"), names.index("backend-coverage"))
         self.assertIn("../scripts", plan.steps[names.index("backend-ruff")].command)
         self.assertIn("../scripts/ci_scope.py", plan.steps[names.index("backend-mypy")].command)
         self.assertEqual(
-            plan.steps[names.index("frontend-container-build")].command[-2:],
-            ("--runtime-output", "frontend/test-results/frontend-runtime.tgz"),
-        )
-        self.assertLess(
-            names.index("frontend-container-boundary"),
-            names.index("frontend-runtime-restore"),
-        )
-        self.assertLess(names.index("frontend-runtime-restore"), names.index("frontend-browser"))
-        self.assertEqual(
-            plan.steps[names.index("frontend-browser")].command[-1],
-            "--workers=2",
-        )
-        self.assertIn(
-            "test:e2e:smoke:production",
-            plan.steps[names.index("frontend-browser")].command,
+            plan.steps[names.index("frontend-tests")].command,
+            ("npm", "test"),
         )
         self.assertEqual(
             plan.steps[names.index("frontend-container-build")].command[:2],
             ("python3", "scripts/build_frontend_image.py"),
         )
         self.assertEqual(
-            plan.steps[names.index(combined)].serial_group,
+            plan.steps[names.index("backend-coverage")].serial_group,
             "backend-supabase",
         )
         backend_lane = [step.name for step in plan.steps if step.lane == "backend"]
         self.assertLess(
-            backend_lane.index(combined), backend_lane.index("backend-container-build")
+            backend_lane.index("backend-coverage"),
+            backend_lane.index("backend-container-build"),
         )
-        combined_step = plan.steps[names.index(combined)]
-        self.assertEqual(
-            combined_step.command,
-            ("uv", "run", "python", "-m", "tests.fullstack_runner"),
-        )
-        self.assertTrue(combined_step.needs_base)
+        self.assertNotIn("fullstack", names)
+        self.assertNotIn("frontend-browser", names)
+        self.assertNotIn("frontend-coverage-plan", names)
 
     def test_plan_builds_only_the_changed_application_image(self):
         frontend_scope = ci_scope.classify_paths(
@@ -87,7 +72,7 @@ class PrepushTests(unittest.TestCase):
         self.assertNotIn("frontend-container-build", backend_names)
         self.assertIn("backend-container-build", backend_names)
 
-    def test_container_only_frontend_change_builds_once_and_runs_smoke(self):
+    def test_container_only_frontend_change_builds_once_without_tests(self):
         plan = prepush.build_plan(
             ci_scope.classify_paths(
                 ["infra/docker/frontend.Dockerfile"], base_ref="base"
@@ -97,10 +82,10 @@ class PrepushTests(unittest.TestCase):
         names = [step.name for step in plan.steps]
 
         self.assertNotIn("frontend-check", names)
+        self.assertNotIn("frontend-tests", names)
         self.assertNotIn("frontend-build", names)
-        self.assertNotIn("frontend-coverage-plan", names)
         self.assertEqual(names.count("frontend-container-build"), 1)
-        self.assertIn("frontend-browser", names)
+        self.assertIn("frontend-container-boundary", names)
 
     def test_resource_lanes_run_serially_on_the_local_host(self):
         calls = []
@@ -177,7 +162,7 @@ class PrepushTests(unittest.TestCase):
         self.assertEqual(result, 0)
         execute.assert_not_called()
         self.assertIn('"frontend"', output.getvalue())
-        self.assertIn('"fullstack"', output.getvalue())
+        self.assertNotIn('"fullstack"', output.getvalue())
 
     def test_main_returns_shell_interrupt_status_without_a_traceback(self):
         scope = all_gate_scope()

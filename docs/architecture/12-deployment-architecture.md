@@ -13,18 +13,18 @@
 
 ## Deployment state map
 
-| Area                                      | Classification       | Verified repository state                                                                                                                                     |
-| ----------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Local development platform                | Implemented          | Supabase CLI plus host-run FastAPI and Next.js; see `README.md` and `supabase/config.toml`.                                                                   |
-| Backend image                             | Implemented artifact | `infra/docker/backend.Dockerfile` builds a standalone non-root image.                                                                                         |
-| Frontend image                            | Implemented artifact | `infra/docker/frontend.Dockerfile` builds a standalone Next.js image.                                                                                         |
-| Pull-request and main-branch verification | Implemented          | `.github/workflows/backend.yml`, `frontend.yml`, and `fullstack.yml` verify code, images, and the disposable production-style release gate.                   |
-| Branch-protection enforcement             | Maintainer action    | The stable `Full-stack release gate` check exists, but repository branch protection is not represented in source; a maintainer must require it after landing. |
-| Image registry and image publishing       | Absent               | No registry, `docker push`, release tag, or image-publishing step is checked in.                                                                              |
-| Hosted application target                 | Unknown              | No provider, cluster, VM, service definition, DNS, or environment manifest is present.                                                                        |
-| Hosted ingress/TLS                        | Unknown              | No hosted ingress or TLS termination configuration is present.                                                                                                |
-| Hosted secrets/configuration delivery     | Unknown              | Only local `.env.example` and process environment consumption are defined.                                                                                    |
-| Hosted deployment trigger                 | Absent               | GitHub Actions verify; neither workflow deploys.                                                                                                              |
+| Area                                      | Classification       | Verified repository state                                                                                                                           |
+| ----------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Local development platform                | Implemented          | Supabase CLI plus host-run FastAPI and Next.js; see `README.md` and `supabase/config.toml`.                                                         |
+| Backend image                             | Implemented artifact | `infra/docker/backend.Dockerfile` builds a standalone non-root image.                                                                               |
+| Frontend image                            | Implemented artifact | `infra/docker/frontend.Dockerfile` builds a standalone Next.js image.                                                                               |
+| Pull-request and main-branch verification | Implemented          | `.github/workflows/backend.yml` and `frontend.yml` verify their owned code and conditional images.                                                  |
+| Branch-protection enforcement             | Maintainer action    | Stable backend and `Frontend / verify` checks exist, but repository branch protection is not represented in source; a maintainer must configure it. |
+| Image registry and image publishing       | Absent               | No registry, `docker push`, release tag, or image-publishing step is checked in.                                                                    |
+| Hosted application target                 | Unknown              | No provider, cluster, VM, service definition, DNS, or environment manifest is present.                                                              |
+| Hosted ingress/TLS                        | Unknown              | No hosted ingress or TLS termination configuration is present.                                                                                      |
+| Hosted secrets/configuration delivery     | Unknown              | Only local `.env.example` and process environment consumption are defined.                                                                          |
+| Hosted deployment trigger                 | Absent               | GitHub Actions verify; neither workflow deploys.                                                                                                    |
 
 ## Implemented local release flow
 
@@ -119,41 +119,13 @@ or rollback step.
 ### Frontend workflow
 
 `.github/workflows/frontend.yml` always reports its stable required-check
-aggregator. For relevant changes it runs quality checks and creates one reusable
-standalone runtime through either the native or conditional image-build path.
-Fixed desktop/mobile smoke and conditional mobile/extended acceptance consume that
-runtime. One isolated/HTTP part plus three duration-balanced desktop-Chromium parts
-apply the 90% overall and changed-line gates once after a fail-closed merge.
-Firefox and WebKit run on `main`; nightly compatibility adds Chromium and mobile
-Chromium and reports failures through a repository issue. Successful uploads contain
-only bounded runtime and compact coverage evidence. Neither workflow publishes an
-image or deploys the application.
-
-### Full-stack release-gate workflow
-
-`.github/workflows/fullstack.yml` supplies one stable check named **Full-stack
-release gate** for pull requests and pushes to `main`. Its internal
-relevant-change detection runs the substantive job for backend, frontend,
-Supabase, infrastructure, environment-example, Docker-ignore, and workflow
-changes; otherwise the same check completes with a no-relevant-change result.
-This avoids path-filtered required checks remaining pending.
-
-For relevant changes, `backend/tests/fullstack_runner.py --acceptance-only` creates a fresh
-Supabase stack on dedicated ports, applies the dynamically discovered Alembic
-head and drift check, provisions the runtime role, starts FastAPI, builds and
-starts production Next.js, and runs the dedicated Chromium browser suite. The
-scanner helper provisions a pinned ClamAV engine with official definitions and
-a serial worker on an internal container network. It
-uses per-run identities and a private temporary fixture, retains only a
-sanitized acceptance summary, and stops the disposable stack without a backup.
-It also runs the read-only operational checker. This is a real
-Supabase → Next.js → FastAPI → PostgreSQL release gate, not evidence that a
-hosted deployment is production-ready. Backend regression and coverage remain
-owned by the parallel backend workflow and are not repeated here.
-
-The workflow definition alone does not enforce merge protection. After landing,
-a repository maintainer must configure branch protection to require the stable
-**Full-stack release gate** check.
+job. For relevant changes it installs dependencies once, runs formatting,
+ESLint, TypeScript, 181 isolated product/security tests, three HTTP boundary
+tests, and one production build. Frontend container inputs substitute one
+conditional image build and environment-boundary check for the native build.
+The workflow installs no browser, runs no browser or full-stack journeys,
+collects no frontend line coverage, and uploads no artifacts. It does not publish
+an image or deploy the application.
 
 ## Approved hosted deployment contract — implementation still blocked
 

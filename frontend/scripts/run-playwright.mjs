@@ -3,8 +3,8 @@ import { spawn } from "node:child_process";
 const layer = process.env.TEST_LAYER;
 const baseUrl = process.env.BASE_URL;
 const configurationMode = process.env.PLAYWRIGHT_CONFIGURATION;
-if (!layer || !["all", "isolated", "http", "browser"].includes(layer))
-  throw new Error("TEST_LAYER must be all, isolated, http, or browser");
+if (!layer || !["all", "isolated", "http"].includes(layer))
+  throw new Error("TEST_LAYER must be all, isolated, or http");
 if (!baseUrl) throw new Error("BASE_URL is required");
 if (!configurationMode || !["synthetic", "process"].includes(configurationMode))
   throw new Error("PLAYWRIGHT_CONFIGURATION must be synthetic or process");

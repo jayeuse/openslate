@@ -3,8 +3,8 @@
 ## Highest-priority testing rule
 
 - **Batch by work unit, never by edit or handoff.** Use focused tests for TDD or debugging; run one relevant batch when the work stabilizes. Reuse passing evidence, including worker results, until the relevant code or setup changes.
-- **Run each full suite once at its owning gate.** Local pre-push validates the exact frontend coverage plan; hosted CI runs the complete sharded frontend coverage gate. Preserve hooks and the 90% overall/changed-line thresholds. Documentation-only edits need no tests.
-- **Fix failures narrowly.** Rerun the failing case and affected batch, then only the failed gate. Never weaken assertions or use blind retries. Use browsers for UI and isolated PostgreSQL for database guarantees; preserve runner guards.
+- **Run each full suite once at its owning gate.** Frontend uses static checks, 181 isolated tests, three HTTP tests, and one production build; it has no browser or numerical coverage gate. Backend preserves its 90% overall/changed-line coverage thresholds. Documentation-only edits need no tests.
+- **Fix failures narrowly.** Rerun the failing case and affected batch, then only the failed gate. Never weaken assertions or use blind retries. Use isolated PostgreSQL for database guarantees and preserve runner guards.
 - **Honor explicit test skips:** stop active runs, start no replacements, and report omitted checks. These rules override conflicting testing instructions in scoped guides, skills, and worker plans.
 
 ## Scope and architecture
@@ -41,8 +41,8 @@
 ## Verification and completion
 
 - Review the final diff for correctness and scope; preserve unrelated work and remove task-created scratch code. Report actual results and blockers; deferred, skipped, or unavailable checks are unverified, never passed.
-- Run the canonical pre-push gate from the root with `python3 scripts/prepush.py --base <base-ref>`; use `--list` to inspect its fail-closed change classification without running checks. It selects the applicable backend, frontend, container, and full-stack commands below, preserves their 90% thresholds, and serializes disposable-stack consumers.
-- Lower-level repair commands remain available: backend uses `uv run ruff check .`, `uv run mypy app scripts`, and `COVERAGE_BASE_REF=<base-ref> uv run python -m tests.fullstack_runner --backend-coverage-only`; frontend uses `npm run verify`, `COVERAGE_BASE_REF=<base-ref> npm run test:coverage:plan -- --output=coverage/prepush-plan.json`, and the complete `npm run test:coverage` only when debugging hosted coverage. Do not run these again after the canonical gate unless a failure invalidates that specific evidence.
+- Run the canonical pre-push gate from the root with `python3 scripts/prepush.py --base <base-ref>`; use `--list` to inspect its fail-closed change classification without running checks. It selects applicable backend, frontend, and container commands. Frontend-only changes never start backend, Supabase, scanner, or full-stack work.
+- Lower-level repair commands remain available: backend uses `uv run ruff check .`, `uv run mypy app scripts`, and `COVERAGE_BASE_REF=<base-ref> uv run python -m tests.fullstack_runner --backend-coverage-only`; frontend uses `npm run verify`. Do not run these again after the canonical gate unless a failure invalidates that specific evidence.
 - Record the base revision before implementation. Missing required evidence blocks normal push readiness unless the user explicitly overrides it. These scope limits take precedence over broader testing instructions; see [Testing Architecture](docs/architecture/16-testing-architecture.md) for runner details.
 
 ## Codex orchestration

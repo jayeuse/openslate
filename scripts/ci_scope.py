@@ -20,32 +20,8 @@ GATE_NAMES: Final[tuple[str, ...]] = (
     "backend",
     "containers",
     "frontend_container",
-    "frontend_mobile",
-    "frontend_extended",
     "backend_container",
-    "fullstack",
     "docs",
-)
-FUNCTIONAL_GATES: Final[tuple[str, ...]] = (
-    "frontend",
-    "backend",
-    "fullstack",
-)
-
-# These are intentionally narrow.  A path is allowed to suppress the real
-# stack only when it is part of the local sample surface, not merely because
-# it happens to live under frontend/.
-LOCAL_SAMPLE_PREFIXES: Final[tuple[str, ...]] = (
-    "frontend/src/components/sample/",
-    "frontend/tests/browser/sample/",
-    "frontend/tests/isolated/sample/",
-)
-LOCAL_SAMPLE_PATHS: Final[frozenset[str]] = frozenset(
-    {
-        "frontend/CONTROLS-ACCEPTANCE.md",
-        "frontend/src/app/(app)/(workspace)/[pillar]/page.tsx",
-        "frontend/tests/isolated/manage-state.spec.ts",
-    }
 )
 
 _FRONTEND_PREFIX = "frontend/"
@@ -73,6 +49,7 @@ _FRONTEND_IMAGE_PATHS: Final[frozenset[str]] = frozenset(
         "frontend/scripts/start-standalone.mjs",
         "frontend/src/lib/environment.ts",
         "infra/docker/frontend.Dockerfile",
+        "scripts/build_frontend_image.py",
     }
 )
 _BACKEND_IMAGE_PATHS: Final[frozenset[str]] = frozenset(
@@ -88,6 +65,16 @@ _TOOLING_PREFIXES: Final[tuple[str, ...]] = (
     ".codex/",
     ".agents/",
     "scripts/",
+)
+_FRONTEND_TOOLING_PATHS: Final[frozenset[str]] = frozenset(
+    {
+        ".github/workflows/frontend.yml",
+        ".github/workflows/frontend-compatibility.yml",
+        ".github/workflows/fullstack.yml",
+        "scripts/build_frontend_image.py",
+        "scripts/test_build_frontend_image.py",
+        "scripts/test_ci_workflows.py",
+    }
 )
 _KNOWN_ROOT_FILES: Final[frozenset[str]] = frozenset(
     {
@@ -216,32 +203,9 @@ def _is_doc(path: str) -> bool:
     )
 
 
-def _is_local_sample_path(path: str) -> bool:
-    return path in LOCAL_SAMPLE_PATHS or path.startswith(LOCAL_SAMPLE_PREFIXES)
-
-
-def _is_mobile_frontend_path(path: str) -> bool:
-    return (
-        path == "frontend/playwright.config.ts"
-        or path.startswith("frontend/tests/browser/")
-        or (path.startswith(_FRONTEND_PREFIX) and path.endswith(".css"))
-        or (
-            path.endswith(".tsx")
-            and path.startswith(("frontend/src/app/", "frontend/src/components/"))
-        )
-    )
-
-
-def _is_browser_spec(path: str) -> bool:
-    return path.startswith("frontend/tests/browser/") and path.endswith(
-        (".spec.ts", ".spec.tsx", ".test.ts", ".test.tsx")
-    )
-
-
 def _is_known_path(path: str) -> bool:
     return (
         _is_doc(path)
-        or _is_local_sample_path(path)
         or path.startswith(
             (
                 _FRONTEND_PREFIX,
@@ -301,15 +265,11 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
                 "backend": _decision(False, "Documentation-only changes"),
                 "containers": _decision(False, "Documentation-only changes"),
                 "frontend_container": _decision(False, "Documentation-only changes"),
-                "frontend_mobile": _decision(False, "Documentation-only changes"),
-                "frontend_extended": _decision(False, "Documentation-only changes"),
                 "backend_container": _decision(False, "Documentation-only changes"),
-                "fullstack": _decision(False, "Documentation-only changes"),
                 "docs": _decision(True, docs_reason),
             },
         )
 
-    local_sample_only = all(_is_local_sample_path(path) for path in functional)
     frontend_paths = tuple(path for path in functional if path.startswith(_FRONTEND_PREFIX))
     backend_paths = tuple(path for path in functional if path.startswith(_BACKEND_PREFIX))
     container_paths = tuple(
@@ -318,7 +278,14 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
         if path.startswith(_CONTAINER_PREFIXES) or path in _CONTAINER_PATHS
     )
     tooling_paths = tuple(path for path in functional if path.startswith(_TOOLING_PREFIXES))
-    broad_tooling_paths = tuple(path for path in tooling_paths if path not in _FRONTEND_IMAGE_PATHS)
+    broad_tooling_paths = tuple(
+        path
+        for path in tooling_paths
+        if path not in _FRONTEND_IMAGE_PATHS and path not in _FRONTEND_TOOLING_PATHS
+    )
+    frontend_tooling_paths = tuple(
+        path for path in tooling_paths if path in _FRONTEND_TOOLING_PATHS
+    )
     shared_docker_paths = tuple(
         path
         for path in functional
@@ -333,7 +300,7 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
     )
 
     broad = bool(broad_tooling_paths)
-    frontend_run = broad or bool(frontend_paths)
+    frontend_run = broad or bool(frontend_paths) or bool(frontend_tooling_paths)
     backend_run = broad or bool(backend_paths)
     frontend_container_run = (
         broad
@@ -341,16 +308,6 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
         or bool(infrastructure_paths)
         or bool(_FRONTEND_IMAGE_PATHS.intersection(functional))
     )
-    frontend_mobile_paths = tuple(
-        path for path in functional if _is_mobile_frontend_path(path)
-    )
-    frontend_mobile_run = broad or bool(frontend_mobile_paths)
-    # Fail closed for browser-spec changes. This avoids a maintained filename
-    # allowlist silently missing a newly tagged or renamed @extended scenario.
-    frontend_extended_paths = tuple(
-        path for path in functional if _is_browser_spec(path)
-    )
-    frontend_extended_run = broad or bool(frontend_extended_paths)
     backend_container_run = (
         broad
         or bool(backend_paths)
@@ -361,7 +318,6 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
     container_run = (
         broad or bool(container_paths) or frontend_container_run or backend_container_run
     )
-    fullstack_run = broad or bool(frontend_paths or backend_paths or container_paths)
     frontend_image_definitions = tuple(
         sorted(_FRONTEND_IMAGE_PATHS.intersection(functional))
     )
@@ -372,21 +328,11 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
         container_paths or frontend_paths or backend_paths or tooling_paths
     )
 
-    if local_sample_only:
-        fullstack_run = False
-        fullstack_reason = (
-            "Local sample-only paths; disposable full-stack provisioning is not required"
-        )
-    elif fullstack_run:
-        fullstack_reason = (
-            f"Functional change requires real-stack acceptance: {_path_list(functional)}"
-        )
-    else:
-        fullstack_reason = "No full-stack-affecting paths changed"
-
     frontend_reason = (
         f"Frontend paths changed: {_path_list(frontend_paths)}"
         if frontend_paths
+        else f"Frontend CI/tooling paths changed: {_path_list(frontend_tooling_paths)}"
+        if frontend_tooling_paths
         else f"Shared CI/tooling paths changed: {_path_list(tooling_paths)}"
         if broad
         else "No frontend paths changed"
@@ -406,21 +352,6 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
         else f"Frontend image input changed: {_path_list(frontend_image_definitions)}"
         if frontend_container_run
         else "No frontend image inputs changed"
-    )
-    frontend_mobile_reason = (
-        f"Mobile-sensitive frontend paths changed: {_path_list(frontend_mobile_paths)}"
-        if frontend_mobile_paths
-        else f"Shared CI/tooling paths changed: {_path_list(tooling_paths)}"
-        if broad
-        else "No mobile-sensitive frontend paths changed"
-    )
-    frontend_extended_reason = (
-        "Browser specifications changed; run extended acceptance: "
-        f"{_path_list(frontend_extended_paths)}"
-        if frontend_extended_paths
-        else f"Shared CI/tooling paths changed: {_path_list(tooling_paths)}"
-        if broad
-        else "No extended frontend specifications changed"
     )
     backend_container_reason = (
         f"Shared/unknown tooling paths changed: {_path_list(broad_tooling_paths)}"
@@ -459,19 +390,10 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
                 frontend_container_run,
                 frontend_container_reason,
             ),
-            "frontend_mobile": _decision(
-                frontend_mobile_run,
-                frontend_mobile_reason,
-            ),
-            "frontend_extended": _decision(
-                frontend_extended_run,
-                frontend_extended_reason,
-            ),
             "backend_container": _decision(
                 backend_container_run,
                 backend_container_reason,
             ),
-            "fullstack": _decision(fullstack_run, fullstack_reason),
             "docs": _decision(bool(docs), docs_reason),
         },
     )

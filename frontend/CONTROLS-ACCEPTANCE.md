@@ -5,8 +5,8 @@ Source: `.todo/CONTROLS.md`. This checklist tracks the approved frontend impleme
 ## Verification boundary
 
 - Sample workflows use synthetic tab-local state. No messages, invitations, credentials, files, scheduled jobs, backups, updates, or permission changes are sent to live services.
-- Browser feature batches cover representative workflows, responsive layout, negative paths, and isolation. A checklist entry is not a claim of an individually automated test.
-- Full production and coverage gates are deferred until push preparation. The obsolete scanner UI coverage step was removed with its source; overall and changed-line coverage gates remain.
+- Isolated tests cover meaningful rules, state transitions, negative paths, and data isolation. A checklist entry is not a claim of an individually automated test.
+- Frontend push readiness uses static checks, the retained isolated/HTTP tests, and one production build. Browser E2E and frontend line-coverage gates are intentionally absent.
 
 ## Control map
 
@@ -355,10 +355,9 @@ outside Manage; related Access and Sandbox workflows are linked to their owners.
 - Compare bundled sample tiers, distinguish Access-derived seat usage from
   illustrative storage, and open sample terms through a button.
 
-Manage acceptance uses `tests/browser/sample/access-manage.spec.ts`,
-`manage-security.spec.ts`, and `manage-controls.spec.ts`, plus focused isolated
-state tests. Browser checks cover narrow layouts, light/dark themes, keyboard and
-dialog focus, field errors, downloads, storage failure, and lack of service writes.
+Manage acceptance is represented by the retained isolated state and policy tests.
+The control inventory remains a product checklist rather than a claim of browser,
+responsive-layout, or visual automation.
 
 ### Platform-Level Controls
 
@@ -458,4 +457,4 @@ Only authentication remains connected: sign-in, session validation/refresh, logo
 
 ## Acceptance evidence
 
-See `tests/browser/sample/` for the current feature and entrypoint checks, `tests/browser/sandbox/` for shared canvas interactions, and `tests/browser/shell/` for the new-only navigation and appearance controls. Public and security suites cover sign-in and account setup. The retained real-stack service tests use authenticated BFF requests rather than deleted UI controls; they require the disposable runner and are not claimed as executed by this cleanup.
+See `tests/isolated/` for retained product, policy, state, and security checks and `tests/http/` for the Next.js request boundary. The acceptance checklist documents implemented controls; it does not claim browser automation for each control.
