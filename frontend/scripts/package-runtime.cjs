@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- CommonJS CLI executed directly by Node and from container exports. */
+
 const { spawnSync } = require("node:child_process");
 const {
   cpSync,
