@@ -50,6 +50,8 @@ class TestSelectionTests(unittest.TestCase):
             path.relative_to(root.parent).as_posix()
             for layer in runner.FRONTEND_LAYERS
             for path in (root / layer).rglob("*.spec.ts")
+            if runner.frontend_section(path.relative_to(root.parent).as_posix())
+            in runner.SECTIONS["frontend"]
         }
         self.assertEqual({arg for arg in call.args[0] if arg.endswith(".spec.ts")}, expected)
 
