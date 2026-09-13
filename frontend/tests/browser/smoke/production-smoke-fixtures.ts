@@ -72,7 +72,13 @@ export function collectRuntimeFaults(page: Page): string[] {
     if (message.type() === "error") faults.push(`console: ${message.text()}`);
   });
   page.on("requestfailed", (request) => {
-    faults.push(`request: ${request.method()} ${request.url()}`);
+    const failure = request.failure()?.errorText;
+    // Next.js cancels speculative RSC prefetches when a real navigation wins.
+    // Those aborted requests are expected and are not unavailable resources.
+    if (failure === "net::ERR_ABORTED") return;
+    faults.push(
+      `request: ${request.method()} ${request.url()} (${failure ?? "unknown failure"})`,
+    );
   });
   return faults;
 }
