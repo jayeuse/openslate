@@ -314,7 +314,7 @@ export default function SampleSandbox() {
     setCreateRequest(null);
     setSection("Designer");
     setClearBackup(null);
-    setMessage("Cleared Sandbox data restored in this tab.");
+    setMessage("");
     router.replace("/sandbox");
   }
 

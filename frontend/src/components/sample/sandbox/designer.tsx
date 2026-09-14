@@ -1127,10 +1127,13 @@ export function Designer({
   }, [canvasView.gridVisible, canvasView.snapEnabled, pane]);
   useEffect(() => {
     if (!wide) return;
-    if (viewPreferences.structureCollapsed)
-      structurePanelRef.current?.collapse();
-    if (viewPreferences.inspectorCollapsed)
-      inspectorPanelRef.current?.collapse();
+    const preferences = viewPreferencesRef.current;
+    structurePanelRef.current?.resize(
+      preferences.structureCollapsed ? 48 : preferences.structureWidth,
+    );
+    inspectorPanelRef.current?.resize(
+      preferences.inspectorCollapsed ? 48 : preferences.inspectorWidth,
+    );
   }, [
     wide,
     viewPreferences.inspectorCollapsed,
@@ -1987,11 +1990,21 @@ export function Designer({
               id="sandbox-structure"
               panelRef={structurePanelRef}
               defaultSize={wide ? viewPreferences.structureWidth : "100%"}
-              minSize={wide ? SANDBOX_STRUCTURE_PANEL_MIN_WIDTH : 0}
-              maxSize={wide ? SANDBOX_STRUCTURE_PANEL_MAX_WIDTH : "100%"}
-              collapsedSize={wide ? 48 : 0}
-              collapsible={wide}
-              disabled={!wide}
+              minSize={
+                wide
+                  ? viewPreferences.structureCollapsed
+                    ? 48
+                    : SANDBOX_STRUCTURE_PANEL_MIN_WIDTH
+                  : 0
+              }
+              maxSize={
+                wide
+                  ? viewPreferences.structureCollapsed
+                    ? 48
+                    : SANDBOX_STRUCTURE_PANEL_MAX_WIDTH
+                  : "100%"
+              }
+              disabled={!wide || viewPreferences.structureCollapsed}
               groupResizeBehavior={
                 wide ? "preserve-pixel-size" : "preserve-relative-size"
               }
@@ -2004,7 +2017,6 @@ export function Designer({
                     variant="ghost"
                     aria-label="Expand structure"
                     onClick={() => {
-                      structurePanelRef.current?.expand();
                       patchViewPreferences({ structureCollapsed: false });
                     }}
                   >
@@ -2026,7 +2038,6 @@ export function Designer({
                     variant="ghost"
                     aria-label="Collapse structure"
                     onClick={() => {
-                      structurePanelRef.current?.collapse();
                       patchViewPreferences({ structureCollapsed: true });
                     }}
                   >
@@ -2394,11 +2405,21 @@ export function Designer({
               id="sandbox-inspector"
               panelRef={inspectorPanelRef}
               defaultSize={wide ? viewPreferences.inspectorWidth : "100%"}
-              minSize={wide ? SANDBOX_INSPECTOR_PANEL_MIN_WIDTH : 0}
-              maxSize={wide ? SANDBOX_INSPECTOR_PANEL_MAX_WIDTH : "100%"}
-              collapsedSize={wide ? 48 : 0}
-              collapsible={wide && viewPreferences.inspectorCollapsed}
-              disabled={!wide}
+              minSize={
+                wide
+                  ? viewPreferences.inspectorCollapsed
+                    ? 48
+                    : SANDBOX_INSPECTOR_PANEL_MIN_WIDTH
+                  : 0
+              }
+              maxSize={
+                wide
+                  ? viewPreferences.inspectorCollapsed
+                    ? 48
+                    : SANDBOX_INSPECTOR_PANEL_MAX_WIDTH
+                  : "100%"
+              }
+              disabled={!wide || viewPreferences.inspectorCollapsed}
               groupResizeBehavior={
                 wide ? "preserve-pixel-size" : "preserve-relative-size"
               }
@@ -2411,7 +2432,6 @@ export function Designer({
                     variant="ghost"
                     aria-label="Expand inspector"
                     onClick={() => {
-                      inspectorPanelRef.current?.expand();
                       patchViewPreferences({ inspectorCollapsed: false });
                     }}
                   >
@@ -2432,7 +2452,6 @@ export function Designer({
                     variant="ghost"
                     aria-label="Collapse inspector"
                     onClick={() => {
-                      inspectorPanelRef.current?.collapse();
                       patchViewPreferences({ inspectorCollapsed: true });
                     }}
                   >
