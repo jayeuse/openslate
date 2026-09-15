@@ -1,862 +1,3796 @@
 "use client";
 
-import { Suspense, useState } from "react";
-import { z } from "zod";
-import { useSearchParams } from "next/navigation";
+import {
+  Suspense,
+  useEffect,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { Route } from "next";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  CalendarDays,
+  Columns3,
+  Copy,
+  CircleHelp,
+  Filter,
+  GalleryHorizontal,
+  GanttChart,
+  Group,
+  LayoutGrid,
+  Link2,
+  MoreHorizontal,
+  Plus,
+  RotateCcw,
+  Save,
+  Search,
+  SlidersHorizontal,
+  Table2,
+  Trash2,
+  X,
+  type LucideIcon,
+} from "lucide-react";
+import { initialPeople, initialRoles } from "../access/model";
+import { INITIAL_RECORDS, type SampleRecord } from "../sample-data";
+import { useSampleState, useSampleStorage } from "../sample-state";
+import { GanttView } from "./gantt";
+import { Alert } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+} from "@/components/ui/combobox";
 import {
   Dialog,
   DialogContent,
-  DialogTitle,
   DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
-import { initialRoles, initialPeople } from "../access/model";
 import {
-  CalendarDays,
-  Plus,
-  Columns3,
-  GalleryHorizontal,
-  GanttChart,
-  LayoutGrid,
-  Search,
-  Table2,
-  X,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
-import { useSampleState } from "@/components/sample/sample-state";
 import {
-  INITIAL_RECORDS,
-  type SampleRecord,
-} from "@/components/sample/sample-data";
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select } from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { cn } from "@/lib/utils";
+import {
+  FILTER_OPERATORS,
+  OPENVIEW_MODULES,
+  OPENVIEW_SECTIONS,
+  audienceLabel,
+  decodeAudienceRef,
+  decodeSavedViews,
+  decodeViewConfig,
+  defaultViewConfig,
+  filterRowsByDateRange,
+  getModuleDefinition,
+  getOpenViewRows,
+  groupRows,
+  isUnresolvedAudience,
+  parseOpenViewUrl,
+  selectRows,
+  serializeOpenViewUrl,
+  type AudienceLookup,
+  type AudienceRef,
+  type FilterClause,
+  type FilterGroup,
+  type FilterOperator,
+  type OpenViewField,
+  type OpenViewModule,
+  type OpenViewModuleId,
+  type OpenViewRow,
+  type OpenViewSection,
+  type SavedView as ModelSavedView,
+  type SortRule,
+  type ViewConfig,
+  type ViewLayout,
+} from "./model";
+import {
+  OPENVIEW_SAMPLE_SNAPSHOT_DATE,
+  getOpenViewLanes,
+  getOpenViewOperationalFacts,
+  getOpenViewOperationalProfile,
+  summarizeOpenViewOperationalRows,
+} from "./operations";
 import SampleAnalytics from "./analytics";
 
-export type ViewConfig = {
+/**
+ * Compatibility exports for the existing Access federation boundary. The
+ * OpenView screen stores typed AudienceRef values; these legacy values are
+ * produced only for the old read-only adapter until it adopts model.ts.
+ */
+export type LegacyViewConfig = {
   type: string;
   search: string;
   status: string;
   sort: string;
   group: string;
 };
-export type SavedView = ViewConfig & {
+export type LegacySavedView = LegacyViewConfig & {
   id: string;
   name: string;
   audience: string;
 };
-const savedViewSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  audience: z.string(),
-  type: z.string(),
-  search: z.string(),
-  status: z.string(),
-  sort: z.string(),
-  group: z.string(),
-});
-export function normalizeSavedViews(raw: unknown): SavedView[] {
-  return Array.isArray(raw)
-    ? raw.flatMap((value) => {
-        const result = savedViewSchema.safeParse(value);
-        return result.success ? [result.data] : [];
-      })
-    : [];
-}
-export const initialViewConfig: ViewConfig = {
+export type { LegacySavedView as SavedView };
+export const initialViewConfig: LegacyViewConfig = {
   type: "Table",
   search: "",
   status: "All statuses",
   sort: "title",
   group: "None",
 };
-export const initialSavedViews: SavedView[] = [];
-const modes = [
-  { name: "Table", icon: Table2 },
-  { name: "Grid", icon: LayoutGrid },
-  { name: "Calendar", icon: CalendarDays },
-  { name: "Kanban", icon: Columns3 },
-  { name: "Timeline", icon: GanttChart },
-  { name: "Gallery", icon: GalleryHorizontal },
+export const initialSavedViews: LegacySavedView[] = [];
+
+const legacyLookup: AudienceLookup = {
+  roles: initialRoles.map(({ id, name }) => ({ id, name })),
+  identities: initialPeople.map(({ id, name }) => ({ id, name })),
+};
+
+export function normalizeSavedViews(raw: unknown): LegacySavedView[] {
+  return decodeSavedViews(raw, legacyLookup).map((view) => {
+    const statusClause = view.config.filters.clauses.find(
+      (clause) => clause.field === "status" && clause.operator === "equals",
+    );
+    return {
+      id: view.id,
+      name: view.name,
+      audience: audienceLabel(view.audience, legacyLookup),
+      type: titleCase(view.config.layout.kind),
+      search: view.config.search,
+      status: statusClause?.value ?? "All statuses",
+      sort:
+        view.config.sorts[0]?.field ??
+        view.config.layout.primaryField ??
+        "title",
+      group: view.config.groupBy ?? "None",
+    };
+  });
+}
+
+const sectionLabels: Record<OpenViewSection, string> = {
+  views: "Views",
+  dashboards: "Dashboards",
+  charts: "Charts",
+  reports: "Reports",
+};
+
+type PendingTransition =
+  | {
+      kind: "section";
+      section: OpenViewSection;
+      source: "view" | "dashboard";
+    }
+  | { kind: "module"; module: OpenViewModuleId; source: "view" }
+  | { kind: "saved-view"; id: string; source: "view" };
+
+function dateRangeLabel(range: ViewLayout["dateRange"]): string {
+  if (range === "week") return "Week";
+  if (range === "quarter") return "Quarter";
+  if (range === "year") return "Year";
+  return "Month";
+}
+
+function dateFieldForLayout(
+  module: OpenViewModule,
+  layout: ViewLayout,
+): string | undefined {
+  const dateFields = module.fields.filter((field) => field.type === "date");
+  if (
+    layout.dateField &&
+    dateFields.some((field) => field.id === layout.dateField)
+  )
+    return layout.dateField;
+  return dateFields[0]?.id;
+}
+
+function sanitizeOpenViewConfig(config: ViewConfig): ViewConfig {
+  const moduleDefinition = getModuleDefinition(config.moduleId);
+  const dateField = dateFieldForLayout(moduleDefinition, config.layout);
+  return {
+    ...config,
+    layout: {
+      ...config.layout,
+      dateField,
+    },
+  };
+}
+
+const layoutMeta: {
+  kind: ViewLayout["kind"];
+  label: string;
+  shortLabel: string;
+  icon: LucideIcon;
+}[] = [
+  {
+    kind: "table",
+    label: "Operational register",
+    shortLabel: "Table",
+    icon: Table2,
+  },
+  {
+    kind: "grid",
+    label: "Scan cards",
+    shortLabel: "Grid",
+    icon: LayoutGrid,
+  },
+  {
+    kind: "kanban",
+    label: "Workflow board",
+    shortLabel: "Kanban",
+    icon: Columns3,
+  },
+  {
+    kind: "calendar",
+    label: "Deadline calendar",
+    shortLabel: "Calendar",
+    icon: CalendarDays,
+  },
+  {
+    kind: "timeline",
+    label: "Planned schedule",
+    shortLabel: "Gantt",
+    icon: GanttChart,
+  },
+  {
+    kind: "gallery",
+    label: "Visual highlights",
+    shortLabel: "Gallery",
+    icon: GalleryHorizontal,
+  },
 ];
+
+const layoutQuestions: Record<ViewLayout["kind"], string> = {
+  table: "Compare exact values and choose the next action.",
+  grid: "Scan the records side by side for a quick comparison.",
+  kanban: "See where work is concentrated and which items need attention.",
+  calendar: "Understand what happens when and what is due next.",
+  timeline: "See the planned work windows and schedule pressure over time.",
+  gallery: "Spot the records and signals that stand out at a glance.",
+};
+
+function layoutLabel(kind: ViewLayout["kind"]): string {
+  return layoutMeta.find((entry) => entry.kind === kind)?.label ?? "View";
+}
+
+function timingStateLabel(state: string): string {
+  if (state === "due-soon") return "Due soon";
+  if (state === "late-plan") return "Late plan";
+  if (state === "on-track") return "On track";
+  if (state === "unscheduled") return "Needs scheduling";
+  return titleCase(state);
+}
+
+function displayDate(value: string): string {
+  return value ? formatCalendarDate(value, true) : "Unscheduled";
+}
+
+const operatorLabels: Record<(typeof FILTER_OPERATORS)[number], string> = {
+  contains: "contains",
+  equals: "is",
+  "not-equals": "is not",
+  "starts-with": "starts with",
+  "ends-with": "ends with",
+  "on-or-after": "on or after",
+  "on-or-before": "on or before",
+  "is-empty": "is empty",
+  "is-not-empty": "is not empty",
+};
+
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+const visualTones = [
+  {
+    surface: "bg-chart-1/12",
+    border: "border-chart-1/35",
+    solid: "bg-chart-1",
+  },
+  {
+    surface: "bg-chart-2/12",
+    border: "border-chart-2/35",
+    solid: "bg-chart-2",
+  },
+  {
+    surface: "bg-chart-3/12",
+    border: "border-chart-3/35",
+    solid: "bg-chart-3",
+  },
+  {
+    surface: "bg-chart-4/12",
+    border: "border-chart-4/35",
+    solid: "bg-chart-4",
+  },
+  {
+    surface: "bg-chart-5/12",
+    border: "border-chart-5/35",
+    solid: "bg-chart-5",
+  },
+] as const;
+
+function visualTone(value: string, fallback = 0) {
+  const normalized = value.toLocaleLowerCase();
+  let index = fallback % visualTones.length;
+  if (normalized.includes("hold") || normalized.includes("repair")) index = 4;
+  else if (
+    normalized.includes("done") ||
+    normalized.includes("complete") ||
+    normalized.includes("active") ||
+    normalized.includes("in service")
+  )
+    index = 2;
+  else if (normalized.includes("progress")) index = 3;
+  else if (
+    normalized.includes("scheduled") ||
+    normalized.includes("due") ||
+    normalized.includes("review")
+  )
+    index = 1;
+  else if (normalized.includes("open") || normalized.includes("requested"))
+    index = 0;
+  else if (value) {
+    index =
+      [...value].reduce(
+        (total, character) => total + character.charCodeAt(0),
+        0,
+      ) % visualTones.length;
+  }
+  return visualTones[index] ?? visualTones[0];
+}
+
+function formatCalendarDate(value: string, includeYear = false): string {
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.valueOf())) return value || "Unscheduled";
+  return new Intl.DateTimeFormat("en", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+    year: includeYear ? "numeric" : undefined,
+  }).format(date);
+}
+
+function moduleIdFromUnknown(value: unknown): OpenViewModuleId {
+  return typeof value === "string" &&
+    OPENVIEW_MODULES.some((module) => module.id === value)
+    ? (value as OpenViewModuleId)
+    : "service-requests";
+}
+
+function sectionFromUnknown(value: unknown): OpenViewSection {
+  if (typeof value === "string") {
+    const lower = value.toLowerCase();
+    if (OPENVIEW_SECTIONS.includes(lower as OpenViewSection)) {
+      return lower as OpenViewSection;
+    }
+  }
+  return "views";
+}
+
+function cloneConfig(config: ViewConfig): ViewConfig {
+  return {
+    ...config,
+    filters: {
+      logic: config.filters.logic,
+      clauses: config.filters.clauses.map((clause) => ({ ...clause })),
+    },
+    sorts: config.sorts.map((sort) => ({ ...sort })),
+    layout: {
+      ...config.layout,
+      columns: [...config.layout.columns],
+      pinnedColumns: [...config.layout.pinnedColumns],
+    },
+  };
+}
+
+function sameConfig(left: ViewConfig, right: ViewConfig): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function audienceValue(audience: AudienceRef): string {
+  if (audience.kind === "private") return "private";
+  if (audience.kind === "everyone") return "everyone";
+  return `${audience.kind}:${audience.id}`;
+}
+
+function audienceFromValue(value: string, lookup: AudienceLookup): AudienceRef {
+  if (value === "everyone") return { kind: "everyone" };
+  if (value === "private") return { kind: "private" };
+  const [kind, id] = value.split(":", 2);
+  return decodeAudienceRef(
+    kind === "role" || kind === "identity" ? { kind, id } : null,
+    lookup,
+  );
+}
+
+function createSampleId(prefix: string): string {
+  return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function defaultMapFromUnknown(
+  value: unknown,
+): Partial<Record<OpenViewModuleId, string>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([moduleId, viewId]) =>
+        OPENVIEW_MODULES.some((module) => module.id === moduleId) &&
+        typeof viewId === "string" &&
+        viewId.length > 0,
+    ),
+  ) as Partial<Record<OpenViewModuleId, string>>;
+}
+
+function fieldLabel(module: OpenViewModule, fieldId: string): string {
+  return module.fields.find((field) => field.id === fieldId)?.label ?? fieldId;
+}
+
+function operatorsForField(field: OpenViewField): FilterOperator[] {
+  if (field.type === "date") {
+    return [
+      "equals",
+      "not-equals",
+      "on-or-after",
+      "on-or-before",
+      "is-empty",
+      "is-not-empty",
+    ];
+  }
+  if (field.type === "number" || field.type === "boolean") {
+    return ["equals", "not-equals", "is-empty", "is-not-empty"];
+  }
+  if (field.type === "select") {
+    return ["equals", "not-equals", "contains", "is-empty", "is-not-empty"];
+  }
+  return [
+    "contains",
+    "equals",
+    "not-equals",
+    "starts-with",
+    "ends-with",
+    "is-empty",
+    "is-not-empty",
+  ];
+}
+
+function inputTypeForField(
+  field: OpenViewField | undefined,
+): "date" | "number" | "text" {
+  if (field?.type === "date") return "date";
+  if (field?.type === "number") return "number";
+  return "text";
+}
+
+function OpenViewLoading() {
+  return (
+    <div
+      className="flex flex-col gap-4"
+      role="status"
+      aria-label="Opening OpenView"
+    >
+      <Skeleton className="h-8 w-52" />
+      <Skeleton className="h-12 w-full" />
+      <Skeleton className="h-64 w-full" />
+    </div>
+  );
+}
 
 export default function SampleOpenView() {
   return (
-    <Suspense fallback={<p>Opening views…</p>}>
+    <Suspense fallback={<OpenViewLoading />}>
       <OpenViewContent />
     </Suspense>
   );
 }
+
 function OpenViewContent() {
+  const pathname = usePathname();
+  const router = useRouter();
   const query = useSearchParams();
-  const recordQuery = query.get("record");
-  const [storedSection, setStoredSection] = useSampleState(
-    "views-section",
-    "Views",
-  );
-  const [records, setRecords] = useSampleState<SampleRecord[]>(
-    "records",
-    INITIAL_RECORDS,
-  );
+  const urlState = parseOpenViewUrl(`${pathname}?${query.toString()}`);
+  const hasSection = query.has("section");
+  const hasModule = query.has("module");
+
+  const [records] = useSampleState<SampleRecord[]>("records", INITIAL_RECORDS);
   const [roles] = useSampleState("access-roles", initialRoles);
   const [people] = useSampleState("access-people", initialPeople);
-  const [storedConfig, setStoredConfig] = useSampleState<ViewConfig>(
+  const [storedSection, setStoredSection] = useSampleState<unknown>(
+    "views-section",
+    "views",
+  );
+  const [storedModule, setStoredModule] = useSampleState<unknown>(
+    "views-module",
+    "service-requests",
+  );
+  const [storedConfig, setStoredConfig] = useSampleState<unknown>(
     "views-current",
-    initialViewConfig,
+    null,
   );
-  const [storedSaved, setSaved] = useSampleState<SavedView[]>(
+  const [rawSavedViews, setRawSavedViews] = useSampleState<unknown>(
     "views-saved",
-    initialSavedViews,
+    [],
   );
-  const saved = normalizeSavedViews(storedSaved);
-  const [defaultId, setDefaultId] = useSampleState("views-default", "");
-  const [storedView, setStoredView] = useSampleState("views-selected", "");
-  const [selectedView, setCurrentView] = useState(defaultId || storedView);
-  const [entryDefault, setEntryDefault] = useState<ViewConfig | null>(
-    () => saved.find((view) => view.id === defaultId) ?? null,
+  const [storedDefault, setStoredDefault] = useSampleState<unknown>(
+    "views-default",
+    "",
   );
-  const config = entryDefault ?? storedConfig;
-  const setConfig = (next: ViewConfig) => {
-    setEntryDefault(null);
+  const [storedDefaultMap, setStoredDefaultMap] = useSampleState<unknown>(
+    "views-defaults",
+    {},
+  );
+  const [storedSelectedView, setStoredSelectedView] = useSampleState<unknown>(
+    "views-selected",
+    "",
+  );
+  const { resetKeys, storageUnavailable } = useSampleStorage();
+  const [dashboardDirty, setDashboardDirty] = useState(false);
+  const [pendingTransition, setPendingTransition] =
+    useState<PendingTransition | null>(null);
+
+  const audienceLookup: AudienceLookup = {
+    roles: roles.map(({ id, name }) => ({ id, name })),
+    identities: people.map(({ id, name }) => ({ id, name })),
+  };
+  const storedSectionValue = sectionFromUnknown(storedSection);
+  const storedModuleValue = moduleIdFromUnknown(storedModule);
+  const section =
+    hasSection || urlState.record ? urlState.section : storedSectionValue;
+  const moduleId =
+    urlState.record && !hasModule
+      ? "service-requests"
+      : hasModule
+        ? urlState.module
+        : storedModuleValue;
+  const selectedModule = getModuleDefinition(moduleId);
+  const savedViews = decodeSavedViews(rawSavedViews, audienceLookup);
+  const defaults = defaultMapFromUnknown(storedDefaultMap);
+  const legacyDefaultId =
+    typeof storedDefault === "string" ? storedDefault : "";
+  const defaultId = defaults[moduleId] ?? legacyDefaultId;
+  const moduleDefault = savedViews.find(
+    (view) => view.id === defaultId && view.moduleId === moduleId,
+  );
+  const storedSelectedId =
+    typeof storedSelectedView === "string" ? storedSelectedView : "";
+  const selectedViewId = urlState.view ?? moduleDefault?.id ?? storedSelectedId;
+  const activeSaved = savedViews.find(
+    (view) => view.id === selectedViewId && view.moduleId === moduleId,
+  );
+  const storedDecodedConfig = sanitizeOpenViewConfig(
+    decodeViewConfig(storedConfig),
+  );
+  const fallbackConfig =
+    storedDecodedConfig.moduleId === moduleId
+      ? storedDecodedConfig
+      : defaultViewConfig(moduleId);
+  const initialConfig = sanitizeOpenViewConfig(
+    activeSaved?.config ?? fallbackConfig,
+  );
+  const configKey = `${moduleId}:${selectedViewId}`;
+  const [draftConfig, setDraftConfig] = useState<ViewConfig>(() =>
+    cloneConfig(initialConfig),
+  );
+  const [draftKey, setDraftKey] = useState(configKey);
+  const config =
+    draftKey === configKey ? draftConfig : cloneConfig(initialConfig);
+
+  const openViewDirty =
+    draftKey === configKey &&
+    !sameConfig(
+      config,
+      activeSaved
+        ? sanitizeOpenViewConfig(activeSaved.config)
+        : defaultViewConfig(moduleId),
+    );
+
+  useEffect(() => {
+    if (draftKey === configKey) return;
+    const next = cloneConfig(initialConfig);
+    setDraftConfig(next);
+    setDraftKey(configKey);
+    setStoredConfig(next);
+  }, [configKey, draftKey, initialConfig, setStoredConfig]);
+
+  const updateUrl = (
+    next: {
+      section?: OpenViewSection;
+      module?: OpenViewModuleId;
+      view?: string;
+      dashboard?: string;
+      record?: string;
+    },
+    options: { replace?: boolean } = {},
+  ) => {
+    const target = serializeOpenViewUrl({
+      section,
+      module: moduleId,
+      view: selectedViewId || undefined,
+      record: urlState.record,
+      ...next,
+    }) as Route;
+    if (options.replace) router.replace(target, { scroll: false });
+    else router.push(target, { scroll: false });
+  };
+
+  const updateConfig = (next: ViewConfig) => {
+    const safe = sanitizeOpenViewConfig(decodeViewConfig(next));
+    setDraftConfig(safe);
+    setDraftKey(configKey);
+    setStoredConfig(safe);
+  };
+
+  const discardOpenViewDraft = () => {
+    const next = sanitizeOpenViewConfig(
+      activeSaved?.config ?? defaultViewConfig(moduleId),
+    );
+    setDraftConfig(cloneConfig(next));
+    setDraftKey(configKey);
     setStoredConfig(next);
   };
-  const setSelectedView = (id: string) => {
-    setCurrentView(id);
-    setStoredView(id);
-  };
-  const [navigation, setNavigation] = useState({
-    query: recordQuery,
-    section: recordQuery ? "Views" : storedSection,
-    selected: recordQuery,
-  });
-  const section =
-    navigation.query === recordQuery
-      ? navigation.section
-      : recordQuery
-        ? "Views"
-        : storedSection;
-  const selected =
-    navigation.query === recordQuery ? navigation.selected : recordQuery;
-  const setSection = (next: string) => {
-    setNavigation({ query: recordQuery, section: next, selected });
+
+  const performSectionChange = (next: OpenViewSection) => {
+    if (next === section) return;
+    if (section === "views" && openViewDirty) discardOpenViewDraft();
+    if (section === "dashboards") setDashboardDirty(false);
     setStoredSection(next);
+    updateUrl({
+      section: next,
+      view: next === "views" ? selectedViewId || undefined : undefined,
+      dashboard:
+        next === "dashboards"
+          ? (query.get("dashboard") ?? undefined)
+          : undefined,
+      record: undefined,
+    });
   };
-  const setSelected = (id: string | null) =>
-    setNavigation({ query: recordQuery, section, selected: id });
-  const [newRecord, setNewRecord] = useState(false);
-  const [draft, setDraft] = useState({
-    title: "",
-    customer: "",
-    status: "Open",
-    assignee: people.find((person) => person.active)?.name ?? "Unassigned",
-    dueDate: "",
-  });
-  const [editing, setEditing] = useState(false);
-  const [name, setName] = useState("");
-  const [audience, setAudience] = useState("Only me");
-  const [message, setMessage] = useState("");
-  const [sharing, setSharing] = useState(false);
-  const [optionsOpen, setOptionsOpen] = useState(false);
-  function change(partial: Partial<ViewConfig>) {
-    setConfig({ ...config, ...partial });
-  }
-  const visible = records
-    .filter(
-      (record) =>
-        `${record.title} ${record.customer}`
-          .toLowerCase()
-          .includes(config.search.toLowerCase()) &&
-        (config.status === "All statuses" || record.status === config.status),
-    )
-    .sort((a, b) =>
-      String(a[config.sort as keyof SampleRecord] ?? "").localeCompare(
-        String(b[config.sort as keyof SampleRecord] ?? ""),
-      ),
+
+  const requestSectionChange = (next: OpenViewSection) => {
+    if (next === section) return;
+    if (section === "views" && openViewDirty) {
+      setPendingTransition({ kind: "section", section: next, source: "view" });
+      return;
+    }
+    if (section === "dashboards" && dashboardDirty) {
+      setPendingTransition({
+        kind: "section",
+        section: next,
+        source: "dashboard",
+      });
+      return;
+    }
+    performSectionChange(next);
+  };
+
+  const performModuleChange = (next: OpenViewModuleId) => {
+    if (next === moduleId) return;
+    const nextDefaultId = defaults[next] ?? legacyDefaultId;
+    const nextDefault = savedViews.find(
+      (view) => view.id === nextDefaultId && view.moduleId === next,
     );
-  const groups =
-    config.group === "None"
-      ? ["All requests"]
-      : [
-          ...new Set(
-            visible.map((record) =>
-              String(record[config.group as keyof SampleRecord]),
-            ),
-          ),
-        ];
-  const inspected = records.find((record) => record.id === selected);
-  const activeSaved = saved.find((view) => view.id === selectedView);
+    const nextSelection = nextDefault?.id ?? "";
+    const nextConfig = sanitizeOpenViewConfig(
+      nextDefault?.config ?? defaultViewConfig(next),
+    );
+    setStoredModule(next);
+    setStoredSelectedView(nextSelection);
+    setStoredConfig(nextConfig);
+    setDraftConfig(nextConfig);
+    setDraftKey(`${next}:${nextSelection}`);
+    updateUrl({
+      module: next,
+      view: nextSelection || undefined,
+      record: undefined,
+      dashboard: undefined,
+    });
+  };
+
+  const requestModuleChange = (next: OpenViewModuleId) => {
+    if (next === moduleId) return;
+    if (section === "views" && openViewDirty) {
+      setPendingTransition({ kind: "module", module: next, source: "view" });
+      return;
+    }
+    performModuleChange(next);
+  };
+
+  const performSavedViewSelection = (id: string) => {
+    if (id === selectedViewId) return;
+    const next = savedViews.find(
+      (view) => view.id === id && view.moduleId === moduleId,
+    );
+    setStoredSelectedView(id);
+    if (next) {
+      const nextConfig = sanitizeOpenViewConfig(cloneConfig(next.config));
+      setDraftConfig(nextConfig);
+      setDraftKey(`${moduleId}:${id}`);
+      setStoredConfig(nextConfig);
+    }
+    updateUrl({ section: "views", view: id || undefined, record: undefined });
+  };
+
+  const requestSavedViewSelection = (id: string) => {
+    if (id === selectedViewId) return;
+    if (section === "views" && openViewDirty) {
+      setPendingTransition({ kind: "saved-view", id, source: "view" });
+      return;
+    }
+    performSavedViewSelection(id);
+  };
+
+  const confirmPendingTransition = () => {
+    const transition = pendingTransition;
+    if (!transition) return;
+    setPendingTransition(null);
+    if (transition.kind === "section") {
+      performSectionChange(transition.section);
+    } else if (transition.kind === "module") {
+      performModuleChange(transition.module);
+    } else {
+      performSavedViewSelection(transition.id);
+    }
+  };
+
+  const rows = getOpenViewRows(moduleId, records);
+  const selectedRows = selectRows(rows, config);
+  const dateRangeLayout =
+    config.layout.kind === "calendar" || config.layout.kind === "timeline";
+  const dateField = dateFieldForLayout(selectedModule, config.layout);
+  const dateRangeRows = dateRangeLayout
+    ? filterRowsByDateRange(
+        selectedRows,
+        dateField,
+        config.layout.dateRange,
+        rows,
+      )
+    : selectedRows;
+  const selectedRecordId = section === "views" ? urlState.record : undefined;
+  const inspected = selectedRecordId
+    ? rows.find((row) => row.id === selectedRecordId)
+    : undefined;
+  const unknownRecord = Boolean(selectedRecordId && !inspected);
+  const isInvalidLink = Boolean(
+    urlState.invalid || (urlState.view && !activeSaved),
+  );
+  const activeFilterCount =
+    config.filters.clauses.length + (config.search.trim() ? 1 : 0);
+  const audienceOptions = [
+    { value: "private", label: "Only me" },
+    { value: "everyone", label: "Everyone" },
+    ...roles.map((role) => ({
+      value: `role:${role.id}`,
+      label: `Role: ${role.name}`,
+    })),
+    ...people
+      .filter((person) => person.active)
+      .map((person) => ({
+        value: `identity:${person.id}`,
+        label: `User: ${person.name}`,
+      })),
+  ];
+
+  const resetOpenView = () => {
+    resetKeys([
+      "views-section",
+      "views-module",
+      "views-current",
+      "views-saved",
+      "views-default",
+      "views-defaults",
+      "views-selected",
+      "views-dashboards",
+      "views-dashboard-selected",
+      "views-dashboard-default",
+      "views-chart",
+      "views-report-draft",
+      "views-report-templates",
+      "views-report-template-selected",
+    ]);
+    router.push("/openview", { scroll: false });
+  };
 
   return (
-    <div className="min-w-0 space-y-4">
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">
-            {section === "Views" ? "Service requests" : section}
-          </h1>
-          <p className="text-muted-foreground mt-2 text-sm">
-            {section === "Views"
-              ? `${visible.length} matching ${visible.length === 1 ? "record" : "records"}`
-              : "Service requests · Sample workspace"}
+    <div className="flex min-w-0 flex-col gap-5">
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-3xl font-semibold tracking-tight">OpenView</h1>
+            <Badge variant="outline">Local preview</Badge>
+          </div>
+          <p className="text-muted-foreground mt-2 max-w-2xl text-sm">
+            Explore operational records, compose reusable views, and prepare
+            sample analytics for your team.
           </p>
         </div>
-        {section === "Views" && (
-          <Button onClick={() => setNewRecord(true)}>
-            <Plus aria-hidden="true" />
-            New record
-          </Button>
-        )}
-      </header>
-      <Dialog open={newRecord} onOpenChange={setNewRecord}>
-        <DialogContent className="max-sm:fixed max-sm:inset-0 max-sm:h-dvh max-sm:max-h-none max-sm:max-w-none max-sm:rounded-none">
-          <DialogTitle>New service request</DialogTitle>
-          <DialogDescription>
-            Create a synthetic request in this sample workspace.
-          </DialogDescription>
-          <form
-            className="mt-5 space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (
-                !draft.title.trim() ||
-                !draft.customer.trim() ||
-                !draft.dueDate
-              )
-                return;
-              const record = {
-                ...draft,
-                title: draft.title.trim(),
-                customer: draft.customer.trim(),
-                id: `sample-sr-${crypto.randomUUID()}`,
-              };
-              setRecords((previous) => [...previous, record]);
-              setConfig({ ...config, search: "", status: "All statuses" });
-              setSelected(record.id);
-              setNewRecord(false);
-              setDraft({
-                title: "",
-                customer: "",
-                status: "Open",
-                assignee: people[0]?.name ?? "Unassigned",
-                dueDate: "",
-              });
-            }}
-          >
-            <label className="block space-y-2 text-sm">
-              Request title
-              <Input
-                required
-                maxLength={120}
-                value={draft.title}
-                onChange={(event) =>
-                  setDraft({ ...draft, title: event.target.value })
-                }
-              />
-            </label>
-            <label className="block space-y-2 text-sm">
-              Request customer
-              <Input
-                required
-                maxLength={120}
-                value={draft.customer}
-                onChange={(event) =>
-                  setDraft({ ...draft, customer: event.target.value })
-                }
-              />
-            </label>
-            <label className="block space-y-2 text-sm">
-              Request status
-              <Select
-                value={draft.status}
-                onValueChange={(status) => setDraft({ ...draft, status })}
-              >
-                {[
-                  "Open",
-                  "In progress",
-                  "Scheduled",
-                  "On hold",
-                  "Completed",
-                ].map((status) => (
-                  <option key={status}>{status}</option>
-                ))}
-              </Select>
-            </label>
-            <label className="block space-y-2 text-sm">
-              Request assignee
-              <Select
-                value={draft.assignee}
-                onValueChange={(assignee) => setDraft({ ...draft, assignee })}
-              >
-                {people
-                  .filter((person) => person.active)
-                  .map((person) => (
-                    <option key={person.id}>{person.name}</option>
-                  ))}
-                <option>Unassigned</option>
-              </Select>
-            </label>
-            <label className="block space-y-2 text-sm">
-              Request due date
-              <Input
-                required
-                type="date"
-                value={draft.dueDate}
-                onChange={(event) =>
-                  setDraft({ ...draft, dueDate: event.target.value })
-                }
-              />
-            </label>
-            <div className="flex gap-2">
-              <Button>Create sample record</Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setNewRecord(false)}
-              >
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-      <nav
-        aria-label="OpenView sections"
-        className="flex gap-5 overflow-x-auto border-b"
-      >
-        {["Views", "Dashboards", "Charts", "Reports"].map((item) => (
-          <button
-            key={item}
-            className={`shrink-0 border-b-2 px-1 py-3 text-sm font-medium ${section === item ? "border-foreground" : "text-muted-foreground hover:text-foreground border-transparent"}`}
-            aria-current={section === item ? "page" : undefined}
-            onClick={() => setSection(item)}
-          >
-            {item}
-          </button>
-        ))}
-      </nav>
-      {section !== "Views" ? (
-        <SampleAnalytics section={section} records={records} />
-      ) : (
-        <>
-          <div className="flex items-center gap-2">
-            <label className="block min-w-0 flex-1 text-xs font-medium">
-              <span className="sr-only">
-                <Search className="size-3" />
-                Search requests
-              </span>
-              <Input
-                aria-label="Search requests"
-                placeholder="Search title or customer…"
-                value={config.search}
-                onChange={(event) => change({ search: event.target.value })}
-              />
-            </label>
-            <Button
-              className="min-h-10 md:hidden"
-              variant="outline"
-              aria-expanded={optionsOpen}
-              onClick={() => setOptionsOpen(!optionsOpen)}
-            >
-              View options
-            </Button>
-          </div>
-          <div
-            className={`${optionsOpen ? "block" : "hidden"} space-y-4 md:block`}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  disabled={!activeSaved}
-                  onClick={() => setSharing(!sharing)}
-                >
-                  Share view
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setEditing(true);
-                    setName(activeSaved?.name ?? "");
-                  }}
-                >
-                  Save view
-                </Button>
-              </div>
-              <div
-                className="order-first flex flex-wrap items-center gap-1"
-                aria-label="View types"
-              >
-                {modes.map(({ name: mode, icon: Icon }) => (
-                  <Button
-                    key={mode}
-                    variant={config.type === mode ? "secondary" : "ghost"}
-                    aria-pressed={config.type === mode}
-                    onClick={() => change({ type: mode })}
-                  >
-                    <Icon />
-                    {mode}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <label className="space-y-1.5 text-xs font-medium">
-                Add filter
-                <Select
-                  aria-label="Status filter"
-                  value={config.status}
-                  onValueChange={(status) => change({ status })}
-                >
-                  {[
-                    "All statuses",
-                    ...new Set(records.map((record) => record.status)),
-                  ].map((status) => (
-                    <option key={status}>{status}</option>
-                  ))}
-                </Select>
-              </label>
-              <label className="space-y-1.5 text-xs font-medium">
-                Sort by
-                <Select
-                  aria-label="Sort by"
-                  value={config.sort}
-                  onValueChange={(sort) => change({ sort })}
-                >
-                  <option value="title">Request</option>
-                  <option value="dueDate">Due date</option>
-                  <option value="customer">Customer</option>
-                  <option value="status">Status</option>
-                </Select>
-              </label>
-              <label className="space-y-1.5 text-xs font-medium">
-                Group by
-                <Select
-                  aria-label="Group by"
-                  value={config.group}
-                  onValueChange={(group) => change({ group })}
-                >
-                  <option>None</option>
-                  <option value="status">Status</option>
-                  <option value="assignee">Assignee</option>
-                  <option value="customer">Customer</option>
-                </Select>
-              </label>
-            </div>
-          </div>
-          {(config.status !== "All statuses" || config.search) && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => change({ status: "All statuses", search: "" })}
-            >
-              <X />
-              Remove filters
-            </Button>
-          )}
-          {saved.length > 0 && (
-            <div
-              className={`${optionsOpen ? "flex" : "hidden"} flex-wrap items-end gap-3 md:flex`}
-            >
-              <label className="min-w-48 space-y-1 text-xs font-medium">
-                Saved view
-                <Select
-                  aria-label="Saved view"
-                  value={selectedView}
-                  onValueChange={(id) => {
-                    const view = saved.find((v) => v.id === id);
-                    if (view) {
-                      setSelectedView(id);
-                      setConfig(view);
-                      setAudience(view.audience);
-                    }
-                  }}
-                >
-                  <option value="">Choose a saved view</option>
-                  {saved.map((view) => (
-                    <option key={view.id} value={view.id}>
-                      {view.name}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <Button
-                variant="ghost"
-                disabled={!activeSaved}
-                onClick={() => {
-                  setDefaultId(selectedView);
-                  setMessage(
-                    `${activeSaved?.name} is the default sample view for Service requests.`,
-                  );
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+          {section === "views" ? (
+            <Field className="w-full sm:w-64">
+              <FieldLabel htmlFor="openview-module">Data source</FieldLabel>
+              <Combobox
+                value={moduleId}
+                onValueChange={(value) => {
+                  if (typeof value === "string")
+                    requestModuleChange(moduleIdFromUnknown(value));
                 }}
+                itemToStringLabel={(value) =>
+                  OPENVIEW_MODULES.find((entry) => entry.id === value)?.name ??
+                  ""
+                }
               >
-                Set as module default
-              </Button>
-              {defaultId && (
-                <span className="text-muted-foreground pb-2 text-xs">
-                  Default: {saved.find((view) => view.id === defaultId)?.name}
-                </span>
-              )}
+                <ComboboxTrigger
+                  id="openview-module"
+                  aria-label="Data source"
+                  className="min-h-11"
+                >
+                  {selectedModule.name}
+                </ComboboxTrigger>
+                <ComboboxContent>
+                  <ComboboxInput
+                    placeholder="Search data sources"
+                    aria-label="Search data sources"
+                    className="min-h-11"
+                  />
+                  <ComboboxList>
+                    {OPENVIEW_MODULES.map((entry) => (
+                      <ComboboxItem
+                        key={entry.id}
+                        value={entry.id}
+                        className="min-h-11"
+                      >
+                        <span className="flex flex-col gap-0.5">
+                          <span>{entry.name}</span>
+                          <span className="text-muted-foreground text-xs">
+                            {entry.description}
+                          </span>
+                        </span>
+                      </ComboboxItem>
+                    ))}
+                    <ComboboxEmpty>No matching data source.</ComboboxEmpty>
+                  </ComboboxList>
+                </ComboboxContent>
+              </Combobox>
+              <FieldDescription>
+                {rows.length} records · {selectedModule.fields.length} fields
+              </FieldDescription>
+            </Field>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary">{selectedModule.name}</Badge>
+              <Badge variant="outline">{rows.length} records</Badge>
             </div>
           )}
-          {editing && (
-            <form
-              className="bg-muted/40 flex flex-wrap items-end gap-3 rounded-xl border p-5"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (!name.trim()) return;
-                const id = `sample-view-${crypto.randomUUID()}`;
-                setSaved([
-                  ...saved,
-                  { ...config, id, name: name.trim(), audience },
-                ]);
-                setSelectedView(id);
-                setEditing(false);
-                setMessage(`“${name.trim()}” saved in this sample workspace.`);
-              }}
-            >
-              <label className="flex-1 space-y-2 text-sm">
-                View name
-                <Input
-                  required
-                  maxLength={80}
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </label>
-              <Button type="submit">Save current view</Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setEditing(false)}
-              >
-                Cancel
-              </Button>
-            </form>
-          )}
-          {sharing && activeSaved && (
-            <form
-              className="flex flex-wrap items-end gap-3 rounded-xl border p-5"
-              onSubmit={(event) => {
-                event.preventDefault();
-                setSaved(
-                  saved.map((view) =>
-                    view.id === selectedView ? { ...view, audience } : view,
-                  ),
-                );
-                setSharing(false);
-                setMessage(
-                  `Sample view shared with ${audience}. No invitation was sent.`,
-                );
-              }}
-            >
-              <label className="min-w-52 space-y-2 text-sm">
-                Share with user or role
-                <Select value={audience} onValueChange={setAudience}>
-                  {[
-                    "Only me",
-                    ...roles.map((role) => `Role: ${role.name}`),
-                    ...people
-                      .filter((person) => person.active)
-                      .map((person) => `User: ${person.name}`),
-                  ].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </Select>
-              </label>
-              <Button>Save sharing</Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setSharing(false)}
-              >
-                Cancel
-              </Button>
-            </form>
-          )}
-          {message && (
-            <p role="status" className="text-muted-foreground text-sm">
-              {message}
-            </p>
-          )}
-          <div
-            className={`grid min-w-0 gap-6 ${inspected ? "xl:grid-cols-[minmax(0,1fr)_300px]" : ""}`}
+        </div>
+      </header>
+
+      <Alert role="note" className="flex items-center gap-2 py-2.5 text-xs">
+        <CircleHelp aria-hidden="true" className="size-4 shrink-0" />
+        <p className="min-w-0">
+          <span className="font-medium">Sample workspace.</span> Synthetic
+          records stay in this tab; audience, refresh, and schedule controls are
+          previews only.
+        </p>
+      </Alert>
+      {storageUnavailable ? (
+        <Alert role="note" variant="warning">
+          Browser storage is unavailable. Your latest changes exist in memory
+          only and may be lost on reload.
+        </Alert>
+      ) : null}
+      {isInvalidLink ? (
+        <Alert
+          role="alert"
+          variant="warning"
+          className="flex flex-wrap items-center justify-between gap-3"
+        >
+          <span>
+            This OpenView link is unavailable or contains unsupported state. You
+            can return to the current workspace.
+          </span>
+          <Button
+            variant="outline"
+            className="min-h-11"
+            onClick={() =>
+              updateUrl(
+                {
+                  view: undefined,
+                  record: undefined,
+                  dashboard: undefined,
+                },
+                { replace: true },
+              )
+            }
           >
-            <div
-              className={`min-w-0 space-y-5 ${inspected ? "hidden xl:block" : ""}`}
-            >
-              {visible.length === 0 ? (
-                <div className="rounded-xl border border-dashed p-12 text-center">
-                  <p className="font-medium">
-                    No requests match these filters.
-                  </p>
-                  <Button
-                    className="mt-4"
-                    variant="outline"
-                    onClick={() =>
-                      change({ search: "", status: "All statuses" })
-                    }
-                  >
-                    Clear filters
-                  </Button>
-                </div>
-              ) : (
-                groups.map((group) => (
-                  <section key={group}>
-                    {config.group !== "None" && (
-                      <h3 className="mb-3 text-sm font-semibold">{group}</h3>
-                    )}
-                    <RecordView
-                      records={
-                        config.group === "None"
-                          ? visible
-                          : visible.filter(
-                              (record) =>
-                                String(
-                                  record[config.group as keyof SampleRecord],
-                                ) === group,
-                            )
-                      }
-                      type={config.type}
-                      onSelect={setSelected}
-                    />
-                  </section>
-                ))
-              )}
-            </div>
-            {inspected && (
-              <aside
-                aria-label="Request detail"
-                className="bg-card self-start rounded-xl border p-6 xl:sticky xl:top-6"
+            Return to workspace
+          </Button>
+        </Alert>
+      ) : null}
+
+      <div className="md:hidden">
+        <Field>
+          <FieldLabel htmlFor="openview-section-mobile">
+            OpenView section
+          </FieldLabel>
+          <NativeSelect
+            id="openview-section-mobile"
+            className="w-full [&_select]:min-h-11"
+            value={section}
+            onChange={(event) =>
+              requestSectionChange(sectionFromUnknown(event.target.value))
+            }
+          >
+            {OPENVIEW_SECTIONS.map((entry) => (
+              <NativeSelectOption key={entry} value={entry}>
+                {sectionLabels[entry]}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </Field>
+      </div>
+      <Tabs
+        value={section}
+        onValueChange={(value) =>
+          requestSectionChange(sectionFromUnknown(value))
+        }
+        className="gap-3"
+      >
+        <nav
+          aria-label="OpenView sections"
+          className="hidden border-b pb-2 md:block"
+        >
+          <TabsList className="grid w-full grid-cols-4 gap-1 sm:inline-flex sm:w-fit">
+            {OPENVIEW_SECTIONS.map((entry) => (
+              <TabsTrigger
+                key={entry}
+                value={entry}
+                type="button"
+                className="min-h-11 min-w-24"
               >
-                <header className="flex items-start justify-between gap-4">
-                  <h2 className="text-xl font-semibold tracking-tight">
-                    {inspected.title}
-                  </h2>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Close request detail"
-                    onClick={() => setSelected(null)}
-                  >
-                    <X />
-                  </Button>
-                </header>
-                <p className="text-muted-foreground mt-2 text-xs break-all">
-                  {inspected.id}
-                </p>
-                <dl className="mt-6 space-y-5 text-sm">
-                  {[
-                    ["Status", inspected.status],
-                    ["Customer", inspected.customer],
-                    ["Assignee", inspected.assignee],
-                    ["Due date", inspected.dueDate],
-                  ].map(([label, value]) => (
-                    <div key={label}>
-                      <dt className="text-muted-foreground mb-1 text-xs">
-                        {label}
-                      </dt>
-                      <dd>{value}</dd>
-                    </div>
-                  ))}
-                </dl>
-                <p className="text-muted-foreground mt-6 border-t pt-5 text-xs">
-                  Synthetic service request shared across the sample workspace.
-                </p>
-              </aside>
-            )}
-          </div>
-        </>
+                {sectionLabels[entry]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </nav>
+      </Tabs>
+
+      {section === "views" ? (
+        <ViewsWorkspace
+          module={selectedModule}
+          rows={rows}
+          config={config}
+          updateConfig={updateConfig}
+          selectedRows={dateRangeRows}
+          matchingRows={selectedRows}
+          activeFilterCount={activeFilterCount}
+          savedViews={savedViews}
+          activeSaved={activeSaved}
+          selectedViewId={selectedViewId}
+          moduleDefault={moduleDefault}
+          defaultId={defaultId}
+          legacyDefaultId={legacyDefaultId}
+          dirty={openViewDirty}
+          audienceOptions={audienceOptions}
+          lookup={audienceLookup}
+          setRawSavedViews={setRawSavedViews}
+          setStoredSelectedView={setStoredSelectedView}
+          setStoredDefault={setStoredDefault}
+          setStoredDefaultMap={setStoredDefaultMap}
+          selectSavedView={requestSavedViewSelection}
+          updateUrl={updateUrl}
+          inspected={inspected}
+          unknownRecord={unknownRecord}
+          onInspect={(id) =>
+            updateUrl({ section: "views", module: moduleId, record: id })
+          }
+          onCloseInspect={() => updateUrl({ record: undefined })}
+          onResetOpenView={resetOpenView}
+        />
+      ) : (
+        <SampleAnalytics
+          section={section}
+          records={records}
+          rows={rows}
+          module={selectedModule}
+          config={config}
+          audienceLookup={audienceLookup}
+          moduleId={moduleId}
+          dashboardUrlId={urlState.dashboard}
+          onDashboardUrlChange={(id) =>
+            updateUrl({
+              section: "dashboards",
+              dashboard: id,
+              view: undefined,
+              record: undefined,
+            })
+          }
+          onDashboardDirtyChange={setDashboardDirty}
+        />
       )}
+      <AlertDialog
+        open={pendingTransition !== null}
+        onOpenChange={(open) => !open && setPendingTransition(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Discard unsaved {pendingTransition?.source ?? "view"} changes?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Your current {pendingTransition?.source ?? "view"} draft has
+              unsaved changes. Continuing will discard them.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setPendingTransition(null)}
+            >
+              Keep editing
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              className="min-h-11"
+              onClick={confirmPendingTransition}
+            >
+              Discard and continue
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
-function RecordView({
-  records,
-  type,
-  onSelect,
-}: {
-  records: SampleRecord[];
-  type: string;
-  onSelect: (id: string) => void;
-}) {
-  if (type === "Table")
-    return (
-      <>
-        <div
-          className="divide-y rounded-xl border md:hidden"
-          aria-label="Service request list"
-        >
-          {records.map((record) => (
-            <button
-              key={record.id}
-              onClick={() => onSelect(record.id)}
-              className="hover:bg-muted/30 block w-full p-4 text-left"
+type ViewsWorkspaceProps = {
+  module: OpenViewModule;
+  rows: OpenViewRow[];
+  config: ViewConfig;
+  updateConfig: (config: ViewConfig) => void;
+  selectedRows: OpenViewRow[];
+  matchingRows: OpenViewRow[];
+  activeFilterCount: number;
+  savedViews: ModelSavedView[];
+  activeSaved?: ModelSavedView;
+  selectedViewId: string;
+  moduleDefault?: ModelSavedView;
+  defaultId: string;
+  legacyDefaultId: string;
+  dirty: boolean;
+  audienceOptions: { value: string; label: string }[];
+  lookup: AudienceLookup;
+  setRawSavedViews: Dispatch<SetStateAction<unknown>>;
+  setStoredSelectedView: Dispatch<SetStateAction<unknown>>;
+  setStoredDefault: Dispatch<SetStateAction<unknown>>;
+  setStoredDefaultMap: Dispatch<SetStateAction<unknown>>;
+  selectSavedView: (id: string) => void;
+  updateUrl: (next: {
+    section?: OpenViewSection;
+    module?: OpenViewModuleId;
+    view?: string;
+    dashboard?: string;
+    record?: string;
+  }) => void;
+  inspected?: OpenViewRow;
+  unknownRecord: boolean;
+  onInspect: (id: string) => void;
+  onCloseInspect: () => void;
+  onResetOpenView: () => void;
+};
+
+function ViewsWorkspace({
+  module,
+  rows,
+  config,
+  updateConfig,
+  selectedRows,
+  matchingRows,
+  activeFilterCount,
+  savedViews,
+  activeSaved,
+  selectedViewId,
+  moduleDefault,
+  defaultId,
+  legacyDefaultId,
+  dirty,
+  audienceOptions,
+  lookup,
+  setRawSavedViews,
+  setStoredSelectedView,
+  setStoredDefault,
+  setStoredDefaultMap,
+  selectSavedView,
+  updateUrl,
+  inspected,
+  unknownRecord,
+  onInspect,
+  onCloseInspect,
+  onResetOpenView,
+}: ViewsWorkspaceProps) {
+  const [filtersOpen, setFiltersOpen] = useState(activeFilterCount > 0);
+  const [layoutOpen, setLayoutOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [pendingAudience, setPendingAudience] = useState<AudienceRef | null>(
+    null,
+  );
+  const [viewName, setViewName] = useState(activeSaved?.name ?? "");
+  const [audience, setAudience] = useState(
+    audienceValue(activeSaved?.audience ?? { kind: "private" }),
+  );
+  const [notice, setNotice] = useState("");
+
+  const change = (partial: Partial<ViewConfig>) => {
+    updateConfig({ ...config, ...partial });
+    setNotice("");
+  };
+  const changeFilters = (filters: FilterGroup) => change({ filters });
+  const changeLayout = (layout: ViewLayout) => change({ layout });
+  const handleAudienceChange = (value: string) => {
+    const nextAudience = audienceFromValue(value, lookup);
+    const currentAudience = audienceFromValue(audience, lookup);
+    if (
+      nextAudience.kind === "everyone" &&
+      currentAudience.kind !== "everyone"
+    ) {
+      setPendingAudience(nextAudience);
+      return;
+    }
+    setAudience(value);
+  };
+  const filterCount = config.filters.clauses.length;
+  const dateRangeLayout =
+    config.layout.kind === "calendar" || config.layout.kind === "timeline";
+  const dateField = dateFieldForLayout(module, config.layout);
+  const dateRangeSupported = dateRangeLayout && Boolean(dateField);
+  const noDateRangeMatches =
+    dateRangeSupported && matchingRows.length > 0 && selectedRows.length === 0;
+  const grouped = groupRows(selectedRows, config.groupBy);
+  const clearNoRows = () => {
+    if (noDateRangeMatches) {
+      change({
+        layout: { ...config.layout, dateRange: "year" },
+      });
+      return;
+    }
+    change({
+      search: "",
+      filters: { ...config.filters, clauses: [] },
+    });
+  };
+  const emptyResults = (
+    <Empty className="min-h-64 border">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <Search aria-hidden="true" />
+        </EmptyMedia>
+        <EmptyTitle>
+          {noDateRangeMatches
+            ? `No records in this ${dateRangeLabel(config.layout.dateRange).toLowerCase()} range`
+            : "No records match these filters"}
+        </EmptyTitle>
+        <EmptyDescription>
+          {noDateRangeMatches
+            ? "Broaden the date range to include more of the matching records."
+            : "Try a broader search or remove one of the active filters."}
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button variant="outline" className="min-h-11" onClick={clearNoRows}>
+          {noDateRangeMatches ? "Show full sample year" : "Clear filters"}
+        </Button>
+      </EmptyContent>
+    </Empty>
+  );
+
+  const saveCurrent = (
+    nextName: string,
+    nextAudience: AudienceRef,
+    existingId?: string,
+  ) => {
+    const cleanName = nextName.trim();
+    if (!cleanName) return;
+    const view: ModelSavedView = {
+      id: existingId ?? createSampleId("sample-view"),
+      name: cleanName.slice(0, 80),
+      moduleId: module.id,
+      audience: nextAudience,
+      config: cloneConfig(config),
+    };
+    setRawSavedViews((previous: unknown) => {
+      const decoded = decodeSavedViews(previous, lookup);
+      return [...decoded.filter((entry) => entry.id !== view.id), view];
+    });
+    setStoredSelectedView(view.id);
+    updateUrl({
+      section: "views",
+      module: module.id,
+      view: view.id,
+      record: undefined,
+    });
+    setSaveOpen(false);
+    setRenameOpen(false);
+    setViewName(view.name);
+    setAudience(audienceValue(view.audience));
+    setNotice(`“${view.name}” is saved in this sample workspace.`);
+  };
+
+  const duplicateView = () => {
+    if (!activeSaved) return;
+    const duplicate: ModelSavedView = {
+      ...activeSaved,
+      id: createSampleId("sample-view"),
+      name: `${activeSaved.name} copy`.slice(0, 80),
+      config: cloneConfig(config),
+    };
+    setRawSavedViews((previous: unknown) => [
+      ...decodeSavedViews(previous, lookup),
+      duplicate,
+    ]);
+    setStoredSelectedView(duplicate.id);
+    updateUrl({
+      section: "views",
+      module: module.id,
+      view: duplicate.id,
+      record: undefined,
+    });
+    setNotice(`“${duplicate.name}” was duplicated.`);
+  };
+
+  const deleteView = () => {
+    if (!activeSaved) return;
+    setRawSavedViews((previous: unknown) =>
+      decodeSavedViews(previous, lookup).filter(
+        (entry) => entry.id !== activeSaved.id,
+      ),
+    );
+    if (defaultId === activeSaved.id) {
+      setStoredDefaultMap((previous: unknown) => {
+        const next = { ...defaultMapFromUnknown(previous) };
+        delete next[module.id];
+        return next;
+      });
+      if (legacyDefaultId === activeSaved.id) setStoredDefault("");
+    }
+    setStoredSelectedView("");
+    updateUrl({
+      section: "views",
+      module: module.id,
+      view: undefined,
+      record: undefined,
+    });
+    setDeleteOpen(false);
+    setNotice(`“${activeSaved.name}” was deleted from this tab.`);
+  };
+
+  const resetDraft = () => {
+    const next = activeSaved?.config ?? defaultViewConfig(module.id);
+    change(cloneConfig(next));
+    setNotice(
+      activeSaved
+        ? `Unsaved changes to “${activeSaved.name}” were reset.`
+        : "The view was reset to its starting configuration.",
+    );
+  };
+
+  return (
+    <div className="flex min-w-0 flex-col gap-4">
+      <section
+        className="flex flex-col gap-4 rounded-[var(--radius)] border p-4 sm:p-5"
+        aria-label="View controls"
+      >
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center">
+            <Field className="min-w-0 flex-1">
+              <FieldLabel htmlFor="openview-search" className="sr-only">
+                Search {module.name}
+              </FieldLabel>
+              <InputGroup className="h-11">
+                <InputGroupAddon>
+                  <Search aria-hidden="true" />
+                </InputGroupAddon>
+                <InputGroupInput
+                  id="openview-search"
+                  className="h-11"
+                  placeholder={`Search ${module.name.toLowerCase()}…`}
+                  value={config.search}
+                  onChange={(event) =>
+                    change({ search: event.target.value.slice(0, 240) })
+                  }
+                />
+                {config.search ? (
+                  <InputGroupAddon align="inline-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-11"
+                      aria-label="Clear search"
+                      onClick={() => change({ search: "" })}
+                    >
+                      <X aria-hidden="true" />
+                    </Button>
+                  </InputGroupAddon>
+                ) : null}
+              </InputGroup>
+            </Field>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              aria-expanded={filtersOpen}
+              onClick={() => setFiltersOpen((open) => !open)}
             >
-              <span className="block text-sm font-medium">{record.title}</span>
-              <span className="text-muted-foreground mt-1 block text-xs">
-                {record.customer}
-              </span>
-              <span className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span className="bg-muted rounded px-2 py-1">
-                  {record.status}
-                </span>
-                <span>{record.assignee}</span>
-              </span>
-              <span className="text-muted-foreground mt-2 block text-xs">
-                Due {record.dueDate}
-              </span>
-            </button>
+              <Filter data-icon="inline-start" aria-hidden="true" /> Filters{" "}
+              {filterCount ? (
+                <Badge variant="secondary">{filterCount}</Badge>
+              ) : null}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              aria-expanded={layoutOpen}
+              onClick={() => setLayoutOpen((open) => !open)}
+            >
+              <SlidersHorizontal data-icon="inline-start" aria-hidden="true" />{" "}
+              View settings
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <SavedViewMenu
+              module={module}
+              savedViews={savedViews}
+              selectedViewId={selectedViewId}
+              moduleDefault={moduleDefault}
+              onSelect={selectSavedView}
+              onCreate={() => {
+                setViewName("");
+                setAudience("private");
+                setSaveOpen(true);
+              }}
+            />
+            {activeSaved && dirty ? (
+              <Button
+                type="button"
+                className="min-h-11"
+                onClick={() =>
+                  saveCurrent(
+                    activeSaved.name,
+                    activeSaved.audience,
+                    activeSaved.id,
+                  )
+                }
+              >
+                <Save data-icon="inline-start" aria-hidden="true" /> Save
+                changes
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => {
+                  setViewName(activeSaved?.name ?? "");
+                  setAudience(
+                    audienceValue(activeSaved?.audience ?? { kind: "private" }),
+                  );
+                  setSaveOpen(true);
+                }}
+              >
+                <Save data-icon="inline-start" aria-hidden="true" /> Save view
+              </Button>
+            )}
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="size-11"
+                    aria-label="More view actions"
+                  />
+                }
+              >
+                <MoreHorizontal aria-hidden="true" />
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-64">
+                <PopoverHeader>
+                  <PopoverTitle>View actions</PopoverTitle>
+                  <PopoverDescription>
+                    Manage this tab-local saved view.
+                  </PopoverDescription>
+                </PopoverHeader>
+                <div className="flex flex-col gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="min-h-11 justify-start"
+                    disabled={!activeSaved}
+                    onClick={() => {
+                      setViewName(activeSaved?.name ?? "");
+                      setRenameOpen(true);
+                    }}
+                  >
+                    Rename saved view
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="min-h-11 justify-start"
+                    disabled={!activeSaved}
+                    onClick={duplicateView}
+                  >
+                    <Copy data-icon="inline-start" aria-hidden="true" />{" "}
+                    Duplicate view
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="min-h-11 justify-start"
+                    disabled={!activeSaved}
+                    onClick={() => setDeleteOpen(true)}
+                  >
+                    <Trash2 data-icon="inline-start" aria-hidden="true" />{" "}
+                    Delete view
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="min-h-11 justify-start"
+                    disabled={!dirty}
+                    onClick={resetDraft}
+                  >
+                    <RotateCcw data-icon="inline-start" aria-hidden="true" />{" "}
+                    Reset changes
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="min-h-11 justify-start"
+                    onClick={() => setResetOpen(true)}
+                  >
+                    Reset OpenView settings
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+        <div className="border-border flex flex-col gap-2 border-t pt-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="-mx-1 overflow-x-auto px-1 pb-1">
+            <ToggleGroup
+              value={[config.layout.kind]}
+              onValueChange={(value) => {
+                const kind = value[0] as ViewLayout["kind"] | undefined;
+                if (kind) changeLayout({ ...config.layout, kind });
+              }}
+              aria-label="Record view"
+              variant="outline"
+              className="w-max min-w-full justify-start"
+            >
+              {layoutMeta.map(({ kind, shortLabel, label, icon: Icon }) => (
+                <ToggleGroupItem
+                  key={kind}
+                  value={kind}
+                  disabled={
+                    (kind === "calendar" || kind === "timeline") &&
+                    !module.fields.some((field) => field.type === "date")
+                  }
+                  className="min-h-11 shrink-0 px-3"
+                  aria-label={`${shortLabel}: ${label}`}
+                >
+                  <Icon aria-hidden="true" />
+                  <span>{shortLabel}</span>
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+          <p className="text-muted-foreground max-w-xl text-sm lg:text-right">
+            <span className="text-foreground font-medium">
+              {layoutLabel(config.layout.kind)}.
+            </span>{" "}
+            {layoutQuestions[config.layout.kind]}
+          </p>
+        </div>
+        {!module.fields.some((field) => field.type === "date") ? (
+          <Alert role="note" variant="warning">
+            Calendar and Gantt are unavailable for {module.name} because it has
+            no date fields.
+          </Alert>
+        ) : null}
+        {activeFilterCount > 0 ? (
+          <div
+            className="flex flex-wrap items-center gap-2"
+            aria-label="Active filters"
+          >
+            <span className="text-muted-foreground text-xs font-medium">
+              Active filters
+            </span>
+            {config.search ? (
+              <Badge variant="outline">Search: {config.search}</Badge>
+            ) : null}
+            {config.filters.clauses.map((clause, index) => (
+              <Badge
+                key={`${clause.field}-${clause.operator}-${index}`}
+                variant="outline"
+                className="gap-1"
+              >
+                {fieldLabel(module, clause.field)}{" "}
+                {operatorLabels[clause.operator]} {clause.value}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-11"
+                  aria-label={`Remove ${fieldLabel(module, clause.field)} filter`}
+                  onClick={() =>
+                    changeFilters({
+                      ...config.filters,
+                      clauses: config.filters.clauses.filter(
+                        (_, clauseIndex) => clauseIndex !== index,
+                      ),
+                    })
+                  }
+                >
+                  <X aria-hidden="true" />
+                </Button>
+              </Badge>
+            ))}
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11"
+              onClick={() =>
+                change({
+                  search: "",
+                  filters: { ...config.filters, clauses: [] },
+                })
+              }
+            >
+              Clear all
+            </Button>
+          </div>
+        ) : null}
+        <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
+          <CollapsibleContent className="flex flex-col gap-4 border-t pt-4">
+            <FilterBuilder
+              module={module}
+              filters={config.filters}
+              onChange={changeFilters}
+            />
+            <SortBuilder
+              module={module}
+              sorts={config.sorts}
+              onChange={(sorts) => change({ sorts })}
+            />
+            <Field className="max-w-sm">
+              <FieldLabel htmlFor="openview-group-by">
+                Group records by
+              </FieldLabel>
+              <Select
+                id="openview-group-by"
+                className="min-h-11"
+                value={config.groupBy ?? "none"}
+                onValueChange={(value) =>
+                  change({ groupBy: value === "none" ? null : value })
+                }
+              >
+                <option value="none">No grouping</option>
+                {module.fields.map((field) => (
+                  <option key={field.id} value={field.id}>
+                    {field.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </CollapsibleContent>
+        </Collapsible>
+        <Collapsible open={layoutOpen} onOpenChange={setLayoutOpen}>
+          <CollapsibleContent className="flex flex-col gap-5 border-t pt-4">
+            <LayoutBuilder
+              module={module}
+              layout={config.layout}
+              groupBy={config.groupBy}
+              onGroupByChange={(groupBy) => change({ groupBy })}
+              onChange={changeLayout}
+            />
+          </CollapsibleContent>
+        </Collapsible>
+      </section>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary">
+            {selectedRows.length} of {rows.length} records
+          </Badge>
+          {dateRangeSupported ? (
+            <Badge variant="outline">
+              {dateRangeLabel(config.layout.dateRange)} date window
+            </Badge>
+          ) : null}
+          {config.groupBy ? (
+            <Badge variant="outline">
+              <Group data-icon="inline-start" aria-hidden="true" /> Grouped by{" "}
+              {fieldLabel(module, config.groupBy)}
+            </Badge>
+          ) : null}
+          {activeSaved ? (
+            <>
+              <Badge variant="outline">{activeSaved.name}</Badge>
+              <Badge
+                variant={
+                  isUnresolvedAudience(activeSaved.audience)
+                    ? "warning"
+                    : "outline"
+                }
+              >
+                Audience preview: {audienceLabel(activeSaved.audience, lookup)}
+              </Badge>
+            </>
+          ) : (
+            <Badge variant="outline">Unsaved view</Badge>
+          )}
+          {dirty ? <Badge variant="outline">Unsaved changes</Badge> : null}
+          {moduleDefault ? (
+            <Badge variant="outline">Module default</Badge>
+          ) : null}
+        </div>
+        {moduleDefault ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11"
+            onClick={() => {
+              setStoredDefaultMap((previous: unknown) => {
+                const next = { ...defaultMapFromUnknown(previous) };
+                delete next[module.id];
+                return next;
+              });
+              if (legacyDefaultId === moduleDefault.id) setStoredDefault("");
+              setNotice(
+                `“${moduleDefault.name}” is no longer the default for ${module.name}.`,
+              );
+            }}
+          >
+            Unset module default
+          </Button>
+        ) : activeSaved ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11"
+            onClick={() => {
+              setStoredDefaultMap((previous: unknown) => ({
+                ...defaultMapFromUnknown(previous),
+                [module.id]: activeSaved.id,
+              }));
+              setNotice(
+                `“${activeSaved.name}” is now the default for ${module.name}.`,
+              );
+            }}
+          >
+            Set as module default
+          </Button>
+        ) : null}
+      </div>
+      {notice ? (
+        <Alert role="status" variant="success">
+          {notice}
+        </Alert>
+      ) : null}
+      <OperationalContextBand
+        module={module}
+        layout={config.layout}
+        rows={selectedRows}
+      />
+      {unknownRecord ? (
+        <Empty className="min-h-56 border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Link2 aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle>Record unavailable</EmptyTitle>
+            <EmptyDescription>
+              This record link does not belong to the selected sample data
+              source.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              onClick={onCloseInspect}
+            >
+              Return to records
+            </Button>
+          </EmptyContent>
+        </Empty>
+      ) : inspected ? (
+        <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]">
+          {selectedRows.length > 0 ? (
+            <RecordResults
+              module={module}
+              grouped={grouped}
+              layout={config.layout}
+              groupBy={config.groupBy}
+              onInspect={onInspect}
+            />
+          ) : (
+            emptyResults
+          )}
+          <RecordInspector
+            module={module}
+            rows={selectedRows}
+            inspected={inspected}
+            onClose={onCloseInspect}
+            onNavigate={onInspect}
+          />
+        </div>
+      ) : selectedRows.length === 0 ? (
+        emptyResults
+      ) : (
+        <RecordResults
+          module={module}
+          grouped={grouped}
+          layout={config.layout}
+          groupBy={config.groupBy}
+          onInspect={onInspect}
+        />
+      )}
+      <SaveViewDialog
+        open={saveOpen}
+        onOpenChange={setSaveOpen}
+        name={viewName}
+        onNameChange={setViewName}
+        audience={audience}
+        onAudienceChange={handleAudienceChange}
+        options={audienceOptions}
+        description={
+          activeSaved
+            ? "Update this saved view's configuration and audience preview."
+            : "Save this configuration for quick reuse in this tab."
+        }
+        submitLabel={activeSaved ? "Update view" : "Save view"}
+        onSubmit={() =>
+          saveCurrent(
+            viewName,
+            audienceFromValue(audience, lookup),
+            activeSaved?.id,
+          )
+        }
+      />
+      <AlertDialog
+        open={pendingAudience !== null}
+        onOpenChange={(open) => !open && setPendingAudience(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Preview sharing with everyone?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This sample setting demonstrates a wider audience. It does not
+              grant access, send invitations, or publish this view.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setPendingAudience(null)}
+            >
+              Not now
+            </Button>
+            <Button
+              type="button"
+              className="min-h-11"
+              onClick={() => {
+                if (pendingAudience)
+                  setAudience(audienceValue(pendingAudience));
+                setPendingAudience(null);
+              }}
+            >
+              Use Everyone preview
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename saved view</DialogTitle>
+            <DialogDescription>
+              The name is stored locally with this sample workspace.
+            </DialogDescription>
+          </DialogHeader>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="openview-rename">View name</FieldLabel>
+              <Input
+                id="openview-rename"
+                className="min-h-11"
+                maxLength={80}
+                value={viewName}
+                onChange={(event) => setViewName(event.target.value)}
+              />
+            </Field>
+          </FieldGroup>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setRenameOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="min-h-11"
+              onClick={() =>
+                activeSaved &&
+                saveCurrent(viewName, activeSaved.audience, activeSaved.id)
+              }
+            >
+              Rename view
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this saved view?</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{activeSaved?.name}” will be removed from this tab. This does not
+              delete any records.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setDeleteOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              className="min-h-11"
+              onClick={deleteView}
+            >
+              Delete view
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset OpenView settings?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes saved views and restores this tab to the default
+              OpenView configuration. Records are not changed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setResetOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              className="min-h-11"
+              onClick={() => {
+                setResetOpen(false);
+                onResetOpenView();
+              }}
+            >
+              Reset OpenView
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+function SavedViewMenu({
+  module,
+  savedViews,
+  selectedViewId,
+  moduleDefault,
+  onSelect,
+  onCreate,
+}: {
+  module: OpenViewModule;
+  savedViews: ModelSavedView[];
+  selectedViewId: string;
+  moduleDefault?: ModelSavedView;
+  onSelect: (id: string) => void;
+  onCreate: () => void;
+}) {
+  const moduleViews = savedViews.filter((view) => view.moduleId === module.id);
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <Field className="min-w-0 sm:min-w-48">
+        <FieldLabel htmlFor="openview-saved-view" className="sr-only">
+          Saved view
+        </FieldLabel>
+        <Select
+          id="openview-saved-view"
+          className="min-h-11"
+          value={selectedViewId}
+          onValueChange={onSelect}
+          aria-label="Saved view"
+        >
+          <option value="">Unsaved view</option>
+          {moduleViews.map((view) => (
+            <option key={view.id} value={view.id}>
+              {view.name}
+              {view.id === moduleDefault?.id ? " · default" : ""}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        className="size-11"
+        aria-label="Create saved view"
+        onClick={onCreate}
+      >
+        <Plus aria-hidden="true" />
+      </Button>
+    </div>
+  );
+}
+
+function OperationalContextBand({
+  module,
+  layout,
+  rows,
+}: {
+  module: OpenViewModule;
+  layout: ViewLayout;
+  rows: OpenViewRow[];
+}) {
+  const summary = summarizeOpenViewOperationalRows(rows, module.id);
+  const profile = getOpenViewOperationalProfile(module.id);
+  const layoutTitle = layoutLabel(layout.kind);
+  const facts = [
+    { label: "Visible", value: summary.total },
+    { label: "Needs attention", value: summary.needsAttention },
+    {
+      label: "Blocked / overdue / due soon",
+      value: `${summary.blocked} / ${summary.overdue} / ${summary.dueSoon}`,
+    },
+    { label: "High priority", value: summary.highPriority },
+  ];
+
+  return (
+    <section
+      className="border-y py-3"
+      aria-labelledby="openview-operational-context"
+    >
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <h2
+            id="openview-operational-context"
+            className="text-base font-semibold"
+          >
+            {layoutTitle}
+          </h2>
+          <p className="text-muted-foreground mt-1 max-w-3xl text-sm">
+            {layoutQuestions[layout.kind]} Showing {module.name.toLowerCase()}{" "}
+            by {profile.dateMeaning.toLocaleLowerCase()}.
+          </p>
+        </div>
+        <p className="text-muted-foreground shrink-0 text-xs">
+          Sample snapshot: {displayDate(summary.snapshotDate)} ·{" "}
+          {summary.timezone}
+        </p>
+      </div>
+      <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-sm">
+        {facts.map((fact) => (
+          <div key={fact.label} className="flex items-baseline gap-1.5">
+            <dt className="text-muted-foreground">{fact.label}</dt>
+            <dd className="font-semibold tabular-nums">{fact.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function FilterBuilder({
+  module,
+  filters,
+  onChange,
+}: {
+  module: OpenViewModule;
+  filters: FilterGroup;
+  onChange: (filters: FilterGroup) => void;
+}) {
+  const updateClause = (index: number, patch: Partial<FilterClause>) => {
+    const current = filters.clauses[index];
+    if (!current) return;
+    const nextField = patch.field
+      ? module.fields.find((field) => field.id === patch.field)
+      : module.fields.find((field) => field.id === current.field);
+    const allowedOperators = nextField
+      ? operatorsForField(nextField)
+      : operatorsForField(
+          module.fields[0] ?? { id: "", label: "", type: "text" },
+        );
+    const nextOperator = patch.operator ?? current.operator;
+    onChange({
+      ...filters,
+      clauses: filters.clauses.map((clause, clauseIndex) =>
+        clauseIndex === index
+          ? {
+              ...clause,
+              ...patch,
+              operator: allowedOperators.includes(nextOperator)
+                ? nextOperator
+                : (allowedOperators[0] ?? "contains"),
+              value:
+                patch.field && !allowedOperators.includes(current.operator)
+                  ? ""
+                  : clause.value,
+            }
+          : clause,
+      ),
+    });
+  };
+  const addClause = () => {
+    const field = module.fields[0];
+    if (!field || filters.clauses.length >= 8) return;
+    onChange({
+      ...filters,
+      clauses: [
+        ...filters.clauses,
+        {
+          field: field.id,
+          operator: field.type === "date" ? "on-or-after" : "contains",
+          value: "",
+        },
+      ],
+    });
+  };
+  return (
+    <FieldSet>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <FieldLegend>Filters</FieldLegend>
+          <p className="text-muted-foreground text-xs">
+            Match records with up to eight conditions.
+          </p>
+        </div>
+        <ToggleGroup
+          value={[filters.logic]}
+          onValueChange={(value) => {
+            const logic = value[0];
+            if (logic === "and" || logic === "or")
+              onChange({ ...filters, logic });
+          }}
+          variant="outline"
+          aria-label="Filter matching logic"
+        >
+          <ToggleGroupItem value="and" className="min-h-11">
+            Match all
+          </ToggleGroupItem>
+          <ToggleGroupItem value="or" className="min-h-11">
+            Match any
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      {filters.clauses.length === 0 ? (
+        <Empty className="min-h-28 border">
+          <EmptyHeader>
+            <EmptyTitle>No filters yet</EmptyTitle>
+            <EmptyDescription>
+              Add conditions to narrow the records.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {filters.clauses.map((clause, index) => (
+            <div
+              key={`${index}-${clause.field}`}
+              className="grid gap-3 rounded-[var(--radius)] border p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end"
+            >
+              <Field>
+                <FieldLabel htmlFor={`openview-filter-field-${index}`}>
+                  Field {index + 1}
+                </FieldLabel>
+                <Select
+                  id={`openview-filter-field-${index}`}
+                  className="min-h-11"
+                  value={clause.field}
+                  onValueChange={(field) => updateClause(index, { field })}
+                >
+                  {module.fields.map((field) => (
+                    <option key={field.id} value={field.id}>
+                      {field.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`openview-filter-operator-${index}`}>
+                  Condition
+                </FieldLabel>
+                <Select
+                  id={`openview-filter-operator-${index}`}
+                  className="min-h-11"
+                  value={clause.operator}
+                  onValueChange={(operator) =>
+                    updateClause(index, {
+                      operator: operator as FilterClause["operator"],
+                    })
+                  }
+                >
+                  {operatorsForField(
+                    module.fields.find((field) => field.id === clause.field) ??
+                      module.fields[0] ?? { id: "", label: "", type: "text" },
+                  ).map((operator) => (
+                    <option key={operator} value={operator}>
+                      {operatorLabels[operator]}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field
+                data-disabled={
+                  clause.operator === "is-empty" ||
+                  clause.operator === "is-not-empty"
+                }
+              >
+                <FieldLabel htmlFor={`openview-filter-value-${index}`}>
+                  Value
+                </FieldLabel>
+                <Input
+                  id={`openview-filter-value-${index}`}
+                  className="min-h-11"
+                  type={inputTypeForField(
+                    module.fields.find((field) => field.id === clause.field),
+                  )}
+                  value={clause.value}
+                  disabled={
+                    clause.operator === "is-empty" ||
+                    clause.operator === "is-not-empty"
+                  }
+                  placeholder={
+                    clause.operator === "is-empty" ||
+                    clause.operator === "is-not-empty"
+                      ? "Not needed"
+                      : "Enter a value"
+                  }
+                  onChange={(event) =>
+                    updateClause(index, {
+                      value: event.target.value.slice(0, 240),
+                    })
+                  }
+                />
+              </Field>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="size-11"
+                aria-label={`Remove filter ${index + 1}`}
+                onClick={() =>
+                  onChange({
+                    ...filters,
+                    clauses: filters.clauses.filter(
+                      (_, clauseIndex) => clauseIndex !== index,
+                    ),
+                  })
+                }
+              >
+                <X aria-hidden="true" />
+              </Button>
+            </div>
           ))}
         </div>
-        <div className="hidden overflow-x-auto rounded-xl border md:block">
-          <table className="w-full min-w-[650px] text-left text-sm">
-            <thead className="bg-muted/40 text-muted-foreground text-xs">
-              <tr>
-                {["Request", "Customer", "Status", "Assignee", "Due date"].map(
-                  (title) => (
-                    <th key={title} className="px-4 py-3 font-medium">
-                      {title}
-                    </th>
-                  ),
-                )}
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {records.map((record) => (
-                <tr key={record.id} className="hover:bg-muted/40">
-                  <td className="px-4 py-4">
-                    <button
-                      className="text-left font-medium hover:underline"
-                      onClick={() => onSelect(record.id)}
-                    >
-                      {record.title}
-                    </button>
-                  </td>
-                  <td className="text-muted-foreground px-4 py-4">
-                    {record.customer}
-                  </td>
-                  <td className="px-4 py-4">
-                    <span className="bg-muted rounded px-2 py-1 text-xs whitespace-nowrap">
-                      {record.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-4">{record.assignee}</td>
-                  <td className="text-muted-foreground px-4 py-4 whitespace-nowrap">
-                    {record.dueDate}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </>
+      )}
+      <Button
+        type="button"
+        variant="outline"
+        className="min-h-11 self-start"
+        disabled={filters.clauses.length >= 8}
+        onClick={addClause}
+      >
+        <Plus data-icon="inline-start" aria-hidden="true" /> Add filter{" "}
+        {filters.clauses.length >= 8 ? "(limit reached)" : ""}
+      </Button>
+    </FieldSet>
+  );
+}
+
+function SortBuilder({
+  module,
+  sorts,
+  onChange,
+}: {
+  module: OpenViewModule;
+  sorts: SortRule[];
+  onChange: (sorts: SortRule[]) => void;
+}) {
+  const addSort = () => {
+    if (sorts.length >= 3) return;
+    const unused = module.fields.find(
+      (field) => !sorts.some((sort) => sort.field === field.id),
     );
-  if (type === "Kanban")
-    return (
-      <div className="grid gap-4 md:grid-cols-3">
-        {[...new Set(records.map((record) => record.status))].map((status) => (
-          <div key={status} className="bg-muted/40 rounded-xl p-4">
-            <h3 className="mb-4 flex justify-between text-sm font-medium">
-              {status}
-              <span className="text-muted-foreground">
-                {records.filter((record) => record.status === status).length}
-              </span>
-            </h3>
-            {records
-              .filter((record) => record.status === status)
-              .map((record) => (
-                <button
-                  key={record.id}
-                  onClick={() => onSelect(record.id)}
-                  className="bg-card hover:border-foreground/40 mb-3 block w-full rounded-lg border p-4 text-left text-sm"
-                >
-                  <strong className="font-medium">{record.title}</strong>
-                  <span className="text-muted-foreground mt-3 block text-xs">
-                    {record.assignee} · {record.dueDate}
-                  </span>
-                </button>
-              ))}
+    if (unused) onChange([...sorts, { field: unused.id, direction: "asc" }]);
+  };
+  return (
+    <FieldSet>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <FieldLegend>Sort order</FieldLegend>
+          <p className="text-muted-foreground text-xs">
+            The first rule has the highest priority.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          disabled={sorts.length >= 3}
+          onClick={addSort}
+        >
+          <Plus data-icon="inline-start" aria-hidden="true" /> Add sort
+        </Button>
+      </div>
+      {sorts.length === 0 ? (
+        <p className="text-muted-foreground text-sm">
+          Records keep their source order.
+        </p>
+      ) : null}
+      <div className="flex flex-col gap-3">
+        {sorts.map((sort, index) => (
+          <div
+            key={`${index}-${sort.field}`}
+            className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto] sm:items-end"
+          >
+            <Field>
+              <FieldLabel htmlFor={`openview-sort-field-${index}`}>
+                Sort {index + 1} by
+              </FieldLabel>
+              <Select
+                id={`openview-sort-field-${index}`}
+                className="min-h-11"
+                value={sort.field}
+                onValueChange={(field) =>
+                  onChange(
+                    sorts.map((entry, entryIndex) =>
+                      entryIndex === index ? { ...entry, field } : entry,
+                    ),
+                  )
+                }
+              >
+                {module.fields.map((field) => (
+                  <option key={field.id} value={field.id}>
+                    {field.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`openview-sort-direction-${index}`}>
+                Direction
+              </FieldLabel>
+              <Select
+                id={`openview-sort-direction-${index}`}
+                className="min-h-11"
+                value={sort.direction}
+                onValueChange={(direction) =>
+                  onChange(
+                    sorts.map((entry, entryIndex) =>
+                      entryIndex === index
+                        ? {
+                            ...entry,
+                            direction: direction as SortRule["direction"],
+                          }
+                        : entry,
+                    ),
+                  )
+                }
+              >
+                <option value="asc">Ascending (A → Z)</option>
+                <option value="desc">Descending (Z → A)</option>
+              </Select>
+            </Field>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="size-11"
+              aria-label={`Remove sort ${index + 1}`}
+              onClick={() =>
+                onChange(sorts.filter((_, entryIndex) => entryIndex !== index))
+              }
+            >
+              <X aria-hidden="true" />
+            </Button>
           </div>
         ))}
       </div>
-    );
-  if (type === "Calendar")
-    return (
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {[...new Set(records.map((record) => record.dueDate))]
-          .sort()
-          .map((date) => (
-            <section key={date} className="min-h-40 rounded-xl border p-4">
-              <h3 className="mb-4 text-sm font-semibold">
-                {date || "Unscheduled"}
-              </h3>
-              {records
-                .filter((record) => record.dueDate === date)
-                .map((record) => (
-                  <button
-                    key={record.id}
-                    className="bg-muted mb-2 block w-full rounded p-3 text-left text-sm hover:underline"
-                    onClick={() => onSelect(record.id)}
-                  >
-                    {record.title}
-                  </button>
-                ))}
-            </section>
-          ))}
-      </div>
-    );
-  if (type === "Timeline")
-    return (
-      <ol className="border-border ml-3 border-l-2">
-        {[...records]
-          .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
-          .map((record) => (
-            <li key={record.id} className="relative pb-6 pl-6">
-              <span className="bg-foreground absolute top-2 -left-[5px] size-2 rounded-full" />
-              <p className="text-muted-foreground mb-2 text-xs">
-                {record.dueDate}
-              </p>
-              <button
-                onClick={() => onSelect(record.id)}
-                className="bg-card hover:bg-muted w-full rounded-lg border p-4 text-left text-sm"
-              >
-                {record.title}
-                <span className="text-muted-foreground mt-2 block text-xs">
-                  {record.assignee} · {record.status}
-                </span>
-              </button>
-            </li>
-          ))}
-      </ol>
-    );
+    </FieldSet>
+  );
+}
+
+function LayoutBuilder({
+  module,
+  layout,
+  groupBy,
+  onGroupByChange,
+  onChange,
+}: {
+  module: OpenViewModule;
+  layout: ViewLayout;
+  groupBy: string | null;
+  onGroupByChange: (groupBy: string | null) => void;
+  onChange: (layout: ViewLayout) => void;
+}) {
+  const update = (partial: Partial<ViewLayout>) =>
+    onChange({ ...layout, ...partial });
+  const visibleColumns = layout.columns.flatMap((fieldId) => {
+    const field = module.fields.find((candidate) => candidate.id === fieldId);
+    return field ? [field] : [];
+  });
+  const visibleColumnIds = visibleColumns.map((field) => field.id);
+  const orderedFields = [
+    ...visibleColumns,
+    ...module.fields.filter((field) => !visibleColumnIds.includes(field.id)),
+  ];
+  const moveColumn = (fieldId: string, direction: -1 | 1) => {
+    const index = visibleColumnIds.indexOf(fieldId);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= visibleColumnIds.length)
+      return;
+    const columns = [...layout.columns];
+    const sourceIndex = columns.indexOf(visibleColumnIds[index]);
+    const targetIndex = columns.indexOf(visibleColumnIds[nextIndex]);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    [columns[sourceIndex], columns[targetIndex]] = [
+      columns[targetIndex],
+      columns[sourceIndex],
+    ];
+    update({ columns });
+  };
+  const dateFields = module.fields.filter((field) => field.type === "date");
   return (
-    <div
-      className={`grid gap-4 ${type === "Gallery" ? "sm:grid-cols-2 xl:grid-cols-3" : "sm:grid-cols-2"}`}
-    >
-      {records.map((record, index) => (
-        <button
-          key={record.id}
-          onClick={() => onSelect(record.id)}
-          className="bg-card hover:border-foreground/40 overflow-hidden rounded-xl border text-left"
-        >
-          {type === "Gallery" && (
-            <div
-              className="bg-muted text-muted-foreground flex h-36 items-center justify-center text-4xl font-light"
-              aria-hidden="true"
-            >
-              {String(index + 1).padStart(2, "0")}
-            </div>
-          )}
-          <div className="p-5">
-            <span className="text-muted-foreground text-xs">
-              {record.status} / {record.dueDate}
-            </span>
-            <h3 className="mt-3 font-medium">{record.title}</h3>
-            <p className="text-muted-foreground mt-1 text-sm">
-              {record.customer}
-            </p>
-            <p className="mt-5 text-xs">{record.assignee}</p>
+    <div className="grid gap-5 lg:grid-cols-2">
+      {layout.kind === "table" ? (
+        <FieldSet>
+          <FieldLegend>Visible columns and order</FieldLegend>
+          <Field>
+            <FieldDescription>
+              Use the arrows to set the order shown in the table. Pin one column
+              to keep it visible while scrolling horizontally.
+            </FieldDescription>
+          </Field>
+          <div className="flex flex-col gap-2">
+            {orderedFields.map((field) => {
+              const checked = layout.columns.includes(field.id);
+              const index = visibleColumnIds.indexOf(field.id);
+              return (
+                <div
+                  key={field.id}
+                  className="flex items-center justify-between gap-3 rounded-[var(--radius)] border p-2"
+                >
+                  <Field className="min-h-11 flex-1 flex-row items-center gap-3">
+                    <Checkbox
+                      id={`openview-column-${field.id}`}
+                      checked={checked}
+                      onCheckedChange={(next) => {
+                        if (!next && layout.columns.length <= 1) return;
+                        update({
+                          columns: next
+                            ? [...layout.columns, field.id]
+                            : layout.columns.filter((id) => id !== field.id),
+                          pinnedColumns: next
+                            ? layout.pinnedColumns
+                            : layout.pinnedColumns.filter(
+                                (id) => id !== field.id,
+                              ),
+                        });
+                      }}
+                    />
+                    <FieldLabel
+                      htmlFor={`openview-column-${field.id}`}
+                      className="font-normal"
+                    >
+                      {field.label}
+                    </FieldLabel>
+                  </Field>
+                  <Field className="min-h-11 flex-row items-center gap-2">
+                    <Checkbox
+                      id={`openview-pin-${field.id}`}
+                      checked={layout.pinnedColumns.includes(field.id)}
+                      disabled={!checked}
+                      onCheckedChange={(next) =>
+                        update({
+                          pinnedColumns: next ? [field.id] : [],
+                        })
+                      }
+                    />
+                    <FieldLabel
+                      htmlFor={`openview-pin-${field.id}`}
+                      className="font-normal"
+                    >
+                      Pin
+                    </FieldLabel>
+                  </Field>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-11"
+                      disabled={!checked || index <= 0}
+                      aria-label={`Move ${field.label} up`}
+                      onClick={() => moveColumn(field.id, -1)}
+                    >
+                      <ArrowUp aria-hidden="true" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-11"
+                      disabled={!checked || index === visibleColumns.length - 1}
+                      aria-label={`Move ${field.label} down`}
+                      onClick={() => moveColumn(field.id, 1)}
+                    >
+                      <ArrowDown aria-hidden="true" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        </button>
+        </FieldSet>
+      ) : (
+        <FieldSet>
+          <FieldLegend>Card content</FieldLegend>
+          <Field>
+            <FieldDescription>
+              Choose the most useful fields for this layout.
+            </FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="openview-layout-primary">
+              Primary field
+            </FieldLabel>
+            <Select
+              id="openview-layout-primary"
+              className="min-h-11"
+              value={layout.primaryField ?? module.primaryField}
+              onValueChange={(primaryField) => update({ primaryField })}
+            >
+              {module.fields.map((field) => (
+                <option key={field.id} value={field.id}>
+                  {field.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="openview-layout-secondary">
+              Secondary field
+            </FieldLabel>
+            <Select
+              id="openview-layout-secondary"
+              className="min-h-11"
+              value={
+                layout.secondaryField ??
+                module.fields[1]?.id ??
+                module.primaryField
+              }
+              onValueChange={(secondaryField) => update({ secondaryField })}
+            >
+              {module.fields.map((field) => (
+                <option key={field.id} value={field.id}>
+                  {field.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {layout.kind === "grid" || layout.kind === "gallery" ? (
+            <Field>
+              <FieldLabel>Card size</FieldLabel>
+              <ToggleGroup
+                value={[layout.cardSize]}
+                onValueChange={(value) => {
+                  const cardSize = value[0];
+                  if (cardSize === "comfortable" || cardSize === "compact")
+                    update({ cardSize });
+                }}
+                variant="outline"
+                aria-label="Card size"
+              >
+                <ToggleGroupItem value="comfortable" className="min-h-11">
+                  Comfortable
+                </ToggleGroupItem>
+                <ToggleGroupItem value="compact" className="min-h-11">
+                  Compact
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </Field>
+          ) : null}
+          {layout.kind === "kanban" ? (
+            <Field>
+              <FieldLabel htmlFor="openview-kanban-group">
+                Kanban lanes
+              </FieldLabel>
+              <Select
+                id="openview-kanban-group"
+                className="min-h-11"
+                value={groupBy ?? "status"}
+                onValueChange={(value) =>
+                  onGroupByChange(value === "none" ? null : value)
+                }
+              >
+                <option value="none">No lanes</option>
+                {module.fields.map((field) => (
+                  <option key={field.id} value={field.id}>
+                    {field.label}
+                  </option>
+                ))}
+              </Select>
+              <FieldDescription>
+                Choose the field that creates each lane.
+              </FieldDescription>
+            </Field>
+          ) : null}
+        </FieldSet>
+      )}
+      <FieldSet>
+        <FieldLegend>Presentation</FieldLegend>
+        <Field className="min-h-11 flex-row items-center justify-between gap-3">
+          <div className="flex flex-col gap-1">
+            <FieldLabel htmlFor="openview-wrap">Wrap long text</FieldLabel>
+            <FieldDescription>
+              Keep full values visible when space is tight.
+            </FieldDescription>
+          </div>
+          <Checkbox
+            id="openview-wrap"
+            checked={layout.wrap}
+            onCheckedChange={(wrap) => update({ wrap: Boolean(wrap) })}
+          />
+        </Field>
+        {layout.kind === "table" ? (
+          <Field>
+            <FieldLabel>Row density</FieldLabel>
+            <ToggleGroup
+              value={[layout.density]}
+              onValueChange={(value) => {
+                const density = value[0];
+                if (density === "comfortable" || density === "compact")
+                  update({ density });
+              }}
+              variant="outline"
+              aria-label="Row density"
+            >
+              <ToggleGroupItem value="comfortable" className="min-h-11">
+                Comfortable
+              </ToggleGroupItem>
+              <ToggleGroupItem value="compact" className="min-h-11">
+                Compact
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </Field>
+        ) : null}
+        {layout.kind === "calendar" || layout.kind === "timeline" ? (
+          dateFields.length ? (
+            <>
+              <Field>
+                <FieldLabel htmlFor="openview-date-field">
+                  Date field
+                </FieldLabel>
+                <Select
+                  id="openview-date-field"
+                  className="min-h-11"
+                  value={
+                    dateFieldForLayout(module, layout) ??
+                    dateFields[0]?.id ??
+                    ""
+                  }
+                  onValueChange={(dateField) => {
+                    if (dateFields.some((field) => field.id === dateField))
+                      update({ dateField });
+                  }}
+                >
+                  {dateFields.map((field) => (
+                    <option key={field.id} value={field.id}>
+                      {field.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel>
+                  {layout.kind === "timeline"
+                    ? "Gantt density"
+                    : "Calendar view"}
+                </FieldLabel>
+                <ToggleGroup
+                  value={[layout.scale ?? "month"]}
+                  onValueChange={(value) => {
+                    const scale = value[0];
+                    if (scale === "month" || scale === "list")
+                      update({ scale });
+                  }}
+                  variant="outline"
+                  aria-label={
+                    layout.kind === "timeline"
+                      ? "Gantt density"
+                      : "Calendar view"
+                  }
+                >
+                  <ToggleGroupItem value="month" className="min-h-11">
+                    {layout.kind === "timeline" ? "Detailed" : "Month view"}
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="list" className="min-h-11">
+                    {layout.kind === "timeline" ? "Compact" : "List view"}
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </Field>
+              <Field>
+                <FieldLabel>Date range</FieldLabel>
+                <ToggleGroup
+                  value={[layout.dateRange]}
+                  onValueChange={(value) => {
+                    const dateRange = value[0];
+                    if (
+                      dateRange === "week" ||
+                      dateRange === "month" ||
+                      dateRange === "quarter" ||
+                      dateRange === "year"
+                    )
+                      update({ dateRange });
+                  }}
+                  variant="outline"
+                  aria-label="Date range"
+                  className="flex-wrap"
+                >
+                  <ToggleGroupItem value="week" className="min-h-11">
+                    Week
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="month" className="min-h-11">
+                    Month
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="quarter" className="min-h-11">
+                    Quarter
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="year" className="min-h-11">
+                    Year
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </Field>
+            </>
+          ) : (
+            <Alert role="note" variant="warning">
+              This layout is unavailable because {module.name} has no date
+              fields. Choose another layout.
+            </Alert>
+          )
+        ) : null}
+      </FieldSet>
+    </div>
+  );
+}
+
+function RecordResults({
+  module,
+  grouped,
+  layout,
+  groupBy,
+  onInspect,
+}: {
+  module: OpenViewModule;
+  grouped: { label: string; rows: OpenViewRow[] }[];
+  layout: ViewLayout;
+  groupBy: string | null;
+  onInspect: (id: string) => void;
+}) {
+  const anchorRows = grouped.flatMap((group) => group.rows);
+  const usesOperationalStatusLanes =
+    layout.kind === "kanban" &&
+    (groupBy === null ||
+      groupBy === getOpenViewOperationalProfile(module.id).statusField);
+  if (usesOperationalStatusLanes) {
+    return (
+      <RecordLayout
+        module={module}
+        rows={anchorRows}
+        anchorRows={anchorRows}
+        layout={layout}
+        groupBy={groupBy}
+        onInspect={onInspect}
+      />
+    );
+  }
+  return (
+    <div className="flex min-w-0 flex-col gap-5">
+      {grouped.map((group, index) => (
+        <section
+          key={group.label}
+          className="flex min-w-0 flex-col gap-3"
+          aria-labelledby={
+            grouped.length > 1 ? `openview-group-${index}` : undefined
+          }
+        >
+          {grouped.length > 1 ? (
+            <h2
+              id={`openview-group-${index}`}
+              className="text-sm font-semibold"
+            >
+              {group.label}{" "}
+              <span className="text-muted-foreground font-normal">
+                · {group.rows.length}
+              </span>
+            </h2>
+          ) : null}
+          <RecordLayout
+            module={module}
+            rows={group.rows}
+            anchorRows={anchorRows}
+            layout={layout}
+            groupBy={groupBy}
+            onInspect={onInspect}
+          />
+        </section>
       ))}
     </div>
+  );
+}
+
+function RecordLayout({
+  module,
+  rows,
+  anchorRows,
+  layout,
+  groupBy,
+  onInspect,
+}: {
+  module: OpenViewModule;
+  rows: OpenViewRow[];
+  anchorRows: OpenViewRow[];
+  layout: ViewLayout;
+  groupBy: string | null;
+  onInspect: (id: string) => void;
+}) {
+  const configuredColumns = layout.columns.flatMap((fieldId) => {
+    const field = module.fields.find((candidate) => candidate.id === fieldId);
+    return field ? [field] : [];
+  });
+  const columns = configuredColumns.length ? configuredColumns : module.fields;
+  const primary = layout.primaryField ?? module.primaryField;
+  const secondary =
+    layout.secondaryField ?? module.fields[1]?.id ?? module.primaryField;
+  const statusField = module.fields.find((field) => field.id === "status");
+  const operationalProfile = getOpenViewOperationalProfile(module.id);
+  const dateField = dateFieldForLayout(module, layout);
+  const dateLabel =
+    module.fields.find((field) => field.id === dateField)?.label ?? "Date";
+  if (
+    (layout.kind === "calendar" || layout.kind === "timeline") &&
+    !dateField
+  ) {
+    return (
+      <Alert role="note" variant="warning">
+        {module.name} cannot use {titleCase(layout.kind)} because it has no date
+        fields. Choose another layout.
+      </Alert>
+    );
+  }
+  const renderDateField = dateField ?? "";
+  const value = (row: OpenViewRow, field: OpenViewField) =>
+    String(row.values[field.id] ?? "");
+  const renderProgress = (row: OpenViewRow) => {
+    const progress = getOpenViewOperationalFacts(row).progress;
+    if (progress === null) return "Unspecified";
+    return (
+      <span className="flex min-w-32 items-center gap-2">
+        <span
+          className="bg-muted relative h-2 min-w-16 flex-1 overflow-hidden rounded-full"
+          role="progressbar"
+          aria-label={`Progress ${progress}%`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={progress}
+        >
+          <span
+            className="bg-primary absolute inset-y-0 left-0 rounded-full"
+            style={{ width: `${progress}%` }}
+          />
+        </span>
+        <span className="tabular-nums">{progress}%</span>
+      </span>
+    );
+  };
+  const rendered = (row: OpenViewRow, field: OpenViewField) => {
+    const rawValue = value(row, field);
+    const fieldValue = rawValue || "Unspecified";
+    if (field.id === operationalProfile.progressField)
+      return renderProgress(row);
+    if (field.type === "date")
+      return rawValue ? displayDate(rawValue) : "Unscheduled";
+    if (field.type !== "select") return fieldValue || "—";
+    const tone = visualTone(fieldValue);
+    return (
+      <Badge
+        variant="outline"
+        className={cn("gap-1.5 font-medium", tone.surface, tone.border)}
+      >
+        <span
+          className={cn("size-1.5 rounded-full", tone.solid)}
+          aria-hidden="true"
+        />
+        {fieldValue}
+      </Badge>
+    );
+  };
+  if (layout.kind === "table")
+    return (
+      <Card className="w-full overflow-hidden">
+        <Table className="min-w-[44rem]">
+          <TableCaption className="sr-only">
+            {rows.length} {rows.length === 1 ? "record" : "records"} from{" "}
+            {module.name}.
+          </TableCaption>
+          <TableHeader className="bg-muted/65">
+            <TableRow className="hover:bg-muted/65">
+              {columns.map((field) => (
+                <TableHead
+                  key={field.id}
+                  className={cn(
+                    "h-11 px-4 text-[0.6875rem] font-semibold tracking-wide uppercase",
+                    layout.pinnedColumns.includes(field.id)
+                      ? "bg-muted sticky left-0 z-10"
+                      : undefined,
+                  )}
+                >
+                  {field.label}
+                </TableHead>
+              ))}
+              <TableHead className="h-11 px-4">
+                <span className="sr-only">Actions</span>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row, rowIndex) => {
+              const rowStatus = statusField
+                ? String(row.values[statusField.id] ?? "")
+                : "";
+              const tone = visualTone(rowStatus, rowIndex);
+              return (
+                <TableRow key={row.id} className="group odd:bg-muted/20">
+                  {columns.map((field) => (
+                    <TableCell
+                      key={field.id}
+                      className={cn(
+                        "px-4",
+                        layout.wrap ? "whitespace-normal" : "whitespace-nowrap",
+                        layout.density === "comfortable" ? "py-3" : "py-1.5",
+                        layout.pinnedColumns.includes(field.id)
+                          ? "bg-card group-odd:bg-muted sticky left-0 z-10"
+                          : undefined,
+                      )}
+                    >
+                      {field.id === primary ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-auto min-h-11 justify-start gap-3 px-2 text-left font-medium"
+                          onClick={() => onInspect(row.id)}
+                        >
+                          <span
+                            className={cn(
+                              "h-7 w-1 shrink-0 rounded-full",
+                              tone.solid,
+                            )}
+                            aria-hidden="true"
+                          />
+                          {rendered(row, field)}
+                        </Button>
+                      ) : (
+                        rendered(row, field)
+                      )}
+                    </TableCell>
+                  ))}
+                  <TableCell className="px-4 text-right">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="min-h-11"
+                      onClick={() => onInspect(row.id)}
+                    >
+                      Inspect
+                      <ArrowRight data-icon="inline-end" aria-hidden="true" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </Card>
+    );
+  if (layout.kind === "kanban") {
+    const operationalLanes =
+      groupBy === null || groupBy === operationalProfile.statusField;
+    const groupField =
+      module.fields.find((field) => field.id === groupBy) ??
+      module.fields.find((field) => field.id === "status") ??
+      module.fields[0];
+    const laneValue = (row: OpenViewRow) =>
+      groupField ? value(row, groupField) || "Unspecified" : "All records";
+    const lanes = operationalLanes
+      ? getOpenViewLanes(rows, module.id).filter(
+          (lane) => lane.count > 0 || lane.configured,
+        )
+      : [...new Set(rows.map(laneValue))].map((label) => {
+          const laneRows = rows.filter((row) => laneValue(row) === label);
+          return {
+            label,
+            rows: laneRows,
+            facts: laneRows.map((row) => getOpenViewOperationalFacts(row)),
+            count: laneRows.length,
+            configured: false,
+          };
+        });
+    return (
+      <div className="grid auto-cols-[minmax(17rem,1fr)] grid-flow-col gap-4 overflow-x-auto pb-2 lg:grid-flow-row lg:grid-cols-3 lg:overflow-visible xl:grid-cols-4">
+        {lanes.map((lane, laneIndex) => {
+          const tone = visualTone(lane.label, laneIndex);
+          const attentionCount = lane.facts.filter(
+            (fact) => fact.attentionRank > 0,
+          ).length;
+          const laneRows = lane.rows;
+          const exceptionLane = attentionCount > 0;
+          return (
+            <Card
+              key={lane.label}
+              className={cn(
+                "bg-muted/25 min-w-0 overflow-hidden",
+                exceptionLane && "border-chart-5/50",
+              )}
+              aria-label={`${lane.label} lane, ${lane.count} records${attentionCount ? `, ${attentionCount} need attention` : ""}`}
+            >
+              <div className={cn("h-1", tone.solid)} aria-hidden="true" />
+              <CardHeader className={cn("p-4", tone.surface)}>
+                <CardTitle className="flex items-center justify-between gap-3 text-sm">
+                  <span className="truncate">{lane.label}</span>
+                  <Badge
+                    variant="outline"
+                    className={cn("bg-card", tone.border)}
+                  >
+                    {lane.count}
+                  </Badge>
+                </CardTitle>
+                <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>
+                    {operationalLanes
+                      ? lane.configured
+                        ? "Workflow stage"
+                        : "Additional stage"
+                      : `${groupField?.label ?? "Records"} group`}
+                  </span>
+                  {attentionCount ? (
+                    <Badge variant="warning" className="text-[0.6875rem]">
+                      {attentionCount} need attention
+                    </Badge>
+                  ) : (
+                    <span>No attention flags</span>
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3 p-3">
+                {laneRows.map((row) => {
+                  const facts = getOpenViewOperationalFacts(row);
+                  const priorityTone = visualTone(facts.priority, 1);
+                  return (
+                    <Button
+                      key={row.id}
+                      type="button"
+                      variant="outline"
+                      className="bg-card h-auto min-h-24 overflow-hidden p-0 text-left whitespace-normal"
+                      onClick={() => onInspect(row.id)}
+                    >
+                      <span className="flex w-full flex-col">
+                        <span
+                          className={cn("h-1 w-full", tone.solid)}
+                          aria-hidden="true"
+                        />
+                        <span className="flex flex-col gap-2 p-4">
+                          <span className="flex items-start justify-between gap-3">
+                            <span className="leading-snug font-medium">
+                              {String(row.values[primary] ?? "Untitled")}
+                            </span>
+                            {facts.priority ? (
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  "shrink-0 text-[0.6875rem]",
+                                  priorityTone.surface,
+                                  priorityTone.border,
+                                )}
+                              >
+                                {facts.priority}
+                              </Badge>
+                            ) : null}
+                          </span>
+                          <span className="text-muted-foreground text-xs">
+                            {String(row.values[secondary] ?? "—")}
+                          </span>
+                          <span className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                            <span>
+                              <span className="text-muted-foreground block">
+                                Owner
+                              </span>
+                              {facts.owner || "Unassigned"}
+                            </span>
+                            <span>
+                              <span className="text-muted-foreground block">
+                                Deadline
+                              </span>
+                              {displayDate(facts.deadline)}
+                            </span>
+                            <span>
+                              <span className="text-muted-foreground block">
+                                Status
+                              </span>
+                              {facts.status || "Unspecified"}
+                            </span>
+                            <span>
+                              <span className="text-muted-foreground block">
+                                Progress
+                              </span>
+                              {facts.progress === null
+                                ? "Unspecified"
+                                : `${facts.progress}%`}
+                            </span>
+                          </span>
+                          {facts.attentionReason ? (
+                            <span className="text-chart-5 text-xs font-medium">
+                              {timingStateLabel(facts.timingState)}:{" "}
+                              {facts.attentionReason}
+                            </span>
+                          ) : null}
+                        </span>
+                      </span>
+                    </Button>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    );
+  }
+  if (layout.kind === "calendar") {
+    const scheduledRows = rows.flatMap((row) => {
+      const date = String(row.values[renderDateField] ?? "");
+      return /^\d{4}-\d{2}-\d{2}$/.test(date) ? [{ row, date }] : [];
+    });
+    const unscheduledRows = rows.filter(
+      (row) =>
+        !/^\d{4}-\d{2}-\d{2}$/.test(String(row.values[renderDateField] ?? "")),
+    );
+    const dates = [...new Set(scheduledRows.map((entry) => entry.date))].sort();
+    const sparseSchedule = scheduledRows.length <= 10;
+    if (layout.scale === "list")
+      return (
+        <Card className="w-full overflow-hidden">
+          <CardHeader className="bg-muted/40 p-4">
+            <CardTitle>Upcoming schedule</CardTitle>
+            <CardDescription>
+              Showing {dateLabel.toLocaleLowerCase()} ·{" "}
+              {operationalProfile.dateMeaning}.{" "}
+              {sparseSchedule
+                ? "List view keeps this sparse schedule easy to scan."
+                : `${dateRangeLabel(layout.dateRange)} range · ${rows.length} records.`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="divide-border divide-y p-0">
+            {[...dates, ...(unscheduledRows.length ? [""] : [])].map((date) => {
+              const dateRows = date
+                ? scheduledRows
+                    .filter((entry) => entry.date === date)
+                    .map((entry) => entry.row)
+                : unscheduledRows;
+              return (
+                <div
+                  key={date || "unscheduled"}
+                  className="grid gap-3 p-3 sm:grid-cols-[7rem_1fr] sm:p-4"
+                >
+                  <div className="flex items-center gap-3 sm:flex-col sm:items-start sm:gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold tabular-nums">
+                        {formatCalendarDate(date, true)}
+                      </span>
+                      {date === OPENVIEW_SAMPLE_SNAPSHOT_DATE ? (
+                        <Badge variant="secondary" className="text-[0.6875rem]">
+                          Sample date
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <span className="text-muted-foreground text-xs">
+                      {date
+                        ? new Intl.DateTimeFormat("en", {
+                            timeZone: "UTC",
+                            weekday: "long",
+                          }).format(new Date(`${date}T00:00:00Z`))
+                        : "Needs scheduling"}
+                    </span>
+                  </div>
+                  <div className="grid gap-2">
+                    {dateRows.map((row, rowIndex) => {
+                      const facts = getOpenViewOperationalFacts(row);
+                      const tone = visualTone(facts.status, rowIndex);
+                      return (
+                        <Button
+                          key={row.id}
+                          type="button"
+                          variant="ghost"
+                          className={cn(
+                            "h-auto min-h-11 justify-start border px-3 text-left whitespace-normal",
+                            tone.surface,
+                            tone.border,
+                          )}
+                          onClick={() => onInspect(row.id)}
+                        >
+                          <span
+                            className={cn(
+                              "size-2 shrink-0 rounded-full",
+                              tone.solid,
+                            )}
+                            aria-hidden="true"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium">
+                              {String(row.values[primary] ?? "Untitled")}
+                            </span>
+                            <span className="text-muted-foreground mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs sm:grid-cols-4">
+                              <span>
+                                Status: {facts.status || "Unspecified"}
+                              </span>
+                              <span>Owner: {facts.owner || "Unassigned"}</span>
+                              <span>
+                                Priority: {facts.priority || "Unspecified"}
+                              </span>
+                              <span>{timingStateLabel(facts.timingState)}</span>
+                            </span>
+                          </span>
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      );
+    const monthKeys = [...new Set(dates.map((date) => date.slice(0, 7)))];
+    return (
+      <div className="flex min-w-0 flex-col gap-4">
+        {monthKeys.map((monthKey) => {
+          const [yearValue, monthValue] = monthKey.split("-").map(Number);
+          const firstDay = new Date(Date.UTC(yearValue, monthValue - 1, 1));
+          const dayCount = new Date(
+            Date.UTC(yearValue, monthValue, 0),
+          ).getUTCDate();
+          const leadingDays = firstDay.getUTCDay();
+          const monthLabel = new Intl.DateTimeFormat("en", {
+            timeZone: "UTC",
+            month: "long",
+            year: "numeric",
+          }).format(firstDay);
+          const cells: (number | null)[] = [
+            ...Array.from({ length: leadingDays }, () => null),
+            ...Array.from({ length: dayCount }, (_, index) => index + 1),
+          ];
+          const monthRows = scheduledRows.filter((entry) =>
+            entry.date.startsWith(monthKey),
+          );
+          return (
+            <Card key={monthKey} className="w-full overflow-hidden">
+              <CardHeader className="bg-muted/40 p-4 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <CardTitle>{monthLabel}</CardTitle>
+                  <CardDescription>
+                    {monthRows.length} scheduled{" "}
+                    {monthRows.length === 1 ? "record" : "records"} by{" "}
+                    {dateLabel.toLocaleLowerCase()}.{" "}
+                    {operationalProfile.dateMeaning}.
+                    {sparseSchedule
+                      ? " List view is recommended for this sparse schedule."
+                      : ""}
+                  </CardDescription>
+                </div>
+                <Badge variant="outline">
+                  {dateRangeLabel(layout.dateRange)} range
+                </Badge>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div
+                  className="overflow-x-auto"
+                  role="region"
+                  aria-label={`${monthLabel} calendar`}
+                  tabIndex={0}
+                >
+                  <div className="min-w-[46rem]">
+                    <div className="bg-muted/25 grid grid-cols-7 border-b">
+                      {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
+                        (day) => (
+                          <div
+                            key={day}
+                            className="text-muted-foreground px-2 py-2 text-center text-[0.6875rem] font-semibold tracking-wide uppercase"
+                          >
+                            {day}
+                          </div>
+                        ),
+                      )}
+                    </div>
+                    <div className="grid grid-cols-7">
+                      {cells.map((day, cellIndex) => {
+                        if (!day)
+                          return (
+                            <div
+                              key={`blank-${cellIndex}`}
+                              className="bg-muted/15 min-h-24 border-r border-b"
+                              aria-hidden="true"
+                            />
+                          );
+                        const date = `${monthKey}-${String(day).padStart(2, "0")}`;
+                        const dayRows = monthRows.filter(
+                          (entry) => entry.date === date,
+                        );
+                        const isSampleDate =
+                          date === OPENVIEW_SAMPLE_SNAPSHOT_DATE;
+                        return (
+                          <div
+                            key={date}
+                            className={cn(
+                              "min-h-24 border-r border-b p-1.5",
+                              isSampleDate && "bg-primary/5",
+                            )}
+                          >
+                            <div className="mb-1 flex items-center justify-between gap-1 px-1">
+                              <p className="text-muted-foreground text-xs font-medium tabular-nums">
+                                {day}
+                              </p>
+                              {isSampleDate ? (
+                                <Badge
+                                  variant="secondary"
+                                  className="px-1.5 py-0 text-[0.625rem]"
+                                >
+                                  Sample date
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              {dayRows.map((entry, rowIndex) => {
+                                const status = statusField
+                                  ? String(
+                                      entry.row.values[statusField.id] ?? "",
+                                    )
+                                  : "";
+                                const tone = visualTone(status, rowIndex);
+                                return (
+                                  <Button
+                                    key={entry.row.id}
+                                    type="button"
+                                    variant="ghost"
+                                    className={cn(
+                                      "h-auto min-h-11 w-full justify-start border px-2 py-1.5 text-left text-xs whitespace-normal",
+                                      tone.surface,
+                                      tone.border,
+                                    )}
+                                    onClick={() => onInspect(entry.row.id)}
+                                  >
+                                    <span
+                                      className={cn(
+                                        "size-1.5 shrink-0 rounded-full",
+                                        tone.solid,
+                                      )}
+                                      aria-hidden="true"
+                                    />
+                                    <span className="line-clamp-2">
+                                      {String(
+                                        entry.row.values[primary] ?? "Untitled",
+                                      )}
+                                    </span>
+                                  </Button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+        {unscheduledRows.length ? (
+          <Alert role="note">
+            {unscheduledRows.length}{" "}
+            {unscheduledRows.length === 1 ? "record has" : "records have"} no{" "}
+            {module.fields
+              .find((field) => field.id === renderDateField)
+              ?.label.toLocaleLowerCase() ?? "date"}{" "}
+            and cannot appear on the calendar grid.
+          </Alert>
+        ) : null}
+      </div>
+    );
+  }
+  if (layout.kind === "timeline")
+    return (
+      <GanttView
+        module={module}
+        rows={rows}
+        anchorRows={anchorRows}
+        layout={layout}
+        dateField={renderDateField}
+        onInspect={onInspect}
+      />
+    );
+  const gallery = layout.kind === "gallery";
+  const grid = gallery ? "sm:grid-cols-2 xl:grid-cols-3" : "sm:grid-cols-2";
+  return (
+    <div className={`grid gap-4 ${grid}`}>
+      {rows.map((row, rowIndex) => {
+        const facts = getOpenViewOperationalFacts(row);
+        const statusTone = visualTone(facts.status, rowIndex);
+        const priorityTone = visualTone(facts.priority, 1);
+        const title = String(row.values[primary] ?? "Untitled");
+        const supporting = String(row.values[secondary] ?? "—");
+        return (
+          <Button
+            key={row.id}
+            type="button"
+            variant="outline"
+            className={cn(
+              "h-auto justify-start p-0 text-left whitespace-normal",
+              layout.cardSize === "compact" ? "min-h-28" : "min-h-36",
+            )}
+            onClick={() => onInspect(row.id)}
+          >
+            <span
+              className={cn(
+                "flex w-full flex-col gap-3",
+                layout.cardSize === "compact" ? "p-3" : "p-5",
+              )}
+            >
+              {gallery ? (
+                <span
+                  className={cn(
+                    "bg-muted/40 relative flex h-28 flex-col justify-end gap-2 overflow-hidden rounded-[var(--radius)] border p-3",
+                    statusTone.surface,
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "absolute inset-x-0 top-0 h-1",
+                      statusTone.solid,
+                    )}
+                    aria-hidden="true"
+                  />
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground text-[0.6875rem] font-semibold tracking-wide uppercase">
+                      {facts.status || "Unspecified"}
+                    </span>
+                    <span className="text-xs font-medium tabular-nums">
+                      {facts.progress === null
+                        ? "No progress"
+                        : `${facts.progress}% complete`}
+                    </span>
+                  </span>
+                  <span className="bg-background/80 h-2 overflow-hidden rounded-full">
+                    <span
+                      className={cn(
+                        "block h-full rounded-full",
+                        statusTone.solid,
+                      )}
+                      style={{ width: `${facts.progress ?? 0}%` }}
+                    />
+                  </span>
+                  <span className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
+                    <span>{facts.owner || "Unassigned"}</span>
+                    <span>{displayDate(facts.deadline)}</span>
+                  </span>
+                </span>
+              ) : null}
+              <span className="flex items-start justify-between gap-3">
+                <span className="leading-snug font-medium">{title}</span>
+                {facts.priority ? (
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "shrink-0 text-[0.6875rem]",
+                      priorityTone.surface,
+                      priorityTone.border,
+                    )}
+                  >
+                    {facts.priority}
+                  </Badge>
+                ) : null}
+              </span>
+              <span className="text-muted-foreground text-sm">
+                {supporting}
+              </span>
+              <span className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                <span>
+                  <span className="text-muted-foreground block">Status</span>
+                  {facts.status || "Unspecified"}
+                </span>
+                <span>
+                  <span className="text-muted-foreground block">Owner</span>
+                  {facts.owner || "Unassigned"}
+                </span>
+                <span>
+                  <span className="text-muted-foreground block">Deadline</span>
+                  {displayDate(facts.deadline)}
+                </span>
+                <span>
+                  <span className="text-muted-foreground block">Timing</span>
+                  {timingStateLabel(facts.timingState)}
+                </span>
+              </span>
+              {facts.progress !== null && !gallery ? (
+                <span>
+                  <span className="text-muted-foreground mb-1 block text-xs">
+                    Progress
+                  </span>
+                  {renderProgress(row)}
+                </span>
+              ) : null}
+              {facts.attentionReason ? (
+                <span className="text-chart-5 text-xs font-medium">
+                  {facts.attentionReason}
+                </span>
+              ) : null}
+            </span>
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
+function RecordInspector({
+  module,
+  rows,
+  inspected,
+  onClose,
+  onNavigate,
+}: {
+  module: OpenViewModule;
+  rows: OpenViewRow[];
+  inspected: OpenViewRow;
+  onClose: () => void;
+  onNavigate: (id: string) => void;
+}) {
+  const [wide, setWide] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1280px)");
+    const update = () => setWide(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  const index = rows.findIndex((row) => row.id === inspected.id);
+  const previous = index > 0 ? rows[index - 1] : undefined;
+  const next =
+    index >= 0 && index < rows.length - 1 ? rows[index + 1] : undefined;
+  const detail = (
+    <div className="flex flex-col gap-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <Badge variant="outline">{module.name}</Badge>
+          <h2 className="mt-2 text-xl font-semibold break-words">
+            {String(inspected.values[module.primaryField] ?? "Untitled")}
+          </h2>
+          <p className="text-muted-foreground mt-1 text-xs break-all">
+            {inspected.id}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-11 shrink-0"
+          aria-label="Close record detail"
+          onClick={onClose}
+        >
+          <X aria-hidden="true" />
+        </Button>
+      </div>
+      <dl className="flex flex-col gap-4 text-sm">
+        {module.fields.map((field) => (
+          <div key={field.id} className="flex flex-col gap-1">
+            <dt className="text-muted-foreground text-xs">{field.label}</dt>
+            <dd>
+              {field.type === "select" ? (
+                <Badge variant="secondary">
+                  {String(inspected.values[field.id] ?? "Unspecified")}
+                </Badge>
+              ) : (
+                String(inspected.values[field.id] ?? "—")
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <div className="flex items-center justify-between gap-2 border-t pt-4">
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-11"
+          disabled={!previous}
+          aria-label="Previous record"
+          onClick={() => previous && onNavigate(previous.id)}
+        >
+          <ArrowLeft aria-hidden="true" />
+        </Button>
+        <span className="text-muted-foreground text-xs">
+          {index + 1} of {rows.length}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-11"
+          disabled={!next}
+          aria-label="Next record"
+          onClick={() => next && onNavigate(next.id)}
+        >
+          <ArrowRight aria-hidden="true" />
+        </Button>
+      </div>
+      <div className="flex flex-col gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(
+                `${window.location.origin}${serializeOpenViewUrl({ section: "views", module: module.id, record: inspected.id })}`,
+              );
+              setCopyStatus("Safe link copied.");
+            } catch {
+              setCopyStatus("Copy is unavailable in this browser.");
+            }
+          }}
+        >
+          <Link2 data-icon="inline-start" aria-hidden="true" /> Copy safe link
+        </Button>
+        {copyStatus ? (
+          <p role="status" className="text-muted-foreground text-xs">
+            {copyStatus}
+          </p>
+        ) : null}
+      </div>
+      <p className="text-muted-foreground text-xs">
+        Read-only sample record. OpenView does not edit the source module.
+      </p>
+    </div>
+  );
+  return wide ? (
+    <Card className="sticky top-5 self-start">
+      <CardHeader>
+        <CardTitle>Record details</CardTitle>
+        <CardDescription>Read-only inspection</CardDescription>
+      </CardHeader>
+      <CardContent>{detail}</CardContent>
+    </Card>
+  ) : (
+    <Sheet open onOpenChange={(open) => !open && onClose()}>
+      <SheetContent side="right" className="w-[min(92vw,26rem)]">
+        <SheetHeader>
+          <SheetTitle>Record details</SheetTitle>
+          <SheetDescription>
+            Read-only inspection from {module.name}.
+          </SheetDescription>
+        </SheetHeader>
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="p-1">{detail}</div>
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function SaveViewDialog({
+  open,
+  onOpenChange,
+  name,
+  onNameChange,
+  audience,
+  onAudienceChange,
+  options,
+  description,
+  submitLabel,
+  onSubmit,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  name: string;
+  onNameChange: (value: string) => void;
+  audience: string;
+  onAudienceChange: (value: string) => void;
+  options: { value: string; label: string }[];
+  description: string;
+  submitLabel: string;
+  onSubmit: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Save view</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="openview-view-name">View name</FieldLabel>
+            <Input
+              id="openview-view-name"
+              className="min-h-11"
+              maxLength={80}
+              value={name}
+              onChange={(event) => onNameChange(event.target.value)}
+              placeholder="e.g. Dispatch queue"
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="openview-view-audience">
+              Audience preview
+            </FieldLabel>
+            <Select
+              id="openview-view-audience"
+              className="min-h-11"
+              value={audience}
+              onValueChange={onAudienceChange}
+            >
+              {options.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+            <FieldDescription>
+              Preview only. This does not grant access or send invitations.
+            </FieldDescription>
+          </Field>
+        </FieldGroup>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            className="min-h-11"
+            disabled={!name.trim()}
+            onClick={onSubmit}
+          >
+            {submitLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

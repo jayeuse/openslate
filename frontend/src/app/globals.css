@@ -22,6 +22,11 @@
   --border: #e5e5e7;
   --input: #d2d3d5;
   --ring: #777b83;
+  --chart-1: #6382b6;
+  --chart-2: #c08b48;
+  --chart-3: #5f936d;
+  --chart-4: #8b70a2;
+  --chart-5: #b96f66;
   --sidebar: #f5f5f6;
   --sidebar-foreground: #292b2f;
   --sidebar-muted: #686b72;
@@ -57,6 +62,11 @@
   --destructive-foreground: #ffffff;
   --success: #4ade80;
   --warning: #fbbf24;
+  --chart-1: #89a6d0;
+  --chart-2: #d2aa70;
+  --chart-3: #83b58e;
+  --chart-4: #ad93c1;
+  --chart-5: #d3948c;
   --border: #30343b;
   --input: #3a414b;
   --ring: #aeb1b8;
@@ -162,6 +172,11 @@
   --color-sidebar-accent: var(--sidebar-accent);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --radius-sm: calc(var(--radius) - 4px);
@@ -296,6 +311,12 @@ textarea:focus-visible {
   .sandbox-ui
     :is(button, a[href], summary, input, select, textarea, [role="separator"]) {
     transition: none;
+  }
+
+  .openview-ui
+    :is(button, a[href], input, select, textarea, [role="separator"]) {
+    transition: none;
+    scroll-behavior: auto;
   }
 }
 

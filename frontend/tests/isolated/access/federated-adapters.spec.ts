@@ -11,17 +11,21 @@ import {
   CATEGORIES,
   CHANNELS,
 } from "../../../src/components/sample/comms/model";
-import { initialBoards } from "../../../src/components/sample/boards";
 import {
-  initialDashboards,
-  initialReport,
-} from "../../../src/components/sample/openview/analytics";
+  defaultViewConfig,
+  decodeDashboards,
+  INITIAL_DASHBOARDS as INITIAL_TYPED_DASHBOARDS,
+  initialReport as initialTypedReport,
+  type AudienceLookup,
+  type AudienceRef,
+} from "../../../src/components/sample/openview/model";
 import {
   executeFederatedAccessCommand,
   federatedRoleReferences,
   getFederatedAccess,
   projectFederatedRoleChange,
   writeFederatedDecision,
+  type FederatedAudienceIdentity,
   type FederatedAccessOwners,
 } from "../../../src/components/sample/access/federated-adapters";
 import type { AccessControllerSnapshot } from "../../../src/components/sample/access/controller-utils";
@@ -38,6 +42,70 @@ const customRole: Role = {
   name: "Dispatch",
   builtin: false,
   grants: [],
+};
+
+const initialBoards = [
+  {
+    id: "sample-board-organization",
+    name: "Organization board",
+    department: "Organization",
+    roles: initialRoles.map((role) => role.name),
+    permission: "Members can view",
+    widgets: [
+      {
+        id: "sample-board-summary",
+        type: "Summary",
+        size: "Half",
+        permission: "Everyone",
+        refresh: "Manual",
+        pinned: true,
+      },
+      {
+        id: "sample-board-workload",
+        type: "Workload",
+        size: "Half",
+        permission: "Everyone",
+        refresh: "Manual",
+        pinned: false,
+      },
+    ],
+  },
+];
+
+const initialDashboards = [
+  {
+    id: "sample-dashboard-operations",
+    name: "Operations pulse",
+    permission: "Everyone",
+    refresh: "Manual",
+    widgets: [
+      {
+        id: "sample-widget-summary",
+        type: "Summary",
+        size: "Full",
+        permission: "Everyone",
+        refresh: "Manual",
+        pinned: false,
+      },
+      {
+        id: "sample-widget-workload",
+        type: "Workload",
+        size: "Half",
+        permission: "Everyone",
+        refresh: "Manual",
+        pinned: false,
+      },
+    ],
+  },
+];
+
+const initialReport = {
+  name: "Weekly service review",
+  fields: ["title", "status", "assignee"],
+  grouping: "status",
+  totals: true,
+  schedule: "Manual",
+  audience: "Only me",
 };
 
 function owners(): FederatedAccessOwners {
@@ -92,6 +160,55 @@ function owners(): FederatedAccessOwners {
       },
     ],
     commsConfiguration,
+    commsCategories: structuredClone(CATEGORIES),
+    commsChannels: structuredClone(CHANNELS),
+  };
+}
+
+function typedOwners(): FederatedAccessOwners {
+  const roleAudience = { kind: "role" as const, id: customRole.id };
+  const identityAudience = {
+    kind: "identity" as const,
+    id: "identity:dispatch",
+  };
+  const savedViewConfig = defaultViewConfig("service-requests");
+  const dashboard = structuredClone(INITIAL_TYPED_DASHBOARDS[0]);
+  dashboard.audience = roleAudience;
+  dashboard.widgets = dashboard.widgets.map((widget) => ({
+    ...widget,
+    audience: roleAudience,
+  }));
+  const reportDraft = initialTypedReport("service-requests");
+  reportDraft.audience = roleAudience;
+  const reportTemplate = {
+    ...initialTypedReport("service-requests"),
+    id: "report:dispatch",
+    name: "Dispatch",
+    audience: identityAudience,
+  };
+  return {
+    boards: structuredClone(initialBoards),
+    announcements: structuredClone(owners().announcements),
+    savedViews: [
+      {
+        id: "saved:typed-role",
+        name: "Typed dispatch queue",
+        moduleId: "service-requests",
+        audience: roleAudience,
+        config: savedViewConfig,
+      },
+      {
+        id: "saved:typed-identity",
+        name: "Typed identity queue",
+        moduleId: "service-requests",
+        audience: identityAudience,
+        config: savedViewConfig,
+      },
+    ],
+    dashboards: [dashboard],
+    reportDraft,
+    reportTemplates: [reportTemplate],
+    commsConfiguration: createCommsConfiguration(),
     commsCategories: structuredClone(CATEGORIES),
     commsChannels: structuredClone(CHANNELS),
   };
@@ -524,4 +641,270 @@ test("cross-product scope and permission tuples fail closed and surface a health
         finding.kind === "invalid-reference",
     ),
   ).toBe(true);
+});
+
+test("typed role audiences keep their stable id through rename and findings use the new label", () => {
+  const before = typedOwners();
+  const identities: FederatedAudienceIdentity[] = [
+    { id: "identity:dispatch", name: "Ari Santos" },
+  ];
+  const beforeRead = getFederatedAccess(
+    before,
+    [...initialRoles, customRole],
+    identities,
+  );
+  expect(beforeRead.findings).toEqual([]);
+  expect(federatedRoleReferences(before, customRole)).toEqual(
+    expect.arrayContaining([
+      "views-saved",
+      "views-dashboards",
+      "views-report-draft",
+    ]),
+  );
+  expect(
+    executeFederatedAccessCommand(
+      controllerSnapshot(before),
+      before,
+      { type: "delete-role", roleId: customRole.id },
+      commandContext,
+    ),
+  ).toEqual({
+    ok: false,
+    error:
+      "Role is still referenced by federated owners and cannot be deleted.",
+  });
+
+  const projected = projectFederatedRoleChange(before, customRole, {
+    ...customRole,
+    name: "Field Dispatch",
+  });
+  expect(projected.savedViews[0].audience).toEqual({
+    kind: "role",
+    id: customRole.id,
+  });
+  expect(projected.dashboards[0].audience).toEqual({
+    kind: "role",
+    id: customRole.id,
+  });
+  expect(projected.reportDraft.audience).toEqual({
+    kind: "role",
+    id: customRole.id,
+  });
+
+  const afterRead = getFederatedAccess(
+    projected,
+    [...initialRoles, { ...customRole, name: "Field Dispatch" }],
+    identities,
+  );
+  expect(afterRead.findings).toEqual([]);
+});
+
+test("Board widget role audiences block deletion for legacy and typed encodings", () => {
+  const variants: Array<{
+    permission: string;
+    audience?: AudienceRef;
+  }> = [
+    { permission: customRole.name },
+    { permission: `Role: ${customRole.name}` },
+    {
+      permission: "Everyone",
+      audience: { kind: "role", id: customRole.id },
+    },
+  ];
+
+  for (const variant of variants) {
+    const current = owners();
+    current.announcements = [];
+    current.savedViews = [];
+    current.dashboards = [];
+    current.reportDraft = { ...current.reportDraft, audience: "Only me" };
+    current.reportTemplates = [];
+    current.boards[0].roles = [];
+    current.boards[0].widgets[0] = {
+      ...current.boards[0].widgets[0],
+      ...variant,
+    };
+    expect(federatedRoleReferences(current, customRole)).toEqual([
+      "boards-list",
+    ]);
+    expect(
+      executeFederatedAccessCommand(
+        controllerSnapshot(current),
+        current,
+        { type: "delete-role", roleId: customRole.id },
+        commandContext,
+      ),
+    ).toEqual({
+      ok: false,
+      error:
+        "Role is still referenced by federated owners and cannot be deleted.",
+    });
+  }
+});
+
+test("unknown or deleted typed audiences are private and never become writable authority", () => {
+  const current = typedOwners();
+  current.savedViews.push({
+    id: "saved:unknown-role",
+    name: "Unknown role view",
+    moduleId: "service-requests",
+    audience: { kind: "role", id: "role:deleted" },
+    config: defaultViewConfig("service-requests"),
+  });
+  current.reportTemplates.push({
+    ...initialTypedReport("service-requests"),
+    id: "report:deleted-identity",
+    name: "Deleted identity report",
+    audience: { kind: "identity", id: "identity:deleted" },
+  });
+
+  const read = getFederatedAccess(
+    current,
+    [...initialRoles, customRole],
+    [{ id: "identity:deleted", name: "Deleted Person", deleted: true }],
+  );
+  expect(read.findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "federated:views-saved:audience:saved:unknown-role",
+        kind: "invalid-reference",
+        severity: "critical",
+      }),
+      expect.objectContaining({
+        id: "federated:views-report-templates:audience:report:deleted-identity",
+        kind: "invalid-reference",
+        severity: "critical",
+      }),
+    ]),
+  );
+  expect(read.findings.map((finding) => finding.detail).join(" ")).toContain(
+    "role:deleted",
+  );
+  expect(read.findings.map((finding) => finding.detail).join(" ")).toContain(
+    "Deleted Person",
+  );
+  expect(
+    read.rules.some(
+      (rule) =>
+        rule.scope.kind === "openview" &&
+        ["openview.view", "openview.edit"].includes(rule.permissionId),
+    ),
+  ).toBe(false);
+});
+
+test("typed report template scopes remain stable when the report is renamed", () => {
+  const roles = [...initialRoles, customRole];
+  const before = getFederatedAccess(typedOwners(), roles);
+  const renamedOwners = typedOwners();
+  renamedOwners.reportTemplates[0].name = "Field dispatch review";
+  const after = getFederatedAccess(renamedOwners, roles);
+  const beforeScope = before.scopes.find(
+    (scope) => scope.owner === "views-report-templates",
+  );
+  const afterScope = after.scopes.find(
+    (scope) => scope.owner === "views-report-templates",
+  );
+  expect(beforeScope).toBeDefined();
+  expect(afterScope).toBeDefined();
+  expect(afterScope?.id).toBe(beforeScope?.id);
+  expect(afterScope?.id).toBe("openview:report-template:report:dispatch");
+  expect(afterScope?.name).toBe("Field dispatch review");
+});
+
+test("legacy report template scope ids stay deterministic while OpenView projections remain read-only", () => {
+  const current = owners();
+  const first = getFederatedAccess(current, [...initialRoles, customRole]);
+  const second = getFederatedAccess(structuredClone(current), [
+    ...initialRoles,
+    customRole,
+  ]);
+  const firstScope = first.scopes.find(
+    (scope) => scope.owner === "views-report-templates",
+  );
+  const secondScope = second.scopes.find(
+    (scope) => scope.owner === "views-report-templates",
+  );
+  expect(firstScope?.id).toBe("openview:report-template:dispatch");
+  expect(secondScope?.id).toBe(firstScope?.id);
+
+  const openViewScopes = first.scopes.filter(
+    (scope) => scope.product === "OpenView",
+  );
+  expect(openViewScopes.length).toBeGreaterThan(0);
+  expect(openViewScopes.every((scope) => scope.mode === "read-only")).toBe(
+    true,
+  );
+  expect(first.rules.some((rule) => rule.scope.kind === "openview")).toBe(
+    false,
+  );
+  for (const permissionId of ["openview.view", "openview.edit"]) {
+    expect(
+      writeFederatedDecision(current, [...initialRoles, customRole], {
+        subject: { kind: "role", id: customRole.id },
+        scope: { kind: "openview", id: "openview:report-draft" },
+        permissionId,
+        decision: "allow",
+      }),
+    ).toMatchObject({
+      ok: false,
+      classification: "overlay",
+    });
+  }
+});
+
+test("dashboard decoding preserves stable role and identity audiences with lookup and privatizes unresolved refs", () => {
+  const raw = [
+    {
+      id: "dashboard:typed",
+      name: "Typed dashboard",
+      audience: { kind: "role", id: customRole.id },
+      widgets: [
+        {
+          id: "widget:typed",
+          type: "records",
+          moduleId: "service-requests",
+          audience: { kind: "identity", id: "identity:dispatch" },
+        },
+      ],
+    },
+  ];
+  const lookup: AudienceLookup = {
+    roles: [...initialRoles, customRole].map(({ id, name }) => ({ id, name })),
+    identities: [{ id: "identity:dispatch", name: "Ari Santos" }],
+  };
+  const decoded = decodeDashboards(raw, lookup);
+  expect(decoded[0]?.audience).toEqual({
+    kind: "role",
+    id: customRole.id,
+  });
+  expect(decoded[0]?.widgets[0]?.audience).toEqual({
+    kind: "identity",
+    id: "identity:dispatch",
+  });
+
+  const unresolved = decodeDashboards(raw, {});
+  expect(unresolved[0]?.audience).toEqual({
+    kind: "private",
+    unresolved: { kind: "role", id: customRole.id },
+  });
+  expect(unresolved[0]?.widgets[0]?.audience).toEqual({
+    kind: "private",
+    unresolved: { kind: "identity", id: "identity:dispatch" },
+  });
+
+  const unresolvedOwners = typedOwners();
+  unresolvedOwners.dashboards = unresolved;
+  const unresolvedRead = getFederatedAccess(unresolvedOwners, initialRoles, []);
+  expect(unresolvedRead.findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: `federated:views-dashboards:audience:${raw[0].id}`,
+        kind: "invalid-reference",
+      }),
+      expect.objectContaining({
+        id: `federated:views-dashboards:audience:${raw[0].widgets[0].id}`,
+        kind: "invalid-reference",
+      }),
+    ]),
+  );
 });

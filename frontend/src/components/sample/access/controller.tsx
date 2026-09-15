@@ -54,15 +54,19 @@ import {
   initialAnnouncements,
   type Announcement,
 } from "../boards/announcements";
-import { initialSavedViews, normalizeSavedViews } from "../openview";
+import { initialSavedViews } from "../openview";
 import {
   initialDashboards,
   initialReport,
   initialReportTemplates,
-  normalizeReports,
-  type Dashboard,
-  type Report,
 } from "../openview/analytics";
+import {
+  decodeDashboards,
+  decodeReport,
+  decodeReports,
+  decodeSavedViews,
+  type AudienceLookup,
+} from "../openview/model";
 import {
   CATEGORIES,
   CHANNELS,
@@ -183,11 +187,11 @@ export function useAccessController() {
     "views-saved",
     initialSavedViews,
   );
-  const [dashboards] = useSampleState<Dashboard[]>(
+  const [rawDashboards] = useSampleState<unknown>(
     "views-dashboards",
     initialDashboards,
   );
-  const [reportDraft] = useSampleState<Report>(
+  const [rawReportDraft] = useSampleState<unknown>(
     "views-report-draft",
     initialReport,
   );
@@ -206,18 +210,30 @@ export function useAccessController() {
   const [commsChannels] = useSampleState<Channel[]>("commsChannels", CHANNELS);
   const transact = useSampleTransaction();
 
+  const openViewAudienceLookup: AudienceLookup = {
+    roles: roles.map(({ id, name }) => ({ id, name })),
+    identities: people.map(({ id, name }) => ({ id, name })),
+  };
   const owners: FederatedAccessOwners = {
     boards,
     announcements,
-    savedViews: normalizeSavedViews(rawSavedViews),
-    dashboards,
-    reportDraft,
-    reportTemplates: normalizeReports(rawReportTemplates),
+    savedViews: decodeSavedViews(rawSavedViews, openViewAudienceLookup),
+    dashboards: decodeDashboards(rawDashboards, openViewAudienceLookup),
+    reportDraft: decodeReport(rawReportDraft, openViewAudienceLookup),
+    reportTemplates: decodeReports(rawReportTemplates, openViewAudienceLookup),
     commsConfiguration: normalizeCommsConfiguration(rawCommsConfiguration),
     commsCategories,
     commsChannels,
   };
-  const federated = getFederatedAccess(owners, roles);
+  const federated = getFederatedAccess(owners, {
+    roles,
+    identities: people.map(({ id, name, active, accessStatus }) => ({
+      id,
+      name,
+      status: accessStatus,
+      deleted: !active,
+    })),
+  });
 
   const snapshot: AccessControllerSnapshot = {
     people,
@@ -271,10 +287,22 @@ export function useAccessController() {
         initialAnnouncements,
         result.owners.announcements,
       );
-      update("views-saved", initialSavedViews, result.owners.savedViews);
-      update("views-dashboards", initialDashboards, result.owners.dashboards);
-      update("views-report-draft", initialReport, result.owners.reportDraft);
-      update(
+      update<unknown>(
+        "views-saved",
+        initialSavedViews,
+        result.owners.savedViews,
+      );
+      update<unknown>(
+        "views-dashboards",
+        initialDashboards,
+        result.owners.dashboards,
+      );
+      update<unknown>(
+        "views-report-draft",
+        initialReport,
+        result.owners.reportDraft,
+      );
+      update<unknown>(
         "views-report-templates",
         initialReportTemplates,
         result.owners.reportTemplates,
