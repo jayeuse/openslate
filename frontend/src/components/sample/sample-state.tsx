@@ -13,6 +13,7 @@ import {
   type SetStateAction,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { releaseAllLocalAttachments } from "./comms/local-attachments";
 import {
   decodeStoredSandboxHistory,
   decodeStoredSandboxVersions,
@@ -227,6 +228,7 @@ export function SampleProvider({ children }: { children: ReactNode }) {
             </Button>
             <Button
               onClick={() => {
+                releaseAllLocalAttachments();
                 setValues({});
                 setGeneration((value) => value + 1);
                 setRecovered(false);

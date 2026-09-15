@@ -1,4 +1,6 @@
 "use client";
+import { useBoardsController } from "../boards/controller";
+import { DEFAULT_BOARD_ID } from "../boards/model";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { Route } from "next";
@@ -116,10 +118,16 @@ export default function SamplePlatform() {
     "platformFollowedRecords",
     [],
   );
-  const [boardRecords, setBoardRecords] = useSampleState<string[]>(
-    "platformBoardRecords",
-    [],
-  );
+  const boardsController = useBoardsController();
+  const boardRecords = boardsController.state.placements
+    .filter((placement) => placement.boardId === DEFAULT_BOARD_ID)
+    .map((placement) => placement.recordId);
+  const canPlaceOnBoard =
+    boardsController.state.boards.some(
+      (board) => board.id === DEFAULT_BOARD_ID && board.status === "active",
+    ) &&
+    (boardsController.can(DEFAULT_BOARD_ID, "edit") ||
+      boardsController.can(DEFAULT_BOARD_ID, "manage"));
   const [recordThreads, setRecordThreads] = useSampleState<RecordThread[]>(
     "commsRecordThreads",
     [],
@@ -526,18 +534,35 @@ export default function SamplePlatform() {
             <div className="flex flex-wrap gap-2">
               <Action
                 onClick={() => {
-                  setBoardRecords((items) =>
-                    items.includes(selectedRecord.id)
-                      ? items
-                      : [...items, selectedRecord.id],
+                  const now = new Date().toISOString();
+                  const result = boardsController.run({
+                    type: "place-record",
+                    placement: {
+                      id: `board-placement-${crypto.randomUUID()}`,
+                      boardId: DEFAULT_BOARD_ID,
+                      recordId: selectedRecord.id,
+                      moduleId: "service-requests",
+                      pinned: false,
+                      position: boardRecords.length,
+                      createdAt: now,
+                      updatedAt: now,
+                    },
+                  });
+                  setNotice(
+                    result.ok
+                      ? "Sample record added to the organization board."
+                      : result.error,
                   );
-                  setNotice("Sample record added to the organization board.");
                 }}
-                disabled={boardRecords.includes(selectedRecord.id)}
+                disabled={
+                  !canPlaceOnBoard || boardRecords.includes(selectedRecord.id)
+                }
               >
-                {boardRecords.includes(selectedRecord.id)
-                  ? "Added to Board"
-                  : "Add record to Board"}
+                {!canPlaceOnBoard
+                  ? "Organization board unavailable"
+                  : boardRecords.includes(selectedRecord.id)
+                    ? "Added to Board"
+                    : "Add record to Board"}
               </Action>
               <Action
                 onClick={() => {

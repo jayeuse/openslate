@@ -5,6 +5,7 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUp,
+  ChevronDown,
   BarChart3,
   Copy,
   List,
@@ -14,7 +15,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -65,6 +66,7 @@ import {
   FieldSet,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -163,10 +165,23 @@ type WidgetSurfaceBaseProps = {
   onRecompute?: (widget: OpenViewWidget, timestamp: string) => void;
 };
 
-type WidgetSurfaceProps<T extends WidgetInput> = WidgetSurfaceBaseProps & {
+type WidgetSurfaceEditProps<T extends WidgetInput> = WidgetSurfaceBaseProps & {
+  mode?: "edit";
   widgets: T[];
   onChange: (widgets: T[]) => void;
 };
+
+type WidgetSurfaceViewProps<T extends WidgetInput> = Omit<
+  WidgetSurfaceBaseProps,
+  "onDuplicate" | "onRemove"
+> & {
+  mode: "view";
+  widgets: T[];
+  onChange?: never;
+};
+
+type WidgetSurfaceProps<T extends WidgetInput> =
+  WidgetSurfaceEditProps<T> | WidgetSurfaceViewProps<T>;
 
 /**
  * `newWidget` returns an intersection: canonical OpenView fields power new
@@ -193,25 +208,29 @@ export function newWidget(type: string): OpenViewWidget & SampleWidget {
   };
 }
 
-export function WidgetSurface<T extends WidgetInput>({
-  widgets,
-  onChange,
-  records = [],
-  rows,
-  rowsByModule,
-  moduleRows,
-  moduleId,
-  board = false,
-  maxWidgets,
-  audienceLookup: suppliedAudienceLookup,
-  error,
-  widgetErrors,
-  lastRecomputedAt,
-  recomputedAt: suppliedRecomputedAt,
-  onDuplicate,
-  onRemove,
-  onRecompute,
-}: WidgetSurfaceProps<T>) {
+export function WidgetSurface<T extends WidgetInput>(
+  props: WidgetSurfaceProps<T>,
+) {
+  const {
+    widgets,
+    records = [],
+    rows,
+    rowsByModule,
+    moduleRows,
+    moduleId,
+    board = false,
+    maxWidgets,
+    audienceLookup: suppliedAudienceLookup,
+    error,
+    widgetErrors,
+    lastRecomputedAt,
+    recomputedAt: suppliedRecomputedAt,
+    onRecompute,
+  } = props;
+  const mode = props.mode ?? "edit";
+  const onChange = props.mode === "view" ? undefined : props.onChange;
+  const onDuplicate = props.mode === "view" ? undefined : props.onDuplicate;
+  const onRemove = props.mode === "view" ? undefined : props.onRemove;
   const [roles] = useSampleState("access-roles", initialRoles);
   const [people] = useSampleState("access-people", initialPeople);
   const [openSettings, setOpenSettings] = useState<Record<string, boolean>>({});
@@ -223,18 +242,56 @@ export function WidgetSurface<T extends WidgetInput>({
     roles: roles.map((role) => ({ id: role.id, name: role.name })),
     identities: activeAudienceIdentities(people),
   };
+  const widgetLimit =
+    maxWidgets === undefined ? undefined : Math.max(0, Math.floor(maxWidgets));
+  const canDuplicate =
+    widgetLimit === undefined || widgets.length < widgetLimit;
+
+  useEffect(() => {
+    if (mode === "view") {
+      setOpenSettings({});
+      setPendingRemoval(null);
+    }
+  }, [mode]);
 
   const commit = (next: WidgetInput[]) => {
+    if (mode !== "edit" || !onChange) return;
     // `writeWidget` preserves the concrete collection shape. The generic
     // public API ensures callers receive the same shape they passed in.
-    onChange(next as T[]);
+    onChange(orderBoardSources(next) as T[]);
   };
 
-  const canonicalWidgets = widgets.map((widget) =>
-    normalizeWidget(widget, moduleId, audienceLookup),
-  );
+  const widgetEntries = widgets.map((source, sourceIndex) => ({
+    source,
+    sourceIndex,
+    widget: normalizeWidget(source, moduleId, audienceLookup),
+  }));
+  const orderedEntries = board
+    ? [...widgetEntries].sort(
+        (left, right) =>
+          Number(right.widget.pinned) - Number(left.widget.pinned) ||
+          left.sourceIndex - right.sourceIndex,
+      )
+    : widgetEntries;
+
+  function orderBoardSources(sources: WidgetInput[]): WidgetInput[] {
+    if (!board) return sources;
+    return sources
+      .map((source, sourceIndex) => ({
+        source,
+        sourceIndex,
+        widget: normalizeWidget(source, moduleId, audienceLookup),
+      }))
+      .sort(
+        (left, right) =>
+          Number(right.widget.pinned) - Number(left.widget.pinned) ||
+          left.sourceIndex - right.sourceIndex,
+      )
+      .map(({ source }) => source);
+  }
 
   function updateWidget(id: string, patch: Partial<OpenViewWidget>) {
+    if (mode !== "edit" || !onChange) return;
     const next = widgets.map((source) => {
       if (source.id !== id) return source;
       const current = normalizeWidget(source, moduleId, audienceLookup);
@@ -246,16 +303,21 @@ export function WidgetSurface<T extends WidgetInput>({
     commit(next);
   }
 
-  function moveWidget(index: number, direction: -1 | 1) {
+  function moveWidget(id: string, direction: -1 | 1) {
+    if (mode !== "edit" || !onChange) return;
+    const index = orderedEntries.findIndex((entry) => entry.widget.id === id);
+    const current = orderedEntries[index];
     const target = index + direction;
-    if (target < 0 || target >= widgets.length) return;
-    const next = [...widgets];
+    const targetEntry = orderedEntries[target];
+    if (!current || !targetEntry) return;
+    if (board && targetEntry.widget.pinned !== current.widget.pinned) return;
+    const next = [...orderedEntries];
     [next[index], next[target]] = [next[target], next[index]];
-    commit(next);
+    commit(next.map(({ source }) => source));
   }
 
   function duplicateWidget(widget: OpenViewWidget) {
-    if (maxWidgets !== undefined && widgets.length >= maxWidgets) return;
+    if (mode !== "edit" || !onChange || !canDuplicate) return;
     const copy: OpenViewWidget = {
       ...widget,
       id: createWidgetId(),
@@ -270,7 +332,10 @@ export function WidgetSurface<T extends WidgetInput>({
   }
 
   function confirmRemove() {
-    if (!pendingRemoval) return;
+    if (mode !== "edit" || !onChange || !pendingRemoval) {
+      setPendingRemoval(null);
+      return;
+    }
     const target = pendingRemoval;
     onRemove?.(target);
     if (!onRemove) commit(widgets.filter((widget) => widget.id !== target.id));
@@ -283,6 +348,16 @@ export function WidgetSurface<T extends WidgetInput>({
     onRecompute?.(widget, timestamp);
   }
 
+  function requestRemove(widget: OpenViewWidget) {
+    if (mode !== "edit" || !onChange) return;
+    setPendingRemoval(widget);
+  }
+
+  function setSettingsOpen(widgetId: string, open: boolean) {
+    if (mode !== "edit") return;
+    setOpenSettings((current) => ({ ...current, [widgetId]: open }));
+  }
+
   return (
     <div className="grid min-w-0 gap-5 lg:grid-cols-2">
       {error ? (
@@ -291,7 +366,7 @@ export function WidgetSurface<T extends WidgetInput>({
           <p className="mt-1">{error}</p>
         </Alert>
       ) : null}
-      {canonicalWidgets.map((widget, index) => (
+      {orderedEntries.map(({ widget }, index) => (
         <WidgetCard
           key={widget.id}
           widget={widget}
@@ -301,29 +376,48 @@ export function WidgetSurface<T extends WidgetInput>({
             rowsByModule: rowsByModule ?? moduleRows,
           })}
           board={board}
+          mode={mode}
           roles={roles}
           people={audienceLookup.identities ?? []}
           audienceLookup={audienceLookup}
           error={widgetErrors?.[widget.id]}
-          settingsOpen={openSettings[widget.id] === true}
-          onSettingsOpenChange={(open) =>
-            setOpenSettings((current) => ({ ...current, [widget.id]: open }))
-          }
+          settingsOpen={mode === "edit" && openSettings[widget.id] === true}
+          onSettingsOpenChange={(open) => setSettingsOpen(widget.id, open)}
           recomputedAt={
             recomputedAt[widget.id] ??
             lastRecomputedAt?.[widget.id] ??
             suppliedRecomputedAt?.[widget.id] ??
             null
           }
-          onChange={(patch) => updateWidget(widget.id, patch)}
-          onDuplicate={() => duplicateWidget(widget)}
-          onRemove={() => setPendingRemoval(widget)}
-          onMoveUp={() => moveWidget(index, -1)}
-          onMoveDown={() => moveWidget(index, 1)}
+          onChange={
+            mode === "edit"
+              ? (patch) => updateWidget(widget.id, patch)
+              : undefined
+          }
+          onDuplicate={
+            mode === "edit" ? () => duplicateWidget(widget) : undefined
+          }
+          onRemove={mode === "edit" ? () => requestRemove(widget) : undefined}
+          onMoveUp={
+            mode === "edit" ? () => moveWidget(widget.id, -1) : undefined
+          }
+          onMoveDown={
+            mode === "edit" ? () => moveWidget(widget.id, 1) : undefined
+          }
           onRecompute={() => recomputeWidget(widget)}
-          canDuplicate={maxWidgets === undefined || widgets.length < maxWidgets}
-          canMoveUp={index > 0}
-          canMoveDown={index < widgets.length - 1}
+          canDuplicate={mode === "edit" && canDuplicate}
+          canMoveUp={
+            mode === "edit" &&
+            index > 0 &&
+            (!board ||
+              orderedEntries[index - 1]?.widget.pinned === widget.pinned)
+          }
+          canMoveDown={
+            mode === "edit" &&
+            index < orderedEntries.length - 1 &&
+            (!board ||
+              orderedEntries[index + 1]?.widget.pinned === widget.pinned)
+          }
         />
       ))}
       {!error && widgets.length === 0 ? (
@@ -335,39 +429,42 @@ export function WidgetSurface<T extends WidgetInput>({
             <EmptyTitle>No widgets yet</EmptyTitle>
             <EmptyDescription>
               Add a summary, workload, records, or chart widget to this
-              dashboard.
+              {board ? " board." : " dashboard."}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : null}
-      <AlertDialog
-        open={pendingRemoval !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingRemoval(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove this widget?</AlertDialogTitle>
-            <AlertDialogDescription>
-              “{pendingRemoval?.name}” will be removed from this dashboard. This
-              only changes the sample workspace in this tab.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="min-h-11">
-              Keep widget
-            </AlertDialogCancel>
-            <Button
-              variant="destructive"
-              className="min-h-11"
-              onClick={confirmRemove}
-            >
-              Remove widget
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {mode === "edit" ? (
+        <AlertDialog
+          open={pendingRemoval !== null}
+          onOpenChange={(open) => {
+            if (!open) setPendingRemoval(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove this widget?</AlertDialogTitle>
+              <AlertDialogDescription>
+                “{pendingRemoval?.name}” will be removed from this{" "}
+                {board ? "board" : "dashboard"}. This only changes the sample
+                workspace in this tab.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="min-h-11">
+                Keep widget
+              </AlertDialogCancel>
+              <Button
+                variant="destructive"
+                className="min-h-11"
+                onClick={confirmRemove}
+              >
+                Remove widget
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
     </div>
   );
 }
@@ -376,18 +473,19 @@ type WidgetCardProps = {
   widget: OpenViewWidget;
   rows: OpenViewRow[];
   board: boolean;
+  mode: "view" | "edit";
   roles: { id: string; name: string }[];
   people: { id: string; name: string }[];
   audienceLookup: AudienceLookup;
   error?: string;
   settingsOpen: boolean;
-  onSettingsOpenChange: (open: boolean) => void;
+  onSettingsOpenChange?: (open: boolean) => void;
   recomputedAt: string | null;
-  onChange: (patch: Partial<OpenViewWidget>) => void;
-  onDuplicate: () => void;
-  onRemove: () => void;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
+  onChange?: (patch: Partial<OpenViewWidget>) => void;
+  onDuplicate?: () => void;
+  onRemove?: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
   onRecompute: () => void;
   canDuplicate: boolean;
   canMoveUp: boolean;
@@ -398,6 +496,7 @@ function WidgetCard({
   widget,
   rows,
   board,
+  mode,
   roles,
   people,
   audienceLookup,
@@ -418,6 +517,14 @@ function WidgetCard({
   const moduleDefinition = getModuleDefinition(widget.moduleId);
   const filteredRows = filterRows(rows, widget.filters);
   const titleId = `widget-title-${widget.id}`;
+  const reading = board && mode === "view";
+  const title =
+    reading &&
+    widget.type === "workload" &&
+    widget.metric === "count" &&
+    ["Team workload", "Workload"].includes(widget.name)
+      ? `${widget.moduleId === "service-requests" ? "Requests" : "Records"} by ${chooseWorkloadDimension(widget, filteredRows).label.toLocaleLowerCase()}`
+      : widget.name;
   const typeLabel = widgetTypeLabel(widget.type);
   const typeIndex =
     widget.type === "summary"
@@ -443,84 +550,94 @@ function WidgetCard({
       )}
       aria-labelledby={titleId}
     >
-      <div className={cn("h-1", tone.solid)} aria-hidden="true" />
+      {!reading && <div className={cn("h-1", tone.solid)} aria-hidden="true" />}
       <CardHeader className="bg-muted/25 flex flex-row flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
-          <span
-            className={cn(
-              "flex size-10 shrink-0 items-center justify-center rounded-[var(--radius)] border",
-              tone.surface,
-              tone.border,
-            )}
-          >
-            <TypeIcon className="size-5" aria-hidden="true" />
-          </span>
+          {!reading && (
+            <span
+              className={cn(
+                "flex size-10 shrink-0 items-center justify-center rounded-[var(--radius)] border",
+                tone.surface,
+                tone.border,
+              )}
+            >
+              <TypeIcon className="size-5" aria-hidden="true" />
+            </span>
+          )}
           <div className="min-w-0 space-y-2">
             <CardTitle id={titleId} className="flex items-center gap-2">
-              {widget.pinned ? (
+              {widget.pinned && !reading ? (
                 <Pin aria-label="Pinned" className="size-4 shrink-0" />
               ) : null}
-              <span className="truncate">{widget.name}</span>
+              <span className="break-words">{title}</span>
             </CardTitle>
             <CardDescription className="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary">{moduleDefinition.name}</Badge>
-              <Badge variant="outline">{typeLabel}</Badge>
+              {reading ? (
+                moduleDefinition.name
+              ) : (
+                <>
+                  <Badge variant="secondary">{moduleDefinition.name}</Badge>
+                  <Badge variant="outline">{typeLabel}</Badge>
+                </>
+              )}
             </CardDescription>
           </div>
         </div>
-        <div className="bg-card flex flex-wrap items-center justify-end gap-1 rounded-[var(--radius)] p-1">
-          {board ? (
+        {mode === "edit" ? (
+          <div className="bg-card flex flex-wrap items-center justify-end gap-1 rounded-[var(--radius)] p-1">
+            {board ? (
+              <Button
+                variant={widget.pinned ? "secondary" : "ghost"}
+                size="icon"
+                className="min-h-11 min-w-11"
+                aria-label={`${widget.pinned ? "Unpin" : "Pin"} ${widget.name}`}
+                aria-pressed={widget.pinned}
+                onClick={() => onChange?.({ pinned: !widget.pinned })}
+              >
+                <Pin aria-hidden="true" />
+              </Button>
+            ) : null}
             <Button
-              variant={widget.pinned ? "secondary" : "ghost"}
+              variant="ghost"
               size="icon"
               className="min-h-11 min-w-11"
-              aria-label={`${widget.pinned ? "Unpin" : "Pin"} ${widget.name}`}
-              aria-pressed={widget.pinned}
-              onClick={() => onChange({ pinned: !widget.pinned })}
+              aria-label={`Move ${widget.name} up`}
+              disabled={!canMoveUp}
+              onClick={onMoveUp}
             >
-              <Pin aria-hidden="true" />
+              <ArrowUp aria-hidden="true" />
             </Button>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="min-h-11 min-w-11"
-            aria-label={`Move ${widget.name} up`}
-            disabled={!canMoveUp}
-            onClick={onMoveUp}
-          >
-            <ArrowUp aria-hidden="true" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="min-h-11 min-w-11"
-            aria-label={`Move ${widget.name} down`}
-            disabled={!canMoveDown}
-            onClick={onMoveDown}
-          >
-            <ArrowDown aria-hidden="true" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="min-h-11 min-w-11"
-            aria-label={`Duplicate ${widget.name}`}
-            disabled={!canDuplicate}
-            onClick={onDuplicate}
-          >
-            <Copy aria-hidden="true" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="text-destructive hover:text-destructive min-h-11 min-w-11"
-            aria-label={`Remove ${widget.name}`}
-            onClick={onRemove}
-          >
-            <Trash2 aria-hidden="true" />
-          </Button>
-        </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="min-h-11 min-w-11"
+              aria-label={`Move ${widget.name} down`}
+              disabled={!canMoveDown}
+              onClick={onMoveDown}
+            >
+              <ArrowDown aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="min-h-11 min-w-11"
+              aria-label={`Duplicate ${widget.name}`}
+              disabled={!canDuplicate}
+              onClick={onDuplicate}
+            >
+              <Copy aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-destructive hover:text-destructive min-h-11 min-w-11"
+              aria-label={`Remove ${widget.name}`}
+              onClick={onRemove}
+            >
+              <Trash2 aria-hidden="true" />
+            </Button>
+          </div>
+        ) : null}
       </CardHeader>
       <CardContent className="bg-muted/10 min-w-0 py-5">
         {error ? (
@@ -534,89 +651,101 @@ function WidgetCard({
             rows={filteredRows}
             totalRows={rows.length}
             moduleName={moduleDefinition.name}
+            board={board}
           />
         )}
       </CardContent>
-      <CardFooter className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">
-            {filteredRows.length}{" "}
-            {filteredRows.length === 1 ? "record" : "records"}
-          </Badge>
-          <Badge
-            variant={
-              isUnresolvedAudience(widget.audience) ? "warning" : "secondary"
+      {!reading && (
+        <CardFooter className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">
+              {filteredRows.length}{" "}
+              {filteredRows.length === 1 ? "record" : "records"}
+            </Badge>
+            <Badge
+              variant={
+                isUnresolvedAudience(widget.audience) ? "warning" : "secondary"
+              }
+            >
+              {audienceLabel(widget.audience, audienceLookup)}
+            </Badge>
+            <Badge variant="outline">
+              {widget.refresh === "manual"
+                ? "Manual refresh"
+                : `${refreshLabel(widget.refresh)}${board ? "" : " preview"}`}
+            </Badge>
+          </div>
+          <Button
+            variant="outline"
+            className="min-h-11"
+            onClick={onRecompute}
+            title="Refresh this widget"
+          >
+            <RefreshCw aria-hidden="true" />
+            {board ? "Refresh" : "Recompute now"}
+          </Button>
+          {(!board || recomputedAt) && (
+            <p className="text-muted-foreground basis-full text-xs">
+              {recomputedAt ? (
+                <>
+                  {board ? "Last refreshed" : "Last manually recomputed"}{" "}
+                  <time dateTime={recomputedAt}>
+                    {formatTimestamp(recomputedAt)}
+                  </time>
+                  .
+                </>
+              ) : (
+                "Refresh cadence is a preview; nothing runs in the background."
+              )}
+            </p>
+          )}
+        </CardFooter>
+      )}
+      {mode === "edit" ? (
+        <Collapsible
+          className="border-border border-t"
+          open={settingsOpen}
+          onOpenChange={onSettingsOpenChange}
+        >
+          <CollapsibleTrigger
+            aria-label={`${settingsOpen ? "Hide" : "Show"} ${widget.name} settings`}
+            render={
+              <Button
+                variant="ghost"
+                className="min-h-11 w-full justify-between rounded-none px-5"
+              />
             }
           >
-            {audienceLabel(widget.audience, audienceLookup)}
-          </Badge>
-          <Badge variant="outline">
-            {widget.refresh === "manual"
-              ? "Manual refresh"
-              : `${refreshLabel(widget.refresh)} preview`}
-          </Badge>
-        </div>
-        <Button
-          variant="outline"
-          className="min-h-11"
-          onClick={onRecompute}
-          title="Recompute this sample widget now"
-        >
-          <RefreshCw aria-hidden="true" />
-          Recompute now
-        </Button>
-        <p className="text-muted-foreground basis-full text-xs">
-          {recomputedAt ? (
-            <>
-              Last manually recomputed{" "}
-              <time dateTime={recomputedAt}>
-                {formatTimestamp(recomputedAt)}
-              </time>
-              .
-            </>
-          ) : (
-            "Refresh cadence is a preview; nothing runs in the background."
-          )}
-        </p>
-      </CardFooter>
-      <Collapsible
-        className="border-border border-t"
-        open={settingsOpen}
-        onOpenChange={onSettingsOpenChange}
-      >
-        <CollapsibleTrigger
-          aria-label={`${settingsOpen ? "Hide" : "Show"} ${widget.name} settings`}
-          render={
-            <Button
-              variant="ghost"
-              className="min-h-11 w-full justify-between rounded-none px-5"
-            />
-          }
-        >
-          <span>Widget settings</span>
-          <Settings2 aria-hidden="true" />
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <CardContent className="border-border border-t">
-            <WidgetSettings
-              widget={widget}
-              roles={roles}
-              people={people}
-              onChange={onChange}
-            />
-          </CardContent>
-        </CollapsibleContent>
-      </Collapsible>
+            <span>Widget settings</span>
+            <Settings2 aria-hidden="true" />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <CardContent className="border-border border-t">
+              {onChange ? (
+                <WidgetSettings
+                  board={board}
+                  widget={widget}
+                  roles={roles}
+                  people={people}
+                  onChange={onChange}
+                />
+              ) : null}
+            </CardContent>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : null}
     </Card>
   );
 }
 
 function WidgetSettings({
+  board,
   widget,
   roles,
   people,
   onChange,
 }: {
+  board: boolean;
   widget: OpenViewWidget;
   roles: { id: string; name: string }[];
   people: { id: string; name: string }[];
@@ -860,14 +989,17 @@ function WidgetSettings({
               </NativeSelectOption>
             </NativeSelect>
             <FieldDescription>
-              No background refresh is scheduled.
+              {board
+                ? "Runs while this board is open in the active tab, after you save."
+                : "No background refresh is scheduled."}
             </FieldDescription>
           </Field>
         </div>
 
         <Alert variant="warning">
-          Audience and refresh are sample configuration previews. They never
-          send invitations, schedule jobs, or grant access.
+          {board
+            ? "Audience narrows visibility within this board. Only people who can access the board can view its widgets."
+            : "Audience and refresh are sample configuration previews. They never send invitations, schedule jobs, or grant access."}
         </Alert>
       </FieldGroup>
       <AlertDialog
@@ -1163,11 +1295,13 @@ function WidgetPreview({
   rows,
   totalRows,
   moduleName,
+  board,
 }: {
   widget: OpenViewWidget;
   rows: OpenViewRow[];
   totalRows: number;
   moduleName: string;
+  board: boolean;
 }) {
   if (!rows.length) {
     return (
@@ -1192,7 +1326,7 @@ function WidgetPreview({
     return <WorkloadPreview widget={widget} rows={rows} />;
   }
   if (widget.type === "records") {
-    return <RecordsPreview widget={widget} rows={rows} />;
+    return <RecordsPreview board={board} widget={widget} rows={rows} />;
   }
   if (widget.type === "chart") {
     return <ChartPreview widget={widget} rows={rows} />;
@@ -1208,120 +1342,142 @@ function SummaryPreview({
   rows: OpenViewRow[];
 }) {
   const moduleDefinition = getModuleDefinition(widget.moduleId);
-  const operationalSummary = summarizeOpenViewOperationalRows(
-    rows,
-    widget.moduleId,
-  );
+  const summary = summarizeOpenViewOperationalRows(rows, widget.moduleId);
   const dimension =
     moduleDefinition.fields.find((field) => field.id === "status") ??
     chooseDimension(widget);
   const groups = summarizeRows(rows, dimension, widget.metric);
-  const max = Math.max(...groups.map((group) => group.value), 1);
-  const attentionTotal =
-    operationalSummary.blocked +
-    operationalSummary.overdue +
-    operationalSummary.latePlan +
-    operationalSummary.dueSoon;
-  const attentionLabel = "Blocked, overdue, late plan, or due soon";
-  const attentionSentence = operationalSummary.needsAttention
-    ? `${operationalSummary.needsAttention} of ${operationalSummary.total} visible ${operationalSummary.total === 1 ? "record needs" : "records need"} attention${attentionTotal ? `; ${attentionTotal} ${attentionTotal === 1 ? "is" : "are"} ${attentionLabel.toLocaleLowerCase()}` : ""}.`
-    : `All ${operationalSummary.total} visible ${operationalSummary.total === 1 ? "record is" : "records are"} on track or complete.`;
+  const noun = widget.moduleId === "service-requests" ? "request" : "record";
+  const causes = [
+    { label: "Blocked", state: "blocked" },
+    { label: "Overdue", state: "overdue" },
+    { label: "Planned after deadline", state: "late-plan" },
+    { label: "Due soon", state: "due-soon" },
+    { label: "Missing dates", state: "unscheduled" },
+  ]
+    .map((cause) => ({
+      ...cause,
+      count: summary.attention.filter(
+        (item) => item.timingState === cause.state,
+      ).length,
+    }))
+    .filter((cause) => cause.count > 0);
   return (
-    <div className="space-y-5">
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="max-w-2xl font-semibold">{attentionSentence}</p>
-          <Badge variant="outline" className="border-chart-1/35 bg-card">
-            Operational summary
-          </Badge>
-        </div>
-        <dl
-          className="grid gap-x-5 gap-y-3 border-y py-3 sm:grid-cols-2 lg:grid-cols-3"
-          aria-label="Operational summary facts"
-        >
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-muted-foreground text-xs">Visible records</dt>
-            <dd className="text-lg font-semibold tabular-nums">
-              {operationalSummary.total}
-            </dd>
-          </div>
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-muted-foreground text-xs">Needs attention</dt>
-            <dd className="text-lg font-semibold tabular-nums">
-              {operationalSummary.needsAttention}
-            </dd>
-          </div>
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-muted-foreground text-xs">{attentionLabel}</dt>
-            <dd className="text-lg font-semibold tabular-nums">
-              {attentionTotal}
-            </dd>
-          </div>
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-muted-foreground text-xs">High priority</dt>
-            <dd className="text-lg font-semibold tabular-nums">
-              {operationalSummary.highPriority}
-            </dd>
-          </div>
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-muted-foreground text-xs">Unscheduled</dt>
-            <dd className="text-lg font-semibold tabular-nums">
-              {operationalSummary.unscheduled}
-            </dd>
-          </div>
-        </dl>
-        <div
-          className="bg-muted flex h-3 overflow-hidden rounded-full"
-          aria-hidden="true"
-        >
-          {groups.map((group, index) => (
-            <span
-              key={group.label}
-              className={widgetTone(index).solid}
-              style={{ width: `${(group.value / max) * 100}%` }}
-            />
-          ))}
-        </div>
-        <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-          Status distribution
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <p className="text-lg leading-snug font-semibold">
+          {summary.needsAttention
+            ? `${summary.needsAttention} of ${summary.total} ${noun}${summary.total === 1 ? " needs" : "s need"} attention.`
+            : `All ${summary.total} ${noun}${summary.total === 1 ? " is" : "s are"} on track or complete.`}
+        </p>
+        <p className="text-muted-foreground text-sm">
+          {summary.highPriority} high priority · Dates assessed as of{" "}
+          {formatOperationalDate(summary.snapshotDate)}
         </p>
       </div>
-      <ul
-        className="grid gap-2 sm:grid-cols-2"
-        aria-label="Status distribution"
-      >
-        {groups.slice(0, 6).map((group, index) => {
-          const tone = widgetTone(index);
-          return (
+      {!!causes.length && (
+        <dl
+          className="grid grid-cols-2 gap-x-5 gap-y-3"
+          aria-label="Reasons for attention"
+        >
+          {causes.map((cause) => (
+            <div
+              key={cause.label}
+              className="flex items-baseline justify-between gap-3"
+            >
+              <dt className="text-sm">{cause.label}</dt>
+              <dd className="text-lg font-semibold tabular-nums">
+                {cause.count}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {!!summary.attention.length && (
+        <Collapsible className="flex flex-col gap-3">
+          <CollapsibleTrigger
+            render={
+              <Button
+                variant="outline"
+                className="min-h-11 w-full justify-between"
+              />
+            }
+          >
+            See {summary.attention.length} {noun}
+            {summary.attention.length === 1 ? "" : "s"} needing attention
+            <ChevronDown data-icon="inline-end" />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <ul
+              className="divide-border max-h-80 divide-y overflow-y-auto"
+              aria-label="Items needing attention"
+            >
+              {summary.attention.map((item) => (
+                <li
+                  key={item.rowId}
+                  className="flex flex-col gap-2 py-3 first:pt-0"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <p className="min-w-0 flex-1 font-medium break-words">
+                      {item.label}
+                    </p>
+                    <Badge variant={operationalTimingVariant(item.timingState)}>
+                      {operationalTimingLabel(item.timingState)}
+                    </Badge>
+                  </div>
+                  {item.attentionReason && (
+                    <p className="text-sm">{item.attentionReason}</p>
+                  )}
+                  <p className="text-muted-foreground text-sm">
+                    {item.owner || "Unassigned"} ·{" "}
+                    {item.deadline
+                      ? `Due ${formatOperationalDate(item.deadline)}`
+                      : "No deadline"}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+      <div className="flex flex-col gap-3 border-t pt-4">
+        <p className="text-sm font-medium">
+          By {dimension.label.toLocaleLowerCase()}
+          {widget.metric !== "count"
+            ? ` · total ${moduleDefinition.fields.find((field) => field.id === widget.metric)?.label ?? widget.metric}`
+            : ""}
+        </p>
+        <ul
+          className="grid gap-x-5 gap-y-2 sm:grid-cols-2"
+          aria-label="Status distribution"
+        >
+          {groups.slice(0, 6).map((group, index) => (
             <li
               key={group.label}
-              className={cn(
-                "relative flex min-h-11 items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border px-3 py-2.5 text-sm",
-                tone.border,
-              )}
+              className="flex items-center justify-between gap-3 text-sm"
             >
-              <span
-                className={cn(
-                  "absolute inset-y-0 left-0 opacity-70",
-                  tone.surface,
-                )}
-                style={{ width: `${Math.max(8, (group.value / max) * 100)}%` }}
-                aria-hidden="true"
-              />
-              <span className="relative flex min-w-0 items-center gap-2">
+              <span className="flex min-w-0 items-center gap-2">
                 <span
-                  className={cn("size-2 shrink-0 rounded-full", tone.solid)}
+                  className={cn(
+                    "size-2 shrink-0 rounded-full",
+                    widgetTone(index).solid,
+                  )}
                   aria-hidden="true"
                 />
-                <span className="truncate">{group.label}</span>
+                <span className="break-words">{group.label}</span>
               </span>
-              <span className="relative font-semibold tabular-nums">
+              <span className="font-semibold tabular-nums">
                 {group.value.toLocaleString()}
               </span>
             </li>
-          );
-        })}
-      </ul>
+          ))}
+        </ul>
+        {groups.length > 6 && (
+          <p className="text-muted-foreground text-sm">
+            Showing 6 of {groups.length} groups.
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -1336,63 +1492,91 @@ function WorkloadPreview({
   const moduleDefinition = getModuleDefinition(widget.moduleId);
   const dimension = chooseWorkloadDimension(widget, rows);
   const groups = summarizeRows(rows, dimension, widget.metric);
-  const workloadCounts = summarizeRows(rows, dimension, "count");
+  const counts = summarizeRows(rows, dimension, "count");
+  const leaders = counts.filter((group) => group.value === counts[0]?.value);
+  const highest = counts[0]?.value ?? 0;
+  const total = groups.reduce((sum, group) => sum + group.value, 0);
   const max = Math.max(...groups.map((group) => group.value), 1);
-  const dominant = workloadCounts[0];
+  const noun = widget.moduleId === "service-requests" ? "request" : "record";
   const metricLabel =
-    widget.metric === "count"
-      ? "record count"
-      : (moduleDefinition.fields.find((field) => field.id === widget.metric)
-          ?.label ?? "metric");
+    moduleDefinition.fields.find((field) => field.id === widget.metric)
+      ?.label ?? widget.metric;
+  const leaderNames =
+    leaders.length <= 3
+      ? new Intl.ListFormat("en", {
+          style: "long",
+          type: "conjunction",
+        }).format(leaders.map((group) => group.label))
+      : `${leaders.length} groups`;
   return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-semibold">
-            {dominant
-              ? `${dominant.label} is the largest visible group`
-              : "No visible workload groups"}
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        <p className="text-lg leading-snug font-semibold">
+          {rows.length} {noun}
+          {rows.length === 1 ? "" : "s"} by{" "}
+          {dimension.label.toLocaleLowerCase()}
+        </p>
+        {widget.metric === "count" && (
+          <p className="text-muted-foreground text-sm">
+            {leaders.length > 1
+              ? `${leaderNames} ${leaders.length > 3 ? "tie for the most, with" : "each have"} ${highest} ${noun}${highest === 1 ? "" : "s"}${leaders.length > 3 ? " each" : ""}.`
+              : `${leaderNames} has the most: ${highest} ${noun}${highest === 1 ? "" : "s"}.`}
           </p>
-          <p className="text-muted-foreground mt-1 text-sm">
-            {dominant
-              ? `${dominant.value} of ${rows.length} visible ${rows.length === 1 ? "record" : "records"} · grouped by ${dimension.label.toLocaleLowerCase()}${widget.metric !== "count" ? ` · bars show ${metricLabel}` : ""}`
-              : `Grouped by ${dimension.label.toLocaleLowerCase()}`}
+        )}
+        {widget.metric !== "count" && (
+          <p className="text-muted-foreground text-sm">
+            Bars show total {metricLabel.toLocaleLowerCase()}, relative to the
+            largest total.
           </p>
-        </div>
-        <Users aria-hidden="true" className="text-muted-foreground size-5" />
+        )}
       </div>
-      <ul className="space-y-3" aria-label={`Workload by ${dimension.label}`}>
-        {groups.slice(0, 8).map((group, index) => {
-          const tone = widgetTone(index);
-          return (
-            <li key={group.label} className="space-y-1.5">
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="truncate">{group.label}</span>
-                <span className="font-semibold tabular-nums">
-                  {group.value.toLocaleString()}
-                </span>
-              </div>
+      <ul
+        className="flex flex-col gap-4"
+        aria-label={`${widget.metric === "count" ? "Record count" : metricLabel} by ${dimension.label}`}
+      >
+        {groups.slice(0, 8).map((group) => (
+          <li key={group.label} className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="min-w-0 break-words">{group.label}</span>
+              <span className="shrink-0 font-semibold tabular-nums">
+                {group.value.toLocaleString()}
+                {widget.metric === "count" && (
+                  <span className="text-muted-foreground ml-2 font-normal">
+                    of {rows.length}
+                  </span>
+                )}
+              </span>
+            </div>
+            <div
+              className="bg-muted h-2 overflow-hidden rounded-full"
+              aria-hidden="true"
+            >
               <div
-                className="bg-muted h-2 overflow-hidden rounded-full"
-                aria-hidden="true"
-              >
-                <div
-                  className={cn("h-full rounded-full", tone.solid)}
-                  style={{ width: `${(group.value / max) * 100}%` }}
-                />
-              </div>
-            </li>
-          );
-        })}
+                className="bg-chart-1 h-full rounded-full"
+                style={{
+                  width: `${(group.value / (widget.metric === "count" ? Math.max(total, 1) : max)) * 100}%`,
+                }}
+              />
+            </div>
+          </li>
+        ))}
       </ul>
+      {groups.length > 8 && (
+        <p className="text-muted-foreground text-sm">
+          Showing the largest 8 of {groups.length} groups. Totals include every
+          group.
+        </p>
+      )}
     </div>
   );
 }
 
 function RecordsPreview({
+  board,
   widget,
   rows,
 }: {
+  board: boolean;
   widget: OpenViewWidget;
   rows: OpenViewRow[];
 }) {
@@ -1471,19 +1655,7 @@ function RecordsPreview({
                     <span className="text-muted-foreground shrink-0">
                       Progress
                     </span>
-                    <span
-                      className="bg-muted h-1.5 min-w-16 flex-1 overflow-hidden rounded-full"
-                      role="progressbar"
-                      aria-label={`${facts.progress}% complete`}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={facts.progress}
-                    >
-                      <span
-                        className="bg-chart-3 block h-full rounded-full"
-                        style={{ width: `${facts.progress}%` }}
-                      />
-                    </span>
+                    <RecordProgress board={board} value={facts.progress} />
                     <span className="font-medium tabular-nums">
                       {facts.progress}%
                     </span>
@@ -1499,6 +1671,33 @@ function RecordsPreview({
         );
       })}
     </ul>
+  );
+}
+
+function RecordProgress({ board, value }: { board: boolean; value: number }) {
+  if (board) {
+    return (
+      <Progress
+        className="h-1.5 min-w-16 flex-1"
+        value={value}
+        aria-label={`${value}% complete`}
+      />
+    );
+  }
+  return (
+    <span
+      className="bg-muted h-1.5 min-w-16 flex-1 overflow-hidden rounded-full"
+      role="progressbar"
+      aria-label={`${value}% complete`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={value}
+    >
+      <span
+        className="bg-chart-3 block h-full rounded-full"
+        style={{ width: `${value}%` }}
+      />
+    </span>
   );
 }
 
@@ -2026,9 +2225,9 @@ function formatOperationalDate(value: string): string {
 function operationalTimingLabel(state: string): string {
   if (state === "blocked") return "Blocked";
   if (state === "overdue") return "Overdue";
-  if (state === "late-plan") return "Late plan";
+  if (state === "late-plan") return "Planned after deadline";
   if (state === "due-soon") return "Due soon";
-  if (state === "unscheduled") return "Unscheduled";
+  if (state === "unscheduled") return "Missing dates";
   return "On track";
 }
 

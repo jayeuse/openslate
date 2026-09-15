@@ -37,10 +37,17 @@ export function ComboboxInput({ className, ...props }: Primitive.Input.Props) {
     />
   );
 }
-export function ComboboxContent({ children, ...props }: Primitive.Popup.Props) {
+export function ComboboxContent({
+  children,
+  positionerClassName,
+  ...props
+}: Primitive.Popup.Props & { positionerClassName?: string }) {
   return (
     <Primitive.Portal>
-      <Primitive.Positioner sideOffset={4} className="isolate">
+      <Primitive.Positioner
+        sideOffset={4}
+        className={cn("isolate", positionerClassName)}
+      >
         <Primitive.Popup
           {...props}
           className="bg-popover text-popover-foreground border-border flex max-h-[var(--available-height)] w-[var(--anchor-width)] max-w-[var(--available-width)] flex-col gap-2 overflow-y-auto rounded-[var(--radius)] border p-2 shadow-md"
