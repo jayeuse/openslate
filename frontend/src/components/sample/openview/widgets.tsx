@@ -302,7 +302,7 @@ export function WidgetSurface<T extends WidgetInput>({
           })}
           board={board}
           roles={roles}
-          people={people}
+          people={audienceLookup.identities ?? []}
           audienceLookup={audienceLookup}
           error={widgetErrors?.[widget.id]}
           settingsOpen={openSettings[widget.id] === true}
@@ -824,7 +824,7 @@ function WidgetSettings({
                   Role: {role.name}
                 </NativeSelectOption>
               ))}
-              {activeAudienceIdentities(people).map((person) => (
+              {people.map((person) => (
                 <NativeSelectOption
                   key={`identity-${person.id}`}
                   value={`identity:${person.id}`}
