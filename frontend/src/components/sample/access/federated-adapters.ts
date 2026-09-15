@@ -10,8 +10,12 @@ import {
   type CommsScope,
 } from "../comms/configuration";
 import type { Category, Channel } from "../comms/model";
-import type { Dashboard, Report } from "../openview/analytics";
-import type { SavedView } from "../openview";
+import type {
+  AudienceRef,
+  OpenViewModuleId,
+  ReportSchedule,
+  ViewConfig,
+} from "../openview/model";
 import type { Role } from "./model";
 import {
   executeAccessCommand,
@@ -30,13 +34,89 @@ import type {
 export type FederatedAccessOwners = {
   boards: SampleBoard[];
   announcements: Announcement[];
-  savedViews: SavedView[];
-  dashboards: Dashboard[];
-  reportDraft: Report;
-  reportTemplates: Report[];
+  savedViews: FederatedSavedView[];
+  dashboards: FederatedDashboard[];
+  reportDraft: FederatedReport;
+  reportTemplates: FederatedReport[];
   commsConfiguration: CommsConfiguration;
   commsCategories: Category[];
   commsChannels: Channel[];
+};
+
+/**
+ * OpenView ownership is local sample state today, so Access has to be able to
+ * read both the current typed model and values written by the legacy screen.
+ * These intentionally describe the smallest common projection rather than
+ * making Access depend on OpenView's presentation components.
+ */
+export type FederatedAudience = AudienceRef | string;
+
+export type FederatedAudienceIdentity = {
+  id: string;
+  name: string;
+  status?: string;
+  deleted?: boolean;
+};
+
+export type FederatedAudienceRole = Pick<Role, "id" | "name">;
+
+export type FederatedAudienceLookup = {
+  roles?: readonly FederatedAudienceRole[];
+  identities?: readonly FederatedAudienceIdentity[];
+};
+
+export type FederatedSavedView = {
+  id: string;
+  name: string;
+  audience: FederatedAudience;
+  moduleId?: OpenViewModuleId;
+  config?: ViewConfig;
+  // Legacy view fields are optional so normalized typed views and old stored
+  // views can cross the Access boundary without a lossy cast.
+  type?: string;
+  search?: string;
+  status?: string;
+  sort?: string;
+  group?: string;
+};
+
+export type FederatedWidget = {
+  id: string;
+  type: string;
+  size: string;
+  refresh?: string;
+  pinned?: boolean;
+  name?: string;
+  moduleId?: OpenViewModuleId;
+  audience?: FederatedAudience;
+  permission?: string;
+  fields?: string[];
+  filters?: unknown;
+  metric?: string;
+  visualization?: string;
+};
+
+export type FederatedDashboard = {
+  id: string;
+  name: string;
+  refresh: string;
+  widgets: FederatedWidget[];
+  audience?: FederatedAudience;
+  permission?: string;
+};
+
+export type FederatedReport = {
+  id?: string;
+  name: string;
+  audience: FederatedAudience;
+  fields: string[];
+  subtitle?: string;
+  moduleId?: OpenViewModuleId;
+  filters?: unknown;
+  sorts?: unknown;
+  grouping: string | null;
+  totals: boolean;
+  schedule: ReportSchedule | string;
 };
 
 export type FederatedOwnerKey =
@@ -102,28 +182,173 @@ function cloneOwners(owners: FederatedAccessOwners): FederatedAccessOwners {
   return structuredClone(owners);
 }
 
-function roleByLabel(roles: readonly Role[], label: string): Role | undefined {
+function roleByLabel(
+  roles: readonly FederatedAudienceRole[],
+  label: string,
+): FederatedAudienceRole | undefined {
   const matches = roles.filter((role) => role.name === label);
   return matches.length === 1 ? matches[0] : undefined;
 }
 
-function audienceRoleLabel(audience: string): string {
+function roleById(
+  roles: readonly FederatedAudienceRole[],
+  id: string,
+): FederatedAudienceRole | undefined {
+  const matches = roles.filter((role) => role.id === id);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function audienceRoleLabel(audience: unknown): string | undefined {
+  if (typeof audience !== "string") return;
   return audience.startsWith("Role: ")
     ? audience.slice("Role: ".length)
     : audience;
 }
 
-function audienceReferencesRole(audience: string, role: Role): boolean {
+function audienceReferencesRole(audience: unknown, role: Role): boolean {
+  if (
+    typeof audience === "object" &&
+    audience !== null &&
+    "kind" in audience &&
+    audience.kind === "role"
+  ) {
+    return "id" in audience && audience.id === role.id;
+  }
   return audienceRoleLabel(audience) === role.name;
 }
 
+function replaceAudience(value: string, previous: string, next: string): string;
 function replaceAudience(
-  value: string,
+  value: FederatedAudience,
   previous: string,
   next: string,
-): string {
+): FederatedAudience;
+function replaceAudience(
+  value: FederatedAudience,
+  previous: string,
+  next: string,
+): FederatedAudience {
+  if (typeof value !== "string") return value;
   if (value === previous) return next;
   return value === `Role: ${previous}` ? `Role: ${next}` : value;
+}
+
+function ownerAudience(value: {
+  audience?: unknown;
+  permission?: unknown;
+}): unknown {
+  return value.audience !== undefined ? value.audience : value.permission;
+}
+
+function isAudienceRef(value: unknown): value is AudienceRef {
+  if (typeof value !== "object" || value === null || !("kind" in value))
+    return false;
+  if (value.kind === "private" || value.kind === "everyone") return true;
+  return (
+    (value.kind === "role" || value.kind === "identity") &&
+    "id" in value &&
+    typeof value.id === "string" &&
+    value.id.length > 0
+  );
+}
+
+type ResolvedAudience = {
+  valid: boolean;
+  label: string;
+  ref: AudienceRef;
+};
+
+function isDeletedIdentity(identity: FederatedAudienceIdentity): boolean {
+  return (
+    identity.deleted === true ||
+    identity.status === "deleted" ||
+    identity.status === "revoked"
+  );
+}
+
+function unresolvedAudience(
+  label: string,
+  kind: "role" | "identity" | "other",
+): ResolvedAudience {
+  return {
+    valid: false,
+    label,
+    ref:
+      kind === "role"
+        ? { kind: "role", id: "unresolved" }
+        : kind === "identity"
+          ? { kind: "identity", id: "unresolved" }
+          : { kind: "private" },
+  };
+}
+
+function resolveAudience(
+  raw: unknown,
+  lookup: FederatedAudienceLookup,
+): ResolvedAudience {
+  const knownRoles = lookup.roles ?? [];
+  if (isAudienceRef(raw)) {
+    if (raw.kind === "private" && raw.unresolved)
+      return unresolvedAudience(
+        `${raw.unresolved.kind === "role" ? "Role" : "User"}: Unresolved (${raw.unresolved.id})`,
+        raw.unresolved.kind,
+      );
+    if (raw.kind === "private")
+      return { valid: true, label: "Only me", ref: raw };
+    if (raw.kind === "everyone")
+      return { valid: true, label: "Everyone", ref: raw };
+    if (raw.kind === "role") {
+      const role = roleById(knownRoles, raw.id);
+      return role
+        ? { valid: true, label: `Role: ${role.name}`, ref: raw }
+        : unresolvedAudience(`Role: Unresolved (${raw.id})`, "role");
+    }
+    const identity = lookup.identities?.find(
+      (candidate) => candidate.id === raw.id,
+    );
+    if (!identity)
+      return unresolvedAudience(`User: Unresolved (${raw.id})`, "identity");
+    if (isDeletedIdentity(identity))
+      return unresolvedAudience(`User: ${identity.name} (deleted)`, "identity");
+    return { valid: true, label: `User: ${identity.name}`, ref: raw };
+  }
+
+  if (raw === "Everyone")
+    return { valid: true, label: "Everyone", ref: { kind: "everyone" } };
+  if (raw === "Only me" || raw === "Private")
+    return { valid: true, label: "Only me", ref: { kind: "private" } };
+  if (typeof raw !== "string")
+    return unresolvedAudience("Unresolved audience", "other");
+
+  if (raw.startsWith("User: ")) {
+    const identityLabel = raw.slice("User: ".length);
+    const identities = lookup.identities?.filter(
+      (identity) => identity.name === identityLabel,
+    );
+    const identity = identities?.length === 1 ? identities[0] : undefined;
+    if (identity && !isDeletedIdentity(identity))
+      return {
+        valid: true,
+        label: `User: ${identity.name}`,
+        ref: { kind: "identity", id: identity.id },
+      };
+    return unresolvedAudience(
+      `User: Unresolved (${identityLabel})`,
+      "identity",
+    );
+  }
+  const roleLabel = audienceRoleLabel(raw);
+  if (roleLabel !== undefined) {
+    const role = roleByLabel(knownRoles, roleLabel);
+    if (role)
+      return {
+        valid: true,
+        label: `Role: ${role.name}`,
+        ref: { kind: "role", id: role.id },
+      };
+    return unresolvedAudience(`Role: Unresolved (${roleLabel})`, "role");
+  }
+  return unresolvedAudience(`Unresolved audience (${raw})`, "other");
 }
 
 export function projectFederatedRoleChange(
@@ -153,10 +378,44 @@ export function projectFederatedRoleChange(
   }));
   projected.dashboards = projected.dashboards.map((dashboard) => ({
     ...dashboard,
-    permission: replaceAudience(dashboard.permission, previous.name, next.name),
+    ...(typeof dashboard.permission === "string"
+      ? {
+          permission: replaceAudience(
+            dashboard.permission,
+            previous.name,
+            next.name,
+          ),
+        }
+      : {}),
+    ...(typeof dashboard.audience === "string"
+      ? {
+          audience: replaceAudience(
+            dashboard.audience,
+            previous.name,
+            next.name,
+          ),
+        }
+      : {}),
     widgets: dashboard.widgets.map((widget) => ({
       ...widget,
-      permission: replaceAudience(widget.permission, previous.name, next.name),
+      ...(typeof widget.permission === "string"
+        ? {
+            permission: replaceAudience(
+              widget.permission,
+              previous.name,
+              next.name,
+            ),
+          }
+        : {}),
+      ...(typeof widget.audience === "string"
+        ? {
+            audience: replaceAudience(
+              widget.audience,
+              previous.name,
+              next.name,
+            ),
+          }
+        : {}),
     })),
   }));
   projected.reportDraft = {
@@ -184,8 +443,12 @@ export function federatedRoleReferences(
   if (
     owners.boards.some(
       (board) =>
-        board.roles.includes(role.name) ||
-        board.widgets.some((widget) => widget.permission === role.name),
+        board.roles.some((audience) =>
+          audienceReferencesRole(audience, role),
+        ) ||
+        board.widgets.some((widget) =>
+          audienceReferencesRole(ownerAudience(widget), role),
+        ),
     )
   )
     references.add("boards-list");
@@ -204,8 +467,10 @@ export function federatedRoleReferences(
   if (
     owners.dashboards.some(
       (dashboard) =>
-        dashboard.permission === role.name ||
-        dashboard.widgets.some((widget) => widget.permission === role.name),
+        audienceReferencesRole(ownerAudience(dashboard), role) ||
+        dashboard.widgets.some((widget) =>
+          audienceReferencesRole(ownerAudience(widget), role),
+        ),
     )
   )
     references.add("views-dashboards");
@@ -290,7 +555,7 @@ export function classifyFederatedDecision(
     if (
       input.permissionId === "boards.view" &&
       subjectRoleId !== undefined &&
-      roles.some((role) => role.id === subjectRoleId) &&
+      roleById(roles, subjectRoleId) !== undefined &&
       input.decision !== "inherit"
     )
       return { classification: "native", owner: "boards-list" };
@@ -326,7 +591,7 @@ export function classifyFederatedDecision(
       input.subject.kind !== "everyone" &&
       !(
         subjectRoleId !== undefined &&
-        roles.some((role) => role.id === subjectRoleId)
+        roleById(roles, subjectRoleId) !== undefined
       )
     )
       return {
@@ -379,10 +644,10 @@ export function writeFederatedDecision(
     return { ok: false, ...classification };
   const projected = cloneOwners(owners);
   if (classification.owner === "boards-list") {
-    const role = roles.find(
-      (candidate) =>
-        input.subject.kind === "role" && candidate.id === input.subject.id,
-    );
+    const role =
+      input.subject.kind === "role"
+        ? roleById(roles, input.subject.id)
+        : undefined;
     const board = resolveBoard(projected, input.scope);
     if (!role || !board)
       return {
@@ -427,31 +692,44 @@ export function writeFederatedDecision(
 
 function addUnknownAudienceFinding(
   findings: FederatedAccessFinding[],
-  roles: readonly Role[],
+  lookup: FederatedAudienceLookup,
   owner: FederatedOwnerKey,
   targetId: string,
-  audience: string,
+  audience: unknown,
 ): void {
-  if (
-    audience === "Everyone" ||
-    audience === "Only me" ||
-    roleByLabel(roles, audienceRoleLabel(audience))
-  )
-    return;
+  const resolved = resolveAudience(audience, lookup);
+  if (resolved.valid) return;
   findings.push({
     id: `federated:${owner}:audience:${targetId}`,
     kind: "invalid-reference",
     severity: "critical",
     title: "Federated audience is unknown",
-    detail: `${owner} references the unknown or ambiguous role label ${audience}.`,
+    detail: `${owner} references ${resolved.label}; the audience is treated as private and has no writable authority.`,
     targetId,
   });
 }
 
+function reportScopeId(report: FederatedReport): string {
+  const stableId = report.id?.trim();
+  return stableId || slug(report.name);
+}
+
+function audienceLookup(
+  roles: readonly Role[] | FederatedAudienceLookup,
+  identities: readonly FederatedAudienceIdentity[] | undefined,
+): FederatedAudienceLookup {
+  if (Array.isArray(roles)) return { roles, identities };
+  const lookup = roles as FederatedAudienceLookup;
+  return { roles: lookup.roles ?? [], identities: lookup.identities };
+}
+
 export function getFederatedAccess(
   owners: FederatedAccessOwners,
-  roles: readonly Role[],
+  roles: readonly Role[] | FederatedAudienceLookup,
+  identities?: readonly FederatedAudienceIdentity[],
 ): FederatedAccessProjection {
+  const lookup = audienceLookup(roles, identities);
+  const knownRoles = lookup.roles ?? [];
   const scopes: FederatedScopeEntry[] = [];
   const rules: AccessRule[] = [];
   const findings: FederatedAccessFinding[] = [];
@@ -467,7 +745,7 @@ export function getFederatedAccess(
       parentId: "workspace",
     });
     for (const label of board.roles) {
-      const role = roleByLabel(roles, label);
+      const role = roleByLabel(knownRoles, label);
       if (!role) {
         findings.push({
           id: `federated:board-role:${board.id}:${slug(label)}`,
@@ -499,7 +777,7 @@ export function getFederatedAccess(
       });
       addUnknownAudienceFinding(
         findings,
-        roles,
+        lookup,
         "boards-list",
         widget.id,
         widget.permission,
@@ -519,7 +797,7 @@ export function getFederatedAccess(
     });
     addUnknownAudienceFinding(
       findings,
-      roles,
+      lookup,
       "views-saved",
       view.id,
       view.audience,
@@ -537,10 +815,10 @@ export function getFederatedAccess(
     });
     addUnknownAudienceFinding(
       findings,
-      roles,
+      lookup,
       "views-dashboards",
       dashboard.id,
-      dashboard.permission,
+      ownerAudience(dashboard),
     );
     for (const widget of dashboard.widgets) {
       scopes.push({
@@ -554,10 +832,10 @@ export function getFederatedAccess(
       });
       addUnknownAudienceFinding(
         findings,
-        roles,
+        lookup,
         "views-dashboards",
         widget.id,
-        widget.permission,
+        ownerAudience(widget),
       );
     }
   }
@@ -572,31 +850,30 @@ export function getFederatedAccess(
   });
   addUnknownAudienceFinding(
     findings,
-    roles,
+    lookup,
     "views-report-draft",
     "report-draft",
     owners.reportDraft.audience,
   );
-  const reportScopeIds = owners.reportTemplates.map((report) =>
-    slug(report.name),
-  );
+  const reportScopeIds = owners.reportTemplates.map(reportScopeId);
   const reportedAmbiguousTemplates = new Set<string>();
   for (const report of owners.reportTemplates) {
-    const id = slug(report.name);
+    const id = reportScopeId(report);
     if (
       !id ||
       reportScopeIds.filter((candidate) => candidate === id).length !== 1
     ) {
-      if (!reportedAmbiguousTemplates.has(id)) {
-        reportedAmbiguousTemplates.add(id);
+      const findingId = id || "empty";
+      if (!reportedAmbiguousTemplates.has(findingId)) {
+        reportedAmbiguousTemplates.add(findingId);
         findings.push({
-          id: `federated:report-template:ambiguous:${id || "empty"}`,
+          id: `federated:report-template:ambiguous:${findingId}`,
           kind: "conflict",
           severity: "critical",
           title: "Report template scope is ambiguous",
           detail:
-            "Report template names must be unique to expose stable Access scopes.",
-          targetId: report.name,
+            "Report template ids must be unique to expose stable Access scopes.",
+          targetId: report.id ?? report.name,
         });
       }
       continue;
@@ -612,7 +889,7 @@ export function getFederatedAccess(
     });
     addUnknownAudienceFinding(
       findings,
-      roles,
+      lookup,
       "views-report-templates",
       id,
       report.audience,
@@ -710,7 +987,7 @@ export function getFederatedAccess(
       if (!subject) continue;
       if (
         subject.kind === "role" &&
-        !roles.some((role) => role.id === subject.id)
+        roleById(knownRoles, subject.id) === undefined
       ) {
         findings.push({
           id: `federated:comms-role:${subject.id}`,

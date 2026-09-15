@@ -26,6 +26,22 @@ const context = {
   id: (prefix: string) => `${prefix}:generated`,
 };
 
+test("OpenView dashboard storage remains migration-tolerant for Access", () => {
+  const legacyDashboards = [
+    {
+      id: "sample-dashboard-operations",
+      name: "Operations pulse",
+      permission: "Everyone",
+      refresh: "Manual",
+      widgets: [],
+    },
+  ];
+
+  expect(
+    decodeSampleStoredValue("views-dashboards", legacyDashboards, null),
+  ).toBe(legacyDashboards);
+});
+
 function snapshot(): AccessControllerSnapshot {
   return {
     people: structuredClone(initialPeople),
