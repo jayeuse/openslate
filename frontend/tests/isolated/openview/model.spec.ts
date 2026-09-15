@@ -5,6 +5,7 @@ import {
   INITIAL_CHART_SETTINGS,
   INITIAL_OPENVIEW_VIEW,
   OPENVIEW_MODULES,
+  activeAudienceIdentities,
   audienceLabel,
   decodeAudienceRef,
   decodeChartSettings,
@@ -608,7 +609,7 @@ test("stored view and dashboard migrations recover legacy state without trusting
     }),
   ).toEqual(
     expect.objectContaining({
-      id: "legacy-report-weekly-review",
+      id: expect.stringMatching(/^legacy-report-weekly-review-[a-z0-9]+$/),
       moduleId: "service-requests",
       audience: { kind: "private" },
       schedule: expect.objectContaining({ cadence: "daily" }),
@@ -781,7 +782,7 @@ test("stored report templates repair unsafe IDs and keep the first stable ID", (
       { field: "title", direction: "desc" },
     ],
   });
-  expect(repaired.id).toBe("legacy-report-unsafe-report");
+  expect(repaired.id).toMatch(/^legacy-report-unsafe-report-[a-z0-9]+$/);
   expect(repaired.filters.clauses).toEqual([
     { field: "status", operator: "equals", value: "Open" },
   ]);
@@ -810,10 +811,46 @@ test("stored report templates repair unsafe IDs and keep the first stable ID", (
     },
   ]);
 
-  expect(reports.map(({ id, name }) => ({ id, name }))).toEqual([
-    { id: "report:weekly", name: "Weekly review" },
-    { id: "legacy-report-unsafe-report", name: "Unsafe report" },
-    { id: "legacy-report-oversized-report", name: "Oversized report" },
+  expect(reports.map((report) => report.name)).toEqual([
+    "Weekly review",
+    "Unsafe report",
+    "Oversized report",
+  ]);
+  expect(reports[0]?.id).toBe("report:weekly");
+  expect(reports[1]?.id).toMatch(/^legacy-report-unsafe-report-[a-z0-9]+$/);
+  expect(reports[2]?.id).toMatch(/^legacy-report-oversized-report-[a-z0-9]+$/);
+
+  const legacyNameCollisions = decodeReports([
+    { name: "A B", fields: ["title"] },
+    { name: "A-B", fields: ["status"] },
+    { name: "承認", fields: ["title"] },
+    { name: "報告", fields: ["status"] },
+  ]);
+  expect(legacyNameCollisions.map((report) => report.name)).toEqual([
+    "A B",
+    "A-B",
+    "承認",
+    "報告",
+  ]);
+  expect(new Set(legacyNameCollisions.map((report) => report.id)).size).toBe(4);
+});
+
+test("audience identities include only active enabled people", () => {
+  expect(
+    activeAudienceIdentities([
+      { id: "active", name: "Active", active: true },
+      { id: "enabled", name: "Enabled", active: true, accessStatus: "active" },
+      {
+        id: "disabled",
+        name: "Disabled",
+        active: true,
+        accessStatus: "disabled",
+      },
+      { id: "deleted", name: "Deleted", active: false, accessStatus: "active" },
+    ]),
+  ).toEqual([
+    { id: "active", name: "Active" },
+    { id: "enabled", name: "Enabled" },
   ]);
 });
 

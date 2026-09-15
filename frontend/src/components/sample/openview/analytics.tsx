@@ -117,6 +117,7 @@ import {
   INITIAL_DASHBOARDS,
   OPENVIEW_MODULE_IDS,
   OPENVIEW_MODULES,
+  activeAudienceIdentities,
   audienceLabel,
   decodeAudienceRef,
   decodeChartSettings,
@@ -130,6 +131,7 @@ import {
   getOpenViewRows,
   groupRows,
   isUnresolvedAudience,
+  isOpenViewIsoDate,
   normalizeChartSettings,
   safeOpenViewFilename,
   serializeOpenViewCsv,
@@ -307,7 +309,7 @@ function clone<T>(value: T): T {
 function lookupFor(roles: Role[], people: Person[]): AudienceLookup {
   return {
     roles: roles.map(({ id, name }) => ({ id, name })),
-    identities: people.map(({ id, name }) => ({ id, name })),
+    identities: activeAudienceIdentities(people),
   };
 }
 
@@ -640,12 +642,10 @@ function AudienceField({
       value: `role:${role.id}`,
       label: `Role: ${role.name}`,
     })),
-    ...people
-      .filter((person) => person.active)
-      .map((person) => ({
-        value: `identity:${person.id}`,
-        label: `User: ${person.name}`,
-      })),
+    ...activeAudienceIdentities(people).map((person) => ({
+      value: `identity:${person.id}`,
+      label: `User: ${person.name}`,
+    })),
   ];
   return (
     <>
@@ -1705,7 +1705,7 @@ function chartAggregationOptions(
   ];
 }
 
-type ChartDatum = { label: string; value: number; key: string };
+export type ChartDatum = { label: string; value: number; key: string };
 
 function chartGroupKey(
   moduleId: OpenViewModuleId,
@@ -1723,7 +1723,7 @@ function chartGroupKey(
   return `chart-group-${(hash >>> 0).toString(36)}`;
 }
 
-function chartRows(
+export function chartRows(
   settings: ChartSettings,
   rows: OpenViewRow[],
 ): { rows: OpenViewRow[]; data: ChartDatum[] } {
@@ -1732,7 +1732,9 @@ function chartRows(
   const selected = filterRows(rows, normalizedSettings.filters).filter(
     (row) => {
       if (!dateField) return true;
+      if (!normalizedSettings.from && !normalizedSettings.to) return true;
       const date = valueFor(row, dateField);
+      if (!isOpenViewIsoDate(date)) return false;
       return (
         (!normalizedSettings.from || date >= normalizedSettings.from) &&
         (!normalizedSettings.to || date <= normalizedSettings.to)
@@ -1750,7 +1752,16 @@ function chartRows(
         normalizedSettings.metric === "count"
           ? []
           : group
-              .map((row) => Number(row.values[normalizedSettings.metric]))
+              .flatMap((row) => {
+                const rawValue = row.values[normalizedSettings.metric];
+                if (
+                  rawValue === undefined ||
+                  rawValue === null ||
+                  (typeof rawValue === "string" && rawValue.trim() === "")
+                )
+                  return [];
+                return [Number(rawValue)];
+              })
               .filter((value) => Number.isFinite(value));
       const sum = values.reduce((total, value) => total + value, 0);
       const value =
@@ -2487,7 +2498,7 @@ function ChartTable({
   );
 }
 
-type ExportRequest = {
+export type ExportRequest = {
   kind: "csv" | "pdf";
   title: string;
   source: string;
@@ -2676,11 +2687,11 @@ function exportFieldLabel(request: ExportRequest, field: string): string {
   return request.fieldLabels?.[field] ?? field;
 }
 
-function serializeExportCsv(request: ExportRequest): string {
+export function serializeExportCsv(request: ExportRequest): string {
   const fields = request.fields.map((field) =>
     exportFieldLabel(request, field),
   );
-  const rows: OpenViewRow[] = request.rows.map((row) => ({
+  const displayRow = (row: OpenViewRow): OpenViewRow => ({
     ...row,
     values: Object.fromEntries(
       request.fields.map((field, index) => [
@@ -2688,7 +2699,36 @@ function serializeExportCsv(request: ExportRequest): string {
         row.values[field] ?? "",
       ]),
     ),
-  }));
+  });
+  let rows = request.rows.map(displayRow);
+  if (request.grouping && request.groups?.length && fields.length > 0) {
+    const firstField = fields[0] ?? "";
+    const moduleId = request.rows[0]?.moduleId ?? "service-requests";
+    const summaryRow = (id: string, label: string): OpenViewRow => ({
+      id,
+      moduleId,
+      values: Object.fromEntries(
+        fields.map((field) => [field, field === firstField ? label : ""]),
+      ),
+    });
+    rows = request.groups.flatMap((group, index) => [
+      summaryRow(`export-group-${index}`, `Group: ${group.label}`),
+      ...group.rows.map(displayRow),
+      ...(request.totals
+        ? [
+            summaryRow(
+              `export-group-total-${index}`,
+              `Group total: ${group.rows.length}`,
+            ),
+          ]
+        : []),
+    ]);
+    if (request.totals) {
+      rows.push(
+        summaryRow("export-grand-total", `Grand total: ${request.rows.length}`),
+      );
+    }
+  }
   return serializeOpenViewCsv(rows, fields);
 }
 
@@ -3313,6 +3353,7 @@ function Reports({
                     filters: draft.filters,
                     grouping: draft.grouping,
                     totals: draft.totals,
+                    groups: draft.grouping ? groups : undefined,
                   })
                 }
               >

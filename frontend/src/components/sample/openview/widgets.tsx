@@ -91,6 +91,7 @@ import {
   FILTER_OPERATORS,
   OPENVIEW_MODULE_IDS,
   OPENVIEW_MODULES,
+  activeAudienceIdentities,
   audienceLabel,
   filterRows,
   getModuleDefinition,
@@ -220,7 +221,7 @@ export function WidgetSurface<T extends WidgetInput>({
   );
   const audienceLookup: AudienceLookup = suppliedAudienceLookup ?? {
     roles: roles.map((role) => ({ id: role.id, name: role.name })),
-    identities: people.map((person) => ({ id: person.id, name: person.name })),
+    identities: activeAudienceIdentities(people),
   };
 
   const commit = (next: WidgetInput[]) => {
@@ -823,7 +824,7 @@ function WidgetSettings({
                   Role: {role.name}
                 </NativeSelectOption>
               ))}
-              {people.map((person) => (
+              {activeAudienceIdentities(people).map((person) => (
                 <NativeSelectOption
                   key={`identity-${person.id}`}
                   value={`identity:${person.id}`}

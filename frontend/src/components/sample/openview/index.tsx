@@ -136,6 +136,7 @@ import {
   FILTER_OPERATORS,
   OPENVIEW_MODULES,
   OPENVIEW_SECTIONS,
+  activeAudienceIdentities,
   audienceLabel,
   decodeAudienceRef,
   decodeSavedViews,
@@ -609,7 +610,7 @@ function OpenViewContent() {
 
   const audienceLookup: AudienceLookup = {
     roles: roles.map(({ id, name }) => ({ id, name })),
-    identities: people.map(({ id, name }) => ({ id, name })),
+    identities: activeAudienceIdentities(people),
   };
   const storedSectionValue = sectionFromUnknown(storedSection);
   const storedModuleValue = moduleIdFromUnknown(storedModule);
@@ -840,12 +841,10 @@ function OpenViewContent() {
       value: `role:${role.id}`,
       label: `Role: ${role.name}`,
     })),
-    ...people
-      .filter((person) => person.active)
-      .map((person) => ({
-        value: `identity:${person.id}`,
-        label: `User: ${person.name}`,
-      })),
+    ...activeAudienceIdentities(people).map((person) => ({
+      value: `identity:${person.id}`,
+      label: `User: ${person.name}`,
+    })),
   ];
 
   const resetOpenView = () => {

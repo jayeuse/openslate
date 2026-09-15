@@ -61,6 +61,7 @@ import {
   initialReportTemplates,
 } from "../openview/analytics";
 import {
+  activeAudienceIdentities,
   decodeDashboards,
   decodeReport,
   decodeReports,
@@ -187,10 +188,7 @@ export function useAccessController() {
     "views-saved",
     initialSavedViews,
   );
-  const [rawDashboards] = useSampleState<unknown>(
-    "views-dashboards",
-    initialDashboards,
-  );
+  const [rawDashboards] = useSampleState<unknown>("views-dashboards", null);
   const [rawReportDraft] = useSampleState<unknown>(
     "views-report-draft",
     initialReport,
@@ -212,13 +210,16 @@ export function useAccessController() {
 
   const openViewAudienceLookup: AudienceLookup = {
     roles: roles.map(({ id, name }) => ({ id, name })),
-    identities: people.map(({ id, name }) => ({ id, name })),
+    identities: activeAudienceIdentities(people),
   };
   const owners: FederatedAccessOwners = {
     boards,
     announcements,
     savedViews: decodeSavedViews(rawSavedViews, openViewAudienceLookup),
-    dashboards: decodeDashboards(rawDashboards, openViewAudienceLookup),
+    dashboards: decodeDashboards(
+      rawDashboards ?? initialDashboards,
+      openViewAudienceLookup,
+    ),
     reportDraft: decodeReport(rawReportDraft, openViewAudienceLookup),
     reportTemplates: decodeReports(rawReportTemplates, openViewAudienceLookup),
     commsConfiguration: normalizeCommsConfiguration(rawCommsConfiguration),

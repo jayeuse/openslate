@@ -271,6 +271,18 @@ function ChartTooltipContent({
 
 const ChartLegend = RechartsPrimitive.Legend;
 
+export function resolveChartLegendLabel(
+  itemConfig: ChartConfig[string] | undefined,
+  item: { value?: unknown; dataKey?: unknown },
+): React.ReactNode {
+  if (itemConfig?.label !== undefined) return itemConfig.label;
+  if (typeof item.value === "string" || typeof item.value === "number")
+    return item.value;
+  if (typeof item.dataKey === "string" || typeof item.dataKey === "number")
+    return item.dataKey;
+  return null;
+}
+
 function ChartLegendContent({
   className,
   hideIcon = false,
@@ -318,7 +330,7 @@ function ChartLegendContent({
                   }}
                 />
               )}
-              {itemConfig?.label}
+              {resolveChartLegendLabel(itemConfig, item)}
             </div>
           );
         })}

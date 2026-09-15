@@ -476,6 +476,22 @@ export type AudienceLookup = {
   identities?: { id: string; name: string }[];
 };
 
+export function activeAudienceIdentities(
+  people: readonly {
+    id: string;
+    name: string;
+    active: boolean;
+    accessStatus?: string;
+  }[],
+): NonNullable<AudienceLookup["identities"]> {
+  return people
+    .filter(
+      (person) =>
+        person.active && (person.accessStatus ?? "active") === "active",
+    )
+    .map(({ id, name }) => ({ id, name }));
+}
+
 export type SavedView = {
   id: string;
   name: string;
@@ -975,9 +991,7 @@ export function decodeReport(
   );
   const parsedFilters = filterGroupSchema.safeParse(value.filters);
   return {
-    id: isSafeStoredIdentifier(value.id)
-      ? value.id
-      : `legacy-report-${slug(name) || "untitled"}`,
+    id: isSafeStoredIdentifier(value.id) ? value.id : legacyReportId(name),
     name,
     subtitle:
       typeof value.subtitle === "string" ? value.subtitle.slice(0, 160) : "",
@@ -1028,7 +1042,8 @@ export function decodeReports(
   lookup: AudienceLookup = {},
 ): Report[] {
   if (!Array.isArray(raw)) return [];
-  const decoded = raw.flatMap((entry) => {
+  const usedIds = new Set<string>();
+  return raw.flatMap((entry) => {
     if (
       typeof entry !== "object" ||
       entry === null ||
@@ -1036,9 +1051,24 @@ export function decodeReports(
       typeof entry.name !== "string"
     )
       return [];
-    return [decodeReport(entry, lookup)];
+    const decoded = decodeReport(entry, lookup);
+    const entryId = (entry as Record<string, unknown>).id;
+    if (isSafeStoredIdentifier(entryId)) {
+      if (usedIds.has(decoded.id)) return [];
+      usedIds.add(decoded.id);
+      return [decoded];
+    }
+
+    let uniqueId = decoded.id;
+    let suffix = 2;
+    while (usedIds.has(uniqueId)) {
+      const suffixText = `-${suffix}`;
+      uniqueId = `${decoded.id.slice(0, 128 - suffixText.length)}${suffixText}`;
+      suffix += 1;
+    }
+    usedIds.add(uniqueId);
+    return [{ ...decoded, id: uniqueId }];
   });
-  return firstStableIdWins(decoded);
 }
 
 export function initialReport(moduleId: OpenViewModuleId): Report {
@@ -1404,6 +1434,10 @@ function parseIsoDate(value: unknown): Date | null {
   return date.toISOString().slice(0, 10) === value ? date : null;
 }
 
+export function isOpenViewIsoDate(value: unknown): value is string {
+  return parseIsoDate(value) !== null;
+}
+
 function formatIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -1568,6 +1602,20 @@ function slug(value: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80);
+}
+
+function stableTextHash(value: string): string {
+  let hash = 2166136261;
+  for (const character of value) {
+    hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function legacyReportId(name: string): string {
+  const hash = stableTextHash(name);
+  const readable = slug(name) || "untitled";
+  return `legacy-report-${readable.slice(0, 128 - hash.length - 15)}-${hash}`;
 }
 
 export function safeOpenViewFilename(
