@@ -445,6 +445,20 @@ export function executeBoardCommand(
       return fail("This event is unavailable or you cannot change it.");
     if (command.action === "delete" && !event.archived)
       return fail("Archive this event before deleting it permanently.");
+    const personal =
+      command.action === "delete"
+        ? Object.fromEntries(
+            Object.entries(state.personal).map(([identityId, value]) => [
+              identityId,
+              {
+                ...value,
+                reminders: value.reminders.filter(
+                  (item) => item.eventId !== event.id,
+                ),
+              },
+            ]),
+          )
+        : state.personal;
     return success(
       {
         ...state,
@@ -460,6 +474,7 @@ export function executeBoardCommand(
                     }
                   : item,
               ),
+        personal,
       },
       command.boardId,
       `${command.action === "delete" ? "Deleted" : command.action === "archive" ? "Archived" : "Restored"} event`,

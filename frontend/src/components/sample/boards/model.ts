@@ -319,6 +319,20 @@ function optionalTimestamp(value: unknown): string | null {
   return timestamp(value, "") || null;
 }
 
+function optionalExpirationTimestamp(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "string") {
+    const candidate = value.trim();
+    if (datePattern.test(candidate)) {
+      if (!validDate(candidate)) return null;
+      const exclusiveEnd = new Date(`${candidate}T00:00:00.000Z`);
+      exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
+      return exclusiveEnd.toISOString();
+    }
+  }
+  return optionalTimestamp(value);
+}
+
 function slug(value: string): string {
   return value
     .trim()
@@ -1043,7 +1057,7 @@ function normalizeRevision(
     expiresAt:
       value.expiresAt === undefined
         ? fallback.expiresAt
-        : optionalTimestamp(value.expiresAt),
+        : optionalExpirationTimestamp(value.expiresAt),
     publishedAt,
     createdAt: timestamp(value.createdAt, fallback.createdAt),
     updatedAt: timestamp(value.updatedAt, fallback.updatedAt),
@@ -1070,7 +1084,9 @@ export function normalizeBoardAnnouncement(
   const publishAt =
     optionalTimestamp(value.publishAt) ??
     (status === "published" ? createdAt : null);
-  const expiresAt = optionalTimestamp(value.expiresAt ?? value.expires);
+  const expiresAt = optionalExpirationTimestamp(
+    value.expiresAt ?? value.expires,
+  );
   const audience = decodeBoardAudience(value.audience, options.audienceLookup);
   const attachments = decodeAttachments(value.attachments);
   const links = decodeLinks(value.links);

@@ -36,13 +36,17 @@ import {
   decodeBoardTemplates,
   decodeBoardActivity,
   type BoardAudienceLookup,
+  type BoardEvent,
   type BoardPersonalState,
+  type BoardReminder,
   type Board,
 } from "./model";
 import {
+  canViewBoardAudience,
   dueBoardReminders,
   getReminderDueAt,
   type BoardReminderTiming,
+  type BoardViewer,
 } from "./content";
 import {
   executeBoardCommand,
@@ -62,6 +66,60 @@ export const BOARD_KEYS = {
   activity: "boards-activity-v1",
 } as const;
 type RawState = Record<keyof BoardsState, unknown>;
+
+export type BoardReminderCandidate = {
+  reminder: BoardReminder;
+  event: BoardEvent;
+};
+
+export type BoardReminderEligibilityOptions = {
+  state: BoardsState;
+  personal: BoardPersonalState | undefined;
+  actorId: string;
+  viewer: BoardViewer | undefined;
+  now: string;
+  preview?: boolean;
+  canViewBoard: (boardId: string) => boolean;
+  canManageBoard: (boardId: string) => boolean;
+};
+
+export function findEligibleBoardReminders({
+  state,
+  personal,
+  actorId,
+  viewer,
+  now,
+  preview = false,
+  canViewBoard,
+  canManageBoard,
+}: BoardReminderEligibilityOptions): BoardReminderCandidate[] {
+  if (
+    preview ||
+    !personal ||
+    personal.identityId !== actorId ||
+    !viewer ||
+    viewer.id !== actorId ||
+    !viewer.active ||
+    (viewer.accessStatus ?? "active") !== "active"
+  )
+    return [];
+
+  return dueBoardReminders(personal.reminders, now).flatMap((reminder) => {
+    if (reminder.identityId !== actorId) return [];
+    const event = state.events.find((item) => item.id === reminder.eventId);
+    if (!event || event.archived) return [];
+    const board = state.boards.find((item) => item.id === event.boardId);
+    if (
+      !board ||
+      board.status !== "active" ||
+      !canViewBoard(board.id) ||
+      (!canManageBoard(board.id) &&
+        !canViewBoardAudience(event.audience, viewer, event.authorId))
+    )
+      return [];
+    return [{ reminder, event }];
+  });
+}
 
 function object(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -114,6 +172,27 @@ function lookupFrom(
       id: name.toLowerCase().replaceAll(" ", "-"),
       name,
     })),
+  };
+}
+function boardViewerFor(
+  actorId: string,
+  person: AccessControllerSnapshot["people"][number] | undefined,
+  lookup: BoardAudienceLookup,
+): BoardViewer {
+  return {
+    id: actorId,
+    active: person?.active ?? false,
+    accessStatus: person?.accessStatus,
+    roleIds:
+      lookup.roles
+        ?.filter(
+          (role) => role.id === person?.role || role.name === person?.role,
+        )
+        .map((role) => role.id) ?? [],
+    departmentIds:
+      person?.departments.map((name) =>
+        name.toLowerCase().replaceAll(" ", "-"),
+      ) ?? [],
   };
 }
 function readBoards(
@@ -406,24 +485,55 @@ export function useBoardsController(previewIdentityId: string | null = null) {
       ],
     });
   }
-  function processReminders(boardId: string) {
-    if (previewIdentityId || !can(boardId, "view")) return;
+  function processReminders() {
+    if (previewIdentityId) return;
     const now = new Date().toISOString();
     if (!dueBoardReminders(personalState.reminders, now).length) return;
+    const currentContext = contextFor(
+      state,
+      access.state,
+      now,
+      "board-reminders",
+      false,
+    );
+    const eligible = findEligibleBoardReminders({
+      state,
+      personal: personalState,
+      actorId,
+      viewer: boardViewerFor(actorId, viewer, lookup),
+      now,
+      canViewBoard: (boardId) => currentContext.can(boardId, "view"),
+      canManageBoard: (boardId) => currentContext.can(boardId, "manage"),
+    });
+    if (!eligible.length) return;
     transact((draft) => {
-      const current = readBoards(draft, lookup);
+      const snapshot = currentAccess(draft, access.state);
+      const currentLookup = lookupFrom(snapshot);
+      const current = readBoards(draft, currentLookup);
       const own = current.personal[actorId];
       if (!own) return;
-      const due = dueBoardReminders(own.reminders, now).filter((reminder) =>
-        current.events.some(
-          (event) =>
-            event.id === reminder.eventId &&
-            event.boardId === boardId &&
-            !event.archived,
-        ),
+      const currentContext = contextFor(
+        current,
+        snapshot,
+        now,
+        "board-reminders",
+        false,
       );
+      const due = findEligibleBoardReminders({
+        state: current,
+        personal: own,
+        actorId,
+        viewer: boardViewerFor(
+          actorId,
+          snapshot.people.find((person) => person.id === actorId),
+          currentLookup,
+        ),
+        now,
+        canViewBoard: (boardId) => currentContext.can(boardId, "view"),
+        canManageBoard: (boardId) => currentContext.can(boardId, "manage"),
+      });
       if (!due.length) return;
-      const ids = new Set(due.map((item) => item.id));
+      const ids = new Set(due.map(({ reminder }) => reminder.id));
       draft.update<unknown>(BOARD_KEYS.personal, null, {
         ...current.personal,
         [actorId]: {
@@ -438,16 +548,14 @@ export function useBoardsController(previewIdentityId: string | null = null) {
       >("platformNotifications", [], (notices) => [
         ...due
           .filter(
-            (reminder) => !notices.some((notice) => notice.id === reminder.id),
+            ({ reminder }) =>
+              !notices.some((notice) => notice.id === reminder.id),
           )
-          .map((reminder) => {
-            const event = current.events.find(
-              (item) => item.id === reminder.eventId,
-            );
+          .map(({ reminder, event }) => {
             return {
               id: reminder.id,
-              title: `Reminder: ${event?.title ?? "Board event"}`,
-              recordId: event?.links.find((link) => link.recordId)?.recordId,
+              title: `Reminder: ${event.title}`,
+              recordId: event.links.find((link) => link.recordId)?.recordId,
               read: false,
             };
           }),

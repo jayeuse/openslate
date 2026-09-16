@@ -182,6 +182,112 @@ test("archived events cannot bypass restoration and unsafe file metadata is reje
   ).toBe(false);
 });
 
+test("event deletion removes its reminders for every identity while preserving other personal state", () => {
+  const current = state();
+  const event = current.events[0];
+  const otherEvent = {
+    ...event,
+    id: "sample-event-other",
+    title: "Other event",
+  };
+  const targetReminder = (identityId: string) => ({
+    id: `${identityId}-target-reminder`,
+    eventId: event.id,
+    identityId,
+    occurrenceStart: event.start,
+    dueAt: event.start,
+    status: "pending" as const,
+    createdAt: event.createdAt,
+  });
+  const otherReminder = (identityId: string) => ({
+    id: `${identityId}-other-reminder`,
+    eventId: otherEvent.id,
+    identityId,
+    occurrenceStart: otherEvent.start,
+    dueAt: otherEvent.start,
+    status: "dismissed" as const,
+    createdAt: otherEvent.createdAt,
+  });
+  current.events = [event, otherEvent];
+  current.personal = {
+    "sample-mara": {
+      identityId: "sample-mara",
+      favoriteBoardIds: [event.boardId],
+      homeBoardId: event.boardId,
+      calendarView: "month",
+      readAnnouncementIds: ["read-announcement"],
+      bookmarkedAnnouncementIds: ["bookmarked-announcement"],
+      reminders: [targetReminder("sample-mara"), otherReminder("sample-mara")],
+    },
+    "sample-lee": {
+      identityId: "sample-lee",
+      favoriteBoardIds: [],
+      homeBoardId: null,
+      calendarView: "agenda",
+      readAnnouncementIds: [],
+      bookmarkedAnnouncementIds: [],
+      reminders: [targetReminder("sample-lee"), otherReminder("sample-lee")],
+    },
+  };
+
+  const archived = executeBoardCommand(
+    current,
+    {
+      type: "event-action",
+      boardId: event.boardId,
+      eventId: event.id,
+      action: "archive",
+    },
+    context,
+  );
+  expect(archived.result.ok).toBe(true);
+  expect(archived.state.personal).toEqual(current.personal);
+
+  const restored = executeBoardCommand(
+    archived.state,
+    {
+      type: "event-action",
+      boardId: event.boardId,
+      eventId: event.id,
+      action: "restore",
+    },
+    context,
+  );
+  expect(restored.result.ok).toBe(true);
+  expect(restored.state.personal).toEqual(current.personal);
+
+  const deleted = executeBoardCommand(
+    executeBoardCommand(
+      restored.state,
+      {
+        type: "event-action",
+        boardId: event.boardId,
+        eventId: event.id,
+        action: "archive",
+      },
+      context,
+    ).state,
+    {
+      type: "event-action",
+      boardId: event.boardId,
+      eventId: event.id,
+      action: "delete",
+    },
+    context,
+  );
+
+  expect(deleted.result.ok).toBe(true);
+  expect(deleted.state.events).toEqual([otherEvent]);
+  expect(deleted.state.personal["sample-mara"]).toEqual({
+    ...current.personal["sample-mara"],
+    reminders: [otherReminder("sample-mara")],
+  });
+  expect(deleted.state.personal["sample-lee"]).toEqual({
+    ...current.personal["sample-lee"],
+    reminders: [otherReminder("sample-lee")],
+  });
+});
+
 test("editing a schedule that has gone live preserves that revision for readers", () => {
   const current = state();
   const post = {

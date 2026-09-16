@@ -15,6 +15,7 @@ import {
   decodeBoardActivity,
   type BoardAudienceLookup,
 } from "../../../src/components/sample/boards/model";
+import { getAnnouncementLifecycle } from "../../../src/components/sample/boards/content";
 
 const audienceLookup: BoardAudienceLookup = {
   roles: [
@@ -208,6 +209,71 @@ test("announcement decoding keeps published content separate from a draft revisi
       }),
     }),
   );
+});
+
+test("legacy date-only announcement expiry keeps its end-of-day lifecycle across round trips", () => {
+  const [announcement] = decodeBoardAnnouncements([
+    {
+      id: "announcement-date-only-expiry",
+      boardId: DEFAULT_BOARD_ID,
+      authorId: "sample-mara",
+      title: "Date-only expiry",
+      body: "This should remain visible through the stored date.",
+      status: "published",
+      expires: "2026-09-30",
+    },
+  ]);
+
+  expect(announcement).toBeDefined();
+  if (!announcement) throw new Error("Expected the announcement to decode.");
+  expect(announcement?.expiresAt).toBe("2026-10-01T00:00:00.000Z");
+  expect(announcement?.publishedRevision?.expiresAt).toBe(
+    "2026-10-01T00:00:00.000Z",
+  );
+  expect(
+    getAnnouncementLifecycle(announcement, "2026-09-30T23:59:59.999Z").visible,
+  ).toBe(true);
+  expect(
+    getAnnouncementLifecycle(announcement, "2026-10-01T00:00:00.000Z").visible,
+  ).toBe(false);
+
+  const [roundTripped] = decodeBoardAnnouncements(
+    JSON.parse(JSON.stringify([announcement])),
+  );
+  expect(roundTripped?.expiresAt).toBe("2026-10-01T00:00:00.000Z");
+  expect(roundTripped?.publishedRevision?.expiresAt).toBe(
+    "2026-10-01T00:00:00.000Z",
+  );
+
+  const [timestampExpiry] = decodeBoardAnnouncements([
+    {
+      id: "announcement-timestamp-expiry",
+      boardId: DEFAULT_BOARD_ID,
+      authorId: "sample-mara",
+      title: "Timestamp expiry",
+      body: "This exact instant should remain canonical.",
+      status: "published",
+      expiresAt: "2026-09-30T12:34:56+08:00",
+    },
+  ]);
+  expect(timestampExpiry?.expiresAt).toBe("2026-09-30T04:34:56.000Z");
+  expect(timestampExpiry?.publishedRevision?.expiresAt).toBe(
+    "2026-09-30T04:34:56.000Z",
+  );
+
+  const [invalidExpiry] = decodeBoardAnnouncements([
+    {
+      id: "announcement-invalid-date-expiry",
+      boardId: DEFAULT_BOARD_ID,
+      authorId: "sample-mara",
+      title: "Invalid date expiry",
+      body: "An invalid date must not become a different valid instant.",
+      status: "published",
+      expires: "2026-02-30",
+    },
+  ]);
+  expect(invalidExpiry?.expiresAt).toBeNull();
+  expect(invalidExpiry?.publishedRevision?.expiresAt).toBeNull();
 });
 
 test("decoding preserves canonical internal record links in events and announcement revisions", () => {

@@ -116,7 +116,7 @@ function BoardsPage() {
   );
   const [selectedDate, setSelectedDate] = useState(() =>
     new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Manila",
+      timeZone: controller.timezone,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -267,14 +267,13 @@ function BoardsPage() {
     const timer = window.setInterval(() => {
       const current = timerRef.current;
       if (
-        !current.board ||
         document.visibilityState !== "visible" ||
         current.preview ||
-        current.editing ||
-        current.board.status === "archived"
+        current.editing
       )
         return;
-      current.controller.processReminders(current.board.id);
+      current.controller.processReminders();
+      if (!current.board || current.board.status === "archived") return;
       const now = Date.now();
       setRecomputed((previous) => {
         const next = { ...previous };
