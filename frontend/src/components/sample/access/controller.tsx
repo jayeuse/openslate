@@ -1,7 +1,7 @@
 "use client";
 
 import { useSampleState, useSampleTransaction } from "../sample-state";
-import { initialPeople, initialRoles } from "./model";
+import { departments, initialPeople, initialRoles } from "./model";
 import {
   createPolicyBundle,
   parsePolicyBundle,
@@ -49,11 +49,15 @@ import {
   type UpdateRolePatch,
 } from "./controller-utils";
 import { initialManageSessions, type ManageSession } from "../manage/sessions";
-import { initialBoards, type SampleBoard } from "../boards";
 import {
-  initialAnnouncements,
+  decodeBoardAnnouncements,
+  decodeBoards,
+  INITIAL_ANNOUNCEMENTS as initialAnnouncements,
+  INITIAL_BOARDS as initialBoards,
   type Announcement,
-} from "../boards/announcements";
+  type BoardAudienceLookup,
+  type SampleBoard,
+} from "../boards/model";
 import { initialSavedViews } from "../openview";
 import {
   initialDashboards,
@@ -179,10 +183,10 @@ export function useAccessController() {
     "access-history-v1",
     { version: 1, items: initialAccessHistory },
   );
-  const [boards] = useSampleState<SampleBoard[]>("boards-list", initialBoards);
-  const [announcements] = useSampleState<Announcement[]>(
+  const [rawBoards] = useSampleState<unknown>("boards-list", null);
+  const [rawAnnouncements] = useSampleState<unknown>(
     "boards-announcements",
-    initialAnnouncements,
+    null,
   );
   const [rawSavedViews] = useSampleState<unknown>(
     "views-saved",
@@ -212,6 +216,24 @@ export function useAccessController() {
     roles: roles.map(({ id, name }) => ({ id, name })),
     identities: activeAudienceIdentities(people),
   };
+  const boardAudienceLookup: BoardAudienceLookup = {
+    roles: roles.map(({ id, name }) => ({ id, name })),
+    identities: activeAudienceIdentities(people),
+    departments: ["Organization", ...departments].map((name) => ({
+      id: name.toLowerCase().replaceAll(" ", "-"),
+      name,
+    })),
+  };
+  const boards: SampleBoard[] =
+    rawBoards === null
+      ? initialBoards
+      : decodeBoards(rawBoards, { audienceLookup: boardAudienceLookup });
+  const announcements: Announcement[] =
+    rawAnnouncements === null
+      ? initialAnnouncements
+      : decodeBoardAnnouncements(rawAnnouncements, {
+          audienceLookup: boardAudienceLookup,
+        });
   const owners: FederatedAccessOwners = {
     boards,
     announcements,
@@ -234,6 +256,7 @@ export function useAccessController() {
       status: accessStatus,
       deleted: !active,
     })),
+    departments: boardAudienceLookup.departments,
   });
 
   const snapshot: AccessControllerSnapshot = {
@@ -429,6 +452,10 @@ export function useAccessController() {
   return {
     state,
     actions,
+    // Boards owns its content state, while Access remains the policy owner.
+    // Expose the current federated owners so Boards can re-project its latest
+    // typed visibility without duplicating Access' resolver or write rules.
+    owners,
     permissionCatalog,
     scopeCatalog: [...coreScopeCatalog, ...federated.scopes],
   };

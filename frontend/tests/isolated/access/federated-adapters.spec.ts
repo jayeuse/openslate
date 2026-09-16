@@ -216,8 +216,12 @@ function typedOwners(): FederatedAccessOwners {
 
 test("role rename updates every label owner while preserving stable OpenComms role ids", () => {
   const before = owners();
-  before.boards[0].roles.push(customRole.name);
-  before.boards[0].widgets[0].permission = customRole.name;
+  const beforeBoard = before.boards[0];
+  if (!beforeBoard || !beforeBoard.widgets[0])
+    throw new Error("Expected the organization board fixture.");
+  beforeBoard.roles ??= [];
+  beforeBoard.roles.push(customRole.name);
+  beforeBoard.widgets[0].permission = customRole.name;
   before.commsConfiguration.channels[CHANNELS[0].id].permissions[
     `role:${customRole.id}`
   ] = { post: "allow" };
@@ -356,7 +360,11 @@ test("board and OpenComms decisions round trip through their native owners", () 
 
 test("ambiguous and unsupported tuples remain overlays and unknown native references fail closed", () => {
   const current = owners();
-  current.boards[0].roles.push("Missing role");
+  const currentBoard = current.boards[0];
+  if (!currentBoard)
+    throw new Error("Expected the organization board fixture.");
+  currentBoard.roles ??= [];
+  currentBoard.roles.push("Missing role");
   current.commsConfiguration.channels.missing = {
     settings: {},
     permissions: { everyone: { post: "allow" } },
@@ -416,7 +424,11 @@ const commandContext = {
 
 test("federated command execution atomically projects role rename and blocks referenced deletion", () => {
   const currentOwners = owners();
-  currentOwners.boards[0].roles.push(customRole.name);
+  const currentBoard = currentOwners.boards[0];
+  if (!currentBoard)
+    throw new Error("Expected the organization board fixture.");
+  currentBoard.roles ??= [];
+  currentBoard.roles.push(customRole.name);
   const state = controllerSnapshot(currentOwners);
   const renamed = executeFederatedAccessCommand(
     state,
@@ -573,7 +585,10 @@ test("conditions and inheritance applied to native rules persist as Access overl
   ).toBeUndefined();
 
   const boardOwners = owners();
-  boardOwners.boards[0].roles.push(customRole.name);
+  const board = boardOwners.boards[0];
+  if (!board) throw new Error("Expected the organization board fixture.");
+  board.roles ??= [];
+  board.roles.push(customRole.name);
   const boardState = controllerSnapshot(boardOwners);
   const boardNative = boardState.rules.find(
     (rule) =>
@@ -906,5 +921,132 @@ test("dashboard decoding preserves stable role and identity audiences with looku
         kind: "invalid-reference",
       }),
     ]),
+  );
+});
+
+test("canonical board visibility uses stable role ids and keeps legacy labels as compatibility data", () => {
+  const current = owners();
+  const board = current.boards[0];
+  if (!board) throw new Error("Expected the organization board fixture.");
+  current.boards[0] = {
+    ...board,
+    visibleRoleIds: [customRole.id],
+    roles: ["Missing legacy role"],
+  };
+
+  const read = getFederatedAccess(current, [...initialRoles, customRole]);
+  expect(read.rules).toContainEqual(
+    expect.objectContaining({
+      subject: { kind: "role", id: customRole.id },
+      scope: { kind: "board", id: `board:${board.id}` },
+      permissionId: "boards.view",
+      decision: "allow",
+    }),
+  );
+  expect(read.findings).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: expect.stringContaining("board-role") }),
+    ]),
+  );
+
+  const projected = writeFederatedDecision(
+    current,
+    [...initialRoles, customRole],
+    {
+      subject: { kind: "role", id: customRole.id },
+      scope: { kind: "board", id: `board:${board.id}` },
+      permissionId: "boards.view",
+      decision: "deny",
+    },
+  );
+  expect(projected.ok).toBe(true);
+  if (!projected.ok) return;
+  expect(projected.owners.boards[0]?.visibleRoleIds).toEqual([]);
+  expect(projected.owners.boards[0]?.roles).toEqual(["Missing legacy role"]);
+});
+
+test("unknown canonical board role ids fail closed without falling back to legacy labels", () => {
+  const current = owners();
+  const board = current.boards[0];
+  if (!board) throw new Error("Expected the organization board fixture.");
+  current.boards[0] = {
+    ...board,
+    visibleRoleIds: ["role:deleted"],
+    roles: [customRole.name],
+  };
+
+  const read = getFederatedAccess(current, [...initialRoles, customRole]);
+  expect(read.rules).not.toContainEqual(
+    expect.objectContaining({
+      scope: { kind: "board", id: `board:${board.id}` },
+      permissionId: "boards.view",
+    }),
+  );
+  expect(read.findings).toContainEqual(
+    expect.objectContaining({
+      id: `federated:board-role:${board.id}:role-deleted`,
+      kind: "invalid-reference",
+      severity: "critical",
+    }),
+  );
+});
+
+test("canonical widget audiences take precedence over legacy permissions", () => {
+  const current = owners();
+  const board = current.boards[0];
+  if (!board) throw new Error("Expected the organization board fixture.");
+  current.announcements = [];
+  current.savedViews = [];
+  current.dashboards = [];
+  current.reportDraft = { ...current.reportDraft, audience: "Only me" };
+  current.reportTemplates = [];
+  board.widgets[0] = {
+    ...board.widgets[0],
+    audience: { kind: "role", id: "role:deleted" },
+    permission: "Everyone",
+  };
+
+  const read = getFederatedAccess(current, [...initialRoles, customRole]);
+  expect(read.findings).toContainEqual(
+    expect.objectContaining({
+      id: `federated:boards-list:audience:${board.widgets[0].id}`,
+      kind: "invalid-reference",
+      severity: "critical",
+    }),
+  );
+  expect(federatedRoleReferences(current, customRole)).toEqual([]);
+});
+
+test("typed announcement audiences are validated while legacy audiences remain supported", () => {
+  const current = owners();
+  current.announcements = [
+    {
+      ...current.announcements[0],
+      audience: { kind: "department", id: "operations" },
+    },
+  ];
+  const roles = [...initialRoles, customRole];
+  const read = getFederatedAccess(current, {
+    roles,
+    identities: [],
+    departments: [{ id: "operations", name: "Operations" }],
+  });
+  expect(read.findings).toEqual([]);
+
+  current.announcements[0].audience = {
+    kind: "role",
+    id: "role:deleted",
+  };
+  const invalid = getFederatedAccess(current, {
+    roles,
+    identities: [],
+    departments: [{ id: "operations", name: "Operations" }],
+  });
+  expect(invalid.findings).toContainEqual(
+    expect.objectContaining({
+      id: `federated:boards-announcements:audience:${current.announcements[0].id}`,
+      kind: "invalid-reference",
+      severity: "critical",
+    }),
   );
 });
