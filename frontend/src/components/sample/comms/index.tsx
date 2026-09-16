@@ -48,7 +48,6 @@ import {
   CollapsibleTrigger,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   MessageScrollerProvider,
@@ -78,6 +77,7 @@ import {
 } from "./ui";
 import { ChannelDialog, newChannel } from "./channel-dialog";
 import { FloatingList, RowEditMenu, ProfilePopoverProvider } from "./floating";
+import { CommsThreadList, type CommsThreadListItem } from "./thread-list";
 import {
   CATEGORIES,
   CHANNELS,
@@ -579,6 +579,21 @@ export default function SampleComms() {
             item.text.toLowerCase().includes(search.toLowerCase()),
         )
       : [];
+  const channelThreadItems: CommsThreadListItem[] = channelThreads.map(
+    (item) => ({
+      id: item.id,
+      title:
+        allMessages.find((message) => message.id === item.messageId)?.text ??
+        "",
+      inactive: item.resolved,
+      metadata: (
+        <>
+          {item.replies.length} replies ·{" "}
+          {item.resolved ? "Inactive" : "Active"}
+        </>
+      ),
+    }),
+  );
   const filteredChannels = channels.filter(
     (item) =>
       viewer &&
@@ -780,6 +795,18 @@ export default function SampleComms() {
       },
     ];
   });
+  const workspaceThreadItems: CommsThreadListItem[] = workspaceThreads.map(
+    (entry) => ({
+      id: entry.thread.id,
+      title: entry.title,
+      inactive: entry.thread.resolved,
+      metadata: (
+        <>
+          #{entry.channel.name} · {entry.thread.replies.length} replies
+        </>
+      ),
+    }),
+  );
   function startDirect(name: string) {
     const existing = directs.find((item) => item.user === name);
     if (existing) {
@@ -1748,69 +1775,18 @@ export default function SampleComms() {
                     icon={<MessageSquare className="size-4" />}
                   >
                     {(close) => (
-                      <>
-                        <ToggleGroup
-                          className="mb-3"
-                          value={[threadFilter]}
-                          onValueChange={(values) => {
-                            if (
-                              values[0] === "active" ||
-                              values[0] === "inactive"
-                            )
-                              setThreadFilter(values[0]);
-                          }}
-                        >
-                          <ToggleGroupItem value="active">
-                            Active
-                          </ToggleGroupItem>
-                          <ToggleGroupItem value="inactive">
-                            Inactive
-                          </ToggleGroupItem>
-                        </ToggleGroup>
-                        <div className="flex flex-col gap-1">
-                          {channelThreads
-                            .filter(
-                              (item) =>
-                                item.resolved === (threadFilter === "inactive"),
-                            )
-                            .map((item) => (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                key={item.id}
-                                className="h-auto flex-col items-stretch gap-0 p-3 text-left whitespace-normal"
-                                onClick={() => {
-                                  close();
-                                  setThreadId(item.id);
-                                  setMemberOpen(false);
-                                }}
-                              >
-                                <span className="line-clamp-2 text-sm">
-                                  {
-                                    allMessages.find(
-                                      (message) =>
-                                        message.id === item.messageId,
-                                    )?.text
-                                  }
-                                </span>
-                                <span className="text-muted-foreground mt-1 block text-xs">
-                                  {item.replies.length} replies ·{" "}
-                                  {item.resolved ? "Inactive" : "Active"}
-                                </span>
-                              </Button>
-                            ))}
-                          {!channelThreads.some(
-                            (item) =>
-                              item.resolved === (threadFilter === "inactive"),
-                          ) && (
-                            <Empty>
-                              <EmptyDescription>
-                                No {threadFilter} threads in this conversation.
-                              </EmptyDescription>
-                            </Empty>
-                          )}
-                        </div>
-                      </>
+                      <CommsThreadList
+                        items={channelThreadItems}
+                        filter={threadFilter}
+                        onFilterChange={setThreadFilter}
+                        onSelect={(item) => {
+                          close();
+                          setThreadId(item.id);
+                          setMemberOpen(false);
+                        }}
+                        emptyDescription={`No ${threadFilter} threads in this conversation.`}
+                        filterClassName="mb-3"
+                      />
                     )}
                   </FloatingList>
                   <FloatingList
@@ -2177,47 +2153,21 @@ export default function SampleComms() {
                 <X className="size-4" />
               </Action>
             </div>
-            <ToggleGroup
-              className="my-4"
-              value={[threadFilter]}
-              onValueChange={(values) => {
-                if (values[0] === "active" || values[0] === "inactive")
-                  setThreadFilter(values[0]);
+            <CommsThreadList
+              items={workspaceThreadItems}
+              filter={threadFilter}
+              onFilterChange={setThreadFilter}
+              onSelect={(item) => {
+                const entry = workspaceThreads.find(
+                  (candidate) => candidate.thread.id === item.id,
+                );
+                if (entry !== undefined) {
+                  openThread(entry.thread, entry.channel.id);
+                }
               }}
-            >
-              <ToggleGroupItem value="active">Active</ToggleGroupItem>
-              <ToggleGroupItem value="inactive">Inactive</ToggleGroupItem>
-            </ToggleGroup>
-            <div className="flex flex-col gap-2">
-              {workspaceThreads
-                .filter(
-                  (entry) =>
-                    entry.thread.resolved === (threadFilter === "inactive"),
-                )
-                .map((entry) => (
-                  <Action
-                    key={entry.thread.id}
-                    className="h-auto min-h-14 w-full flex-col items-start gap-1 text-left whitespace-normal"
-                    onClick={() => openThread(entry.thread, entry.channel.id)}
-                  >
-                    <span className="line-clamp-2">{entry.title}</span>
-                    <span className="text-muted-foreground text-xs">
-                      #{entry.channel.name} · {entry.thread.replies.length}{" "}
-                      replies
-                    </span>
-                  </Action>
-                ))}
-              {!workspaceThreads.some(
-                (entry) =>
-                  entry.thread.resolved === (threadFilter === "inactive"),
-              ) && (
-                <Empty>
-                  <EmptyDescription>
-                    No {threadFilter} threads in your channels.
-                  </EmptyDescription>
-                </Empty>
-              )}
-            </div>
+              emptyDescription={`No ${threadFilter} threads in your channels.`}
+              filterClassName="my-4"
+            />
           </DialogContent>
         </Dialog>
         {editor && (

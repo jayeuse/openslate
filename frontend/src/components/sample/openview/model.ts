@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { serializeCsv } from "@/lib/csv";
 import type { SampleRecord } from "../sample-data";
 
 export const OPENVIEW_SECTIONS = [
@@ -1578,22 +1579,14 @@ export function serializeOpenViewUrl(state: OpenViewUrlState): string {
   return query ? `/openview?${query}` : "/openview";
 }
 
-function csvCell(value: OpenViewValue | undefined): string {
-  let text = String(value ?? "");
-  if (/^\s*[=+\-@]/.test(text)) text = `'${text}`;
-  return `"${text.replaceAll('"', '""')}"`;
-}
-
 export function serializeOpenViewCsv(
   rows: OpenViewRow[],
   fields: string[],
 ): string {
-  return [
-    fields.map(csvCell).join(","),
-    ...rows.map((row) =>
-      fields.map((field) => csvCell(row.values[field])).join(","),
-    ),
-  ].join("\r\n");
+  return serializeCsv([
+    fields,
+    ...rows.map((row) => fields.map((field) => row.values[field])),
+  ]);
 }
 
 function slug(value: string): string {

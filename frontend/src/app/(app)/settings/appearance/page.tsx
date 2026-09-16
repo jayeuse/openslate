@@ -139,7 +139,7 @@ export default function AppearancePage() {
                   key={item}
                   value={item}
                   className={cn(
-                    "h-auto w-auto rounded-md border px-4 py-2 text-sm",
+                    "h-auto min-h-11 w-auto rounded-md border px-4 py-2 text-sm",
                     preferences.density === item
                       ? "border-primary bg-primary text-primary-foreground"
                       : "border-input bg-card hover:bg-muted",
@@ -169,7 +169,7 @@ export default function AppearancePage() {
                   key={item}
                   value={item}
                   className={cn(
-                    "h-auto w-auto rounded-md border px-4 py-2 text-sm",
+                    "h-auto min-h-11 w-auto rounded-md border px-4 py-2 text-sm",
                     preferences.radius === item
                       ? "border-primary bg-primary text-primary-foreground"
                       : "border-input bg-card hover:bg-muted",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDownAZ,
   Bot,
@@ -43,22 +43,8 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import { toast } from "@/components/ui/toast";
 import { departments } from "./model";
 import type { AccessController, BulkIdentityUpdateInput } from "./controller";
@@ -132,7 +118,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
   const [expiry, setExpiry] = useState<ExpiryFilter>("all");
   const [activity, setActivity] = useState<ActivityFilter>("all");
   const [sort, setSort] = useState<SortOption>("name");
-  const [page, setPage] = useState(1);
+  const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState<number>(3);
   const [selected, setSelected] = useState<string[]>([]);
   const [editorIdentityId, setEditorIdentityId] = useState<string | null>(null);
@@ -261,10 +247,10 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
       );
     });
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, pageCount);
+  const safePageIndex = Math.min(Math.max(pageIndex, 0), pageCount - 1);
   const visible = filtered.slice(
-    (safePage - 1) * pageSize,
-    safePage * pageSize,
+    safePageIndex * pageSize,
+    (safePageIndex + 1) * pageSize,
   );
   const visibleIds = visible
     .filter((identity) => identity.status !== "deleted")
@@ -285,6 +271,112 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
   };
   const bulkPreview = controller.actions.previewBulkIdentityUpdate(bulkInput);
 
+  const identityColumns = useMemo<DataTableColumn<AccessIdentity>[]>(
+    () => [
+      {
+        id: "select",
+        header: () => (
+          <label className="flex size-11 items-center justify-center">
+            <Checkbox
+              checked={allVisibleSelected}
+              onCheckedChange={(checked) =>
+                setSelected((current) =>
+                  checked === true
+                    ? [...new Set([...current, ...visibleIds])]
+                    : current.filter((id) => !visibleIds.includes(id)),
+                )
+              }
+            />
+            <span className="sr-only">Select all identities on this page</span>
+          </label>
+        ),
+        cell: ({ row }) => {
+          const identity = row.original;
+          const isSelected = selected.includes(identity.id);
+          return (
+            <label className="flex size-11 items-center justify-center">
+              <Checkbox
+                checked={isSelected}
+                disabled={identity.status === "deleted"}
+                onCheckedChange={(checked) =>
+                  setSelected((current) =>
+                    checked === true
+                      ? [...new Set([...current, identity.id])]
+                      : current.filter((id) => id !== identity.id),
+                  )
+                }
+              />
+              <span className="sr-only">
+                {identity.status === "deleted" ? "Deleted identity" : "Select"}{" "}
+                {identity.name}
+              </span>
+            </label>
+          );
+        },
+      },
+      {
+        id: "identity",
+        header: "Identity",
+        cell: ({ row }) => {
+          const identity = row.original;
+          return (
+            <div className="max-w-72 min-w-0">
+              <p className="truncate font-medium">{identity.name}</p>
+              <p className="text-muted-foreground truncate text-xs">
+                {identityDetail(identity)}
+              </p>
+            </div>
+          );
+        },
+      },
+      {
+        id: "kind",
+        header: "Kind",
+        cell: ({ row }) => kindLabels[row.original.kind],
+      },
+      {
+        id: "role",
+        header: "Role",
+        cell: ({ row }) =>
+          controller.state.roles.find((item) => item.id === row.original.roleId)
+            ?.name ?? "Unknown role",
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: ({ row }) => (
+          <Badge variant={statusVariant(row.original.status)}>
+            {statusLabels[row.original.status]}
+          </Badge>
+        ),
+      },
+      {
+        id: "actions",
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => (
+          <div className="flex justify-end">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-11"
+              aria-label={`Manage ${row.original.name}`}
+              onClick={() => openIdentity(row.original.id)}
+            >
+              <MoreHorizontal />
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [
+      allVisibleSelected,
+      controller.state.roles,
+      openIdentity,
+      selected,
+      visibleIds,
+    ],
+  );
+
   function resetFilters() {
     setQuery("");
     setKind("all");
@@ -295,7 +387,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
     setExpiry("all");
     setActivity("all");
     setSort("name");
-    setPage(1);
+    setPageIndex(0);
   }
 
   function openIdentity(identityId: string) {
@@ -404,7 +496,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                   value={query}
                   onChange={(event) => {
                     setQuery(event.target.value);
-                    setPage(1);
+                    setPageIndex(0);
                   }}
                 />
               </div>
@@ -417,7 +509,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                 value={kind}
                 onChange={(event) => {
                   setKind(event.target.value as KindFilter);
-                  setPage(1);
+                  setPageIndex(0);
                 }}
               >
                 <NativeSelectOption value="all">All kinds</NativeSelectOption>
@@ -436,7 +528,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                 value={status}
                 onChange={(event) => {
                   setStatus(event.target.value as StatusFilter);
-                  setPage(1);
+                  setPageIndex(0);
                 }}
               >
                 <NativeSelectOption value="all">
@@ -457,7 +549,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                 value={sort}
                 onChange={(event) => {
                   setSort(event.target.value as SortOption);
-                  setPage(1);
+                  setPageIndex(0);
                 }}
               >
                 <NativeSelectOption value="name">Name</NativeSelectOption>
@@ -487,7 +579,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                   )
                     return;
                   setPageSize(nextPageSize);
-                  setPage(1);
+                  setPageIndex(0);
                 }}
               >
                 {PAGE_SIZE_OPTIONS.map((option) => (
@@ -520,7 +612,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                   value={roleId}
                   onChange={(event) => {
                     setRoleId(event.target.value);
-                    setPage(1);
+                    setPageIndex(0);
                   }}
                 >
                   <NativeSelectOption value="all">All roles</NativeSelectOption>
@@ -539,7 +631,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                   value={groupId}
                   onChange={(event) => {
                     setGroupId(event.target.value);
-                    setPage(1);
+                    setPageIndex(0);
                   }}
                 >
                   <NativeSelectOption value="all">
@@ -565,7 +657,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                   value={department}
                   onChange={(event) => {
                     setDepartment(event.target.value);
-                    setPage(1);
+                    setPageIndex(0);
                   }}
                 >
                   <NativeSelectOption value="all">
@@ -586,7 +678,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                   value={expiry}
                   onChange={(event) => {
                     setExpiry(event.target.value as ExpiryFilter);
-                    setPage(1);
+                    setPageIndex(0);
                   }}
                 >
                   <NativeSelectOption value="all">
@@ -613,7 +705,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                   value={activity}
                   onChange={(event) => {
                     setActivity(event.target.value as ActivityFilter);
-                    setPage(1);
+                    setPageIndex(0);
                   }}
                 >
                   <NativeSelectOption value="all">
@@ -695,54 +787,20 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
       ) : (
         <>
           <div className="hidden overflow-hidden rounded-md border md:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12">
-                    <label className="flex size-11 items-center justify-center">
-                      <Checkbox
-                        checked={allVisibleSelected}
-                        onCheckedChange={(checked) =>
-                          setSelected((current) =>
-                            checked
-                              ? [...new Set([...current, ...visibleIds])]
-                              : current.filter(
-                                  (id) => !visibleIds.includes(id),
-                                ),
-                          )
-                        }
-                      />
-                      <span className="sr-only">
-                        Select all identities on this page
-                      </span>
-                    </label>
-                  </TableHead>
-                  <TableHead>Identity</TableHead>
-                  <TableHead>Kind</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visible.map((identity) => (
-                  <IdentityTableRow
-                    key={identity.id}
-                    identity={identity}
-                    controller={controller}
-                    selected={selected.includes(identity.id)}
-                    onSelect={(checked) =>
-                      setSelected((current) =>
-                        checked
-                          ? [...new Set([...current, identity.id])]
-                          : current.filter((id) => id !== identity.id),
-                      )
-                    }
-                    onOpen={() => openIdentity(identity.id)}
-                  />
-                ))}
-              </TableBody>
-            </Table>
+            <DataTable
+              ariaLabel="Identity directory"
+              columns={identityColumns}
+              data={filtered}
+              getRowId={(identity) => identity.id}
+              pagination={{ pageIndex: safePageIndex, pageSize }}
+              onPaginationChange={(next) => {
+                setPageIndex(next.pageIndex);
+                if (next.pageSize !== pageSize) setPageSize(next.pageSize);
+              }}
+              rowState={(identity) =>
+                selected.includes(identity.id) ? "selected" : undefined
+              }
+            />
           </div>
 
           <div className="grid gap-3 md:hidden">
@@ -766,59 +824,18 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-muted-foreground text-sm">
-              Showing {(safePage - 1) * pageSize + 1}–
-              {Math.min(safePage * pageSize, filtered.length)} of{" "}
+              Showing {safePageIndex * pageSize + 1}–
+              {Math.min((safePageIndex + 1) * pageSize, filtered.length)} of{" "}
               {filtered.length} · {pageSize} per page
             </p>
-            {pageCount > 1 && (
-              <Pagination className="mx-0 w-auto justify-start sm:justify-end">
-                <PaginationContent>
-                  <PaginationItem>
-                    <PaginationPrevious
-                      href="#identity-directory"
-                      aria-disabled={safePage === 1}
-                      tabIndex={safePage === 1 ? -1 : undefined}
-                      className={
-                        safePage === 1
-                          ? "pointer-events-none opacity-50"
-                          : undefined
-                      }
-                      onClick={(event) => {
-                        event.preventDefault();
-                        if (safePage > 1) setPage(safePage - 1);
-                      }}
-                    />
-                  </PaginationItem>
-                  <PaginationItem>
-                    <PaginationLink
-                      href="#identity-directory"
-                      size="default"
-                      isActive
-                      aria-label={`Page ${safePage} of ${pageCount}`}
-                      onClick={(event) => event.preventDefault()}
-                    >
-                      {safePage} / {pageCount}
-                    </PaginationLink>
-                  </PaginationItem>
-                  <PaginationItem>
-                    <PaginationNext
-                      href="#identity-directory"
-                      aria-disabled={safePage === pageCount}
-                      tabIndex={safePage === pageCount ? -1 : undefined}
-                      className={
-                        safePage === pageCount
-                          ? "pointer-events-none opacity-50"
-                          : undefined
-                      }
-                      onClick={(event) => {
-                        event.preventDefault();
-                        if (safePage < pageCount) setPage(safePage + 1);
-                      }}
-                    />
-                  </PaginationItem>
-                </PaginationContent>
-              </Pagination>
-            )}
+            <PaginationControls
+              ariaLabel="Identity pages"
+              className="w-auto justify-start sm:justify-end"
+              pageCount={pageCount}
+              pageIndex={safePageIndex}
+              onPageIndexChange={setPageIndex}
+              variant="compact"
+            />
           </div>
         </>
       )}
@@ -936,67 +953,6 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-}
-
-function IdentityTableRow({
-  identity,
-  controller,
-  selected,
-  onSelect,
-  onOpen,
-}: {
-  identity: AccessIdentity;
-  controller: AccessController;
-  selected: boolean;
-  onSelect: (checked: boolean) => void;
-  onOpen: () => void;
-}) {
-  const role = controller.state.roles.find(
-    (item) => item.id === identity.roleId,
-  );
-  return (
-    <TableRow data-state={selected ? "selected" : undefined}>
-      <TableCell>
-        <label className="flex size-11 items-center justify-center">
-          <Checkbox
-            checked={selected}
-            disabled={identity.status === "deleted"}
-            onCheckedChange={onSelect}
-          />
-          <span className="sr-only">
-            {identity.status === "deleted" ? "Deleted identity" : "Select"}{" "}
-            {identity.name}
-          </span>
-        </label>
-      </TableCell>
-      <TableCell>
-        <div className="max-w-72 min-w-0">
-          <p className="truncate font-medium">{identity.name}</p>
-          <p className="text-muted-foreground truncate text-xs">
-            {identityDetail(identity)}
-          </p>
-        </div>
-      </TableCell>
-      <TableCell>{kindLabels[identity.kind]}</TableCell>
-      <TableCell>{role?.name ?? "Unknown role"}</TableCell>
-      <TableCell>
-        <Badge variant={statusVariant(identity.status)}>
-          {statusLabels[identity.status]}
-        </Badge>
-      </TableCell>
-      <TableCell className="text-right">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-11"
-          aria-label={`Manage ${identity.name}`}
-          onClick={onOpen}
-        >
-          <MoreHorizontal />
-        </Button>
-      </TableCell>
-    </TableRow>
   );
 }
 

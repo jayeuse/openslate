@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ArrowUpDown,
   Copy,
@@ -47,19 +47,8 @@ import {
 } from "@/components/ui/empty";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-} from "@/components/ui/pagination";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { AccessController } from "./controller";
 import type { Role } from "./model";
@@ -147,6 +136,99 @@ export function RolesView({ controller }: RolesViewProps) {
     const result = controller.actions.duplicateRole(role.id);
     setMessage(result.ok ? `Duplicated ${role.name}.` : result.error);
   }
+
+  const roleColumns = useMemo<DataTableColumn<Role>[]>(
+    () => [
+      {
+        id: "compare",
+        header: () => <span className="sr-only">Compare</span>,
+        cell: ({ row }) => {
+          const role = row.original;
+          return (
+            <Checkbox
+              aria-label={`Compare ${role.name}`}
+              checked={compareIds.includes(role.id)}
+              disabled={!compareIds.includes(role.id) && compareIds.length >= 4}
+              onCheckedChange={(checked) =>
+                toggleCompare(role.id, checked === true)
+              }
+            />
+          );
+        },
+      },
+      {
+        id: "role",
+        header: "Role",
+        cell: ({ row }) => {
+          const role = row.original;
+          return (
+            <button
+              className="focus-visible:outline-ring min-h-11 max-w-md rounded-sm text-left outline-none focus-visible:outline-2"
+              onClick={() => setDraft({ ...role, grants: [...role.grants] })}
+            >
+              <span className="flex items-center gap-2 font-medium">
+                {role.name}
+                {role.builtin && <Badge variant="secondary">Built-in</Badge>}
+              </span>
+              <span className="text-muted-foreground block truncate text-xs">
+                {roleDescription(role)}
+              </span>
+            </button>
+          );
+        },
+      },
+      {
+        id: "members",
+        header: "Members",
+        cell: ({ row }) => memberCount(row.original.id),
+      },
+      {
+        id: "grants",
+        header: "Grants",
+        cell: ({ row }) => row.original.grants.length,
+      },
+      {
+        id: "actions",
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => {
+          const role = row.original;
+          return (
+            <div className="flex justify-end">
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="size-11"
+                      aria-label={`Role actions for ${role.name}`}
+                    />
+                  }
+                >
+                  <MoreHorizontal />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        setDraft({ ...role, grants: [...role.grants] })
+                      }
+                    >
+                      Edit role
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => duplicate(role)}>
+                      <Copy /> Duplicate role
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ],
+    [compareIds, controller.state.identities, duplicate, memberCount],
+  );
 
   return (
     <section
@@ -289,90 +371,14 @@ export function RolesView({ controller }: RolesViewProps) {
       ) : (
         <>
           <div className="hidden overflow-hidden rounded-lg border md:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12">
-                    <span className="sr-only">Compare</span>
-                  </TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Members</TableHead>
-                  <TableHead>Grants</TableHead>
-                  <TableHead className="w-16">
-                    <span className="sr-only">Actions</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visible.map((role) => (
-                  <TableRow key={role.id}>
-                    <TableCell>
-                      <Checkbox
-                        aria-label={`Compare ${role.name}`}
-                        checked={compareIds.includes(role.id)}
-                        disabled={
-                          !compareIds.includes(role.id) &&
-                          compareIds.length >= 4
-                        }
-                        onCheckedChange={(checked) =>
-                          toggleCompare(role.id, checked)
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <button
-                        className="focus-visible:outline-ring min-h-11 max-w-md rounded-sm text-left outline-none focus-visible:outline-2"
-                        onClick={() =>
-                          setDraft({ ...role, grants: [...role.grants] })
-                        }
-                      >
-                        <span className="flex items-center gap-2 font-medium">
-                          {role.name}
-                          {role.builtin && (
-                            <Badge variant="secondary">Built-in</Badge>
-                          )}
-                        </span>
-                        <span className="text-muted-foreground block truncate text-xs">
-                          {roleDescription(role)}
-                        </span>
-                      </button>
-                    </TableCell>
-                    <TableCell>{memberCount(role.id)}</TableCell>
-                    <TableCell>{role.grants.length}</TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="size-11"
-                              aria-label={`Role actions for ${role.name}`}
-                            />
-                          }
-                        >
-                          <MoreHorizontal />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuGroup>
-                            <DropdownMenuItem
-                              onClick={() =>
-                                setDraft({ ...role, grants: [...role.grants] })
-                              }
-                            >
-                              Edit role
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => duplicate(role)}>
-                              <Copy /> Duplicate role
-                            </DropdownMenuItem>
-                          </DropdownMenuGroup>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataTable
+              ariaLabel="Roles directory"
+              columns={roleColumns}
+              data={filtered}
+              getRowId={(role) => role.id}
+              pagination={{ pageIndex: currentPage, pageSize: PAGE_SIZE }}
+              onPaginationChange={(next) => setPage(next.pageIndex)}
+            />
           </div>
 
           <div className="grid gap-3 md:hidden">
@@ -438,25 +444,12 @@ export function RolesView({ controller }: RolesViewProps) {
       )}
 
       {pageCount > 1 && (
-        <Pagination aria-label="Role pages">
-          <PaginationContent>
-            {Array.from({ length: pageCount }, (_, index) => index).map(
-              (number) => (
-                <PaginationItem key={number}>
-                  <Button
-                    variant={number === currentPage ? "outline" : "ghost"}
-                    className="min-h-11 min-w-11"
-                    aria-current={number === currentPage ? "page" : undefined}
-                    aria-label={`Page ${number + 1}`}
-                    onClick={() => setPage(number)}
-                  >
-                    {number + 1}
-                  </Button>
-                </PaginationItem>
-              ),
-            )}
-          </PaginationContent>
-        </Pagination>
+        <PaginationControls
+          ariaLabel="Role pages"
+          pageCount={pageCount}
+          pageIndex={currentPage}
+          onPageIndexChange={setPage}
+        />
       )}
 
       <Dialog open={templateOpen} onOpenChange={setTemplateOpen}>

@@ -24,11 +24,17 @@ export default function LoginPage() {
     setError("");
     setPending(true);
     try {
-      const response = await fetch("/session/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
+      let response: Response;
+      try {
+        response = await fetch("/session/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+      } catch {
+        setError("Unable to sign in. Check your connection and try again.");
+        return;
+      }
       if (!response.ok) {
         const body: unknown = await response.json().catch(() => null);
         const detail =
@@ -38,11 +44,10 @@ export default function LoginPage() {
           typeof body.detail === "string"
             ? body.detail
             : "Sign in failed";
-        throw new Error(detail);
+        setError(detail);
+        return;
       }
       router.push("/openview");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Sign in failed");
     } finally {
       setPending(false);
     }
@@ -92,7 +97,7 @@ export default function LoginPage() {
             </p>
           </div>
           {error && (
-            <Alert variant="destructive" className="mb-5">
+            <Alert role="alert" variant="destructive" className="mb-5">
               {error}
             </Alert>
           )}

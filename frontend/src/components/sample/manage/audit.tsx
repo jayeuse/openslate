@@ -41,23 +41,10 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import type { ManageActivityEntry } from "./state";
+import { serializeCsv } from "@/lib/csv";
 
 const PAGE_SIZE = 5;
 
@@ -136,16 +123,6 @@ function matchesSearch(entry: ManageActivityEntry, query: string): boolean {
   ].some((value) => value.toLowerCase().includes(query));
 }
 
-/**
- * Quote CSV values and neutralize spreadsheet formula prefixes. The leading
- * apostrophe is intentional: spreadsheet applications treat the value as
- * text instead of executing a value beginning with =, +, -, or @.
- */
-export function quoteActivityCsvCell(value: string): string {
-  const safeValue = /^\s*[=+\-@]/.test(value) ? `'${value}` : value;
-  return `"${safeValue.replaceAll('"', '""')}"`;
-}
-
 export function buildActivityCsv(entries: ManageActivityEntry[]): string {
   const header = [
     "Date",
@@ -167,9 +144,7 @@ export function buildActivityCsv(entries: ManageActivityEntry[]): string {
     entry.after,
     entry.source === "manage" ? "Manage change" : "Recorded activity",
   ]);
-  return [header, ...rows]
-    .map((row) => row.map(quoteActivityCsvCell).join(","))
-    .join("\r\n");
+  return serializeCsv([header, ...rows]);
 }
 
 function downloadActivityCsv(entries: ManageActivityEntry[]): void {
@@ -202,7 +177,7 @@ function sourceVariant(
 
 export default function ManageAudit({ entries }: ManageAuditProps) {
   const [filters, setFilters] = useState<ActivityFilters>(initialFilters);
-  const [page, setPage] = useState(1);
+  const [pageIndex, setPageIndex] = useState(0);
   const [selected, setSelected] = useState<ManageActivityEntry | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [notice, setNotice] = useState("");
@@ -233,20 +208,81 @@ export default function ManageAudit({ entries }: ManageAuditProps) {
     return left.id.localeCompare(right.id);
   });
   const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
-  const safePage = Math.min(page, pageCount);
-  const visible = sorted.slice(
-    (safePage - 1) * PAGE_SIZE,
-    safePage * PAGE_SIZE,
+  const safePageIndex = Math.min(Math.max(pageIndex, 0), pageCount - 1);
+  const visibleEntries = sorted.slice(
+    safePageIndex * PAGE_SIZE,
+    (safePageIndex + 1) * PAGE_SIZE,
   );
-  const firstVisible = sorted.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
-  const lastVisible = Math.min(safePage * PAGE_SIZE, sorted.length);
+  const firstVisible = sorted.length === 0 ? 0 : safePageIndex * PAGE_SIZE + 1;
+  const lastVisible = Math.min((safePageIndex + 1) * PAGE_SIZE, sorted.length);
+
+  function openDetails(entry: ManageActivityEntry, trigger: HTMLButtonElement) {
+    detailTrigger.current = trigger;
+    setSelected(entry);
+  }
+
+  const columns: DataTableColumn<ManageActivityEntry>[] = [
+    {
+      id: "date",
+      header: "Date",
+      cell: ({ row }) => (
+        <time dateTime={row.original.date}>{row.original.date}</time>
+      ),
+    },
+    {
+      id: "user",
+      header: "User",
+      cell: ({ row }) => (
+        <span className="font-medium">{row.original.user}</span>
+      ),
+    },
+    {
+      id: "activity",
+      header: "Activity",
+      cell: ({ row }) => (
+        <>
+          <span className="font-medium">{row.original.action}</span>
+          <span className="text-muted-foreground">
+            {" "}
+            · {row.original.entity}
+          </span>
+        </>
+      ),
+    },
+    { id: "target", header: "Target", cell: ({ row }) => row.original.target },
+    {
+      id: "source",
+      header: "Source",
+      cell: ({ row }) => (
+        <Badge variant={sourceVariant(row.original.source)}>
+          {sourceLabel(row.original.source)}
+        </Badge>
+      ),
+    },
+    {
+      id: "details",
+      header: () => <span className="block text-right">Details</span>,
+      cell: ({ row }) => (
+        <div className="text-right">
+          <Button
+            variant="ghost"
+            className="min-h-11 px-2.5 md:h-8 md:min-h-8"
+            onClick={(event) => openDetails(row.original, event.currentTarget)}
+            aria-label={`View audit ${row.original.target}`}
+          >
+            View details
+          </Button>
+        </div>
+      ),
+    },
+  ];
 
   function updateFilter<Key extends keyof ActivityFilters>(
     key: Key,
     value: ActivityFilters[Key],
   ) {
     setFilters((current) => ({ ...current, [key]: value }));
-    setPage(1);
+    setPageIndex(0);
     setNotice("");
   }
 
@@ -256,7 +292,7 @@ export default function ManageAudit({ entries }: ManageAuditProps) {
 
   function clearFilters() {
     setFilters(initialFilters);
-    setPage(1);
+    setPageIndex(0);
     setNotice("");
   }
 
@@ -491,117 +527,87 @@ export default function ManageAudit({ entries }: ManageAuditProps) {
           </EmptyHeader>
         </Empty>
       ) : (
-        <Card aria-label="Activity history table" className="w-full min-w-0">
+        <Card aria-label="Activity history" className="w-full min-w-0">
           <CardContent className="p-0">
-            <Table aria-label="Activity history">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="h-8 py-1 text-xs">Date</TableHead>
-                  <TableHead className="h-8 py-1 text-xs">User</TableHead>
-                  <TableHead className="h-8 py-1 text-xs">Activity</TableHead>
-                  <TableHead className="h-8 py-1 text-xs">Target</TableHead>
-                  <TableHead className="h-8 py-1 text-xs">Source</TableHead>
-                  <TableHead className="h-8 py-1 text-right text-xs">
-                    Details
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visible.map((entry) => (
-                  <TableRow key={entry.id}>
-                    <TableCell className="py-1.5">
-                      <time dateTime={entry.date}>{entry.date}</time>
-                    </TableCell>
-                    <TableCell className="py-1.5 font-medium">
-                      {entry.user}
-                    </TableCell>
-                    <TableCell className="py-1.5">
-                      <span className="font-medium">{entry.action}</span>
-                      <span className="text-muted-foreground">
-                        {" "}
-                        · {entry.entity}
-                      </span>
-                    </TableCell>
-                    <TableCell className="py-1.5">{entry.target}</TableCell>
-                    <TableCell className="py-1.5">
-                      <Badge variant={sourceVariant(entry.source)}>
-                        {sourceLabel(entry.source)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="py-1 text-right">
-                      <Button
-                        variant="ghost"
-                        className="min-h-11 px-2.5 md:h-8 md:min-h-8"
-                        onClick={(event) => {
-                          detailTrigger.current = event.currentTarget;
-                          setSelected(entry);
-                        }}
-                        aria-label={`View audit ${entry.target}`}
-                      >
-                        View details
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div className="divide-border divide-y md:hidden">
+              {visibleEntries.map((entry) => (
+                <article key={entry.id} className="flex flex-col gap-3 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                        Target
+                      </p>
+                      <p className="mt-1 font-medium break-words">
+                        {entry.target}
+                      </p>
+                    </div>
+                    <Badge
+                      className="shrink-0"
+                      variant={sourceVariant(entry.source)}
+                    >
+                      {sourceLabel(entry.source)}
+                    </Badge>
+                  </div>
+
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <div className="min-w-0">
+                      <dt className="text-muted-foreground text-xs">User</dt>
+                      <dd className="mt-0.5 break-words">{entry.user}</dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="text-muted-foreground text-xs">Action</dt>
+                      <dd className="mt-0.5 font-medium break-words">
+                        {entry.action}
+                      </dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="text-muted-foreground text-xs">Entity</dt>
+                      <dd className="mt-0.5 break-words">{entry.entity}</dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="text-muted-foreground text-xs">Time</dt>
+                      <dd className="mt-0.5 break-words">
+                        <time dateTime={entry.date}>{entry.date}</time>
+                      </dd>
+                    </div>
+                  </dl>
+
+                  <Button
+                    variant="outline"
+                    className="min-h-11 w-full"
+                    onClick={(event) => openDetails(entry, event.currentTarget)}
+                    aria-label={`View audit ${entry.target}`}
+                  >
+                    View details
+                  </Button>
+                </article>
+              ))}
+            </div>
+            <div className="hidden md:block">
+              <DataTable
+                ariaLabel="Activity history table"
+                cellClassName="py-1.5"
+                columns={columns}
+                data={sorted}
+                getRowId={(entry) => entry.id}
+                pagination={{ pageIndex: safePageIndex, pageSize: PAGE_SIZE }}
+                onPaginationChange={(next) => setPageIndex(next.pageIndex)}
+              />
+            </div>
           </CardContent>
           {pageCount > 1 ? (
             <CardFooter className="flex-wrap justify-between gap-2 p-2.5">
               <p className="text-muted-foreground text-xs">
-                Page {safePage} of {pageCount}
+                Page {safePageIndex + 1} of {pageCount}
               </p>
-              <Pagination
-                aria-label="Activity pages"
-                className="mx-0 w-auto justify-start sm:justify-end"
-              >
-                <PaginationContent>
-                  <PaginationItem>
-                    <PaginationPrevious
-                      href="#activity-history"
-                      aria-disabled={safePage === 1}
-                      tabIndex={safePage === 1 ? -1 : undefined}
-                      className={
-                        safePage === 1
-                          ? "pointer-events-none opacity-50 md:min-h-8"
-                          : "md:min-h-8"
-                      }
-                      onClick={(event) => {
-                        event.preventDefault();
-                        if (safePage > 1) setPage(safePage - 1);
-                      }}
-                    />
-                  </PaginationItem>
-                  <PaginationItem>
-                    <PaginationLink
-                      href="#activity-history"
-                      size="default"
-                      isActive
-                      className="md:min-h-8"
-                      aria-label={`Page ${safePage} of ${pageCount}`}
-                      onClick={(event) => event.preventDefault()}
-                    >
-                      {safePage} / {pageCount}
-                    </PaginationLink>
-                  </PaginationItem>
-                  <PaginationItem>
-                    <PaginationNext
-                      href="#activity-history"
-                      aria-disabled={safePage === pageCount}
-                      tabIndex={safePage === pageCount ? -1 : undefined}
-                      className={
-                        safePage === pageCount
-                          ? "pointer-events-none opacity-50 md:min-h-8"
-                          : "md:min-h-8"
-                      }
-                      onClick={(event) => {
-                        event.preventDefault();
-                        if (safePage < pageCount) setPage(safePage + 1);
-                      }}
-                    />
-                  </PaginationItem>
-                </PaginationContent>
-              </Pagination>
+              <PaginationControls
+                ariaLabel="Activity pages"
+                className="w-auto sm:justify-end"
+                pageCount={pageCount}
+                pageIndex={safePageIndex}
+                onPageIndexChange={setPageIndex}
+                variant="compact"
+              />
             </CardFooter>
           ) : null}
         </Card>

@@ -27,20 +27,6 @@ import {
   Fragment,
   type ReactNode,
 } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  LabelList,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { z } from "zod";
 import { Alert } from "@/components/ui/alert";
 import {
@@ -94,13 +80,6 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import {
-  ChartContainer,
-  ChartLegendContent,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart";
 import { cn } from "@/lib/utils";
 import { useSampleState } from "@/components/sample/sample-state";
 import type { SampleRecord } from "@/components/sample/sample-data";
@@ -111,8 +90,10 @@ import {
   type Role,
 } from "../access/model";
 import { WidgetSurface, type SampleWidget } from "./widgets";
+import { OpenViewChartPreview } from "./chart-preview";
+import { OpenViewAudienceConfirmation } from "./audience-confirmation";
+import { OpenViewFilterEditor } from "./filter-editor";
 import {
-  FILTER_OPERATORS,
   INITIAL_CHART_SETTINGS,
   INITIAL_DASHBOARDS,
   OPENVIEW_MODULE_IDS,
@@ -139,10 +120,8 @@ import {
   type AudienceLookup,
   type AudienceRef,
   type ChartSettings,
-  type FilterClause,
   type FilterGroup,
   type FilterOperator,
-  type OpenViewField,
   type OpenViewModule,
   type OpenViewModuleId,
   type OpenViewRow,
@@ -286,7 +265,8 @@ const scheduleLabels: Record<OpenViewReport["schedule"]["cadence"], string> = {
   weekly: "Weekly",
   monthly: "Monthly",
 };
-const operatorLabels: Record<FilterOperator, string> = {
+
+const analyticsFilterOperatorLabels: Record<FilterOperator, string> = {
   contains: "contains",
   equals: "equals",
   "not-equals": "does not equal",
@@ -298,6 +278,9 @@ const operatorLabels: Record<FilterOperator, string> = {
   "is-not-empty": "is not empty",
 };
 
+function analyticsFilterOperatorLabel(operator: FilterOperator): string {
+  return analyticsFilterOperatorLabels[operator];
+}
 function makeId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
@@ -380,15 +363,6 @@ function fieldLabel(moduleId: OpenViewModuleId, fieldId: string): string {
   );
 }
 
-function fieldFor(
-  moduleId: OpenViewModuleId,
-  fieldId: string,
-): OpenViewField | undefined {
-  return getModuleDefinition(moduleId).fields.find(
-    (field) => field.id === fieldId,
-  );
-}
-
 function formatSampleSnapshotDate(
   value = OPENVIEW_SAMPLE_SNAPSHOT_DATE,
 ): string {
@@ -400,16 +374,6 @@ function formatSampleSnapshotDate(
     day: "numeric",
     timeZone: "UTC",
   });
-}
-
-function fieldValues(rows: OpenViewRow[], fieldId: string): string[] {
-  return [
-    ...new Set(
-      rows.map((row) => String(row.values[fieldId] ?? "")).filter(Boolean),
-    ),
-  ].sort((left, right) =>
-    left.localeCompare(right, undefined, { numeric: true }),
-  );
 }
 
 function valueFor(row: OpenViewRow, fieldId: string): string {
@@ -676,38 +640,16 @@ function AudienceField({
           <span className="text-muted-foreground text-xs">Preview only</span>
         ) : null}
       </div>
-      <AlertDialog
+      <OpenViewAudienceConfirmation
         open={pending !== null}
-        onOpenChange={(open) => !open && setPending(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Preview sharing with everyone?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This sample setting demonstrates a wider audience. It does not
-              grant access, send invitations, or publish this artifact.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={() => setPending(null)}
-            >
-              Keep private
-            </Button>
-            <Button
-              className="min-h-11"
-              onClick={() => {
-                if (pending) onChange(pending);
-                setPending(null);
-              }}
-            >
-              Use Everyone preview
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        artifact="artifact"
+        cancelLabel="Keep private"
+        onCancel={() => setPending(null)}
+        onConfirm={() => {
+          if (pending) onChange(pending);
+          setPending(null);
+        }}
+      />
     </>
   );
 }
@@ -734,162 +676,6 @@ function RefreshField({
       onChange={(next) => onChange(refreshFromValue(next))}
       description="No background refresh runs in this sample workspace."
     />
-  );
-}
-
-function FilterEditor({
-  moduleId,
-  rows,
-  filters,
-  onChange,
-  title = "Filters",
-}: {
-  moduleId: OpenViewModuleId;
-  rows: OpenViewRow[];
-  filters: FilterGroup;
-  onChange: (filters: FilterGroup) => void;
-  title?: string;
-}) {
-  const moduleDefinition = getModuleDefinition(moduleId);
-  const updateClause = (index: number, change: Partial<FilterClause>) => {
-    onChange({
-      ...filters,
-      clauses: filters.clauses.map((clause, clauseIndex) =>
-        clauseIndex === index ? { ...clause, ...change } : clause,
-      ),
-    });
-  };
-  return (
-    <FieldSet>
-      <FieldLegend>{title}</FieldLegend>
-      <p className="text-muted-foreground text-sm">
-        Combine up to eight conditions with AND or OR.
-      </p>
-      {filters.clauses.length > 0 ? (
-        <Choice
-          id={`${title.toLowerCase().replaceAll(" ", "-")}-logic`}
-          label="Match"
-          value={filters.logic}
-          values={[
-            { value: "and", label: "All conditions (AND)" },
-            { value: "or", label: "Any condition (OR)" },
-          ]}
-          onChange={(logic) =>
-            onChange({ ...filters, logic: logic === "or" ? "or" : "and" })
-          }
-        />
-      ) : null}
-      <FieldGroup>
-        {filters.clauses.map((clause, index) => {
-          const field =
-            fieldFor(moduleId, clause.field) ?? moduleDefinition.fields[0];
-          const valueOptions =
-            field?.type === "select" ? fieldValues(rows, clause.field) : [];
-          const needsValue =
-            clause.operator !== "is-empty" &&
-            clause.operator !== "is-not-empty";
-          return (
-            <div
-              key={`${clause.field}-${index}`}
-              className="border-border grid gap-3 rounded-[var(--radius)] border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end"
-            >
-              <Choice
-                id={`filter-field-${index}`}
-                label="Field"
-                value={clause.field}
-                values={moduleDefinition.fields.map((candidate) => ({
-                  value: candidate.id,
-                  label: candidate.label,
-                }))}
-                onChange={(fieldId) =>
-                  updateClause(index, { field: fieldId, value: "" })
-                }
-              />
-              <Choice
-                id={`filter-operator-${index}`}
-                label="Condition"
-                value={clause.operator}
-                values={FILTER_OPERATORS.map((operator) => ({
-                  value: operator,
-                  label: operatorLabels[operator],
-                }))}
-                onChange={(operator) =>
-                  updateClause(index, { operator: operator as FilterOperator })
-                }
-              />
-              <Field data-disabled={!needsValue}>
-                <FieldLabel htmlFor={`filter-value-${index}`}>Value</FieldLabel>
-                {field?.type === "select" && needsValue ? (
-                  <Select
-                    id={`filter-value-${index}`}
-                    className="h-11 min-h-11"
-                    value={clause.value}
-                    onValueChange={(value) => updateClause(index, { value })}
-                  >
-                    <option value="">Choose a value</option>
-                    {valueOptions.map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ))}
-                  </Select>
-                ) : (
-                  <Input
-                    id={`filter-value-${index}`}
-                    className="min-h-11"
-                    value={clause.value}
-                    disabled={!needsValue}
-                    placeholder={needsValue ? "Enter a value" : "Not needed"}
-                    onChange={(event) =>
-                      updateClause(index, { value: event.target.value })
-                    }
-                  />
-                )}
-              </Field>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="min-h-11 min-w-11"
-                aria-label={`Remove filter ${index + 1}`}
-                onClick={() =>
-                  onChange({
-                    ...filters,
-                    clauses: filters.clauses.filter(
-                      (_, clauseIndex) => clauseIndex !== index,
-                    ),
-                  })
-                }
-              >
-                <X data-icon="inline-start" />
-              </Button>
-            </div>
-          );
-        })}
-      </FieldGroup>
-      <Button
-        type="button"
-        variant="outline"
-        className="min-h-11 self-start"
-        disabled={filters.clauses.length >= 8}
-        onClick={() =>
-          onChange({
-            ...filters,
-            clauses: [
-              ...filters.clauses,
-              {
-                field: moduleDefinition.fields[0]?.id ?? "",
-                operator: "contains",
-                value: "",
-              },
-            ],
-          })
-        }
-      >
-        <Plus data-icon="inline-start" />
-        Add filter
-      </Button>
-    </FieldSet>
   );
 }
 
@@ -1811,142 +1597,20 @@ function ChartPreview({
   settings: ChartSettings;
   data: ChartDatum[];
 }) {
-  const config: ChartConfig = {
-    value: {
-      label:
+  return (
+    <OpenViewChartPreview
+      data={data}
+      type={settings.type}
+      valueLabel={
         settings.metric === "count"
           ? "Records"
-          : fieldLabel(settings.moduleId, settings.metric),
-      color: "var(--chart-1)",
-    },
-    ...Object.fromEntries(
-      data.map((item, index) => [
-        item.key,
-        {
-          label: item.label,
-          color: `var(--chart-${(index % 5) + 1})`,
-        },
-      ]),
-    ),
-  };
-  return (
-    <ChartContainer
-      config={config}
+          : fieldLabel(settings.moduleId, settings.metric)
+      }
+      showLabels={settings.showLabels}
+      showLegend={settings.showLegend}
+      allowDecimals={settings.aggregation === "average"}
       className="border-border/70 bg-muted/15 h-[20rem] w-full rounded-[var(--radius)] border p-3"
-    >
-      {settings.type === "bar" ? (
-        <BarChart
-          accessibilityLayer
-          data={data}
-          margin={{
-            top: settings.showLabels ? 24 : 8,
-            right: 12,
-            left: 0,
-            bottom: 8,
-          }}
-        >
-          <CartesianGrid vertical={false} strokeDasharray="3 3" />
-          <XAxis
-            dataKey="label"
-            tickLine={false}
-            axisLine={false}
-            tickMargin={8}
-          />
-          <YAxis
-            allowDecimals={settings.aggregation === "average"}
-            tickLine={false}
-            axisLine={false}
-          />
-          <ChartTooltip content={<ChartTooltipContent />} />
-          {settings.showLegend ? (
-            <Legend content={<ChartLegendContent />} />
-          ) : null}
-          <Bar dataKey="value" radius={[7, 7, 0, 0]} maxBarSize={58}>
-            {data.map((item) => (
-              <Cell key={item.key} fill={`var(--color-${item.key})`} />
-            ))}
-            {settings.showLabels ? (
-              <LabelList dataKey="value" position="top" />
-            ) : null}
-          </Bar>
-        </BarChart>
-      ) : settings.type === "line" ? (
-        <LineChart
-          accessibilityLayer
-          data={data}
-          margin={{
-            top: settings.showLabels ? 24 : 8,
-            right: 12,
-            left: 0,
-            bottom: 8,
-          }}
-        >
-          <CartesianGrid vertical={false} strokeDasharray="3 3" />
-          <XAxis
-            dataKey="label"
-            tickLine={false}
-            axisLine={false}
-            tickMargin={8}
-          />
-          <YAxis
-            allowDecimals={settings.aggregation === "average"}
-            tickLine={false}
-            axisLine={false}
-          />
-          <ChartTooltip content={<ChartTooltipContent />} />
-          {settings.showLegend ? (
-            <Legend content={<ChartLegendContent />} />
-          ) : null}
-          <Line
-            dataKey="value"
-            type="monotone"
-            stroke="var(--color-value)"
-            strokeWidth={3}
-            dot={
-              settings.showLabels
-                ? {
-                    r: 5,
-                    fill: "var(--color-value)",
-                    stroke: "var(--background)",
-                    strokeWidth: 2,
-                  }
-                : false
-            }
-            activeDot={{ r: 7 }}
-          >
-            {settings.showLabels ? (
-              <LabelList dataKey="value" position="top" />
-            ) : null}
-          </Line>
-        </LineChart>
-      ) : (
-        <PieChart accessibilityLayer>
-          <ChartTooltip content={<ChartTooltipContent nameKey="label" />} />
-          {settings.showLegend ? (
-            <Legend content={<ChartLegendContent nameKey="label" />} />
-          ) : null}
-          <Pie
-            data={data}
-            dataKey="value"
-            nameKey="label"
-            innerRadius={62}
-            outerRadius={96}
-            paddingAngle={3}
-            stroke="var(--background)"
-            strokeWidth={2}
-            label={
-              settings.showLabels
-                ? ({ name, value }) => `${String(name ?? "Group")}: ${value}`
-                : false
-            }
-          >
-            {data.map((item) => (
-              <Cell key={item.key} fill={`var(--color-${item.key})`} />
-            ))}
-          </Pie>
-        </PieChart>
-      )}
-    </ChartContainer>
+    />
   );
 }
 
@@ -2185,12 +1849,26 @@ function Charts({
               End date must be on or after the start date.
             </Alert>
           ) : null}
-          <FilterEditor
-            moduleId={settings.moduleId}
+          <OpenViewFilterEditor
+            module={moduleDefinition}
             rows={rows}
             filters={settings.filters}
             onChange={(filters) => update({ filters })}
             title="Chart filters"
+            idPrefix="openview-chart-filter"
+            operatorMode="all"
+            clearValueOnFieldChange
+            selectValueFields
+            showLogicWhenEmpty={false}
+            logicControl="select"
+            logicLabel="Match"
+            logicOptions={{
+              and: "All conditions (AND)",
+              or: "Any condition (OR)",
+            }}
+            valueMaxLength={null}
+            operatorLabel={analyticsFilterOperatorLabel}
+            addOperator="contains"
           />
           <Field>
             <FieldLabel htmlFor="chart-limit">Top results</FieldLabel>
@@ -3183,12 +2861,26 @@ function Reports({
               ))}
             </FieldGroup>
           </FieldSet>
-          <FilterEditor
-            moduleId={draft.moduleId}
+          <OpenViewFilterEditor
+            module={moduleDefinition}
             rows={getOpenViewRows(draft.moduleId, records)}
             filters={draft.filters}
             onChange={(filters) => update({ filters })}
             title="Report filters"
+            idPrefix="openview-report-filter"
+            operatorMode="all"
+            clearValueOnFieldChange
+            selectValueFields
+            showLogicWhenEmpty={false}
+            logicControl="select"
+            logicLabel="Match"
+            logicOptions={{
+              and: "All conditions (AND)",
+              or: "Any condition (OR)",
+            }}
+            valueMaxLength={null}
+            operatorLabel={analyticsFilterOperatorLabel}
+            addOperator="contains"
           />
           <SortEditor
             moduleId={draft.moduleId}

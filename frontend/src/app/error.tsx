@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
+
 export default function Error({
   reset,
 }: {
@@ -18,13 +20,9 @@ export default function Error({
         <p className="text-muted-foreground mt-4">
           Try the request again or return to the homepage.
         </p>
-        <button
-          className="bg-primary text-primary-foreground focus-visible:outline-ring mt-8 inline-flex h-11 items-center rounded-md px-5 font-medium hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2"
-          onClick={reset}
-          type="button"
-        >
+        <Button className="mt-8" size="lg" onClick={reset} type="button">
           Try again
-        </button>
+        </Button>
       </div>
     </main>
   );

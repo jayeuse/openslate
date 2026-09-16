@@ -16,20 +16,6 @@ import {
   Users,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  LabelList,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  XAxis,
-  YAxis,
-} from "recharts";
 
 import { Alert } from "@/components/ui/alert";
 import {
@@ -78,19 +64,15 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  ChartContainer,
-  ChartLegendContent,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart";
 import { cn } from "@/lib/utils";
 import { initialPeople, initialRoles } from "../access/model";
 import { useSampleState } from "../sample-state";
 import type { SampleRecord } from "../sample-data";
+import { OpenViewChartPreview } from "./chart-preview";
+import { OpenViewAudienceConfirmation } from "./audience-confirmation";
+import { OpenViewFilterEditor } from "./filter-editor";
+import { normalizeFilterGroup } from "./filter-helpers";
 import {
-  FILTER_OPERATORS,
   OPENVIEW_MODULE_IDS,
   OPENVIEW_MODULES,
   activeAudienceIdentities,
@@ -101,10 +83,8 @@ import {
   isUnresolvedAudience,
   type AudienceLookup,
   type AudienceRef,
-  type FilterClause,
   type FilterGroup,
   type FilterOperator,
-  type OpenViewField,
   type OpenViewModuleId,
   type OpenViewRow,
   type OpenViewWidget,
@@ -925,11 +905,23 @@ function WidgetSettings({
           ) : null}
         </div>
 
-        <FilterEditor
-          widgetId={widget.id}
-          moduleId={widget.moduleId}
+        <OpenViewFilterEditor
+          module={moduleDefinition}
           filters={widget.filters}
           onChange={(filters) => onChange({ filters })}
+          idPrefix={`widget-${widget.id}-${widget.moduleId}`}
+          title="Widget filters"
+          description={`Only matching ${moduleDefinition.name.toLocaleLowerCase()} rows are included.`}
+          logicControl="select"
+          logicLabel="Match filters"
+          logicOptions={{
+            and: "All conditions (AND)",
+            or: "Any condition (OR)",
+          }}
+          showEmptyState={false}
+          showLimitLabel={false}
+          operatorLabel={widgetOperatorLabel}
+          removeVariant="ghost"
         />
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -1002,257 +994,17 @@ function WidgetSettings({
             : "Audience and refresh are sample configuration previews. They never send invitations, schedule jobs, or grant access."}
         </Alert>
       </FieldGroup>
-      <AlertDialog
+      <OpenViewAudienceConfirmation
         open={pendingAudience !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingAudience(null);
+        artifact="widget"
+        cancelLabel="Keep current audience"
+        onCancel={() => setPendingAudience(null)}
+        onConfirm={() => {
+          if (pendingAudience) onChange({ audience: pendingAudience });
+          setPendingAudience(null);
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Preview sharing with everyone?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This sample setting demonstrates a wider audience. It does not
-              grant access, send invitations, or publish this widget.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={() => setPendingAudience(null)}
-            >
-              Keep current audience
-            </Button>
-            <Button
-              className="min-h-11"
-              onClick={() => {
-                if (pendingAudience) onChange({ audience: pendingAudience });
-                setPendingAudience(null);
-              }}
-            >
-              Use Everyone preview
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      />
     </>
-  );
-}
-
-function FilterEditor({
-  widgetId,
-  moduleId,
-  filters,
-  onChange,
-}: {
-  widgetId: string;
-  moduleId: OpenViewModuleId;
-  filters: FilterGroup;
-  onChange: (filters: FilterGroup) => void;
-}) {
-  const moduleDefinition = getModuleDefinition(moduleId);
-  function updateClause(index: number, patch: Partial<FilterClause>) {
-    const current = filters.clauses[index];
-    if (!current) return;
-    const nextField = patch.field
-      ? moduleDefinition.fields.find((field) => field.id === patch.field)
-      : moduleDefinition.fields.find((field) => field.id === current.field);
-    const selectedField = nextField ??
-      moduleDefinition.fields[0] ?? {
-        id: "",
-        label: "",
-        type: "text" as const,
-      };
-    const allowedOperators = operatorsForField(selectedField);
-    const nextOperator = patch.operator ?? current.operator;
-    const fieldChanged =
-      patch.field !== undefined && patch.field !== current.field;
-    const nextClause = { ...current, ...patch };
-    onChange({
-      ...filters,
-      clauses: filters.clauses.map((clause, clauseIndex) =>
-        clauseIndex === index
-          ? {
-              ...nextClause,
-              operator: allowedOperators.includes(nextOperator)
-                ? nextOperator
-                : (allowedOperators[0] ?? "contains"),
-              value:
-                fieldChanged && !allowedOperators.includes(current.operator)
-                  ? ""
-                  : nextClause.value,
-            }
-          : clause,
-      ),
-    });
-  }
-  const firstField = moduleDefinition.fields[0];
-  return (
-    <FieldSet>
-      <FieldLegend>Widget filters</FieldLegend>
-      <Field className="gap-1">
-        <FieldDescription>
-          Only matching {moduleDefinition.name.toLocaleLowerCase()} rows are
-          included.
-        </FieldDescription>
-      </Field>
-      <Field>
-        <FieldLabel htmlFor={`widget-filter-logic-${widgetId}-${moduleId}`}>
-          Match filters
-        </FieldLabel>
-        <NativeSelect
-          id={`widget-filter-logic-${widgetId}-${moduleId}`}
-          className="w-full [&_select]:min-h-11"
-          value={filters.logic}
-          onChange={(event) =>
-            onChange({
-              ...filters,
-              logic: event.target.value as FilterGroup["logic"],
-            })
-          }
-        >
-          <NativeSelectOption value="and">
-            All conditions (AND)
-          </NativeSelectOption>
-          <NativeSelectOption value="or">Any condition (OR)</NativeSelectOption>
-        </NativeSelect>
-      </Field>
-      <FieldGroup className="gap-3">
-        {filters.clauses.map((clause, index) => (
-          <div
-            key={`${widgetId}-${moduleId}-${index}-${clause.field}`}
-            className="border-border grid gap-3 rounded-[var(--radius)] border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end"
-          >
-            <Field>
-              <FieldLabel
-                htmlFor={`widget-filter-field-${widgetId}-${moduleId}-${index}`}
-              >
-                Field
-              </FieldLabel>
-              <NativeSelect
-                id={`widget-filter-field-${widgetId}-${moduleId}-${index}`}
-                className="w-full [&_select]:min-h-11"
-                value={clause.field}
-                onChange={(event) =>
-                  updateClause(index, { field: event.target.value })
-                }
-              >
-                {moduleDefinition.fields.map((field) => (
-                  <NativeSelectOption key={field.id} value={field.id}>
-                    {field.label}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </Field>
-            <Field>
-              <FieldLabel
-                htmlFor={`widget-filter-operator-${widgetId}-${moduleId}-${index}`}
-              >
-                Condition
-              </FieldLabel>
-              <NativeSelect
-                id={`widget-filter-operator-${widgetId}-${moduleId}-${index}`}
-                className="w-full [&_select]:min-h-11"
-                value={clause.operator}
-                onChange={(event) =>
-                  updateClause(index, {
-                    operator: event.target.value as FilterClause["operator"],
-                  })
-                }
-              >
-                {operatorsForField(
-                  moduleDefinition.fields.find(
-                    (field) => field.id === clause.field,
-                  ) ??
-                    firstField ?? { id: "", label: "", type: "text" },
-                ).map((operator) => (
-                  <NativeSelectOption key={operator} value={operator}>
-                    {operatorLabel(operator)}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </Field>
-            <Field>
-              <FieldLabel
-                htmlFor={`widget-filter-value-${widgetId}-${moduleId}-${index}`}
-              >
-                Value
-              </FieldLabel>
-              <Input
-                id={`widget-filter-value-${widgetId}-${moduleId}-${index}`}
-                className="min-h-11"
-                type={inputTypeForField(
-                  moduleDefinition.fields.find(
-                    (field) => field.id === clause.field,
-                  ),
-                )}
-                value={clause.value}
-                disabled={
-                  clause.operator === "is-empty" ||
-                  clause.operator === "is-not-empty"
-                }
-                placeholder={
-                  clause.operator === "is-empty" ||
-                  clause.operator === "is-not-empty"
-                    ? "Not needed"
-                    : "Enter a value"
-                }
-                onChange={(event) =>
-                  updateClause(index, {
-                    value: event.target.value.slice(0, 240),
-                  })
-                }
-              />
-            </Field>
-            <Button
-              type="button"
-              variant="ghost"
-              className="text-destructive min-h-11 min-w-11"
-              aria-label={`Remove filter ${index + 1}`}
-              onClick={() =>
-                onChange({
-                  ...filters,
-                  clauses: filters.clauses.filter(
-                    (_, clauseIndex) => clauseIndex !== index,
-                  ),
-                })
-              }
-            >
-              <Trash2 aria-hidden="true" />
-            </Button>
-          </div>
-        ))}
-      </FieldGroup>
-      <Button
-        type="button"
-        variant="outline"
-        className="min-h-11 w-fit"
-        disabled={filters.clauses.length >= 8}
-        onClick={() =>
-          onChange({
-            ...filters,
-            clauses: [
-              ...filters.clauses,
-              ...(firstField
-                ? [
-                    {
-                      field: firstField.id,
-                      operator:
-                        firstField.type === "date"
-                          ? ("on-or-after" as const)
-                          : ("contains" as const),
-                      value: "",
-                    },
-                  ]
-                : []),
-            ],
-          })
-        }
-      >
-        Add filter
-      </Button>
-    </FieldSet>
   );
 }
 
@@ -1715,26 +1467,6 @@ function ChartPreview({
       ...group,
       key: `group-${index}`,
     }));
-  const config: ChartConfig = {
-    value: {
-      label:
-        widget.metric === "count"
-          ? "Records"
-          : (getModuleDefinition(widget.moduleId).fields.find(
-              (field) => field.id === widget.metric,
-            )?.label ?? "Metric"),
-      color: "var(--chart-1)",
-    },
-    ...Object.fromEntries(
-      data.map((group, index) => [
-        group.key,
-        {
-          label: group.label,
-          color: `var(--chart-${(index % 5) + 1})`,
-        },
-      ]),
-    ),
-  };
   const topGroup = data[0];
   const metricLabel =
     widget.metric === "count"
@@ -1764,89 +1496,22 @@ function ChartPreview({
           {OPENVIEW_SAMPLE_SNAPSHOT_DATE} · synthetic sample preview
         </p>
       </figcaption>
-      <ChartContainer
-        config={config}
+      <OpenViewChartPreview
+        data={data}
+        type={widget.visualization}
+        valueLabel={
+          widget.metric === "count"
+            ? "Records"
+            : (getModuleDefinition(widget.moduleId).fields.find(
+                (field) => field.id === widget.metric,
+              )?.label ?? "Metric")
+        }
         className="border-border/70 bg-muted/15 h-[18rem] w-full rounded-[var(--radius)] border p-3"
-      >
-        {widget.visualization === "bar" ? (
-          <BarChart
-            accessibilityLayer
-            data={data}
-            margin={{ top: 24, right: 12, left: 0, bottom: 8 }}
-          >
-            <CartesianGrid vertical={false} strokeDasharray="3 3" />
-            <XAxis
-              dataKey="label"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-            />
-            <YAxis tickLine={false} axisLine={false} />
-            <ChartTooltip content={<ChartTooltipContent />} />
-            <Legend content={<ChartLegendContent />} />
-            <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={52}>
-              {data.map((group) => (
-                <Cell key={group.key} fill={`var(--color-${group.key})`} />
-              ))}
-              <LabelList dataKey="value" position="top" />
-            </Bar>
-          </BarChart>
-        ) : widget.visualization === "line" ? (
-          <LineChart
-            accessibilityLayer
-            data={data}
-            margin={{ top: 24, right: 12, left: 0, bottom: 8 }}
-          >
-            <CartesianGrid vertical={false} strokeDasharray="3 3" />
-            <XAxis
-              dataKey="label"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-            />
-            <YAxis tickLine={false} axisLine={false} />
-            <ChartTooltip content={<ChartTooltipContent />} />
-            <Legend content={<ChartLegendContent />} />
-            <Line
-              dataKey="value"
-              type="monotone"
-              stroke="var(--color-value)"
-              strokeWidth={3}
-              dot={{
-                r: 5,
-                fill: "var(--color-value)",
-                stroke: "var(--background)",
-                strokeWidth: 2,
-              }}
-              activeDot={{ r: 7 }}
-            >
-              <LabelList dataKey="value" position="top" />
-            </Line>
-          </LineChart>
-        ) : (
-          <PieChart accessibilityLayer>
-            <ChartTooltip content={<ChartTooltipContent nameKey="label" />} />
-            <Legend content={<ChartLegendContent nameKey="label" />} />
-            <Pie
-              data={data}
-              dataKey="value"
-              nameKey="label"
-              innerRadius={60}
-              outerRadius={92}
-              paddingAngle={3}
-              stroke="var(--background)"
-              strokeWidth={2}
-              label={({ name, value }) =>
-                `${String(name ?? "Group")}: ${value}`
-              }
-            >
-              {data.map((group) => (
-                <Cell key={group.key} fill={`var(--color-${group.key})`} />
-              ))}
-            </Pie>
-          </PieChart>
-        )}
-      </ChartContainer>
+        barRadius={6}
+        maxBarSize={52}
+        pieInnerRadius={60}
+        pieOuterRadius={92}
+      />
     </figure>
   );
 }
@@ -1974,7 +1639,7 @@ function normalizeWidget(
   const fields = Array.isArray(source.fields)
     ? source.fields.filter((field) => allowed.has(field))
     : [];
-  const filters = normalizeFilters(source.filters, moduleDefinition);
+  const filters = normalizeFilterGroup(source.filters, moduleDefinition);
   const legacyPermission =
     "permission" in source && typeof source.permission === "string"
       ? source.permission
@@ -2011,77 +1676,6 @@ function normalizeWidget(
       source.visualization === "line" || source.visualization === "pie"
         ? source.visualization
         : "bar",
-  };
-}
-
-function operatorsForField(field: OpenViewField): FilterOperator[] {
-  if (field.type === "date") {
-    return [
-      "equals",
-      "not-equals",
-      "on-or-after",
-      "on-or-before",
-      "is-empty",
-      "is-not-empty",
-    ];
-  }
-  if (field.type === "number" || field.type === "boolean") {
-    return ["equals", "not-equals", "is-empty", "is-not-empty"];
-  }
-  if (field.type === "select") {
-    return ["equals", "not-equals", "contains", "is-empty", "is-not-empty"];
-  }
-  return [
-    "contains",
-    "equals",
-    "not-equals",
-    "starts-with",
-    "ends-with",
-    "is-empty",
-    "is-not-empty",
-  ];
-}
-
-function inputTypeForField(
-  field: OpenViewField | undefined,
-): "date" | "number" | "text" {
-  if (field?.type === "date") return "date";
-  if (field?.type === "number") return "number";
-  return "text";
-}
-
-function normalizeFilters(
-  filters: FilterGroup | undefined,
-  moduleDefinition: ReturnType<typeof getModuleDefinition>,
-): FilterGroup {
-  if (
-    !filters ||
-    (filters.logic !== "and" && filters.logic !== "or") ||
-    !Array.isArray(filters.clauses)
-  ) {
-    return { logic: "and", clauses: [] };
-  }
-  return {
-    logic: filters.logic,
-    clauses: filters.clauses.slice(0, 8).flatMap((clause) => {
-      const field = moduleDefinition.fields.find(
-        (candidate) => candidate.id === clause.field,
-      );
-      if (!field || !FILTER_OPERATORS.includes(clause.operator)) return [];
-      const allowedOperators = operatorsForField(field);
-      const operatorIsCompatible = allowedOperators.includes(clause.operator);
-      return [
-        {
-          field: field.id,
-          operator: operatorIsCompatible
-            ? clause.operator
-            : (allowedOperators[0] ?? "contains"),
-          value: operatorIsCompatible
-            ? String(clause.value ?? "").slice(0, 240)
-            : "",
-        },
-      ];
-    }),
   };
 }
 
@@ -2200,7 +1794,7 @@ function audienceToLegacy(
   return "Only me";
 }
 
-function operatorLabel(operator: (typeof FILTER_OPERATORS)[number]): string {
+function widgetOperatorLabel(operator: FilterOperator): string {
   return operator
     .split("-")
     .map((word) => word[0]?.toLocaleUpperCase() + word.slice(1))

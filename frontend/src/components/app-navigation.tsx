@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import {
   BarChart3,
@@ -37,6 +38,12 @@ export function AppNavigation({
   onNavigate,
   collapsed = false,
 }: AppNavigationProps) {
+  const router = useRouter();
+
+  function prefetchRoute(href: string) {
+    router.prefetch(href as Route);
+  }
+
   return (
     <SidebarGroup className="p-0">
       <nav aria-label="Main navigation">
@@ -46,7 +53,15 @@ export function AppNavigation({
             return (
               <SidebarMenuItem key={href}>
                 <SidebarMenuButton
-                  render={<Link href={href as Route} onNavigate={onNavigate} />}
+                  render={
+                    <Link
+                      href={href as Route}
+                      prefetch={false}
+                      onNavigate={onNavigate}
+                      onPointerEnter={() => prefetchRoute(href)}
+                      onFocus={() => prefetchRoute(href)}
+                    />
+                  }
                   isActive={active}
                   aria-current={active ? "page" : undefined}
                   aria-label={label}

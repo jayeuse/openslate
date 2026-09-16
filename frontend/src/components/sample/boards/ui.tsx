@@ -8,15 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel } from "@/components/ui/field";
 import {
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-  ComboboxTrigger,
-} from "@/components/ui/combobox";
-import {
   AlertDialog,
   AlertDialogContent,
   AlertDialogDescription,
@@ -38,84 +29,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-
-export type SelectOption = {
-  value: string;
-  label: string;
-  description?: string;
-};
-
-export function SearchSelect({
-  label,
-  value,
-  options,
-  onChange,
-  disabled = false,
-  placeholder = "Choose an option",
-}: {
-  label: string;
-  value: string;
-  options: readonly SelectOption[];
-  onChange: (value: string) => void;
-  disabled?: boolean;
-  placeholder?: string;
-}) {
-  const id = useId();
-  return (
-    <Field>
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Combobox
-        items={options.map((option) => option.value)}
-        value={value}
-        disabled={disabled}
-        itemToStringLabel={(item) =>
-          options.find((option) => option.value === item)?.label ?? ""
-        }
-        onValueChange={(item) => {
-          if (typeof item === "string") onChange(item);
-        }}
-      >
-        <ComboboxTrigger id={id} aria-label={label} className="min-h-11">
-          <span className="truncate">
-            {options.find((option) => option.value === value)?.label ??
-              placeholder}
-          </span>
-        </ComboboxTrigger>
-        <ComboboxContent positionerClassName="z-[60]">
-          <ComboboxInput
-            aria-label={`Search ${label.toLowerCase()}`}
-            placeholder="Search…"
-            className="min-h-11"
-          />
-          <ComboboxList>
-            {(item: string) => {
-              const option = options.find((entry) => entry.value === item)!;
-              return (
-                <ComboboxItem
-                  key={option.value}
-                  value={option.value}
-                  className="min-h-11"
-                >
-                  <span className="flex min-w-0 flex-col gap-0.5">
-                    <span className="truncate">{option.label}</span>
-                    {option.description && (
-                      <span className="text-muted-foreground text-xs">
-                        {option.description}
-                      </span>
-                    )}
-                  </span>
-                </ComboboxItem>
-              );
-            }}
-          </ComboboxList>
-          <ComboboxEmpty className="text-muted-foreground p-3 text-sm">
-            No matches. Try another search.
-          </ComboboxEmpty>
-        </ComboboxContent>
-      </Combobox>
-    </Field>
-  );
-}
 
 export function BoardEmpty({
   title,

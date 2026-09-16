@@ -20,7 +20,7 @@ import {
 
 import {
   FIELD_TYPE_META,
-  type SandboxField,
+  fieldsForModule,
   type SandboxFieldType,
   type SandboxState,
   type UpdateSandboxFieldPatch,
@@ -321,17 +321,6 @@ function readLayout(graph: Graph): SandboxCanvasLayout {
 function nodeKindOf(node: Node): string | null {
   const data = node.getData() as { kind?: unknown };
   return typeof data.kind === "string" ? data.kind : null;
-}
-
-function fieldsForModule(
-  moduleId: string,
-  fieldIds: string[],
-  fieldsById: Map<string, SandboxField>,
-): SandboxField[] {
-  return fieldIds.flatMap((fieldId) => {
-    const field = fieldsById.get(fieldId);
-    return field !== undefined && field.moduleId === moduleId ? [field] : [];
-  });
 }
 
 function departmentHeight(moduleHeights: number[]): number {

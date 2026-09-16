@@ -54,6 +54,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group";
 import { Textarea } from "@/components/ui/textarea";
+import { SearchSelect } from "@/components/ui/search-select";
 import { datetimeInputToUtc, formatDateTimeLocal } from "@/lib/date-time";
 import type { SampleRecord } from "../sample-data";
 import {
@@ -77,7 +78,7 @@ import {
   ContentFields,
   type BoardPerson,
 } from "./content-fields";
-import { BoardEmpty, ConfirmAction, EditSheet, SearchSelect } from "./ui";
+import { BoardEmpty, ConfirmAction, EditSheet } from "./ui";
 import { releaseLocalAttachment } from "../comms/local-attachments";
 
 export type BoardMutationResult =
@@ -644,7 +645,7 @@ export function AnnouncementFeed({
                 label: person.name,
               })),
             ]}
-            onChange={setAuthorFilter}
+            onValueChange={setAuthorFilter}
           />
         </div>
       </div>

@@ -8,11 +8,13 @@ import { Bell, Search, Files, ArrowUpRight } from "lucide-react";
 import { initialPeople, type Person } from "@/components/sample/access/model";
 import { initialDesign, type Design } from "@/components/sample/sandbox/model";
 import { useSampleState } from "@/components/sample/sample-state";
+import { SearchField } from "@/components/ui/search-field";
+import { PageHeader } from "@/components/page-header";
 import {
   INITIAL_RECORDS,
   type SampleRecord,
 } from "@/components/sample/sample-data";
-import { Action, Choice, Panel, TextField, Toggle } from "../comms/ui";
+import { Action, Choice, Panel, Toggle } from "../comms/ui";
 import {
   MESSAGES,
   type Message,
@@ -194,12 +196,10 @@ export default function SamplePlatform() {
   }));
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight">Platform</h1>
-        <p className="text-muted-foreground mt-2 text-sm">
-          Sample search, notifications and workspace tools.
-        </p>
-      </header>
+      <PageHeader
+        title="Platform"
+        description="Sample search, notifications and workspace tools."
+      />
       <nav
         aria-label="Platform sections"
         className="flex flex-wrap gap-2 border-b pb-4"
@@ -229,10 +229,10 @@ export default function SamplePlatform() {
       ) : tab === "Search" ? (
         <section className="space-y-6">
           <div className="max-w-2xl">
-            <TextField
+            <SearchField
               label="Search sample workspace"
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onValueChange={setQuery}
               placeholder="Search people, records, conversations and files…"
             />
           </div>
@@ -422,10 +422,10 @@ export default function SamplePlatform() {
       ) : tab === "File library" ? (
         <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
           <Panel title="Central file library">
-            <TextField
+            <SearchField
               label="Search files by name"
               value={fileQuery}
-              onChange={(event) => setFileQuery(event.target.value)}
+              onValueChange={setFileQuery}
               placeholder="Find a sample file…"
             />
             {FILES.filter((item) =>

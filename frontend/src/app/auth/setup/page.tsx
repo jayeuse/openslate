@@ -45,7 +45,7 @@ export default function AuthSetupPage() {
       router.replace("/openview");
     } catch {
       setError(
-        "We could not set up your password. The invitation may have expired.",
+        "We could not set up your password. Return to sign in and try again.",
       );
     } finally {
       setPending(false);
@@ -74,9 +74,14 @@ export default function AuthSetupPage() {
           </p>
         </div>
         {error && (
-          <Alert variant="destructive" className="mb-5">
-            {error}
-          </Alert>
+          <div className="mb-5 space-y-3">
+            <Alert role="alert" variant="destructive">
+              {error}
+            </Alert>
+            <Button asChild variant="outline" className="w-full">
+              <a href="/login">Return to sign in</a>
+            </Button>
+          </div>
         )}
         <form className="space-y-5" onSubmit={submit}>
           <Field className="space-y-2">

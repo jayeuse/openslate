@@ -23,6 +23,7 @@ import {
   AttachmentMedia,
   AttachmentTitle,
 } from "@/components/ui/attachment";
+import { SearchSelect } from "@/components/ui/search-select";
 import {
   localAttachmentUrl,
   releaseLocalAttachment,
@@ -30,7 +31,6 @@ import {
 import type { SampleRecord } from "../sample-data";
 import type { BoardAttachment, BoardAudience, BoardLink } from "./model";
 import { admitBoardFiles, cacheBoardAttachment, safeBoardUrl } from "./files";
-import { SearchSelect } from "./ui";
 
 export type BoardPerson = {
   id: string;
@@ -87,7 +87,7 @@ export function AudienceField({
         options={options}
         disabled={disabled}
         placeholder="Choose an available audience"
-        onChange={(next) => {
+        onValueChange={(next) => {
           const [kind, ...rest] = next.split(":");
           if (kind === "everyone" || kind === "private") onChange({ kind });
           else if (
@@ -225,7 +225,7 @@ export function ContentFields({
               (record) => !links.some((link) => link.recordId === record.id),
             )
             .map((record) => ({ value: record.id, label: record.title }))}
-          onChange={(recordId) => {
+          onValueChange={(recordId) => {
             const record = records.find((item) => item.id === recordId);
             if (record)
               onChange({

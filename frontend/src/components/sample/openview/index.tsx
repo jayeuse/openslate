@@ -132,8 +132,9 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
+import { OpenViewFilterEditor } from "./filter-editor";
+import { filterOperatorLabel } from "./filter-helpers";
 import {
-  FILTER_OPERATORS,
   OPENVIEW_MODULES,
   OPENVIEW_SECTIONS,
   activeAudienceIdentities,
@@ -152,9 +153,7 @@ import {
   serializeOpenViewUrl,
   type AudienceLookup,
   type AudienceRef,
-  type FilterClause,
   type FilterGroup,
-  type FilterOperator,
   type OpenViewField,
   type OpenViewModule,
   type OpenViewModuleId,
@@ -344,18 +343,6 @@ function displayDate(value: string): string {
   return value ? formatCalendarDate(value, true) : "Unscheduled";
 }
 
-const operatorLabels: Record<(typeof FILTER_OPERATORS)[number], string> = {
-  contains: "contains",
-  equals: "is",
-  "not-equals": "is not",
-  "starts-with": "starts with",
-  "ends-with": "ends with",
-  "on-or-after": "on or after",
-  "on-or-before": "on or before",
-  "is-empty": "is empty",
-  "is-not-empty": "is not empty",
-};
-
 function titleCase(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
@@ -504,42 +491,6 @@ function defaultMapFromUnknown(
 
 function fieldLabel(module: OpenViewModule, fieldId: string): string {
   return module.fields.find((field) => field.id === fieldId)?.label ?? fieldId;
-}
-
-function operatorsForField(field: OpenViewField): FilterOperator[] {
-  if (field.type === "date") {
-    return [
-      "equals",
-      "not-equals",
-      "on-or-after",
-      "on-or-before",
-      "is-empty",
-      "is-not-empty",
-    ];
-  }
-  if (field.type === "number" || field.type === "boolean") {
-    return ["equals", "not-equals", "is-empty", "is-not-empty"];
-  }
-  if (field.type === "select") {
-    return ["equals", "not-equals", "contains", "is-empty", "is-not-empty"];
-  }
-  return [
-    "contains",
-    "equals",
-    "not-equals",
-    "starts-with",
-    "ends-with",
-    "is-empty",
-    "is-not-empty",
-  ];
-}
-
-function inputTypeForField(
-  field: OpenViewField | undefined,
-): "date" | "number" | "text" {
-  if (field?.type === "date") return "date";
-  if (field?.type === "number") return "number";
-  return "text";
 }
 
 function OpenViewLoading() {
@@ -869,11 +820,15 @@ function OpenViewContent() {
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
-      <header className="flex flex-wrap items-start justify-between gap-4">
+      <header className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-3xl font-semibold tracking-tight">OpenView</h1>
-            <Badge variant="outline">Local preview</Badge>
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              OpenView
+            </h1>
+            <Badge variant="outline" className="min-h-7">
+              Local preview
+            </Badge>
           </div>
           <p className="text-muted-foreground mt-2 max-w-2xl text-sm">
             Explore operational records, compose reusable views, and prepare
@@ -1599,7 +1554,7 @@ function ViewsWorkspace({
                 className="gap-1"
               >
                 {fieldLabel(module, clause.field)}{" "}
-                {operatorLabels[clause.operator]} {clause.value}
+                {filterOperatorLabel(clause.operator)} {clause.value}
                 <Button
                   type="button"
                   variant="ghost"
@@ -1636,10 +1591,14 @@ function ViewsWorkspace({
         ) : null}
         <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
           <CollapsibleContent className="flex flex-col gap-4 border-t pt-4">
-            <FilterBuilder
+            <OpenViewFilterEditor
               module={module}
               filters={config.filters}
               onChange={changeFilters}
+              idPrefix="openview-view-filter"
+              description="Match records with up to eight conditions."
+              showEmptyState
+              removeVariant="outline"
             />
             <SortBuilder
               module={module}
@@ -2089,213 +2048,6 @@ function OperationalContextBand({
         ))}
       </dl>
     </section>
-  );
-}
-
-function FilterBuilder({
-  module,
-  filters,
-  onChange,
-}: {
-  module: OpenViewModule;
-  filters: FilterGroup;
-  onChange: (filters: FilterGroup) => void;
-}) {
-  const updateClause = (index: number, patch: Partial<FilterClause>) => {
-    const current = filters.clauses[index];
-    if (!current) return;
-    const nextField = patch.field
-      ? module.fields.find((field) => field.id === patch.field)
-      : module.fields.find((field) => field.id === current.field);
-    const allowedOperators = nextField
-      ? operatorsForField(nextField)
-      : operatorsForField(
-          module.fields[0] ?? { id: "", label: "", type: "text" },
-        );
-    const nextOperator = patch.operator ?? current.operator;
-    onChange({
-      ...filters,
-      clauses: filters.clauses.map((clause, clauseIndex) =>
-        clauseIndex === index
-          ? {
-              ...clause,
-              ...patch,
-              operator: allowedOperators.includes(nextOperator)
-                ? nextOperator
-                : (allowedOperators[0] ?? "contains"),
-              value:
-                patch.field && !allowedOperators.includes(current.operator)
-                  ? ""
-                  : clause.value,
-            }
-          : clause,
-      ),
-    });
-  };
-  const addClause = () => {
-    const field = module.fields[0];
-    if (!field || filters.clauses.length >= 8) return;
-    onChange({
-      ...filters,
-      clauses: [
-        ...filters.clauses,
-        {
-          field: field.id,
-          operator: field.type === "date" ? "on-or-after" : "contains",
-          value: "",
-        },
-      ],
-    });
-  };
-  return (
-    <FieldSet>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <FieldLegend>Filters</FieldLegend>
-          <p className="text-muted-foreground text-xs">
-            Match records with up to eight conditions.
-          </p>
-        </div>
-        <ToggleGroup
-          value={[filters.logic]}
-          onValueChange={(value) => {
-            const logic = value[0];
-            if (logic === "and" || logic === "or")
-              onChange({ ...filters, logic });
-          }}
-          variant="outline"
-          aria-label="Filter matching logic"
-        >
-          <ToggleGroupItem value="and" className="min-h-11">
-            Match all
-          </ToggleGroupItem>
-          <ToggleGroupItem value="or" className="min-h-11">
-            Match any
-          </ToggleGroupItem>
-        </ToggleGroup>
-      </div>
-      {filters.clauses.length === 0 ? (
-        <Empty className="min-h-28 border">
-          <EmptyHeader>
-            <EmptyTitle>No filters yet</EmptyTitle>
-            <EmptyDescription>
-              Add conditions to narrow the records.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {filters.clauses.map((clause, index) => (
-            <div
-              key={`${index}-${clause.field}`}
-              className="grid gap-3 rounded-[var(--radius)] border p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end"
-            >
-              <Field>
-                <FieldLabel htmlFor={`openview-filter-field-${index}`}>
-                  Field {index + 1}
-                </FieldLabel>
-                <Select
-                  id={`openview-filter-field-${index}`}
-                  className="min-h-11"
-                  value={clause.field}
-                  onValueChange={(field) => updateClause(index, { field })}
-                >
-                  {module.fields.map((field) => (
-                    <option key={field.id} value={field.id}>
-                      {field.label}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor={`openview-filter-operator-${index}`}>
-                  Condition
-                </FieldLabel>
-                <Select
-                  id={`openview-filter-operator-${index}`}
-                  className="min-h-11"
-                  value={clause.operator}
-                  onValueChange={(operator) =>
-                    updateClause(index, {
-                      operator: operator as FilterClause["operator"],
-                    })
-                  }
-                >
-                  {operatorsForField(
-                    module.fields.find((field) => field.id === clause.field) ??
-                      module.fields[0] ?? { id: "", label: "", type: "text" },
-                  ).map((operator) => (
-                    <option key={operator} value={operator}>
-                      {operatorLabels[operator]}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field
-                data-disabled={
-                  clause.operator === "is-empty" ||
-                  clause.operator === "is-not-empty"
-                }
-              >
-                <FieldLabel htmlFor={`openview-filter-value-${index}`}>
-                  Value
-                </FieldLabel>
-                <Input
-                  id={`openview-filter-value-${index}`}
-                  className="min-h-11"
-                  type={inputTypeForField(
-                    module.fields.find((field) => field.id === clause.field),
-                  )}
-                  value={clause.value}
-                  disabled={
-                    clause.operator === "is-empty" ||
-                    clause.operator === "is-not-empty"
-                  }
-                  placeholder={
-                    clause.operator === "is-empty" ||
-                    clause.operator === "is-not-empty"
-                      ? "Not needed"
-                      : "Enter a value"
-                  }
-                  onChange={(event) =>
-                    updateClause(index, {
-                      value: event.target.value.slice(0, 240),
-                    })
-                  }
-                />
-              </Field>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="size-11"
-                aria-label={`Remove filter ${index + 1}`}
-                onClick={() =>
-                  onChange({
-                    ...filters,
-                    clauses: filters.clauses.filter(
-                      (_, clauseIndex) => clauseIndex !== index,
-                    ),
-                  })
-                }
-              >
-                <X aria-hidden="true" />
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-      <Button
-        type="button"
-        variant="outline"
-        className="min-h-11 self-start"
-        disabled={filters.clauses.length >= 8}
-        onClick={addClause}
-      >
-        <Plus data-icon="inline-start" aria-hidden="true" /> Add filter{" "}
-        {filters.clauses.length >= 8 ? "(limit reached)" : ""}
-      </Button>
-    </FieldSet>
   );
 }
 
@@ -2927,93 +2679,160 @@ function RecordLayout({
       </Badge>
     );
   };
-  if (layout.kind === "table")
+  if (layout.kind === "table") {
+    const summaryField = columns[0];
+
     return (
-      <Card className="w-full overflow-hidden">
-        <Table className="min-w-[44rem]">
-          <TableCaption className="sr-only">
-            {rows.length} {rows.length === 1 ? "record" : "records"} from{" "}
-            {module.name}.
-          </TableCaption>
-          <TableHeader className="bg-muted/65">
-            <TableRow className="hover:bg-muted/65">
-              {columns.map((field) => (
-                <TableHead
-                  key={field.id}
-                  className={cn(
-                    "h-11 px-4 text-[0.6875rem] font-semibold tracking-wide uppercase",
-                    layout.pinnedColumns.includes(field.id)
-                      ? "bg-muted sticky left-0 z-10"
-                      : undefined,
-                  )}
-                >
-                  {field.label}
-                </TableHead>
-              ))}
-              <TableHead className="h-11 px-4">
-                <span className="sr-only">Actions</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+      <>
+        <section className="md:hidden" aria-label={`${module.name} records`}>
+          <ul className="m-0 flex list-none flex-col gap-3 p-0">
             {rows.map((row, rowIndex) => {
               const rowStatus = statusField
                 ? String(row.values[statusField.id] ?? "")
                 : "";
               const tone = visualTone(rowStatus, rowIndex);
               return (
-                <TableRow key={row.id} className="group odd:bg-muted/20">
-                  {columns.map((field) => (
-                    <TableCell
-                      key={field.id}
-                      className={cn(
-                        "px-4",
-                        layout.wrap ? "whitespace-normal" : "whitespace-nowrap",
-                        layout.density === "comfortable" ? "py-3" : "py-1.5",
-                        layout.pinnedColumns.includes(field.id)
-                          ? "bg-card group-odd:bg-muted sticky left-0 z-10"
-                          : undefined,
-                      )}
-                    >
-                      {field.id === primary ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className="h-auto min-h-11 justify-start gap-3 px-2 text-left font-medium"
-                          onClick={() => onInspect(row.id)}
-                        >
-                          <span
-                            className={cn(
-                              "h-7 w-1 shrink-0 rounded-full",
-                              tone.solid,
-                            )}
-                            aria-hidden="true"
-                          />
-                          {rendered(row, field)}
-                        </Button>
-                      ) : (
-                        rendered(row, field)
-                      )}
-                    </TableCell>
-                  ))}
-                  <TableCell className="px-4 text-right">
+                <li key={row.id} className="bg-card rounded-lg border p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span
+                        className={cn(
+                          "mt-1 h-7 w-1 shrink-0 rounded-full",
+                          tone.solid,
+                        )}
+                        aria-hidden="true"
+                      />
+                      {summaryField ? (
+                        <div className="min-w-0">
+                          <p className="text-muted-foreground text-[0.6875rem] font-semibold tracking-wide uppercase">
+                            {summaryField.label}
+                          </p>
+                          <div className="mt-1 text-sm font-medium break-words">
+                            {rendered(row, summaryField)}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                     <Button
                       type="button"
-                      variant="ghost"
-                      className="min-h-11"
+                      variant="outline"
+                      className="min-h-11 shrink-0"
                       onClick={() => onInspect(row.id)}
                     >
                       Inspect
                       <ArrowRight data-icon="inline-end" aria-hidden="true" />
                     </Button>
-                  </TableCell>
-                </TableRow>
+                  </div>
+                  {summaryField && columns.length > 1 ? (
+                    <dl className="mt-4 grid gap-x-4 gap-y-3 border-t pt-4 sm:grid-cols-2">
+                      {columns.map((field) =>
+                        field.id === summaryField.id ? null : (
+                          <div key={field.id} className="min-w-0">
+                            <dt className="text-muted-foreground text-[0.6875rem] font-semibold tracking-wide uppercase">
+                              {field.label}
+                            </dt>
+                            <dd className="mt-1 text-sm break-words">
+                              {rendered(row, field)}
+                            </dd>
+                          </div>
+                        ),
+                      )}
+                    </dl>
+                  ) : null}
+                </li>
               );
             })}
-          </TableBody>
-        </Table>
-      </Card>
+          </ul>
+        </section>
+        <Card className="hidden w-full overflow-hidden md:block">
+          <Table className="min-w-[44rem]">
+            <TableCaption className="sr-only">
+              {rows.length} {rows.length === 1 ? "record" : "records"} from{" "}
+              {module.name}.
+            </TableCaption>
+            <TableHeader className="bg-muted/65">
+              <TableRow className="hover:bg-muted/65">
+                {columns.map((field) => (
+                  <TableHead
+                    key={field.id}
+                    className={cn(
+                      "h-11 px-4 text-[0.6875rem] font-semibold tracking-wide uppercase",
+                      layout.pinnedColumns.includes(field.id)
+                        ? "bg-muted sticky left-0 z-10"
+                        : undefined,
+                    )}
+                  >
+                    {field.label}
+                  </TableHead>
+                ))}
+                <TableHead className="h-11 px-4">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row, rowIndex) => {
+                const rowStatus = statusField
+                  ? String(row.values[statusField.id] ?? "")
+                  : "";
+                const tone = visualTone(rowStatus, rowIndex);
+                return (
+                  <TableRow key={row.id} className="group odd:bg-muted/20">
+                    {columns.map((field) => (
+                      <TableCell
+                        key={field.id}
+                        className={cn(
+                          "px-4",
+                          layout.wrap
+                            ? "whitespace-normal"
+                            : "whitespace-nowrap",
+                          layout.density === "comfortable" ? "py-3" : "py-1.5",
+                          layout.pinnedColumns.includes(field.id)
+                            ? "bg-card group-odd:bg-muted sticky left-0 z-10"
+                            : undefined,
+                        )}
+                      >
+                        {field.id === primary ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="h-auto min-h-11 justify-start gap-3 px-2 text-left font-medium"
+                            onClick={() => onInspect(row.id)}
+                          >
+                            <span
+                              className={cn(
+                                "h-7 w-1 shrink-0 rounded-full",
+                                tone.solid,
+                              )}
+                              aria-hidden="true"
+                            />
+                            {rendered(row, field)}
+                          </Button>
+                        ) : (
+                          rendered(row, field)
+                        )}
+                      </TableCell>
+                    ))}
+                    <TableCell className="px-4 text-right">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="min-h-11"
+                        onClick={() => onInspect(row.id)}
+                      >
+                        Inspect
+                        <ArrowRight data-icon="inline-end" aria-hidden="true" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </Card>
+      </>
     );
+  }
   if (layout.kind === "kanban") {
     const operationalLanes =
       groupBy === null || groupBy === operationalProfile.statusField;

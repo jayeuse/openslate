@@ -23,7 +23,7 @@ export function RadioGroupItem({
   return (
     <Radio.Root
       className={cn(
-        "border-input text-primary focus-visible:outline-ring data-checked:border-primary flex size-4 shrink-0 items-center justify-center rounded-full border outline-none focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50",
+        "border-input text-primary focus-visible:outline-ring data-checked:border-primary flex size-4 shrink-0 items-center justify-center rounded-full border outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid disabled:opacity-50",
         className,
       )}
       {...props}

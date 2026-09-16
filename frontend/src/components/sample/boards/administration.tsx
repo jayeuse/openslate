@@ -11,8 +11,9 @@ import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { SearchSelect } from "@/components/ui/search-select";
 import { BOARD_INPUT_LIMITS, type Board, type BoardSection } from "./model";
-import { EditSheet, SearchSelect, ConfirmAction } from "./ui";
+import { EditSheet, ConfirmAction } from "./ui";
 import {
   exportBoardConfiguration,
   getBoardConfiguration,
@@ -150,7 +151,7 @@ export function CreateBoardSheet({
                     label: template.name,
                     description: `${template.widgets.length} widgets`,
                   }))}
-                  onChange={(id) => {
+                  onValueChange={(id) => {
                     const template = controller.state.templates.find(
                       (item) => item.id === id,
                     );
@@ -228,7 +229,7 @@ export function CreateBoardSheet({
               value: item.name,
               label: item.name,
             }))}
-            onChange={(department) =>
+            onValueChange={(department) =>
               setConfiguration({ ...configuration, department })
             }
           />
@@ -236,7 +237,7 @@ export function CreateBoardSheet({
             label="Opens to"
             value={configuration.defaultSection}
             options={sections}
-            onChange={(value) =>
+            onValueChange={(value) =>
               setConfiguration({
                 ...configuration,
                 defaultSection: value as BoardSection,
@@ -330,7 +331,7 @@ export function BoardSettingsSheet({
             value: item.name,
             label: item.name,
           }))}
-          onChange={(department) => onChange({ ...board, department })}
+          onValueChange={(department) => onChange({ ...board, department })}
         />
         <p className="text-muted-foreground -mt-3 text-sm">
           Department describes the board. Choose each widget’s data source
@@ -340,7 +341,7 @@ export function BoardSettingsSheet({
           label="Default section"
           value={board.defaultSection}
           options={sections}
-          onChange={(value) =>
+          onValueChange={(value) =>
             onChange({ ...board, defaultSection: value as BoardSection })
           }
         />
@@ -467,7 +468,9 @@ export function BoardToolsSheet({
                   label: `${person.name} · read-only`,
                 })),
             ]}
-            onChange={(id) => onPreviewChange(id === "manager" ? null : id)}
+            onValueChange={(id) =>
+              onPreviewChange(id === "manager" ? null : id)
+            }
           />
           <div className="flex flex-wrap gap-2">
             {(["view", "edit", "manage"] as const).map((permission) => (

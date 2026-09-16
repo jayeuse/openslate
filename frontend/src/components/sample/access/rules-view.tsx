@@ -30,24 +30,13 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-} from "@/components/ui/pagination";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 import type { AccessController } from "./controller";
@@ -72,6 +61,7 @@ type ConflictResolution = {
   choice: "current" | "draft";
   current: AccessRule | null;
 };
+type Permission = AccessController["permissionCatalog"][number];
 
 const PAGE_SIZE = 1;
 const subjectKinds: AccessSubjectRef["kind"][] = [
@@ -142,6 +132,47 @@ function groupByProduct<T extends { product: string }>(items: readonly T[]) {
     groups.set(item.product, group);
   }
   return groups;
+}
+
+function permissionColumns(
+  ruleFor: (permissionId: string) => AccessRule,
+  onChange: (rule: AccessRule) => void,
+): DataTableColumn<Permission>[] {
+  return [
+    {
+      id: "permission",
+      header: "Permission",
+      cell: ({ row }) => {
+        const permission = row.original;
+        return (
+          <div>
+            <p className="font-medium">{permission.name}</p>
+            <p className="text-muted-foreground mt-1 font-mono text-xs">
+              {permission.id}
+            </p>
+            <Badge variant="secondary" className="mt-2">
+              {permission.product}
+            </Badge>
+          </div>
+        );
+      },
+    },
+    {
+      id: "decision",
+      header: "Decision and conditions",
+      cell: ({ row }) => {
+        const permission = row.original;
+        return (
+          <RuleControls
+            rule={ruleFor(permission.id)}
+            permissionName={permission.name}
+            idSuffix="desktop"
+            onChange={onChange}
+          />
+        );
+      },
+    },
+  ];
 }
 
 function RuleControls({
@@ -252,7 +283,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   >({});
   const [query, setQuery] = useState("");
   const [modifiedOnly, setModifiedOnly] = useState(false);
-  const [page, setPage] = useState(1);
+  const [pageIndex, setPageIndex] = useState(0);
   const [impactOpen, setImpactOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -334,9 +365,10 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
     1,
     Math.ceil(filteredPermissions.length / PAGE_SIZE),
   );
+  const safePageIndex = Math.min(Math.max(pageIndex, 0), pageCount - 1);
   const visiblePermissions = filteredPermissions.slice(
-    (Math.min(page, pageCount) - 1) * PAGE_SIZE,
-    Math.min(page, pageCount) * PAGE_SIZE,
+    safePageIndex * PAGE_SIZE,
+    (safePageIndex + 1) * PAGE_SIZE,
   );
   const grouped = groupByProduct(visiblePermissions);
 
@@ -381,7 +413,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
       return;
     }
     setSelection(next);
-    setPage(1);
+    setPageIndex(0);
   }
 
   function applyChanges() {
@@ -608,7 +640,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                   value={query}
                   onChange={(event) => {
                     setQuery(event.target.value);
-                    setPage(1);
+                    setPageIndex(0);
                   }}
                   placeholder="Permission, product, or ID"
                 />
@@ -625,7 +657,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                 checked={modifiedOnly}
                 onCheckedChange={(checked) => {
                   setModifiedOnly(checked);
-                  setPage(1);
+                  setPageIndex(0);
                 }}
               />
             </Field>
@@ -644,40 +676,13 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
           <Card key={product}>
             <CardContent className="p-0">
               <div className="hidden lg:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Permission</TableHead>
-                      <TableHead>Decision and conditions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {entries.map((permission) => {
-                      const rule = ruleFor(permission.id);
-                      return (
-                        <TableRow key={permission.id}>
-                          <TableCell className="w-64 p-4 align-top whitespace-normal">
-                            <p className="font-medium">{permission.name}</p>
-                            <p className="text-muted-foreground mt-1 font-mono text-xs">
-                              {permission.id}
-                            </p>
-                            <Badge variant="secondary" className="mt-2">
-                              {product}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="p-4 whitespace-normal">
-                            <RuleControls
-                              rule={rule}
-                              permissionName={permission.name}
-                              idSuffix="desktop"
-                              onChange={stage}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                <DataTable
+                  ariaLabel={`${product} permissions`}
+                  cellClassName="p-4 whitespace-normal"
+                  columns={permissionColumns(ruleFor, stage)}
+                  data={entries}
+                  getRowId={(permission) => permission.id}
+                />
               </div>
               <div className="divide-y lg:hidden">
                 {entries.map((permission) => {
@@ -712,26 +717,12 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
       )}
 
       {pageCount > 1 ? (
-        <Pagination aria-label="Permission pages">
-          <PaginationContent>
-            {Array.from({ length: pageCount }, (_, index) => index + 1).map(
-              (number) => (
-                <PaginationItem key={number}>
-                  <Button
-                    type="button"
-                    variant={number === page ? "outline" : "ghost"}
-                    className="min-h-11 min-w-11"
-                    aria-current={number === page ? "page" : undefined}
-                    aria-label={`Page ${number}`}
-                    onClick={() => setPage(number)}
-                  >
-                    {number}
-                  </Button>
-                </PaginationItem>
-              ),
-            )}
-          </PaginationContent>
-        </Pagination>
+        <PaginationControls
+          ariaLabel="Permission pages"
+          pageCount={pageCount}
+          pageIndex={safePageIndex}
+          onPageIndexChange={setPageIndex}
+        />
       ) : null}
 
       <div className="bg-card/95 sticky bottom-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 shadow-sm backdrop-blur">
@@ -980,7 +971,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                 if (pendingSelection) setSelection(pendingSelection);
                 setPendingSelection(null);
                 setDiscardOpen(false);
-                setPage(1);
+                setPageIndex(0);
               }}
             >
               Discard changes

@@ -15,7 +15,6 @@ import {
   MapPin,
   Plus,
   Repeat2,
-  Search,
   Trash2,
   UserRound,
   X,
@@ -43,6 +42,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { SearchField } from "@/components/ui/search-field";
 import { NativeSelect } from "@/components/ui/native-select";
 import {
   Popover,
@@ -997,7 +997,7 @@ function CalendarMonth({
     <Card className="w-full overflow-hidden">
       <CardContent className="p-0">
         <div
-          className="overflow-x-auto"
+          className="focus-visible:outline-ring overflow-x-auto focus-visible:outline-2 focus-visible:outline-offset-2"
           role="region"
           aria-label={`${formatMonth(month)} calendar`}
           tabIndex={0}
@@ -1045,6 +1045,7 @@ function CalendarMonth({
                         className="size-11 text-xs tabular-nums"
                         aria-label={`View ${formatDay(date)}`}
                         aria-pressed={date === selectedDate}
+                        aria-current={date === today ? "date" : undefined}
                         aria-controls="board-calendar-day-details"
                         onClick={() => onSelect(date)}
                       >
@@ -1831,36 +1832,29 @@ export function BoardCalendar({
               </Button>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Field className="w-full min-w-0 sm:w-52">
-              <FieldLabel className="sr-only" htmlFor="board-calendar-search">
-                Search calendar
-              </FieldLabel>
-              <div className="relative">
-                <Search
-                  aria-hidden="true"
-                  className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 -translate-y-1/2"
-                />
-                <Input
-                  id="board-calendar-search"
-                  value={query}
-                  placeholder="Search events"
-                  className="min-h-11 pr-10 pl-10"
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-                {query ? (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute top-1/2 right-0 size-11 -translate-y-1/2"
-                    aria-label="Clear calendar search"
-                    onClick={() => setQuery("")}
-                  >
-                    <X aria-hidden="true" />
-                  </Button>
-                ) : null}
-              </div>
-            </Field>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="relative w-full min-w-0 sm:w-52">
+              <SearchField
+                id="board-calendar-search"
+                label="Search calendar"
+                value={query}
+                placeholder="Search events"
+                className="pr-10"
+                onValueChange={setQuery}
+              />
+              {query ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 bottom-0 size-11"
+                  aria-label="Clear calendar search"
+                  onClick={() => setQuery("")}
+                >
+                  <X aria-hidden="true" />
+                </Button>
+              ) : null}
+            </div>
             <ToggleGroup
               variant="outline"
               value={[personal.calendarView]}
@@ -1891,7 +1885,11 @@ export function BoardCalendar({
             </Button>
           </div>
         </div>
-        <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+        <div
+          className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-sm"
+          role="status"
+          aria-live="polite"
+        >
           <span className="inline-flex items-center gap-1.5">
             <CalendarDays aria-hidden="true" />
             {formatCalendarSummary(
@@ -2054,7 +2052,11 @@ export function BoardCalendar({
       ) : null}
 
       {status ? (
-        <p role="status" className="text-muted-foreground text-sm">
+        <p
+          role="status"
+          aria-live="polite"
+          className="text-muted-foreground text-sm"
+        >
           {status}
         </p>
       ) : null}

@@ -755,14 +755,20 @@ function ManageContent() {
   return (
     <div className="min-w-0 space-y-3 md:[&_button]:min-h-8 md:[&_form]:gap-3 md:[&_input]:min-h-8 md:[&_section>div:first-child>p]:sr-only md:[&_select]:h-8 md:[&_td]:py-1 md:[&_th]:h-8 md:[&_th]:py-1">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-semibold">
-            Manage
-          </h1>
-          <Badge variant="outline" className="hidden md:inline-flex">
-            Local preview · tab only
-          </Badge>
-          <p className="text-muted-foreground mt-1 max-w-2xl text-sm md:sr-only">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1
+              ref={headingRef}
+              tabIndex={-1}
+              className="text-2xl font-semibold tracking-tight sm:text-3xl"
+            >
+              Manage
+            </h1>
+            <Badge variant="outline" className="hidden md:inline-flex">
+              Local preview · tab only
+            </Badge>
+          </div>
+          <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
             Configure organization, security, recovery, updates and licensing.
           </p>
         </div>

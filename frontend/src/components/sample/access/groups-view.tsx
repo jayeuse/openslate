@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Building2,
   ChevronRight,
@@ -30,19 +30,8 @@ import {
 } from "@/components/ui/empty";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-} from "@/components/ui/pagination";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AccessController } from "./controller";
 import type { AccessGroup, InternalIdentity } from "./policy";
@@ -160,6 +149,73 @@ export function GroupsView({
     controller.state.rules.filter(
       (rule) => rule.subject.kind === "group" && rule.subject.id === groupId,
     ).length;
+  const groupColumns = useMemo<DataTableColumn<AccessGroup>[]>(
+    () => [
+      {
+        id: "group",
+        header: "Group",
+        cell: ({ row }) => {
+          const group = row.original;
+          return (
+            <button
+              className="focus-visible:outline-ring min-h-11 max-w-md rounded-sm text-left outline-none focus-visible:outline-2"
+              onClick={() =>
+                setDraft({ ...group, memberIds: [...group.memberIds] })
+              }
+            >
+              <span className="block font-medium">{group.name}</span>
+              <span className="text-muted-foreground block max-w-md truncate text-xs">
+                {group.description || "No description"}
+              </span>
+            </button>
+          );
+        },
+      },
+      {
+        id: "members",
+        header: "Members",
+        cell: ({ row }) => {
+          const group = row.original;
+          return (
+            <>
+              <span className="block">{group.memberIds.length}</span>
+              <span className="text-muted-foreground block max-w-48 truncate text-xs">
+                {group.memberIds.slice(0, 2).map(identityName).join(", ") ||
+                  "No members"}
+              </span>
+            </>
+          );
+        },
+      },
+      {
+        id: "rules",
+        header: "Scoped rules",
+        cell: ({ row }) => ruleCount(row.original.id),
+      },
+      {
+        id: "actions",
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => {
+          const group = row.original;
+          return (
+            <div className="flex justify-end gap-1">
+              <RulesShortcut groupId={group.id} onOpen={onOpenRulesForGroup} />
+              <Button
+                variant="outline"
+                className="min-h-11"
+                onClick={() =>
+                  setDraft({ ...group, memberIds: [...group.memberIds] })
+                }
+              >
+                Edit
+              </Button>
+            </div>
+          );
+        },
+      },
+    ],
+    [identityName, onOpenRulesForGroup, ruleCount],
+  );
 
   return (
     <section
@@ -258,74 +314,14 @@ export function GroupsView({
           ) : (
             <>
               <div className="hidden overflow-hidden rounded-lg border md:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Group</TableHead>
-                      <TableHead>Members</TableHead>
-                      <TableHead>Scoped rules</TableHead>
-                      <TableHead className="w-56">
-                        <span className="sr-only">Actions</span>
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {visible.map((group) => (
-                      <TableRow key={group.id}>
-                        <TableCell>
-                          <button
-                            className="focus-visible:outline-ring min-h-11 max-w-md rounded-sm text-left outline-none focus-visible:outline-2"
-                            onClick={() =>
-                              setDraft({
-                                ...group,
-                                memberIds: [...group.memberIds],
-                              })
-                            }
-                          >
-                            <span className="block font-medium">
-                              {group.name}
-                            </span>
-                            <span className="text-muted-foreground block max-w-md truncate text-xs">
-                              {group.description || "No description"}
-                            </span>
-                          </button>
-                        </TableCell>
-                        <TableCell>
-                          <span className="block">
-                            {group.memberIds.length}
-                          </span>
-                          <span className="text-muted-foreground block max-w-48 truncate text-xs">
-                            {group.memberIds
-                              .slice(0, 2)
-                              .map(identityName)
-                              .join(", ") || "No members"}
-                          </span>
-                        </TableCell>
-                        <TableCell>{ruleCount(group.id)}</TableCell>
-                        <TableCell>
-                          <div className="flex justify-end gap-1">
-                            <RulesShortcut
-                              groupId={group.id}
-                              onOpen={onOpenRulesForGroup}
-                            />
-                            <Button
-                              variant="outline"
-                              className="min-h-11"
-                              onClick={() =>
-                                setDraft({
-                                  ...group,
-                                  memberIds: [...group.memberIds],
-                                })
-                              }
-                            >
-                              Edit
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <DataTable
+                  ariaLabel="Groups directory"
+                  columns={groupColumns}
+                  data={filtered}
+                  getRowId={(group) => group.id}
+                  pagination={{ pageIndex: currentPage, pageSize: PAGE_SIZE }}
+                  onPaginationChange={(next) => setPage(next.pageIndex)}
+                />
               </div>
 
               <div className="grid gap-3 md:hidden">
@@ -346,27 +342,12 @@ export function GroupsView({
           )}
 
           {pageCount > 1 && (
-            <Pagination aria-label="Group pages">
-              <PaginationContent>
-                {Array.from({ length: pageCount }, (_, index) => index).map(
-                  (number) => (
-                    <PaginationItem key={number}>
-                      <Button
-                        variant={number === currentPage ? "outline" : "ghost"}
-                        className="min-h-11 min-w-11"
-                        aria-current={
-                          number === currentPage ? "page" : undefined
-                        }
-                        aria-label={`Page ${number + 1}`}
-                        onClick={() => setPage(number)}
-                      >
-                        {number + 1}
-                      </Button>
-                    </PaginationItem>
-                  ),
-                )}
-              </PaginationContent>
-            </Pagination>
+            <PaginationControls
+              ariaLabel="Group pages"
+              pageCount={pageCount}
+              pageIndex={currentPage}
+              onPageIndexChange={setPage}
+            />
           )}
         </TabsContent>
 

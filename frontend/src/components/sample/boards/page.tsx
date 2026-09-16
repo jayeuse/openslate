@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { SearchSelect } from "@/components/ui/search-select";
 import {
   Popover,
   PopoverContent,
@@ -63,7 +64,7 @@ import {
   type AnnouncementPersonalAction,
 } from "./announcement-feed";
 import { canViewBoardAudience, type BoardViewer } from "./content";
-import { BoardEmpty, SearchSelect, EditSheet, ConfirmAction } from "./ui";
+import { BoardEmpty, EditSheet, ConfirmAction } from "./ui";
 import {
   BoardSettingsSheet,
   BoardToolsSheet,
@@ -355,7 +356,7 @@ function BoardsPage() {
             label: item.name,
             description: `${item.department}${item.status === "archived" ? " · Archived" : ""}${personal.favoriteBoardIds.includes(item.id) ? " · Favorite" : ""}`,
           }))}
-          onChange={(id) => {
+          onValueChange={(id) => {
             setBrowsing(false);
             guarded(() => navigate(id));
           }}
@@ -370,7 +371,7 @@ function BoardsPage() {
             (name) => ({ value: name, label: name }),
           ),
         ]}
-        onChange={setDepartment}
+        onValueChange={setDepartment}
       />
       <SearchSelect
         label="Board status"
@@ -380,7 +381,7 @@ function BoardsPage() {
           { value: "archived", label: "Archived" },
           { value: "all", label: "All boards" },
         ]}
-        onChange={setStatus}
+        onValueChange={setStatus}
       />
     </div>
   );
@@ -1156,7 +1157,7 @@ function AddWidget({
             label: value[0].toUpperCase() + value.slice(1),
             description: descriptions[value],
           }))}
-          onChange={setType}
+          onValueChange={setType}
         />
         <SearchSelect
           label="Data source"
@@ -1166,7 +1167,7 @@ function AddWidget({
             label: module.name,
             description: module.description,
           }))}
-          onChange={(id) => setModuleId(id as OpenViewModuleId)}
+          onValueChange={(id) => setModuleId(id as OpenViewModuleId)}
         />
         <p className="text-muted-foreground text-sm">
           This source is independent of the board’s department. Filters select
@@ -1226,7 +1227,7 @@ function AddRecord({
             label: record.title,
             description: `${record.status} · ${record.customer}`,
           }))}
-          onChange={setRecordId}
+          onValueChange={setRecordId}
         />
         {!available.length && (
           <p className="text-muted-foreground text-sm">

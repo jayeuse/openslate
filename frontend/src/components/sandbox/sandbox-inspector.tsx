@@ -4,6 +4,8 @@ import { useRef, useState, type ReactNode, type DragEvent } from "react";
 
 import {
   FIELD_TYPE_META,
+  fieldsForModule,
+  searchSandboxStructure,
   type SandboxFieldType,
   type SandboxState,
   type UpdateSandboxFieldPatch,
@@ -197,6 +199,7 @@ export function SandboxInspector({
       : state.modules.find((item) => item.id === field.moduleId);
   const showOutline = mode !== "properties";
   const showProperties = mode !== "outline";
+  const structureSearch = searchSandboxStructure(state, structureQuery);
 
   function beginEdit(id: string, value: string): void {
     onSelect(id);
@@ -216,15 +219,6 @@ export function SandboxInspector({
       }
     }
     setEditingId(null);
-  }
-
-  function fieldsForModule(moduleId: string, fieldIds: string[]) {
-    return fieldIds.flatMap((fieldId) => {
-      const match = state.fields.find(
-        (item) => item.id === fieldId && item.moduleId === moduleId,
-      );
-      return match === undefined ? [] : [match];
-    });
   }
 
   function rowContextMenu(
@@ -479,24 +473,12 @@ export function SandboxInspector({
   function renderDepartment(
     departmentItem: SandboxState["departments"][number],
   ) {
-    const allDepartmentModules = departmentItem.moduleIds.flatMap(
-      (id) => state.modules.find((item) => item.id === id) ?? [],
-    );
-    const query = structureQuery.trim().toLocaleLowerCase();
-    const departmentMatches = departmentItem.name
-      .toLocaleLowerCase()
-      .includes(query);
-    const departmentModules = allDepartmentModules.filter(
-      (moduleItem) =>
-        query.length === 0 ||
-        departmentMatches ||
-        moduleItem.name.toLocaleLowerCase().includes(query) ||
-        fieldsForModule(moduleItem.id, moduleItem.fieldIds).some((fieldItem) =>
-          fieldItem.name.toLocaleLowerCase().includes(query),
-        ),
-    );
-    if (query && !departmentMatches && departmentModules.length === 0)
+    const searchResult = structureSearch.departments.get(departmentItem.id);
+    if (searchResult === undefined || !searchResult.matches) {
       return null;
+    }
+    const { modules: departmentModules } = searchResult;
+    const query = structureSearch.query;
     const departmentExpanded =
       query.length > 0 || !collapsedDepartments.has(departmentItem.id);
     return (
@@ -541,16 +523,8 @@ export function SandboxInspector({
                 {(() => {
                   const moduleExpanded =
                     query.length > 0 || !collapsedModules.has(moduleItem.id);
-                  const visibleFields = fieldsForModule(
-                    moduleItem.id,
-                    moduleItem.fieldIds,
-                  ).filter(
-                    (fieldItem) =>
-                      !query ||
-                      departmentMatches ||
-                      moduleItem.name.toLocaleLowerCase().includes(query) ||
-                      fieldItem.name.toLocaleLowerCase().includes(query),
-                  );
+                  const visibleFields =
+                    searchResult.fieldsByModule.get(moduleItem.id) ?? [];
                   return (
                     <>
                       <div className="flex min-w-0 items-center gap-0.5">
@@ -626,7 +600,7 @@ export function SandboxInspector({
   const moduleFields =
     sandboxModule === undefined
       ? []
-      : fieldsForModule(sandboxModule.id, sandboxModule.fieldIds);
+      : fieldsForModule(sandboxModule.id, sandboxModule.fieldIds, state.fields);
 
   const selectedName =
     department?.name ??
@@ -741,29 +715,7 @@ export function SandboxInspector({
               </Button>
             </div>
 
-            {state.departments.length > 0 &&
-            (!structureQuery.trim() ||
-              state.departments.some((departmentItem) => {
-                const query = structureQuery.trim().toLocaleLowerCase();
-                return (
-                  departmentItem.name.toLocaleLowerCase().includes(query) ||
-                  departmentItem.moduleIds.some((moduleId) => {
-                    const moduleItem = state.modules.find(
-                      (item) => item.id === moduleId,
-                    );
-                    return (
-                      moduleItem !== undefined &&
-                      (moduleItem.name.toLocaleLowerCase().includes(query) ||
-                        fieldsForModule(
-                          moduleItem.id,
-                          moduleItem.fieldIds,
-                        ).some((fieldItem) =>
-                          fieldItem.name.toLocaleLowerCase().includes(query),
-                        ))
-                    );
-                  })
-                );
-              })) ? (
+            {state.departments.length > 0 && structureSearch.hasMatches ? (
               <ul className="mt-3 flex flex-col gap-3">
                 {state.departments.map(renderDepartment)}
               </ul>
