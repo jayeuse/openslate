@@ -8,7 +8,10 @@ import {
   setAuthCookies,
 } from "@/lib/auth-cookies";
 import { isSameOriginRequest } from "@/lib/request-security";
-import { withinDeadline } from "@/lib/reliability";
+import {
+  RequestDeadlineExceededError,
+  withinDeadline,
+} from "@/lib/reliability";
 import { beginSessionRoute } from "@/lib/session-response";
 import { establishSupabaseSession } from "@/lib/supabase/session";
 
@@ -39,24 +42,54 @@ export async function GET(request: Request) {
   }
 
   try {
-    const session = await withinDeadline(
+    const result = await withinDeadline(
       establishSupabaseSession(accessToken, refreshToken, deadline.signal),
       deadline.signal,
     );
-    if (!session) throw new Error("session refresh failed");
+    if (result.kind === "unavailable")
+      return complete(
+        NextResponse.json(
+          { detail: "Authentication service unavailable" },
+          { status: 503, headers },
+        ),
+        result.reason,
+      );
+    if (result.kind === "invalid") {
+      const response = NextResponse.json(
+        {
+          detail:
+            result.reason === "missing_refresh_token"
+              ? "Authentication required"
+              : "Session expired",
+        },
+        { status: 401, headers },
+      );
+      clearAuthCookies(response);
+      return complete(response, result.reason);
+    }
 
     const response = NextResponse.json(
-      { access_token: session.access_token },
+      { access_token: result.session.access_token },
       { headers },
     );
-    setAuthCookies(response, session);
+    setAuthCookies(response, result.session);
     return complete(response);
-  } catch {
+  } catch (error: unknown) {
+    if (
+      error instanceof RequestDeadlineExceededError ||
+      deadline.signal.aborted
+    )
+      return complete(
+        NextResponse.json(
+          { detail: "Authentication service timed out" },
+          { status: 504, headers },
+        ),
+        "deadline_exceeded",
+      );
     const response = NextResponse.json(
-      { detail: "Session expired" },
-      { status: 401, headers },
+      { detail: "Authentication service unavailable" },
+      { status: 503, headers },
     );
-    clearAuthCookies(response);
-    return complete(response, "session_refresh_failed");
+    return complete(response, "auth_provider_unavailable");
   }
 }

@@ -12,12 +12,25 @@ export const passwordCanary = testSecret();
 export const accessCanary = testSecret();
 export const refreshCanary = testSecret();
 
+type PasswordRouteHarnessOptions = {
+  setSession?: (...args: unknown[]) => Promise<unknown>;
+  updateUser?: (...args: unknown[]) => Promise<unknown>;
+  expireDuringBodyRead?: boolean;
+  cookies?: Partial<
+    Record<"openslate_access" | "openslate_refresh", string | null>
+  >;
+};
+
 // Load the real handler and helpers; replace only external I/O boundaries.
-export function passwordRouteHarness(transport: typeof fetch) {
+export function passwordRouteHarness(
+  transport: typeof fetch,
+  options: PasswordRouteHarnessOptions = {},
+) {
   const root = path.resolve(__dirname, "../..");
   const nativeRequire = createRequire(path.join(root, "package.json"));
   const logs: string[] = [];
   const cache = new Map<string, Record<string, unknown>>();
+  let expire: (() => void) | undefined;
   const context = vm.createContext({
     Request,
     Response,
@@ -29,8 +42,13 @@ export function passwordRouteHarness(transport: typeof fetch) {
     DOMException,
     Uint8Array,
     crypto,
-    setTimeout,
-    clearTimeout,
+    setTimeout: (callback: () => void) => {
+      expire = callback;
+      return 1;
+    },
+    clearTimeout: () => {
+      expire = undefined;
+    },
     process: {
       cwd: () => "/tmp",
       env: {
@@ -70,26 +88,41 @@ export function passwordRouteHarness(transport: typeof fetch) {
       if (name === "next/headers")
         return {
           cookies: async () => ({
-            get: (key: string) => ({
-              value: key === "openslate_access" ? accessCanary : refreshCanary,
-            }),
+            get: (key: string) => {
+              const cookieName = key as
+                "openslate_access" | "openslate_refresh";
+              const configured = Object.prototype.hasOwnProperty.call(
+                options.cookies ?? {},
+                cookieName,
+              );
+              const value = configured
+                ? (options.cookies?.[cookieName] ?? undefined)
+                : cookieName === "openslate_access"
+                  ? accessCanary
+                  : cookieName === "openslate_refresh"
+                    ? refreshCanary
+                    : undefined;
+              return value === undefined ? undefined : { value };
+            },
           }),
         };
       if (name === "@/lib/supabase/server")
         return {
           createSupabaseServerClient: () => ({
             auth: {
-              setSession: async () => ({
-                error: null,
-                data: {
-                  session: {
-                    access_token: accessCanary,
-                    refresh_token: refreshCanary,
-                    expires_in: 3600,
+              setSession:
+                options.setSession ??
+                (async () => ({
+                  error: null,
+                  data: {
+                    session: {
+                      access_token: accessCanary,
+                      refresh_token: refreshCanary,
+                      expires_in: 3600,
+                    },
                   },
-                },
-              }),
-              updateUser: async () => ({ error: null }),
+                })),
+              updateUser: options.updateUser ?? (async () => ({ error: null })),
             },
           }),
         };
@@ -124,8 +157,38 @@ export function passwordRouteHarness(transport: typeof fetch) {
     .POST as (request: Request) => Promise<Response>;
   return {
     logs,
-    post: (origin = "http://frontend.invalid") =>
-      handler(
+    expire: () => {
+      if (!expire) throw new Error("No active deadline");
+      expire();
+    },
+    post: (
+      origin = "http://frontend.invalid",
+      requestOptions: { expireDuringBodyRead?: boolean } = {},
+    ) => {
+      const payload = new TextEncoder().encode(
+        JSON.stringify({
+          password: passwordCanary,
+          confirmation: passwordCanary,
+        }),
+      );
+      let firstRead = true;
+      const body =
+        options.expireDuringBodyRead || requestOptions.expireDuringBodyRead
+          ? new ReadableStream<Uint8Array>({
+              pull(controller) {
+                if (firstRead) {
+                  firstRead = false;
+                  expire?.();
+                }
+                controller.enqueue(payload);
+                controller.close();
+              },
+            })
+          : JSON.stringify({
+              password: passwordCanary,
+              confirmation: passwordCanary,
+            });
+      return handler(
         new Request(
           `http://frontend.invalid/session/password?secret=${queryCanary}`,
           {
@@ -136,12 +199,11 @@ export function passwordRouteHarness(transport: typeof fetch) {
               "content-type": "application/json",
               "x-request-id": callerCanary,
             },
-            body: JSON.stringify({
-              password: passwordCanary,
-              confirmation: passwordCanary,
-            }),
+            body,
+            ...(body instanceof ReadableStream ? { duplex: "half" } : {}),
           },
         ),
-      ),
+      );
+    },
   };
 }

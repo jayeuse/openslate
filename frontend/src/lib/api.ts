@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export type Pagination = {
   limit: number;
   offset: number;
@@ -224,6 +226,20 @@ export class ApiError extends Error {
   }
 }
 
+const SAFE_API_CONTRACT_ERROR_MESSAGE =
+  "The server returned an invalid response";
+
+export class ApiContractError extends Error {
+  constructor() {
+    super(SAFE_API_CONTRACT_ERROR_MESSAGE);
+    this.name = "ApiContractError";
+  }
+}
+
+function safeApiContractError(): ApiContractError {
+  return new ApiContractError();
+}
+
 export type ApiFieldErrors = Record<string, string[]>;
 
 function isErrorDetail(
@@ -273,9 +289,28 @@ export function getApiFieldErrors(error: unknown): ApiFieldErrors {
   );
 }
 
-async function parseResponse(response: Response): Promise<unknown> {
-  if (response.status === 204) return null;
-  const body: unknown = await response.json().catch(() => null);
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+async function parseResponse(
+  response: Response,
+  signal?: AbortSignal | null,
+): Promise<unknown> {
+  if (response.status === 204 && response.ok) return null;
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch (error) {
+    if (
+      isAbortError(error) ||
+      signal?.aborted ||
+      !(error instanceof SyntaxError)
+    )
+      throw error;
+    if (response.ok) throw safeApiContractError();
+    body = null;
+  }
   if (!response.ok) {
     const detail =
       typeof body === "object" && body !== null && "detail" in body
@@ -296,10 +331,11 @@ async function parseResponse(response: Response): Promise<unknown> {
   return body;
 }
 
-export async function apiFetch<T>(
+export async function apiFetch<Schema extends z.ZodType>(
   path: string,
+  schema: Schema,
   init: RequestInit = {},
-): Promise<T> {
+): Promise<z.output<Schema>> {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
   const response = await fetch(`/bff${path}`, {
@@ -308,7 +344,15 @@ export async function apiFetch<T>(
     headers,
   });
   try {
-    return (await parseResponse(response)) as T;
+    const body = await parseResponse(response, init.signal);
+    try {
+      const result = schema.safeParse(body);
+      if (!result.success) throw safeApiContractError();
+      return result.data;
+    } catch (error) {
+      if (error instanceof ApiContractError) throw error;
+      throw safeApiContractError();
+    }
   } catch (error) {
     if (
       error instanceof ApiError &&
@@ -322,25 +366,4 @@ export async function apiFetch<T>(
     }
     throw error;
   }
-}
-
-export function listQuery(params: Record<string, string | number | undefined>) {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params))
-    if (value !== undefined && value !== "") query.set(key, String(value));
-  return query.toString();
-}
-
-export async function listAllModuleFields(moduleId: string): Promise<Field[]> {
-  const fields: Field[] = [];
-  const limit = 100;
-  let offset = 0;
-  do {
-    const result = await apiFetch<ListResponse<Field>>(
-      `/fields?${listQuery({ module_id: moduleId, limit, offset, deleted: "include", sort_by: "position", sort_order: "asc" })}`,
-    );
-    fields.push(...result.items);
-    if (!result.pagination.has_more) return fields;
-    offset += result.items.length;
-  } while (true);
 }

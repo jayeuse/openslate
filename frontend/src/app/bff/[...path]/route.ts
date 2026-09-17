@@ -27,7 +27,7 @@ import {
   withinDeadline,
 } from "@/lib/reliability";
 import { validateRuntimeEnvironment } from "@/lib/environment";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { establishSupabaseSession } from "@/lib/supabase/session";
 
 export const maxDuration = 120;
 
@@ -197,21 +197,36 @@ async function handle(request: Request, { params }: Params) {
         return complete(next, "authentication_required");
       }
 
+      let refreshed: Awaited<ReturnType<typeof establishSupabaseSession>>;
       try {
-        const supabase = createSupabaseServerClient(deadline.signal);
-        const refreshed = await withinDeadline(
-          supabase.auth.refreshSession({ refresh_token: refresh }),
+        refreshed = await withinDeadline(
+          establishSupabaseSession(undefined, refresh, deadline.signal),
           deadline.signal,
         );
-        if (refreshed.error || !refreshed.data.session)
-          throw new Error("refresh failed");
-        refreshedSession = refreshed.data.session;
-        access = refreshedSession.access_token;
-      } catch (error) {
-        if (error instanceof RequestDeadlineExceededError) throw error;
-        const next = safeError("Session expired", 401);
-        return complete(next, "session_refresh_failed");
+      } catch (error: unknown) {
+        if (
+          error instanceof RequestDeadlineExceededError ||
+          deadline.signal.aborted
+        )
+          return complete(
+            safeError("Authentication service timed out", 504),
+            "deadline_exceeded",
+          );
+        return complete(
+          safeError("Authentication service unavailable", 503),
+          "auth_provider_unavailable",
+        );
       }
+      if (refreshed.kind === "unavailable") {
+        const next = safeError("Authentication service unavailable", 503);
+        return complete(next, refreshed.reason);
+      }
+      if (refreshed.kind === "invalid") {
+        const next = safeError("Session expired", 401);
+        return complete(next, refreshed.reason);
+      }
+      refreshedSession = refreshed.session;
+      access = refreshedSession.access_token;
 
       attemptStartedAt = Date.now();
       response = await requestBackend(

@@ -19,6 +19,7 @@ export function sessionRouteHarness(
   const nativeRequire = createRequire(path.join(root, "package.json"));
   const logs: string[] = [];
   const cache = new Map<string, Record<string, unknown>>();
+  let expire: (() => void) | undefined;
   const context = vm.createContext({
     Request,
     Response,
@@ -30,8 +31,13 @@ export function sessionRouteHarness(
     DOMException,
     Uint8Array,
     crypto,
-    setTimeout,
-    clearTimeout,
+    setTimeout: (callback: () => void) => {
+      expire = callback;
+      return 1;
+    },
+    clearTimeout: () => {
+      expire = undefined;
+    },
     process: {
       cwd: () => "/tmp",
       env: {
@@ -109,6 +115,10 @@ export function sessionRouteHarness(
   const handlers = load(path.join(root, `src/app/${route}/route.ts`));
   return {
     logs,
+    expire: () => {
+      if (!expire) throw new Error("No active deadline");
+      expire();
+    },
     request: (
       options: {
         method?: "GET" | "POST";

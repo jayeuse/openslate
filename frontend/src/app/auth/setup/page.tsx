@@ -14,6 +14,32 @@ import {
   FieldError,
 } from "@/components/ui/field";
 
+type SetupFailure = "retryable" | "session" | "unavailable" | "uncertain";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function classifySetupFailure(response: Response, body: unknown): SetupFailure {
+  // Success was already checked by the caller. An incomplete success response
+  // cannot prove that a password mutation did not happen.
+  if (response.ok) return "uncertain";
+  if (response.status === 401) return "session";
+  if (response.status >= 500) {
+    const detail = isRecord(body) ? body.detail : undefined;
+    return detail === "Authentication service unavailable" ||
+      detail === "Authentication service timed out"
+      ? "unavailable"
+      : "uncertain";
+  }
+  if (
+    isRecord(body) &&
+    body.detail === "Password set, but account setup could not be completed"
+  )
+    return "uncertain";
+  return "retryable";
+}
+
 export default function AuthSetupPage() {
   const router = useRouter();
   const [hydrated, setHydrated] = useState(false);
@@ -22,31 +48,59 @@ export default function AuthSetupPage() {
   const [confirmation, setConfirmation] = useState("");
   const [mismatch, setMismatch] = useState(false);
   const [error, setError] = useState("");
+  const [failure, setFailure] = useState<SetupFailure | null>(null);
   const [pending, setPending] = useState(false);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) return;
+    if (pending || failure === "session" || failure === "uncertain") return;
     setMismatch(password !== confirmation);
     if (password !== confirmation) {
       document.getElementById("confirmation")?.focus();
       return;
     }
     setError("");
+    setFailure(null);
     setPending(true);
     try {
-      const response = await fetch("/session/password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ password, confirmation }),
-      });
-      if (!response.ok) throw new Error("Password setup failed");
-      router.replace("/openview");
-    } catch {
-      setError(
-        "We could not set up your password. Return to sign in and try again.",
-      );
+      let response: Response;
+      try {
+        response = await fetch("/session/password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ password, confirmation }),
+        });
+      } catch {
+        setFailure("uncertain");
+        setError(
+          "Password setup may have completed. Return to sign in to confirm before trying again.",
+        );
+        return;
+      }
+      const body: unknown = await response.json().catch(() => null);
+      if (response.ok && isRecord(body) && body.authenticated === true) {
+        router.replace("/openview");
+        return;
+      }
+      const kind = classifySetupFailure(response, body);
+      setFailure(kind);
+      if (kind === "session")
+        setError(
+          "Your invitation session has expired. Return to sign in and start again.",
+        );
+      else if (kind === "uncertain")
+        setError(
+          "Password setup may have completed. Return to sign in to confirm before trying again.",
+        );
+      else if (kind === "unavailable")
+        setError(
+          "Authentication is temporarily unavailable. Your entries are still here. Try again shortly.",
+        );
+      else
+        setError(
+          "We could not set that password. Check the requirements and try again.",
+        );
     } finally {
       setPending(false);
     }
@@ -78,9 +132,11 @@ export default function AuthSetupPage() {
             <Alert role="alert" variant="destructive">
               {error}
             </Alert>
-            <Button asChild variant="outline" className="w-full">
-              <a href="/login">Return to sign in</a>
-            </Button>
+            {failure === "session" || failure === "uncertain" ? (
+              <Button asChild variant="outline" className="w-full">
+                <a href="/login">Return to sign in</a>
+              </Button>
+            ) : null}
           </div>
         )}
         <form className="space-y-5" onSubmit={submit}>
@@ -91,7 +147,12 @@ export default function AuthSetupPage() {
                 <Input
                   id="password"
                   type="password"
-                  disabled={!hydrated}
+                  disabled={
+                    !hydrated ||
+                    pending ||
+                    failure === "session" ||
+                    failure === "uncertain"
+                  }
                   autoComplete="new-password"
                   minLength={12}
                   required
@@ -110,7 +171,12 @@ export default function AuthSetupPage() {
                   aria-invalid={mismatch}
                   aria-describedby={mismatch ? "confirmation-error" : undefined}
                   type="password"
-                  disabled={!hydrated}
+                  disabled={
+                    !hydrated ||
+                    pending ||
+                    failure === "session" ||
+                    failure === "uncertain"
+                  }
                   autoComplete="new-password"
                   minLength={12}
                   required
@@ -125,7 +191,16 @@ export default function AuthSetupPage() {
               </FieldError>
             )}
           </Field>
-          <Button className="w-full" size="lg" disabled={!hydrated || pending}>
+          <Button
+            className="w-full"
+            size="lg"
+            disabled={
+              !hydrated ||
+              pending ||
+              failure === "session" ||
+              failure === "uncertain"
+            }
+          >
             {pending ? (
               "Saving…"
             ) : (

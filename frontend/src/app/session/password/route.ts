@@ -16,11 +16,16 @@ import {
   MAX_JSON_REQUEST_BYTES,
   parseJsonBody,
   PayloadTooLargeError,
+  RequestDeadlineExceededError,
   readLimitedStream,
   withinDeadline,
 } from "@/lib/reliability";
 import { validateRuntimeEnvironment } from "@/lib/environment";
 import { beginSessionRoute } from "@/lib/session-response";
+import {
+  classifySupabaseAuthError,
+  establishSupabaseSessionWithClient,
+} from "@/lib/supabase/session";
 
 const PasswordSchema = z
   .object({
@@ -57,6 +62,17 @@ export async function POST(request: Request) {
         NextResponse.json({ detail: "Request is too large" }, { status: 413 }),
         "payload_too_large",
       );
+    if (
+      error instanceof RequestDeadlineExceededError ||
+      deadline.signal.aborted
+    )
+      return complete(
+        NextResponse.json(
+          { detail: "Authentication service timed out" },
+          { status: 504, headers: { "Cache-Control": "no-store" } },
+        ),
+        "deadline_exceeded",
+      );
     return complete(
       NextResponse.json({ detail: "Invalid password" }, { status: 400 }),
       "invalid_request",
@@ -76,7 +92,7 @@ export async function POST(request: Request) {
   if (!access || !refresh) {
     const response = NextResponse.json(
       { detail: "Authentication required" },
-      { status: 401 },
+      { status: 401, headers: { "Cache-Control": "no-store" } },
     );
     clearAuthCookies(response);
     return complete(response, "authentication_required");
@@ -87,36 +103,174 @@ export async function POST(request: Request) {
   let backendAttemptStartedAt: number | undefined;
   try {
     const supabase = createSupabaseServerClient(deadline.signal);
-    const session = await withinDeadline(
-      supabase.auth.setSession({
-        access_token: access,
-        refresh_token: refresh,
-      }),
-      deadline.signal,
-    );
-    if (session.error || !session.data.session)
-      throw new Error("session failed");
-    establishedSession = session.data.session;
+    let established: Awaited<
+      ReturnType<typeof establishSupabaseSessionWithClient>
+    >;
+    try {
+      established = await withinDeadline(
+        establishSupabaseSessionWithClient(
+          supabase,
+          access,
+          refresh,
+          deadline.signal,
+        ),
+        deadline.signal,
+      );
+    } catch (error: unknown) {
+      if (
+        error instanceof RequestDeadlineExceededError ||
+        deadline.signal.aborted
+      )
+        return complete(
+          NextResponse.json(
+            { detail: "Authentication service timed out" },
+            { status: 504, headers: { "Cache-Control": "no-store" } },
+          ),
+          "deadline_exceeded",
+        );
+      return complete(
+        NextResponse.json(
+          { detail: "Authentication service unavailable" },
+          { status: 503, headers: { "Cache-Control": "no-store" } },
+        ),
+        "auth_provider_unavailable",
+      );
+    }
 
-    const updated = await withinDeadline(
-      supabase.auth.updateUser({ password: input.data.password }),
-      deadline.signal,
-    );
-    if (updated.error) throw new Error("password update failed");
+    if (established.kind === "invalid") {
+      const response = NextResponse.json(
+        {
+          detail:
+            established.reason === "missing_refresh_token"
+              ? "Authentication required"
+              : "Session expired",
+        },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
+      clearAuthCookies(response);
+      return complete(response, established.reason);
+    }
+    if (established.kind === "unavailable")
+      return complete(
+        NextResponse.json(
+          { detail: "Authentication service unavailable" },
+          { status: 503, headers: { "Cache-Control": "no-store" } },
+        ),
+        established.reason,
+      );
+    establishedSession = established.session;
+
+    let updated: Awaited<ReturnType<typeof supabase.auth.updateUser>>;
+    try {
+      updated = await withinDeadline(
+        supabase.auth.updateUser({ password: input.data.password }),
+        deadline.signal,
+      );
+    } catch (error: unknown) {
+      const uncertain = NextResponse.json(
+        {
+          detail:
+            "Password update outcome is uncertain; sign in to confirm before trying again.",
+        },
+        {
+          status:
+            error instanceof RequestDeadlineExceededError ||
+            deadline.signal.aborted
+              ? 504
+              : 503,
+          headers: { "Cache-Control": "no-store" },
+        },
+      );
+      setAuthCookies(uncertain, establishedSession);
+      return complete(
+        uncertain,
+        error instanceof RequestDeadlineExceededError || deadline.signal.aborted
+          ? "deadline_exceeded"
+          : "password_update_uncertain",
+      );
+    }
+    if (updated.error) {
+      if (
+        updated.error.code === "weak_password" ||
+        updated.error.code === "same_password"
+      ) {
+        const response = NextResponse.json(
+          { detail: "Unable to set password" },
+          { status: 400, headers: { "Cache-Control": "no-store" } },
+        );
+        setAuthCookies(response, establishedSession);
+        return complete(response, "password_update_rejected");
+      }
+      const updateFailure = classifySupabaseAuthError(updated.error);
+      if (updateFailure.kind === "unavailable") {
+        const uncertain = NextResponse.json(
+          {
+            detail:
+              "Password update outcome is uncertain; sign in to confirm before trying again.",
+          },
+          { status: 503, headers: { "Cache-Control": "no-store" } },
+        );
+        setAuthCookies(uncertain, establishedSession);
+        return complete(uncertain, "password_update_uncertain");
+      }
+      if (updateFailure.kind === "invalid") {
+        const response = NextResponse.json(
+          { detail: "Session expired" },
+          { status: 401, headers: { "Cache-Control": "no-store" } },
+        );
+        clearAuthCookies(response);
+        return complete(response, updateFailure.reason);
+      }
+    }
 
     backendAttemptStartedAt = Date.now();
-    const accepted = await fetch(
-      `${runtime.backendUrl}/api/auth/invitations/accept`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${establishedSession.access_token}`,
-          "X-Request-ID": requestId,
+    let accepted: Response;
+    try {
+      accepted = await fetch(
+        `${runtime.backendUrl}/api/auth/invitations/accept`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${establishedSession.access_token}`,
+            "X-Request-ID": requestId,
+          },
+          cache: "no-store",
+          signal: deadline.signal,
         },
-        cache: "no-store",
-        signal: deadline.signal,
-      },
-    );
+      );
+    } catch (error: unknown) {
+      logSafeEvent({
+        event: "backend_attempt_failed",
+        requestId,
+        route: "/session/password",
+        method: request.method,
+        elapsedMs: Date.now() - backendAttemptStartedAt,
+        reason: "backend_transport_failed",
+      });
+      backendAttemptStartedAt = undefined;
+      const uncertain = NextResponse.json(
+        {
+          detail:
+            "Password setup outcome is uncertain; sign in to confirm before trying again.",
+        },
+        {
+          status:
+            error instanceof RequestDeadlineExceededError ||
+            deadline.signal.aborted
+              ? 504
+              : 503,
+          headers: { "Cache-Control": "no-store" },
+        },
+      );
+      setAuthCookies(uncertain, establishedSession);
+      return complete(
+        uncertain,
+        error instanceof RequestDeadlineExceededError || deadline.signal.aborted
+          ? "deadline_exceeded"
+          : "backend_transport_uncertain",
+        backendRequestId,
+      );
+    }
     backendRequestId = accepted.headers.get("x-request-id") || undefined;
     logSafeEvent({
       event: "backend_attempt_completed",
@@ -128,15 +282,26 @@ export async function POST(request: Request) {
       elapsedMs: Date.now() - backendAttemptStartedAt,
     });
     backendAttemptStartedAt = undefined;
-    if (!accepted.ok) throw new Error("invitation acceptance failed");
+    if (!accepted.ok) {
+      const response = NextResponse.json(
+        { detail: "Password set, but account setup could not be completed" },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
+      );
+      setAuthCookies(response, establishedSession);
+      return complete(
+        response,
+        "invitation_acceptance_rejected",
+        backendRequestId,
+      );
+    }
 
     const response = NextResponse.json(
       { authenticated: true },
       { headers: { "Cache-Control": "no-store" } },
     );
-    setAuthCookies(response, session.data.session);
+    setAuthCookies(response, establishedSession);
     return complete(response, undefined, backendRequestId);
-  } catch {
+  } catch (error: unknown) {
     if (backendAttemptStartedAt !== undefined) {
       logSafeEvent({
         event: "backend_attempt_failed",
@@ -147,12 +312,38 @@ export async function POST(request: Request) {
         reason: "backend_transport_failed",
       });
     }
+    const timedOut =
+      error instanceof RequestDeadlineExceededError || deadline.signal.aborted;
     const response = NextResponse.json(
-      { detail: "Unable to set password" },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      {
+        detail: establishedSession
+          ? "Password setup outcome is uncertain; sign in to confirm before trying again."
+          : timedOut
+            ? "Authentication service timed out"
+            : "Authentication service unavailable",
+      },
+      {
+        status: establishedSession
+          ? timedOut
+            ? 504
+            : 503
+          : timedOut
+            ? 504
+            : 503,
+        headers: { "Cache-Control": "no-store" },
+      },
     );
     if (establishedSession) setAuthCookies(response, establishedSession);
-    else clearAuthCookies(response);
-    return complete(response, "password_update_failed", backendRequestId);
+    return complete(
+      response,
+      establishedSession
+        ? timedOut
+          ? "deadline_exceeded"
+          : "password_setup_uncertain"
+        : timedOut
+          ? "deadline_exceeded"
+          : "auth_provider_unavailable",
+      backendRequestId,
+    );
   }
 }

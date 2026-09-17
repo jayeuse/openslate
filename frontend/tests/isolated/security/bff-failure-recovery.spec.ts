@@ -95,12 +95,12 @@ test("a final backend authentication rejection clears refreshed cookies", async 
   expect(refreshes).toBe(1);
 });
 
-test("failed refresh clears credentials and never replays the mutation", async () => {
+test("confirmed invalid refresh clears credentials and never replays the mutation", async () => {
   let attempts = 0;
   const harness = createBffHarness({
     refresh: async () => ({
       data: { session: null },
-      error: new Error("Rejected"),
+      error: { code: "refresh_token_already_used", message: "Rejected" },
     }),
     transport: async () => {
       attempts++;
@@ -151,7 +151,28 @@ for (const failure of ["oversize", "deadline"] as const) {
   });
 }
 
-test("never persists a session returned alongside a refresh error", async () => {
+test("unavailable refresh preserves credentials and never replays the mutation", async () => {
+  let attempts = 0;
+  const harness = createBffHarness({
+    refresh: async () => {
+      throw new Error("Provider unavailable");
+    },
+    transport: async () => {
+      attempts++;
+      return new Response(null, { status: 401 });
+    },
+  });
+  const response = await harness.request();
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({
+    detail: "Authentication service unavailable",
+  });
+  expect(response.cookies.get("openslate_access")).toBeUndefined();
+  expect(response.cookies.get("openslate_refresh")).toBeUndefined();
+  expect(attempts).toBe(1);
+});
+
+test("ambiguous refresh preserves credentials and never persists a session returned with an error", async () => {
   let attempts = 0;
   const harness = createBffHarness({
     refresh: async () => ({ data: { session }, error: new Error("Rejected") }),
@@ -161,9 +182,59 @@ test("never persists a session returned alongside a refresh error", async () => 
     },
   });
   const response = await harness.request();
-  expect(response.status).toBe(401);
-  for (const name of ["openslate_access", "openslate_refresh"])
-    expect(response.cookies.get(name)).toMatchObject({ value: "", maxAge: 0 });
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({
+    detail: "Authentication service unavailable",
+  });
+  expect(response.cookies.get("openslate_access")).toBeUndefined();
+  expect(response.cookies.get("openslate_refresh")).toBeUndefined();
+  expect(attempts).toBe(1);
+});
+
+test("timed out refresh preserves credentials and never replays the mutation", async () => {
+  let attempts = 0;
+  const deadline: { expire: () => void } = {
+    expire: () => {
+      throw new Error("deadline unavailable");
+    },
+  };
+  const harness = createBffHarness({
+    refresh: async () => {
+      deadline.expire();
+      return { data: { session }, error: null };
+    },
+    transport: async () => {
+      attempts++;
+      return new Response(null, { status: 401 });
+    },
+  });
+  deadline.expire = harness.expire;
+  const response = await harness.request();
+  expect(response.status).toBe(504);
+  expect(await response.json()).toEqual({
+    detail: "Authentication service timed out",
+  });
+  expect(response.cookies.get("openslate_access")).toBeUndefined();
+  expect(response.cookies.get("openslate_refresh")).toBeUndefined();
+  expect(attempts).toBe(1);
+});
+
+test("an ambiguous empty refresh preserves credentials and never replays the mutation", async () => {
+  let attempts = 0;
+  const harness = createBffHarness({
+    refresh: async () => ({ data: { session: null }, error: null }),
+    transport: async () => {
+      attempts++;
+      return new Response(null, { status: 401 });
+    },
+  });
+  const response = await harness.request();
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({
+    detail: "Authentication service unavailable",
+  });
+  expect(response.cookies.get("openslate_access")).toBeUndefined();
+  expect(response.cookies.get("openslate_refresh")).toBeUndefined();
   expect(attempts).toBe(1);
 });
 

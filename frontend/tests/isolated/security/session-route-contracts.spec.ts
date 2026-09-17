@@ -11,6 +11,14 @@ const rejected = {
   data: { session: null },
   error: { message: "private provider detail" },
 };
+const ambiguous = { data: { session: null }, error: null };
+const invalidRefreshError = {
+  data: { session: null },
+  error: {
+    code: "refresh_token_not_found",
+    message: "private provider detail",
+  },
+};
 const cookies = {
   openslate_access: testSecret(),
   openslate_refresh: testSecret(),
@@ -26,6 +34,9 @@ function expectCookies(response: Response, cleared = false) {
   expect(header).toContain("HttpOnly");
   expect(header).toContain("SameSite=lax");
   expect(header).toContain(cleared ? "Max-Age=0" : "Max-Age=1800");
+}
+function expectNoCookieMutation(response: Response) {
+  expect(response.headers.get("set-cookie")).toBeNull();
 }
 test("login trims email, sets private cookies, and returns no tokens", async () => {
   const inputs: unknown[] = [];
@@ -83,7 +94,7 @@ test("login translates provider rejection and outages to safe responses", async 
     expect(response.headers.get("set-cookie")).toBeNull();
   }
 });
-test("status renews a refresh-only session and clears invalid or missing sessions", async () => {
+test("status renews valid sessions and clears only confirmed invalid or missing sessions", async () => {
   const inputs: unknown[] = [];
   const response = await sessionRouteHarness(
     "session/status",
@@ -98,23 +109,68 @@ test("status renews a refresh-only session and clears invalid or missing session
   expect(inputs).toEqual([{ refresh_token: cookies.openslate_refresh }]);
   expect(await response.json()).toEqual({ authenticated: true });
   expectCookies(response);
-  for (const offline of [false, true]) {
+  for (const error of [
+    invalidRefreshError.error,
+    { name: "AuthSessionMissingError", message: "private provider detail" },
+  ]) {
     const invalid = await sessionRouteHarness(
       "session/status",
       {
-        setSession: async () => {
-          if (offline) throw new Error("offline");
-          return rejected;
-        },
+        setSession: async () => ({ data: { session: null }, error }),
       },
       cookies,
     ).request();
+    expect(invalid.status).toBe(200);
     expect(await invalid.json()).toEqual({ authenticated: false });
     expectCookies(invalid, true);
   }
   const absent = await sessionRouteHarness("session/status", {}).request();
+  expect(absent.status).toBe(200);
   expect(await absent.json()).toEqual({ authenticated: false });
   expectCookies(absent, true);
+});
+
+test("status preserves cookies for provider outages, ambiguous sessions, and deadlines", async () => {
+  for (const mode of ["provider", "ambiguous"] as const) {
+    const response = await sessionRouteHarness(
+      "session/status",
+      {
+        setSession: async () =>
+          mode === "provider"
+            ? Promise.reject(new Error("private provider failure"))
+            : ambiguous,
+      },
+      cookies,
+    ).request();
+    expect(response.status, mode).toBe(503);
+    expect(await response.json(), mode).toEqual({
+      detail: "Authentication service unavailable",
+    });
+    expectNoCookieMutation(response);
+  }
+
+  const deadline: { expire: () => void } = {
+    expire: () => {
+      throw new Error("deadline unavailable");
+    },
+  };
+  const harness = sessionRouteHarness(
+    "session/status",
+    {
+      setSession: async () => {
+        deadline.expire();
+        return accepted;
+      },
+    },
+    cookies,
+  );
+  deadline.expire = harness.expire;
+  const response = await harness.request();
+  expect(response.status).toBe(504);
+  expect(await response.json()).toEqual({
+    detail: "Authentication service timed out",
+  });
+  expectNoCookieMutation(response);
 });
 test("realtime token denies foreign origins and missing refresh credentials", async () => {
   const harness = sessionRouteHarness("session/realtime-token", {});
@@ -138,12 +194,55 @@ test("realtime token returns only the access token and expires rejected sessions
   expectCookies(response);
   const denied = await sessionRouteHarness(
     "session/realtime-token",
-    { setSession: async () => rejected },
+    { setSession: async () => invalidRefreshError },
     cookies,
   ).request();
   expect(denied.status).toBe(401);
   expect(await denied.json()).toEqual({ detail: "Session expired" });
   expectCookies(denied, true);
+});
+
+test("realtime token preserves cookies for unavailable or timed out refreshes", async () => {
+  for (const mode of ["provider", "ambiguous"] as const) {
+    const response = await sessionRouteHarness(
+      "session/realtime-token",
+      {
+        setSession: async () =>
+          mode === "provider"
+            ? Promise.reject(new Error("private provider failure"))
+            : rejected,
+      },
+      cookies,
+    ).request();
+    expect(response.status, mode).toBe(503);
+    expect(await response.json(), mode).toEqual({
+      detail: "Authentication service unavailable",
+    });
+    expectNoCookieMutation(response);
+  }
+
+  const deadline: { expire: () => void } = {
+    expire: () => {
+      throw new Error("deadline unavailable");
+    },
+  };
+  const harness = sessionRouteHarness(
+    "session/realtime-token",
+    {
+      setSession: async () => {
+        deadline.expire();
+        return accepted;
+      },
+    },
+    cookies,
+  );
+  deadline.expire = harness.expire;
+  const response = await harness.request();
+  expect(response.status).toBe(504);
+  expect(await response.json()).toEqual({
+    detail: "Authentication service timed out",
+  });
+  expectNoCookieMutation(response);
 });
 test("logout revokes locally with refresh fallback and clears cookies despite provider failure", async () => {
   for (const mode of [
