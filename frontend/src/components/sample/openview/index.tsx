@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  Suspense,
-  useEffect,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
 import {
@@ -36,8 +30,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { initialPeople, initialRoles } from "../access/model";
-import { INITIAL_RECORDS, type SampleRecord } from "../sample-data";
 import { useSampleState, useSampleStorage } from "../sample-state";
+import { sampleOperationMessage } from "../sample-async";
+import {
+  completeCollection,
+  pageCollection,
+  type PageResult,
+} from "../sample-collections";
 import { GanttView } from "./gantt";
 import { Alert } from "@/components/ui/alert";
 import {
@@ -137,7 +136,6 @@ import { filterOperatorLabel } from "./filter-helpers";
 import {
   OPENVIEW_MODULES,
   OPENVIEW_SECTIONS,
-  activeAudienceIdentities,
   audienceLabel,
   decodeAudienceRef,
   decodeSavedViews,
@@ -149,6 +147,7 @@ import {
   groupRows,
   isUnresolvedAudience,
   parseOpenViewUrl,
+  projectAudienceLookup,
   selectRows,
   serializeOpenViewUrl,
   type AudienceLookup,
@@ -171,39 +170,18 @@ import {
   getOpenViewOperationalProfile,
   summarizeOpenViewOperationalRows,
 } from "./operations";
+import { type LegacySavedView } from "./seeds";
+import {
+  type OpenViewCommandController,
+  useOpenViewResource,
+  useOpenViewCommands,
+} from "./controller";
 import SampleAnalytics from "./analytics";
 
-/**
- * Compatibility exports for the existing Access federation boundary. The
- * OpenView screen stores typed AudienceRef values; these legacy values are
- * produced only for the old read-only adapter until it adopts model.ts.
- */
-export type LegacyViewConfig = {
-  type: string;
-  search: string;
-  status: string;
-  sort: string;
-  group: string;
-};
-export type LegacySavedView = LegacyViewConfig & {
-  id: string;
-  name: string;
-  audience: string;
-};
-export type { LegacySavedView as SavedView };
-export const initialViewConfig: LegacyViewConfig = {
-  type: "Table",
-  search: "",
-  status: "All statuses",
-  sort: "title",
-  group: "None",
-};
-export const initialSavedViews: LegacySavedView[] = [];
-
-const legacyLookup: AudienceLookup = {
-  roles: initialRoles.map(({ id, name }) => ({ id, name })),
-  identities: initialPeople.map(({ id, name }) => ({ id, name })),
-};
+const legacyLookup: AudienceLookup = projectAudienceLookup(
+  initialRoles,
+  initialPeople,
+);
 
 export function normalizeSavedViews(raw: unknown): LegacySavedView[] {
   return decodeSavedViews(raw, legacyLookup).map((view) => {
@@ -237,10 +215,12 @@ type PendingTransition =
   | {
       kind: "section";
       section: OpenViewSection;
-      source: "view" | "dashboard";
+      source: "view" | "dashboard" | "chart" | "report";
     }
   | { kind: "module"; module: OpenViewModuleId; source: "view" }
   | { kind: "saved-view"; id: string; source: "view" };
+
+type OpenViewResetResult = { ok: true } | { ok: false; error: string };
 
 function dateRangeLabel(range: ViewLayout["dateRange"]): string {
   if (range === "week") return "Week";
@@ -507,6 +487,31 @@ function OpenViewLoading() {
   );
 }
 
+function OpenViewReadError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <Alert role="alert" variant="warning" className="flex flex-wrap gap-3">
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">OpenView data is temporarily unavailable.</p>
+        <p className="mt-1 text-sm">{message}</p>
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        className="min-h-11"
+        onClick={onRetry}
+      >
+        Retry
+      </Button>
+    </Alert>
+  );
+}
+
 export default function SampleOpenView() {
   return (
     <Suspense fallback={<OpenViewLoading />}>
@@ -523,46 +528,41 @@ function OpenViewContent() {
   const hasSection = query.has("section");
   const hasModule = query.has("module");
 
-  const [records] = useSampleState<SampleRecord[]>("records", INITIAL_RECORDS);
-  const [roles] = useSampleState("access-roles", initialRoles);
-  const [people] = useSampleState("access-people", initialPeople);
-  const [storedSection, setStoredSection] = useSampleState<unknown>(
+  const workspaceResource = useOpenViewResource();
+  const [, setStoredSection] = useSampleState<unknown>(
     "views-section",
     "views",
   );
-  const [storedModule, setStoredModule] = useSampleState<unknown>(
+  const [, setStoredModule] = useSampleState<unknown>(
     "views-module",
     "service-requests",
   );
-  const [storedConfig, setStoredConfig] = useSampleState<unknown>(
-    "views-current",
-    null,
-  );
-  const [rawSavedViews, setRawSavedViews] = useSampleState<unknown>(
-    "views-saved",
-    [],
-  );
-  const [storedDefault, setStoredDefault] = useSampleState<unknown>(
-    "views-default",
-    "",
-  );
-  const [storedDefaultMap, setStoredDefaultMap] = useSampleState<unknown>(
-    "views-defaults",
-    {},
-  );
-  const [storedSelectedView, setStoredSelectedView] = useSampleState<unknown>(
+  const [, setStoredSelectedView] = useSampleState<unknown>(
     "views-selected",
     "",
   );
-  const { resetKeys, storageUnavailable } = useSampleStorage();
+  const { storageUnavailable } = useSampleStorage();
+  const openViewCommands = useOpenViewCommands();
+  const openViewPending = openViewCommands.isPending();
   const [dashboardDirty, setDashboardDirty] = useState(false);
+  const [chartDirty, setChartDirty] = useState(false);
+  const [reportDirty, setReportDirty] = useState(false);
   const [pendingTransition, setPendingTransition] =
     useState<PendingTransition | null>(null);
 
-  const audienceLookup: AudienceLookup = {
-    roles: roles.map(({ id, name }) => ({ id, name })),
-    identities: activeAudienceIdentities(people),
-  };
+  const snapshot = workspaceResource.data;
+  const records = snapshot?.records ?? [];
+  const roles = snapshot?.roles ?? initialRoles;
+  const people = snapshot?.people ?? initialPeople;
+  const storedSection = snapshot?.section ?? "views";
+  const storedModule = snapshot?.module ?? "service-requests";
+  const storedConfig = snapshot?.config ?? null;
+  const rawSavedViews = snapshot?.savedViews ?? [];
+  const storedDefault = snapshot?.defaultId ?? "";
+  const storedDefaultMap = snapshot?.defaultMap ?? {};
+  const storedSelectedView = snapshot?.selectedView ?? "";
+
+  const audienceLookup = projectAudienceLookup(roles, people);
   const storedSectionValue = sectionFromUnknown(storedSection);
   const storedModuleValue = moduleIdFromUnknown(storedModule);
   const section =
@@ -599,6 +599,8 @@ function OpenViewContent() {
     activeSaved?.config ?? fallbackConfig,
   );
   const configKey = `${moduleId}:${selectedViewId}`;
+  const workspaceReady = snapshot !== undefined;
+  const workspaceReadyRef = useRef(false);
   const [draftConfig, setDraftConfig] = useState<ViewConfig>(() =>
     cloneConfig(initialConfig),
   );
@@ -616,12 +618,24 @@ function OpenViewContent() {
     );
 
   useEffect(() => {
-    if (draftKey === configKey) return;
+    if (!workspaceReady) return;
+    if (draftKey === configKey && workspaceReadyRef.current) return;
     const next = cloneConfig(initialConfig);
     setDraftConfig(next);
     setDraftKey(configKey);
-    setStoredConfig(next);
-  }, [configKey, draftKey, initialConfig, setStoredConfig]);
+    workspaceReadyRef.current = true;
+  }, [configKey, draftKey, initialConfig, workspaceReady]);
+
+  if (!snapshot) {
+    return workspaceResource.status === "error" ? (
+      <OpenViewReadError
+        message={workspaceResource.error}
+        onRetry={workspaceResource.reload}
+      />
+    ) : (
+      <OpenViewLoading />
+    );
+  }
 
   const updateUrl = (
     next: {
@@ -633,6 +647,7 @@ function OpenViewContent() {
     },
     options: { replace?: boolean } = {},
   ) => {
+    if (openViewPending) return;
     const target = serializeOpenViewUrl({
       section,
       module: moduleId,
@@ -648,7 +663,6 @@ function OpenViewContent() {
     const safe = sanitizeOpenViewConfig(decodeViewConfig(next));
     setDraftConfig(safe);
     setDraftKey(configKey);
-    setStoredConfig(safe);
   };
 
   const discardOpenViewDraft = () => {
@@ -657,13 +671,14 @@ function OpenViewContent() {
     );
     setDraftConfig(cloneConfig(next));
     setDraftKey(configKey);
-    setStoredConfig(next);
   };
 
   const performSectionChange = (next: OpenViewSection) => {
-    if (next === section) return;
+    if (openViewPending || next === section) return;
     if (section === "views" && openViewDirty) discardOpenViewDraft();
     if (section === "dashboards") setDashboardDirty(false);
+    if (section === "charts") setChartDirty(false);
+    if (section === "reports") setReportDirty(false);
     setStoredSection(next);
     updateUrl({
       section: next,
@@ -677,7 +692,7 @@ function OpenViewContent() {
   };
 
   const requestSectionChange = (next: OpenViewSection) => {
-    if (next === section) return;
+    if (openViewPending || next === section) return;
     if (section === "views" && openViewDirty) {
       setPendingTransition({ kind: "section", section: next, source: "view" });
       return;
@@ -690,11 +705,23 @@ function OpenViewContent() {
       });
       return;
     }
+    if (section === "charts" && chartDirty) {
+      setPendingTransition({ kind: "section", section: next, source: "chart" });
+      return;
+    }
+    if (section === "reports" && reportDirty) {
+      setPendingTransition({
+        kind: "section",
+        section: next,
+        source: "report",
+      });
+      return;
+    }
     performSectionChange(next);
   };
 
   const performModuleChange = (next: OpenViewModuleId) => {
-    if (next === moduleId) return;
+    if (openViewPending || next === moduleId) return;
     const nextDefaultId = defaults[next] ?? legacyDefaultId;
     const nextDefault = savedViews.find(
       (view) => view.id === nextDefaultId && view.moduleId === next,
@@ -705,7 +732,6 @@ function OpenViewContent() {
     );
     setStoredModule(next);
     setStoredSelectedView(nextSelection);
-    setStoredConfig(nextConfig);
     setDraftConfig(nextConfig);
     setDraftKey(`${next}:${nextSelection}`);
     updateUrl({
@@ -717,7 +743,7 @@ function OpenViewContent() {
   };
 
   const requestModuleChange = (next: OpenViewModuleId) => {
-    if (next === moduleId) return;
+    if (openViewPending || next === moduleId) return;
     if (section === "views" && openViewDirty) {
       setPendingTransition({ kind: "module", module: next, source: "view" });
       return;
@@ -726,7 +752,7 @@ function OpenViewContent() {
   };
 
   const performSavedViewSelection = (id: string) => {
-    if (id === selectedViewId) return;
+    if (openViewPending || id === selectedViewId) return;
     const next = savedViews.find(
       (view) => view.id === id && view.moduleId === moduleId,
     );
@@ -735,13 +761,12 @@ function OpenViewContent() {
       const nextConfig = sanitizeOpenViewConfig(cloneConfig(next.config));
       setDraftConfig(nextConfig);
       setDraftKey(`${moduleId}:${id}`);
-      setStoredConfig(nextConfig);
     }
     updateUrl({ section: "views", view: id || undefined, record: undefined });
   };
 
   const requestSavedViewSelection = (id: string) => {
-    if (id === selectedViewId) return;
+    if (openViewPending || id === selectedViewId) return;
     if (section === "views" && openViewDirty) {
       setPendingTransition({ kind: "saved-view", id, source: "view" });
       return;
@@ -750,6 +775,7 @@ function OpenViewContent() {
   };
 
   const confirmPendingTransition = () => {
+    if (openViewPending) return;
     const transition = pendingTransition;
     if (!transition) return;
     setPendingTransition(null);
@@ -780,8 +806,13 @@ function OpenViewContent() {
     ? rows.find((row) => row.id === selectedRecordId)
     : undefined;
   const unknownRecord = Boolean(selectedRecordId && !inspected);
+  const savedViewLinkCanBeJudged =
+    workspaceResource.status === "ready" &&
+    !workspaceResource.refreshing &&
+    workspaceResource.error === null;
   const isInvalidLink = Boolean(
-    urlState.invalid || (urlState.view && !activeSaved),
+    urlState.invalid ||
+    (savedViewLinkCanBeJudged && urlState.view && !activeSaved),
   );
   const activeFilterCount =
     config.filters.clauses.length + (config.search.trim() ? 1 : 0);
@@ -792,30 +823,48 @@ function OpenViewContent() {
       value: `role:${role.id}`,
       label: `Role: ${role.name}`,
     })),
-    ...activeAudienceIdentities(people).map((person) => ({
+    ...(audienceLookup.identities ?? []).map((person) => ({
       value: `identity:${person.id}`,
       label: `User: ${person.name}`,
     })),
   ];
 
-  const resetOpenView = () => {
-    resetKeys([
-      "views-section",
-      "views-module",
-      "views-current",
-      "views-saved",
-      "views-default",
-      "views-defaults",
-      "views-selected",
-      "views-dashboards",
-      "views-dashboard-selected",
-      "views-dashboard-default",
-      "views-chart",
-      "views-report-draft",
-      "views-report-templates",
-      "views-report-template-selected",
-    ]);
-    router.push("/openview", { scroll: false });
+  const acceptSavedView = (saved: ModelSavedView) => {
+    const nextConfig = sanitizeOpenViewConfig(cloneConfig(saved.config));
+    setStoredModule(saved.moduleId);
+    setStoredSelectedView(saved.id);
+    setDraftConfig(nextConfig);
+    setDraftKey(`${saved.moduleId}:${saved.id}`);
+    router.push(
+      serializeOpenViewUrl({
+        section: "views",
+        module: saved.moduleId,
+        view: saved.id,
+      }) as Route,
+      { scroll: false },
+    );
+  };
+
+  const resetOpenView = async (): Promise<OpenViewResetResult> => {
+    if (openViewPending)
+      return {
+        ok: false,
+        error: "Another OpenView change is still being saved.",
+      };
+    try {
+      const result = await openViewCommands.resetOpenView();
+      if (!result.ok) return { ok: false, error: result.error };
+      router.push("/openview", { scroll: false });
+      return { ok: true };
+    } catch (error) {
+      return {
+        ok: false,
+        error: sampleOperationMessage(
+          error,
+          "The OpenView settings could not be reset. Try again.",
+        ),
+      };
+    }
   };
 
   return (
@@ -854,6 +903,7 @@ function OpenViewContent() {
                   id="openview-module"
                   aria-label="Data source"
                   className="min-h-11"
+                  disabled={openViewPending}
                 >
                   {selectedModule.name}
                 </ComboboxTrigger>
@@ -909,6 +959,36 @@ function OpenViewContent() {
           only and may be lost on reload.
         </Alert>
       ) : null}
+      {workspaceResource.refreshing ? (
+        <Alert role="status" className="text-sm">
+          Refreshing OpenView data…
+        </Alert>
+      ) : null}
+      {openViewPending ? (
+        <Alert role="status" className="text-sm">
+          Saving an OpenView change… Navigation and conflicting actions are
+          paused until it finishes.
+        </Alert>
+      ) : null}
+      {workspaceResource.error ? (
+        <Alert
+          role="alert"
+          variant="warning"
+          className="flex flex-wrap items-center justify-between gap-3"
+        >
+          <span>
+            {workspaceResource.error} Your current data is still shown.
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={workspaceResource.reload}
+          >
+            Retry refresh
+          </Button>
+        </Alert>
+      ) : null}
       {isInvalidLink ? (
         <Alert
           role="alert"
@@ -922,6 +1002,7 @@ function OpenViewContent() {
           <Button
             variant="outline"
             className="min-h-11"
+            disabled={openViewPending}
             onClick={() =>
               updateUrl(
                 {
@@ -947,6 +1028,7 @@ function OpenViewContent() {
             id="openview-section-mobile"
             className="w-full [&_select]:min-h-11"
             value={section}
+            disabled={openViewPending}
             onChange={(event) =>
               requestSectionChange(sectionFromUnknown(event.target.value))
             }
@@ -977,6 +1059,7 @@ function OpenViewContent() {
                 value={entry}
                 type="button"
                 className="min-h-11 min-w-24"
+                disabled={openViewPending}
               >
                 {sectionLabels[entry]}
               </TabsTrigger>
@@ -998,15 +1081,10 @@ function OpenViewContent() {
           activeSaved={activeSaved}
           selectedViewId={selectedViewId}
           moduleDefault={moduleDefault}
-          defaultId={defaultId}
-          legacyDefaultId={legacyDefaultId}
           dirty={openViewDirty}
           audienceOptions={audienceOptions}
           lookup={audienceLookup}
-          setRawSavedViews={setRawSavedViews}
-          setStoredSelectedView={setStoredSelectedView}
-          setStoredDefault={setStoredDefault}
-          setStoredDefaultMap={setStoredDefaultMap}
+          commands={openViewCommands}
           selectSavedView={requestSavedViewSelection}
           updateUrl={updateUrl}
           inspected={inspected}
@@ -1016,14 +1094,13 @@ function OpenViewContent() {
           }
           onCloseInspect={() => updateUrl({ record: undefined })}
           onResetOpenView={resetOpenView}
+          onAcceptedView={acceptSavedView}
         />
       ) : (
         <SampleAnalytics
           section={section}
-          records={records}
-          rows={rows}
-          module={selectedModule}
-          config={config}
+          commands={openViewCommands}
+          snapshot={snapshot}
           audienceLookup={audienceLookup}
           moduleId={moduleId}
           dashboardUrlId={urlState.dashboard}
@@ -1036,11 +1113,15 @@ function OpenViewContent() {
             })
           }
           onDashboardDirtyChange={setDashboardDirty}
+          onChartDirtyChange={setChartDirty}
+          onReportDirtyChange={setReportDirty}
         />
       )}
       <AlertDialog
         open={pendingTransition !== null}
-        onOpenChange={(open) => !open && setPendingTransition(null)}
+        onOpenChange={(open) => {
+          if (!open && !openViewPending) setPendingTransition(null);
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1051,12 +1132,19 @@ function OpenViewContent() {
               Your current {pendingTransition?.source ?? "view"} draft has
               unsaved changes. Continuing will discard them.
             </AlertDialogDescription>
+            {openViewPending ? (
+              <p role="status" className="text-muted-foreground text-sm">
+                An OpenView change is still being saved. Keep editing until it
+                finishes.
+              </p>
+            ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <Button
               type="button"
               variant="outline"
               className="min-h-11"
+              disabled={openViewPending}
               onClick={() => setPendingTransition(null)}
             >
               Keep editing
@@ -1065,6 +1153,7 @@ function OpenViewContent() {
               type="button"
               variant="destructive"
               className="min-h-11"
+              disabled={openViewPending}
               onClick={confirmPendingTransition}
             >
               Discard and continue
@@ -1088,15 +1177,10 @@ type ViewsWorkspaceProps = {
   activeSaved?: ModelSavedView;
   selectedViewId: string;
   moduleDefault?: ModelSavedView;
-  defaultId: string;
-  legacyDefaultId: string;
   dirty: boolean;
   audienceOptions: { value: string; label: string }[];
   lookup: AudienceLookup;
-  setRawSavedViews: Dispatch<SetStateAction<unknown>>;
-  setStoredSelectedView: Dispatch<SetStateAction<unknown>>;
-  setStoredDefault: Dispatch<SetStateAction<unknown>>;
-  setStoredDefaultMap: Dispatch<SetStateAction<unknown>>;
+  commands: OpenViewCommandController;
   selectSavedView: (id: string) => void;
   updateUrl: (next: {
     section?: OpenViewSection;
@@ -1109,8 +1193,12 @@ type ViewsWorkspaceProps = {
   unknownRecord: boolean;
   onInspect: (id: string) => void;
   onCloseInspect: () => void;
-  onResetOpenView: () => void;
+  onResetOpenView: () => Promise<OpenViewResetResult>;
+  onAcceptedView: (view: ModelSavedView) => void;
 };
+
+type SaveViewIntent =
+  { kind: "create" } | { kind: "update"; id: string; expected: ModelSavedView };
 
 function ViewsWorkspace({
   module,
@@ -1124,15 +1212,10 @@ function ViewsWorkspace({
   activeSaved,
   selectedViewId,
   moduleDefault,
-  defaultId,
-  legacyDefaultId,
   dirty,
   audienceOptions,
   lookup,
-  setRawSavedViews,
-  setStoredSelectedView,
-  setStoredDefault,
-  setStoredDefaultMap,
+  commands,
   selectSavedView,
   updateUrl,
   inspected,
@@ -1140,6 +1223,7 @@ function ViewsWorkspace({
   onInspect,
   onCloseInspect,
   onResetOpenView,
+  onAcceptedView,
 }: ViewsWorkspaceProps) {
   const [filtersOpen, setFiltersOpen] = useState(activeFilterCount > 0);
   const [layoutOpen, setLayoutOpen] = useState(false);
@@ -1154,11 +1238,41 @@ function ViewsWorkspace({
   const [audience, setAudience] = useState(
     audienceValue(activeSaved?.audience ?? { kind: "private" }),
   );
+  const [saveIntent, setSaveIntent] = useState<SaveViewIntent | null>(null);
+  const [saveError, setSaveError] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [resetError, setResetError] = useState("");
   const [notice, setNotice] = useState("");
+  const [pageOffset, setPageOffset] = useState(0);
+  const draftRevision = useRef(0);
+  const effectiveSaveIntent: SaveViewIntent =
+    saveIntent ??
+    (activeSaved
+      ? { kind: "update", id: activeSaved.id, expected: activeSaved }
+      : { kind: "create" });
+  const saveKey = `openview.view.save:${
+    effectiveSaveIntent.kind === "update" ? effectiveSaveIntent.id : "new"
+  }`;
+  const deleteKey = `openview.view.delete:${activeSaved?.id ?? ""}`;
+  const commandPending = commands.isPending();
+  const savePending = commands.isPending(saveKey);
+  const deletePending = commands.isPending(deleteKey);
 
   const change = (partial: Partial<ViewConfig>) => {
+    draftRevision.current += 1;
     updateConfig({ ...config, ...partial });
+    setSaveError("");
     setNotice("");
+  };
+  const changeViewName = (value: string) => {
+    draftRevision.current += 1;
+    setViewName(value);
+    setSaveError("");
+  };
+  const changeAudience = (value: string) => {
+    draftRevision.current += 1;
+    setAudience(value);
+    setSaveError("");
   };
   const changeFilters = (filters: FilterGroup) => change({ filters });
   const changeLayout = (layout: ViewLayout) => change({ layout });
@@ -1172,7 +1286,7 @@ function ViewsWorkspace({
       setPendingAudience(nextAudience);
       return;
     }
-    setAudience(value);
+    changeAudience(value);
   };
   const filterCount = config.filters.clauses.length;
   const dateRangeLayout =
@@ -1181,7 +1295,31 @@ function ViewsWorkspace({
   const dateRangeSupported = dateRangeLayout && Boolean(dateField);
   const noDateRangeMatches =
     dateRangeSupported && matchingRows.length > 0 && selectedRows.length === 0;
-  const grouped = groupRows(selectedRows, config.groupBy);
+  const completeRows = completeCollection(
+    selectedRows,
+    `openview:${module.id}:${JSON.stringify({
+      search: config.search,
+      filters: config.filters,
+      sorts: config.sorts,
+      groupBy: config.groupBy,
+      layout: config.layout.kind,
+      dateRange: config.layout.dateRange,
+    })}`,
+  );
+  const page =
+    config.layout.kind === "table" && !config.groupBy
+      ? pageCollection(completeRows, pageOffset, 10)
+      : undefined;
+  const displayedRows = [...(page?.items ?? completeRows.items)];
+  const grouped = groupRows(displayedRows, config.groupBy);
+
+  useEffect(() => {
+    if (page && page.offset !== pageOffset) setPageOffset(page.offset);
+  }, [page, pageOffset]);
+
+  useEffect(() => {
+    setPageOffset(0);
+  }, [completeRows.queryKey]);
   const clearNoRows = () => {
     if (noDateRangeMatches) {
       change({
@@ -1219,13 +1357,21 @@ function ViewsWorkspace({
     </Empty>
   );
 
-  const saveCurrent = (
+  const saveCurrent = async (
     nextName: string,
     nextAudience: AudienceRef,
-    existingId?: string,
+    intent: SaveViewIntent,
   ) => {
+    if (commandPending) return;
+    setSaveError("");
     const cleanName = nextName.trim();
-    if (!cleanName) return;
+    if (!cleanName) {
+      const error = "Give this view a name before saving.";
+      setSaveError(error);
+      setNotice(error);
+      return;
+    }
+    const existingId = intent.kind === "update" ? intent.id : undefined;
     const view: ModelSavedView = {
       id: existingId ?? createSampleId("sample-view"),
       name: cleanName.slice(0, 80),
@@ -1233,25 +1379,46 @@ function ViewsWorkspace({
       audience: nextAudience,
       config: cloneConfig(config),
     };
-    setRawSavedViews((previous: unknown) => {
-      const decoded = decodeSavedViews(previous, lookup);
-      return [...decoded.filter((entry) => entry.id !== view.id), view];
-    });
-    setStoredSelectedView(view.id);
-    updateUrl({
-      section: "views",
-      module: module.id,
-      view: view.id,
-      record: undefined,
-    });
-    setSaveOpen(false);
-    setRenameOpen(false);
-    setViewName(view.name);
-    setAudience(audienceValue(view.audience));
-    setNotice(`“${view.name}” is saved in this sample workspace.`);
+    const submittedRevision = draftRevision.current;
+    setNotice("");
+    try {
+      const result = await commands.saveView({
+        view,
+        expectedId: existingId,
+        expected: intent.kind === "update" ? intent.expected : undefined,
+      });
+      if (!result.ok) {
+        setSaveError(result.error);
+        setNotice(result.error);
+        return;
+      }
+      const saved = result.value;
+      if (submittedRevision !== draftRevision.current) {
+        setNotice(
+          `“${saved.name}” was saved. Your newer edits remain open as an unsaved draft.`,
+        );
+        return;
+      }
+      onAcceptedView(saved);
+      setSaveOpen(false);
+      setRenameOpen(false);
+      setSaveIntent(null);
+      setSaveError("");
+      setViewName(saved.name);
+      setAudience(audienceValue(saved.audience));
+      setNotice(`“${saved.name}” is saved in this sample workspace.`);
+    } catch (error) {
+      const message = sampleOperationMessage(
+        error,
+        "The view could not be saved. Keep the editor open and try again.",
+      );
+      setSaveError(message);
+      setNotice(message);
+    }
   };
 
-  const duplicateView = () => {
+  const duplicateView = async () => {
+    if (commandPending) return;
     if (!activeSaved) return;
     const duplicate: ModelSavedView = {
       ...activeSaved,
@@ -1259,47 +1426,69 @@ function ViewsWorkspace({
       name: `${activeSaved.name} copy`.slice(0, 80),
       config: cloneConfig(config),
     };
-    setRawSavedViews((previous: unknown) => [
-      ...decodeSavedViews(previous, lookup),
-      duplicate,
-    ]);
-    setStoredSelectedView(duplicate.id);
-    updateUrl({
-      section: "views",
-      module: module.id,
-      view: duplicate.id,
-      record: undefined,
-    });
-    setNotice(`“${duplicate.name}” was duplicated.`);
+    const submittedRevision = draftRevision.current;
+    setNotice("");
+    try {
+      const result = await commands.duplicateView({
+        sourceId: activeSaved.id,
+        view: duplicate,
+        expectedSource: activeSaved,
+      });
+      if (!result.ok) {
+        setNotice(result.error);
+        return;
+      }
+      if (submittedRevision !== draftRevision.current) {
+        setNotice(
+          `“${result.value.name}” was duplicated. Your newer edits remain open as an unsaved draft.`,
+        );
+        return;
+      }
+      onAcceptedView(result.value);
+      setNotice(`“${result.value.name}” was duplicated.`);
+    } catch (error) {
+      setNotice(
+        sampleOperationMessage(
+          error,
+          "The view could not be duplicated. Try again.",
+        ),
+      );
+    }
   };
 
-  const deleteView = () => {
+  const deleteView = async () => {
+    if (commandPending) return;
     if (!activeSaved) return;
-    setRawSavedViews((previous: unknown) =>
-      decodeSavedViews(previous, lookup).filter(
-        (entry) => entry.id !== activeSaved.id,
-      ),
-    );
-    if (defaultId === activeSaved.id) {
-      setStoredDefaultMap((previous: unknown) => {
-        const next = { ...defaultMapFromUnknown(previous) };
-        delete next[module.id];
-        return next;
+    setNotice("");
+    setDeleteError("");
+    try {
+      const result = await commands.deleteView(activeSaved.id, activeSaved);
+      if (!result.ok) {
+        setDeleteError(result.error);
+        return;
+      }
+      updateUrl({
+        section: "views",
+        module: module.id,
+        view: undefined,
+        record: undefined,
       });
-      if (legacyDefaultId === activeSaved.id) setStoredDefault("");
+      selectSavedView("");
+      setDeleteError("");
+      setDeleteOpen(false);
+      setNotice(`“${activeSaved.name}” was deleted from this tab.`);
+    } catch (error) {
+      setDeleteError(
+        sampleOperationMessage(
+          error,
+          "The view could not be deleted. Try again.",
+        ),
+      );
     }
-    setStoredSelectedView("");
-    updateUrl({
-      section: "views",
-      module: module.id,
-      view: undefined,
-      record: undefined,
-    });
-    setDeleteOpen(false);
-    setNotice(`“${activeSaved.name}” was deleted from this tab.`);
   };
 
   const resetDraft = () => {
+    if (commandPending) return;
     const next = activeSaved?.config ?? defaultViewConfig(module.id);
     change(cloneConfig(next));
     setNotice(
@@ -1379,10 +1568,13 @@ function ViewsWorkspace({
               savedViews={savedViews}
               selectedViewId={selectedViewId}
               moduleDefault={moduleDefault}
+              disabled={commandPending}
               onSelect={selectSavedView}
               onCreate={() => {
+                setSaveIntent({ kind: "create" });
                 setViewName("");
                 setAudience("private");
+                setSaveError("");
                 setSaveOpen(true);
               }}
             />
@@ -1390,12 +1582,13 @@ function ViewsWorkspace({
               <Button
                 type="button"
                 className="min-h-11"
+                disabled={commandPending}
                 onClick={() =>
-                  saveCurrent(
-                    activeSaved.name,
-                    activeSaved.audience,
-                    activeSaved.id,
-                  )
+                  saveCurrent(activeSaved.name, activeSaved.audience, {
+                    kind: "update",
+                    id: activeSaved.id,
+                    expected: activeSaved,
+                  })
                 }
               >
                 <Save data-icon="inline-start" aria-hidden="true" /> Save
@@ -1406,11 +1599,22 @@ function ViewsWorkspace({
                 type="button"
                 variant="outline"
                 className="min-h-11"
+                disabled={commandPending}
                 onClick={() => {
+                  setSaveIntent(
+                    activeSaved
+                      ? {
+                          kind: "update",
+                          id: activeSaved.id,
+                          expected: activeSaved,
+                        }
+                      : { kind: "create" },
+                  );
                   setViewName(activeSaved?.name ?? "");
                   setAudience(
                     audienceValue(activeSaved?.audience ?? { kind: "private" }),
                   );
+                  setSaveError("");
                   setSaveOpen(true);
                 }}
               >
@@ -1443,9 +1647,16 @@ function ViewsWorkspace({
                     type="button"
                     variant="ghost"
                     className="min-h-11 justify-start"
-                    disabled={!activeSaved}
+                    disabled={!activeSaved || commandPending}
                     onClick={() => {
+                      if (!activeSaved) return;
+                      setSaveIntent({
+                        kind: "update",
+                        id: activeSaved.id,
+                        expected: activeSaved,
+                      });
                       setViewName(activeSaved?.name ?? "");
+                      setSaveError("");
                       setRenameOpen(true);
                     }}
                   >
@@ -1455,7 +1666,7 @@ function ViewsWorkspace({
                     type="button"
                     variant="ghost"
                     className="min-h-11 justify-start"
-                    disabled={!activeSaved}
+                    disabled={!activeSaved || commandPending}
                     onClick={duplicateView}
                   >
                     <Copy data-icon="inline-start" aria-hidden="true" />{" "}
@@ -1465,8 +1676,11 @@ function ViewsWorkspace({
                     type="button"
                     variant="ghost"
                     className="min-h-11 justify-start"
-                    disabled={!activeSaved}
-                    onClick={() => setDeleteOpen(true)}
+                    disabled={!activeSaved || commandPending}
+                    onClick={() => {
+                      setDeleteError("");
+                      setDeleteOpen(true);
+                    }}
                   >
                     <Trash2 data-icon="inline-start" aria-hidden="true" />{" "}
                     Delete view
@@ -1475,7 +1689,7 @@ function ViewsWorkspace({
                     type="button"
                     variant="ghost"
                     className="min-h-11 justify-start"
-                    disabled={!dirty}
+                    disabled={!dirty || commandPending}
                     onClick={resetDraft}
                   >
                     <RotateCcw data-icon="inline-start" aria-hidden="true" />{" "}
@@ -1485,6 +1699,7 @@ function ViewsWorkspace({
                     type="button"
                     variant="ghost"
                     className="min-h-11 justify-start"
+                    disabled={commandPending}
                     onClick={() => setResetOpen(true)}
                   >
                     Reset OpenView settings
@@ -1642,7 +1857,9 @@ function ViewsWorkspace({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary">
-            {selectedRows.length} of {rows.length} records
+            {page
+              ? `${page.items.length} of ${page.total} matching records`
+              : `${selectedRows.length} of ${rows.length} records`}
           </Badge>
           {dateRangeSupported ? (
             <Badge variant="outline">
@@ -1681,16 +1898,27 @@ function ViewsWorkspace({
             type="button"
             variant="ghost"
             className="min-h-11"
-            onClick={() => {
-              setStoredDefaultMap((previous: unknown) => {
-                const next = { ...defaultMapFromUnknown(previous) };
-                delete next[module.id];
-                return next;
-              });
-              if (legacyDefaultId === moduleDefault.id) setStoredDefault("");
-              setNotice(
-                `“${moduleDefault.name}” is no longer the default for ${module.name}.`,
-              );
+            disabled={commandPending}
+            onClick={async () => {
+              if (commandPending) return;
+              setNotice("");
+              try {
+                const result = await commands.setViewDefault(module.id, null);
+                if (!result.ok) {
+                  setNotice(result.error);
+                  return;
+                }
+                setNotice(
+                  `“${moduleDefault.name}” is no longer the default for ${module.name}.`,
+                );
+              } catch (error) {
+                setNotice(
+                  sampleOperationMessage(
+                    error,
+                    "The default could not be changed. Try again.",
+                  ),
+                );
+              }
             }}
           >
             Unset module default
@@ -1700,14 +1928,30 @@ function ViewsWorkspace({
             type="button"
             variant="ghost"
             className="min-h-11"
-            onClick={() => {
-              setStoredDefaultMap((previous: unknown) => ({
-                ...defaultMapFromUnknown(previous),
-                [module.id]: activeSaved.id,
-              }));
-              setNotice(
-                `“${activeSaved.name}” is now the default for ${module.name}.`,
-              );
+            disabled={commandPending}
+            onClick={async () => {
+              if (commandPending) return;
+              setNotice("");
+              try {
+                const result = await commands.setViewDefault(
+                  module.id,
+                  activeSaved.id,
+                );
+                if (!result.ok) {
+                  setNotice(result.error);
+                  return;
+                }
+                setNotice(
+                  `“${activeSaved.name}” is now the default for ${module.name}.`,
+                );
+              } catch (error) {
+                setNotice(
+                  sampleOperationMessage(
+                    error,
+                    "The default could not be changed. Try again.",
+                  ),
+                );
+              }
             }}
           >
             Set as module default
@@ -1715,7 +1959,14 @@ function ViewsWorkspace({
         ) : null}
       </div>
       {notice ? (
-        <Alert role="status" variant="success">
+        <Alert
+          role="status"
+          variant={
+            notice.includes("could not") || notice.includes("changed")
+              ? "warning"
+              : "success"
+          }
+        >
           {notice}
         </Alert>
       ) : null}
@@ -1754,6 +2005,8 @@ function ViewsWorkspace({
               grouped={grouped}
               layout={config.layout}
               groupBy={config.groupBy}
+              page={page}
+              onPageChange={setPageOffset}
               onInspect={onInspect}
             />
           ) : (
@@ -1775,34 +2028,50 @@ function ViewsWorkspace({
           grouped={grouped}
           layout={config.layout}
           groupBy={config.groupBy}
+          page={page}
+          onPageChange={setPageOffset}
           onInspect={onInspect}
         />
       )}
       <SaveViewDialog
         open={saveOpen}
-        onOpenChange={setSaveOpen}
+        onOpenChange={(open) => {
+          if (!open && savePending) return;
+          if (!open) {
+            setSaveIntent(null);
+            setSaveError("");
+          }
+          setSaveOpen(open);
+        }}
+        pending={savePending}
+        error={saveError}
         name={viewName}
-        onNameChange={setViewName}
+        onNameChange={changeViewName}
         audience={audience}
         onAudienceChange={handleAudienceChange}
         options={audienceOptions}
         description={
-          activeSaved
+          effectiveSaveIntent.kind === "update"
             ? "Update this saved view's configuration and audience preview."
             : "Save this configuration for quick reuse in this tab."
         }
-        submitLabel={activeSaved ? "Update view" : "Save view"}
+        submitLabel={
+          effectiveSaveIntent.kind === "update" ? "Update view" : "Save view"
+        }
         onSubmit={() =>
           saveCurrent(
             viewName,
             audienceFromValue(audience, lookup),
-            activeSaved?.id,
+            effectiveSaveIntent,
           )
         }
       />
       <AlertDialog
         open={pendingAudience !== null}
-        onOpenChange={(open) => !open && setPendingAudience(null)}
+        onOpenChange={(open) => {
+          if (!open && commandPending) return;
+          if (!open) setPendingAudience(null);
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1817,6 +2086,7 @@ function ViewsWorkspace({
               type="button"
               variant="outline"
               className="min-h-11"
+              disabled={commandPending}
               onClick={() => setPendingAudience(null)}
             >
               Not now
@@ -1824,9 +2094,10 @@ function ViewsWorkspace({
             <Button
               type="button"
               className="min-h-11"
+              disabled={commandPending}
               onClick={() => {
                 if (pendingAudience)
-                  setAudience(audienceValue(pendingAudience));
+                  changeAudience(audienceValue(pendingAudience));
                 setPendingAudience(null);
               }}
             >
@@ -1835,7 +2106,17 @@ function ViewsWorkspace({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+      <Dialog
+        open={renameOpen}
+        onOpenChange={(open) => {
+          if (!open && savePending) return;
+          if (!open) {
+            setSaveIntent(null);
+            setSaveError("");
+          }
+          setRenameOpen(open);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Rename saved view</DialogTitle>
@@ -1843,6 +2124,16 @@ function ViewsWorkspace({
               The name is stored locally with this sample workspace.
             </DialogDescription>
           </DialogHeader>
+          {savePending ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              Saving this view… Keep the rename dialog open until it finishes.
+            </p>
+          ) : null}
+          {saveError ? (
+            <Alert role="alert" variant="destructive">
+              {saveError}
+            </Alert>
+          ) : null}
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="openview-rename">View name</FieldLabel>
@@ -1851,7 +2142,8 @@ function ViewsWorkspace({
                 className="min-h-11"
                 maxLength={80}
                 value={viewName}
-                onChange={(event) => setViewName(event.target.value)}
+                disabled={savePending}
+                onChange={(event) => changeViewName(event.target.value)}
               />
             </Field>
           </FieldGroup>
@@ -1860,6 +2152,7 @@ function ViewsWorkspace({
               type="button"
               variant="outline"
               className="min-h-11"
+              disabled={savePending}
               onClick={() => setRenameOpen(false)}
             >
               Cancel
@@ -1867,9 +2160,14 @@ function ViewsWorkspace({
             <Button
               type="button"
               className="min-h-11"
+              disabled={!activeSaved || savePending}
               onClick={() =>
-                activeSaved &&
-                saveCurrent(viewName, activeSaved.audience, activeSaved.id)
+                effectiveSaveIntent.kind === "update" &&
+                saveCurrent(
+                  viewName,
+                  effectiveSaveIntent.expected.audience,
+                  effectiveSaveIntent,
+                )
               }
             >
               Rename view
@@ -1877,7 +2175,14 @@ function ViewsWorkspace({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <AlertDialog
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          if (!open && deletePending) return;
+          if (!open) setDeleteError("");
+          setDeleteOpen(open);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this saved view?</AlertDialogTitle>
@@ -1886,12 +2191,26 @@ function ViewsWorkspace({
               delete any records.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deletePending ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              Deleting this view… Keep the confirmation open until it finishes.
+            </p>
+          ) : null}
+          {deleteError ? (
+            <Alert role="alert" variant="warning">
+              {deleteError}
+            </Alert>
+          ) : null}
           <AlertDialogFooter>
             <Button
               type="button"
               variant="outline"
               className="min-h-11"
-              onClick={() => setDeleteOpen(false)}
+              disabled={deletePending}
+              onClick={() => {
+                setDeleteError("");
+                setDeleteOpen(false);
+              }}
             >
               Cancel
             </Button>
@@ -1899,14 +2218,22 @@ function ViewsWorkspace({
               type="button"
               variant="destructive"
               className="min-h-11"
+              disabled={deletePending}
               onClick={deleteView}
             >
-              Delete view
+              {commands.isPending(deleteKey) ? "Deleting…" : "Delete view"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+      <AlertDialog
+        open={resetOpen}
+        onOpenChange={(open) => {
+          if (!open && commandPending) return;
+          if (!open) setResetError("");
+          setResetOpen(open);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Reset OpenView settings?</AlertDialogTitle>
@@ -1915,12 +2242,22 @@ function ViewsWorkspace({
               OpenView configuration. Records are not changed.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {commandPending ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              An OpenView change is still being saved. Keep this confirmation
+              open until it finishes.
+            </p>
+          ) : null}
           <AlertDialogFooter>
             <Button
               type="button"
               variant="outline"
               className="min-h-11"
-              onClick={() => setResetOpen(false)}
+              disabled={commandPending}
+              onClick={() => {
+                setResetError("");
+                setResetOpen(false);
+              }}
             >
               Cancel
             </Button>
@@ -1928,14 +2265,24 @@ function ViewsWorkspace({
               type="button"
               variant="destructive"
               className="min-h-11"
-              onClick={() => {
-                setResetOpen(false);
-                onResetOpenView();
+              disabled={commandPending}
+              onClick={async () => {
+                setResetError("");
+                const result = await onResetOpenView();
+                if (result.ok) {
+                  setResetError("");
+                  setResetOpen(false);
+                } else setResetError(result.error);
               }}
             >
-              Reset OpenView
+              {commandPending ? "Resetting OpenView…" : "Reset OpenView"}
             </Button>
           </AlertDialogFooter>
+          {resetError ? (
+            <Alert role="alert" variant="warning">
+              {resetError}
+            </Alert>
+          ) : null}
         </AlertDialogContent>
       </AlertDialog>
     </div>
@@ -1947,6 +2294,7 @@ function SavedViewMenu({
   savedViews,
   selectedViewId,
   moduleDefault,
+  disabled = false,
   onSelect,
   onCreate,
 }: {
@@ -1954,6 +2302,7 @@ function SavedViewMenu({
   savedViews: ModelSavedView[];
   selectedViewId: string;
   moduleDefault?: ModelSavedView;
+  disabled?: boolean;
   onSelect: (id: string) => void;
   onCreate: () => void;
 }) {
@@ -1968,6 +2317,7 @@ function SavedViewMenu({
           id="openview-saved-view"
           className="min-h-11"
           value={selectedViewId}
+          disabled={disabled}
           onValueChange={onSelect}
           aria-label="Saved view"
         >
@@ -1986,6 +2336,7 @@ function SavedViewMenu({
         size="icon"
         className="size-11"
         aria-label="Create saved view"
+        disabled={disabled}
         onClick={onCreate}
       >
         <Plus aria-hidden="true" />
@@ -2533,12 +2884,16 @@ function RecordResults({
   grouped,
   layout,
   groupBy,
+  page,
+  onPageChange,
   onInspect,
 }: {
   module: OpenViewModule;
   grouped: { label: string; rows: OpenViewRow[] }[];
   layout: ViewLayout;
   groupBy: string | null;
+  page?: PageResult<OpenViewRow>;
+  onPageChange?: (offset: number) => void;
   onInspect: (id: string) => void;
 }) {
   const anchorRows = grouped.flatMap((group) => group.rows);
@@ -2548,14 +2903,19 @@ function RecordResults({
       groupBy === getOpenViewOperationalProfile(module.id).statusField);
   if (usesOperationalStatusLanes) {
     return (
-      <RecordLayout
-        module={module}
-        rows={anchorRows}
-        anchorRows={anchorRows}
-        layout={layout}
-        groupBy={groupBy}
-        onInspect={onInspect}
-      />
+      <div className="flex min-w-0 flex-col gap-3">
+        <RecordLayout
+          module={module}
+          rows={anchorRows}
+          anchorRows={anchorRows}
+          layout={layout}
+          groupBy={groupBy}
+          onInspect={onInspect}
+        />
+        {page && onPageChange ? (
+          <OpenViewPageControls page={page} onPageChange={onPageChange} />
+        ) : null}
+      </div>
     );
   }
   return (
@@ -2589,7 +2949,52 @@ function RecordResults({
           />
         </section>
       ))}
+      {page && onPageChange ? (
+        <OpenViewPageControls page={page} onPageChange={onPageChange} />
+      ) : null}
     </div>
+  );
+}
+
+function OpenViewPageControls({
+  page,
+  onPageChange,
+}: {
+  page: PageResult<OpenViewRow>;
+  onPageChange: (offset: number) => void;
+}) {
+  if (page.total <= page.limit) return null;
+  const first = page.offset + 1;
+  const last = Math.min(page.offset + page.items.length, page.total);
+  return (
+    <nav
+      aria-label="OpenView record pages"
+      className="flex flex-wrap items-center justify-between gap-3 border-t pt-3"
+    >
+      <p className="text-muted-foreground text-sm" aria-live="polite">
+        Showing {first}–{last} of {page.total} matching records
+      </p>
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          disabled={page.offset === 0}
+          onClick={() => onPageChange(Math.max(0, page.offset - page.limit))}
+        >
+          <ArrowLeft data-icon="inline-start" aria-hidden="true" /> Previous
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          disabled={page.offset + page.items.length >= page.total}
+          onClick={() => onPageChange(page.offset + page.limit)}
+        >
+          Next <ArrowRight data-icon="inline-end" aria-hidden="true" />
+        </Button>
+      </div>
+    </nav>
   );
 }
 
@@ -3530,6 +3935,8 @@ function RecordInspector({
 function SaveViewDialog({
   open,
   onOpenChange,
+  pending,
+  error,
   name,
   onNameChange,
   audience,
@@ -3541,6 +3948,8 @@ function SaveViewDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  pending: boolean;
+  error: string;
   name: string;
   onNameChange: (value: string) => void;
   audience: string;
@@ -3548,15 +3957,31 @@ function SaveViewDialog({
   options: { value: string; label: string }[];
   description: string;
   submitLabel: string;
-  onSubmit: () => void;
+  onSubmit: () => void | Promise<void>;
 }) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && pending) return;
+        onOpenChange(nextOpen);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Save view</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
+        {pending ? (
+          <p role="status" className="text-muted-foreground text-sm">
+            Saving this view… Keep the dialog open until it finishes.
+          </p>
+        ) : null}
+        {error ? (
+          <Alert role="alert" variant="destructive">
+            {error}
+          </Alert>
+        ) : null}
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor="openview-view-name">View name</FieldLabel>
@@ -3565,6 +3990,7 @@ function SaveViewDialog({
               className="min-h-11"
               maxLength={80}
               value={name}
+              disabled={pending}
               onChange={(event) => onNameChange(event.target.value)}
               placeholder="e.g. Dispatch queue"
             />
@@ -3577,6 +4003,7 @@ function SaveViewDialog({
               id="openview-view-audience"
               className="min-h-11"
               value={audience}
+              disabled={pending}
               onValueChange={onAudienceChange}
             >
               {options.map((option) => (
@@ -3595,6 +4022,7 @@ function SaveViewDialog({
             type="button"
             variant="outline"
             className="min-h-11"
+            disabled={pending}
             onClick={() => onOpenChange(false)}
           >
             Cancel
@@ -3602,10 +4030,10 @@ function SaveViewDialog({
           <Button
             type="button"
             className="min-h-11"
-            disabled={!name.trim()}
+            disabled={pending || !name.trim()}
             onClick={onSubmit}
           >
-            {submitLabel}
+            {pending ? "Saving…" : submitLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

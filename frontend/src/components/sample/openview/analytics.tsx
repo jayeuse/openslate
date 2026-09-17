@@ -81,24 +81,15 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
-import { useSampleState } from "@/components/sample/sample-state";
-import type { SampleRecord } from "@/components/sample/sample-data";
-import {
-  initialPeople,
-  initialRoles,
-  type Person,
-  type Role,
-} from "../access/model";
-import { WidgetSurface, type SampleWidget } from "./widgets";
+import { sampleOperationMessage } from "../sample-async";
+import { WidgetSurface } from "./widgets";
 import { OpenViewChartPreview } from "./chart-preview";
 import { OpenViewAudienceConfirmation } from "./audience-confirmation";
 import { OpenViewFilterEditor } from "./filter-editor";
+import { initialReport, type Report } from "./seeds";
 import {
-  INITIAL_CHART_SETTINGS,
-  INITIAL_DASHBOARDS,
   OPENVIEW_MODULE_IDS,
   OPENVIEW_MODULES,
-  activeAudienceIdentities,
   audienceLabel,
   decodeAudienceRef,
   decodeChartSettings,
@@ -122,7 +113,6 @@ import {
   type ChartSettings,
   type FilterGroup,
   type FilterOperator,
-  type OpenViewModule,
   type OpenViewModuleId,
   type OpenViewRow,
   type OpenViewWidget,
@@ -132,39 +122,13 @@ import {
   type Dashboard as OpenViewDashboard,
 } from "./model";
 import {
+  type OpenViewCommandController,
+  type OpenViewReadSnapshot,
+} from "./controller";
+import {
   OPENVIEW_SAMPLE_SNAPSHOT_DATE,
   OPENVIEW_SAMPLE_TIMEZONE,
 } from "./operations";
-
-/*
- * Access still consumes the original sample-workspace shapes. These exports
- * intentionally remain compatible adapters; OpenView itself uses the typed
- * model records below and writes legacy-compatible owner slices.
- */
-export type Dashboard = {
-  id: string;
-  name: string;
-  permission?: string;
-  audience?: AudienceRef;
-  refresh: string;
-  widgets: Array<Omit<SampleWidget, "permission"> & { permission?: string }>;
-};
-
-export type Report = {
-  id?: string;
-  name: string;
-  subtitle?: string;
-  moduleId?: OpenViewModuleId;
-  fields: string[];
-  grouping: string | null;
-  totals: boolean;
-  schedule: string;
-  audience: string | AudienceRef;
-  audienceLabel?: string;
-  permission?: string;
-  filters?: unknown;
-  sorts?: unknown;
-};
 
 const legacyReportSchema = z.object({
   id: z.string().optional(),
@@ -213,47 +177,6 @@ export function normalizeReports(raw: unknown): Report[] {
   });
 }
 
-export const initialReport: Report = {
-  name: "Weekly service review",
-  fields: ["title", "status", "assignee"],
-  grouping: "status",
-  totals: true,
-  schedule: "Manual",
-  audience: { kind: "private" },
-  audienceLabel: "Only me",
-  permission: "Only me",
-};
-
-export const initialDashboards: Dashboard[] = [
-  {
-    id: "sample-dashboard-operations",
-    name: "Operations pulse",
-    permission: "Everyone",
-    audience: { kind: "everyone" },
-    refresh: "Manual",
-    widgets: [
-      {
-        id: "sample-widget-summary",
-        type: "Summary",
-        size: "Full",
-        permission: "Everyone",
-        refresh: "Manual",
-        pinned: false,
-      },
-      {
-        id: "sample-widget-workload",
-        type: "Workload",
-        size: "Half",
-        permission: "Everyone",
-        refresh: "Manual",
-        pinned: false,
-      },
-    ],
-  },
-];
-
-export const initialReportTemplates: Report[] = [];
-
 const cadenceLabels: Record<RefreshCadence, string> = {
   manual: "Manual",
   "one-minute": "Every minute",
@@ -287,13 +210,6 @@ function makeId(prefix: string): string {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
-}
-
-function lookupFor(roles: Role[], people: Person[]): AudienceLookup {
-  return {
-    roles: roles.map(({ id, name }) => ({ id, name })),
-    identities: activeAudienceIdentities(people),
-  };
 }
 
 function audienceValue(audience: AudienceRef): string {
@@ -378,41 +294,6 @@ function formatSampleSnapshotDate(
 
 function valueFor(row: OpenViewRow, fieldId: string): string {
   return String(row.values[fieldId] ?? "");
-}
-
-function toLegacyDashboard(
-  dashboard: OpenViewDashboard,
-  lookup: AudienceLookup,
-): Dashboard {
-  return {
-    id: dashboard.id,
-    name: dashboard.name,
-    permission: audienceLabel(dashboard.audience, lookup),
-    audience: clone(dashboard.audience),
-    refresh: refreshLabel(dashboard.refresh),
-    widgets: dashboard.widgets.map((widget) => ({
-      id: widget.id,
-      name: widget.name,
-      type:
-        widget.type === "summary"
-          ? "Summary"
-          : widget.type === "workload"
-            ? "Workload"
-            : widget.type === "chart"
-              ? "Chart"
-              : "OpenView",
-      size: widget.size === "full" ? "Full" : "Half",
-      permission: audienceLabel(widget.audience, lookup),
-      refresh: refreshLabel(widget.refresh),
-      pinned: widget.pinned,
-      moduleId: widget.moduleId,
-      audience: widget.audience,
-      fields: [...widget.fields],
-      filters: clone(widget.filters),
-      metric: widget.metric,
-      visualization: widget.visualization,
-    })),
-  };
 }
 
 function toLegacyReport(
@@ -586,27 +467,25 @@ function AudienceField({
   id,
   label = "Audience preview",
   audience,
-  roles,
-  people,
+  audienceLookup,
   onChange,
 }: {
   id: string;
   label?: string;
   audience: AudienceRef;
-  roles: Role[];
-  people: Person[];
+  audienceLookup: AudienceLookup;
   onChange: (audience: AudienceRef) => void;
 }) {
   const [pending, setPending] = useState<AudienceRef | null>(null);
-  const lookup = lookupFor(roles, people);
+  const lookup = audienceLookup;
   const audienceOptions = [
     { value: "private", label: "Only me" },
     { value: "everyone", label: "Everyone" },
-    ...roles.map((role) => ({
+    ...(lookup.roles ?? []).map((role) => ({
       value: `role:${role.id}`,
       label: `Role: ${role.name}`,
     })),
-    ...activeAudienceIdentities(people).map((person) => ({
+    ...(lookup.identities ?? []).map((person) => ({
       value: `identity:${person.id}`,
       label: `User: ${person.name}`,
     })),
@@ -790,36 +669,37 @@ function Workbench({
 }
 
 function Dashboards({
-  records,
   moduleId = "service-requests",
   dashboardUrlId,
+  commands,
+  snapshot,
+  audienceLookup,
   onDashboardUrlChange,
   onDashboardDirtyChange,
 }: {
-  records: SampleRecord[];
   moduleId?: OpenViewModuleId;
   dashboardUrlId?: string;
+  commands: OpenViewCommandController;
+  snapshot: OpenViewReadSnapshot;
+  audienceLookup: AudienceLookup;
   onDashboardUrlChange?: (id: string | undefined) => void;
   onDashboardDirtyChange?: (dirty: boolean) => void;
 }) {
-  const [roles] = useSampleState("access-roles", initialRoles);
-  const [people] = useSampleState("access-people", initialPeople);
-  const lookup = lookupFor(roles, people);
-  const [rawDashboards, setRawDashboards] = useSampleState<unknown>(
-    "views-dashboards",
-    null,
+  const lookup = audienceLookup;
+  const commandPending = commands.isPending();
+  const records = snapshot.records;
+  const rawDashboards = snapshot.dashboards;
+  const storedSelectedId = snapshot.dashboardSelected;
+  const storedDefaultId = snapshot.dashboardDefault;
+  const [selectedId, setSelectedId] = useState(
+    typeof storedSelectedId === "string" ? storedSelectedId : "",
   );
-  const [selectedId, setSelectedId] = useSampleState(
-    "views-dashboard-selected",
-    "",
-  );
-  const [defaultId, setDefaultId] = useSampleState(
-    "views-dashboard-default",
-    "",
+  const [defaultId, setDefaultId] = useState(
+    typeof storedDefaultId === "string" ? storedDefaultId : "",
   );
   const dashboards = useMemo(
-    () => normalizeDashboards(rawDashboards ?? initialDashboards, lookup),
-    [rawDashboards, lookup.roles, lookup.identities],
+    () => normalizeDashboards(rawDashboards, audienceLookup),
+    [rawDashboards, audienceLookup.roles, audienceLookup.identities],
   );
   const urlDashboard = dashboardUrlId
     ? dashboards.find((dashboard) => dashboard.id === dashboardUrlId)
@@ -834,12 +714,23 @@ function Dashboards({
     urlDashboard ?? storedDashboard ?? defaultDashboardRecord ?? dashboards[0];
   const unknownUrlDashboard = Boolean(dashboardUrlId && !urlDashboard);
   const fallback = useMemo(
-    () => clone(INITIAL_DASHBOARDS[0] ?? defaultDashboard("Operations pulse")),
+    () => clone(defaultDashboard("Operations pulse")),
     [],
   );
   const [draft, setDraft] = useState<OpenViewDashboard>(() =>
     clone(selected ?? fallback),
   );
+  const deletePending = commands.isPending(
+    `openview.dashboard.delete:${draft.id}`,
+  );
+  const draftRevision = useRef(0);
+  const updateDraft = (
+    action:
+      OpenViewDashboard | ((current: OpenViewDashboard) => OpenViewDashboard),
+  ) => {
+    draftRevision.current += 1;
+    setDraft(action);
+  };
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [pendingSelection, setPendingSelection] = useState<string | null>(null);
@@ -847,6 +738,7 @@ function Dashboards({
     { kind: "create"; name: string } | { kind: "duplicate" } | null
   >(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [message, setMessage] = useState("");
   const dirty = selected
     ? JSON.stringify(draft) !== JSON.stringify(selected)
@@ -859,60 +751,107 @@ function Dashboards({
   }, [dirty, onDashboardDirtyChange]);
 
   useEffect(() => {
-    if (selected && selected.id !== draft.id) setDraft(clone(selected));
+    if (selected && selected.id !== draft.id) {
+      draftRevision.current = 0;
+      setDraft(clone(selected));
+    }
   }, [selected?.id, draft.id]);
 
-  function persist(next: OpenViewDashboard[]) {
-    setRawDashboards(
-      next.map((dashboard) => toLegacyDashboard(dashboard, lookup)),
-    );
-  }
-
   function chooseDashboard(id: string) {
+    if (commandPending) return;
     if (id === draft.id || !dirty) {
       setSelectedId(id);
       const next = dashboards.find((dashboard) => dashboard.id === id);
-      if (next) setDraft(clone(next));
+      if (next) {
+        draftRevision.current = 0;
+        setDraft(clone(next));
+      }
       onDashboardUrlChange?.(id);
       return;
     }
     setPendingSelection(id);
   }
 
-  function saveDashboard() {
+  async function saveDashboard() {
+    if (commandPending) return;
     const name = draft.name.trim();
     if (!name) {
       setMessage("Give this dashboard a name before saving.");
       return;
     }
     const nextDashboard = { ...draft, name };
-    persist(
-      dashboards.some((item) => item.id === nextDashboard.id)
-        ? dashboards.map((item) =>
-            item.id === nextDashboard.id ? nextDashboard : item,
-          )
-        : [...dashboards, nextDashboard],
-    );
-    setDraft(nextDashboard);
-    setSelectedId(nextDashboard.id);
-    onDashboardUrlChange?.(nextDashboard.id);
-    setMessage(
-      "Dashboard saved in this tab. Audience and refresh remain previews.",
-    );
+    const submittedRevision = draftRevision.current;
+    setMessage("");
+    try {
+      const expected = selected?.id === nextDashboard.id ? selected : undefined;
+      const result = await commands.saveDashboard({
+        dashboard: nextDashboard,
+        expectedId: expected?.id,
+        expected,
+      });
+      if (!result.ok) {
+        setMessage(result.error);
+        return;
+      }
+      if (submittedRevision !== draftRevision.current) {
+        setMessage(
+          "Dashboard saved. Your newer edits remain open as an unsaved draft.",
+        );
+        return;
+      }
+      draftRevision.current = 0;
+      setDraft(result.value);
+      setSelectedId(result.value.id);
+      onDashboardUrlChange?.(result.value.id);
+      setMessage(
+        "Dashboard saved in this tab. Audience and refresh remain previews.",
+      );
+    } catch (error) {
+      setMessage(
+        sampleOperationMessage(
+          error,
+          "The dashboard could not be saved. Keep the editor open and try again.",
+        ),
+      );
+    }
   }
 
-  function commitCreateDashboard(name: string) {
+  async function commitCreateDashboard(name: string) {
+    if (commandPending) return;
     const dashboard = defaultDashboard(name || "New dashboard");
-    persist([...dashboards, dashboard]);
-    setSelectedId(dashboard.id);
-    onDashboardUrlChange?.(dashboard.id);
-    setDraft(dashboard);
-    setCreateName("");
-    setCreateOpen(false);
-    setMessage("Dashboard created in this tab.");
+    const submittedRevision = draftRevision.current;
+    setMessage("");
+    try {
+      const result = await commands.createDashboard(dashboard);
+      if (!result.ok) {
+        setMessage(result.error);
+        return;
+      }
+      if (submittedRevision !== draftRevision.current) {
+        setMessage(
+          "Dashboard created. Your newer edits remain open as an unsaved draft.",
+        );
+        return;
+      }
+      draftRevision.current = 0;
+      setSelectedId(result.value.id);
+      onDashboardUrlChange?.(result.value.id);
+      setDraft(result.value);
+      setCreateName("");
+      setCreateOpen(false);
+      setMessage("Dashboard created in this tab.");
+    } catch (error) {
+      setMessage(
+        sampleOperationMessage(
+          error,
+          "The dashboard could not be created. Try again.",
+        ),
+      );
+    }
   }
 
   function requestCreateDashboard(name: string) {
+    if (commandPending) return;
     if (dirty) {
       setPendingTransition({ kind: "create", name });
       return;
@@ -925,7 +864,8 @@ function Dashboards({
     requestCreateDashboard(createName.trim() || "New dashboard");
   }
 
-  function commitDuplicateDashboard() {
+  async function commitDuplicateDashboard() {
+    if (commandPending) return;
     const dashboard = {
       ...clone(draft),
       id: makeId("sample-dashboard"),
@@ -935,14 +875,41 @@ function Dashboards({
         id: makeId("sample-widget"),
       })),
     };
-    persist([...dashboards, dashboard]);
-    setSelectedId(dashboard.id);
-    onDashboardUrlChange?.(dashboard.id);
-    setDraft(dashboard);
-    setMessage("Dashboard duplicated.");
+    const submittedRevision = draftRevision.current;
+    setMessage("");
+    try {
+      const result = await commands.duplicateDashboard({
+        sourceId: draft.id,
+        dashboard,
+        expectedSource: selected?.id === draft.id ? selected : undefined,
+      });
+      if (!result.ok) {
+        setMessage(result.error);
+        return;
+      }
+      if (submittedRevision !== draftRevision.current) {
+        setMessage(
+          "Dashboard duplicated. Your newer edits remain open as an unsaved draft.",
+        );
+        return;
+      }
+      draftRevision.current = 0;
+      setSelectedId(result.value.id);
+      onDashboardUrlChange?.(result.value.id);
+      setDraft(result.value);
+      setMessage("Dashboard duplicated.");
+    } catch (error) {
+      setMessage(
+        sampleOperationMessage(
+          error,
+          "The dashboard could not be duplicated. Try again.",
+        ),
+      );
+    }
   }
 
   function duplicateDashboard() {
+    if (commandPending) return;
     if (dirty) {
       setPendingTransition({ kind: "duplicate" });
       return;
@@ -951,7 +918,7 @@ function Dashboards({
   }
 
   function handleSurfaceChange(next: OpenViewWidget[]) {
-    setDraft((current) => ({ ...current, widgets: next }));
+    updateDraft((current) => ({ ...current, widgets: next }));
   }
 
   if (!selected && dashboards.length === 0) {
@@ -968,6 +935,7 @@ function Dashboards({
             <div className="mb-5">
               <DashboardLinkWarning
                 hasFallback={false}
+                disabled={commandPending}
                 onClear={() => onDashboardUrlChange?.(undefined)}
               />
             </div>
@@ -979,6 +947,7 @@ function Dashboards({
             action={
               <Button
                 className="min-h-11"
+                disabled={commandPending}
                 onClick={() => requestCreateDashboard("New dashboard")}
               >
                 <Plus data-icon="inline-start" />
@@ -1004,6 +973,7 @@ function Dashboards({
           id="openview-dashboard"
           label="Dashboard"
           value={activeDashboard.id}
+          disabled={commandPending}
           values={dashboards.map((dashboard) => ({
             value: dashboard.id,
             label: dashboard.name,
@@ -1014,6 +984,7 @@ function Dashboards({
           <Button
             variant="outline"
             className="min-h-11"
+            disabled={commandPending}
             onClick={() => setCreateOpen((open) => !open)}
           >
             <Plus data-icon="inline-start" />
@@ -1022,6 +993,7 @@ function Dashboards({
           <Button
             variant="ghost"
             className="min-h-11"
+            disabled={commandPending}
             onClick={duplicateDashboard}
           >
             <Copy data-icon="inline-start" />
@@ -1053,14 +1025,18 @@ function Dashboards({
                   value={createName}
                   maxLength={80}
                   autoFocus
+                  disabled={commandPending}
                   onChange={(event) => setCreateName(event.target.value)}
                 />
               </Field>
-              <Button className="min-h-11">Create dashboard</Button>
+              <Button className="min-h-11" disabled={commandPending}>
+                Create dashboard
+              </Button>
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-11"
+                disabled={commandPending}
                 onClick={() => setCreateOpen(false)}
               >
                 Cancel
@@ -1071,6 +1047,7 @@ function Dashboards({
       ) : null}
       {unknownUrlDashboard ? (
         <DashboardLinkWarning
+          disabled={commandPending}
           onClear={() => onDashboardUrlChange?.(undefined)}
         />
       ) : null}
@@ -1086,7 +1063,7 @@ function Dashboards({
                   value={draft.name}
                   maxLength={80}
                   onChange={(event) =>
-                    setDraft((current) => ({
+                    updateDraft((current) => ({
                       ...current,
                       name: event.target.value,
                     }))
@@ -1121,17 +1098,16 @@ function Dashboards({
             <AudienceField
               id="dashboard-audience"
               audience={draft.audience}
-              roles={roles}
-              people={people}
+              audienceLookup={lookup}
               onChange={(audience) =>
-                setDraft((current) => ({ ...current, audience }))
+                updateDraft((current) => ({ ...current, audience }))
               }
             />
             <RefreshField
               id="dashboard-refresh"
               value={draft.refresh}
               onChange={(refresh) =>
-                setDraft((current) => ({ ...current, refresh }))
+                updateDraft((current) => ({ ...current, refresh }))
               }
             />
           </div>
@@ -1158,9 +1134,9 @@ function Dashboards({
               </p>
             </div>
             <WidgetCatalog
-              disabled={draft.widgets.length >= 12}
+              disabled={draft.widgets.length >= 12 || commandPending}
               onAdd={(type) =>
-                setDraft((current) =>
+                updateDraft((current) =>
                   current.widgets.length >= 12
                     ? current
                     : {
@@ -1195,15 +1171,27 @@ function Dashboards({
         </CardContent>
         <CardFooter className="flex-wrap justify-between">
           <div className="flex flex-wrap gap-2">
-            <Button className="min-h-11" onClick={saveDashboard}>
+            <Button
+              className="min-h-11"
+              disabled={commandPending}
+              onClick={() => void saveDashboard()}
+            >
               <Save data-icon="inline-start" />
-              {dirty ? "Save changes" : "Saved"}
+              {commands.isPending(`openview.dashboard.save:${draft.id}`)
+                ? "Saving…"
+                : dirty
+                  ? "Save changes"
+                  : "Saved"}
             </Button>
             <Button
               variant="outline"
               className="min-h-11"
-              disabled={!dirty}
-              onClick={() => selected && setDraft(clone(selected))}
+              disabled={!dirty || commandPending}
+              onClick={() => {
+                if (!selected) return;
+                draftRevision.current = 0;
+                setDraft(clone(selected));
+              }}
             >
               <RotateCcw data-icon="inline-start" />
               Reset draft
@@ -1211,9 +1199,26 @@ function Dashboards({
             <Button
               variant="outline"
               className="min-h-11"
-              onClick={() =>
-                setDefaultId(defaultId === draft.id ? "" : draft.id)
-              }
+              disabled={commandPending}
+              onClick={async () => {
+                const nextId = defaultId === draft.id ? null : draft.id;
+                setMessage("");
+                try {
+                  const result = await commands.setDashboardDefault(nextId);
+                  if (!result.ok) {
+                    setMessage(result.error);
+                    return;
+                  }
+                  setDefaultId(result.value ?? "");
+                } catch (error) {
+                  setMessage(
+                    sampleOperationMessage(
+                      error,
+                      "The dashboard default could not be changed. Try again.",
+                    ),
+                  );
+                }
+              }}
             >
               {defaultId === draft.id ? "Unset default" : "Set as default"}
             </Button>
@@ -1221,7 +1226,11 @@ function Dashboards({
           <Button
             variant="destructive"
             className="min-h-11"
-            onClick={() => setConfirmDelete(true)}
+            disabled={commandPending}
+            onClick={() => {
+              setDeleteError("");
+              setConfirmDelete(true);
+            }}
           >
             <Trash2 data-icon="inline-start" />
             Delete dashboard
@@ -1229,13 +1238,23 @@ function Dashboards({
         </CardFooter>
       </Card>
       {message ? (
-        <Alert variant={message.includes("before") ? "warning" : "success"}>
+        <Alert
+          variant={
+            message.includes("before") ||
+            message.includes("could not") ||
+            message.includes("changed")
+              ? "warning"
+              : "success"
+          }
+        >
           {message}
         </Alert>
       ) : null}
       <AlertDialog
         open={pendingTransition !== null}
-        onOpenChange={(open) => !open && setPendingTransition(null)}
+        onOpenChange={(open) => {
+          if (!open && !commandPending) setPendingTransition(null);
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1249,17 +1268,25 @@ function Dashboards({
               replace the draft in the editor without saving those changes
               first.
             </AlertDialogDescription>
+            {commandPending ? (
+              <p role="status" className="text-muted-foreground text-sm">
+                A dashboard change is still being saved. Keep editing until it
+                finishes.
+              </p>
+            ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <Button
               variant="outline"
               className="min-h-11"
+              disabled={commandPending}
               onClick={() => setPendingTransition(null)}
             >
               Keep editing
             </Button>
             <Button
               className="min-h-11"
+              disabled={commandPending}
               onClick={() => {
                 const transition = pendingTransition;
                 if (!transition) return;
@@ -1278,7 +1305,9 @@ function Dashboards({
       </AlertDialog>
       <AlertDialog
         open={pendingSelection !== null}
-        onOpenChange={(open) => !open && setPendingSelection(null)}
+        onOpenChange={(open) => {
+          if (!open && !commandPending) setPendingSelection(null);
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1287,17 +1316,25 @@ function Dashboards({
               Your current dashboard draft has unsaved changes. Switching
               dashboards will discard them.
             </AlertDialogDescription>
+            {commandPending ? (
+              <p role="status" className="text-muted-foreground text-sm">
+                A dashboard change is still being saved. Keep editing until it
+                finishes.
+              </p>
+            ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <Button
               variant="outline"
               className="min-h-11"
+              disabled={commandPending}
               onClick={() => setPendingSelection(null)}
             >
               Keep editing
             </Button>
             <Button
               className="min-h-11"
+              disabled={commandPending}
               onClick={() => {
                 if (pendingSelection) {
                   setSelectedId(pendingSelection);
@@ -1305,6 +1342,7 @@ function Dashboards({
                     (item) => item.id === pendingSelection,
                   );
                   if (next) {
+                    draftRevision.current = 0;
                     setDraft(clone(next));
                     onDashboardUrlChange?.(next.id);
                   }
@@ -1317,7 +1355,14 @@ function Dashboards({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+      <AlertDialog
+        open={confirmDelete}
+        onOpenChange={(open) => {
+          if (!open && commandPending) return;
+          if (!open) setDeleteError("");
+          setConfirmDelete(open);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{draft.name}”?</AlertDialogTitle>
@@ -1325,39 +1370,73 @@ function Dashboards({
               This removes the dashboard from this tab. Its source records are
               unchanged.
             </AlertDialogDescription>
+            {commandPending ? (
+              <p role="status" className="text-muted-foreground text-sm">
+                A dashboard change is still being saved. Keep this confirmation
+                open until it finishes.
+              </p>
+            ) : null}
           </AlertDialogHeader>
+          {deleteError ? (
+            <Alert role="alert" variant="warning">
+              {deleteError}
+            </Alert>
+          ) : null}
           <AlertDialogFooter>
             <Button
               variant="outline"
               className="min-h-11"
-              onClick={() => setConfirmDelete(false)}
+              disabled={commandPending}
+              onClick={() => {
+                setDeleteError("");
+                setConfirmDelete(false);
+              }}
             >
               Cancel
             </Button>
             <Button
               variant="destructive"
               className="min-h-11"
-              onClick={() => {
-                const remaining = dashboards.filter(
-                  (item) => item.id !== draft.id,
-                );
-                persist(remaining);
-                setDefaultId(defaultId === draft.id ? "" : defaultId);
-                const next = remaining[0];
-                if (next) {
-                  setSelectedId(next.id);
-                  setDraft(clone(next));
-                  onDashboardUrlChange?.(next.id);
-                } else {
-                  setSelectedId("");
-                  setDraft(defaultDashboard());
-                  onDashboardUrlChange?.(undefined);
+              disabled={commandPending}
+              onClick={async () => {
+                setMessage("");
+                setDeleteError("");
+                try {
+                  const result = await commands.deleteDashboard(
+                    draft.id,
+                    selected?.id === draft.id ? selected : undefined,
+                  );
+                  if (!result.ok) {
+                    setDeleteError(result.error);
+                    return;
+                  }
+                  setDefaultId(defaultId === draft.id ? "" : defaultId);
+                  const next = result.value.remaining[0];
+                  if (next) {
+                    draftRevision.current = 0;
+                    setSelectedId(next.id);
+                    setDraft(clone(next));
+                    onDashboardUrlChange?.(next.id);
+                  } else {
+                    draftRevision.current = 0;
+                    setSelectedId("");
+                    setDraft(defaultDashboard());
+                    onDashboardUrlChange?.(undefined);
+                  }
+                  setConfirmDelete(false);
+                  setDeleteError("");
+                  setMessage("Dashboard deleted from this tab.");
+                } catch (error) {
+                  setDeleteError(
+                    sampleOperationMessage(
+                      error,
+                      "The dashboard could not be deleted. Try again.",
+                    ),
+                  );
                 }
-                setConfirmDelete(false);
-                setMessage("Dashboard deleted from this tab.");
               }}
             >
-              Delete dashboard
+              {deletePending ? "Deleting…" : "Delete dashboard"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1452,9 +1531,11 @@ function EmptyState({
 function DashboardLinkWarning({
   onClear,
   hasFallback = true,
+  disabled = false,
 }: {
   onClear?: () => void;
   hasFallback?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <Alert variant="warning">
@@ -1462,7 +1543,12 @@ function DashboardLinkWarning({
         ? "This dashboard link is unavailable in the current sample tab. The selected dashboard is a safe recovery view; choose another dashboard to update the link."
         : "This dashboard link is unavailable in the current sample tab. Choose a dashboard to recover the workspace."}
       {onClear ? (
-        <Button variant="outline" className="mt-3 min-h-11" onClick={onClear}>
+        <Button
+          variant="outline"
+          className="mt-3 min-h-11"
+          disabled={disabled}
+          onClick={onClear}
+        >
           Clear unavailable link
         </Button>
       ) : null}
@@ -1530,7 +1616,9 @@ export function chartRows(
   const groups = new Map<string, OpenViewRow[]>();
   selected.forEach((row) => {
     const label = valueFor(row, normalizedSettings.dimension) || "Unspecified";
-    groups.set(label, [...(groups.get(label) ?? []), row]);
+    const group = groups.get(label);
+    if (group) group.push(row);
+    else groups.set(label, [row]);
   });
   const sortedGroups = [...groups.entries()]
     .map(([label, group]) => {
@@ -1615,33 +1703,52 @@ function ChartPreview({
 }
 
 function Charts({
-  records,
   moduleId = "service-requests",
+  commands,
+  snapshot,
+  onChartDirtyChange,
 }: {
-  records: SampleRecord[];
   moduleId?: OpenViewModuleId;
+  commands: OpenViewCommandController;
+  snapshot: OpenViewReadSnapshot;
+  onChartDirtyChange?: (dirty: boolean) => void;
 }) {
-  const [rawSettings, setRawSettings] = useSampleState<unknown>(
-    "views-chart",
-    INITIAL_CHART_SETTINGS,
+  const commandPending = commands.isPending();
+  const records = snapshot.records;
+  const rawSettings = snapshot.chart;
+  const storedSettings = useMemo(
+    () => decodeChartSettings(rawSettings),
+    [rawSettings],
   );
+  const initialSettings =
+    storedSettings.moduleId === moduleId
+      ? storedSettings
+      : defaultChartSettings(moduleId);
   const [settings, setSettings] = useState<ChartSettings>(() => {
-    const stored = decodeChartSettings(rawSettings);
-    if (stored.moduleId === moduleId) return stored;
-    return defaultChartSettings(moduleId);
+    return clone(initialSettings);
   });
+  const [baseline, setBaseline] = useState<ChartSettings>(() =>
+    clone(initialSettings),
+  );
   const modulePropRef = useRef(moduleId);
+  const draftRevision = useRef(0);
   useEffect(() => {
     if (modulePropRef.current === moduleId) return;
     modulePropRef.current = moduleId;
     const next = defaultChartSettings(moduleId);
+    draftRevision.current += 1;
     setSettings(next);
-    setRawSettings(next);
-  }, [moduleId, setRawSettings]);
+    setBaseline(next);
+  }, [moduleId]);
   const [exportRequest, setExportRequest] = useState<ExportRequest | null>(
     null,
   );
   const [message, setMessage] = useState("");
+  const dirty = JSON.stringify(settings) !== JSON.stringify(baseline);
+  useEffect(() => {
+    onChartDirtyChange?.(dirty);
+    return () => onChartDirtyChange?.(false);
+  }, [dirty, onChartDirtyChange]);
   const rows = useMemo(
     () => getOpenViewRows(settings.moduleId, records),
     [settings.moduleId, records],
@@ -1668,9 +1775,69 @@ function Charts({
 
   function update(change: Partial<ChartSettings>) {
     const next = normalizeChartSettings({ ...settings, ...change });
+    draftRevision.current += 1;
     setSettings(next);
-    setRawSettings(next);
     setMessage("");
+  }
+
+  async function saveSettings() {
+    if (commandPending) return;
+    const submittedRevision = draftRevision.current;
+    setMessage("");
+    try {
+      const result = await commands.saveChartSettings(settings);
+      if (!result.ok) {
+        setMessage(result.error);
+        return;
+      }
+      setBaseline(result.value);
+      if (submittedRevision !== draftRevision.current) {
+        setMessage(
+          "Chart settings saved. Your newer edits remain open as an unsaved draft.",
+        );
+        return;
+      }
+      draftRevision.current = 0;
+      setSettings(result.value);
+      setMessage("Chart settings saved in this tab.");
+    } catch (error) {
+      setMessage(
+        sampleOperationMessage(
+          error,
+          "The chart settings could not be saved. Try again.",
+        ),
+      );
+    }
+  }
+
+  async function resetSettings() {
+    if (commandPending) return;
+    const submittedRevision = draftRevision.current;
+    setMessage("");
+    try {
+      const result = await commands.resetChartSettings(settings.moduleId);
+      if (!result.ok) {
+        setMessage(result.error);
+        return;
+      }
+      setBaseline(result.value);
+      if (submittedRevision !== draftRevision.current) {
+        setMessage(
+          "The chart reset was accepted, but your newer edits remain open.",
+        );
+        return;
+      }
+      draftRevision.current = 0;
+      setSettings(result.value);
+      setMessage("Chart settings reset for this data source.");
+    } catch (error) {
+      setMessage(
+        sampleOperationMessage(
+          error,
+          "The chart settings could not be reset. Try again.",
+        ),
+      );
+    }
   }
 
   function chartExportRows(): { rows: OpenViewRow[]; fields: string[] } {
@@ -1917,6 +2084,27 @@ function Charts({
             </Field>
           </div>
           <div className="flex flex-wrap gap-2">
+            <Button
+              className="min-h-11"
+              disabled={!dirty || commandPending}
+              onClick={() => void saveSettings()}
+            >
+              <Save data-icon="inline-start" />
+              {commands.isPending("openview.chart.save")
+                ? "Saving…"
+                : "Save settings"}
+            </Button>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              disabled={!dirty || commandPending}
+              onClick={() => void resetSettings()}
+            >
+              <RotateCcw data-icon="inline-start" />
+              {commands.isPending("openview.chart.reset")
+                ? "Resetting…"
+                : "Reset settings"}
+            </Button>
             <Button
               variant="outline"
               className="min-h-11"
@@ -2557,63 +2745,94 @@ function ExportConfirmation({
 }
 
 function Reports({
-  records,
   moduleId = "service-requests",
+  commands,
+  snapshot,
+  audienceLookup,
+  onReportDirtyChange,
 }: {
-  records: SampleRecord[];
   moduleId?: OpenViewModuleId;
+  commands: OpenViewCommandController;
+  snapshot: OpenViewReadSnapshot;
+  audienceLookup: AudienceLookup;
+  onReportDirtyChange?: (dirty: boolean) => void;
 }) {
-  const [roles] = useSampleState("access-roles", initialRoles);
-  const [people] = useSampleState("access-people", initialPeople);
-  const lookup = lookupFor(roles, people);
-  const [rawDraft, setRawDraft] = useSampleState<unknown>(
-    "views-report-draft",
-    null,
-  );
-  const [rawTemplates, setRawTemplates] = useSampleState<unknown>(
-    "views-report-templates",
-    null,
-  );
-  const [selectedTemplateId, setSelectedTemplateId] = useSampleState(
-    "views-report-template-selected",
-    "",
-  );
+  const lookup = audienceLookup;
+  const commandPending = commands.isPending();
+  const records = snapshot.records;
+  const rawDraft = snapshot.reportDraft;
+  const rawTemplates = snapshot.reportTemplates;
+  const storedSelectedTemplateId = snapshot.reportTemplateSelected;
   const storedDraft = useMemo(
     () => normalizeReportRecord(rawDraft ?? initialReport, lookup),
     [rawDraft, lookup.roles, lookup.identities],
   );
   const templates = useMemo(
-    () =>
-      normalizeReportTemplates(rawTemplates ?? initialReportTemplates, lookup),
+    () => normalizeReportTemplates(rawTemplates, lookup),
     [rawTemplates, lookup.roles, lookup.identities],
+  );
+  const restoresStoredDraft = storedDraft.moduleId === moduleId;
+  const initialDraft: OpenViewReport = restoresStoredDraft
+    ? storedDraft
+    : {
+        ...decodeReport(initialReport, lookup),
+        id: makeId("sample-report"),
+        moduleId,
+        fields: getModuleDefinition(moduleId)
+          .fields.slice(0, 3)
+          .map((field) => field.id),
+        sorts: [
+          {
+            field: getModuleDefinition(moduleId).primaryField,
+            direction: "asc",
+          },
+        ],
+        grouping:
+          getModuleDefinition(moduleId).fields.find(
+            (field) => field.id === "status",
+          )?.id ?? null,
+      };
+  const persistedSelectedTemplateId =
+    typeof storedSelectedTemplateId === "string"
+      ? storedSelectedTemplateId
+      : "";
+  const selectedTemplateIdFromStorage = restoresStoredDraft
+    ? templates.some(
+        (template) =>
+          template.id === persistedSelectedTemplateId &&
+          template.id === initialDraft.id,
+      )
+      ? persistedSelectedTemplateId
+      : templates.some((template) => template.id === initialDraft.id)
+        ? initialDraft.id
+        : ""
+    : "";
+  const [selectedTemplateId, setSelectedTemplateId] = useState(
+    selectedTemplateIdFromStorage,
   );
   const selectedTemplate = templates.find(
     (template) => template.id === selectedTemplateId,
   );
-  const [draft, setDraft] = useState<OpenViewReport>(() => {
-    if (storedDraft.moduleId === moduleId) return clone(storedDraft);
-    const moduleDefinition = getModuleDefinition(moduleId);
-    return {
-      ...decodeReport(initialReport, lookup),
-      moduleId,
-      fields: moduleDefinition.fields.slice(0, 3).map((field) => field.id),
-      sorts: [{ field: moduleDefinition.primaryField, direction: "asc" }],
-      grouping:
-        moduleDefinition.fields.find((field) => field.id === "status")?.id ??
-        null,
-    };
-  });
+  const [draft, setDraft] = useState<OpenViewReport>(() => clone(initialDraft));
+  const [baseline, setBaseline] = useState<OpenViewReport | null>(() =>
+    clone(initialDraft),
+  );
+  const draftRevision = useRef(0);
   const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(
     null,
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [message, setMessage] = useState("");
   const [exportRequest, setExportRequest] = useState<ExportRequest | null>(
     null,
   );
-  const dirty = selectedTemplate
-    ? JSON.stringify(draft) !== JSON.stringify(selectedTemplate)
-    : true;
+  const dirty =
+    baseline === null || JSON.stringify(draft) !== JSON.stringify(baseline);
+  useEffect(() => {
+    onReportDirtyChange?.(dirty);
+    return () => onReportDirtyChange?.(false);
+  }, [dirty, onReportDirtyChange]);
   const rows = useMemo(
     () =>
       sortRows(
@@ -2629,12 +2848,13 @@ function Reports({
   const moduleDefinition = getModuleDefinition(draft.moduleId);
   const update = (change: Partial<OpenViewReport>) => {
     const next = { ...draft, ...change };
+    draftRevision.current += 1;
     setDraft(next);
-    setRawDraft(toLegacyReport(next, lookup));
     setMessage("");
   };
 
-  function saveTemplate() {
+  async function saveTemplate() {
+    if (commandPending) return;
     const name = draft.name.trim();
     if (!name || draft.fields.length === 0) {
       setMessage(
@@ -2643,21 +2863,46 @@ function Reports({
       return;
     }
     const next = { ...draft, name };
-    const nextTemplates = templates.some((template) => template.id === next.id)
-      ? templates.map((template) => (template.id === next.id ? next : template))
-      : [...templates, next];
-    setRawTemplates(
-      nextTemplates.map((template) => toLegacyReport(template, lookup)),
-    );
-    setRawDraft(toLegacyReport(next, lookup));
-    setSelectedTemplateId(next.id);
-    setDraft(next);
-    setMessage(
-      "Report template saved in this tab. Audience and schedule remain previews.",
-    );
+    const submittedRevision = draftRevision.current;
+    setMessage("");
+    try {
+      const expectedId =
+        selectedTemplate?.id ??
+        (selectedTemplateId === draft.id ? selectedTemplateId : undefined);
+      const result = await commands.saveReportTemplate({
+        report: next,
+        expectedId,
+        expected: expectedId ? selectedTemplate : undefined,
+      });
+      if (!result.ok) {
+        setMessage(result.error);
+        return;
+      }
+      setBaseline(result.value);
+      setSelectedTemplateId(result.value.id);
+      if (submittedRevision !== draftRevision.current) {
+        setMessage(
+          "Report template saved. Your newer edits remain open as an unsaved draft.",
+        );
+        return;
+      }
+      draftRevision.current = 0;
+      setDraft(result.value);
+      setMessage(
+        "Report template saved in this tab. Audience and schedule remain previews.",
+      );
+    } catch (error) {
+      setMessage(
+        sampleOperationMessage(
+          error,
+          "The report template could not be saved. Keep the editor open and try again.",
+        ),
+      );
+    }
   }
 
   function createTemplate() {
+    if (commandPending) return;
     const nextModule = getModuleDefinition(draft.moduleId);
     const next = {
       ...decodeReport(initialReport, lookup),
@@ -2668,35 +2913,62 @@ function Reports({
       grouping:
         nextModule.fields.find((field) => field.id === "status")?.id ?? null,
     };
+    draftRevision.current = 0;
     setDraft(next);
+    setBaseline(null);
     setSelectedTemplateId("");
-    setRawDraft(toLegacyReport(next, lookup));
     setMessage(
       "New report draft ready. Save it to create a reusable template.",
     );
   }
 
-  function duplicateTemplate() {
+  async function duplicateTemplate() {
+    if (commandPending) return;
     const next = {
       ...clone(draft),
       id: makeId("sample-report"),
       name: `${draft.name || "Report"} copy`,
     };
-    setDraft(next);
-    setSelectedTemplateId("");
-    setRawDraft(toLegacyReport(next, lookup));
-    setMessage("Report duplicated as a new draft.");
+    const submittedRevision = draftRevision.current;
+    setMessage("");
+    try {
+      const result = await commands.duplicateReportDraft(next);
+      if (!result.ok) {
+        setMessage(result.error);
+        return;
+      }
+      if (submittedRevision !== draftRevision.current) {
+        setMessage(
+          "Report duplicated. Your newer edits remain open as an unsaved draft.",
+        );
+        return;
+      }
+      draftRevision.current = 0;
+      setDraft(result.value);
+      setBaseline(null);
+      setSelectedTemplateId("");
+      setMessage("Report duplicated as a new draft.");
+    } catch (error) {
+      setMessage(
+        sampleOperationMessage(
+          error,
+          "The report could not be duplicated. Keep the editor open and try again.",
+        ),
+      );
+    }
   }
 
   function chooseTemplate(id: string) {
+    if (commandPending) return;
     if (!id) return;
     if (dirty) setPendingTemplateId(id);
     else {
       const next = templates.find((template) => template.id === id);
       if (next) {
+        draftRevision.current = 0;
         setSelectedTemplateId(id);
         setDraft(clone(next));
-        setRawDraft(toLegacyReport(next, lookup));
+        setBaseline(clone(next));
       }
     }
   }
@@ -2713,6 +2985,47 @@ function Reports({
     });
   }
 
+  async function resetDraft() {
+    if (commandPending) return;
+    const target = selectedTemplate
+      ? clone(selectedTemplate)
+      : normalizeReportRecord(
+          { ...initialReport, moduleId: draft.moduleId },
+          lookup,
+        );
+    setMessage("");
+    const submittedRevision = draftRevision.current;
+    try {
+      const result = await commands.resetReportDraft(target);
+      if (!result.ok) {
+        setMessage(result.error);
+        return;
+      }
+      setBaseline(result.value);
+      if (submittedRevision !== draftRevision.current) {
+        setMessage(
+          "The report reset was accepted, but your newer edits remain open.",
+        );
+        return;
+      }
+      draftRevision.current = 0;
+      setDraft(result.value);
+      setSelectedTemplateId(
+        templates.some((template) => template.id === result.value.id)
+          ? result.value.id
+          : "",
+      );
+      setMessage("Unsaved report changes were reset.");
+    } catch (error) {
+      setMessage(
+        sampleOperationMessage(
+          error,
+          "The report draft could not be reset. Try again.",
+        ),
+      );
+    }
+  }
+
   return (
     <Workbench
       controls={
@@ -2727,6 +3040,7 @@ function Reports({
             <Button
               variant="outline"
               className="min-h-11"
+              disabled={commandPending}
               onClick={createTemplate}
             >
               <Plus data-icon="inline-start" />
@@ -2735,10 +3049,13 @@ function Reports({
             <Button
               variant="ghost"
               className="min-h-11"
-              onClick={duplicateTemplate}
+              disabled={commandPending}
+              onClick={() => void duplicateTemplate()}
             >
               <Copy data-icon="inline-start" />
-              Duplicate
+              {commands.isPending("openview.report.duplicate")
+                ? "Duplicating…"
+                : "Duplicate"}
             </Button>
           </div>
           {templates.length > 0 ? (
@@ -2753,6 +3070,7 @@ function Reports({
                   label: template.name,
                 })),
               ]}
+              disabled={commandPending}
               onChange={chooseTemplate}
             />
           ) : null}
@@ -2943,14 +3261,35 @@ function Reports({
           <AudienceField
             id="report-audience"
             audience={draft.audience}
-            roles={roles}
-            people={people}
+            audienceLookup={lookup}
             onChange={(audience) => update({ audience })}
           />
-          <Button className="min-h-11" onClick={saveTemplate}>
-            <Save data-icon="inline-start" />
-            {dirty ? "Save template" : "Saved"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              className="min-h-11"
+              disabled={commandPending}
+              onClick={() => void saveTemplate()}
+            >
+              <Save data-icon="inline-start" />
+              {commands.isPending(`openview.report.save:${draft.id}`)
+                ? "Saving…"
+                : dirty
+                  ? "Save template"
+                  : "Saved"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              disabled={!dirty || commandPending}
+              onClick={() => void resetDraft()}
+            >
+              <RotateCcw data-icon="inline-start" />
+              {commands.isPending("openview.report.reset")
+                ? "Resetting…"
+                : "Reset draft"}
+            </Button>
+          </div>
         </FieldGroup>
       }
     >
@@ -3084,7 +3423,13 @@ function Reports({
           </div>
           {message ? (
             <Alert
-              variant={message.includes("before") ? "warning" : "success"}
+              variant={
+                message.includes("before") ||
+                message.includes("could not") ||
+                message.includes("changed")
+                  ? "warning"
+                  : "success"
+              }
               className="mt-5"
             >
               {message}
@@ -3099,11 +3444,18 @@ function Reports({
           <Button
             variant="destructive"
             className="min-h-11"
-            disabled={!selectedTemplate}
-            onClick={() => setConfirmDelete(true)}
+            disabled={!selectedTemplate || commandPending}
+            onClick={() => {
+              setDeleteError("");
+              setConfirmDelete(true);
+            }}
           >
             <Trash2 data-icon="inline-start" />
-            Delete template
+            {commands.isPending(
+              `openview.report.delete:${selectedTemplate?.id ?? ""}`,
+            )
+              ? "Deleting…"
+              : "Delete template"}
           </Button>
         </CardFooter>
       </Card>
@@ -3117,7 +3469,10 @@ function Reports({
       />
       <AlertDialog
         open={pendingTemplateId !== null}
-        onOpenChange={(open) => !open && setPendingTemplateId(null)}
+        onOpenChange={(open) => {
+          if (!open && commandPending) return;
+          if (!open) setPendingTemplateId(null);
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -3126,26 +3481,35 @@ function Reports({
               Your current report draft has unsaved changes. Loading a template
               will replace it.
             </AlertDialogDescription>
+            {commandPending ? (
+              <p role="status" className="text-muted-foreground text-sm">
+                A report change is still being saved. Keep editing until it
+                finishes.
+              </p>
+            ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <Button
               variant="outline"
               className="min-h-11"
+              disabled={commandPending}
               onClick={() => setPendingTemplateId(null)}
             >
               Keep editing
             </Button>
             <Button
               className="min-h-11"
+              disabled={commandPending}
               onClick={() => {
                 if (pendingTemplateId) {
                   const next = templates.find(
                     (template) => template.id === pendingTemplateId,
                   );
                   if (next) {
+                    draftRevision.current = 0;
                     setSelectedTemplateId(next.id);
                     setDraft(clone(next));
-                    setRawDraft(toLegacyReport(next, lookup));
+                    setBaseline(clone(next));
                   }
                 }
                 setPendingTemplateId(null);
@@ -3156,7 +3520,14 @@ function Reports({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+      <AlertDialog
+        open={confirmDelete}
+        onOpenChange={(open) => {
+          if (!open && commandPending) return;
+          if (!open) setDeleteError("");
+          setConfirmDelete(open);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -3166,35 +3537,68 @@ function Reports({
               This removes the saved report template from this tab. It does not
               remove source records.
             </AlertDialogDescription>
+            {commandPending ? (
+              <p role="status" className="text-muted-foreground text-sm">
+                A report change is still being saved. Keep this confirmation
+                open until it finishes.
+              </p>
+            ) : null}
           </AlertDialogHeader>
+          {deleteError ? (
+            <Alert role="alert" variant="warning">
+              {deleteError}
+            </Alert>
+          ) : null}
           <AlertDialogFooter>
             <Button
               variant="outline"
               className="min-h-11"
-              onClick={() => setConfirmDelete(false)}
+              disabled={commandPending}
+              onClick={() => {
+                setDeleteError("");
+                setConfirmDelete(false);
+              }}
             >
               Cancel
             </Button>
             <Button
               variant="destructive"
               className="min-h-11"
-              onClick={() => {
+              disabled={!selectedTemplate || commandPending}
+              onClick={async () => {
                 if (!selectedTemplate) return;
-                const remaining = templates.filter(
-                  (template) => template.id !== selectedTemplate.id,
-                );
-                setRawTemplates(
-                  remaining.map((template) => toLegacyReport(template, lookup)),
-                );
-                setSelectedTemplateId("");
-                const next = normalizeReportRecord(initialReport, lookup);
-                setDraft(next);
-                setRawDraft(toLegacyReport(next, lookup));
-                setConfirmDelete(false);
-                setMessage("Report template deleted from this tab.");
+                setMessage("");
+                setDeleteError("");
+                try {
+                  const result = await commands.deleteReportTemplate(
+                    selectedTemplate.id,
+                    selectedTemplate,
+                  );
+                  if (!result.ok) {
+                    setDeleteError(result.error);
+                    return;
+                  }
+                  setSelectedTemplateId("");
+                  setDraft(result.value.draft);
+                  setBaseline(result.value.draft);
+                  setConfirmDelete(false);
+                  setDeleteError("");
+                  setMessage("Report template deleted from this tab.");
+                } catch (error) {
+                  setDeleteError(
+                    sampleOperationMessage(
+                      error,
+                      "The report template could not be deleted. Try again.",
+                    ),
+                  );
+                }
               }}
             >
-              Delete template
+              {commands.isPending(
+                `openview.report.delete:${selectedTemplate?.id ?? ""}`,
+              )
+                ? "Deleting…"
+                : "Delete template"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -3299,42 +3703,62 @@ function ReportTable({
 
 type SampleAnalyticsProps = {
   section: string;
-  records: SampleRecord[];
-  rows?: OpenViewRow[];
-  module?: OpenViewModule;
-  config?: unknown;
-  audienceLookup?: AudienceLookup;
+  commands: OpenViewCommandController;
+  snapshot: OpenViewReadSnapshot;
+  audienceLookup: AudienceLookup;
   moduleId?: OpenViewModuleId;
   dashboardUrlId?: string;
   onDashboardUrlChange?: (id: string | undefined) => void;
   onDashboardDirtyChange?: (dirty: boolean) => void;
+  onChartDirtyChange?: (dirty: boolean) => void;
+  onReportDirtyChange?: (dirty: boolean) => void;
 };
 
 export default function SampleAnalytics({
   section,
-  records,
-  module: selectedModule,
+  commands,
   moduleId,
+  snapshot,
+  audienceLookup,
   dashboardUrlId,
   onDashboardUrlChange,
   onDashboardDirtyChange,
+  onChartDirtyChange,
+  onReportDirtyChange,
 }: SampleAnalyticsProps) {
   const normalized = section.toLowerCase();
-  const startingModule = selectedModule?.id ?? moduleId ?? "service-requests";
+  const startingModule = moduleId ?? "service-requests";
   if (normalized === "dashboards")
     return (
       <Dashboards
-        records={records}
         moduleId={startingModule}
         dashboardUrlId={dashboardUrlId}
+        commands={commands}
+        snapshot={snapshot}
+        audienceLookup={audienceLookup}
         onDashboardUrlChange={onDashboardUrlChange}
         onDashboardDirtyChange={onDashboardDirtyChange}
       />
     );
   if (normalized === "charts")
-    return <Charts records={records} moduleId={startingModule} />;
+    return (
+      <Charts
+        moduleId={startingModule}
+        commands={commands}
+        snapshot={snapshot}
+        onChartDirtyChange={onChartDirtyChange}
+      />
+    );
   if (normalized === "reports")
-    return <Reports records={records} moduleId={startingModule} />;
+    return (
+      <Reports
+        moduleId={startingModule}
+        commands={commands}
+        snapshot={snapshot}
+        audienceLookup={audienceLookup}
+        onReportDirtyChange={onReportDirtyChange}
+      />
+    );
   return (
     <Alert variant="warning">
       Choose Dashboards, Charts, or Reports to open an analytics workspace.

@@ -75,12 +75,12 @@ import { normalizeFilterGroup } from "./filter-helpers";
 import {
   OPENVIEW_MODULE_IDS,
   OPENVIEW_MODULES,
-  activeAudienceIdentities,
   audienceLabel,
   filterRows,
   getModuleDefinition,
   getOpenViewRows,
   isUnresolvedAudience,
+  projectAudienceLookup,
   type AudienceLookup,
   type AudienceRef,
   type FilterGroup,
@@ -218,10 +218,8 @@ export function WidgetSurface<T extends WidgetInput>(
   const [pendingRemoval, setPendingRemoval] = useState<OpenViewWidget | null>(
     null,
   );
-  const audienceLookup: AudienceLookup = suppliedAudienceLookup ?? {
-    roles: roles.map((role) => ({ id: role.id, name: role.name })),
-    identities: activeAudienceIdentities(people),
-  };
+  const audienceLookup: AudienceLookup =
+    suppliedAudienceLookup ?? projectAudienceLookup(roles, people);
   const widgetLimit =
     maxWidgets === undefined ? undefined : Math.max(0, Math.floor(maxWidgets));
   const canDuplicate =
