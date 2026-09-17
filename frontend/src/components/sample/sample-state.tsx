@@ -8,12 +8,19 @@ import {
   useEffect,
   useState,
   useRef,
+  useSyncExternalStore,
   type Dispatch,
   type ReactNode,
   type SetStateAction,
 } from "react";
+import {
+  createSampleRuntime,
+  type SampleDraft,
+  type SampleRuntime,
+} from "./sample-runtime";
 import { Button } from "@/components/ui/button";
 import { releaseAllLocalAttachments } from "./comms/local-attachments";
+import { clearCommsDraftTextStore } from "./comms/draft-text";
 import {
   decodeStoredSandboxHistory,
   decodeStoredSandboxVersions,
@@ -27,23 +34,25 @@ import {
 } from "@/components/ui/dialog";
 
 const STORAGE_KEY = "openslate.sample.v1";
+const sessionClearListeners = new Set<() => void>();
 type Snapshot = Record<string, unknown>;
-export type SampleTransactionDraft = {
-  update<T>(key: string, initial: T, action: SetStateAction<T>): void;
-};
-export type SampleTransactionRecipe = (
+export type SampleTransactionDraft = SampleDraft;
+export type SampleTransactionRecipe<T = void> = (
   transaction: SampleTransactionDraft,
-) => void;
+) => T;
 type SampleContextValue = {
   values: Snapshot;
   update: (key: string, action: (previous: unknown) => unknown) => void;
-  transact: (recipe: SampleTransactionRecipe) => void;
+  transact: <T>(recipe: SampleTransactionRecipe<T>) => T;
   resetKeys: (keys: readonly string[]) => void;
   storageUnavailable: boolean;
+  runtime: SampleRuntime;
 };
 const SampleContext = createContext<SampleContextValue | null>(null);
 
 export function clearSampleSessionSnapshot(): void {
+  for (const clear of sessionClearListeners) clear();
+  clearCommsDraftTextStore();
   try {
     sessionStorage.removeItem(STORAGE_KEY);
   } catch {
@@ -120,31 +129,41 @@ export function applySampleTransaction(
   previous: Readonly<Snapshot>,
   recipe: SampleTransactionRecipe,
 ): Snapshot {
-  const next: Snapshot = { ...previous };
-  recipe({
-    update<T>(key: string, initial: T, action: SetStateAction<T>) {
-      const current = decodeSampleStoredValue(key, next[key], initial);
-      next[key] =
-        typeof action === "function"
-          ? (action as (value: T) => T)(current)
-          : action;
-    },
-  });
-  return next;
+  const runtime = createSampleRuntime(decodeSampleStoredValue, previous);
+  runtime.commit(recipe);
+  return { ...runtime.getSnapshot() };
 }
 
 export function SampleProvider({ children }: { children: ReactNode }) {
-  const [values, setValues] = useState<Snapshot>({});
+  const [runtime] = useState(() =>
+    createSampleRuntime(decodeSampleStoredValue),
+  );
+  const values = useSyncExternalStore(
+    runtime.subscribe,
+    runtime.getSnapshot,
+    runtime.getServerSnapshot,
+  );
   const [ready, setReady] = useState(false);
   const [storageUnavailable, setStorageUnavailable] = useState(false);
   const [recovered, setRecovered] = useState(false);
   const [generation, setGeneration] = useState(0);
   const [confirmReset, setConfirmReset] = useState(false);
+  const persistenceSuspended = useRef(false);
   const resetOpener = useRef<HTMLButtonElement | null>(null);
   function requestReset(opener: HTMLButtonElement) {
     resetOpener.current = opener;
     setConfirmReset(true);
   }
+  useEffect(() => {
+    const clear = () => {
+      persistenceSuspended.current = true;
+      runtime.reset();
+    };
+    sessionClearListeners.add(clear);
+    return () => {
+      sessionClearListeners.delete(clear);
+    };
+  }, [runtime]);
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(STORAGE_KEY);
@@ -155,7 +174,7 @@ export function SampleProvider({ children }: { children: ReactNode }) {
           parsed !== null &&
           !Array.isArray(parsed)
         )
-          setValues(parsed as Snapshot);
+          runtime.reset(parsed as Snapshot);
         else setRecovered(true);
       } catch {
         setRecovered(true);
@@ -164,9 +183,9 @@ export function SampleProvider({ children }: { children: ReactNode }) {
       setStorageUnavailable(true);
     }
     setReady(true);
-  }, []);
+  }, [runtime]);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || persistenceSuspended.current) return;
     try {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(values));
     } catch {
@@ -175,23 +194,28 @@ export function SampleProvider({ children }: { children: ReactNode }) {
   }, [ready, values]);
   const update = useCallback(
     (key: string, action: (previous: unknown) => unknown) => {
-      setValues((previous) => ({ ...previous, [key]: action(previous[key]) }));
+      runtime.commit((draft) => {
+        draft.update<unknown>(
+          key,
+          undefined,
+          action(structuredClone(runtime.getSnapshot()[key])),
+        );
+      });
     },
-    [],
+    [runtime],
   );
-  const transact = useCallback((recipe: SampleTransactionRecipe) => {
-    setValues((previous) => applySampleTransaction(previous, recipe));
-  }, []);
-  const resetKeys = useCallback((keys: readonly string[]) => {
-    setValues((previous) =>
-      Object.fromEntries(
-        Object.entries(previous).filter(([key]) => !keys.includes(key)),
-      ),
-    );
-  }, []);
+  const transact = runtime.commit;
+  const resetKeys = runtime.resetKeys;
   return (
     <SampleContext.Provider
-      value={{ values, update, transact, resetKeys, storageUnavailable }}
+      value={{
+        values,
+        update,
+        transact,
+        resetKeys,
+        storageUnavailable,
+        runtime,
+      }}
     >
       {storageUnavailable && (
         <p role="status" className="shrink-0 border-b px-4 py-2 text-sm">
@@ -229,7 +253,8 @@ export function SampleProvider({ children }: { children: ReactNode }) {
             <Button
               onClick={() => {
                 releaseAllLocalAttachments();
-                setValues({});
+                clearCommsDraftTextStore();
+                runtime.reset();
                 setGeneration((value) => value + 1);
                 setRecovered(false);
                 setConfirmReset(false);
@@ -287,10 +312,14 @@ export function useSampleStorage(): Pick<
   };
 }
 
-export function useSampleTransaction(): (
-  recipe: SampleTransactionRecipe,
-) => void {
+export function useSampleTransaction(): SampleRuntime["commit"] {
   const context = useContext(SampleContext);
   if (!context) throw new Error("Sample transaction requires SampleProvider");
   return context.transact;
+}
+
+export function useSampleRuntime(): SampleRuntime {
+  const context = useContext(SampleContext);
+  if (!context) throw new Error("Sample runtime requires SampleProvider");
+  return context.runtime;
 }
