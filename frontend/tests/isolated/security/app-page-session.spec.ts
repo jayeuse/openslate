@@ -4,7 +4,10 @@ import { classifySessionResponse } from "../../../src/components/app-page";
 
 test("session gate only treats an exact authenticated 200 as valid", () => {
   expect(
-    classifySessionResponse({ ok: true, status: 200 }, { authenticated: true }),
+    classifySessionResponse(
+      { ok: true, status: 200 },
+      { authenticated: true, userId: "user-a" },
+    ),
   ).toBe("valid");
   expect(
     classifySessionResponse(
@@ -27,4 +30,13 @@ test("session gate treats non-contract responses as unavailable", () => {
   expect(classifySessionResponse({ ok: true, status: 200 }, null)).toBe(
     "unavailable",
   );
+  expect(
+    classifySessionResponse({ ok: true, status: 200 }, { authenticated: true }),
+  ).toBe("unavailable");
+  expect(
+    classifySessionResponse(
+      { ok: true, status: 200 },
+      { authenticated: true, userId: "" },
+    ),
+  ).toBe("unavailable");
 });

@@ -1,15 +1,15 @@
 import { expect, test } from "@playwright/test";
-import { initialPeople } from "../../../src/components/sample/access/model";
+import { initialPeople } from "../../../src/components/systems/access/domain/model";
 import {
   createCommsConfiguration,
   DEFAULT_COMMS_PREFERENCES,
-} from "../../../src/components/sample/comms/configuration";
-import { CHANNELS } from "../../../src/components/sample/comms/model";
+} from "../../../src/components/systems/comms/domain/configuration";
+import { CHANNELS } from "../../../src/components/systems/comms/domain/model";
 import {
   resolveCommsNotification,
   previewCommsNotification,
   type CommsNotificationInput,
-} from "../../../src/components/sample/comms/notification-policy";
+} from "../../../src/components/systems/comms/domain/notification-policy";
 function fixture(): CommsNotificationInput {
   return {
     config: createCommsConfiguration(),

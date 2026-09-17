@@ -5,7 +5,8 @@ import {
   COMMS_DRAFT_TEXT_PREFIX,
   createCommsDraftTextStore,
   legacyCommsDraftTextKey,
-} from "../../../src/components/sample/comms/draft-text";
+  ownedCommsDraftTextId,
+} from "../../../src/components/systems/comms/state/draft-text";
 
 function memoryStorage() {
   const data = new Map<string, string>();
@@ -38,6 +39,82 @@ test("draft subscribers receive a new snapshot when text changes", () => {
   expect(store.getSnapshot()).not.toBe(before);
   expect(store.getSnapshot().value).toBe("new draft");
   unsubscribe();
+});
+
+test("owned Comms drafts restore for their account without crossing accounts", () => {
+  const storage = memoryStorage();
+  const composerId = "thread-identity";
+  const userA = ownedCommsDraftTextId("user-a", composerId);
+  const userB = ownedCommsDraftTextId("user-b", composerId);
+  storage.setItem(commsDraftTextKey(composerId), "legacy unowned draft");
+  const draftA = createCommsDraftTextStore(userA, "", storage);
+  draftA.setValue("A's private draft");
+
+  expect(
+    createCommsDraftTextStore(userA, "", storage).getSnapshot().value,
+  ).toBe("A's private draft");
+  expect(
+    createCommsDraftTextStore(userB, "", storage).getSnapshot().value,
+  ).toBe("");
+  expect(
+    createCommsDraftTextStore(userA, "", storage).getSnapshot().value,
+  ).toBe("A's private draft");
+});
+
+test("owned Comms draft cleanup removes only the active account", () => {
+  const data = new Map<string, string>();
+  const storage = {
+    get length() {
+      return data.size;
+    },
+    key(index: number) {
+      return [...data.keys()][index] ?? null;
+    },
+    getItem(key: string) {
+      return data.get(key) ?? null;
+    },
+    setItem(key: string, value: string) {
+      data.set(key, value);
+    },
+    removeItem(key: string) {
+      data.delete(key);
+    },
+  } as unknown as Storage;
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const originalStorage = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "sessionStorage",
+  );
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {},
+  });
+  Object.defineProperty(globalThis, "sessionStorage", {
+    configurable: true,
+    value: storage,
+  });
+  try {
+    const composerId = "thread-logout";
+    const userA = ownedCommsDraftTextId("user-a", composerId);
+    const userB = ownedCommsDraftTextId("user-b", composerId);
+    const legacy = commsDraftTextKey(composerId);
+    storage.setItem(commsDraftTextKey(userA), "A's draft");
+    storage.setItem(commsDraftTextKey(userB), "B's draft");
+    storage.setItem(legacy, "legacy unowned draft");
+
+    clearCommsDraftTextStore("user-a");
+
+    expect(storage.getItem(commsDraftTextKey(userA))).toBeNull();
+    expect(storage.getItem(commsDraftTextKey(userB))).toBe("B's draft");
+    expect(storage.getItem(legacy)).toBe("legacy unowned draft");
+  } finally {
+    if (originalWindow)
+      Object.defineProperty(globalThis, "window", originalWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+    if (originalStorage)
+      Object.defineProperty(globalThis, "sessionStorage", originalStorage);
+    else Reflect.deleteProperty(globalThis, "sessionStorage");
+  }
 });
 
 test("legacy text migrates to the dedicated key before cleanup completes", async () => {

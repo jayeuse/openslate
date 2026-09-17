@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { parseBoardConfiguration } from "../../../src/components/sample/boards/portability";
+import { parseBoardConfiguration } from "../../../src/components/systems/boards/adapters/portability";
 
 const configuration = {
   name: "Dispatch",

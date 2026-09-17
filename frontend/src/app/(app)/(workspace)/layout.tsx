@@ -1,4 +1,4 @@
-import { SampleProvider } from "@/components/sample/sample-state";
+import { SampleProvider } from "@/components/systems/shared/runtime/sample-state";
 export default function SampleLayout({
   children,
 }: {

@@ -5,14 +5,14 @@ import {
   normalizeFilterGroup,
   operatorsForField,
   updateFilterClause,
-} from "../../../src/components/sample/openview/filter-helpers";
+} from "../../../src/components/systems/openview/helpers/filter-helpers";
 import {
   getModuleDefinition,
   filterRows,
   getOpenViewRows,
   type FilterGroup,
-} from "../../../src/components/sample/openview/model";
-import { INITIAL_RECORDS } from "../../../src/components/sample/sample-data";
+} from "../../../src/components/systems/openview/domain/model";
+import { INITIAL_RECORDS } from "../../../src/components/systems/shared/data/sample-data";
 
 const serviceRequests = getModuleDefinition("service-requests");
 

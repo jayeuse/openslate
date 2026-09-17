@@ -82,9 +82,9 @@ class TestSelectionTests(unittest.TestCase):
 
     def test_sample_changes_include_connected_workspace_and_canvas_checks(self):
         for path in [
-            "frontend/src/components/sample/access/model.ts",
-            "frontend/src/components/sample/comms/message-policy.ts",
-            "frontend/src/components/sample/sandbox/index.tsx",
+            "frontend/src/components/systems/access/domain/model.ts",
+            "frontend/src/components/systems/comms/domain/message-policy.ts",
+            "frontend/src/components/systems/sandbox/page.tsx",
             "frontend/src/app/(app)/(workspace)/[pillar]/page.tsx",
             "frontend/src/components/sandbox/sandbox-canvas.tsx",
             "frontend/src/lib/sandbox/model.ts",

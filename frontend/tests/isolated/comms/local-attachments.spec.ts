@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import * as localAttachments from "../../../src/components/sample/comms/local-attachments";
+import * as localAttachments from "../../../src/components/systems/shared/runtime/local-attachments";
 
 test("releases every cached local attachment and remains idempotent", () => {
   const originalCreateObjectUrl = URL.createObjectURL;

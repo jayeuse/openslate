@@ -4,8 +4,8 @@ import {
   normalizePlatformImportRows,
   pagePlatformSearch,
   readPlatformSnapshot,
-} from "../../../src/components/sample/platform/runtime";
-import { initialDesign } from "../../../src/components/sample/sandbox/model";
+} from "../../../src/components/systems/platform/adapters/runtime";
+import { initialDesign } from "../../../src/components/systems/sandbox/domain/model";
 
 test("Platform search filters and sorts the complete match set before applying its visible limit", () => {
   const items = [

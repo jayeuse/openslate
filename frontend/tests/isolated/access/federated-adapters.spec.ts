@@ -2,15 +2,15 @@ import { expect, test } from "@playwright/test";
 import {
   initialRoles,
   type Role,
-} from "../../../src/components/sample/access/model";
+} from "../../../src/components/systems/access/domain/model";
 import {
   createCommsConfiguration,
   normalizeCommsConfiguration,
-} from "../../../src/components/sample/comms/configuration";
+} from "../../../src/components/systems/comms/domain/configuration";
 import {
   CATEGORIES,
   CHANNELS,
-} from "../../../src/components/sample/comms/model";
+} from "../../../src/components/systems/comms/domain/model";
 import {
   defaultViewConfig,
   decodeDashboards,
@@ -18,7 +18,7 @@ import {
   initialReport as initialTypedReport,
   type AudienceLookup,
   type AudienceRef,
-} from "../../../src/components/sample/openview/model";
+} from "../../../src/components/systems/openview/domain/model";
 import {
   executeFederatedAccessCommand,
   federatedRoleReferences,
@@ -27,15 +27,15 @@ import {
   writeFederatedDecision,
   type FederatedAudienceIdentity,
   type FederatedAccessOwners,
-} from "../../../src/components/sample/access/federated-adapters";
-import type { AccessControllerSnapshot } from "../../../src/components/sample/access/controller-utils";
-import { getAccessHealth } from "../../../src/components/sample/access/controller-utils";
+} from "../../../src/components/systems/access/adapters/federated-adapters";
+import type { AccessControllerSnapshot } from "../../../src/components/systems/access/domain/controller-utils";
+import { getAccessHealth } from "../../../src/components/systems/access/domain/controller-utils";
 import {
   initialAccessDefaults,
   initialAccessGroups,
   initialAccessTemplates,
-} from "../../../src/components/sample/access/policy";
-import { initialPeople } from "../../../src/components/sample/access/model";
+} from "../../../src/components/systems/access/domain/policy";
+import { initialPeople } from "../../../src/components/systems/access/domain/model";
 
 const customRole: Role = {
   id: "role:dispatch",

@@ -3,16 +3,16 @@ import {
   applySandboxRuntimeCommand,
   emptySandboxSimulation,
   initialSandboxVersions,
-} from "../../../src/components/sample/sandbox/async";
+} from "../../../src/components/systems/sandbox/state/async";
 import {
   createSampleRuntime,
   type SampleDecoder,
-} from "../../../src/components/sample/sample-runtime";
+} from "../../../src/components/systems/shared/runtime/sample-runtime";
 import {
   initialDesign,
   initialSandboxHistory,
   type Design,
-} from "../../../src/components/sample/sandbox/model";
+} from "../../../src/components/systems/sandbox/domain/model";
 
 const decode: SampleDecoder = <T>(_key: string, value: unknown, initial: T) =>
   value === undefined ? initial : (value as T);

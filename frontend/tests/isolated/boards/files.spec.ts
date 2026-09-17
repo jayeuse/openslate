@@ -8,7 +8,7 @@ import {
   isSafeBoardUrl,
   releaseRemovedBoardAttachments,
   releaseBoardAttachment,
-} from "../../../src/components/sample/boards/files";
+} from "../../../src/components/systems/boards/adapters/files";
 
 function file(name: string, type: string, size = 100): File {
   return new File([new Uint8Array(size)], name, { type });

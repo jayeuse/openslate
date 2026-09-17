@@ -7,15 +7,15 @@ import {
   initialManageState,
   type ManageCommand,
   type ManageState,
-} from "../../src/components/sample/manage/state";
+} from "../../src/components/systems/manage/state/state";
 import {
   buildActivityCsv,
   initialActivityFilters,
   queryManageActivity,
-} from "../../src/components/sample/manage/audit";
-import { completeCollection } from "../../src/components/sample/sample-collections";
-import { createSampleRuntime } from "../../src/components/sample/sample-runtime";
-import { decodeSampleStoredValue } from "../../src/components/sample/sample-state";
+} from "../../src/components/systems/manage/components/audit";
+import { completeCollection } from "../../src/components/systems/shared/helpers/sample-collections";
+import { createSampleRuntime } from "../../src/components/systems/shared/runtime/sample-runtime";
+import { decodeSampleStoredValue } from "../../src/components/systems/shared/runtime/sample-state";
 
 function run(state: ManageState, command: ManageCommand, id = "test-action") {
   return executeManageCommand(state, command, "2026-09-12T12:00:00Z", id);

@@ -4,22 +4,22 @@ import {
   initialDesign,
   normalizeField,
   type Design,
-} from "../../../src/components/sample/sandbox/model";
+} from "../../../src/components/systems/sandbox/domain/model";
 import {
   applySandboxCommand,
   createSandboxHistory,
   normalizeSandboxHistory,
   undoSandboxCommand,
-} from "../../../src/components/sample/sandbox/controller";
-import { validateSandboxDesign } from "../../../src/components/sample/sandbox/validation";
+} from "../../../src/components/systems/sandbox/state/controller";
+import { validateSandboxDesign } from "../../../src/components/systems/sandbox/domain/validation";
 import {
   exportSandboxFile,
   parseSandboxFile,
-} from "../../../src/components/sample/sandbox/file-format";
+} from "../../../src/components/systems/sandbox/helpers/file-format";
 import {
   canvasFieldId,
   updateProjectedField,
-} from "../../../src/components/sample/sandbox/bridge";
+} from "../../../src/components/systems/sandbox/helpers/bridge";
 
 function fixture(): Design {
   return structuredClone(initialDesign);

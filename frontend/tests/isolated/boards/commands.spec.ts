@@ -3,12 +3,12 @@ import {
   executeBoardCommand,
   type BoardsState,
   type BoardCommandContext,
-} from "../../../src/components/sample/boards/commands";
+} from "../../../src/components/systems/boards/domain/commands";
 import {
   INITIAL_BOARDS,
   INITIAL_EVENTS,
   INITIAL_ANNOUNCEMENTS,
-} from "../../../src/components/sample/boards/model";
+} from "../../../src/components/systems/boards/domain/model";
 
 function state(): BoardsState {
   return {

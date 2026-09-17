@@ -1,4 +1,4 @@
-import SamplePlatform from "@/components/sample/platform";
+import SamplePlatform from "@/components/systems/platform/page";
 
 export default function PlatformPage() {
   return <SamplePlatform />;

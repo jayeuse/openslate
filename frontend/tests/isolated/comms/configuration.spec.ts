@@ -5,12 +5,12 @@ import {
   normalizeCommsConfiguration,
   resolveCommsPermission,
   resolveCommsSettings,
-} from "../../../src/components/sample/comms/configuration";
+} from "../../../src/components/systems/comms/domain/configuration";
 import {
   CHANNELS,
   CATEGORIES,
-} from "../../../src/components/sample/comms/model";
-import { initialPeople } from "../../../src/components/sample/access/model";
+} from "../../../src/components/systems/comms/domain/model";
+import { initialPeople } from "../../../src/components/systems/access/domain/model";
 const person = initialPeople[0];
 const channel = CHANNELS[0];
 test("channel values override inherited settings unless workspace locked", () => {

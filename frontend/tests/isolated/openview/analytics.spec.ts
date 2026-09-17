@@ -3,11 +3,11 @@ import {
   chartRows,
   serializeExportCsv,
   type ExportRequest,
-} from "../../../src/components/sample/openview/analytics";
+} from "../../../src/components/systems/openview/components/analytics";
 import {
   defaultChartSettings,
   type OpenViewRow,
-} from "../../../src/components/sample/openview/model";
+} from "../../../src/components/systems/openview/domain/model";
 import { resolveChartLegendLabel } from "../../../src/components/ui/chart";
 
 function serviceRow(id: string, values: OpenViewRow["values"]): OpenViewRow {

@@ -1,4 +1,4 @@
-import SampleAccess from "@/components/sample/access";
+import SampleAccess from "@/components/systems/access/page";
 
 export default function AccessPage() {
   return <SampleAccess />;

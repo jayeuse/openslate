@@ -124,7 +124,7 @@ def affected_sections(project: str, paths: list[str]) -> set[str]:
                 return all_sections
             continue
         if path.startswith("frontend/src/"):
-            if "/components/sample/" in path or "/app/(app)/(workspace)/" in path:
+            if "/components/systems/" in path or "/app/(app)/(workspace)/" in path:
                 # Shared people, permissions and state connect every sample
                 # pillar, including the canvas interaction suite.
                 selected.update(("sample", "sandbox"))

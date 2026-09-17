@@ -1,20 +1,20 @@
 import { expect, test } from "@playwright/test";
-import { createSampleRuntime } from "../../../src/components/sample/sample-runtime";
-import { saveReportTemplateRecipe } from "../../../src/components/sample/openview/controller";
-import { decodeSampleStoredValue } from "../../../src/components/sample/sample-state";
+import { createSampleRuntime } from "../../../src/components/systems/shared/runtime/sample-runtime";
+import { saveReportTemplateRecipe } from "../../../src/components/systems/openview/adapters/controller";
+import { decodeSampleStoredValue } from "../../../src/components/systems/shared/runtime/sample-state";
 import {
   decodeReport,
   decodeReports,
   projectAudienceLookup,
-} from "../../../src/components/sample/openview/model";
+} from "../../../src/components/systems/openview/domain/model";
 import {
   initialPeople,
   initialRoles,
-} from "../../../src/components/sample/access/model";
+} from "../../../src/components/systems/access/domain/model";
 import {
   initialReport,
   initialReportTemplates,
-} from "../../../src/components/sample/openview/seeds";
+} from "../../../src/components/systems/openview/domain/seeds";
 
 const lookup = projectAudienceLookup(initialRoles, initialPeople);
 

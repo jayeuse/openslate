@@ -42,7 +42,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import type { SandboxCommandResult } from "@/components/sample/sandbox/async";
+import type { SandboxCommandResult } from "@/components/systems/sandbox/state/async";
 
 type SandboxCommand =
   | void

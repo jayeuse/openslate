@@ -7,11 +7,11 @@ import {
   type AccessIdentity,
   type AccessRule,
   type AccessScopeRef,
-} from "../../../src/components/sample/access/policy";
+} from "../../../src/components/systems/access/domain/policy";
 import {
   normalizeLegacyGrant,
   projectLegacyGrants,
-} from "../../../src/components/sample/access/adapters";
+} from "../../../src/components/systems/access/adapters/adapters";
 
 const now = "2026-09-12T12:00:00.000Z";
 const workspace: AccessScopeRef = { kind: "workspace", id: "workspace" };

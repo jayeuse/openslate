@@ -36,7 +36,7 @@ import {
   type OpenViewRow,
   type OpenViewValue,
   type SortRule,
-} from "../../../src/components/sample/openview/model";
+} from "../../../src/components/systems/openview/domain/model";
 import {
   getOpenViewLanes,
   getOpenViewOperationalFacts,
@@ -44,8 +44,8 @@ import {
   normalizeOpenViewScheduleItems,
   summarizeOpenViewOperationalRows,
   type OpenViewTimingState,
-} from "../../../src/components/sample/openview/operations";
-import { INITIAL_RECORDS } from "../../../src/components/sample/sample-data";
+} from "../../../src/components/systems/openview/helpers/operations";
+import { INITIAL_RECORDS } from "../../../src/components/systems/shared/data/sample-data";
 
 function operationalRow(
   id: string,

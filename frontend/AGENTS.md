@@ -36,7 +36,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Features
 
-- Current workspace routes are `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`; their screens live under `src/components/sample/`. Inspect the target screen and state provider before choosing a pattern.
+- Current workspace routes are `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`; their screens live under `src/components/systems/`. Inspect the target screen and state provider before choosing a pattern.
 - Legacy module, department, administration, and workspace routes redirect to the current workspace. Do not restore retired pages or components to satisfy an older example.
 - Use explicit `CompleteCollection` and `PageResult` boundaries. Filter/sort before paging; complete exports and aggregates cannot use a visible page. Render a prepared page without a second table slice. Future backend pagination must preserve the frontend feature contract; retired list helpers are not an integration template.
 - Workspace screens currently do not subscribe to realtime. Any explicitly requested integration must preserve private Broadcast invalidation without row snapshots and avoid discarding in-progress form state.

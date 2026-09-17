@@ -6,7 +6,7 @@ import {
   normalizeField,
   type Design,
   type Version,
-} from "../../../src/components/sample/sandbox/model";
+} from "../../../src/components/systems/sandbox/domain/model";
 
 function fixture(): Design {
   return structuredClone(initialDesign);

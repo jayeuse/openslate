@@ -4,17 +4,17 @@ import {
   findEligibleBoardReminders,
   readBoardsRuntimeSnapshot,
   type BoardReminderEligibilityOptions,
-} from "../../../src/components/sample/boards/controller";
-import type { BoardsState } from "../../../src/components/sample/boards/commands";
+} from "../../../src/components/systems/boards/state/controller";
+import type { BoardsState } from "../../../src/components/systems/boards/domain/commands";
 import type {
   BoardEvent,
   BoardReminder,
-} from "../../../src/components/sample/boards/model";
+} from "../../../src/components/systems/boards/domain/model";
 import {
   INITIAL_BOARDS,
   INITIAL_EVENTS,
-} from "../../../src/components/sample/boards/model";
-import type { BoardViewer } from "../../../src/components/sample/boards/content";
+} from "../../../src/components/systems/boards/domain/model";
+import type { BoardViewer } from "../../../src/components/systems/boards/domain/content";
 
 const now = "2026-09-15T01:00:00.000Z";
 const actorId = "sample-eli";

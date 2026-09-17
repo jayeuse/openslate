@@ -3,9 +3,9 @@ import {
   initialDesign,
   type Design,
   type Version,
-} from "../../../src/components/sample/sandbox/model";
-import { decodeStoredSandboxVersions } from "../../../src/components/sample/sandbox/stored-history";
-import { decodeSampleStoredValue } from "../../../src/components/sample/sample-state";
+} from "../../../src/components/systems/sandbox/domain/model";
+import { decodeStoredSandboxVersions } from "../../../src/components/systems/sandbox/helpers/stored-history";
+import { decodeSampleStoredValue } from "../../../src/components/systems/shared/runtime/sample-state";
 
 function version(overrides: Partial<Version> = {}): Version {
   return {

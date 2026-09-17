@@ -12,7 +12,7 @@ Source: `.todo/CONTROLS.md`. This checklist tracks the approved frontend impleme
 
 ### Sandbox
 
-Destination: `/sandbox`. Source: [`src/components/sample/sandbox/`](src/components/sample/sandbox/). The Designer reuses the original Sandbox canvas and structure outline, including inline editing, drag placement, resizing, and connection ports. Draft history and versions include canvas geometry; field defaults, select options, and lifecycle controls remain in the sample inspector. Module ordering controls affect the outline independently of free canvas placement.
+Destination: `/sandbox`. Source: [`src/components/systems/sandbox/`](src/components/systems/sandbox/). The Designer reuses the original Sandbox canvas and structure outline, including inline editing, drag placement, resizing, and connection ports. Draft history and versions include canvas geometry; field defaults, select options, and lifecycle controls remain in the sample inspector. Module ordering controls affect the outline independently of free canvas placement.
 
 **Organization Designer**
 
@@ -92,7 +92,7 @@ Destination: `/sandbox`. Source: [`src/components/sample/sandbox/`](src/componen
 
 ### Boards
 
-Destination: `/boards`. Source: [`src/components/sample/boards/`](src/components/sample/boards/).
+Destination: `/boards`. Source: [`src/components/systems/boards/`](src/components/systems/boards/).
 
 **Organization Board**
 
@@ -139,7 +139,7 @@ Destination: `/boards`. Source: [`src/components/sample/boards/`](src/components
 
 ### OpenComms
 
-Destination: `/comms`. Source: [`src/components/sample/comms/`](src/components/sample/comms/).
+Destination: `/comms`. Source: [`src/components/systems/comms/`](src/components/systems/comms/).
 
 OpenComms uses a full-height channel list, conversation, and members panel, with responsive drawers and bounded pointer/keyboard panel resizing. Channel, category, thread, and message quick actions use keyboard/touch-accessible menus. Detailed configuration uses searchable, staged modals with inherited values, workspace locks, validation, pinned Save/Cancel actions, and unsaved-change protection. The title menu opens preferences, workspace settings, channel management, templates, automation, history, and thread tools.
 
@@ -187,7 +187,7 @@ Selected file contents remain in tab memory for actual local previews/downloads;
 
 ### Access
 
-Destination: `/access`. Source: [`src/components/sample/access/`](src/components/sample/access/).
+Destination: `/access`. Source: [`src/components/systems/access/`](src/components/systems/access/).
 
 **Users**
 
@@ -232,7 +232,7 @@ Destination: `/access`. Source: [`src/components/sample/access/`](src/components
 
 ### OpenView
 
-Destination: `/openview`. Source: [`src/components/sample/openview/`](src/components/sample/openview/).
+Destination: `/openview`. Source: [`src/components/systems/openview/`](src/components/systems/openview/).
 
 **Views**
 
@@ -274,7 +274,7 @@ Destination: `/openview`. Source: [`src/components/sample/openview/`](src/compon
 
 ### Manage
 
-Destination: `/manage`. Source: [`src/components/sample/manage/`](src/components/sample/manage/).
+Destination: `/manage`. Source: [`src/components/systems/manage/`](src/components/systems/manage/).
 
 Manage is an interactive, tab-local administration sample. Security policies,
 maintenance, and licensing do not operate live services. Saved settings and
@@ -361,7 +361,7 @@ responsive-layout, or visual automation.
 
 ### Platform-Level Controls
 
-Destination: `/platform`. Source: [`src/components/sample/platform/`](src/components/sample/platform/).
+Destination: `/platform`. Source: [`src/components/systems/platform/`](src/components/systems/platform/).
 
 **Import and Export**
 
@@ -415,7 +415,7 @@ Destination: `/platform`. Source: [`src/components/sample/platform/`](src/compon
 
 ### Access Control Center
 
-Destination: `/access`. Source: [`src/components/sample/access/`](src/components/sample/access/).
+Destination: `/access`. Source: [`src/components/systems/access/`](src/components/systems/access/).
 
 **P0 — identity and policy safety**
 

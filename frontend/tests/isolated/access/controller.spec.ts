@@ -2,13 +2,13 @@ import { expect, test } from "@playwright/test";
 import {
   initialPeople,
   initialRoles,
-} from "../../../src/components/sample/access/model";
+} from "../../../src/components/systems/access/domain/model";
 import {
   initialAccessDefaults,
   initialAccessGroups,
   initialAccessRules,
   initialAccessTemplates,
-} from "../../../src/components/sample/access/policy";
+} from "../../../src/components/systems/access/domain/policy";
 import {
   executeAccessCommand,
   getAccessHealth,
@@ -17,24 +17,24 @@ import {
   resolveControllerAccess,
   previewBulkIdentityUpdate,
   type AccessControllerSnapshot,
-} from "../../../src/components/sample/access/controller-utils";
+} from "../../../src/components/systems/access/domain/controller-utils";
 import {
   readAccessProjection,
   writeAccessProjection,
-} from "../../../src/components/sample/access/controller";
-import { initialManageSessions } from "../../../src/components/sample/manage/sessions";
-import { decodeSampleStoredValue } from "../../../src/components/sample/sample-state";
+} from "../../../src/components/systems/access/state/controller";
+import { initialManageSessions } from "../../../src/components/systems/manage/state/sessions";
+import { decodeSampleStoredValue } from "../../../src/components/systems/shared/runtime/sample-state";
 import {
   decodeDashboards,
   decodeReport,
   decodeReports,
   projectAudienceLookup,
-} from "../../../src/components/sample/openview/model";
+} from "../../../src/components/systems/openview/domain/model";
 import {
   initialDashboards,
   initialReport,
-} from "../../../src/components/sample/openview/seeds";
-import type { SampleDraft } from "../../../src/components/sample/sample-runtime";
+} from "../../../src/components/systems/openview/domain/seeds";
+import type { SampleDraft } from "../../../src/components/systems/shared/runtime/sample-runtime";
 
 const context = {
   now: "2026-09-12T12:00:00.000Z",

@@ -14,8 +14,8 @@ import {
   decodeBoardPersonalState,
   decodeBoardActivity,
   type BoardAudienceLookup,
-} from "../../../src/components/sample/boards/model";
-import { getAnnouncementLifecycle } from "../../../src/components/sample/boards/content";
+} from "../../../src/components/systems/boards/domain/model";
+import { getAnnouncementLifecycle } from "../../../src/components/systems/boards/domain/content";
 
 const audienceLookup: BoardAudienceLookup = {
   roles: [

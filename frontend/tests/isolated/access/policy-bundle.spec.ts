@@ -4,14 +4,14 @@ import {
   parsePolicyBundle,
   planPolicyImport,
   type AccessPolicyBundleV1,
-} from "../../../src/components/sample/access/policy-bundle";
+} from "../../../src/components/systems/access/domain/policy-bundle";
 import {
   initialAccessDefaults,
   initialAccessGroups,
   initialAccessRules,
   initialAccessTemplates,
-} from "../../../src/components/sample/access/policy";
-import { initialRoles } from "../../../src/components/sample/access/model";
+} from "../../../src/components/systems/access/domain/policy";
+import { initialRoles } from "../../../src/components/systems/access/domain/model";
 
 function bundle(): AccessPolicyBundleV1 {
   return createPolicyBundle({

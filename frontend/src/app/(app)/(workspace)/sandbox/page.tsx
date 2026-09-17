@@ -1,4 +1,4 @@
-import SampleSandbox from "@/components/sample/sandbox";
+import SampleSandbox from "@/components/systems/sandbox/page";
 
 export default function SandboxPage() {
   return <SampleSandbox />;

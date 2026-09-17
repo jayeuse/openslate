@@ -1,14 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { INITIAL_RECORDS } from "../../../src/components/sample/sample-data";
+import { INITIAL_RECORDS } from "../../../src/components/systems/shared/data/sample-data";
 import {
   createSampleRuntime,
   type SampleDecoder,
-} from "../../../src/components/sample/sample-runtime";
-import { SampleOperationError } from "../../../src/components/sample/sample-runtime";
+} from "../../../src/components/systems/shared/runtime/sample-runtime";
+import { SampleOperationError } from "../../../src/components/systems/shared/runtime/sample-runtime";
 import {
   messageFromCommsError,
   stageRecordDiscussion,
-} from "../../../src/components/sample/comms/runtime";
+} from "../../../src/components/systems/comms/state/runtime";
 
 const decode: SampleDecoder = <T>(_key: string, value: unknown, initial: T) =>
   value === undefined ? initial : (value as T);

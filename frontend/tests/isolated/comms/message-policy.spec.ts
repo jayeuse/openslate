@@ -1,15 +1,15 @@
 import { test, expect } from "@playwright/test";
-import { createCommsConfiguration } from "../../../src/components/sample/comms/configuration";
+import { createCommsConfiguration } from "../../../src/components/systems/comms/domain/configuration";
 import {
   validateCommsMessage,
   validateCommsMessageChange,
   type CommsMessageInput,
-} from "../../../src/components/sample/comms/message-policy";
+} from "../../../src/components/systems/comms/domain/message-policy";
 import {
   CHANNELS,
   CATEGORIES,
-} from "../../../src/components/sample/comms/model";
-import { initialPeople } from "../../../src/components/sample/access/model";
+} from "../../../src/components/systems/comms/domain/model";
+import { initialPeople } from "../../../src/components/systems/access/domain/model";
 const input = (): CommsMessageInput => ({
   config: createCommsConfiguration(),
   person: initialPeople[1],

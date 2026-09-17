@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   createSampleRuntime,
   SampleOperationError,
-} from "../../../src/components/sample/sample-runtime";
+} from "../../../src/components/systems/shared/runtime/sample-runtime";
 
 const decode = <T>(_key: string, value: unknown, initial: T): T =>
   value === undefined ? initial : (value as T);

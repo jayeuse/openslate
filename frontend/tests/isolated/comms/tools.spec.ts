@@ -3,7 +3,7 @@ import {
   parseSettingsImport,
   selectedSettings,
   restoreConfigurationEntry,
-} from "../../../src/components/sample/comms/tools-helpers";
+} from "../../../src/components/systems/comms/domain/tools-helpers";
 test("settings import rejects entity payloads and invalid values rather than dropping them", () => {
   expect(() => parseSettingsImport('{"messages": []}')).toThrow();
   expect(() => parseSettingsImport('{"slowModeSeconds": -1}')).toThrow();
@@ -24,7 +24,7 @@ test("selected-field applications preserve unrelated settings and membership", (
 import {
   createCommsConfiguration,
   type CommsHistoryEntry,
-} from "../../../src/components/sample/comms/configuration";
+} from "../../../src/components/systems/comms/domain/configuration";
 test("restoring workspace history restores locks and logs the current configuration without replacing unrelated state", () => {
   const config = createCommsConfiguration();
   config.workspace.settings = { slowModeSeconds: 30 };
@@ -71,14 +71,14 @@ test("restoring workspace history restores locks and logs the current configurat
   });
 });
 
-import { toolChannelMessages } from "../../../src/components/sample/comms/tools-helpers";
-import { validateCommsMessage } from "../../../src/components/sample/comms/message-policy";
+import { toolChannelMessages } from "../../../src/components/systems/comms/domain/tools-helpers";
+import { validateCommsMessage } from "../../../src/components/systems/comms/domain/message-policy";
 import {
   CHANNELS,
   MESSAGES,
   type Thread,
-} from "../../../src/components/sample/comms/model";
-import { initialPeople } from "../../../src/components/sample/access/model";
+} from "../../../src/components/systems/comms/domain/model";
+import { initialPeople } from "../../../src/components/systems/access/domain/model";
 test("tool sending observes slow mode from recent thread replies in the destination channel", () => {
   const config = createCommsConfiguration();
   config.workspace.settings.slowModeSeconds = 60;

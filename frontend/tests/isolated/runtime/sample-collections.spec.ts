@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   completeCollection,
   pageCollection,
-} from "../../../src/components/sample/sample-collections";
+} from "../../../src/components/systems/shared/helpers/sample-collections";
 
 test("page results retain the full query total and final-page boundary", () => {
   const items = Array.from({ length: 25 }, (_, id) => ({ id }));

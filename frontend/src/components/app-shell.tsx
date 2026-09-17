@@ -1,13 +1,13 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
 import {
   Bell,
   Search,
   LogOut,
   Menu,
+  MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
@@ -24,8 +24,13 @@ import {
 
 import { AppNavigation } from "@/components/app-navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
-import { releaseAllLocalAttachments } from "@/components/sample/comms/local-attachments";
-import { clearSampleSessionSnapshot } from "@/components/sample/sample-state";
+import {
+  GuardedWorkspaceLink,
+  WorkspaceNavigationGuardProvider,
+  useWorkspaceNavigationRequest,
+} from "@/components/workspace-navigation-guard";
+import { releaseAllLocalAttachments } from "@/components/systems/shared/runtime/local-attachments";
+import { clearVerifiedWorkspaceSessionSnapshot } from "@/components/systems/shared/runtime/workspace-identity";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
   DropdownMenu,
@@ -51,15 +56,22 @@ import { cn } from "@/lib/utils";
 
 const SIDEBAR_COLLAPSED_KEY = "openslate-sidebar-collapsed";
 const SIDEBAR_WIDTH_KEY = "openslate-sidebar-width";
-const SIDEBAR_MIN_WIDTH = 256;
+const SIDEBAR_MIN_WIDTH = 271;
 const SIDEBAR_MAX_WIDTH = 400;
 
 function clampSidebarWidth(width: number) {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width));
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({
+  children,
+  verifiedUserId,
+}: {
+  children: ReactNode;
+  verifiedUserId: string | null;
+}) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const isComms = pathname === "/comms";
   const isAccess = pathname === "/access";
@@ -81,6 +93,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [preferencesReady, setPreferencesReady] = useState(false);
   const mobileCloseRef = useRef<HTMLButtonElement>(null);
   const navigationReturnFocus = useRef<HTMLElement | null>(null);
+  const navigationSearchParams = new URLSearchParams(searchParams.toString());
 
   useEffect(() => {
     try {
@@ -116,12 +129,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     setAccountOpen(false);
   }, [pathname]);
 
-  function navigate(href: string) {
-    setMobileOpen(false);
-    setAccountOpen(false);
-    router.push(href as Route);
-  }
-
   function openMobileNavigation(opener: HTMLElement) {
     navigationReturnFocus.current = opener;
     setAccountOpen(false);
@@ -147,7 +154,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         credentials: "same-origin",
       });
     } finally {
-      clearSampleSessionSnapshot();
+      void clearVerifiedWorkspaceSessionSnapshot(verifiedUserId);
       releaseAllLocalAttachments();
       router.replace("/login");
     }
@@ -159,256 +166,213 @@ export function AppShell({ children }: { children: ReactNode }) {
   } as CSSProperties;
 
   return (
-    <>
-      <SidebarProvider
-        open={!sidebarCollapsed}
-        onOpenChange={setSidebarOpen}
-        className={cn(
-          "app-shell bg-background text-foreground",
-          isAccess
-            ? "fixed inset-0 h-screen min-h-0 overflow-hidden"
-            : "min-h-screen",
-        )}
-        style={sidebarStyle}
-        data-sidebar-resizing={resizing || undefined}
-      >
-        <a
-          href="#main-content"
-          className="focus:bg-primary focus:text-primary-foreground sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[70] focus:rounded-md focus:px-4 focus:py-2"
+    <WorkspaceNavigationGuardProvider
+      onAcceptedNavigation={closeMobileNavigation}
+    >
+      <>
+        <SidebarProvider
+          open={!sidebarCollapsed}
+          onOpenChange={setSidebarOpen}
+          className={cn(
+            "app-shell bg-background text-foreground",
+            isAccess
+              ? "fixed inset-0 h-screen min-h-0 overflow-hidden"
+              : "min-h-screen",
+          )}
+          style={sidebarStyle}
+          data-sidebar-resizing={resizing || undefined}
         >
-          Skip to content
-        </a>
-
-        <Sidebar
-          collapsible="icon"
-          role="complementary"
-          id="primary-sidebar"
-          aria-label="Primary sidebar"
-          className="z-30"
-        >
-          <AppSidebarHeader collapsed={sidebarCollapsed} />
-          <SidebarContent className="px-3 py-5">
-            <AppNavigation
-              pathname={pathname}
-              onNavigate={closeMobileNavigation}
-              collapsed={sidebarCollapsed}
-            />
-          </SidebarContent>
-          <AppSidebarFooter
-            collapsed={sidebarCollapsed}
-            showToggle
-            onNavigate={navigate}
-          />
-          {!sidebarCollapsed ? (
-            <div
-              role="separator"
-              aria-label="Resize sidebar"
-              aria-orientation="vertical"
-              aria-controls="primary-sidebar"
-              aria-valuemin={SIDEBAR_MIN_WIDTH}
-              aria-valuemax={SIDEBAR_MAX_WIDTH}
-              aria-valuenow={sidebarWidth}
-              aria-valuetext={`${sidebarWidth} pixels`}
-              tabIndex={0}
-              title="Drag to resize. Double-click to reset."
-              className="hover:bg-primary/20 focus-visible:bg-primary/20 focus-visible:outline-ring absolute inset-y-0 -right-1 z-40 w-2 cursor-col-resize touch-none focus-visible:outline-2"
-              onPointerDown={(event) => {
-                if (!event.isPrimary || event.button !== 0) return;
-                event.preventDefault();
-                event.currentTarget.focus();
-                event.currentTarget.setPointerCapture(event.pointerId);
-                resizeStart.current = {
-                  pointerId: event.pointerId,
-                  x: event.clientX,
-                  width: sidebarWidth,
-                };
-                setResizing(true);
-              }}
-              onPointerMove={(event) => {
-                const start = resizeStart.current;
-                if (!start || start.pointerId !== event.pointerId) return;
-                setSidebarWidth(
-                  clampSidebarWidth(
-                    Math.round(start.width + event.clientX - start.x),
-                  ),
-                );
-              }}
-              onPointerUp={(event) => {
-                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                  event.currentTarget.releasePointerCapture(event.pointerId);
-                }
-                resizeStart.current = null;
-                setResizing(false);
-              }}
-              onPointerCancel={() => {
-                resizeStart.current = null;
-                setResizing(false);
-              }}
-              onLostPointerCapture={() => {
-                resizeStart.current = null;
-                setResizing(false);
-              }}
-              onDoubleClick={() => setSidebarWidth(SIDEBAR_MIN_WIDTH)}
-              onKeyDown={(event) => {
-                if (
-                  !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
-                    event.key,
-                  )
-                )
-                  return;
-                event.preventDefault();
-                setSidebarWidth((current) =>
-                  event.key === "Home"
-                    ? SIDEBAR_MIN_WIDTH
-                    : event.key === "End"
-                      ? SIDEBAR_MAX_WIDTH
-                      : clampSidebarWidth(
-                          current + (event.key === "ArrowRight" ? 16 : -16),
-                        ),
-                );
-              }}
-            />
-          ) : null}
-        </Sidebar>
-
-        <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetContent
-            side="left"
-            id="mobile-navigation"
-            initialFocus={mobileCloseRef}
-            finalFocus={() => navigationReturnFocus.current}
-            className="flex h-full w-72 max-w-[calc(100vw-2rem)] flex-col p-0"
+          <a
+            href="#main-content"
+            className="focus:bg-primary focus:text-primary-foreground sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[70] focus:rounded-md focus:px-4 focus:py-2"
           >
-            <SheetTitle className="sr-only">OpenSlate navigation</SheetTitle>
-            <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
-              <Link
-                href={"/openview" as Route}
-                onNavigate={closeMobileNavigation}
-                className="flex min-w-0 items-center gap-2.5 font-semibold"
-              >
-                <WorkspaceMark />
-                <span>OpenSlate</span>
-              </Link>
-              <button
-                ref={mobileCloseRef}
-                type="button"
-                aria-label="Close navigation"
-                onClick={closeMobileNavigation}
-                className="text-sidebar-muted hover:bg-sidebar-accent hover:text-sidebar-foreground grid size-11 place-items-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
-              >
-                <X className="size-4" aria-hidden="true" />
-              </button>
-            </div>
-            <div className="px-4 pt-3">
-              <WorkspaceLabel />
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+            Skip to content
+          </a>
+
+          <Sidebar
+            collapsible="icon"
+            role="complementary"
+            id="primary-sidebar"
+            aria-label="Primary sidebar"
+            className="z-30"
+          >
+            <AppSidebarHeader collapsed={sidebarCollapsed} />
+            <SidebarContent className="app-sidebar-scroll px-3 pt-5">
               <AppNavigation
                 pathname={pathname}
-                onNavigate={closeMobileNavigation}
+                searchParams={navigationSearchParams}
+                collapsed={sidebarCollapsed}
+                onExpandSidebar={() => setSidebarOpen(true)}
               />
-            </div>
-            <AppSidebarFooter collapsed={false} onNavigate={navigate} />
-          </SheetContent>
-        </Sheet>
-
-        <div
-          className={cn(
-            "min-w-0 flex-1",
-            isComms || isAccess ? "h-screen min-h-0" : "min-h-screen",
-          )}
-        >
-          <header className="border-border bg-background sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-11 lg:hidden"
-                aria-label="Open navigation"
-                aria-expanded={mobileOpen}
-                aria-controls="mobile-navigation"
-                onClick={(event) => openMobileNavigation(event.currentTarget)}
-              >
-                <Menu aria-hidden="true" />
-              </Button>
-              <AppBreadcrumbs />
-            </div>
-            <div className="flex shrink-0 items-center gap-1 sm:gap-3">
-              <Link
-                href={"/platform" as Route}
-                aria-label="Search workspace"
-                title="Search workspace"
-                className="text-muted-foreground hover:bg-muted flex min-h-11 items-center gap-2 rounded-md px-3 text-sm sm:min-w-52 sm:border"
-              >
-                <Search className="size-4" aria-hidden="true" />
-                <span className="hidden sm:inline">Search workspace…</span>
-              </Link>
-              <Link
-                href={"/platform#notifications" as Route}
-                aria-label="Notifications"
-                title="Notifications"
-                className="hover:bg-muted grid size-11 place-items-center rounded-md"
-              >
-                <Bell className="size-4" aria-hidden="true" />
-              </Link>
-              <DropdownMenu open={accountOpen} onOpenChange={setAccountOpen}>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-11"
-                      aria-label="Account"
-                    />
+              <div className="bg-sidebar sticky bottom-0 z-10 -mx-3 mt-auto px-3 pt-3 pb-2">
+                <AppCommsLink collapsed={sidebarCollapsed} />
+              </div>
+            </SidebarContent>
+            <AppSidebarFooter collapsed={sidebarCollapsed} showToggle />
+            {!sidebarCollapsed ? (
+              <div
+                role="separator"
+                aria-label="Resize sidebar"
+                aria-orientation="vertical"
+                aria-controls="primary-sidebar"
+                aria-valuemin={SIDEBAR_MIN_WIDTH}
+                aria-valuemax={SIDEBAR_MAX_WIDTH}
+                aria-valuenow={sidebarWidth}
+                aria-valuetext={`${sidebarWidth} pixels`}
+                tabIndex={0}
+                title="Drag to resize. Double-click to reset."
+                className="hover:bg-primary/20 focus-visible:bg-primary/20 focus-visible:outline-ring absolute inset-y-0 -right-1 z-40 w-2 cursor-col-resize touch-none focus-visible:outline-2"
+                onPointerDown={(event) => {
+                  if (!event.isPrimary || event.button !== 0) return;
+                  event.preventDefault();
+                  event.currentTarget.focus();
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  resizeStart.current = {
+                    pointerId: event.pointerId,
+                    x: event.clientX,
+                    width: sidebarWidth,
+                  };
+                  setResizing(true);
+                }}
+                onPointerMove={(event) => {
+                  const start = resizeStart.current;
+                  if (!start || start.pointerId !== event.pointerId) return;
+                  setSidebarWidth(
+                    clampSidebarWidth(
+                      Math.round(start.width + event.clientX - start.x),
+                    ),
+                  );
+                }}
+                onPointerUp={(event) => {
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                    event.currentTarget.releasePointerCapture(event.pointerId);
                   }
+                  resizeStart.current = null;
+                  setResizing(false);
+                }}
+                onPointerCancel={() => {
+                  resizeStart.current = null;
+                  setResizing(false);
+                }}
+                onLostPointerCapture={() => {
+                  resizeStart.current = null;
+                  setResizing(false);
+                }}
+                onDoubleClick={() => setSidebarWidth(SIDEBAR_MIN_WIDTH)}
+                onKeyDown={(event) => {
+                  if (
+                    !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                      event.key,
+                    )
+                  )
+                    return;
+                  event.preventDefault();
+                  setSidebarWidth((current) =>
+                    event.key === "Home"
+                      ? SIDEBAR_MIN_WIDTH
+                      : event.key === "End"
+                        ? SIDEBAR_MAX_WIDTH
+                        : clampSidebarWidth(
+                            current + (event.key === "ArrowRight" ? 16 : -16),
+                          ),
+                  );
+                }}
+              />
+            ) : null}
+          </Sidebar>
+
+          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+            <SheetContent
+              side="left"
+              id="mobile-navigation"
+              initialFocus={mobileCloseRef}
+              finalFocus={() => navigationReturnFocus.current}
+              className="flex h-full w-72 max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden p-0"
+            >
+              <SheetTitle className="sr-only">OpenSlate navigation</SheetTitle>
+              <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
+                <GuardedWorkspaceLink
+                  href={"/openview" as Route}
+                  onAcceptedNavigate={closeMobileNavigation}
+                  className="flex min-w-0 items-center gap-2.5 font-semibold"
                 >
-                  <UserCircle className="size-5" aria-hidden="true" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" aria-label="Account">
-                  <DropdownMenuGroup>
-                    <DropdownMenuItem
-                      render={
-                        <Link
-                          href={"/platform#account" as Route}
-                          onNavigate={() => setAccountOpen(false)}
-                        />
-                      }
-                    >
-                      <UserCircle aria-hidden="true" />
-                      Account settings
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={logout}>
-                      <LogOut aria-hidden="true" />
-                      Sign out
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </header>
-          <main
-            id="main-content"
+                  <WorkspaceMark />
+                  <span>OpenSlate</span>
+                </GuardedWorkspaceLink>
+                <button
+                  ref={mobileCloseRef}
+                  type="button"
+                  aria-label="Close navigation"
+                  onClick={closeMobileNavigation}
+                  className="text-sidebar-muted hover:bg-sidebar-accent hover:text-sidebar-foreground grid size-11 place-items-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </button>
+              </div>
+              <div className="app-sidebar-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4">
+                <AppNavigation
+                  pathname={pathname}
+                  searchParams={navigationSearchParams}
+                />
+                <div className="bg-background sticky bottom-0 z-10 -mx-4 mt-auto px-4 pt-3 pb-2">
+                  <AppCommsLink collapsed={false} />
+                </div>
+              </div>
+              <AppSidebarFooter collapsed={false} />
+            </SheetContent>
+          </Sheet>
+
+          <div
             className={cn(
-              isComms || isAccess
-                ? "flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden"
-                : isManage
-                  ? "min-h-[calc(100vh-3.5rem)] p-3 sm:px-5 sm:py-3"
-                  : "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7",
+              "min-w-0 flex-1",
+              isComms || isAccess ? "h-screen min-h-0" : "min-h-screen",
             )}
           >
-            {children}
-          </main>
-        </div>
-      </SidebarProvider>
-      <Toaster />
-    </>
+            <header className="border-border bg-background sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-11 lg:hidden"
+                  aria-label="Open navigation"
+                  aria-expanded={mobileOpen}
+                  aria-controls="mobile-navigation"
+                  onClick={(event) => openMobileNavigation(event.currentTarget)}
+                >
+                  <Menu aria-hidden="true" />
+                </Button>
+                <AppBreadcrumbs />
+              </div>
+              <AppHeaderActions
+                accountOpen={accountOpen}
+                onAccountOpenChange={setAccountOpen}
+                onLogout={logout}
+              />
+            </header>
+            <main
+              id="main-content"
+              className={cn(
+                isComms || isAccess
+                  ? "flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden"
+                  : isManage
+                    ? "min-h-[calc(100vh-3.5rem)] p-3 sm:px-5 sm:py-3"
+                    : "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7",
+              )}
+            >
+              {children}
+            </main>
+          </div>
+        </SidebarProvider>
+        <Toaster />
+      </>
+    </WorkspaceNavigationGuardProvider>
   );
 }
 
 function AppSidebarHeader({ collapsed }: { collapsed: boolean }) {
   return (
     <SidebarHeader className="shrink-0 gap-4 px-4 pt-4 pb-2">
-      <Link
+      <GuardedWorkspaceLink
         href={"/openview" as Route}
         aria-label="OpenSlate workspace"
         className={cn(
@@ -421,21 +385,57 @@ function AppSidebarHeader({ collapsed }: { collapsed: boolean }) {
             OpenSlate
           </span>
         ) : null}
-      </Link>
-      {!collapsed ? <WorkspaceLabel /> : null}
+      </GuardedWorkspaceLink>
     </SidebarHeader>
+  );
+}
+
+function AppCommsLink({ collapsed }: { collapsed: boolean }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const active = pathname === "/comms" || pathname.startsWith("/comms/");
+
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          render={
+            <GuardedWorkspaceLink
+              href={"/comms" as Route}
+              prefetch={false}
+              onPointerEnter={() => router.prefetch("/comms" as Route)}
+              onFocus={() => router.prefetch("/comms" as Route)}
+            />
+          }
+          isActive={active}
+          aria-current={active ? "page" : undefined}
+          aria-label="OpenComms"
+          title={collapsed ? "OpenComms" : undefined}
+          className="min-h-11"
+        >
+          <MessageSquare aria-hidden="true" />
+          <span>OpenComms</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
   );
 }
 
 function AppSidebarFooter({
   collapsed,
   showToggle = false,
-  onNavigate,
 }: {
   collapsed: boolean;
   showToggle?: boolean;
-  onNavigate: (href: string) => void;
 }) {
+  const router = useRouter();
+  const requestNavigation = useWorkspaceNavigationRequest();
+
+  function navigate(href: Route) {
+    const resume = () => router.push(href);
+    if (requestNavigation(href, resume)) resume();
+  }
+
   return (
     <SidebarFooter className="border-sidebar-accent/60 relative shrink-0 border-t px-4 py-3">
       <SidebarMenu>
@@ -468,7 +468,7 @@ function AppSidebarFooter({
             type="button"
             aria-label={collapsed ? "Appearance" : undefined}
             title={collapsed ? "Appearance" : undefined}
-            onClick={() => onNavigate("/settings/appearance")}
+            onClick={() => navigate("/settings/appearance")}
           >
             <Settings className="size-4 shrink-0" aria-hidden="true" />
             <span className={cn("truncate", collapsed && "sr-only")}>
@@ -481,6 +481,81 @@ function AppSidebarFooter({
   );
 }
 
+function AppHeaderActions({
+  accountOpen,
+  onAccountOpenChange,
+  onLogout,
+}: {
+  accountOpen: boolean;
+  onAccountOpenChange: (open: boolean) => void;
+  onLogout: () => Promise<void>;
+}) {
+  const requestNavigation = useWorkspaceNavigationRequest();
+
+  function requestLogout() {
+    const logout = () => {
+      onAccountOpenChange(false);
+      void onLogout();
+    };
+    if (requestNavigation("/login", logout)) logout();
+  }
+
+  return (
+    <div className="flex shrink-0 items-center gap-1 sm:gap-3">
+      <GuardedWorkspaceLink
+        href={"/platform" as Route}
+        aria-label="Search workspace"
+        title="Search workspace"
+        className="text-muted-foreground hover:bg-muted flex min-h-11 items-center gap-2 rounded-md px-3 text-sm sm:min-w-52 sm:border"
+      >
+        <Search className="size-4" aria-hidden="true" />
+        <span className="hidden sm:inline">Search workspace…</span>
+      </GuardedWorkspaceLink>
+      <GuardedWorkspaceLink
+        href={"/platform?section=notifications" as Route}
+        aria-label="Notifications"
+        title="Notifications"
+        className="hover:bg-muted grid size-11 place-items-center rounded-md"
+      >
+        <Bell className="size-4" aria-hidden="true" />
+      </GuardedWorkspaceLink>
+      <DropdownMenu open={accountOpen} onOpenChange={onAccountOpenChange}>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-11"
+              aria-label="Account"
+            />
+          }
+        >
+          <UserCircle className="size-5" aria-hidden="true" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" aria-label="Account">
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              render={
+                <GuardedWorkspaceLink
+                  href={"/platform?section=account" as Route}
+                  onAcceptedNavigate={() => onAccountOpenChange(false)}
+                />
+              }
+            >
+              <UserCircle aria-hidden="true" />
+              Account settings
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={requestLogout}>
+              <LogOut aria-hidden="true" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
 function WorkspaceMark() {
   return (
     <span
@@ -489,19 +564,5 @@ function WorkspaceMark() {
     >
       OS
     </span>
-  );
-}
-
-function WorkspaceLabel() {
-  return (
-    <div className="text-sidebar-muted flex min-h-11 items-center gap-2 px-2 text-xs">
-      <span
-        className="bg-sidebar-accent text-sidebar-foreground grid size-6 shrink-0 place-items-center rounded font-semibold"
-        aria-hidden="true"
-      >
-        W
-      </span>
-      <span>Workspace</span>
-    </div>
   );
 }

@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import type {
   BoardAnnouncement,
   BoardEvent,
-} from "../../../src/components/sample/boards/model";
+} from "../../../src/components/systems/boards/domain/model";
 import {
   canViewBoardAudience,
   dedupeBoardReminders,
@@ -14,7 +14,7 @@ import {
   validateBoardAnnouncement,
   type BoardEventOccurrence,
   type BoardViewer,
-} from "../../../src/components/sample/boards/content";
+} from "../../../src/components/systems/boards/domain/content";
 
 const baseEvent: BoardEvent = {
   id: "event-briefing",

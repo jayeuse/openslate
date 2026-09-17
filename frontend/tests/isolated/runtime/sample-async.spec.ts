@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   createSampleCommands,
   createSampleResource,
-} from "../../../src/components/sample/sample-async-state";
+} from "../../../src/components/systems/shared/runtime/sample-async-state";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

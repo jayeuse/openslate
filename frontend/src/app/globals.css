@@ -368,6 +368,25 @@ textarea:focus-visible {
 .app-shell [data-slot="sidebar-menu-button"] svg {
   stroke-width: 1.65;
 }
+
+.app-sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sidebar-muted) transparent;
+}
+
+.app-sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.app-sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-sidebar-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--sidebar-muted);
+}
+
 @media (max-width: 639px) {
   .app-shell
     :is(

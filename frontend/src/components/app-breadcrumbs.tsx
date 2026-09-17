@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Route } from "next";
+import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -33,7 +33,9 @@ export function AppBreadcrumbs() {
     <Breadcrumb className="min-w-0">
       <BreadcrumbList className="flex-nowrap">
         <BreadcrumbItem>
-          <BreadcrumbLink render={<Link href={"/openview" as Route} />}>
+          <BreadcrumbLink
+            render={<GuardedWorkspaceLink href={"/openview" as Route} />}
+          >
             Workspace
           </BreadcrumbLink>
         </BreadcrumbItem>

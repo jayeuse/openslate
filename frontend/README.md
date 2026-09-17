@@ -2,11 +2,24 @@
 
 The workspace is currently UI-first: business data, roles, permissions, branding, and interaction state are local sample state. Workspace screens do not fetch business APIs or subscribe to realtime updates. Existing-account sign-in, session validation/refresh, and logout remain connected to Supabase Auth.
 
+Browser-held workspace snapshots and Comms drafts are scoped to the verified
+account in each tab. Older snapshots without an account owner remain stored but
+are not loaded automatically.
+
 FastAPI does not need to be running for existing-account login and workspace UI work. Existing configuration still supplies a backend URL, and invitation onboarding retains its protected backend acceptance flow. The backend and BFF implementations remain available for later integration; current workspace controls do not call them.
 
 Frontend-specific commands and architecture are documented in the repository root [`README.md`](../README.md).
 
 Workspace pages use `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`. The URL prefix is independent of the local placeholder data.
+
+The active workspace implementation lives in `src/components/systems/`.
+The sidebar owns top-level section navigation for Sandbox, Boards, Access,
+OpenView, Manage, and Platform; OpenComms remains a direct page link at the
+bottom of the navigation area, above the footer divider. The
+group labels expand or collapse their child links without navigating; choose a
+child link to open a section. The selected section is encoded in each page's
+existing `view` or `section` query parameter, including `section` on Sandbox and
+Platform. Existing Platform hash and file links remain supported.
 
 ## Shared interface contract
 

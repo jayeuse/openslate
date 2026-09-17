@@ -5,7 +5,7 @@ import {
   hasThreeWayConflict,
   resolveThreeWayValue,
   sameList,
-} from "../../../src/components/sample/access/editor-helpers";
+} from "../../../src/components/systems/access/helpers/editor-helpers";
 
 test("three-way conflict detection ignores untouched or converged fields", () => {
   expect(hasThreeWayConflict("same", "same", "draft")).toBe(false);

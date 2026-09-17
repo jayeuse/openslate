@@ -1,4 +1,4 @@
-import SampleBoards from "@/components/sample/boards";
+import SampleBoards from "@/components/systems/boards/page";
 
 export default function BoardsPage() {
   return <SampleBoards />;

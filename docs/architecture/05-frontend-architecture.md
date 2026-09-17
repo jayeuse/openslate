@@ -9,7 +9,7 @@
 The frontend uses Next.js App Router and React with strict TypeScript. Package
 versions live in `frontend/package.json` and its lockfile. Pages and layouts are
 Server Components by default; the interactive workspace features are client
-components under `frontend/src/components/sample/`.
+components under `frontend/src/components/systems/`.
 
 `src/app/layout.tsx:RootLayout` loads Geist fonts and `globals.css`, awaits
 `connection()`, and applies the request nonce from `src/proxy.ts`. Its blocking
@@ -45,6 +45,17 @@ navigation. The workspace layout similarly preserves `SampleProvider` across
 its seven routes. The generic `[pillar]` entry is not a second implementation
 of these seven feature screens.
 
+`src/components/app-navigation.tsx` renders expandable sidebar groups for the
+top-level sections of Sandbox, Boards, Access, OpenView, Manage, and Platform.
+Each group label toggles its child links without navigation; selecting a child
+navigates to that section. OpenComms stays a direct link above the sidebar footer.
+`workspace-navigation.ts` owns the section URL mapping; the shell reads the URL
+rather than feature state. Access and Manage
+use `view`, while Boards, OpenView, Sandbox, and Platform use `section` query
+parameters. Legacy Platform hash/file links and existing feature deep links
+remain readable. The shell navigation guard lets active features block pending
+commands or defer a link behind an unsaved-change confirmation.
+
 ## Local workspace authority
 
 The frontend prototype defines the product behavior. Existing backend endpoint
@@ -53,12 +64,16 @@ records, policy editing, conversations, reports, settings, local releases, and
 account demonstrations remain local sample behavior. This separation is not a
 claim of production persistence, server authorization, delivery, or scheduling.
 
-`sample/sample-runtime.ts:createSampleRuntime` owns the current snapshot.
-`sample/sample-state.tsx:SampleProvider` creates one runtime and subscribes with
+`systems/shared/runtime/sample-runtime.ts:createSampleRuntime` owns the current snapshot.
+`systems/shared/runtime/sample-state.tsx:SampleProvider` creates one runtime and subscribes with
 `useSyncExternalStore`. Legacy local setters and transactions use that same
 runtime, so there is no second store competing with feature command adapters.
 The provider decodes saved values before use and persists synthetic workspace
-state in tab-scoped `sessionStorage` under `openslate.sample.v1`.
+state in tab-scoped `sessionStorage` under an account-scoped key derived from
+`openslate.sample.v1` and the verified user ID returned by `/session/status`.
+The older unowned key is left untouched but is not loaded, because it cannot
+be attributed to a signed-in account. A switch between accounts in the same
+tab restores only the matching account's snapshot.
 
 A synchronous transaction reads the latest owner values, stages related changes,
 and publishes once. Touched values are copied so a rejected or throwing recipe
@@ -75,14 +90,15 @@ whose declared owner keys overlap. Cross-feature commands must declare every
 owner they read or write.
 
 Local `File` objects and object URLs stay in Comms' attachment registry, outside
-the JSON snapshot. Sample reset releases local attachments. Sign-out clears the
-sample session snapshot and cancels pending work in the mounted provider; later
-persistence effects cannot repopulate that signed-out snapshot.
+the JSON snapshot. Sample reset releases local attachments. Sign-out removes
+the verified account's snapshot even from a route outside the workspace
+provider, and cancels pending work in a mounted provider. It leaves other
+accounts' snapshots and the older unowned key untouched.
 
 ## Async resources, commands, and drafts
 
-`sample/sample-async-state.ts` contains the small resource and command state
-machines. `sample/sample-async.ts` connects them to React and runtime key
+`systems/shared/runtime/sample-async-state.ts` contains the small resource and command state
+machines. `systems/shared/runtime/sample-async.ts` connects them to React and runtime key
 subscriptions. Feature adapters own their domain decoding, projections,
 validation, conflicts, and command result types.
 
@@ -95,7 +111,7 @@ validation, conflicts, and command result types.
   clearing drafts, navigating, or displaying success.
 - Pending forms guard their conflicting actions and dismissals. The shared hook
   blocks ordinary navigation links and warns before unloading; feature-owned
-  tab/router actions apply the same pending policy. Unmount cancels uncommitted
+  router/sidebar actions apply the same pending policy. Unmount cancels uncommitted
   work rather than installing a global browser-history trap.
 - Failed saves retain the user's text, selections, and attachments. Ephemeral
   input and canvas gestures can stay synchronous; confirmed domain changes pass
@@ -103,26 +119,28 @@ validation, conflicts, and command result types.
 
 The current boundaries are feature-specific, not a generic repository framework:
 
-| Feature  | Adapter and ownership                                                                                                                                                                                                   |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Sandbox  | `sample/sandbox/async.ts` coordinates the existing reducer, design history, versions, and local release simulation. Canvas interaction remains local.                                                                   |
-| Access   | `sample/access/controller.tsx` projects current policy plus federated owners and runs policy commands atomically. Role/group editors preserve create versus edit intent and detect stale baselines.                     |
-| OpenView | `sample/openview/controller.ts` owns view/report/dashboard operations and audience projection. Data-only `seeds.ts` is separate from rendered analytics, so Access does not import the analytics UI to obtain defaults. |
-| Boards   | `sample/boards/controller.tsx` owns board, event, announcement, personal/reminder, and related notification changes using current Access policy.                                                                        |
-| Comms    | `sample/comms/runtime.ts` coordinates conversation and configuration changes. `draft-text.ts` owns keyed text drafts independently of the message history snapshot.                                                     |
-| Manage   | `sample/manage/state.ts` retains decoding, execution, and section drafts. Organization, Security, Backup, Updates, Licensing, and Audit have narrow presentation panels.                                                |
-| Platform | `sample/platform/` owns platform records and demonstrations and delegates shared-owner operations to their feature boundaries. Nullable selection is a normal empty state in record-dependent sections.                 |
+| Feature  | Adapter and ownership                                                                                                                                                                                                             |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sandbox  | `systems/sandbox/state/async.ts` coordinates the existing reducer, design history, versions, and local release simulation. Canvas interaction remains local.                                                                      |
+| Access   | `systems/access/state/controller.tsx` projects current policy plus federated owners and runs policy commands atomically. Role/group editors preserve create versus edit intent and detect stale baselines.                        |
+| OpenView | `systems/openview/adapters/controller.ts` owns view/report/dashboard operations and audience projection. Data-only `seeds.ts` is separate from rendered analytics, so Access does not import the analytics UI to obtain defaults. |
+| Boards   | `systems/boards/state/controller.tsx` owns board, event, announcement, personal/reminder, and related notification changes using current Access policy.                                                                           |
+| Comms    | `systems/comms/state/runtime.ts` coordinates conversation and configuration changes. `draft-text.ts` owns keyed text drafts independently of the message history snapshot.                                                        |
+| Manage   | `systems/manage/state/state.ts` retains decoding, execution, and section drafts. Organization, Security, Backup, Updates, Licensing, and Audit have narrow presentation panels.                                                   |
+| Platform | `systems/platform/` owns platform records and demonstrations and delegates shared-owner operations to their feature boundaries. Nullable selection is a normal empty state in record-dependent sections.                          |
 
-Comms text drafts are keyed by composer destination and persist independently of
-conversation history. Submit clears only the accepted submitted draft, preserving
-newer edits; attachment objects remain in the existing local registry. Legacy
-text drafts are migrated and removed from their old owner. Workspace reset and
-sign-out clear draft persistence. Draft persistence failure is exposed to the
-user rather than silently claiming that typing was saved.
+Comms text drafts are keyed by verified account and composer destination and
+persist independently of conversation history. Submit clears only the accepted
+submitted draft, preserving newer edits; attachment objects remain in the
+existing local registry. Legacy drafts in the matching account's workspace
+snapshot can be migrated; older unowned dedicated draft keys remain inaccessible.
+Workspace reset and sign-out clear only the active account's draft persistence.
+Draft persistence failure is exposed to the user rather than silently claiming
+that typing was saved.
 
 ## Collections and presentation
 
-`sample/sample-collections.ts` distinguishes `CompleteCollection<T>` from
+`systems/shared/helpers/sample-collections.ts` distinguishes `CompleteCollection<T>` from
 `PageResult<T>`. A complete collection declares the full result for its query;
 a page carries items, total, offset, and limit. Filtering and stable sorting run
 before paging. Empty and shortened result sets clamp to a valid page.
@@ -207,7 +225,7 @@ business DTOs or endpoint shapes.
 `src/components/app-shell.tsx` owns desktop navigation, a mobile Sheet, account
 controls, the skip link, and the main content region. Feature controls use the
 existing semantic tokens and local shadcn/Base UI wrappers. Neutral shared
-sample compositions live in `sample/ui.tsx`; features do not import another
+workspace compositions live in `systems/shared/components/ui.tsx`; features do not import another
 feature's presentation merely to obtain a button or field wrapper.
 
 Forms keep validation and pending state with their feature. Associated labels,

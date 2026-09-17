@@ -5,6 +5,7 @@ const session = {
   access_token: testSecret(),
   refresh_token: testSecret(),
   expires_in: 1800,
+  user: { id: "2cb24e31-8b78-4ec2-b33a-807a14b1f9e8" },
 };
 const accepted = { data: { session }, error: null };
 const rejected = {
@@ -107,7 +108,10 @@ test("status renews valid sessions and clears only confirmed invalid or missing 
     { openslate_refresh: cookies.openslate_refresh },
   ).request();
   expect(inputs).toEqual([{ refresh_token: cookies.openslate_refresh }]);
-  expect(await response.json()).toEqual({ authenticated: true });
+  expect(await response.json()).toEqual({
+    authenticated: true,
+    userId: session.user.id,
+  });
   expectCookies(response);
   for (const error of [
     invalidRefreshError.error,

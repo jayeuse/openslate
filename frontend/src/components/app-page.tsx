@@ -4,6 +4,10 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import {
+  clearVerifiedWorkspaceSessionSnapshot,
+  VerifiedWorkspaceIdentityProvider,
+} from "@/components/systems/shared/runtime/workspace-identity";
 
 type AppPageProps = {
   children: ReactNode;
@@ -29,9 +33,23 @@ export function classifySessionResponse(
 ): SessionCheck {
   if (response.status !== 200 || !response.ok || !isRecord(body))
     return "unavailable";
-  if (body.authenticated === true) return "valid";
+  if (
+    body.authenticated === true &&
+    typeof body.userId === "string" &&
+    body.userId.length > 0
+  )
+    return "valid";
   if (body.authenticated === false) return "invalid";
   return "unavailable";
+}
+
+function sessionUserId(body: unknown): string | null {
+  return isRecord(body) &&
+    body.authenticated === true &&
+    typeof body.userId === "string" &&
+    body.userId.length > 0
+    ? body.userId
+    : null;
 }
 
 export function AppPage({ children }: AppPageProps) {
@@ -39,6 +57,8 @@ export function AppPage({ children }: AppPageProps) {
   const pathname = usePathname();
   const [checking, setChecking] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
+  const [verifiedUserId, setVerifiedUserId] = useState<string | null>(null);
+  const verifiedUserIdRef = useRef<string | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
   const mounted = useRef(false);
   const initialCheck = useRef(true);
@@ -78,6 +98,7 @@ export function AppPage({ children }: AppPageProps) {
         const controller = new AbortController();
         current.controller = controller;
         let result: SessionCheck = "unavailable";
+        let responseUserId: string | null = null;
         try {
           const response = await fetch("/session/status", {
             cache: "no-store",
@@ -92,6 +113,7 @@ export function AppPage({ children }: AppPageProps) {
           )
             return;
           result = classifySessionResponse(response, body);
+          responseUserId = sessionUserId(body);
         } catch {
           if (
             !mounted.current ||
@@ -110,10 +132,18 @@ export function AppPage({ children }: AppPageProps) {
         if (current.nextVersion > requested.version) continue;
         if (result === "invalid") {
           current.queued = null;
+          void clearVerifiedWorkspaceSessionSnapshot(verifiedUserIdRef.current);
+          verifiedUserIdRef.current = null;
           router.replace("/login");
           return;
         }
         if (result === "valid") {
+          if (responseUserId === null) {
+            setUnavailable(true);
+            continue;
+          }
+          verifiedUserIdRef.current = responseUserId;
+          setVerifiedUserId(responseUserId);
           setUnavailable(false);
           if (initialCheck.current) {
             initialCheck.current = false;
@@ -161,8 +191,8 @@ export function AppPage({ children }: AppPageProps) {
   }
 
   return (
-    <>
-      <AppShell>{children}</AppShell>
+    <VerifiedWorkspaceIdentityProvider userId={verifiedUserId}>
+      <AppShell verifiedUserId={verifiedUserId}>{children}</AppShell>
       {unavailable && (
         <div
           className="bg-destructive text-destructive-foreground fixed right-4 bottom-4 z-[80] flex max-w-sm items-center gap-3 rounded-md px-4 py-3 text-sm shadow-lg"
@@ -178,6 +208,6 @@ export function AppPage({ children }: AppPageProps) {
           </button>
         </div>
       )}
-    </>
+    </VerifiedWorkspaceIdentityProvider>
   );
 }

@@ -60,7 +60,9 @@ export async function GET(request: Request) {
     );
 
   const response = NextResponse.json(
-    { authenticated: result.kind === "valid" },
+    result.kind === "valid"
+      ? { authenticated: true, userId: result.session.user.id }
+      : { authenticated: false },
     { headers },
   );
   if (result.kind === "valid") {

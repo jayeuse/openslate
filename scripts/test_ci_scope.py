@@ -46,7 +46,7 @@ class CiScopeTests(unittest.TestCase):
 
     def test_frontend_changes_never_select_backend_or_container_by_default(self):
         for path in (
-            "frontend/src/components/sample/manage/index.tsx",
+            "frontend/src/components/systems/manage/page.tsx",
             "frontend/tests/isolated/manage-state.spec.ts",
             ".github/workflows/frontend.yml",
             ".github/workflows/frontend-compatibility.yml",

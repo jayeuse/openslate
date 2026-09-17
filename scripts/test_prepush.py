@@ -54,7 +54,7 @@ class PrepushTests(unittest.TestCase):
 
     def test_plan_builds_only_the_changed_application_image(self):
         frontend_scope = ci_scope.classify_paths(
-            ["frontend/src/components/sample/manage/index.tsx"], base_ref="base"
+            ["frontend/src/components/systems/manage/page.tsx"], base_ref="base"
         )
         backend_scope = ci_scope.classify_paths(
             ["backend/app/systems/users/service.py"], base_ref="base"

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { applySampleTransaction } from "../../../src/components/sample/sample-state";
+import { applySampleTransaction } from "../../../src/components/systems/shared/runtime/sample-state";
 
 test("a sample transaction updates multiple keys without mutating its input", () => {
   const previous = {

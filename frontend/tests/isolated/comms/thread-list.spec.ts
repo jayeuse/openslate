@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   filterCommsThreadItems,
   type CommsThreadListItem,
-} from "../../../src/components/sample/comms/thread-list";
+} from "../../../src/components/systems/comms/components/thread-list";
 
 const items: CommsThreadListItem[] = [
   {

@@ -1,0 +1,771 @@
+"use client";
+
+import { useRef, useState, type ChangeEvent } from "react";
+import {
+  Download,
+  PackageCheck,
+  Plus,
+  RotateCcw,
+  Save,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import { Alert } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { counts, type Design, type Version } from "../domain/model";
+import {
+  exportSandboxFile,
+  parseSandboxFile,
+  type SandboxFileV1,
+} from "../helpers/file-format";
+import type { SandboxCommandResult } from "../state/async";
+import {
+  SANDBOX_LIMITS,
+  type SandboxValidationIssue,
+} from "../domain/validation";
+
+type SandboxControlsProps = {
+  design: Design;
+  versions: Version[];
+  issues: SandboxValidationIssue[];
+  onCreateCheckpoint: (
+    name: string,
+    note: string,
+  ) => Promise<SandboxCommandResult<Version>>;
+  onCreateRelease: (note: string) => Promise<SandboxCommandResult<Version>>;
+  onImport: (file: SandboxFileV1) => Promise<SandboxCommandResult<unknown>>;
+  onCreate: (kind: SandboxCreateKind) => void;
+  onResetDesign: () => Promise<SandboxCommandResult<unknown>>;
+  onClearData: () => Promise<SandboxCommandResult<unknown>>;
+  onSelectIssue: (issue: SandboxValidationIssue) => void;
+  pending: boolean;
+};
+
+export type SandboxCreateKind =
+  "department" | "module" | "field" | "relationship" | "automation-rule";
+
+export type SandboxCreateRequest = {
+  id: number;
+  kind: SandboxCreateKind;
+};
+
+export function SandboxControls({
+  design,
+  versions,
+  issues,
+  onCreateCheckpoint,
+  onCreateRelease,
+  onImport,
+  onCreate,
+  onResetDesign,
+  onClearData,
+  onSelectIssue,
+  pending,
+}: SandboxControlsProps) {
+  const [checkpointOpen, setCheckpointOpen] = useState(false);
+  const [checkpointName, setCheckpointName] = useState("");
+  const [checkpointNote, setCheckpointNote] = useState("");
+  const [releaseOpen, setReleaseOpen] = useState(false);
+  const [releaseNote, setReleaseNote] = useState("");
+  const [portabilityOpen, setPortabilityOpen] = useState(false);
+  const [includeVersions, setIncludeVersions] = useState(false);
+  const [staged, setStaged] = useState<SandboxFileV1 | null>(null);
+  const [importError, setImportError] = useState("");
+  const [exportError, setExportError] = useState("");
+  const [importInputKey, setImportInputKey] = useState(0);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [commandError, setCommandError] = useState("");
+  const resetOpener = useRef<HTMLButtonElement | null>(null);
+  const clearOpener = useRef<HTMLButtonElement | null>(null);
+  const errors = issues.filter((issue) => issue.severity === "error");
+  const warnings = issues.filter((issue) => issue.severity === "warning");
+
+  function clearStagedImport() {
+    setStaged(null);
+    setImportError("");
+    setImportInputKey((key) => key + 1);
+  }
+
+  async function stageImport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.size > SANDBOX_LIMITS.fileBytes) {
+      setStaged(null);
+      setImportError("Sandbox file exceeds the 2 MiB limit");
+      return;
+    }
+    const result = parseSandboxFile(await file.text());
+    if (!result.ok) {
+      setStaged(null);
+      setImportError(result.error);
+      return;
+    }
+    setImportError("");
+    setStaged(result.file);
+  }
+
+  function exportJson() {
+    let text: string;
+    try {
+      text = exportSandboxFile({
+        design,
+        ...(includeVersions ? { versions } : {}),
+      });
+    } catch (error) {
+      setExportError(
+        error instanceof Error ? error.message : "Sandbox export failed",
+      );
+      return;
+    }
+    setExportError("");
+    const url = URL.createObjectURL(
+      new Blob([text], { type: "application/json" }),
+    );
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "openslate-sandbox.json";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <>
+      <div className="flex gap-2 xl:hidden">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button className="min-h-11 flex-1" disabled={pending}>
+                <Plus />
+                Create
+              </Button>
+            }
+          />
+          <DropdownMenuContent data-sandbox-portal align="start">
+            <DropdownMenuItem
+              className="min-h-11 min-w-11"
+              onClick={() => onCreate("department")}
+            >
+              Department
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 min-w-11"
+              onClick={() => onCreate("module")}
+            >
+              Module
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 min-w-11"
+              onClick={() => onCreate("field")}
+            >
+              Field
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 min-w-11"
+              onClick={() => onCreate("relationship")}
+            >
+              Relationship
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 min-w-11"
+              onClick={() => onCreate("automation-rule")}
+            >
+              Automation rule
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="outline"
+                className="min-h-11 flex-1"
+                disabled={pending}
+              />
+            }
+          >
+            Actions
+          </DropdownMenuTrigger>
+          <DropdownMenuContent data-sandbox-portal align="end">
+            <DropdownMenuItem
+              className="min-h-11 min-w-11"
+              onClick={() => {
+                setCommandError("");
+                setCheckpointOpen(true);
+              }}
+            >
+              Create checkpoint
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 min-w-11"
+              onClick={() => {
+                setCommandError("");
+                setReleaseOpen(true);
+              }}
+            >
+              Create release snapshot
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 min-w-11"
+              onClick={() => {
+                setCommandError("");
+                setPortabilityOpen(true);
+              }}
+            >
+              Import or export
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 min-w-11"
+              onClick={() => {
+                setCommandError("");
+                setResetOpen(true);
+              }}
+            >
+              Reset design
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 min-w-11"
+              onClick={() => {
+                setCommandError("");
+                setClearOpen(true);
+              }}
+            >
+              Clear Sandbox data
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <div className="hidden flex-wrap gap-2 xl:flex">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button aria-label="Create" disabled={pending}>
+                <Plus />
+                Create
+              </Button>
+            }
+          />
+          <DropdownMenuContent data-sandbox-portal align="start">
+            <DropdownMenuItem
+              className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+              onClick={() => onCreate("department")}
+            >
+              Department
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+              onClick={() => onCreate("module")}
+            >
+              Module
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+              onClick={() => onCreate("field")}
+            >
+              Field
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+              onClick={() => onCreate("relationship")}
+            >
+              Relationship
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+              onClick={() => onCreate("automation-rule")}
+            >
+              Automation rule
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button
+          variant="outline"
+          disabled={pending}
+          onClick={() => {
+            setCommandError("");
+            setCheckpointOpen(true);
+          }}
+        >
+          <Save />
+          Create checkpoint
+        </Button>
+        <Button
+          disabled={pending}
+          onClick={() => {
+            setCommandError("");
+            setReleaseOpen(true);
+          }}
+        >
+          <PackageCheck />
+          Create release snapshot
+        </Button>
+        <Button
+          variant="outline"
+          disabled={pending}
+          onClick={() => {
+            setCommandError("");
+            setPortabilityOpen(true);
+          }}
+        >
+          <Upload />
+          Import or export
+        </Button>
+        <Button
+          ref={resetOpener}
+          variant="ghost"
+          disabled={pending}
+          onClick={() => {
+            setCommandError("");
+            setResetOpen(true);
+          }}
+        >
+          <RotateCcw />
+          Reset design
+        </Button>
+        <Button
+          ref={clearOpener}
+          variant="ghost"
+          disabled={pending}
+          onClick={() => {
+            setCommandError("");
+            setClearOpen(true);
+          }}
+        >
+          <Trash2 />
+          Clear Sandbox data
+        </Button>
+      </div>
+
+      <Alert
+        aria-label="Sandbox validation summary"
+        className="p-3 tabular-nums"
+      >
+        {errors.length} {errors.length === 1 ? "error" : "errors"} ·{" "}
+        {warnings.length} {warnings.length === 1 ? "warning" : "warnings"}
+      </Alert>
+
+      {issues.length > 0 && (
+        <Alert
+          role="region"
+          aria-label="Sandbox validation issues"
+          variant={errors.length > 0 ? "destructive" : "warning"}
+          className="p-3"
+        >
+          <p className="font-medium">
+            {errors.length} validation{" "}
+            {errors.length === 1 ? "error" : "errors"}
+          </p>
+          <ul className="mt-2 flex flex-col gap-1">
+            {issues.map((issue, index) => (
+              <li key={`${issue.code}-${issue.targetId ?? "design"}-${index}`}>
+                <Button
+                  variant="ghost"
+                  className="text-primary h-auto justify-start p-0 text-left whitespace-normal underline-offset-4 hover:underline"
+                  onClick={() => onSelectIssue(issue)}
+                >
+                  {issue.message}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </Alert>
+      )}
+
+      <Dialog
+        open={checkpointOpen}
+        onOpenChange={(open) => {
+          if (!open && pending) return;
+          setCheckpointOpen(open);
+        }}
+      >
+        <DialogContent className="max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11">
+          <DialogTitle>Create checkpoint</DialogTitle>
+          <DialogDescription>
+            Save a named snapshot of the current design in this tab.
+          </DialogDescription>
+          <div className="mt-4 space-y-4">
+            <Field>
+              <FieldLabel htmlFor="sandbox-checkpoint-name">
+                Checkpoint name
+              </FieldLabel>
+              <Input
+                id="sandbox-checkpoint-name"
+                autoFocus
+                required
+                disabled={pending}
+                maxLength={80}
+                value={checkpointName}
+                onChange={(event) => setCheckpointName(event.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="sandbox-checkpoint-note">
+                Checkpoint note
+              </FieldLabel>
+              <Textarea
+                id="sandbox-checkpoint-note"
+                disabled={pending}
+                maxLength={500}
+                value={checkpointNote}
+                onChange={(event) => setCheckpointNote(event.target.value)}
+              />
+            </Field>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() => setCheckpointOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={pending || !checkpointName.trim()}
+              onClick={async () => {
+                setCommandError("");
+                const result = await onCreateCheckpoint(
+                  checkpointName.trim(),
+                  checkpointNote.trim(),
+                );
+                if (!result.ok) {
+                  setCommandError(result.error);
+                  return;
+                }
+                setCheckpointName("");
+                setCheckpointNote("");
+                setCheckpointOpen(false);
+              }}
+            >
+              Save checkpoint
+            </Button>
+          </DialogFooter>
+          {commandError ? (
+            <Alert role="alert" variant="destructive">
+              {commandError}
+            </Alert>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={releaseOpen}
+        onOpenChange={(open) => {
+          if (!open && pending) return;
+          setReleaseOpen(open);
+          if (!open) setReleaseNote("");
+        }}
+      >
+        <DialogContent className="max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11">
+          <DialogTitle>Review release snapshot</DialogTitle>
+          <DialogDescription>
+            Review this snapshot before confirming. No live workspace will be
+            changed.
+          </DialogDescription>
+          <div className="mt-4 space-y-4 text-sm">
+            <section
+              aria-label="Release summary"
+              className="bg-muted rounded-lg p-4"
+            >
+              <p className="font-medium">Current design</p>
+              <p className="text-muted-foreground mt-1">{counts(design)}</p>
+              <p className="mt-3">
+                {errors.length} {errors.length === 1 ? "error" : "errors"} ·{" "}
+                {warnings.length}{" "}
+                {warnings.length === 1 ? "warning" : "warnings"}
+              </p>
+              {issues.length > 0 && (
+                <ul className="mt-2 list-inside list-disc space-y-1">
+                  {issues.map((issue, index) => (
+                    <li
+                      key={`${issue.code}-${issue.targetId ?? "design"}-${index}`}
+                    >
+                      {issue.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            <Field>
+              <FieldLabel htmlFor="sandbox-release-note">
+                Release note
+              </FieldLabel>
+              <Textarea
+                id="sandbox-release-note"
+                autoFocus
+                disabled={pending}
+                maxLength={500}
+                value={releaseNote}
+                onChange={(event) => setReleaseNote(event.target.value)}
+              />
+            </Field>
+            {errors.length > 0 && (
+              <Alert role="alert" variant="destructive">
+                Resolve validation errors before creating this release snapshot.
+              </Alert>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() => setReleaseOpen(false)}
+            >
+              Cancel release
+            </Button>
+            <Button
+              disabled={pending || errors.length > 0}
+              onClick={async () => {
+                setCommandError("");
+                const result = await onCreateRelease(releaseNote.trim());
+                if (!result.ok) {
+                  setCommandError(result.error);
+                  return;
+                }
+                setReleaseOpen(false);
+                setReleaseNote("");
+              }}
+            >
+              Confirm release snapshot
+            </Button>
+          </DialogFooter>
+          {commandError ? (
+            <Alert role="alert" variant="destructive">
+              {commandError}
+            </Alert>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={portabilityOpen}
+        onOpenChange={(open) => {
+          if (!open && pending) return;
+          setPortabilityOpen(open);
+          if (!open) {
+            clearStagedImport();
+            setExportError("");
+          }
+        }}
+      >
+        <DialogContent className="max-xl:[&_button:not([data-slot=checkbox])]:min-h-11 max-xl:[&_button:not([data-slot=checkbox])]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11">
+          <DialogTitle>Sandbox import and export</DialogTitle>
+          <DialogDescription>
+            JSON files stay on this device. Import replaces the current Sandbox
+            only after confirmation.
+          </DialogDescription>
+          <div className="mt-4 space-y-5">
+            <section className="space-y-3" aria-label="Export sandbox">
+              <Field className="flex-row items-center gap-2">
+                <Checkbox
+                  id="sandbox-include-versions"
+                  disabled={pending}
+                  checked={includeVersions}
+                  onCheckedChange={setIncludeVersions}
+                />
+                <FieldLabel
+                  htmlFor="sandbox-include-versions"
+                  className="flex min-h-11 min-w-11 flex-1 cursor-pointer items-center font-normal xl:min-h-0 xl:min-w-0"
+                >
+                  Include checkpoints and release snapshots
+                </FieldLabel>
+              </Field>
+              <Button variant="outline" disabled={pending} onClick={exportJson}>
+                <Download />
+                Export JSON
+              </Button>
+              {exportError ? (
+                <Alert role="alert" variant="destructive">
+                  {exportError}
+                </Alert>
+              ) : null}
+            </section>
+            <section
+              className="border-border space-y-3 border-t pt-4"
+              aria-label="Import sandbox"
+            >
+              <Field>
+                <FieldLabel htmlFor="sandbox-import-file">
+                  Import sandbox JSON
+                </FieldLabel>
+                <Input
+                  id="sandbox-import-file"
+                  key={importInputKey}
+                  disabled={pending}
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={stageImport}
+                />
+              </Field>
+              {importError && (
+                <Alert role="alert" variant="destructive">
+                  {importError}
+                </Alert>
+              )}
+              {staged && (
+                <div className="bg-muted rounded-md p-3 text-sm">
+                  <p className="font-medium">Replace sandbox from file?</p>
+                  <p className="text-muted-foreground mt-1">
+                    {counts(staged.design)}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      disabled={pending}
+                      onClick={async () => {
+                        setCommandError("");
+                        const result = await onImport(staged);
+                        if (!result.ok) {
+                          setCommandError(result.error);
+                          setImportError(result.error);
+                          return;
+                        }
+                        clearStagedImport();
+                        setPortabilityOpen(false);
+                      }}
+                    >
+                      Replace sandbox
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={pending}
+                      onClick={clearStagedImport}
+                    >
+                      Cancel import
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {commandError ? (
+                <Alert role="alert" variant="destructive">
+                  {commandError}
+                </Alert>
+              ) : null}
+            </section>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={resetOpen}
+        onOpenChange={(open) => {
+          if (!open && pending) return;
+          setResetOpen(open);
+        }}
+      >
+        <AlertDialogContent
+          className="max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11"
+          finalFocus={() => resetOpener.current}
+        >
+          <AlertDialogTitle>Reset design?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This replaces only the current Design with the starting structure as
+            one undoable action. Versions, Simulation data, and view preferences
+            stay in this tab.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() => setResetOpen(false)}
+            >
+              Cancel reset
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={pending}
+              onClick={async () => {
+                setCommandError("");
+                const result = await onResetDesign();
+                if (!result.ok) {
+                  setCommandError(result.error);
+                  return;
+                }
+                setResetOpen(false);
+              }}
+            >
+              Reset current design
+            </Button>
+          </AlertDialogFooter>
+          {commandError ? (
+            <Alert role="alert" variant="destructive">
+              {commandError}
+            </Alert>
+          ) : null}
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={clearOpen}
+        onOpenChange={(open) => {
+          if (!open && pending) return;
+          setClearOpen(open);
+        }}
+      >
+        <AlertDialogContent
+          className="max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11"
+          finalFocus={() => clearOpener.current}
+        >
+          <AlertDialogTitle>Clear Sandbox data?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This clears the Sandbox Design and undo history, Versions,
+            Simulation data, and Sandbox view preferences in this tab, then
+            loads the defaults. Other workspace areas are unchanged. Recovery is
+            available until reload or your next Sandbox change.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() => setClearOpen(false)}
+            >
+              Cancel clear
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={pending}
+              onClick={async () => {
+                setCommandError("");
+                const result = await onClearData();
+                if (!result.ok) {
+                  setCommandError(result.error);
+                  return;
+                }
+                setClearOpen(false);
+              }}
+            >
+              Clear Sandbox data
+            </Button>
+          </AlertDialogFooter>
+          {commandError ? (
+            <Alert role="alert" variant="destructive">
+              {commandError}
+            </Alert>
+          ) : null}
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
