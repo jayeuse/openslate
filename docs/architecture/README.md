@@ -39,7 +39,7 @@ The browser does not write application data through Supabase's Data API. Next.js
 5. [Backend architecture](04-backend-architecture.md) — startup, packages, request handling, and persistence path.
 6. [API architecture](07-api-architecture.md) — endpoint groups, list conventions, status behavior, and request sequences.
 7. [Authentication and authorization](08-authentication-authorization.md) — cookies, JWTs, profiles, roles, invitations, and step-up checks.
-8. [Frontend architecture](05-frontend-architecture.md) — routes, client state, BFF, forms, realtime, and UI status.
+8. [Frontend architecture](05-frontend-architecture.md) — routes, sample feature state, async boundaries, sessions, BFF, and UI status.
 9. [Lifecycle and state management](09-lifecycle-and-state-management.md) — close, reopen, restore, visibility, and purge.
 10. [Audit and history](10-audit-and-history.md) — listener mechanics, snapshots, immutability, and capture boundary.
 11. [Runtime flows](13-runtime-flows.md) — six concrete end-to-end traces.
@@ -56,7 +56,7 @@ The browser does not write application data through Supabase's Data API. Next.js
 | [02 — System context](02-system-context.md)                                 | Human actors, Supabase services, CI, and trust boundaries.                             |
 | [03 — Domain architecture](03-domain-architecture.md)                       | Departments, modules, fields, records, relationships, users, roles, and invariants.    |
 | [04 — Backend architecture](04-backend-architecture.md)                     | FastAPI assembly, capability packages, request/session flow, and application layering. |
-| [05 — Frontend architecture](05-frontend-architecture.md)                   | Next.js routes, protected shell, session handlers, BFF, state, forms, and Realtime.    |
+| [05 — Frontend architecture](05-frontend-architecture.md)                   | Next.js routes, protected shell, session handlers, BFF, and async sample features.     |
 | [06 — Data architecture](06-data-architecture.md)                           | PostgreSQL entities, FKs, constraints, indexes, JSONB, RLS, grants, and Alembic.       |
 | [07 — API architecture](07-api-architecture.md)                             | Route groups, validation, list/query conventions, transactions, and sequences.         |
 | [08 — Authentication and authorization](08-authentication-authorization.md) | Supabase session lifecycle, JWT/local checks, roles, invitations, and failures.        |

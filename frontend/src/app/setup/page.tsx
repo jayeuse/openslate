@@ -52,21 +52,26 @@ export default function SetupPage() {
               commands from the repository root and backend directory. Supabase
               starts the local platform; Alembic applies the schema; the
               provisioning script creates the runtime login; and the bootstrap
-              script sends the invitation.
+              script reads the administrator settings and sends the invitation.
             </p>
             <pre className="bg-muted text-foreground mt-4 overflow-x-auto rounded-md p-4 text-xs leading-6">
-              supabase start{`\n`}
-              cd backend{`\n`}
-              uv sync --locked{`\n`}
-              uv run alembic upgrade head{`\n`}
-              uv run python scripts/provision_database_role.py{`\n`}
-              uv run python scripts/bootstrap_admin.py \{`\n`} --email
-              &lt;email&gt; \{`\n`} --username &lt;username&gt;
+              # Set ADMIN_EMAIL, ADMIN_USERNAME, and ADMIN_PASSWORD{"\n"}# in
+              the repository root .env file{"\n"}
+              supabase start{"\n"}
+              cd backend{"\n"}
+              uv sync --locked{"\n"}
+              uv run alembic upgrade head{"\n"}
+              uv run python scripts/provision_database_role.py{"\n"}
+              uv run python scripts/bootstrap_admin.py
             </pre>
             <p className="text-muted-foreground mt-4 text-sm leading-6">
-              Open the invitation in local Mailpit to set the password, then
-              return to sign in. The required bootstrap inputs are an email and
-              username; there is no browser-side password bootstrap variable.
+              The bootstrap script reads <code>ADMIN_EMAIL</code> and{" "}
+              <code>ADMIN_USERNAME</code> from the root <code>.env</code> file.{" "}
+              <code>ADMIN_PASSWORD</code> must also be present for backend
+              configuration validation, but it is not used to create or set the
+              account password. Open the invitation in local Mailpit to choose
+              the password, then return to sign in. For non-local environments,
+              append <code>--confirm</code> to the bootstrap command.
             </p>
           </CardContent>
         </Card>

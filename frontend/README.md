@@ -68,8 +68,11 @@ visual treatment.
   and small-screen behavior remain consistent. Table headers use the existing
   40px row treatment and `text-sm`; feature-owned columns, sorting, selection,
   and filtering stay outside the primitive. Directories with real pagination
-  use `DataTable` with controlled zero-based state and `PaginationControls`
-  with one-based labels. Feature screens keep their mobile row presentation.
+  use `PaginationControls` with one-based labels. Pass a complete collection to
+  `DataTable` with controlled zero-based pagination, or pass an already prepared
+  page without local pagination so it is not sliced twice. Filter and sort before
+  paging; aggregate and export from complete results. Feature screens keep their
+  mobile row presentation.
 - Use `Dialog` for focused tasks and `AlertDialog` for decisions that must
   interrupt. Use `Sheet` for responsive side or bottom tasks. Let Base UI
   manage focus, Escape, dismissal, and restoration.

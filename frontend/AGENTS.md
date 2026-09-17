@@ -32,13 +32,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Authenticated pages live under `src/app/(app)/`, whose layout mounts `AppPage` (auth gate + shell) once for the group; do not wrap pages individually or implement a second cookie/auth gate. `proxy.ts` sets CSP and security headers only — it is not auth.
 - When a feature uses authorized backend integration, domain requests go through `apiFetch()` to `/bff/[...path]`; the BFF converts cookies to a Bearer token and refreshes the Supabase session on a backend 401. Never call `BACKEND_URL` or Supabase directly from pages.
 - Sessions use HttpOnly `openslate_access`/`openslate_refresh` cookies managed by the `/session/*` route handlers; the browser never sees tokens.
-- For client-side backend fetches, use the established `useEffect` + local `useState` convention. Local sample screens use their existing state/provider and derive filtered results without adding fetch effects. TanStack Query and React Hook Form are not installed; do not add them without a demonstrated need.
+- Feature adapters own typed reads and confirmed commands. Local sample screens use the shared runtime, `useSampleResource`, and `useSampleCommands`; keep ephemeral drafts local and await acceptance before clearing or navigating. Preserve loading/retry, last-good refresh data, cancellation, and pending guards. Future authorized backend adapters use schema-required `apiFetch`; do not add a second state or form library without demonstrated need.
 
 ## Features
 
 - Current workspace routes are `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`; their screens live under `src/components/sample/`. Inspect the target screen and state provider before choosing a pattern.
 - Legacy module, department, administration, and workspace routes redirect to the current workspace. Do not restore retired pages or components to satisfy an older example.
-- For backend list integration, use `listQuery()` (`limit=100`, follow `has_more` via offset) and `listAllModuleFields()` when all fields are required; preserve the server's field-UUID, relationship, and lifecycle contracts.
+- Use explicit `CompleteCollection` and `PageResult` boundaries. Filter/sort before paging; complete exports and aggregates cannot use a visible page. Render a prepared page without a second table slice. Future backend pagination must preserve the frontend feature contract; retired list helpers are not an integration template.
 - Workspace screens currently do not subscribe to realtime. Any explicitly requested integration must preserve private Broadcast invalidation without row snapshots and avoid discarding in-progress form state.
 
 ## Styling
@@ -50,10 +50,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - Follow the root test workflow: focused case, passing feature batch, then the lean frontend gate. Run all retained frontend tests only when the work unit stabilizes or before push.
 - Playwright Test is the lightweight runner for `tests/isolated/` and `tests/http/`; no browser binaries or browser projects are used. Add isolated tests for rules and state, and HTTP tests only for a real Next.js request boundary.
-- When preparing to push, use the root `python3 scripts/prepush.py --base <base-ref>` command. Its frontend lane runs formatting, lint, type checking, all 184 retained tests, and one native-or-container production build. Use `npm run verify` to repair a failed frontend gate. Local npm commands generate `frontend/.env.local` from canonical root `.env`; never source the root `.env` into npm or Next.
+- When preparing to push, use the root `python3 scripts/prepush.py --base <base-ref>` command. Its frontend lane runs formatting, lint, type checking, the retained isolated and HTTP tests, and one native-or-container production build. Use `npm run verify` to repair a failed frontend gate. Local npm commands generate `frontend/.env.local` from canonical root `.env`; never source the root `.env` into npm or Next.
 
 ## TDD and acceptance
 
 - Before creating/extending tests, changing behavior, fixing bugs, or refactoring, read and follow [tdd-workflow](../.agents/skills/tdd-workflow/SKILL.md). It owns test admission, sequencing, and exceptions; this guide owns project runners.
 - Workers must report the skill path actually read and the focused failing/passing test evidence, or the applicable exception. A reference or announcement alone does not prove TDD execution.
-- Frontend acceptance is formatting, ESLint, TypeScript, 181 isolated tests, three HTTP tests, and one production build. There is no frontend browser suite or numerical line-coverage requirement. Backend coverage policy is unchanged.
+- Frontend acceptance is formatting, ESLint, TypeScript, the retained isolated and HTTP tests, and one production build. There is no frontend browser suite or numerical line-coverage requirement. Backend coverage policy is unchanged.
