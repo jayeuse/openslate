@@ -27,6 +27,7 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
 } from "@/components/ui/alert-dialog";
+import { useDiscardGuard } from "../use-discard-guard";
 
 export interface ConfigurationFrameProps {
   title: string;
@@ -57,19 +58,27 @@ export function ConfigurationFrame({
 }: ConfigurationFrameProps) {
   const keepEditing = useRef<HTMLButtonElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
-  const [confirmClose, setConfirmClose] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const {
+    discardOpen,
+    requestClose: guardRequestClose,
+    cancelDiscard,
+    confirmDiscard,
+  } = useDiscardGuard({
+    dirty,
+    pending: saving,
+    onClose,
+  });
   function requestClose() {
     if (saving) return;
-    if (confirmClose) setConfirmClose(false);
-    else if (dirty) {
+    if (dirty && !discardOpen) {
       previousFocus.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null;
-      setConfirmClose(true);
-    } else onClose();
+    }
+    guardRequestClose();
   }
   async function save() {
     if (!onSave || saving || disabled) return;
@@ -127,7 +136,9 @@ export function ConfigurationFrame({
         </header>
         <Separator className="shrink-0" />
         <ScrollArea className="min-h-0 flex-1 overflow-hidden [&_[data-slot=scroll-area-viewport]]:[scrollbar-gutter:stable] [&_[data-slot=scroll-area-viewport]]:overscroll-contain">
-          {children}
+          <fieldset disabled={saving} aria-busy={saving} className="contents">
+            {children}
+          </fieldset>
         </ScrollArea>
         <Separator className="shrink-0" />
         <footer className="bg-muted/15 grid shrink-0 grid-cols-2 items-center justify-end gap-2 px-5 py-4 sm:flex sm:flex-wrap sm:px-6">
@@ -140,7 +151,11 @@ export function ConfigurationFrame({
               {error}
             </Alert>
           )}
-          {footer && <div className="col-span-2 mr-auto">{footer}</div>}
+          {footer && (
+            <fieldset disabled={saving} className="contents">
+              <div className="col-span-2 mr-auto">{footer}</div>
+            </fieldset>
+          )}
           <Button
             type="button"
             variant="outline"
@@ -161,7 +176,12 @@ export function ConfigurationFrame({
             </Button>
           )}
         </footer>
-        <AlertDialog open={confirmClose} onOpenChange={setConfirmClose}>
+        <AlertDialog
+          open={discardOpen}
+          onOpenChange={(open) => {
+            if (!open) cancelDiscard();
+          }}
+        >
           <AlertDialogContent
             initialFocus={keepEditing}
             finalFocus={() => previousFocus.current ?? false}
@@ -177,11 +197,16 @@ export function ConfigurationFrame({
                 ref={keepEditing}
                 type="button"
                 variant="outline"
-                onClick={() => setConfirmClose(false)}
+                onClick={cancelDiscard}
               >
                 Keep editing
               </Button>
-              <Button type="button" variant="destructive" onClick={onClose}>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={confirmDiscard}
+                disabled={saving}
+              >
                 Discard changes
               </Button>
             </AlertDialogFooter>

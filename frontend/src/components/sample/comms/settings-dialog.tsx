@@ -40,11 +40,16 @@ import {
   EmptyDescription,
 } from "@/components/ui/empty";
 import type { Person, Role } from "../access/model";
-import { useSampleState } from "../sample-state";
-import { Action, Choice, TextField, Toggle } from "./ui";
+import { type SampleTransactionDraft } from "../sample-state";
+import { Action, Choice, Toggle } from "../ui";
+import { TextField } from "./ui";
 import { OPEN_PERMISSIONS, type Category, type Channel } from "./model";
 import { ConfigurationFrame } from "./configuration-frame";
-import { useCommsConfiguration } from "./configuration-state";
+import {
+  DEFAULT_PLATFORM_PREFERENCES,
+  useCommsConfiguration,
+  useCommsPlatformPreferences,
+} from "./configuration-state";
 import { previewCommsNotification } from "./notification-policy";
 import {
   DEFAULT_COMMS_PREFERENCES,
@@ -65,6 +70,13 @@ import {
   SETTINGS_SECTIONS,
 } from "./settings-fields";
 import { PermissionFields, PermissionInspector } from "./permission-inspector";
+import {
+  COMMS_CONFIGURATION_KEY,
+  messageFromCommsError,
+  readCommsConfiguration,
+  stageCommsConfiguration,
+  useCommsCommands,
+} from "./runtime";
 
 const PERSON_ID = "sample-eli";
 function changed(a: unknown, b: unknown) {
@@ -145,7 +157,9 @@ export interface CommsSettingsDialogProps {
   title?: string;
   overview?: ReactNode;
   additionalDirty?: boolean;
-  onBeforeSave?: () => boolean;
+  onBeforeSave?: () => boolean | Promise<boolean>;
+  onBeforeSaveTransaction?: (draft: SampleTransactionDraft) => void;
+  onAfterSave?: () => void;
   saveLabel?: string;
   initialSubject?: string;
   initialTab?: string;
@@ -163,6 +177,8 @@ export function CommsSettingsDialog({
   overview,
   additionalDirty = false,
   onBeforeSave,
+  onBeforeSaveTransaction,
+  onAfterSave,
   saveLabel,
   initialSubject,
   initialTab,
@@ -171,7 +187,8 @@ export function CommsSettingsDialog({
   const target: CommsScope = personal
     ? { kind: "workspace", id: "workspace" }
     : scope;
-  const [config, setConfig] = useCommsConfiguration();
+  const [config] = useCommsConfiguration();
+  const { run } = useCommsCommands();
   const [baseline] = useState(() =>
     structuredClone(getCommsScope(config, target)),
   );
@@ -186,10 +203,7 @@ export function CommsSettingsDialog({
   const [lockedPermissions, setLockedPermissions] = useState(
     config.lockedPermissions,
   );
-  const [platformPreferences, setPlatformPreferences] = useSampleState(
-    "platformNotificationPreferences",
-    { threads: true, records: true, digest: false },
-  );
+  const [platformPreferences] = useCommsPlatformPreferences();
   const [initialPlatformPreferences] = useState(platformPreferences);
   const [platformDraft, setPlatformDraft] = useState(platformPreferences);
   const [section, setSection] = useState(
@@ -332,7 +346,7 @@ export function CommsSettingsDialog({
     }
     setDraft({ settings: {}, permissions });
   }
-  function save() {
+  async function save() {
     const cleaned = cleanSettings(overrides);
     const invalid = settingsError({ ...values, ...cleaned });
     if (invalid) {
@@ -366,84 +380,109 @@ export function CommsSettingsDialog({
         return false;
       }
     }
-    if (onBeforeSave && !onBeforeSave()) {
+    if (onBeforeSave && !(await onBeforeSave())) {
       setSection("overview");
       setQuery("");
       return false;
     }
-    setConfig((current) => {
-      if (personal) {
-        const live =
-          current.preferences[PERSON_ID] ?? DEFAULT_COMMS_PREFERENCES;
-        return {
-          ...current,
-          preferences: {
-            ...current.preferences,
-            [PERSON_ID]: {
-              ...mergeFields(live, initialPreferences, preferences),
-              settings: mergeFields(
-                live.settings,
-                initialPreferences.settings,
-                cleaned,
-              ),
-              shortcuts: mergeFields(
-                live.shortcuts,
-                initialPreferences.shortcuts,
-                preferences.shortcuts,
-              ),
+    const result = await run(
+      `settings:save:${target.kind}:${target.id}`,
+      (transaction) => {
+        const current = readCommsConfiguration(transaction);
+        if (personal) {
+          const live =
+            current.preferences[PERSON_ID] ?? DEFAULT_COMMS_PREFERENCES;
+          stageCommsConfiguration(transaction, (value) => ({
+            ...value,
+            preferences: {
+              ...value.preferences,
+              [PERSON_ID]: {
+                ...mergeFields(live, initialPreferences, preferences),
+                settings: mergeFields(
+                  live.settings,
+                  initialPreferences.settings,
+                  cleaned,
+                ),
+                shortcuts: mergeFields(
+                  live.shortcuts,
+                  initialPreferences.shortcuts,
+                  preferences.shortcuts,
+                ),
+              },
             },
-          },
-        };
-      }
-      const before = getCommsScope(current, target);
-      const after = mergeScope(before, baseline, {
-        ...draft,
-        settings: cleaned,
-      });
-      const next: CommsConfiguration = {
-        ...patchCommsScope(current, target, after),
-        lockedSettings: changed(initialLockedSettings, lockedSettings)
-          ? lockedSettings
-          : current.lockedSettings,
-        lockedPermissions: changed(initialLockedPermissions, lockedPermissions)
-          ? lockedPermissions
-          : current.lockedPermissions,
-      };
-      if (
-        changed(before, after) ||
-        changed(current.lockedSettings, next.lockedSettings) ||
-        changed(current.lockedPermissions, next.lockedPermissions)
-      )
-        next.history = [
-          ...current.history,
-          {
-            id: crypto.randomUUID(),
-            created: Date.now(),
-            actorId: PERSON_ID,
-            label: `Updated ${title ?? currentLabel}`,
-            scope: target,
-            before,
-            after,
-            ...(target.kind === "workspace"
-              ? {
-                  beforeLocks: {
-                    settings: current.lockedSettings,
-                    permissions: current.lockedPermissions,
-                  },
-                  afterLocks: {
-                    settings: next.lockedSettings,
-                    permissions: next.lockedPermissions,
-                  },
-                }
-              : {}),
-          },
-        ];
-      return next;
+          }));
+        } else {
+          const before = getCommsScope(current, target);
+          const after = mergeScope(before, baseline, {
+            ...draft,
+            settings: cleaned,
+          });
+          const next: CommsConfiguration = {
+            ...patchCommsScope(current, target, after),
+            lockedSettings: changed(initialLockedSettings, lockedSettings)
+              ? lockedSettings
+              : current.lockedSettings,
+            lockedPermissions: changed(
+              initialLockedPermissions,
+              lockedPermissions,
+            )
+              ? lockedPermissions
+              : current.lockedPermissions,
+          };
+          if (
+            changed(before, after) ||
+            changed(current.lockedSettings, next.lockedSettings) ||
+            changed(current.lockedPermissions, next.lockedPermissions)
+          )
+            next.history = [
+              ...current.history,
+              {
+                id: crypto.randomUUID(),
+                created: Date.now(),
+                actorId: PERSON_ID,
+                label: `Updated ${title ?? currentLabel}`,
+                scope: target,
+                before,
+                after,
+                ...(target.kind === "workspace"
+                  ? {
+                      beforeLocks: {
+                        settings: current.lockedSettings,
+                        permissions: current.lockedPermissions,
+                      },
+                      afterLocks: {
+                        settings: next.lockedSettings,
+                        permissions: next.lockedPermissions,
+                      },
+                    }
+                  : {}),
+              },
+            ];
+          transaction.update(COMMS_CONFIGURATION_KEY, null, next);
+        }
+        onBeforeSaveTransaction?.(transaction);
+        if (personal && changed(initialPlatformPreferences, platformDraft))
+          transaction.update(
+            "platformNotificationPreferences",
+            DEFAULT_PLATFORM_PREFERENCES,
+            (current) =>
+              mergeFields(current, initialPlatformPreferences, platformDraft),
+          );
+        return true;
+      },
+      [
+        COMMS_CONFIGURATION_KEY,
+        "platformNotificationPreferences",
+        ...(onBeforeSaveTransaction
+          ? ["commsChannels", "commsCategories"]
+          : []),
+      ],
+    ).catch((error: unknown) => {
+      setError(messageFromCommsError(error, "Changes could not be saved."));
+      return false;
     });
-    if (personal && changed(initialPlatformPreferences, platformDraft))
-      setPlatformPreferences((current) =>
-        mergeFields(current, initialPlatformPreferences, platformDraft),
-      );
+    if (!result) return false;
+    onAfterSave?.();
     onClose();
     return true;
   }

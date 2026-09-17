@@ -1,14 +1,15 @@
 "use client";
 import { NativeSelectOption } from "@/components/ui/native-select";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Alert } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
 import { initialPeople, type Person, type Role } from "../access/model";
-import { useSampleState } from "../sample-state";
+import { useSampleState, type SampleTransactionDraft } from "../sample-state";
 import { CommsSettingsDialog } from "./settings-dialog";
-import { Action, Choice, TextField } from "./ui";
+import { Action, Choice } from "../ui";
+import { TextField } from "./ui";
 import { OPEN_PERMISSIONS, type Category, type Channel } from "./model";
 
 type EditorProps = {
@@ -16,19 +17,28 @@ type EditorProps = {
   roles: Role[];
   categories: Category[];
   onClose: () => void;
+  onAcceptedChannelSave?: (id: string) => void;
   channels: Channel[];
 } & (
   | {
       kind: "channel";
       value: Channel;
       existing: { id: string; name: string }[];
-      onSave: (value: Channel, beforeId: string) => void;
+      onSave: (
+        value: Channel,
+        beforeId: string,
+        draft?: SampleTransactionDraft,
+      ) => void;
     }
   | {
       kind: "category";
       value: Category;
       existing: { id: string; name: string }[];
-      onSave: (value: Category, beforeId: string) => void;
+      onSave: (
+        value: Category,
+        beforeId: string,
+        draft?: SampleTransactionDraft,
+      ) => void;
     }
 );
 
@@ -40,6 +50,12 @@ export function ChannelDialog(props: EditorProps) {
   const [initialDraft] = useState(draft);
   const [beforeId, setBeforeId] = useState("unchanged");
   const [error, setError] = useState("");
+  const pendingSave = useRef<
+    | { kind: "channel"; value: Channel; beforeId: string }
+    | { kind: "category"; value: Category; beforeId: string }
+    | null
+  >(null);
+  const acceptedChannelId = useRef<string | null>(null);
   const [people] = useSampleState<Person[]>("access-people", initialPeople);
   const creating = !props.value.id;
   const channel = "categoryId" in draft ? draft : undefined;
@@ -67,9 +83,24 @@ export function ChannelDialog(props: EditorProps) {
     }
     const saved = { ...draft, name };
     if (props.kind === "channel" && "categoryId" in saved)
-      props.onSave(saved, beforeId);
-    else if (props.kind === "category") props.onSave(saved, beforeId);
+      pendingSave.current = { kind: "channel", value: saved, beforeId };
+    else if (props.kind === "category" && !("categoryId" in saved))
+      pendingSave.current = { kind: "category", value: saved, beforeId };
+    else {
+      setError("The editor draft is invalid.");
+      return false;
+    }
     return true;
+  }
+  function stageMetadata(draftState: SampleTransactionDraft) {
+    const pending = pendingSave.current;
+    pendingSave.current = null;
+    if (!pending) return;
+    if (pending.kind === "channel" && props.kind === "channel") {
+      props.onSave(pending.value, pending.beforeId, draftState);
+      acceptedChannelId.current = pending.value.id;
+    } else if (pending.kind === "category" && props.kind === "category")
+      props.onSave(pending.value, pending.beforeId, draftState);
   }
   return (
     <CommsSettingsDialog
@@ -82,6 +113,12 @@ export function ChannelDialog(props: EditorProps) {
       opener={props.opener}
       onClose={props.onClose}
       onBeforeSave={saveMetadata}
+      onBeforeSaveTransaction={stageMetadata}
+      onAfterSave={() => {
+        const id = acceptedChannelId.current;
+        acceptedChannelId.current = null;
+        if (id) props.onAcceptedChannelSave?.(id);
+      }}
       additionalDirty={
         JSON.stringify(draft) !== JSON.stringify(initialDraft) ||
         beforeId !== "unchanged"

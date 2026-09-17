@@ -21,7 +21,13 @@ import {
   type Person,
   type Role,
 } from "../access/model";
-import { useSampleState } from "../sample-state";
+import {
+  useSampleRuntime,
+  useSampleState,
+  type SampleTransactionDraft,
+} from "../sample-state";
+import { SampleOperationError } from "../sample-runtime";
+import { useSampleResource } from "../sample-async";
 import { INITIAL_RECORDS, type SampleRecord } from "../sample-data";
 import {
   Dialog,
@@ -67,14 +73,22 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
-  Action,
   Avatar,
   MembersPanel,
   ThreadPanel,
   MessageTimeline,
   MessageComposer,
   type MessageDraft,
+  type ThreadChangeOptions,
 } from "./ui";
+import { Action } from "../ui";
+import {
+  COMMS_CONFIGURATION_KEY,
+  messageFromCommsError,
+  readCommsConfiguration,
+  stageCommsConfiguration,
+  useCommsCommands,
+} from "./runtime";
 import { ChannelDialog, newChannel } from "./channel-dialog";
 import { FloatingList, RowEditMenu, ProfilePopoverProvider } from "./floating";
 import { CommsThreadList, type CommsThreadListItem } from "./thread-list";
@@ -94,7 +108,12 @@ import {
   type RecordThread,
 } from "./model";
 
-import { useCommsConfiguration } from "./configuration-state";
+import {
+  CommsConfigurationProvider,
+  CommsPlatformPreferencesProvider,
+  DEFAULT_PLATFORM_PREFERENCES,
+  useCommsConfiguration,
+} from "./configuration-state";
 import {
   DEFAULT_COMMS_PREFERENCES,
   resolveCommsPermission,
@@ -125,6 +144,97 @@ function appendExamples<T extends { id: string }>(
   return [...current, ...examples.filter((item) => !existing.has(item.id))];
 }
 
+const COMMS_RESOURCE_KEYS = [
+  "comms-configuration",
+  "access-people",
+  "access-roles",
+  "commsCategories",
+  "commsChannels",
+  "commsMessages",
+  "commsThreads",
+  "commsDirects",
+  "records",
+  "commsRecordThreads",
+  "platformAccount",
+  "platformNotificationPreferences",
+] as const;
+type SampleAccount = {
+  language: string;
+  theme: string;
+  presence: string;
+  passwordChanged: boolean;
+  signedOut: boolean;
+};
+const INITIAL_ACCOUNT: SampleAccount = {
+  language: "English",
+  theme: "Light",
+  presence: "Available",
+  passwordChanged: false,
+  signedOut: false,
+};
+const INITIAL_DIRECTS: Direct[] = [
+  { id: "sample-dm-alex", user: PEOPLE[0], read: false, blocked: false },
+];
+
+function mergeThreadReplies(
+  current: Message[],
+  base: Message[],
+  desired: (Message | string)[],
+): (Message | string)[] {
+  if (desired.some((reply) => typeof reply === "string")) return desired;
+  const desiredMessages = desired.filter(
+    (reply): reply is Message => typeof reply !== "string",
+  );
+  const baseIds = new Set(base.map((reply) => reply.id));
+  const desiredById = new Map(
+    desiredMessages.map((reply) => [reply.id, reply] as const),
+  );
+  const next = current
+    .filter((reply) => !baseIds.has(reply.id) || desiredById.has(reply.id))
+    .map((reply) => desiredById.get(reply.id) ?? reply);
+  const present = new Set(
+    next
+      .filter((reply): reply is Message => typeof reply !== "string")
+      .map((reply) => reply.id),
+  );
+  for (const reply of desiredMessages) {
+    if (!present.has(reply.id)) {
+      next.push(reply);
+      present.add(reply.id);
+    }
+  }
+  return next;
+}
+
+function stageCommsEditor(
+  draft: SampleTransactionDraft,
+  value: Channel | Category,
+  beforeId: string,
+): void {
+  if ("categoryId" in value)
+    draft.update<Channel[]>("commsChannels", CHANNELS, (items) => {
+      const next = items.some((item) => item.id === value.id)
+        ? items.map((item) => (item.id === value.id ? value : item))
+        : [...items, value];
+      if (beforeId === "unchanged") return next;
+      const reordered = next.filter((item) => item.id !== value.id);
+      const at = reordered.findIndex((item) => item.id === beforeId);
+      reordered.splice(at < 0 ? reordered.length : at, 0, value);
+      return reordered;
+    });
+  else
+    draft.update<Category[]>("commsCategories", CATEGORIES, (items) => {
+      const next = items.some((item) => item.id === value.id)
+        ? items.map((item) => (item.id === value.id ? value : item))
+        : [...items, value];
+      if (beforeId === "unchanged") return next;
+      const reordered = next.filter((item) => item.id !== value.id);
+      const at = reordered.findIndex((item) => item.id === beforeId);
+      reordered.splice(at < 0 ? reordered.length : at, 0, value);
+      return reordered;
+    });
+}
+
 type ToolView =
   | "management"
   | "templates"
@@ -139,6 +249,8 @@ type ToolView =
 type Editor = (
   { kind: "channel"; value: Channel } | { kind: "category"; value: Category }
 ) & { opener: HTMLElement };
+type MessageSendResult =
+  { ok: true; threadId?: string } | { ok: false; error: string };
 
 type WorkspaceSetting =
   | "create-channel"
@@ -229,7 +341,65 @@ function CommsMenu({
 }
 
 export default function SampleComms() {
-  const [config, setConfig] = useCommsConfiguration();
+  const [initialConfig] = useCommsConfiguration();
+  const runtime = useSampleRuntime();
+  const { run, isPending } = useCommsCommands();
+  const commsResource = useSampleResource({
+    keys: COMMS_RESOURCE_KEYS,
+    queryKey: "comms-workspace",
+    load: (signal) =>
+      runtime.load(
+        (draft) => ({
+          configuration: readCommsConfiguration(draft),
+          people: draft.read<Person[]>("access-people", initialPeople),
+          roles: draft.read<Role[]>("access-roles", initialRoles),
+          categories: draft.read<Category[]>("commsCategories", CATEGORIES),
+          channels: draft.read<Channel[]>("commsChannels", CHANNELS),
+          messages: draft.read<Message[]>("commsMessages", MESSAGES),
+          threads: draft.read<Thread[]>("commsThreads", []),
+          directs: draft.read<Direct[]>("commsDirects", INITIAL_DIRECTS),
+          records: draft.read<SampleRecord[]>("records", INITIAL_RECORDS),
+          recordThreads: draft.read<RecordThread[]>("commsRecordThreads", []),
+          account: draft.read<SampleAccount>(
+            "platformAccount",
+            INITIAL_ACCOUNT,
+          ),
+          platformPreferences: draft.read(
+            "platformNotificationPreferences",
+            DEFAULT_PLATFORM_PREFERENCES,
+          ),
+        }),
+        { keys: COMMS_RESOURCE_KEYS, signal },
+      ),
+  });
+  const workspace = commsResource.data ?? {
+    configuration: initialConfig,
+    people: initialPeople,
+    roles: initialRoles,
+    categories: CATEGORIES,
+    channels: CHANNELS,
+    messages: MESSAGES,
+    threads: [] as Thread[],
+    directs: INITIAL_DIRECTS,
+    records: INITIAL_RECORDS,
+    recordThreads: [] as RecordThread[],
+    account: INITIAL_ACCOUNT,
+    platformPreferences: DEFAULT_PLATFORM_PREFERENCES,
+  };
+  const {
+    configuration: config,
+    people,
+    roles,
+    categories,
+    channels,
+    messages,
+    threads: storedThreads,
+    directs,
+    records,
+    recordThreads,
+    account,
+    platformPreferences,
+  } = workspace;
   const [settingsDialog, setSettingsDialog] = useState<{
     scope: CommsScope | "personal";
     opener: HTMLElement;
@@ -243,91 +413,92 @@ export default function SampleComms() {
     threadId?: string;
     messageId?: string;
   } | null>(null);
-  const [people, setPeople] = useSampleState<Person[]>(
-    "access-people",
-    initialPeople,
-  );
-  const [roles] = useSampleState<Role[]>("access-roles", initialRoles);
-  const [categories, setCategories] = useSampleState<Category[]>(
-    "commsCategories",
-    CATEGORIES,
-  );
-  const [channels, setChannels] = useSampleState<Channel[]>(
-    "commsChannels",
-    CHANNELS,
-  );
-  const [messages, setMessages] = useSampleState<Message[]>(
-    "commsMessages",
-    MESSAGES,
-  );
-  const [storedThreads, setThreads] = useSampleState<Thread[]>(
-    "commsThreads",
-    [],
-  );
-  const [directs, setDirects] = useSampleState<Direct[]>("commsDirects", [
-    { id: "sample-dm-alex", user: PEOPLE[0], read: false, blocked: false },
-  ]);
-  const [records] = useSampleState<SampleRecord[]>("records", INITIAL_RECORDS);
-  const [examplesLoaded, setExamplesLoaded] = useSampleState(
-    "commsExamplesLoaded",
-    false,
-  );
+  const [examplesLoaded] = useSampleState("commsExamplesLoaded", false);
+  const [notice, setNotice] = useState("");
   useEffect(() => {
     if (examplesLoaded) return;
-    const categoryIds = new Set(
-      [...categories, ...EXAMPLE_CATEGORIES].map((item) => item.id),
-    );
-    const newChannels = EXAMPLE_CHANNELS.filter((item) =>
-      categoryIds.has(item.categoryId),
-    );
-    const conversationIds = new Set(
-      [...channels, ...newChannels, ...directs, ...EXAMPLE_DIRECTS].map(
-        (item) => item.id,
-      ),
-    );
-    const newMessages = EXAMPLE_MESSAGES.filter((item) =>
-      conversationIds.has(item.conversation),
-    );
-    const messageIds = new Set(
-      [...messages, ...newMessages].map((item) => item.id),
-    );
-    setPeople((items) => appendExamples(items, EXAMPLE_PEOPLE));
-    setCategories((items) => appendExamples(items, EXAMPLE_CATEGORIES));
-    setChannels((items) => appendExamples(items, newChannels));
-    setDirects((items) => appendExamples(items, EXAMPLE_DIRECTS));
-    setMessages((items) => appendExamples(items, newMessages));
-    setThreads((items) =>
-      appendExamples(
-        items,
-        EXAMPLE_THREADS.filter((item) => messageIds.has(item.messageId)),
-      ),
-    );
-    setExamplesLoaded(true);
-  }, [
-    examplesLoaded,
-    categories,
-    channels,
-    directs,
-    messages,
-    setPeople,
-    setCategories,
-    setChannels,
-    setDirects,
-    setMessages,
-    setThreads,
-    setExamplesLoaded,
-  ]);
-  const [recordThreads] = useSampleState<RecordThread[]>(
-    "commsRecordThreads",
-    [],
-  );
-  const [account] = useSampleState("platformAccount", {
-    language: "English",
-    theme: "Light",
-    presence: "Available",
-    passwordChanged: false,
-    signedOut: false,
-  });
+    void run(
+      "seed-examples",
+      (draft) => {
+        if (draft.read("commsExamplesLoaded", false)) return false;
+        const currentCategories = draft.read<Category[]>(
+          "commsCategories",
+          CATEGORIES,
+        );
+        const currentChannels = draft.read<Channel[]>(
+          "commsChannels",
+          CHANNELS,
+        );
+        const currentDirects = draft.read<Direct[]>(
+          "commsDirects",
+          INITIAL_DIRECTS,
+        );
+        const currentMessages = draft.read<Message[]>(
+          "commsMessages",
+          MESSAGES,
+        );
+        const categoryIds = new Set(
+          [...currentCategories, ...EXAMPLE_CATEGORIES].map((item) => item.id),
+        );
+        const newChannels = EXAMPLE_CHANNELS.filter((item) =>
+          categoryIds.has(item.categoryId),
+        );
+        const conversationIds = new Set(
+          [
+            ...currentChannels,
+            ...newChannels,
+            ...currentDirects,
+            ...EXAMPLE_DIRECTS,
+          ].map((item) => item.id),
+        );
+        const newMessages = EXAMPLE_MESSAGES.filter((item) =>
+          conversationIds.has(item.conversation),
+        );
+        const messageIds = new Set(
+          [...currentMessages, ...newMessages].map((item) => item.id),
+        );
+        draft.update<Person[]>("access-people", initialPeople, (items) =>
+          appendExamples(items, EXAMPLE_PEOPLE),
+        );
+        draft.update<Category[]>("commsCategories", CATEGORIES, (items) =>
+          appendExamples(items, EXAMPLE_CATEGORIES),
+        );
+        draft.update<Channel[]>("commsChannels", CHANNELS, (items) =>
+          appendExamples(items, newChannels),
+        );
+        draft.update<Direct[]>("commsDirects", INITIAL_DIRECTS, (items) =>
+          appendExamples(items, EXAMPLE_DIRECTS),
+        );
+        draft.update<Message[]>("commsMessages", MESSAGES, (items) =>
+          appendExamples(items, newMessages),
+        );
+        draft.update<Thread[]>("commsThreads", [], (items) =>
+          appendExamples(
+            items,
+            EXAMPLE_THREADS.filter((item) => messageIds.has(item.messageId)),
+          ),
+        );
+        draft.update("commsExamplesLoaded", false, true);
+        return true;
+      },
+      [
+        "access-people",
+        "commsCategories",
+        "commsChannels",
+        "commsDirects",
+        "commsMessages",
+        "commsThreads",
+        "commsExamplesLoaded",
+      ],
+    ).catch((error: unknown) => {
+      setNotice(
+        messageFromCommsError(
+          error,
+          "Sample conversations could not be loaded.",
+        ),
+      );
+    });
+  }, [examplesLoaded, run]);
   const [selected, setSelected] = useState(() =>
     typeof window === "undefined"
       ? CHANNELS[0].id
@@ -397,7 +568,6 @@ export default function SampleComms() {
   );
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [highlightedId, setHighlightedId] = useState("");
-  const [notice, setNotice] = useState("");
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const messageList = useRef<HTMLDivElement>(null);
   const viewerId = "sample-eli";
@@ -460,18 +630,33 @@ export default function SampleComms() {
     permission("post") &&
     (settings.mode !== "announcements" || viewerId === "sample-eli");
   const elevated = permission("pin");
-  function patchPreferences(patch: Partial<CommsPreferences>) {
-    setConfig((current) => ({
-      ...current,
-      preferences: {
-        ...current.preferences,
-        [viewerId]: {
-          ...preferences,
-          ...current.preferences[viewerId],
-          ...patch,
+  async function patchPreferences(patch: Partial<CommsPreferences>) {
+    try {
+      await run(
+        "preferences",
+        (draft) => {
+          const current = readCommsConfiguration(draft);
+          const currentPreferences = current.preferences[viewerId] ?? {
+            ...DEFAULT_COMMS_PREFERENCES,
+            channelWidth: panelWidths.channels,
+            memberWidth: panelWidths.members,
+            threadWidth: preferredThreadWidth,
+          };
+          stageCommsConfiguration(draft, (value) => ({
+            ...value,
+            preferences: {
+              ...value.preferences,
+              [viewerId]: { ...currentPreferences, ...patch },
+            },
+          }));
         },
-      },
-    }));
+        [COMMS_CONFIGURATION_KEY],
+      );
+    } catch (error) {
+      setNotice(
+        messageFromCommsError(error, "Preferences could not be saved."),
+      );
+    }
   }
   const identity = {
     people,
@@ -807,89 +992,347 @@ export default function SampleComms() {
       ),
     }),
   );
-  function startDirect(name: string) {
-    const existing = directs.find((item) => item.user === name);
-    if (existing) {
-      select(existing.id);
-      setDmOpen(false);
-      setDirectError("");
+  async function startDirect(name: string) {
+    const result = await run(
+      `direct:${name}`,
+      (draft) => {
+        const currentConfig = readCommsConfiguration(draft);
+        const currentPeople = draft.read<Person[]>(
+          "access-people",
+          initialPeople,
+        );
+        const currentCategories = draft.read<Category[]>(
+          "commsCategories",
+          CATEGORIES,
+        );
+        const currentChannels = draft.read<Channel[]>(
+          "commsChannels",
+          CHANNELS,
+        );
+        const currentDirects = draft.read<Direct[]>(
+          "commsDirects",
+          INITIAL_DIRECTS,
+        );
+        const existing = currentDirects.find((item) => item.user === name);
+        if (existing) return { ok: true as const, id: existing.id };
+        const currentViewer = currentPeople.find(
+          (person) => person.id === viewerId && person.active,
+        );
+        const target = currentPeople.find(
+          (person) => person.name === name && person.active,
+        );
+        const dmRule = resolveCommsSettings(currentConfig).values.dmRule;
+        if (!currentViewer || !target)
+          return draft.reject({
+            ok: false as const,
+            error: "Choose an active person in this workspace.",
+          });
+        if (dmRule === "none")
+          return draft.reject({
+            ok: false as const,
+            error: "New direct messages are disabled by workspace policy.",
+          });
+        if (
+          dmRule === "shared-channel" &&
+          !currentChannels.some((item) =>
+            [currentViewer, target].every(
+              (person) =>
+                resolveCommsPermission(
+                  currentConfig,
+                  { person, channel: item, categories: currentCategories },
+                  "viewChannel",
+                ).allowed,
+            ),
+          )
+        )
+          return draft.reject({
+            ok: false as const,
+            error: "New direct messages require a shared channel.",
+          });
+        const id = `sample-dm-${crypto.randomUUID()}`;
+        draft.update<Direct[]>("commsDirects", INITIAL_DIRECTS, (items) => [
+          ...items,
+          { id, user: name, read: false, blocked: false },
+        ]);
+        return { ok: true as const, id };
+      },
+      [
+        "commsDirects",
+        COMMS_CONFIGURATION_KEY,
+        "access-people",
+        "commsCategories",
+        "commsChannels",
+      ],
+    ).catch((error: unknown) => ({
+      ok: false as const,
+      error: messageFromCommsError(
+        error,
+        "The direct conversation could not be opened.",
+      ),
+    }));
+    if (!result.ok) {
+      setDirectError(result.error);
+      setNotice(result.error);
       return;
     }
-    const dmRule = resolveCommsSettings(config).values.dmRule;
-    if (dmRule === "none") {
-      setDirectError("New direct messages are disabled by workspace policy.");
-      setNotice("New direct messages are disabled by workspace policy.");
-      return;
-    }
-    if (
-      dmRule === "shared-channel" &&
-      !channels.some((item) =>
-        [viewer, people.find((person) => person.name === name)].every(
-          (person) =>
-            person &&
-            resolveCommsPermission(
-              config,
-              { person, channel: item, categories },
-              "viewChannel",
-            ).allowed,
-        ),
-      )
-    ) {
-      setDirectError("New direct messages require a shared channel.");
-      setNotice("New direct messages require a shared channel.");
-      return;
-    }
-    const id = `sample-dm-${crypto.randomUUID()}`;
-    setDirects((items) => [
-      ...items,
-      { id, user: name, read: false, blocked: false },
-    ]);
     setDirectError("");
-    select(id);
+    select(result.id);
     setDmOpen(false);
   }
-  function startThread(message: Message) {
-    if (!canParticipate || !permission("createThread")) return;
-    const existing = threads.find((item) => item.messageId === message.id);
-    const id = existing?.id ?? `sample-thread-${crypto.randomUUID()}`;
-    if (!existing)
-      setThreads((items) => [
-        ...items,
-        {
-          id,
-          messageId: message.id,
-          conversation: selected,
-          resolved: false,
-          replies: [],
-          subscribed: settings.defaultThreadSubscription,
-        },
-      ]);
-    setThreadId(id);
+  async function startThread(message: Message) {
+    const result = await run(
+      `thread:create:${message.id}`,
+      (draft) => {
+        const currentConfig = readCommsConfiguration(draft);
+        const currentPeople = draft.read<Person[]>(
+          "access-people",
+          initialPeople,
+        );
+        const currentCategories = draft.read<Category[]>(
+          "commsCategories",
+          CATEGORIES,
+        );
+        const currentChannels = draft.read<Channel[]>(
+          "commsChannels",
+          CHANNELS,
+        );
+        const currentMessages = draft.read<Message[]>(
+          "commsMessages",
+          MESSAGES,
+        );
+        const currentThreads = draft.read<Thread[]>("commsThreads", []);
+        const currentDirect = draft
+          .read<Direct[]>("commsDirects", INITIAL_DIRECTS)
+          .find((item) => item.id === selected);
+        const currentViewer = currentPeople.find(
+          (person) => person.id === viewerId && person.active,
+        );
+        const currentChannel = currentChannels.find(
+          (item) => item.id === selected,
+        );
+        const currentSettings = resolveCommsSettings(
+          currentConfig,
+          currentChannel,
+          currentCategories,
+        ).values;
+        const access = resolveCommsPermission(
+          currentConfig,
+          {
+            person: currentViewer,
+            channel: currentChannel,
+            categories: currentCategories,
+          },
+          "createThread",
+        );
+        if (
+          !currentViewer ||
+          (!currentChannel && !currentDirect) ||
+          currentChannel?.archived ||
+          currentDirect?.blocked ||
+          currentSettings.locked ||
+          !access.allowed
+        )
+          return draft.reject({
+            ok: false as const,
+            error: "You cannot start a thread in this conversation.",
+          });
+        const parent = [
+          ...currentMessages.filter((item) => item.conversation === selected),
+          ...currentThreads
+            .filter(
+              (thread) =>
+                (thread.conversation ??
+                  currentMessages.find((item) => item.id === thread.messageId)
+                    ?.conversation) === selected,
+            )
+            .flatMap(threadMessages),
+        ].find((item) => item.id === message.id);
+        if (!parent)
+          return draft.reject({
+            ok: false as const,
+            error: "This message is no longer available.",
+          });
+        const existing = currentThreads.find(
+          (item) => item.messageId === message.id,
+        );
+        const id = existing?.id ?? `sample-thread-${crypto.randomUUID()}`;
+        if (!existing)
+          draft.update<Thread[]>("commsThreads", [], (items) => [
+            ...items,
+            {
+              id,
+              messageId: message.id,
+              conversation: selected,
+              resolved: false,
+              replies: [],
+              subscribed: currentSettings.defaultThreadSubscription,
+            },
+          ]);
+        return { ok: true as const, id };
+      },
+      [
+        "commsThreads",
+        "commsMessages",
+        "commsDirects",
+        COMMS_CONFIGURATION_KEY,
+        "access-people",
+        "commsCategories",
+        "commsChannels",
+      ],
+    ).catch((error: unknown) => ({
+      ok: false as const,
+      error: messageFromCommsError(error, "The thread could not be opened."),
+    }));
+    if (!result.ok) {
+      setNotice(result.error);
+      return;
+    }
+    setThreadId(result.id);
     setMemberOpen(false);
   }
-  function patchThread(patch: Partial<Thread>) {
-    if (!canParticipate) return;
-    if (patch.resolved !== undefined || patch.subscribed !== undefined)
-      setConfig((current) => ({
-        ...current,
-        threadMeta: {
-          ...current.threadMeta,
-          [threadId]: {
-            ...current.threadMeta[threadId],
-            ...(patch.resolved !== undefined
-              ? { resolved: patch.resolved }
-              : {}),
-            ...(patch.subscribed !== undefined
-              ? { followedBy: patch.subscribed ? [viewerId] : [] }
-              : {}),
+  async function patchThread(
+    patch: Partial<Thread>,
+    options: ThreadChangeOptions = {},
+  ): Promise<string | null> {
+    const result = await run(
+      `thread:update:${threadId}`,
+      (draft) => {
+        const currentConfig = readCommsConfiguration(draft);
+        const currentPeople = draft.read<Person[]>(
+          "access-people",
+          initialPeople,
+        );
+        const currentCategories = draft.read<Category[]>(
+          "commsCategories",
+          CATEGORIES,
+        );
+        const currentChannels = draft.read<Channel[]>(
+          "commsChannels",
+          CHANNELS,
+        );
+        const currentMessages = draft.read<Message[]>(
+          "commsMessages",
+          MESSAGES,
+        );
+        const currentThreads = draft.read<Thread[]>("commsThreads", []);
+        const currentViewer = currentPeople.find(
+          (person) => person.id === viewerId && person.active,
+        );
+        const currentChannel = currentChannels.find(
+          (item) => item.id === selected,
+        );
+        const currentDirect = draft
+          .read<Direct[]>("commsDirects", INITIAL_DIRECTS)
+          .find((item) => item.id === selected);
+        const currentSettings = resolveCommsSettings(
+          currentConfig,
+          currentChannel,
+          currentCategories,
+        ).values;
+        const access = resolveCommsPermission(
+          currentConfig,
+          {
+            person: currentViewer,
+            channel: currentChannel,
+            categories: currentCategories,
           },
-        },
-      }));
-    setThreads((items) =>
-      items.map((item) =>
-        item.id === threadId ? { ...item, ...patch } : item,
-      ),
+          patch.replies || options.archiveMessage || options.historyMessage
+            ? "reply"
+            : "viewChannel",
+        );
+        const currentThread = currentThreads.find(
+          (item) => item.id === threadId,
+        );
+        const threadConversation =
+          currentThread?.conversation ??
+          currentMessages.find((item) => item.id === currentThread?.messageId)
+            ?.conversation;
+        if (
+          !currentViewer ||
+          !currentThread ||
+          threadConversation !== selected ||
+          (!currentChannel && !currentDirect) ||
+          currentChannel?.archived ||
+          currentDirect?.blocked ||
+          currentSettings.locked ||
+          !access.allowed
+        )
+          return draft.reject("This thread is read-only.");
+        const nextPatch: Partial<Thread> = { ...patch };
+        if (patch.replies && options.replyBase)
+          nextPatch.replies = mergeThreadReplies(
+            threadMessages(currentThread),
+            options.replyBase,
+            patch.replies,
+          );
+        draft.update<Thread[]>("commsThreads", [], (items) =>
+          items.map((item) =>
+            item.id === threadId ? { ...item, ...nextPatch } : item,
+          ),
+        );
+        if (
+          patch.resolved !== undefined ||
+          patch.subscribed !== undefined ||
+          options.archiveMessage ||
+          options.historyMessage
+        )
+          stageCommsConfiguration(draft, (current) => ({
+            ...current,
+            ...(patch.resolved !== undefined || patch.subscribed !== undefined
+              ? {
+                  threadMeta: {
+                    ...current.threadMeta,
+                    [threadId]: {
+                      ...current.threadMeta[threadId],
+                      ...(patch.resolved !== undefined
+                        ? { resolved: patch.resolved }
+                        : {}),
+                      ...(patch.subscribed !== undefined
+                        ? {
+                            followedBy: patch.subscribed ? [viewerId] : [],
+                          }
+                        : {}),
+                    },
+                  },
+                }
+              : {}),
+            ...(options.archiveMessage
+              ? {
+                  tombstones: {
+                    ...current.tombstones,
+                    [options.archiveMessage.id]: options.archiveMessage,
+                  },
+                }
+              : {}),
+            ...(options.historyMessage
+              ? {
+                  messageHistory: {
+                    ...current.messageHistory,
+                    [options.historyMessage.id]: [
+                      ...(current.messageHistory[options.historyMessage.id] ??
+                        []),
+                      options.historyMessage,
+                    ],
+                  },
+                }
+              : {}),
+          }));
+        return null;
+      },
+      [
+        "commsThreads",
+        "commsMessages",
+        "commsDirects",
+        COMMS_CONFIGURATION_KEY,
+        "access-people",
+        "commsCategories",
+        "commsChannels",
+      ],
+    ).catch((error: unknown) =>
+      messageFromCommsError(error, "The thread could not be updated."),
     );
+    if (result) setNotice(result);
+    return result;
   }
   function jumpToMessage(id: string) {
     setSearch("");
@@ -911,58 +1354,185 @@ export default function SampleComms() {
       document.getElementById(`composer-${selected}`)?.focus(),
     );
   }
-  function changeMessage(id: string, patch: Partial<Message>) {
-    const message = messages.find((item) => item.id === id);
-    if (!canParticipate || !message) return;
-    if (patch.text !== undefined) {
-      const error = validateCommsMessageChange({
-        config,
-        person: viewer,
-        channel,
-        categories,
-        people,
-        message,
-        kind: "edit",
-      });
-      if (error) {
-        setNotice(error);
-        return;
-      }
-      setConfig((current) => ({
-        ...current,
-        messageHistory: {
-          ...current.messageHistory,
-          [id]: [...(current.messageHistory[id] ?? []), message],
-        },
-      }));
-    }
-    if (patch.pinned !== undefined && !permission("pin")) return;
-    if (patch.reactions !== undefined && !permission("react")) return;
-    setMessages((items) =>
-      items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+  async function changeMessage(
+    id: string,
+    patch: Partial<Message>,
+  ): Promise<string | null> {
+    const result = await run(
+      `message:update:${id}`,
+      (draft) => {
+        const currentConfig = readCommsConfiguration(draft);
+        const currentPeople = draft.read<Person[]>(
+          "access-people",
+          initialPeople,
+        );
+        const currentCategories = draft.read<Category[]>(
+          "commsCategories",
+          CATEGORIES,
+        );
+        const currentChannels = draft.read<Channel[]>(
+          "commsChannels",
+          CHANNELS,
+        );
+        const currentMessages = draft.read<Message[]>(
+          "commsMessages",
+          MESSAGES,
+        );
+        const currentViewer = currentPeople.find(
+          (person) => person.id === viewerId && person.active,
+        );
+        const currentChannel = currentChannels.find(
+          (item) => item.id === selected,
+        );
+        const message = currentMessages.find((item) => item.id === id);
+        if (!currentViewer || !message)
+          return draft.reject("This message is no longer available.");
+        const currentSettings = resolveCommsSettings(
+          currentConfig,
+          currentChannel,
+          currentCategories,
+        ).values;
+        if (
+          currentChannel?.archived ||
+          currentSettings.locked ||
+          !resolveCommsPermission(
+            currentConfig,
+            {
+              person: currentViewer,
+              channel: currentChannel,
+              categories: currentCategories,
+            },
+            "viewChannel",
+          ).allowed
+        )
+          return draft.reject("This conversation is read-only.");
+        if (patch.text !== undefined) {
+          const error = validateCommsMessageChange({
+            config: currentConfig,
+            person: currentViewer,
+            channel: currentChannel,
+            categories: currentCategories,
+            people: currentPeople,
+            message,
+            kind: "edit",
+          });
+          if (error) return draft.reject(error);
+        }
+        if (
+          patch.pinned !== undefined &&
+          !resolveCommsPermission(
+            currentConfig,
+            {
+              person: currentViewer,
+              channel: currentChannel,
+              categories: currentCategories,
+            },
+            "pin",
+          ).allowed
+        )
+          return draft.reject("You do not have permission to pin messages.");
+        if (
+          patch.reactions !== undefined &&
+          !resolveCommsPermission(
+            currentConfig,
+            {
+              person: currentViewer,
+              channel: currentChannel,
+              categories: currentCategories,
+            },
+            "react",
+          ).allowed
+        )
+          return draft.reject(
+            "You do not have permission to react to messages.",
+          );
+        if (patch.text !== undefined)
+          stageCommsConfiguration(draft, (current) => ({
+            ...current,
+            messageHistory: {
+              ...current.messageHistory,
+              [id]: [...(current.messageHistory[id] ?? []), message],
+            },
+          }));
+        draft.update<Message[]>("commsMessages", MESSAGES, (items) =>
+          items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+        );
+        return null;
+      },
+      [
+        "commsMessages",
+        COMMS_CONFIGURATION_KEY,
+        "access-people",
+        "commsCategories",
+        "commsChannels",
+      ],
+    ).catch((error: unknown) =>
+      messageFromCommsError(error, "The message could not be updated."),
     );
+    if (result) setNotice(result);
+    return result;
   }
-  function deleteMessage(id: string) {
-    const message = messages.find((item) => item.id === id);
-    if (!message || !canParticipate) return;
-    const error = validateCommsMessageChange({
-      config,
-      person: viewer,
-      channel,
-      categories,
-      people,
-      message,
-      kind: "delete",
-    });
-    if (error) {
-      setNotice(error);
-      return;
-    }
-    setConfig((current) => ({
-      ...current,
-      tombstones: { ...current.tombstones, [id]: message },
-    }));
-    setMessages((items) => items.filter((item) => item.id !== id));
+  async function deleteMessage(id: string): Promise<string | null> {
+    const result = await run(
+      `message:delete:${id}`,
+      (draft) => {
+        const currentConfig = readCommsConfiguration(draft);
+        const currentPeople = draft.read<Person[]>(
+          "access-people",
+          initialPeople,
+        );
+        const currentCategories = draft.read<Category[]>(
+          "commsCategories",
+          CATEGORIES,
+        );
+        const currentChannels = draft.read<Channel[]>(
+          "commsChannels",
+          CHANNELS,
+        );
+        const currentMessages = draft.read<Message[]>(
+          "commsMessages",
+          MESSAGES,
+        );
+        const currentViewer = currentPeople.find(
+          (person) => person.id === viewerId && person.active,
+        );
+        const currentChannel = currentChannels.find(
+          (item) => item.id === selected,
+        );
+        const message = currentMessages.find((item) => item.id === id);
+        if (!currentViewer || !message)
+          return draft.reject("This message is no longer available.");
+        const error = validateCommsMessageChange({
+          config: currentConfig,
+          person: currentViewer,
+          channel: currentChannel,
+          categories: currentCategories,
+          people: currentPeople,
+          message,
+          kind: "delete",
+        });
+        if (error) return draft.reject(error);
+        stageCommsConfiguration(draft, (current) => ({
+          ...current,
+          tombstones: { ...current.tombstones, [id]: message },
+        }));
+        draft.update<Message[]>("commsMessages", MESSAGES, (items) =>
+          items.filter((item) => item.id !== id),
+        );
+        return null;
+      },
+      [
+        "commsMessages",
+        COMMS_CONFIGURATION_KEY,
+        "access-people",
+        "commsCategories",
+        "commsChannels",
+      ],
+    ).catch((error: unknown) =>
+      messageFromCommsError(error, "The message could not be deleted."),
+    );
+    if (result) setNotice(result);
+    return result;
   }
   function validateDraft(
     draft: MessageDraft,
@@ -987,47 +1557,155 @@ export default function SampleComms() {
       kind,
     });
   }
-  function sendMessage(draft: MessageDraft) {
-    const { text, files, recordId, sentAt } = draft;
-    const kind = replyingTo
-      ? "reply"
-      : channel && settings.mode === "thread-first"
-        ? "thread"
-        : "post";
-    const error = validateDraft(draft, kind);
-    if (error || !viewer || !canParticipate)
-      return error ?? "This conversation is read-only.";
-    const id = `sample-message-${crypto.randomUUID()}`;
-    setMessages((items) => [
-      ...items,
-      {
-        id,
-        conversation: selected,
-        author: viewer.name,
-        authorId: viewer.id,
-        text: text.trim() || "Shared a file",
-        created: sentAt,
-        pinned: false,
-        ...(files.length ? { files } : {}),
-        ...(recordId ? { recordId } : {}),
-        ...(replyingTo ? { replyToId: replyingTo.id } : {}),
+  async function sendMessage(draft: MessageDraft): Promise<string | null> {
+    const replyToId = replyingTo?.id;
+    const result: MessageSendResult = await run<MessageSendResult>(
+      `message:send:${selected}`,
+      (transaction) => {
+        const currentConfig = readCommsConfiguration(transaction);
+        const currentPeople = transaction.read<Person[]>(
+          "access-people",
+          initialPeople,
+        );
+        const currentRoles = transaction.read<Role[]>(
+          "access-roles",
+          initialRoles,
+        );
+        const currentCategories = transaction.read<Category[]>(
+          "commsCategories",
+          CATEGORIES,
+        );
+        const currentChannels = transaction.read<Channel[]>(
+          "commsChannels",
+          CHANNELS,
+        );
+        const currentMessages = transaction.read<Message[]>(
+          "commsMessages",
+          MESSAGES,
+        );
+        const currentThreads = transaction.read<Thread[]>("commsThreads", []);
+        const currentRecords = transaction.read<SampleRecord[]>(
+          "records",
+          INITIAL_RECORDS,
+        );
+        const currentViewer = currentPeople.find(
+          (person) => person.id === viewerId && person.active,
+        );
+        const currentChannel = currentChannels.find(
+          (item) => item.id === selected,
+        );
+        const currentDirect = transaction
+          .read<Direct[]>("commsDirects", INITIAL_DIRECTS)
+          .find((item) => item.id === selected);
+        const currentSettings = resolveCommsSettings(
+          currentConfig,
+          currentChannel,
+          currentCategories,
+        ).values;
+        const kind = replyToId
+          ? "reply"
+          : currentChannel && currentSettings.mode === "thread-first"
+            ? "thread"
+            : "post";
+        const currentChannelThreads = currentThreads.filter(
+          (thread) =>
+            (thread.conversation ??
+              currentMessages.find((message) => message.id === thread.messageId)
+                ?.conversation) === selected,
+        );
+        const currentAllMessages = [
+          ...currentMessages,
+          ...currentThreads.flatMap(threadMessages),
+        ];
+        const error = validateCommsMessage({
+          config: currentConfig,
+          person: currentViewer,
+          channel: currentChannel,
+          categories: currentCategories,
+          people: currentPeople,
+          roles: currentRoles,
+          messages: currentAllMessages.filter(
+            (item) =>
+              item.conversation === selected ||
+              currentChannelThreads.some(
+                (thread) => thread.id === item.conversation,
+              ),
+          ),
+          text: draft.text,
+          files: draft.files,
+          record: currentRecords.find((item) => item.id === draft.recordId),
+          now: draft.sentAt,
+          kind,
+        });
+        if (error || !currentViewer || (!currentChannel && !currentDirect))
+          return transaction.reject({
+            ok: false as const,
+            error: error ?? "This conversation is read-only.",
+          });
+        if (
+          replyToId &&
+          !currentAllMessages.some((item) => item.id === replyToId)
+        )
+          return transaction.reject({
+            ok: false as const,
+            error: "This message is no longer available.",
+          });
+        const id = `sample-message-${crypto.randomUUID()}`;
+        transaction.update<Message[]>("commsMessages", MESSAGES, (items) => [
+          ...items,
+          {
+            id,
+            conversation: selected,
+            author: currentViewer.name,
+            authorId: currentViewer.id,
+            text: draft.text.trim() || "Shared a file",
+            created: draft.sentAt,
+            pinned: false,
+            ...(draft.files.length ? { files: draft.files } : {}),
+            ...(draft.recordId ? { recordId: draft.recordId } : {}),
+            ...(replyToId ? { replyToId } : {}),
+          },
+        ]);
+        let threadId: string | undefined;
+        if (kind === "thread") {
+          threadId = `sample-thread-${crypto.randomUUID()}`;
+          transaction.update<Thread[]>("commsThreads", [], (items) => [
+            ...items,
+            {
+              id: threadId!,
+              messageId: id,
+              conversation: selected,
+              resolved: false,
+              replies: [],
+              subscribed: currentSettings.defaultThreadSubscription,
+            },
+          ]);
+        }
+        return {
+          ok: true as const,
+          ...(threadId ? { threadId } : {}),
+        };
       },
-    ]);
-    if (kind === "thread") {
-      const idThread = `sample-thread-${crypto.randomUUID()}`;
-      setThreads((items) => [
-        ...items,
-        {
-          id: idThread,
-          messageId: id,
-          conversation: selected,
-          resolved: false,
-          replies: [],
-          subscribed: settings.defaultThreadSubscription,
-        },
-      ]);
-      setThreadId(idThread);
+      [
+        "commsMessages",
+        "commsThreads",
+        "commsDirects",
+        "records",
+        COMMS_CONFIGURATION_KEY,
+        "access-people",
+        "access-roles",
+        "commsCategories",
+        "commsChannels",
+      ],
+    ).catch((error: unknown) => ({
+      ok: false as const,
+      error: messageFromCommsError(error, "The message could not be sent."),
+    }));
+    if (!result.ok) {
+      setNotice(result.error);
+      return result.error;
     }
+    if (result.threadId) setThreadId(result.threadId);
     setReplyingTo(null);
     setNotice("Message sent.");
     requestAnimationFrame(() =>
@@ -1035,15 +1713,204 @@ export default function SampleComms() {
     );
     return null;
   }
-  function moveCategory(id: string, direction: number) {
-    setCategories((items) => {
-      const next = [...items];
-      const from = next.findIndex((item) => item.id === id);
-      const to = from + direction;
-      if (to >= 0 && to < next.length)
-        [next[from], next[to]] = [next[to], next[from]];
-      return next;
-    });
+  async function moveCategory(id: string, direction: number) {
+    try {
+      await run(
+        `category:move:${id}`,
+        (draft) => {
+          draft.update<Category[]>("commsCategories", CATEGORIES, (items) => {
+            const next = [...items];
+            const from = next.findIndex((item) => item.id === id);
+            const to = from + direction;
+            if (from >= 0 && to >= 0 && to < next.length)
+              [next[from], next[to]] = [next[to], next[from]];
+            return next;
+          });
+        },
+        ["commsCategories"],
+      );
+    } catch (error) {
+      setNotice(
+        messageFromCommsError(error, "The category order could not be saved."),
+      );
+    }
+  }
+  async function moveChannelToCategory(channelId: string, categoryId: string) {
+    try {
+      await run(
+        `channel:move:${channelId}`,
+        (draft) => {
+          draft.update<Channel[]>("commsChannels", CHANNELS, (items) =>
+            items.map((item) =>
+              item.id === channelId ? { ...item, categoryId } : item,
+            ),
+          );
+        },
+        ["commsChannels"],
+      );
+    } catch (error) {
+      setNotice(
+        messageFromCommsError(error, "The channel could not be moved."),
+      );
+    }
+  }
+  async function duplicateChannel(channel: Channel) {
+    try {
+      await run(
+        `channel:duplicate:${channel.id}`,
+        (draft) => {
+          const id = `sample-channel-${crypto.randomUUID()}`;
+          const copy = {
+            ...channel,
+            id,
+            name: `${channel.name}-copy`,
+            archived: false,
+          };
+          draft.update<Channel[]>("commsChannels", CHANNELS, (items) => [
+            ...items,
+            copy,
+          ]);
+          stageCommsConfiguration(draft, (current) => ({
+            ...current,
+            channels: {
+              ...current.channels,
+              [id]: current.channels[channel.id] ?? {
+                settings: {},
+                permissions: {},
+              },
+            },
+          }));
+        },
+        ["commsChannels", COMMS_CONFIGURATION_KEY],
+      );
+    } catch (error) {
+      setNotice(
+        messageFromCommsError(error, "The channel could not be duplicated."),
+      );
+    }
+  }
+  async function toggleChannelArchive(channelId: string) {
+    try {
+      await run(
+        `channel:archive:${channelId}`,
+        (draft) => {
+          draft.update<Channel[]>("commsChannels", CHANNELS, (items) =>
+            items.map((item) =>
+              item.id === channelId
+                ? { ...item, archived: !item.archived }
+                : item,
+            ),
+          );
+        },
+        ["commsChannels"],
+      );
+    } catch (error) {
+      setNotice(
+        messageFromCommsError(
+          error,
+          "The channel archive state could not be saved.",
+        ),
+      );
+    }
+  }
+  async function ensureRecordThread(item: RecordThread) {
+    try {
+      await run(
+        `record-thread:${item.id}`,
+        (draft) => {
+          const currentChannels = draft.read<Channel[]>(
+            "commsChannels",
+            CHANNELS,
+          );
+          if (currentChannels.some((entry) => entry.id === item.id)) return;
+          const currentCategories = draft.read<Category[]>(
+            "commsCategories",
+            CATEGORIES,
+          );
+          const categoryId = currentCategories[0]?.id ?? CATEGORIES[0].id;
+          draft.update<Channel[]>("commsChannels", CHANNELS, (items) => [
+            ...items,
+            {
+              ...newChannel(categoryId),
+              id: item.id,
+              name: item.text,
+            },
+          ]);
+          draft.update<Message[]>("commsMessages", MESSAGES, (items) => [
+            ...items,
+            {
+              id: `${item.id}-opening`,
+              conversation: item.id,
+              author: "You",
+              text: item.text,
+              created: Date.now(),
+              pinned: false,
+              recordId: item.recordId,
+            },
+          ]);
+        },
+        ["commsChannels", "commsCategories", "commsMessages"],
+      );
+      select(item.id);
+    } catch (error) {
+      setNotice(
+        messageFromCommsError(
+          error,
+          "The record conversation could not be opened.",
+        ),
+      );
+    }
+  }
+  async function toggleDirect(directId: string, field: "read" | "blocked") {
+    try {
+      await run(
+        `direct:update:${directId}:${field}`,
+        (draft) => {
+          draft.update<Direct[]>("commsDirects", INITIAL_DIRECTS, (items) =>
+            items.map((item) =>
+              item.id === directId ? { ...item, [field]: !item[field] } : item,
+            ),
+          );
+        },
+        ["commsDirects"],
+      );
+    } catch (error) {
+      setNotice(
+        messageFromCommsError(
+          error,
+          "The direct conversation could not be updated.",
+        ),
+      );
+    }
+  }
+  async function saveEditor(
+    value: Channel | Category,
+    beforeId: string,
+    transaction?: SampleTransactionDraft,
+  ) {
+    if (transaction) {
+      stageCommsEditor(transaction, value, beforeId);
+      return;
+    }
+    const result = await run(
+      `editor:save:${value.id}`,
+      (draft) => {
+        stageCommsEditor(draft, value, beforeId);
+        return null;
+      },
+      ["commsChannels", "commsCategories"],
+    ).catch((error: unknown) =>
+      messageFromCommsError(
+        error,
+        "The conversation settings could not be saved.",
+      ),
+    );
+    if (result) {
+      setNotice(result);
+      throw new SampleOperationError("conflict", result);
+    }
+    if ("categoryId" in value && selected !== value.id) select(value.id);
+    setEditor(null);
   }
   const membersContent = (
     <MembersPanel
@@ -1088,24 +1955,6 @@ export default function SampleComms() {
       onMessageTool={(view, messageId, opener) =>
         setToolsDialog({ view, messageId, channelId: selected, opener })
       }
-      onArchiveMessage={(message) =>
-        setConfig((current) => ({
-          ...current,
-          tombstones: { ...current.tombstones, [message.id]: message },
-        }))
-      }
-      onMessageHistory={(message) =>
-        setConfig((current) => ({
-          ...current,
-          messageHistory: {
-            ...current.messageHistory,
-            [message.id]: [
-              ...(current.messageHistory[message.id] ?? []),
-              message,
-            ],
-          },
-        }))
-      }
       onThread={startThread}
       onDirect={startDirect}
       onClose={() => {
@@ -1113,1145 +1962,1123 @@ export default function SampleComms() {
         setMembersVisible(true);
       }}
       onChange={patchThread}
+      pending={isPending(`thread:update:${currentThread.id}`)}
     />
   );
 
-  return (
-    <ProfilePopoverProvider>
-      <div
-        ref={container}
-        className="bg-card relative flex min-h-0 flex-1 overflow-hidden"
+  if (commsResource.status === "loading" && commsResource.data === undefined)
+    return (
+      <section
+        aria-label="OpenComms"
+        className="flex min-h-0 flex-1 items-center justify-center p-6"
       >
-        {settingsDialog && (
-          <CommsSettingsDialog
-            {...settingsDialog}
-            channels={channels}
-            categories={categories}
-            people={people}
-            roles={roles}
-            onClose={() => setSettingsDialog(null)}
-          />
-        )}
-        {toolsDialog && (
-          <CommsToolsDialog
-            {...toolsDialog}
-            onClose={() => setToolsDialog(null)}
-          />
-        )}
-        <ResizablePanelGroup
-          orientation="horizontal"
-          onLayoutChanged={(_, meta) => {
-            if (!meta.isUserInteraction) return;
-            const channelPixels = channelsPanel.current?.getSize().inPixels;
-            const rightPixels = rightPanel.current?.getSize().inPixels;
-            patchPreferences({
-              ...(desktop && channelPixels
-                ? { channelWidth: Math.round(channelPixels) }
-                : {}),
-              ...(rightOpen && rightPixels
-                ? currentThread
-                  ? { threadWidth: Math.round(rightPixels) }
-                  : { memberWidth: Math.round(rightPixels) }
-                : {}),
-            });
-          }}
-        >
-          {(desktop || !mobileConversation) && (
-            <ResizablePanel
-              id="channels"
-              panelRef={channelsPanel}
-              defaultSize={desktop ? channelWidth : "100%"}
-              minSize={desktop ? 200 : 0}
-              maxSize={desktop ? channelMaximum : "100%"}
-              groupResizeBehavior={
-                desktop ? "preserve-pixel-size" : "preserve-relative-size"
-              }
-            >
-              <aside
-                id="comms-channels"
-                aria-label="Conversations"
-                className={cn(
-                  "bg-muted/25 flex h-full min-h-0 w-full flex-col border-r",
-                )}
-              >
-                <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
-                  <CommsMenu
-                    hasChannel={!!channel}
-                    onSelect={openWorkspaceSetting}
-                  />
+        <p role="status" className="text-muted-foreground text-sm">
+          Loading conversations…
+        </p>
+      </section>
+    );
+  if (commsResource.status === "error" && commsResource.data === undefined)
+    return (
+      <section
+        aria-label="OpenComms"
+        className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center"
+      >
+        <Alert role="alert" variant="destructive">
+          {commsResource.error}
+        </Alert>
+        <Action type="button" variant="outline" onClick={commsResource.reload}>
+          Try again
+        </Action>
+      </section>
+    );
+
+  return (
+    <CommsConfigurationProvider value={config}>
+      <CommsPlatformPreferencesProvider value={platformPreferences}>
+        <ProfilePopoverProvider>
+          <div
+            ref={container}
+            className="bg-card relative flex min-h-0 flex-1 overflow-hidden"
+          >
+            {(commsResource.refreshing || commsResource.error) && (
+              <div className="bg-background/95 absolute inset-x-0 top-0 z-20 flex items-center gap-2 border-b px-4 py-2 text-xs backdrop-blur">
+                <p role="status" className="text-muted-foreground flex-1">
+                  {commsResource.refreshing
+                    ? "Refreshing conversations…"
+                    : `Showing the last saved conversations. ${commsResource.error}`}
+                </p>
+                {!commsResource.refreshing && (
                   <Action
-                    aria-label="Create channel"
-                    size="icon"
+                    type="button"
                     variant="ghost"
-                    onClick={(event) =>
-                      setEditor({
-                        opener: event.currentTarget,
-                        kind: "channel",
-                        value: newChannel(categories[0].id),
-                      })
-                    }
+                    size="sm"
+                    onClick={commsResource.reload}
                   >
-                    <Plus className="size-4" />
+                    Retry
                   </Action>
-                </div>
-                <div className="p-3">
-                  <Input
-                    aria-label="Search conversations"
-                    placeholder="Find a conversation…"
-                    value={conversationSearch}
-                    onChange={(event) =>
-                      setConversationSearch(event.target.value)
-                    }
-                  />
-                </div>
-                <ScrollArea className="min-h-0 flex-1">
-                  <div className="px-2 pb-4">
-                    {categories.map((category, categoryIndex) => (
-                      <Collapsible
-                        key={category.id}
-                        className="mb-4"
-                        open={!collapsed.includes(category.id)}
-                        onOpenChange={(open) =>
-                          setCollapsed((items) =>
-                            open
-                              ? items.filter((id) => id !== category.id)
-                              : [...items, category.id],
-                          )
-                        }
-                      >
-                        <RowEditMenu
-                          label="Edit category"
-                          actionsLabel={`Category actions: ${category.name}`}
-                          showActions={false}
-                          actions={[
-                            {
-                              label: collapsed.includes(category.id)
-                                ? "Expand category"
-                                : "Collapse category",
-                              onSelect: () =>
-                                setCollapsed((items) =>
-                                  items.includes(category.id)
-                                    ? items.filter((id) => id !== category.id)
-                                    : [...items, category.id],
-                                ),
-                            },
-                            {
-                              label: "Mute category for 1 hour",
-                              onSelect: () =>
-                                patchPreferences({
-                                  mutedUntil: {
-                                    ...preferences.mutedUntil,
-                                    ...Object.fromEntries(
-                                      channels
-                                        .filter(
-                                          (item) =>
-                                            item.categoryId === category.id,
-                                        )
-                                        .map((item) => [
-                                          item.id,
-                                          Date.now() + 3600000,
-                                        ]),
-                                    ),
-                                  },
-                                }),
-                            },
-                            {
-                              label: "Create channel in category",
-                              onSelect: (opener) =>
-                                setEditor({
-                                  kind: "channel",
-                                  value: newChannel(category.id),
-                                  opener,
-                                }),
-                            },
-                            {
-                              label: "Category settings",
-                              onSelect: (opener) =>
-                                setSettingsDialog({
-                                  scope: { kind: "category", id: category.id },
-                                  opener,
-                                }),
-                            },
-                            {
-                              label: "Move category up",
-                              disabled: categoryIndex === 0,
-                              onSelect: () => moveCategory(category.id, -1),
-                            },
-                            {
-                              label: "Move category down",
-                              disabled: categoryIndex === categories.length - 1,
-                              onSelect: () => moveCategory(category.id, 1),
-                            },
-                            {
-                              label: "Apply template",
-                              onSelect: (opener) =>
-                                setToolsDialog({ view: "templates", opener }),
-                            },
-                          ]}
-                          onEdit={(opener) =>
-                            setEditor({
-                              kind: "category",
-                              value: category,
-                              opener,
-                            })
-                          }
-                        >
-                          <div className="group flex items-center">
-                            <CollapsibleTrigger
-                              render={
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-auto min-h-11 min-w-0 flex-1 justify-start gap-1 px-1 text-left"
-                                />
-                              }
-                            >
-                              <ChevronDown
-                                className={cn(
-                                  "size-3 shrink-0",
-                                  collapsed.includes(category.id) &&
-                                    "-rotate-90",
-                                )}
-                              />
-                              <span className="truncate">{category.name}</span>
-                            </CollapsibleTrigger>
-                            <Action
-                              size="icon"
-                              variant="ghost"
-                              aria-label={`Edit category ${category.name}`}
-                              onClick={(event) =>
-                                setEditor({
-                                  kind: "category",
-                                  value: category,
-                                  opener: event.currentTarget,
-                                })
-                              }
-                            >
-                              <Settings2 className="size-3" />
-                            </Action>
-                            <Action
-                              size="icon"
-                              variant="ghost"
-                              aria-label={`Move ${category.name} ${categoryIndex ? "up" : "down"}`}
-                              disabled={categories.length < 2}
-                              onClick={() =>
-                                moveCategory(
-                                  category.id,
-                                  categoryIndex ? -1 : 1,
-                                )
-                              }
-                            >
-                              {categoryIndex ? (
-                                <ChevronUp className="size-3" />
-                              ) : (
-                                <ChevronDown className="size-3" />
-                              )}
-                            </Action>
-                          </div>
-                        </RowEditMenu>
-                        <CollapsibleContent>
-                          {filteredChannels
-                            .filter((item) => item.categoryId === category.id)
-                            .map((item) => (
-                              <div key={item.id}>
-                                <RowEditMenu
-                                  label="Edit channel"
-                                  actionsLabel={`Channel actions: ${item.name}`}
-                                  actions={[
-                                    {
-                                      label: preferences.favorites.includes(
-                                        item.id,
-                                      )
-                                        ? "Remove from favorites"
-                                        : "Add to favorites",
-                                      onSelect: () =>
-                                        patchPreferences({
-                                          favorites:
-                                            preferences.favorites.includes(
-                                              item.id,
-                                            )
-                                              ? preferences.favorites.filter(
-                                                  (id) => id !== item.id,
-                                                )
-                                              : [
-                                                  ...preferences.favorites,
-                                                  item.id,
-                                                ],
-                                        }),
-                                    },
-                                    {
-                                      label:
-                                        (preferences.mutedUntil[item.id] ?? 0) >
-                                        Date.now()
-                                          ? "Unmute channel"
-                                          : "Mute channel for 1 hour",
-                                      onSelect: () =>
-                                        patchPreferences({
-                                          mutedUntil: {
-                                            ...preferences.mutedUntil,
-                                            [item.id]:
-                                              (preferences.mutedUntil[
-                                                item.id
-                                              ] ?? 0) > Date.now()
-                                                ? 0
-                                                : Date.now() + 3600000,
-                                          },
-                                        }),
-                                    },
-                                    {
-                                      label: channelUnread(item.id)
-                                        ? "Mark read"
-                                        : "Mark unread",
-                                      onSelect: () =>
-                                        patchPreferences({
-                                          readAt: {
-                                            ...preferences.readAt,
-                                            [item.id]: channelUnread(item.id)
-                                              ? Math.max(
-                                                  Date.now(),
-                                                  latestChannelActivity(
-                                                    item.id,
-                                                  ),
-                                                )
-                                              : 0,
-                                          },
-                                        }),
-                                    },
-                                    {
-                                      label: "Copy channel link",
-                                      onSelect: () => copyConversation(item.id),
-                                    },
-                                    {
-                                      label: "Channel settings",
-                                      onSelect: (opener) =>
-                                        setSettingsDialog({
-                                          scope: {
-                                            kind: "channel",
-                                            id: item.id,
-                                          },
-                                          opener,
-                                        }),
-                                    },
-                                    ...categories
-                                      .filter(
-                                        (category) =>
-                                          category.id !== item.categoryId,
-                                      )
-                                      .map((category) => ({
-                                        label: `Move to ${category.name}`,
-                                        onSelect: () =>
-                                          setChannels((items) =>
-                                            items.map((channel) =>
-                                              channel.id === item.id
-                                                ? {
-                                                    ...channel,
-                                                    categoryId: category.id,
-                                                  }
-                                                : channel,
-                                            ),
-                                          ),
-                                      })),
-                                    {
-                                      label: "Duplicate channel",
-                                      onSelect: () => {
-                                        const id = `sample-channel-${crypto.randomUUID()}`;
-                                        setChannels((items) => [
-                                          ...items,
-                                          {
-                                            ...item,
-                                            id,
-                                            name: `${item.name}-copy`,
-                                            archived: false,
-                                          },
-                                        ]);
-                                        setConfig((current) => ({
-                                          ...current,
-                                          channels: {
-                                            ...current.channels,
-                                            [id]: current.channels[item.id] ?? {
-                                              settings: {},
-                                              permissions: {},
-                                            },
-                                          },
-                                        }));
-                                      },
-                                    },
-                                    {
-                                      label: item.archived
-                                        ? "Restore channel"
-                                        : "Archive channel",
-                                      onSelect: () =>
-                                        setChannels((items) =>
-                                          items.map((channel) =>
-                                            channel.id === item.id
-                                              ? {
-                                                  ...channel,
-                                                  archived: !channel.archived,
-                                                }
-                                              : channel,
-                                          ),
-                                        ),
-                                    },
-                                  ]}
-                                  onEdit={(opener) =>
-                                    setEditor({
-                                      kind: "channel",
-                                      value: item,
-                                      opener,
-                                    })
-                                  }
-                                >
-                                  <Button
-                                    type="button"
-                                    variant={
-                                      selected === item.id
-                                        ? "secondary"
-                                        : "ghost"
-                                    }
-                                    aria-label={item.name}
-                                    aria-current={
-                                      selected === item.id && !currentThread
-                                        ? "page"
-                                        : undefined
-                                    }
-                                    onClick={() => select(item.id)}
-                                    className="h-auto min-h-11 w-full justify-start py-2 pr-10 pl-3 text-left"
-                                  >
-                                    <Hash className="text-muted-foreground size-4 shrink-0" />
-                                    <span className="truncate">
-                                      {preferences.favorites.includes(item.id)
-                                        ? "★ "
-                                        : ""}
-                                      {item.name}
-                                    </span>
-                                    {(preferences.mutedUntil[item.id] ?? 0) >
-                                      Date.now() && (
-                                      <span className="text-muted-foreground text-[10px]">
-                                        Muted
-                                      </span>
-                                    )}
-                                    {channelUnread(item.id) && (
-                                      <span
-                                        aria-label="Unread"
-                                        className="bg-foreground ml-auto size-1.5 shrink-0 rounded-full"
-                                      />
-                                    )}
-                                    {item.archived && (
-                                      <span className="text-muted-foreground ml-auto text-[10px]">
-                                        Archived
-                                      </span>
-                                    )}
-                                  </Button>
-                                </RowEditMenu>
-                                {workspaceThreads.some(
-                                  (entry) => entry.channel.id === item.id,
-                                ) && (
-                                  <div
-                                    role="group"
-                                    aria-label={`Threads in ${item.name}`}
-                                    className="mb-1 ml-4 flex min-w-0 flex-col"
-                                  >
-                                    {workspaceThreads
-                                      .filter(
-                                        (entry) =>
-                                          entry.channel.id === item.id &&
-                                          !config.threadMeta[entry.thread.id]
-                                            ?.archived &&
-                                          resolveCommsSettings(
-                                            config,
-                                            item,
-                                            categories,
-                                          ).values.threadBranches !== "none" &&
-                                          (resolveCommsSettings(
-                                            config,
-                                            item,
-                                            categories,
-                                          ).values.threadBranches !==
-                                            "followed" ||
-                                            (config.threadMeta[
-                                              entry.thread.id
-                                            ]?.followedBy?.includes(viewerId) ??
-                                              entry.thread.subscribed)),
-                                      )
-                                      .map((entry) => (
-                                        <Tooltip key={entry.thread.id}>
-                                          <TooltipTrigger
-                                            render={
-                                              <Button
-                                                type="button"
-                                                variant={
-                                                  currentThread?.id ===
-                                                  entry.thread.id
-                                                    ? "secondary"
-                                                    : "ghost"
-                                                }
-                                                size="sm"
-                                                aria-label={`Thread: ${entry.title}`}
-                                                aria-current={
-                                                  currentThread?.id ===
-                                                  entry.thread.id
-                                                    ? "page"
-                                                    : undefined
-                                                }
-                                                onClick={() =>
-                                                  openThread(
-                                                    entry.thread,
-                                                    item.id,
-                                                  )
-                                                }
-                                                className="h-auto min-h-9 min-w-0 justify-start pr-2 pl-0 text-left"
-                                              />
-                                            }
-                                          >
-                                            <CornerDownRight
-                                              aria-hidden="true"
-                                              className="text-muted-foreground mt-2 size-4 shrink-0 self-start"
-                                            />
-                                            <span className="truncate">
-                                              {entry.title}
-                                            </span>
-                                            {entry.thread.resolved && (
-                                              <Badge
-                                                variant="secondary"
-                                                className="ml-auto shrink-0"
-                                              >
-                                                Inactive
-                                              </Badge>
-                                            )}
-                                          </TooltipTrigger>
-                                          <TooltipContent>
-                                            {entry.title}
-                                          </TooltipContent>
-                                        </Tooltip>
-                                      ))}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                        </CollapsibleContent>
-                      </Collapsible>
-                    ))}
-                    <Action
-                      variant="ghost"
-                      className="text-muted-foreground w-full justify-start"
-                      onClick={(event) =>
-                        setEditor({
-                          opener: event.currentTarget,
-                          kind: "category",
-                          value: { id: "", name: "", ...OPEN_PERMISSIONS },
-                        })
-                      }
-                    >
-                      <Plus className="size-3" />
-                      Create category
-                    </Action>
-                    <div className="mt-5 flex items-center justify-between px-2">
-                      <h2 className="text-muted-foreground text-xs font-semibold">
-                        Direct messages
-                      </h2>
+                )}
+              </div>
+            )}
+            {settingsDialog && (
+              <CommsSettingsDialog
+                {...settingsDialog}
+                channels={channels}
+                categories={categories}
+                people={people}
+                roles={roles}
+                onClose={() => setSettingsDialog(null)}
+              />
+            )}
+            {toolsDialog && (
+              <CommsToolsDialog
+                {...toolsDialog}
+                onClose={() => setToolsDialog(null)}
+              />
+            )}
+            <ResizablePanelGroup
+              orientation="horizontal"
+              onLayoutChanged={(_, meta) => {
+                if (!meta.isUserInteraction) return;
+                const channelPixels = channelsPanel.current?.getSize().inPixels;
+                const rightPixels = rightPanel.current?.getSize().inPixels;
+                patchPreferences({
+                  ...(desktop && channelPixels
+                    ? { channelWidth: Math.round(channelPixels) }
+                    : {}),
+                  ...(rightOpen && rightPixels
+                    ? currentThread
+                      ? { threadWidth: Math.round(rightPixels) }
+                      : { memberWidth: Math.round(rightPixels) }
+                    : {}),
+                });
+              }}
+            >
+              {(desktop || !mobileConversation) && (
+                <ResizablePanel
+                  id="channels"
+                  panelRef={channelsPanel}
+                  defaultSize={desktop ? channelWidth : "100%"}
+                  minSize={desktop ? 200 : 0}
+                  maxSize={desktop ? channelMaximum : "100%"}
+                  groupResizeBehavior={
+                    desktop ? "preserve-pixel-size" : "preserve-relative-size"
+                  }
+                >
+                  <aside
+                    id="comms-channels"
+                    aria-label="Conversations"
+                    className={cn(
+                      "bg-muted/25 flex h-full min-h-0 w-full flex-col border-r",
+                    )}
+                  >
+                    <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
+                      <CommsMenu
+                        hasChannel={!!channel}
+                        onSelect={openWorkspaceSetting}
+                      />
                       <Action
+                        aria-label="Create channel"
                         size="icon"
                         variant="ghost"
-                        aria-label="Start direct message"
-                        onClick={() => {
-                          setMemberSearch("");
-                          setDirectError("");
-                          setDmOpen(true);
-                        }}
+                        onClick={(event) =>
+                          setEditor({
+                            opener: event.currentTarget,
+                            kind: "channel",
+                            value: newChannel(categories[0].id),
+                          })
+                        }
                       >
                         <Plus className="size-4" />
                       </Action>
                     </div>
-                    {directs
-                      .filter((item) =>
-                        item.user
-                          .toLowerCase()
-                          .includes(conversationSearch.toLowerCase()),
-                      )
-                      .map((item) => (
-                        <Button
-                          type="button"
-                          variant={selected === item.id ? "secondary" : "ghost"}
-                          key={item.id}
-                          onClick={() => select(item.id)}
-                          className="h-auto min-h-11 w-full justify-start px-3 text-left"
-                        >
-                          <Avatar name={item.user} />
-                          <span
-                            className={cn(
-                              "truncate",
-                              !item.read && "font-semibold",
-                            )}
-                          >
-                            {item.user}
-                          </span>
-                          {!item.read && (
-                            <span
-                              aria-label="Unread"
-                              className="bg-foreground ml-auto size-1.5 rounded-full"
-                            />
-                          )}
-                        </Button>
-                      ))}
-                    {recordThreads.map((item) => (
-                      <Action
-                        key={item.id}
-                        variant="ghost"
-                        className="h-auto w-full justify-start text-left whitespace-normal"
-                        onClick={() => {
-                          if (!channels.some((entry) => entry.id === item.id)) {
-                            setChannels((items) => [
-                              ...items,
-                              {
-                                ...newChannel(categories[0].id),
-                                id: item.id,
-                                name: item.text,
-                              },
-                            ]);
-                            setMessages((items) => [
-                              ...items,
-                              {
-                                id: `${item.id}-opening`,
-                                conversation: item.id,
-                                author: "You",
-                                text: item.text,
-                                created: Date.now(),
-                                pinned: false,
-                                recordId: item.recordId,
-                              },
-                            ]);
-                          }
-                          select(item.id);
-                        }}
-                      >
-                        {item.text}
-                      </Action>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </aside>
-            </ResizablePanel>
-          )}
-          {desktop && <ResizableHandle aria-label="Resize channels" />}
-          {(desktop || mobileConversation) && (
-            <ResizablePanel
-              id="conversation"
-              minSize={desktop ? minimumChatWidth : 0}
-            >
-              <section
-                aria-label="Conversation"
-                className={cn("flex h-full min-h-0 min-w-0 flex-col")}
-              >
-                <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-1.5 border-b px-3 py-2">
-                  <Action
-                    className="md:hidden"
-                    size="icon"
-                    variant="ghost"
-                    aria-label="Conversations"
-                    onClick={() => setMobileConversation(false)}
-                  >
-                    <ArrowLeft className="size-4" />
-                  </Action>
-                  {channel ? (
-                    <Hash className="text-muted-foreground hidden size-5 shrink-0 sm:block" />
-                  ) : (
-                    <MessageSquare className="text-muted-foreground size-5 shrink-0" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <CommsMenu
-                      compact
-                      hasChannel={!!channel}
-                      onSelect={openWorkspaceSetting}
-                    />
-                    <h2 className="truncate text-sm font-semibold">
-                      {channel?.name ?? direct?.user ?? "Choose a conversation"}
-                    </h2>
-                    <p className="text-muted-foreground hidden truncate text-xs lg:block">
-                      {channel?.description ?? "Private conversation"}
-                    </p>
-                  </div>
-                  <FloatingList
-                    label="Threads"
-                    icon={<MessageSquare className="size-4" />}
-                  >
-                    {(close) => (
-                      <CommsThreadList
-                        items={channelThreadItems}
-                        filter={threadFilter}
-                        onFilterChange={setThreadFilter}
-                        onSelect={(item) => {
-                          close();
-                          setThreadId(item.id);
-                          setMemberOpen(false);
-                        }}
-                        emptyDescription={`No ${threadFilter} threads in this conversation.`}
-                        filterClassName="mb-3"
+                    <div className="p-3">
+                      <Input
+                        aria-label="Search conversations"
+                        placeholder="Find a conversation…"
+                        value={conversationSearch}
+                        onChange={(event) =>
+                          setConversationSearch(event.target.value)
+                        }
                       />
-                    )}
-                  </FloatingList>
-                  <FloatingList
-                    label="Pinned messages"
-                    icon={<Pin className="size-4" />}
-                  >
-                    {(close) => (
-                      <div className="flex flex-col gap-1">
-                        {pinnedMessages.map((message) => (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            key={message.id}
-                            className="h-auto flex-col items-stretch gap-0 p-3 text-left whitespace-normal"
-                            onClick={() => {
-                              close();
-                              jumpToMessage(message.id);
-                            }}
+                    </div>
+                    <ScrollArea className="min-h-0 flex-1">
+                      <div className="px-2 pb-4">
+                        {categories.map((category, categoryIndex) => (
+                          <Collapsible
+                            key={category.id}
+                            className="mb-4"
+                            open={!collapsed.includes(category.id)}
+                            onOpenChange={(open) =>
+                              setCollapsed((items) =>
+                                open
+                                  ? items.filter((id) => id !== category.id)
+                                  : [...items, category.id],
+                              )
+                            }
                           >
-                            <span className="mb-1 block text-xs font-medium">
-                              {people.find(
-                                (person) =>
-                                  person.id ===
-                                  messageAuthorId(message, people),
-                              )?.name ?? message.author}
-                            </span>
-                            <span className="text-muted-foreground line-clamp-3 text-sm">
-                              {message.text}
-                            </span>
-                          </Button>
-                        ))}
-                        {!pinnedMessages.length && (
-                          <Empty>
-                            <EmptyDescription>
-                              No pinned messages yet.
-                            </EmptyDescription>
-                          </Empty>
-                        )}
-                      </div>
-                    )}
-                  </FloatingList>
-                  <Action
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Members"
-                    aria-expanded={
-                      wide ? membersVisible && !currentThread : memberOpen
-                    }
-                    onClick={() => {
-                      if (wide)
-                        setMembersVisible(
-                          currentThread ? true : !membersVisible,
-                        );
-                      else setMemberOpen(!memberOpen);
-                      setThreadId("");
-                    }}
-                  >
-                    <Users className="size-4" />
-                  </Action>
-                  {channel && (
-                    <Action
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Channel settings"
-                      onClick={(event) =>
-                        setEditor({
-                          kind: "channel",
-                          value: channel,
-                          opener: event.currentTarget,
-                        })
-                      }
-                    >
-                      <Settings2 className="size-4" />
-                    </Action>
-                  )}
-                  <Input
-                    aria-label="Search messages"
-                    placeholder="Search messages"
-                    value={search}
-                    onChange={(event) => {
-                      setSearch(event.target.value);
-                      setHighlightedId("");
-                    }}
-                    className="order-last h-9 w-full sm:w-40 lg:w-48"
-                  />
-                </header>
-                {direct && (
-                  <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3">
-                    <Action
-                      size="sm"
-                      variant="ghost"
-                      onClick={() =>
-                        setDirects((items) =>
-                          items.map((item) =>
-                            item.id === selected
-                              ? { ...item, read: !item.read }
-                              : item,
-                          ),
-                        )
-                      }
-                    >
-                      Mark {direct.read ? "unread" : "read"}
-                    </Action>
-                    <Action
-                      size="sm"
-                      variant="ghost"
-                      onClick={() =>
-                        setDirects((items) =>
-                          items.map((item) =>
-                            item.id === selected
-                              ? { ...item, blocked: !item.blocked }
-                              : item,
-                          ),
-                        )
-                      }
-                    >
-                      {direct.blocked ? "Unblock user" : "Block user"}
-                    </Action>
-                  </div>
-                )}
-                {settings.pinnedRecordId && (
-                  <a
-                    className="bg-muted/30 border-b px-4 py-2 text-xs underline"
-                    href={`/openview?record=${encodeURIComponent(settings.pinnedRecordId)}`}
-                  >
-                    Pinned incident ·{" "}
-                    {records.find(
-                      (record) => record.id === settings.pinnedRecordId,
-                    )?.title ?? "View record"}
-                  </a>
-                )}
-                <MessageScrollerProvider
-                  autoScroll={false}
-                  defaultScrollPosition="start"
-                >
-                  <MessageScroller className="min-h-0 flex-1">
-                    <MessageScrollerViewport
-                      ref={messageList}
-                      aria-label="Messages"
-                      className="px-2 py-4 sm:px-4"
-                      onScroll={(event) => {
-                        const list = event.currentTarget;
-                        setAwayFromLatest(
-                          list.scrollHeight -
-                            list.scrollTop -
-                            list.clientHeight >
-                            120,
-                        );
-                      }}
-                    >
-                      <MessageScrollerContent className="gap-0">
-                        {!canView ? (
-                          <Alert>
-                            Your role does not have access to this channel.
-                            Choose another conversation or update the channel
-                            settings.
-                          </Alert>
-                        ) : (
-                          <>
-                            <div className="mt-4 mb-8 px-3">
-                              <div className="bg-muted mb-3 flex size-12 items-center justify-center rounded-2xl">
-                                <Hash className="text-muted-foreground size-6" />
-                              </div>
-                              <h3 className="text-xl font-semibold tracking-tight">
-                                {channel
-                                  ? `Welcome to #${channel.name}`
-                                  : `A conversation with ${direct?.user}`}
-                              </h3>
-                              <p className="text-muted-foreground mt-2 text-sm">
-                                {channel?.description ||
-                                  "This is the beginning of your conversation."}
-                              </p>
-                            </div>
-                            {visibleMessages.length === 0 && (
-                              <Empty>
-                                <EmptyDescription>
-                                  {search
-                                    ? "No messages match."
-                                    : "No messages yet. Start the conversation below."}
-                                </EmptyDescription>
-                              </Empty>
-                            )}
-                            <MessageTimeline
-                              key={selected}
-                              visibleMessages={visibleMessages}
-                              allMessages={allMessages}
-                              records={records}
-                              threads={channelThreads}
-                              highlightedId={highlightedId}
-                              {...identity}
-                              mutable={canParticipate}
-                              onMessageTool={(view, messageId, opener) =>
-                                setToolsDialog({
-                                  view,
-                                  messageId,
-                                  channelId: selected,
+                            <RowEditMenu
+                              label="Edit category"
+                              actionsLabel={`Category actions: ${category.name}`}
+                              showActions={false}
+                              actions={[
+                                {
+                                  label: collapsed.includes(category.id)
+                                    ? "Expand category"
+                                    : "Collapse category",
+                                  onSelect: () =>
+                                    setCollapsed((items) =>
+                                      items.includes(category.id)
+                                        ? items.filter(
+                                            (id) => id !== category.id,
+                                          )
+                                        : [...items, category.id],
+                                    ),
+                                },
+                                {
+                                  label: "Mute category for 1 hour",
+                                  onSelect: () =>
+                                    patchPreferences({
+                                      mutedUntil: {
+                                        ...preferences.mutedUntil,
+                                        ...Object.fromEntries(
+                                          channels
+                                            .filter(
+                                              (item) =>
+                                                item.categoryId === category.id,
+                                            )
+                                            .map((item) => [
+                                              item.id,
+                                              Date.now() + 3600000,
+                                            ]),
+                                        ),
+                                      },
+                                    }),
+                                },
+                                {
+                                  label: "Create channel in category",
+                                  onSelect: (opener) =>
+                                    setEditor({
+                                      kind: "channel",
+                                      value: newChannel(category.id),
+                                      opener,
+                                    }),
+                                },
+                                {
+                                  label: "Category settings",
+                                  onSelect: (opener) =>
+                                    setSettingsDialog({
+                                      scope: {
+                                        kind: "category",
+                                        id: category.id,
+                                      },
+                                      opener,
+                                    }),
+                                },
+                                {
+                                  label: "Move category up",
+                                  disabled: categoryIndex === 0,
+                                  onSelect: () => moveCategory(category.id, -1),
+                                },
+                                {
+                                  label: "Move category down",
+                                  disabled:
+                                    categoryIndex === categories.length - 1,
+                                  onSelect: () => moveCategory(category.id, 1),
+                                },
+                                {
+                                  label: "Apply template",
+                                  onSelect: (opener) =>
+                                    setToolsDialog({
+                                      view: "templates",
+                                      opener,
+                                    }),
+                                },
+                              ]}
+                              onEdit={(opener) =>
+                                setEditor({
+                                  kind: "category",
+                                  value: category,
                                   opener,
                                 })
                               }
-                              onChange={changeMessage}
-                              onDelete={deleteMessage}
-                              onReply={beginReply}
-                              onThread={startThread}
-                              onJump={jumpToMessage}
-                              onDirect={startDirect}
-                            />
-                          </>
-                        )}
-                      </MessageScrollerContent>
-                    </MessageScrollerViewport>
-                  </MessageScroller>
-                </MessageScrollerProvider>
-                {awayFromLatest && (
-                  <Action
-                    className="mx-auto mb-2"
-                    size="sm"
-                    onClick={() =>
-                      messageList.current?.scrollTo({
-                        top: messageList.current.scrollHeight,
-                        behavior: "instant",
-                      })
-                    }
-                  >
-                    Jump to latest
-                  </Action>
-                )}
-                <MessageComposer
-                  key={selected}
-                  id={selected}
-                  preferences={preferences}
-                  settings={settings}
-                  canPost={replyingTo ? canParticipate : canPost}
-                  replyingTo={replyingTo}
-                  people={people}
-                  onCancelReply={() => setReplyingTo(null)}
-                  conversationName={
-                    channel
-                      ? `#${channel.name}`
-                      : (direct?.user ?? "a teammate")
-                  }
-                  unavailableReason={
-                    direct?.blocked
-                      ? "Unblock this user to send a message."
-                      : channel?.archived
-                        ? "This channel is archived. Restore it to post."
-                        : settings.locked
-                          ? "This channel is locked. Unlock it in channel settings to post."
-                          : "Your role cannot post in this channel."
-                  }
-                  records={records}
-                  onSend={sendMessage}
-                />
-                {notice && <Alert className="sr-only">{notice}</Alert>}
-              </section>
-            </ResizablePanel>
-          )}
-          {rightOpen && (
-            <>
-              <ResizableHandle
-                aria-label={currentThread ? "Resize thread" : "Resize members"}
-                onKeyDownCapture={(event) => {
-                  if (event.key !== "Home" && event.key !== "End") return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  const width =
-                    event.key === "Home"
-                      ? currentThread
-                        ? 320
-                        : 200
-                      : currentThread
-                        ? threadMaximum
-                        : memberMaximum;
-                  rightPanel.current?.resize(width);
-                  patchPreferences(
-                    currentThread
-                      ? { threadWidth: width }
-                      : { memberWidth: width },
-                  );
-                }}
-              />
-              <ResizablePanel
-                key={currentThread ? "thread" : "members"}
-                id={currentThread ? "thread" : "members"}
-                panelRef={rightPanel}
-                defaultSize={currentThread ? threadWidth : memberWidth}
-                minSize={currentThread ? 320 : 200}
-                maxSize={currentThread ? threadMaximum : memberMaximum}
-                groupResizeBehavior="preserve-pixel-size"
-              >
-                <aside
-                  id="comms-members"
-                  aria-label={
-                    currentThread ? "Thread panel" : "Channel members"
-                  }
-                  className="bg-muted/15 h-full min-h-0 overflow-hidden border-l"
-                >
-                  {currentThread ? (
-                    threadContent
-                  ) : (
-                    <ScrollArea className="h-full">{membersContent}</ScrollArea>
-                  )}
-                </aside>
-              </ResizablePanel>
-            </>
-          )}
-        </ResizablePanelGroup>
-        <div className="xl:hidden">
-          {!wide &&
-            !toolsDialog &&
-            !settingsDialog &&
-            (memberOpen || currentThread) && (
-              <Dialog
-                open
-                onOpenChange={(open) => {
-                  if (!open) {
-                    setMemberOpen(false);
-                    setThreadId("");
-                  }
-                }}
-              >
-                <DialogContent
-                  className={
-                    currentThread
-                      ? "h-[calc(100dvh-24px)] max-h-[calc(100dvh-24px)] max-w-lg overflow-hidden p-0"
-                      : "h-[85dvh] max-w-md"
-                  }
-                >
-                  <DialogTitle className="sr-only">
-                    {currentThread ? "Thread" : "Members"}
-                  </DialogTitle>
-                  <DialogDescription className="sr-only">
-                    {currentThread
-                      ? "Replies to this message"
-                      : "People with access to this conversation"}
-                  </DialogDescription>
-                  {currentThread ? threadContent : membersContent}
-                </DialogContent>
-              </Dialog>
-            )}
-        </div>
-        <Dialog
-          open={!!threadDirectory}
-          onOpenChange={(open) => {
-            if (!open) setThreadDirectory(null);
-          }}
-        >
-          <DialogContent
-            finalFocus={() => threadDirectoryOpener.current}
-            className="max-w-lg"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <DialogTitle>Workspace threads</DialogTitle>
-                <DialogDescription>
-                  Follow discussions across your channels.
-                </DialogDescription>
-              </div>
-              <Action
-                size="icon"
-                variant="ghost"
-                aria-label="Close workspace threads"
-                onClick={() => setThreadDirectory(null)}
-              >
-                <X className="size-4" />
-              </Action>
-            </div>
-            <CommsThreadList
-              items={workspaceThreadItems}
-              filter={threadFilter}
-              onFilterChange={setThreadFilter}
-              onSelect={(item) => {
-                const entry = workspaceThreads.find(
-                  (candidate) => candidate.thread.id === item.id,
-                );
-                if (entry !== undefined) {
-                  openThread(entry.thread, entry.channel.id);
-                }
-              }}
-              emptyDescription={`No ${threadFilter} threads in your channels.`}
-              filterClassName="my-4"
-            />
-          </DialogContent>
-        </Dialog>
-        {editor && (
-          <ChannelDialog
-            key={`${editor.kind}-${editor.value.id}`}
-            {...editor}
-            roles={roles}
-            categories={categories}
-            channels={channels}
-            existing={editor.kind === "channel" ? channels : categories}
-            onClose={() => setEditor(null)}
-            onSave={(value: Channel | Category, beforeId: string) => {
-              if ("categoryId" in value) {
-                setChannels((items) => {
-                  const next = items.some((item) => item.id === value.id)
-                    ? items.map((item) => (item.id === value.id ? value : item))
-                    : [...items, value];
-                  if (beforeId === "unchanged") return next;
-                  const reordered = next.filter((item) => item.id !== value.id);
-                  const at = reordered.findIndex(
-                    (item) => item.id === beforeId,
-                  );
-                  reordered.splice(at < 0 ? reordered.length : at, 0, value);
-                  return reordered;
-                });
-                if (selected !== value.id) select(value.id);
-              } else
-                setCategories((items) => {
-                  const next = items.some((item) => item.id === value.id)
-                    ? items.map((item) => (item.id === value.id ? value : item))
-                    : [...items, value];
-                  if (beforeId === "unchanged") return next;
-                  const reordered = next.filter((item) => item.id !== value.id);
-                  const at = reordered.findIndex(
-                    (item) => item.id === beforeId,
-                  );
-                  reordered.splice(at < 0 ? reordered.length : at, 0, value);
-                  return reordered;
-                });
-              setEditor(null);
-            }}
-          />
-        )}
-
-        <Dialog open={dmOpen} onOpenChange={setDmOpen}>
-          <DialogContent>
-            <DialogTitle>Start direct message</DialogTitle>
-            <DialogDescription>
-              Choose someone from your workspace.
-            </DialogDescription>
-            <div className="mt-4 flex flex-col gap-2">
-              {directError && (
-                <Alert role="alert" variant="destructive">
-                  {directError}
-                </Alert>
+                            >
+                              <div className="group flex items-center">
+                                <CollapsibleTrigger
+                                  render={
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-auto min-h-11 min-w-0 flex-1 justify-start gap-1 px-1 text-left"
+                                    />
+                                  }
+                                >
+                                  <ChevronDown
+                                    className={cn(
+                                      "size-3 shrink-0",
+                                      collapsed.includes(category.id) &&
+                                        "-rotate-90",
+                                    )}
+                                  />
+                                  <span className="truncate">
+                                    {category.name}
+                                  </span>
+                                </CollapsibleTrigger>
+                                <Action
+                                  size="icon"
+                                  variant="ghost"
+                                  aria-label={`Edit category ${category.name}`}
+                                  onClick={(event) =>
+                                    setEditor({
+                                      kind: "category",
+                                      value: category,
+                                      opener: event.currentTarget,
+                                    })
+                                  }
+                                >
+                                  <Settings2 className="size-3" />
+                                </Action>
+                                <Action
+                                  size="icon"
+                                  variant="ghost"
+                                  aria-label={`Move ${category.name} ${categoryIndex ? "up" : "down"}`}
+                                  disabled={categories.length < 2}
+                                  onClick={() =>
+                                    moveCategory(
+                                      category.id,
+                                      categoryIndex ? -1 : 1,
+                                    )
+                                  }
+                                >
+                                  {categoryIndex ? (
+                                    <ChevronUp className="size-3" />
+                                  ) : (
+                                    <ChevronDown className="size-3" />
+                                  )}
+                                </Action>
+                              </div>
+                            </RowEditMenu>
+                            <CollapsibleContent>
+                              {filteredChannels
+                                .filter(
+                                  (item) => item.categoryId === category.id,
+                                )
+                                .map((item) => (
+                                  <div key={item.id}>
+                                    <RowEditMenu
+                                      label="Edit channel"
+                                      actionsLabel={`Channel actions: ${item.name}`}
+                                      actions={[
+                                        {
+                                          label: preferences.favorites.includes(
+                                            item.id,
+                                          )
+                                            ? "Remove from favorites"
+                                            : "Add to favorites",
+                                          onSelect: () =>
+                                            patchPreferences({
+                                              favorites:
+                                                preferences.favorites.includes(
+                                                  item.id,
+                                                )
+                                                  ? preferences.favorites.filter(
+                                                      (id) => id !== item.id,
+                                                    )
+                                                  : [
+                                                      ...preferences.favorites,
+                                                      item.id,
+                                                    ],
+                                            }),
+                                        },
+                                        {
+                                          label:
+                                            (preferences.mutedUntil[item.id] ??
+                                              0) > Date.now()
+                                              ? "Unmute channel"
+                                              : "Mute channel for 1 hour",
+                                          onSelect: () =>
+                                            patchPreferences({
+                                              mutedUntil: {
+                                                ...preferences.mutedUntil,
+                                                [item.id]:
+                                                  (preferences.mutedUntil[
+                                                    item.id
+                                                  ] ?? 0) > Date.now()
+                                                    ? 0
+                                                    : Date.now() + 3600000,
+                                              },
+                                            }),
+                                        },
+                                        {
+                                          label: channelUnread(item.id)
+                                            ? "Mark read"
+                                            : "Mark unread",
+                                          onSelect: () =>
+                                            patchPreferences({
+                                              readAt: {
+                                                ...preferences.readAt,
+                                                [item.id]: channelUnread(
+                                                  item.id,
+                                                )
+                                                  ? Math.max(
+                                                      Date.now(),
+                                                      latestChannelActivity(
+                                                        item.id,
+                                                      ),
+                                                    )
+                                                  : 0,
+                                              },
+                                            }),
+                                        },
+                                        {
+                                          label: "Copy channel link",
+                                          onSelect: () =>
+                                            copyConversation(item.id),
+                                        },
+                                        {
+                                          label: "Channel settings",
+                                          onSelect: (opener) =>
+                                            setSettingsDialog({
+                                              scope: {
+                                                kind: "channel",
+                                                id: item.id,
+                                              },
+                                              opener,
+                                            }),
+                                        },
+                                        ...categories
+                                          .filter(
+                                            (category) =>
+                                              category.id !== item.categoryId,
+                                          )
+                                          .map((category) => ({
+                                            label: `Move to ${category.name}`,
+                                            onSelect: () =>
+                                              void moveChannelToCategory(
+                                                item.id,
+                                                category.id,
+                                              ),
+                                          })),
+                                        {
+                                          label: "Duplicate channel",
+                                          onSelect: () =>
+                                            void duplicateChannel(item),
+                                        },
+                                        {
+                                          label: item.archived
+                                            ? "Restore channel"
+                                            : "Archive channel",
+                                          onSelect: () =>
+                                            void toggleChannelArchive(item.id),
+                                        },
+                                      ]}
+                                      onEdit={(opener) =>
+                                        setEditor({
+                                          kind: "channel",
+                                          value: item,
+                                          opener,
+                                        })
+                                      }
+                                    >
+                                      <Button
+                                        type="button"
+                                        variant={
+                                          selected === item.id
+                                            ? "secondary"
+                                            : "ghost"
+                                        }
+                                        aria-label={item.name}
+                                        aria-current={
+                                          selected === item.id && !currentThread
+                                            ? "page"
+                                            : undefined
+                                        }
+                                        onClick={() => select(item.id)}
+                                        className="h-auto min-h-11 w-full justify-start py-2 pr-10 pl-3 text-left"
+                                      >
+                                        <Hash className="text-muted-foreground size-4 shrink-0" />
+                                        <span className="truncate">
+                                          {preferences.favorites.includes(
+                                            item.id,
+                                          )
+                                            ? "★ "
+                                            : ""}
+                                          {item.name}
+                                        </span>
+                                        {(preferences.mutedUntil[item.id] ??
+                                          0) > Date.now() && (
+                                          <span className="text-muted-foreground text-[10px]">
+                                            Muted
+                                          </span>
+                                        )}
+                                        {channelUnread(item.id) && (
+                                          <span
+                                            aria-label="Unread"
+                                            className="bg-foreground ml-auto size-1.5 shrink-0 rounded-full"
+                                          />
+                                        )}
+                                        {item.archived && (
+                                          <span className="text-muted-foreground ml-auto text-[10px]">
+                                            Archived
+                                          </span>
+                                        )}
+                                      </Button>
+                                    </RowEditMenu>
+                                    {workspaceThreads.some(
+                                      (entry) => entry.channel.id === item.id,
+                                    ) && (
+                                      <div
+                                        role="group"
+                                        aria-label={`Threads in ${item.name}`}
+                                        className="mb-1 ml-4 flex min-w-0 flex-col"
+                                      >
+                                        {workspaceThreads
+                                          .filter(
+                                            (entry) =>
+                                              entry.channel.id === item.id &&
+                                              !config.threadMeta[
+                                                entry.thread.id
+                                              ]?.archived &&
+                                              resolveCommsSettings(
+                                                config,
+                                                item,
+                                                categories,
+                                              ).values.threadBranches !==
+                                                "none" &&
+                                              (resolveCommsSettings(
+                                                config,
+                                                item,
+                                                categories,
+                                              ).values.threadBranches !==
+                                                "followed" ||
+                                                (config.threadMeta[
+                                                  entry.thread.id
+                                                ]?.followedBy?.includes(
+                                                  viewerId,
+                                                ) ??
+                                                  entry.thread.subscribed)),
+                                          )
+                                          .map((entry) => (
+                                            <Tooltip key={entry.thread.id}>
+                                              <TooltipTrigger
+                                                render={
+                                                  <Button
+                                                    type="button"
+                                                    variant={
+                                                      currentThread?.id ===
+                                                      entry.thread.id
+                                                        ? "secondary"
+                                                        : "ghost"
+                                                    }
+                                                    size="sm"
+                                                    aria-label={`Thread: ${entry.title}`}
+                                                    aria-current={
+                                                      currentThread?.id ===
+                                                      entry.thread.id
+                                                        ? "page"
+                                                        : undefined
+                                                    }
+                                                    onClick={() =>
+                                                      openThread(
+                                                        entry.thread,
+                                                        item.id,
+                                                      )
+                                                    }
+                                                    className="h-auto min-h-9 min-w-0 justify-start pr-2 pl-0 text-left"
+                                                  />
+                                                }
+                                              >
+                                                <CornerDownRight
+                                                  aria-hidden="true"
+                                                  className="text-muted-foreground mt-2 size-4 shrink-0 self-start"
+                                                />
+                                                <span className="truncate">
+                                                  {entry.title}
+                                                </span>
+                                                {entry.thread.resolved && (
+                                                  <Badge
+                                                    variant="secondary"
+                                                    className="ml-auto shrink-0"
+                                                  >
+                                                    Inactive
+                                                  </Badge>
+                                                )}
+                                              </TooltipTrigger>
+                                              <TooltipContent>
+                                                {entry.title}
+                                              </TooltipContent>
+                                            </Tooltip>
+                                          ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                            </CollapsibleContent>
+                          </Collapsible>
+                        ))}
+                        <Action
+                          variant="ghost"
+                          className="text-muted-foreground w-full justify-start"
+                          onClick={(event) =>
+                            setEditor({
+                              opener: event.currentTarget,
+                              kind: "category",
+                              value: { id: "", name: "", ...OPEN_PERMISSIONS },
+                            })
+                          }
+                        >
+                          <Plus className="size-3" />
+                          Create category
+                        </Action>
+                        <div className="mt-5 flex items-center justify-between px-2">
+                          <h2 className="text-muted-foreground text-xs font-semibold">
+                            Direct messages
+                          </h2>
+                          <Action
+                            size="icon"
+                            variant="ghost"
+                            aria-label="Start direct message"
+                            onClick={() => {
+                              setMemberSearch("");
+                              setDirectError("");
+                              setDmOpen(true);
+                            }}
+                          >
+                            <Plus className="size-4" />
+                          </Action>
+                        </div>
+                        {directs
+                          .filter((item) =>
+                            item.user
+                              .toLowerCase()
+                              .includes(conversationSearch.toLowerCase()),
+                          )
+                          .map((item) => (
+                            <Button
+                              type="button"
+                              variant={
+                                selected === item.id ? "secondary" : "ghost"
+                              }
+                              key={item.id}
+                              onClick={() => select(item.id)}
+                              className="h-auto min-h-11 w-full justify-start px-3 text-left"
+                            >
+                              <Avatar name={item.user} />
+                              <span
+                                className={cn(
+                                  "truncate",
+                                  !item.read && "font-semibold",
+                                )}
+                              >
+                                {item.user}
+                              </span>
+                              {!item.read && (
+                                <span
+                                  aria-label="Unread"
+                                  className="bg-foreground ml-auto size-1.5 rounded-full"
+                                />
+                              )}
+                            </Button>
+                          ))}
+                        {recordThreads.map((item) => (
+                          <Action
+                            key={item.id}
+                            variant="ghost"
+                            className="h-auto w-full justify-start text-left whitespace-normal"
+                            onClick={() => void ensureRecordThread(item)}
+                          >
+                            {item.text}
+                          </Action>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  </aside>
+                </ResizablePanel>
               )}
-              <Input
-                aria-label="Find a teammate"
-                placeholder="Search people"
-                value={memberSearch}
-                onChange={(event) => setMemberSearch(event.target.value)}
-              />
-              {activePeople
-                .filter((person) =>
-                  person.name
-                    .toLowerCase()
-                    .includes(memberSearch.toLowerCase()),
-                )
-                .map((person) => (
-                  <Action
-                    key={person.id}
-                    variant="ghost"
-                    className="justify-start"
-                    onClick={() => startDirect(person.name)}
+              {desktop && <ResizableHandle aria-label="Resize channels" />}
+              {(desktop || mobileConversation) && (
+                <ResizablePanel
+                  id="conversation"
+                  minSize={desktop ? minimumChatWidth : 0}
+                >
+                  <section
+                    aria-label="Conversation"
+                    className={cn("flex h-full min-h-0 min-w-0 flex-col")}
                   >
-                    <Avatar name={person.name} />
-                    Message {person.name}
-                  </Action>
-                ))}
-              <Action onClick={() => setDmOpen(false)}>Cancel</Action>
+                    <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-1.5 border-b px-3 py-2">
+                      <Action
+                        className="md:hidden"
+                        size="icon"
+                        variant="ghost"
+                        aria-label="Conversations"
+                        onClick={() => setMobileConversation(false)}
+                      >
+                        <ArrowLeft className="size-4" />
+                      </Action>
+                      {channel ? (
+                        <Hash className="text-muted-foreground hidden size-5 shrink-0 sm:block" />
+                      ) : (
+                        <MessageSquare className="text-muted-foreground size-5 shrink-0" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <CommsMenu
+                          compact
+                          hasChannel={!!channel}
+                          onSelect={openWorkspaceSetting}
+                        />
+                        <h2 className="truncate text-sm font-semibold">
+                          {channel?.name ??
+                            direct?.user ??
+                            "Choose a conversation"}
+                        </h2>
+                        <p className="text-muted-foreground hidden truncate text-xs lg:block">
+                          {channel?.description ?? "Private conversation"}
+                        </p>
+                      </div>
+                      <FloatingList
+                        label="Threads"
+                        icon={<MessageSquare className="size-4" />}
+                      >
+                        {(close) => (
+                          <CommsThreadList
+                            items={channelThreadItems}
+                            filter={threadFilter}
+                            onFilterChange={setThreadFilter}
+                            onSelect={(item) => {
+                              close();
+                              setThreadId(item.id);
+                              setMemberOpen(false);
+                            }}
+                            emptyDescription={`No ${threadFilter} threads in this conversation.`}
+                            filterClassName="mb-3"
+                          />
+                        )}
+                      </FloatingList>
+                      <FloatingList
+                        label="Pinned messages"
+                        icon={<Pin className="size-4" />}
+                      >
+                        {(close) => (
+                          <div className="flex flex-col gap-1">
+                            {pinnedMessages.map((message) => (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                key={message.id}
+                                className="h-auto flex-col items-stretch gap-0 p-3 text-left whitespace-normal"
+                                onClick={() => {
+                                  close();
+                                  jumpToMessage(message.id);
+                                }}
+                              >
+                                <span className="mb-1 block text-xs font-medium">
+                                  {people.find(
+                                    (person) =>
+                                      person.id ===
+                                      messageAuthorId(message, people),
+                                  )?.name ?? message.author}
+                                </span>
+                                <span className="text-muted-foreground line-clamp-3 text-sm">
+                                  {message.text}
+                                </span>
+                              </Button>
+                            ))}
+                            {!pinnedMessages.length && (
+                              <Empty>
+                                <EmptyDescription>
+                                  No pinned messages yet.
+                                </EmptyDescription>
+                              </Empty>
+                            )}
+                          </div>
+                        )}
+                      </FloatingList>
+                      <Action
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Members"
+                        aria-expanded={
+                          wide ? membersVisible && !currentThread : memberOpen
+                        }
+                        onClick={() => {
+                          if (wide)
+                            setMembersVisible(
+                              currentThread ? true : !membersVisible,
+                            );
+                          else setMemberOpen(!memberOpen);
+                          setThreadId("");
+                        }}
+                      >
+                        <Users className="size-4" />
+                      </Action>
+                      {channel && (
+                        <Action
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Channel settings"
+                          onClick={(event) =>
+                            setEditor({
+                              kind: "channel",
+                              value: channel,
+                              opener: event.currentTarget,
+                            })
+                          }
+                        >
+                          <Settings2 className="size-4" />
+                        </Action>
+                      )}
+                      <Input
+                        aria-label="Search messages"
+                        placeholder="Search messages"
+                        value={search}
+                        onChange={(event) => {
+                          setSearch(event.target.value);
+                          setHighlightedId("");
+                        }}
+                        className="order-last h-9 w-full sm:w-40 lg:w-48"
+                      />
+                    </header>
+                    {direct && (
+                      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3">
+                        <Action
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => void toggleDirect(selected, "read")}
+                        >
+                          Mark {direct.read ? "unread" : "read"}
+                        </Action>
+                        <Action
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => void toggleDirect(selected, "blocked")}
+                        >
+                          {direct.blocked ? "Unblock user" : "Block user"}
+                        </Action>
+                      </div>
+                    )}
+                    {settings.pinnedRecordId && (
+                      <a
+                        className="bg-muted/30 border-b px-4 py-2 text-xs underline"
+                        href={`/openview?record=${encodeURIComponent(settings.pinnedRecordId)}`}
+                      >
+                        Pinned incident ·{" "}
+                        {records.find(
+                          (record) => record.id === settings.pinnedRecordId,
+                        )?.title ?? "View record"}
+                      </a>
+                    )}
+                    <MessageScrollerProvider
+                      autoScroll={false}
+                      defaultScrollPosition="start"
+                    >
+                      <MessageScroller className="min-h-0 flex-1">
+                        <MessageScrollerViewport
+                          ref={messageList}
+                          aria-label="Messages"
+                          className="px-2 py-4 sm:px-4"
+                          onScroll={(event) => {
+                            const list = event.currentTarget;
+                            setAwayFromLatest(
+                              list.scrollHeight -
+                                list.scrollTop -
+                                list.clientHeight >
+                                120,
+                            );
+                          }}
+                        >
+                          <MessageScrollerContent className="gap-0">
+                            {!canView ? (
+                              <Alert>
+                                Your role does not have access to this channel.
+                                Choose another conversation or update the
+                                channel settings.
+                              </Alert>
+                            ) : (
+                              <>
+                                <div className="mt-4 mb-8 px-3">
+                                  <div className="bg-muted mb-3 flex size-12 items-center justify-center rounded-2xl">
+                                    <Hash className="text-muted-foreground size-6" />
+                                  </div>
+                                  <h3 className="text-xl font-semibold tracking-tight">
+                                    {channel
+                                      ? `Welcome to #${channel.name}`
+                                      : `A conversation with ${direct?.user}`}
+                                  </h3>
+                                  <p className="text-muted-foreground mt-2 text-sm">
+                                    {channel?.description ||
+                                      "This is the beginning of your conversation."}
+                                  </p>
+                                </div>
+                                {visibleMessages.length === 0 && (
+                                  <Empty>
+                                    <EmptyDescription>
+                                      {search
+                                        ? "No messages match."
+                                        : "No messages yet. Start the conversation below."}
+                                    </EmptyDescription>
+                                  </Empty>
+                                )}
+                                <MessageTimeline
+                                  key={selected}
+                                  visibleMessages={visibleMessages}
+                                  allMessages={allMessages}
+                                  records={records}
+                                  threads={channelThreads}
+                                  highlightedId={highlightedId}
+                                  {...identity}
+                                  mutable={canParticipate && !isPending()}
+                                  onMessageTool={(view, messageId, opener) =>
+                                    setToolsDialog({
+                                      view,
+                                      messageId,
+                                      channelId: selected,
+                                      opener,
+                                    })
+                                  }
+                                  onChange={changeMessage}
+                                  onDelete={deleteMessage}
+                                  onReply={beginReply}
+                                  onThread={startThread}
+                                  onJump={jumpToMessage}
+                                  onDirect={startDirect}
+                                />
+                              </>
+                            )}
+                          </MessageScrollerContent>
+                        </MessageScrollerViewport>
+                      </MessageScroller>
+                    </MessageScrollerProvider>
+                    {awayFromLatest && (
+                      <Action
+                        className="mx-auto mb-2"
+                        size="sm"
+                        onClick={() =>
+                          messageList.current?.scrollTo({
+                            top: messageList.current.scrollHeight,
+                            behavior: "instant",
+                          })
+                        }
+                      >
+                        Jump to latest
+                      </Action>
+                    )}
+                    <MessageComposer
+                      key={selected}
+                      id={selected}
+                      preferences={preferences}
+                      settings={settings}
+                      canPost={replyingTo ? canParticipate : canPost}
+                      replyingTo={replyingTo}
+                      people={people}
+                      onCancelReply={() => setReplyingTo(null)}
+                      conversationName={
+                        channel
+                          ? `#${channel.name}`
+                          : (direct?.user ?? "a teammate")
+                      }
+                      unavailableReason={
+                        direct?.blocked
+                          ? "Unblock this user to send a message."
+                          : channel?.archived
+                            ? "This channel is archived. Restore it to post."
+                            : settings.locked
+                              ? "This channel is locked. Unlock it in channel settings to post."
+                              : "Your role cannot post in this channel."
+                      }
+                      records={records}
+                      onSend={sendMessage}
+                      pending={isPending(`message:send:${selected}`)}
+                    />
+                    {notice && <Alert className="sr-only">{notice}</Alert>}
+                  </section>
+                </ResizablePanel>
+              )}
+              {rightOpen && (
+                <>
+                  <ResizableHandle
+                    aria-label={
+                      currentThread ? "Resize thread" : "Resize members"
+                    }
+                    onKeyDownCapture={(event) => {
+                      if (event.key !== "Home" && event.key !== "End") return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      const width =
+                        event.key === "Home"
+                          ? currentThread
+                            ? 320
+                            : 200
+                          : currentThread
+                            ? threadMaximum
+                            : memberMaximum;
+                      rightPanel.current?.resize(width);
+                      patchPreferences(
+                        currentThread
+                          ? { threadWidth: width }
+                          : { memberWidth: width },
+                      );
+                    }}
+                  />
+                  <ResizablePanel
+                    key={currentThread ? "thread" : "members"}
+                    id={currentThread ? "thread" : "members"}
+                    panelRef={rightPanel}
+                    defaultSize={currentThread ? threadWidth : memberWidth}
+                    minSize={currentThread ? 320 : 200}
+                    maxSize={currentThread ? threadMaximum : memberMaximum}
+                    groupResizeBehavior="preserve-pixel-size"
+                  >
+                    <aside
+                      id="comms-members"
+                      aria-label={
+                        currentThread ? "Thread panel" : "Channel members"
+                      }
+                      className="bg-muted/15 h-full min-h-0 overflow-hidden border-l"
+                    >
+                      {currentThread ? (
+                        threadContent
+                      ) : (
+                        <ScrollArea className="h-full">
+                          {membersContent}
+                        </ScrollArea>
+                      )}
+                    </aside>
+                  </ResizablePanel>
+                </>
+              )}
+            </ResizablePanelGroup>
+            <div className="xl:hidden">
+              {!wide &&
+                !toolsDialog &&
+                !settingsDialog &&
+                (memberOpen || currentThread) && (
+                  <Dialog
+                    open
+                    onOpenChange={(open) => {
+                      if (!open) {
+                        setMemberOpen(false);
+                        setThreadId("");
+                      }
+                    }}
+                  >
+                    <DialogContent
+                      className={
+                        currentThread
+                          ? "h-[calc(100dvh-24px)] max-h-[calc(100dvh-24px)] max-w-lg overflow-hidden p-0"
+                          : "h-[85dvh] max-w-md"
+                      }
+                    >
+                      <DialogTitle className="sr-only">
+                        {currentThread ? "Thread" : "Members"}
+                      </DialogTitle>
+                      <DialogDescription className="sr-only">
+                        {currentThread
+                          ? "Replies to this message"
+                          : "People with access to this conversation"}
+                      </DialogDescription>
+                      {currentThread ? threadContent : membersContent}
+                    </DialogContent>
+                  </Dialog>
+                )}
             </div>
-          </DialogContent>
-        </Dialog>
-      </div>
-    </ProfilePopoverProvider>
+            <Dialog
+              open={!!threadDirectory}
+              onOpenChange={(open) => {
+                if (!open) setThreadDirectory(null);
+              }}
+            >
+              <DialogContent
+                finalFocus={() => threadDirectoryOpener.current}
+                className="max-w-lg"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <DialogTitle>Workspace threads</DialogTitle>
+                    <DialogDescription>
+                      Follow discussions across your channels.
+                    </DialogDescription>
+                  </div>
+                  <Action
+                    size="icon"
+                    variant="ghost"
+                    aria-label="Close workspace threads"
+                    onClick={() => setThreadDirectory(null)}
+                  >
+                    <X className="size-4" />
+                  </Action>
+                </div>
+                <CommsThreadList
+                  items={workspaceThreadItems}
+                  filter={threadFilter}
+                  onFilterChange={setThreadFilter}
+                  onSelect={(item) => {
+                    const entry = workspaceThreads.find(
+                      (candidate) => candidate.thread.id === item.id,
+                    );
+                    if (entry !== undefined) {
+                      openThread(entry.thread, entry.channel.id);
+                    }
+                  }}
+                  emptyDescription={`No ${threadFilter} threads in your channels.`}
+                  filterClassName="my-4"
+                />
+              </DialogContent>
+            </Dialog>
+            {editor && (
+              <ChannelDialog
+                key={`${editor.kind}-${editor.value.id}`}
+                {...editor}
+                roles={roles}
+                categories={categories}
+                channels={channels}
+                existing={editor.kind === "channel" ? channels : categories}
+                onClose={() => setEditor(null)}
+                onSave={saveEditor}
+                onAcceptedChannelSave={select}
+              />
+            )}
+
+            <Dialog open={dmOpen} onOpenChange={setDmOpen}>
+              <DialogContent>
+                <DialogTitle>Start direct message</DialogTitle>
+                <DialogDescription>
+                  Choose someone from your workspace.
+                </DialogDescription>
+                <div className="mt-4 flex flex-col gap-2">
+                  {directError && (
+                    <Alert role="alert" variant="destructive">
+                      {directError}
+                    </Alert>
+                  )}
+                  <Input
+                    aria-label="Find a teammate"
+                    placeholder="Search people"
+                    value={memberSearch}
+                    onChange={(event) => setMemberSearch(event.target.value)}
+                  />
+                  {activePeople
+                    .filter((person) =>
+                      person.name
+                        .toLowerCase()
+                        .includes(memberSearch.toLowerCase()),
+                    )
+                    .map((person) => (
+                      <Action
+                        key={person.id}
+                        variant="ghost"
+                        className="justify-start"
+                        onClick={() => startDirect(person.name)}
+                      >
+                        <Avatar name={person.name} />
+                        Message {person.name}
+                      </Action>
+                    ))}
+                  <Action onClick={() => setDmOpen(false)}>Cancel</Action>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </ProfilePopoverProvider>
+      </CommsPlatformPreferencesProvider>
+    </CommsConfigurationProvider>
   );
 }

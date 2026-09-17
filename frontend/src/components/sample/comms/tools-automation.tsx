@@ -43,6 +43,16 @@ import { initialPeople } from "../access/model";
 import { INITIAL_RECORDS } from "../sample-data";
 import { templateText, toolChannelMessages } from "./tools-helpers";
 import { validateCommsMessage } from "./message-policy";
+import {
+  COMMS_CONFIGURATION_KEY,
+  messageFromCommsError,
+  readCommsConfiguration,
+  stageCommsConfiguration,
+  useCommsCommands,
+} from "./runtime";
+
+type AutomationSaveResult =
+  { ok: true; rule: CommsAutomationRule } | { ok: false; error: string };
 
 export function AutomationTools({
   opener,
@@ -53,16 +63,12 @@ export function AutomationTools({
   onClose: () => void;
   channelId?: string;
 }) {
-  const [config, setConfig] = useCommsConfiguration();
+  const [config] = useCommsConfiguration();
+  const { run } = useCommsCommands();
   const [channels] = useSampleState("commsChannels", CHANNELS);
-  const [categories] = useSampleState("commsCategories", CATEGORIES);
   const [people] = useSampleState("access-people", initialPeople);
-  const [threads] = useSampleState<Thread[]>("commsThreads", []);
   const [records] = useSampleState("records", INITIAL_RECORDS);
-  const [messages, setMessages] = useSampleState<Message[]>(
-    "commsMessages",
-    MESSAGES,
-  );
+  const [messages] = useSampleState<Message[]>("commsMessages", MESSAGES);
   const [draft, setDraft] = useState<CommsAutomationRule>({
     id: "",
     name: "New rule",
@@ -118,7 +124,8 @@ export function AutomationTools({
     setError("");
     return true;
   }
-  function save() {
+  async function save() {
+    setStatus("");
     if (
       !resolveCommsPermission(config, { person: viewer }, "manageWorkspace")
         .allowed
@@ -128,17 +135,49 @@ export function AutomationTools({
     }
     if (!valid()) return;
     const rule = { ...draft, id: draft.id || crypto.randomUUID() };
-    setConfig((c) => ({
-      ...c,
-      rules: c.rules.some((r) => r.id === rule.id)
-        ? c.rules.map((r) => (r.id === rule.id ? rule : r))
-        : [...c.rules, rule],
+    const result: AutomationSaveResult = await run<AutomationSaveResult>(
+      `automation:save:${rule.id}`,
+      (draftState) => {
+        const current = readCommsConfiguration(draftState);
+        const currentPeople = draftState.read("access-people", initialPeople);
+        const currentViewer = currentPeople.find(
+          (person) => person.id === "sample-eli" && person.active,
+        );
+        if (
+          !currentViewer ||
+          !resolveCommsPermission(
+            current,
+            { person: currentViewer },
+            "manageWorkspace",
+          ).allowed
+        )
+          return draftState.reject({
+            ok: false as const,
+            error: "Workspace management access is required.",
+          });
+        const rules = current.rules.some((item) => item.id === rule.id)
+          ? current.rules.map((item) => (item.id === rule.id ? rule : item))
+          : [...current.rules, rule];
+        stageCommsConfiguration(draftState, (value) => ({ ...value, rules }));
+        return { ok: true as const, rule };
+      },
+      [COMMS_CONFIGURATION_KEY, "access-people"],
+    ).catch((error: unknown) => ({
+      ok: false as const,
+      error: messageFromCommsError(
+        error,
+        "The automation rule could not be saved.",
+      ),
     }));
-    setDraft(rule);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setDraft(result.rule);
     setDirty(false);
     setStatus("Automation rule saved. Runs only when you apply a preview.");
   }
-  function apply() {
+  async function apply() {
     if (
       !resolveCommsPermission(config, { person: viewer }, "manageWorkspace")
         .allowed
@@ -151,36 +190,107 @@ export function AutomationTools({
       setError("This event does not match an enabled rule.");
       return;
     }
-    const failure = validateCommsMessage({
-      config,
-      person: viewer,
-      channel,
-      categories,
-      people,
-      messages: toolChannelMessages(messages, threads, channel.id),
-      text: rendered,
-      files: [],
-      record,
-      kind: "post",
-      system: true,
-    });
-    if (failure) {
-      setError(failure);
+    const result = await run(
+      `automation:apply:${draft.id || draft.channelId}`,
+      (draftState) => {
+        const current = readCommsConfiguration(draftState);
+        const currentChannels = draftState.read("commsChannels", CHANNELS);
+        const currentCategories = draftState.read(
+          "commsCategories",
+          CATEGORIES,
+        );
+        const currentPeople = draftState.read("access-people", initialPeople);
+        const currentThreads = draftState.read<Thread[]>("commsThreads", []);
+        const currentRecords = draftState.read("records", INITIAL_RECORDS);
+        const currentMessages = draftState.read<Message[]>(
+          "commsMessages",
+          MESSAGES,
+        );
+        const currentChannel = currentChannels.find(
+          (item) => item.id === draft.channelId,
+        );
+        const currentViewer = currentPeople.find(
+          (person) => person.id === "sample-eli" && person.active,
+        );
+        const currentRecord = currentRecords.find(
+          (item) => item.id === example,
+        );
+        if (!currentChannel || !currentViewer)
+          return draftState.reject(
+            "The automation destination is unavailable.",
+          );
+        if (
+          !resolveCommsPermission(
+            current,
+            { person: currentViewer },
+            "manageWorkspace",
+          ).allowed
+        )
+          return draftState.reject("Workspace management access is required.");
+        const currentRendered = templateText(draft.template, {
+          title: currentRecord?.title ?? "",
+          status: currentRecord?.status ?? "",
+          assignee: currentRecord?.assignee ?? "",
+          recordId: currentRecord?.id ?? "",
+          channel: currentChannel.name,
+          message:
+            currentMessages.find(
+              (item) => item.conversation === currentChannel.id,
+            )?.text ?? "",
+          event: draft.event,
+        });
+        const failure = validateCommsMessage({
+          config: current,
+          person: currentViewer,
+          channel: currentChannel,
+          categories: currentCategories,
+          people: currentPeople,
+          messages: toolChannelMessages(
+            currentMessages,
+            currentThreads,
+            currentChannel.id,
+          ),
+          text: currentRendered,
+          files: [],
+          record: currentRecord,
+          kind: "post",
+          system: true,
+        });
+        if (failure) return draftState.reject(failure);
+        draftState.update<Message[]>("commsMessages", MESSAGES, (previous) => [
+          ...previous,
+          {
+            id: crypto.randomUUID(),
+            conversation: currentChannel.id,
+            author: "OpenComms",
+            authorId: "sample-eli",
+            text: currentRendered,
+            created: Date.now(),
+            pinned: false,
+            ...(currentRecord ? { recordId: currentRecord.id } : {}),
+          },
+        ]);
+        return null;
+      },
+      [
+        COMMS_CONFIGURATION_KEY,
+        "commsChannels",
+        "commsCategories",
+        "access-people",
+        "commsMessages",
+        "commsThreads",
+        "records",
+      ],
+    ).catch((error: unknown) =>
+      messageFromCommsError(
+        error,
+        "The automation preview could not be applied.",
+      ),
+    );
+    if (result) {
+      setError(result);
       return;
     }
-    setMessages((previous) => [
-      ...previous,
-      {
-        id: crypto.randomUUID(),
-        conversation: channel.id,
-        author: "OpenComms",
-        authorId: "sample-eli",
-        text: rendered,
-        created: Date.now(),
-        pinned: false,
-        ...(record ? { recordId: record.id } : {}),
-      },
-    ]);
     setPreview(false);
     setStatus(
       "Preview applied as a local system message. No notifications were delivered.",

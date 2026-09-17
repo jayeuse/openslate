@@ -16,7 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { FieldGroup } from "@/components/ui/field";
 import type { Person, Role } from "../access/model";
-import { Action, Choice, Toggle } from "./ui";
+import { Action, Choice, Toggle } from "../ui";
 import { ConfigurationFrame } from "./configuration-frame";
 import {
   COMMS_PERMISSIONS,

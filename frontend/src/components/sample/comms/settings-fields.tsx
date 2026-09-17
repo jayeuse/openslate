@@ -12,7 +12,8 @@ import { Separator } from "@/components/ui/separator";
 import type { Person } from "../access/model";
 import { INITIAL_RECORDS } from "../sample-data";
 import { useSampleState } from "../sample-state";
-import { Choice, TextField, Toggle } from "./ui";
+import { Choice, Toggle } from "../ui";
+import { TextField } from "./ui";
 import type { CommsSettingKey, CommsSettings } from "./configuration";
 
 export const SETTINGS_SECTIONS: {

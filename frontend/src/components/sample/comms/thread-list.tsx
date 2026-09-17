@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
-import { Action } from "./ui";
+import { Action } from "../ui";
 
 export type CommsThreadFilter = "active" | "inactive";
 

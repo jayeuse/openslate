@@ -1,5 +1,5 @@
 import type { Person, Role } from "../access/model";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import {
@@ -25,19 +25,16 @@ import {
 } from "./model";
 import { Avatar, EmojiPicker, MessageMenu, ProfilePopover } from "./floating";
 export { Avatar } from "./floating";
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Switch } from "@/components/ui/switch";
-import { NativeSelect } from "@/components/ui/native-select";
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupTextarea,
 } from "@/components/ui/input-group";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -53,11 +50,6 @@ import {
   CollapsibleTrigger,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
-import {
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-} from "@/components/ui/tooltip";
 import {
   Message as MessageRow,
   MessageContent,
@@ -83,7 +75,8 @@ import {
   MessageScrollerItem,
 } from "@/components/ui/message-scroller";
 
-import { useSampleState } from "../sample-state";
+import { useSampleRuntime, useSampleState } from "../sample-state";
+import { useCommsDraftText, legacyCommsDraftTextKey } from "./draft-text";
 import {
   cacheLocalAttachment,
   localAttachmentUrl,
@@ -95,24 +88,8 @@ import {
   type CommsPreferences,
   type CommsSettings,
 } from "./configuration";
+import { Action, Choice, Toggle } from "../ui";
 
-export function Action(props: ComponentProps<typeof Button>) {
-  const button = (
-    <Button
-      variant="outline"
-      {...props}
-      className={`min-h-11 ${props.className ?? ""}`}
-    />
-  );
-  return props["aria-label"] ? (
-    <Tooltip>
-      <TooltipTrigger render={button} />
-      <TooltipContent>{props["aria-label"]}</TooltipContent>
-    </Tooltip>
-  ) : (
-    button
-  );
-}
 export function TextField({
   label,
   id,
@@ -128,78 +105,19 @@ export function TextField({
     </Field>
   );
 }
-export function Choice({
-  label,
-  children,
-  id,
-  className,
-  ...props
-}: ComponentProps<typeof NativeSelect> & { label: string }) {
-  const generatedId = useId();
-  const controlId = id ?? generatedId;
-  return (
-    <Field>
-      <FieldLabel htmlFor={controlId}>{label}</FieldLabel>
-      <NativeSelect
-        {...props}
-        id={controlId}
-        className={cn("w-full [&_select]:min-h-11", className)}
-      >
-        {children}
-      </NativeSelect>
-    </Field>
-  );
-}
-export function Toggle({
-  label,
-  id,
-  className,
-  control = "checkbox",
-  ...props
-}: {
-  label: string;
-  id?: string;
-  className?: string;
-  control?: "checkbox" | "switch";
-  checked: boolean;
-  disabled?: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  const generatedId = useId();
-  const controlId = id ?? generatedId;
-  const Control = control === "switch" ? Switch : Checkbox;
-  return (
-    <Field className="min-h-11 flex-row items-center gap-3">
-      <Control {...props} id={controlId} className={className} />
-      <FieldLabel
-        htmlFor={controlId}
-        className="flex-1 cursor-pointer font-normal"
-      >
-        {label}
-      </FieldLabel>
-    </Field>
-  );
-}
-export function Panel({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <Card className="w-full">
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-5">{children}</CardContent>
-    </Card>
-  );
-}
+
+export type CommsAsyncResult =
+  string | null | void | Promise<string | null | void>;
+export type ThreadChangeOptions = {
+  archiveMessage?: Message;
+  historyMessage?: Message;
+  /** Replies displayed by this render; used to merge concurrent replies. */
+  replyBase?: Message[];
+};
 
 export type TimelineActions = {
-  onChange: (id: string, patch: Partial<Message>) => void;
-  onDelete: (id: string) => void;
+  onChange: (id: string, patch: Partial<Message>) => CommsAsyncResult;
+  onDelete: (id: string) => CommsAsyncResult;
   onReply: (message: Message) => void;
   onThread: (message: Message) => void;
   onJump: (id: string) => void;
@@ -364,8 +282,12 @@ export function MessageTimeline({
                 const next = current.includes(viewerId)
                   ? current.filter((id) => id !== viewerId)
                   : [...current, viewerId];
-                onChange(message.id, {
-                  reactions: { ...message.reactions, [emoji]: next },
+                void Promise.resolve(
+                  onChange(message.id, {
+                    reactions: { ...message.reactions, [emoji]: next },
+                  }),
+                ).then((error) => {
+                  if (error) setNotice(error);
                 });
               }}
               onEdit={() => {
@@ -375,10 +297,18 @@ export function MessageTimeline({
               onReply={() => onReply(message)}
               onThread={() => onThread(message)}
               onPin={() => {
-                if (elevated) onChange(message.id, { pinned: !message.pinned });
+                if (elevated)
+                  void Promise.resolve(
+                    onChange(message.id, { pinned: !message.pinned }),
+                  ).then((error) => {
+                    if (error) setNotice(error);
+                  });
               }}
               onDelete={() => {
-                if (own || elevated) onDelete(message.id);
+                if (own || elevated)
+                  void Promise.resolve(onDelete(message.id)).then((error) => {
+                    if (error) setNotice(error);
+                  });
               }}
             >
               <MessageRow className="flex-col gap-0">
@@ -454,7 +384,7 @@ export function MessageTimeline({
                   {editing === message.id && own && mutable ? (
                     <form
                       className="flex flex-col gap-2"
-                      onSubmit={(event) => {
+                      onSubmit={async (event) => {
                         event.preventDefault();
                         if (
                           !mutable ||
@@ -468,7 +398,20 @@ export function MessageTimeline({
                           return;
                         }
                         if (!editText.trim()) return;
-                        onChange(message.id, { text: editText.trim() });
+                        try {
+                          const error = await onChange(message.id, {
+                            text: editText.trim(),
+                          });
+                          if (error) {
+                            setNotice(error);
+                            return;
+                          }
+                        } catch {
+                          setNotice(
+                            "The message could not be saved. Try again.",
+                          );
+                          return;
+                        }
                         setEditing("");
                       }}
                     >
@@ -633,13 +576,17 @@ export function MessageTimeline({
                             !settings.allowedReactions.includes(emoji)
                           }
                           onPressedChange={(pressed) =>
-                            onChange(message.id, {
-                              reactions: {
-                                ...message.reactions,
-                                [emoji]: pressed
-                                  ? [...users, viewerId]
-                                  : users.filter((id) => id !== viewerId),
-                              },
+                            void Promise.resolve(
+                              onChange(message.id, {
+                                reactions: {
+                                  ...message.reactions,
+                                  [emoji]: pressed
+                                    ? [...users, viewerId]
+                                    : users.filter((id) => id !== viewerId),
+                                },
+                              }),
+                            ).then((error) => {
+                              if (error) setNotice(error);
                             })
                           }
                           className="mt-2 min-h-8 gap-1.5 rounded-full text-xs"
@@ -795,8 +742,7 @@ export function ThreadPanel({
   validateDraft,
   onSettings,
   onMessageTool,
-  onArchiveMessage,
-  onMessageHistory,
+  pending = false,
   ...identity
 }: {
   thread: Thread;
@@ -805,8 +751,7 @@ export function ThreadPanel({
   validateDraft?: (draft: MessageDraft) => string | null;
   onSettings?: (opener: HTMLElement) => void;
   onMessageTool?: TimelineActions["onMessageTool"];
-  onArchiveMessage?: (message: Message) => void;
-  onMessageHistory?: (message: Message) => void;
+  pending?: boolean;
   message?: Message;
   allMessages: Message[];
   highlightedId: string;
@@ -814,7 +759,10 @@ export function ThreadPanel({
   records: SampleRecord[];
   canPost: boolean;
   onClose: () => void;
-  onChange: (patch: Partial<Thread>) => void;
+  onChange: (
+    patch: Partial<Thread>,
+    options?: ThreadChangeOptions,
+  ) => CommsAsyncResult;
   onThread: (message: Message) => void;
   onDirect: (name: string) => void;
 } & TimelinePeople) {
@@ -824,14 +772,15 @@ export function ThreadPanel({
   );
   const list = useRef<HTMLDivElement>(null);
   const replies = threadMessages(thread);
-  function send(draft: MessageDraft) {
+  const [notice, setNotice] = useState("");
+  async function send(draft: MessageDraft): Promise<string | null> {
     if (!canPost || thread.resolved) return "This thread is read-only.";
     const error = validateDraft?.(draft);
     if (error) return error;
     const person = identity.people.find(
       (item) => item.id === identity.viewerId,
     );
-    onChange({
+    const result = await onChange({
       replies: [
         ...replies,
         {
@@ -848,10 +797,12 @@ export function ThreadPanel({
         },
       ],
     });
+    if (result) return result;
     setReplyingTo(null);
     requestAnimationFrame(() =>
       list.current?.scrollTo({ top: list.current.scrollHeight }),
     );
+    return null;
   }
   return (
     <section
@@ -859,6 +810,9 @@ export function ThreadPanel({
       aria-label="Thread conversation"
       className="flex h-full min-h-0 flex-col"
     >
+      <p role="status" className="sr-only">
+        {notice}
+      </p>
       <header className="flex min-h-14 shrink-0 items-center gap-2 border-b px-4">
         <MessagesSquare className="size-4" />
         <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">
@@ -869,6 +823,7 @@ export function ThreadPanel({
           variant="ghost"
           aria-label="Thread settings"
           onClick={(event) => onSettings?.(event.currentTarget)}
+          disabled={pending}
         >
           <Settings2 className="size-4" />
         </Action>
@@ -887,9 +842,15 @@ export function ThreadPanel({
         <Action
           size="sm"
           variant="ghost"
-          disabled={archived}
+          disabled={archived || pending}
           aria-label={thread.resolved ? "Reopen thread" : "Resolve thread"}
-          onClick={() => onChange({ resolved: !thread.resolved })}
+          onClick={() => {
+            void Promise.resolve(onChange({ resolved: !thread.resolved })).then(
+              (error) => {
+                if (error) setNotice(error);
+              },
+            );
+          }}
         >
           {thread.resolved ? "Reopen" : <Check className="size-4" />}
         </Action>
@@ -898,6 +859,7 @@ export function ThreadPanel({
           size="icon"
           aria-label="Back to messages"
           onClick={onClose}
+          disabled={pending}
         >
           <X className="size-4" />
         </Action>
@@ -925,25 +887,36 @@ export function ThreadPanel({
                 records={records}
                 threads={[]}
                 highlightedId={highlightedId}
-                mutable={canPost}
+                mutable={canPost && !pending}
                 {...identity}
                 onMessageTool={onMessageTool}
                 onChange={(id, patch) => {
                   const original = replies.find((item) => item.id === id);
-                  if (original && patch.text !== undefined)
-                    onMessageHistory?.(original);
-                  onChange({
-                    replies: replies.map((item) =>
-                      item.id === id ? { ...item, ...patch } : item,
-                    ),
-                  });
+                  return onChange(
+                    {
+                      replies: replies.map((item) =>
+                        item.id === id ? { ...item, ...patch } : item,
+                      ),
+                    },
+                    {
+                      ...(original && patch.text !== undefined
+                        ? { historyMessage: original }
+                        : {}),
+                      replyBase: replies,
+                    },
+                  );
                 }}
                 onDelete={(id) => {
                   const original = replies.find((item) => item.id === id);
-                  if (original) onArchiveMessage?.(original);
-                  onChange({
-                    replies: replies.filter((item) => item.id !== id),
-                  });
+                  return onChange(
+                    {
+                      replies: replies.filter((item) => item.id !== id),
+                    },
+                    {
+                      ...(original ? { archiveMessage: original } : {}),
+                      replyBase: replies,
+                    },
+                  );
                 }}
                 onReply={(item) => {
                   setReplyingTo(item);
@@ -983,7 +956,14 @@ export function ThreadPanel({
             control="switch"
             label="Notify me of new replies"
             checked={thread.subscribed}
-            onCheckedChange={(checked) => onChange({ subscribed: checked })}
+            disabled={pending}
+            onCheckedChange={(checked) => {
+              void Promise.resolve(onChange({ subscribed: checked })).then(
+                (error) => {
+                  if (error) setNotice(error);
+                },
+              );
+            }}
           />
         </CollapsibleContent>
       </Collapsible>
@@ -1008,6 +988,7 @@ export function ThreadPanel({
         people={identity.people}
         onCancelReply={() => setReplyingTo(null)}
         onSend={send}
+        pending={pending}
       />
     </section>
   );
@@ -1039,6 +1020,7 @@ export function MessageComposer({
   people,
   onCancelReply,
   onSend,
+  pending = false,
   preferences = DEFAULT_COMMS_PREFERENCES,
   settings = DEFAULT_COMMS_SETTINGS,
 }: {
@@ -1052,11 +1034,29 @@ export function MessageComposer({
   replyingTo: Message | null;
   people: Person[];
   onCancelReply: () => void;
-  onSend: (draft: MessageDraft) => string | null | void;
+  onSend: (draft: MessageDraft) => string | null | Promise<string | null>;
+  pending?: boolean;
   preferences?: CommsPreferences;
   settings?: CommsSettings;
 }) {
-  const [text, setText] = useSampleState(`comms-draft-text-${id}`, "");
+  const runtime = useSampleRuntime();
+  const legacyKey = legacyCommsDraftTextKey(id);
+  const legacyValue = runtime.read(legacyKey, "");
+  const removeLegacy = useCallback(
+    () =>
+      runtime.execute(
+        (draft) => {
+          draft.remove(legacyKey);
+        },
+        { keys: [legacyKey] },
+      ),
+    [legacyKey, runtime],
+  );
+  const [text, setText, draftText] = useCommsDraftText(
+    id,
+    legacyValue,
+    removeLegacy,
+  );
   const [savedFiles, setSavedFiles] = useSampleState<FilePreview[]>(
     `comms-draft-files-${id}`,
     [],
@@ -1081,9 +1081,22 @@ export function MessageComposer({
     "",
   );
   const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
   const [recordPickerOpen, setRecordPickerOpen] = useState(false);
   const fileInputId = useId();
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const restoreComposerFocus = useRef(false);
+  const isPending = sending || pending;
+  useEffect(() => {
+    if (isPending || !restoreComposerFocus.current) return;
+    restoreComposerFocus.current = false;
+    const input = textarea.current;
+    if (
+      document.activeElement === document.body ||
+      input?.form?.contains(document.activeElement)
+    )
+      input?.focus();
+  }, [isPending]);
   function removeFile(id: string) {
     releaseLocalAttachment(id);
     setFiles((items) => items.filter((file) => file.id !== id));
@@ -1092,35 +1105,58 @@ export function MessageComposer({
     <form
       aria-label={`${label} composer`}
       className="shrink-0 border-t p-3"
-      onSubmit={(event) => {
+      onSubmit={async (event) => {
         event.preventDefault();
-        if (!canPost || (!text.trim() && !files.length && !recordId)) return;
-        const error = onSend({
-          sentAt: Math.round(performance.timeOrigin + event.timeStamp),
-          text,
-          files: files.map(({ id, name, size, type }) => ({
-            id,
-            name,
-            size,
-            type,
-          })),
-          recordId,
-        });
-        if (error) {
-          setError(error);
+        if (
+          isPending ||
+          !canPost ||
+          (!text.trim() && !files.length && !recordId)
+        )
           return;
+        const submittedTextRevision = draftText.revision;
+        restoreComposerFocus.current = true;
+        setSending(true);
+        try {
+          const error = await onSend({
+            sentAt: Math.round(performance.timeOrigin + event.timeStamp),
+            text,
+            files: files.map(({ id, name, size, type }) => ({
+              id,
+              name,
+              size,
+              type,
+            })),
+            recordId,
+          });
+          if (error) {
+            setError(error);
+            return;
+          }
+          setError("");
+          const cleared = await draftText.clear(submittedTextRevision);
+          if (!cleared) return;
+          setFiles([]);
+          setRecordId("");
+          setRecordPickerOpen(false);
+        } catch {
+          setError(
+            "The message could not be sent. Your draft is still available.",
+          );
+        } finally {
+          setSending(false);
         }
-        setError("");
-        setText("");
-        setFiles([]);
-        setRecordId("");
-        setRecordPickerOpen(false);
       }}
     >
       {error && (
         <Alert role="alert" variant="destructive" className="mb-2 p-2 text-xs">
           {error}
         </Alert>
+      )}
+      {draftText.storageUnavailable && (
+        <p role="status" className="text-muted-foreground mb-2 text-xs">
+          Draft text cannot be saved in this browser. It will remain available
+          until this composer is closed.
+        </p>
       )}
       {!canPost && (
         <Alert className="mb-2 p-2 text-xs">{unavailableReason}</Alert>
@@ -1143,6 +1179,7 @@ export function MessageComposer({
             size="icon"
             aria-label="Cancel reply"
             onClick={onCancelReply}
+            disabled={isPending}
           >
             <X className="size-3" />
           </Button>
@@ -1154,6 +1191,7 @@ export function MessageComposer({
             label="Attach record link"
             value={recordId}
             onChange={(event) => setRecordId(event.target.value)}
+            disabled={isPending}
           >
             <option value="">No record</option>
             {records.map((record) => (
@@ -1199,6 +1237,7 @@ export function MessageComposer({
                   variant="ghost"
                   aria-label={`Remove ${file.name}`}
                   onClick={() => removeFile(file.id)}
+                  disabled={isPending}
                 >
                   <X className="size-3" />
                 </AttachmentAction>
@@ -1213,6 +1252,7 @@ export function MessageComposer({
               className="max-w-full"
               aria-label="Remove record attachment"
               onClick={() => setRecordId("")}
+              disabled={isPending}
             >
               <span className="truncate">
                 {records.find((record) => record.id === recordId)?.title}
@@ -1243,7 +1283,7 @@ export function MessageComposer({
               event.currentTarget.form?.requestSubmit();
             }
           }}
-          disabled={!canPost}
+          disabled={!canPost || isPending}
           placeholder={`Message ${conversationName}…`}
         />
         <InputGroupAddon align="block-end" className="gap-1">
@@ -1254,7 +1294,7 @@ export function MessageComposer({
             accept={settings.allowedFileTypes.join(",")}
             aria-label="Upload files"
             className="sr-only"
-            disabled={!canPost}
+            disabled={!canPost || isPending}
             onChange={(event) => {
               const chosen = Array.from(event.target.files ?? []).map(
                 (file): FilePreview => {
@@ -1281,13 +1321,13 @@ export function MessageComposer({
             size="icon-sm"
             variant="ghost"
             aria-label="Choose files"
-            disabled={!canPost}
+            disabled={!canPost || isPending}
             onClick={() => document.getElementById(fileInputId)?.click()}
           >
             <Paperclip className="size-4" />
           </InputGroupButton>
           <EmojiPicker
-            disabled={!canPost}
+            disabled={!canPost || isPending}
             onSelect={(emoji) => {
               setText((value) => `${value}${emoji}`);
               requestAnimationFrame(() => textarea.current?.focus());
@@ -1298,7 +1338,7 @@ export function MessageComposer({
             size="icon-sm"
             variant="ghost"
             aria-label="Attach record"
-            disabled={!canPost}
+            disabled={!canPost || isPending}
             aria-expanded={recordPickerOpen}
             onClick={() => setRecordPickerOpen(!recordPickerOpen)}
           >
@@ -1316,7 +1356,11 @@ export function MessageComposer({
             size="icon-sm"
             variant="default"
             aria-label={sendLabel}
-            disabled={!canPost || (!text.trim() && !files.length && !recordId)}
+            disabled={
+              !canPost ||
+              isPending ||
+              (!text.trim() && !files.length && !recordId)
+            }
           >
             <Send className="size-4" />
           </InputGroupButton>

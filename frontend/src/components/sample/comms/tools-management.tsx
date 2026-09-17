@@ -51,6 +51,16 @@ import {
 } from "./tools-helpers";
 import { ConfigurationFrame } from "./configuration-frame";
 import { SettingsFields, SETTINGS_LABELS } from "./settings-fields";
+import {
+  COMMS_CONFIGURATION_KEY,
+  messageFromCommsError,
+  readCommsConfiguration,
+  stageCommsConfiguration,
+  useCommsCommands,
+} from "./runtime";
+
+type TemplateSaveResult =
+  { ok: true; templates: CommsTemplate[] } | { ok: false; error: string };
 
 export function ManagementTools({
   view,
@@ -63,7 +73,8 @@ export function ManagementTools({
   opener: HTMLElement | null;
   onClose: () => void;
 }) {
-  const [config, setConfig] = useCommsConfiguration();
+  const [config] = useCommsConfiguration();
+  const { run } = useCommsCommands();
   const [channels] = useSampleState("commsChannels", CHANNELS);
   const [categories] = useSampleState("commsCategories", CATEGORIES);
   const [people] = useSampleState("access-people", initialPeople);
@@ -142,7 +153,7 @@ export function ManagementTools({
   const values = { ...DEFAULT_COMMS_SETTINGS, ...parsed };
   const picked = selectedSettings(values, keys);
   const selectedChannels = channels.filter((c) => targets.includes(c.id));
-  function apply() {
+  async function apply() {
     const input = validate();
     if (!input) return;
     const value = { ...DEFAULT_COMMS_SETTINGS, ...input };
@@ -154,37 +165,79 @@ export function ManagementTools({
       setError("Workspace management access is required.");
       return;
     }
-    setConfig((previous) =>
-      selectedChannels.reduce((next, channel) => {
+    const result = await run(
+      "management:apply",
+      (draft) => {
+        const previous = readCommsConfiguration(draft);
+        const currentChannels = draft.read("commsChannels", CHANNELS);
+        const currentCategories = draft.read("commsCategories", CATEGORIES);
+        const currentPeople = draft.read("access-people", initialPeople);
+        const currentViewer = currentPeople.find(
+          (person) => person.id === "sample-eli" && person.active,
+        );
         if (
+          !currentViewer ||
           !resolveCommsPermission(
-            next,
-            { person: viewer, channel, categories },
-            "manageChannel",
+            previous,
+            { person: currentViewer },
+            "manageWorkspace",
           ).allowed
         )
-          return next;
-        const scope = { kind: "channel" as const, id: channel.id };
-        const before = getCommsScope(next, scope);
-        const settings = selectedSettings(
-          value,
-          keys.filter((k) => !next.lockedSettings.includes(k)),
+          return draft.reject("Workspace management access is required.");
+        return stageCommsConfiguration(draft, () =>
+          targets.reduce((next, channelId) => {
+            const channel = currentChannels.find(
+              (item) => item.id === channelId,
+            );
+            if (
+              !channel ||
+              !resolveCommsPermission(
+                next,
+                {
+                  person: currentViewer,
+                  channel,
+                  categories: currentCategories,
+                },
+                "manageChannel",
+              ).allowed
+            )
+              return next;
+            const scope = { kind: "channel" as const, id: channel.id };
+            const before = getCommsScope(next, scope);
+            const settings = selectedSettings(
+              value,
+              keys.filter((key) => !next.lockedSettings.includes(key)),
+            );
+            return recordScopeChange(
+              next,
+              scope,
+              { ...before, settings: { ...before.settings, ...settings } },
+              `${view === "templates" ? name : "Bulk settings"} · ${channel.name}`,
+            );
+          }, previous),
         );
-        return recordScopeChange(
-          next,
-          scope,
-          { ...before, settings: { ...before.settings, ...settings } },
-          `${view === "templates" ? name : "Bulk settings"} · ${channel.name}`,
-        );
-      }, previous),
+      },
+      [
+        COMMS_CONFIGURATION_KEY,
+        "commsChannels",
+        "commsCategories",
+        "access-people",
+      ],
+    ).catch((error: unknown) =>
+      messageFromCommsError(error, "Selected settings could not be applied."),
     );
+    if (typeof result === "string") {
+      setError(result);
+      return;
+    }
     setPreview(false);
     setEdited(false);
     setStatus(
       `Applied selected settings to ${selectedChannels.length} channel(s).`,
     );
   }
-  function saveTemplate() {
+  async function saveTemplate() {
+    setStatus("");
     if (!canManage) {
       setError("Workspace management access is required.");
       return;
@@ -202,14 +255,154 @@ export function ManagementTools({
       description,
       settings,
     };
-    const next = templates.some((t) => t.id === item.id)
-      ? templates.map((t) => (t.id === item.id ? item : t))
-      : [...templates, item];
-    setTemplates(next);
+    const result: TemplateSaveResult = await run<TemplateSaveResult>(
+      `template:save:${item.id}`,
+      (draft) => {
+        const current = readCommsConfiguration(draft);
+        const currentPeople = draft.read("access-people", initialPeople);
+        const currentViewer = currentPeople.find(
+          (person) => person.id === "sample-eli" && person.active,
+        );
+        if (
+          !currentViewer ||
+          !resolveCommsPermission(
+            current,
+            { person: currentViewer },
+            "manageWorkspace",
+          ).allowed
+        )
+          return draft.reject({
+            ok: false as const,
+            error: "Workspace management access is required.",
+          });
+        const nextTemplates = current.templates.some(
+          (template) => template.id === item.id,
+        )
+          ? current.templates.map((template) =>
+              template.id === item.id ? item : template,
+            )
+          : [...current.templates, item];
+        stageCommsConfiguration(draft, (value) => ({
+          ...value,
+          templates: nextTemplates,
+        }));
+        return { ok: true as const, templates: nextTemplates };
+      },
+      [COMMS_CONFIGURATION_KEY, "access-people"],
+    ).catch((error: unknown) => ({
+      ok: false as const,
+      error: messageFromCommsError(error, "The template could not be saved."),
+    }));
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setTemplates(result.templates);
     setActive(item.id);
-    setConfig((c) => ({ ...c, templates: next }));
     setEdited(false);
     setStatus("Template saved.");
+  }
+  async function createInvites() {
+    if (!canManage) {
+      setError("Workspace management access is required.");
+      return;
+    }
+    if (!invitePerson || !targets.length) {
+      setError("Select a person and target channels.");
+      return;
+    }
+    const result = await run(
+      `membership:create:${invitePerson}`,
+      (draft) => {
+        const current = readCommsConfiguration(draft);
+        const currentPeople = draft.read("access-people", initialPeople);
+        const currentViewer = currentPeople.find(
+          (person) => person.id === "sample-eli" && person.active,
+        );
+        if (
+          !currentViewer ||
+          !resolveCommsPermission(
+            current,
+            { person: currentViewer },
+            "manageWorkspace",
+          ).allowed
+        )
+          return draft.reject("Workspace management access is required.");
+        stageCommsConfiguration(draft, (current) => ({
+          ...current,
+          invites: [
+            ...current.invites,
+            ...targets
+              .filter(
+                (id) =>
+                  !current.invites.some(
+                    (invite) =>
+                      invite.channelId === id &&
+                      invite.personId === invitePerson &&
+                      invite.status !== "declined",
+                  ),
+              )
+              .map((id) => ({
+                id: crypto.randomUUID(),
+                channelId: id,
+                personId: invitePerson,
+                type: membershipType,
+                status: "pending" as const,
+              })),
+          ],
+        }));
+        return null;
+      },
+      [COMMS_CONFIGURATION_KEY, "access-people"],
+    ).catch((error: unknown) =>
+      messageFromCommsError(error, "Membership changes could not be saved."),
+    );
+    if (result) {
+      setError(result);
+      return;
+    }
+    setStatus(
+      membershipType === "invite"
+        ? "Local invitations created."
+        : "Local join requests created.",
+    );
+  }
+  async function updateInvite(
+    inviteId: string,
+    status: "accepted" | "declined",
+  ) {
+    const result = await run(
+      `membership:${status}:${inviteId}`,
+      (draft) => {
+        const current = readCommsConfiguration(draft);
+        const currentPeople = draft.read("access-people", initialPeople);
+        const currentViewer = currentPeople.find(
+          (person) => person.id === "sample-eli" && person.active,
+        );
+        if (
+          !currentViewer ||
+          !resolveCommsPermission(
+            current,
+            { person: currentViewer },
+            "manageWorkspace",
+          ).allowed
+        )
+          return draft.reject("Workspace management access is required.");
+        if (!current.invites.some((invite) => invite.id === inviteId))
+          return draft.reject("This membership request no longer exists.");
+        stageCommsConfiguration(draft, (value) => ({
+          ...value,
+          invites: value.invites.map((invite) =>
+            invite.id === inviteId ? { ...invite, status } : invite,
+          ),
+        }));
+        return null;
+      },
+      [COMMS_CONFIGURATION_KEY, "access-people"],
+    ).catch((error: unknown) =>
+      messageFromCommsError(error, "Membership changes could not be saved."),
+    );
+    if (result) setError(result);
   }
   return (
     <ConfigurationFrame
@@ -528,47 +721,7 @@ export function ManagementTools({
                     ))}
                 </NativeSelect>
               </Field>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  if (!canManage) {
-                    setError("Workspace management access is required.");
-                    return;
-                  }
-                  if (!invitePerson || !targets.length) {
-                    setError("Select a person and target channels.");
-                    return;
-                  }
-                  setConfig((c) => ({
-                    ...c,
-                    invites: [
-                      ...c.invites,
-                      ...targets
-                        .filter(
-                          (id) =>
-                            !c.invites.some(
-                              (i) =>
-                                i.channelId === id &&
-                                i.personId === invitePerson &&
-                                i.status !== "declined",
-                            ),
-                        )
-                        .map((id) => ({
-                          id: crypto.randomUUID(),
-                          channelId: id,
-                          personId: invitePerson,
-                          type: membershipType,
-                          status: "pending" as const,
-                        })),
-                    ],
-                  }));
-                  setStatus(
-                    membershipType === "invite"
-                      ? "Local invitations created."
-                      : "Local join requests created.",
-                  );
-                }}
-              >
+              <Button variant="outline" onClick={() => void createInvites()}>
                 {membershipType === "invite"
                   ? "Create local invitations"
                   : "Create local join requests"}
@@ -588,32 +741,14 @@ export function ManagementTools({
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() =>
-                          setConfig((c) => ({
-                            ...c,
-                            invites: c.invites.map((i) =>
-                              i.id === invite.id
-                                ? { ...i, status: "accepted" }
-                                : i,
-                            ),
-                          }))
-                        }
+                        onClick={() => void updateInvite(invite.id, "accepted")}
                       >
                         Accept
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() =>
-                          setConfig((c) => ({
-                            ...c,
-                            invites: c.invites.map((i) =>
-                              i.id === invite.id
-                                ? { ...i, status: "declined" }
-                                : i,
-                            ),
-                          }))
-                        }
+                        onClick={() => void updateInvite(invite.id, "declined")}
                       >
                         Decline
                       </Button>
