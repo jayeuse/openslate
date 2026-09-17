@@ -4,10 +4,18 @@ import { useState } from "react";
 import {
   useSampleState,
   useSampleStorage,
-  useSampleTransaction,
+  useSampleRuntime,
   type SampleTransactionDraft,
 } from "../sample-state";
 import { initialManageSessions, type ManageSession } from "./sessions";
+import type { SampleRuntime } from "../sample-runtime";
+import { completeCollection } from "../sample-collections";
+import { initialPeople } from "../access/model";
+import {
+  useSampleCommands,
+  useSampleResource,
+  sampleOperationMessage,
+} from "../sample-async";
 
 export type ManageSettings = {
   name: string;
@@ -826,15 +834,10 @@ const keys = {
   activity: "manage-activity-v1",
   drafts: "manage-drafts-v1",
 } as const;
-function readState(transaction: SampleTransactionDraft): ManageState {
-  function read<T>(key: string, initial: T): T {
-    let value = initial;
-    transaction.update<T>(key, initial, (current) => {
-      value = current;
-      return current;
-    });
-    return value;
-  }
+function readState(
+  transaction: Pick<SampleTransactionDraft, "read">,
+): ManageState {
+  const { read } = transaction;
   return {
     settings: decodeManageSettings(
       read<Record<string, unknown>>(keys.settings, {}),
@@ -849,51 +852,89 @@ function readState(transaction: SampleTransactionDraft): ManageState {
   };
 }
 
+function applyManageRuntimeCommand(
+  draft: SampleTransactionDraft,
+  command: ManageCommand,
+): ManageActionResult {
+  const current = readState(draft);
+  const outcome = executeManageCommand(current, command);
+  if (!outcome.result.ok) return draft.reject(outcome.result);
+  for (const key of Object.keys(keys) as (keyof ManageState)[])
+    if (outcome.state[key] !== current[key])
+      draft.update<unknown>(
+        keys[key],
+        initialManageState[key],
+        outcome.state[key],
+      );
+  return outcome.result;
+}
+
+export function executeManageRuntimeCommand(
+  runtime: SampleRuntime,
+  command: ManageCommand,
+  signal?: AbortSignal,
+): Promise<ManageActionResult> {
+  return runtime.execute((draft) => applyManageRuntimeCommand(draft, command), {
+    keys: Object.values(keys),
+    signal,
+  });
+}
+
 export function useManageController() {
-  const [rawSettings] = useSampleState<Record<string, unknown>>(
-    keys.settings,
-    {},
-  );
-  // Decode entries here so one malformed row cannot discard valid sibling rows.
-  const [rawBackups] = useSampleState<unknown>(keys.backups, null);
-  const [sessions] = useSampleState(keys.sessions, initialManageSessions);
-  const [rawHistory] = useSampleState<unknown>(
-    keys.history,
-    initialManageState.history,
-  );
-  const [rawActivity] = useSampleState<unknown>(keys.activity, null);
+  const runtime = useSampleRuntime();
+  const commands = useSampleCommands();
+  const resource = useSampleResource({
+    keys: [
+      ...Object.values(keys).filter((key) => key !== keys.drafts),
+      "access-people",
+    ],
+    queryKey: "manage",
+    load: (signal) =>
+      runtime.load(
+        (source) => ({
+          ...readState(source),
+          people: source.read("access-people", initialPeople),
+        }),
+        { keys: [...Object.values(keys), "access-people"], signal },
+      ),
+  });
+  // Drafts stay synchronous and at route lifetime while confirmed data loads.
   const [rawDrafts] = useSampleState<Record<string, unknown>>(keys.drafts, {});
-  const transaction = useSampleTransaction();
   const { storageUnavailable } = useSampleStorage();
   const [checked, setChecked] = useState(false);
   const state: ManageState = {
-    settings: decodeManageSettings(rawSettings),
-    backups: decodeBackups(rawBackups),
-    sessions,
-    history: decodeHistory(rawHistory),
-    activity: decodeActivity(rawActivity),
+    ...(resource.data ?? initialManageState),
     drafts: decodeDrafts(rawDrafts),
   };
-  function run(command: ManageCommand): ManageActionResult {
-    const date = new Date().toISOString();
-    const id = crypto.randomUUID();
-    const preview = executeManageCommand(state, command, date, id);
-    if (!preview.result.ok) return preview.result;
-    transaction((draft) => {
-      const current = readState(draft);
-      const outcome = executeManageCommand(current, command, date, id);
-      if (!outcome.result.ok) return;
-      for (const key of Object.keys(keys) as (keyof ManageState)[])
-        draft.update<unknown>(
-          keys[key],
-          initialManageState[key],
-          outcome.state[key],
-        );
-    });
-    return preview.result;
+  async function run(command: ManageCommand): Promise<ManageActionResult> {
+    try {
+      return await commands.run("manage", (signal) =>
+        executeManageRuntimeCommand(runtime, command, signal),
+      );
+    } catch (error) {
+      return {
+        ok: false,
+        message: sampleOperationMessage(
+          error,
+          "This change could not be saved. Try again.",
+        ),
+      };
+    }
+  }
+  function local(command: ManageCommand) {
+    if (commands.isPending()) return;
+    runtime.commit((draft) => applyManageRuntimeCommand(draft, command));
   }
   return {
     ...state,
+    resource,
+    pending: commands.isPending(),
+    people: resource.data?.people ?? [],
+    collections: {
+      sessions: completeCollection(state.sessions, "manage:sessions"),
+      snapshots: completeCollection(state.backups, "manage:snapshots"),
+      activity: completeCollection(state.activity, "manage:activity"),
+    },
     snapshots: state.backups,
     storageUnavailable,
     hasDrafts: (Object.keys(manageSectionKeys) as ManageSection[]).some(
@@ -916,11 +957,11 @@ export function useManageController() {
       key: keyof ManageSettings,
       value: string,
     ) => {
-      run({ type: "change", section, key, value });
+      local({ type: "change", section, key, value });
     },
     save: (section: ManageSection) => run({ type: "save", section }),
     discard: (section: ManageSection) => {
-      run({ type: "discard", section });
+      local({ type: "discard", section });
     },
     createSnapshot: (name?: string) => run({ type: "create-snapshot", name }),
     renameSnapshot: (id: string, name: string) =>
@@ -938,9 +979,31 @@ export function useManageController() {
       run({ type: "reset", ...options }),
     revokeSession: (id: string) => run({ type: "revoke-session", id }),
     revokeAllSessions: () => run({ type: "revoke-all-sessions" }),
-    checkForUpdate: () => {
-      setChecked(true);
-      return state.settings.version !== "1.5.0";
+    checkForUpdate: async (): Promise<
+      ManageActionResult & { available?: boolean }
+    > => {
+      try {
+        const settings = await commands.run("manage", (signal) =>
+          runtime.load(
+            (source) => decodeManageSettings(source.read(keys.settings, {})),
+            { keys: [keys.settings], signal },
+          ),
+        );
+        setChecked(true);
+        return {
+          ok: true,
+          available: settings.version !== "1.5.0",
+          message: "Update check completed.",
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          message: sampleOperationMessage(
+            error,
+            "Could not check for updates. Try again.",
+          ),
+        };
+      }
     },
     applyUpdate: () => run({ type: "apply-update" }),
     rollbackUpdate: () => run({ type: "rollback-update" }),

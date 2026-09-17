@@ -45,16 +45,21 @@ import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import type { ManageActivityEntry } from "./state";
 import { serializeCsv } from "@/lib/csv";
+import {
+  completeCollection,
+  pageCollection,
+  type CompleteCollection,
+} from "../sample-collections";
 
 const PAGE_SIZE = 5;
 
 type ManageAuditProps = {
-  entries: ManageActivityEntry[];
+  entries: CompleteCollection<ManageActivityEntry>;
 };
 
 type ActivityOrder = "newest" | "oldest";
 
-type ActivityFilters = {
+export type ActivityFilters = {
   query: string;
   user: string;
   entity: string;
@@ -64,7 +69,7 @@ type ActivityFilters = {
   order: ActivityOrder;
 };
 
-const initialFilters: ActivityFilters = {
+export const initialActivityFilters: ActivityFilters = {
   query: "",
   user: "All users",
   entity: "All entities",
@@ -75,7 +80,7 @@ const initialFilters: ActivityFilters = {
 };
 
 function uniqueValues(
-  entries: ManageActivityEntry[],
+  entries: readonly ManageActivityEntry[],
   key: keyof ManageActivityEntry,
 ) {
   return [
@@ -123,7 +128,9 @@ function matchesSearch(entry: ManageActivityEntry, query: string): boolean {
   ].some((value) => value.toLowerCase().includes(query));
 }
 
-export function buildActivityCsv(entries: ManageActivityEntry[]): string {
+export function buildActivityCsv(
+  entries: readonly ManageActivityEntry[],
+): string {
   const header = [
     "Date",
     "User",
@@ -147,7 +154,7 @@ export function buildActivityCsv(entries: ManageActivityEntry[]): string {
   return serializeCsv([header, ...rows]);
 }
 
-function downloadActivityCsv(entries: ManageActivityEntry[]): void {
+function downloadActivityCsv(entries: readonly ManageActivityEntry[]): void {
   const blob = new Blob([buildActivityCsv(entries)], {
     type: "text/csv;charset=utf-8",
   });
@@ -175,24 +182,13 @@ function sourceVariant(
   return source === "manage" ? "secondary" : "outline";
 }
 
-export default function ManageAudit({ entries }: ManageAuditProps) {
-  const [filters, setFilters] = useState<ActivityFilters>(initialFilters);
-  const [pageIndex, setPageIndex] = useState(0);
-  const [selected, setSelected] = useState<ManageActivityEntry | null>(null);
-  const [exportOpen, setExportOpen] = useState(false);
-  const [notice, setNotice] = useState("");
-  const detailTrigger = useRef<HTMLButtonElement | null>(null);
-  const exportTrigger = useRef<HTMLButtonElement | null>(null);
-
-  const users = uniqueValues(entries, "user");
-  const entities = uniqueValues(entries, "entity");
-  const actions = uniqueValues(entries, "action");
-  const dateRangeError =
-    filters.from && filters.to && filters.from > filters.to
-      ? "The end date must be on or after the start date."
-      : "";
+export function queryManageActivity(
+  source: CompleteCollection<ManageActivityEntry>,
+  filters: ActivityFilters,
+  offset: number,
+) {
   const normalizedQuery = filters.query.trim().toLowerCase();
-  const filtered = entries.filter(
+  const filtered = source.items.filter(
     (entry) =>
       matchesSearch(entry, normalizedQuery) &&
       (filters.user === "All users" || entry.user === filters.user) &&
@@ -207,14 +203,43 @@ export default function ManageAudit({ entries }: ManageAuditProps) {
       return filters.order === "newest" ? -dateComparison : dateComparison;
     return left.id.localeCompare(right.id);
   });
-  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
-  const safePageIndex = Math.min(Math.max(pageIndex, 0), pageCount - 1);
-  const visibleEntries = sorted.slice(
-    safePageIndex * PAGE_SIZE,
-    (safePageIndex + 1) * PAGE_SIZE,
+
+  const complete = completeCollection(sorted, JSON.stringify(filters));
+  return { complete, page: pageCollection(complete, offset, PAGE_SIZE) };
+}
+
+export default function ManageAudit({ entries: source }: ManageAuditProps) {
+  const entries = source.items;
+  const [filters, setFilters] = useState<ActivityFilters>(
+    initialActivityFilters,
   );
-  const firstVisible = sorted.length === 0 ? 0 : safePageIndex * PAGE_SIZE + 1;
-  const lastVisible = Math.min((safePageIndex + 1) * PAGE_SIZE, sorted.length);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [selected, setSelected] = useState<ManageActivityEntry | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [notice, setNotice] = useState("");
+  const detailTrigger = useRef<HTMLButtonElement | null>(null);
+  const exportTrigger = useRef<HTMLButtonElement | null>(null);
+
+  const users = uniqueValues(entries, "user");
+  const entities = uniqueValues(entries, "entity");
+  const actions = uniqueValues(entries, "action");
+  const dateRangeError =
+    filters.from && filters.to && filters.from > filters.to
+      ? "The end date must be on or after the start date."
+      : "";
+  const result = queryManageActivity(source, filters, pageIndex * PAGE_SIZE);
+  const sorted = result.complete.items;
+  const pageCount = Math.max(
+    1,
+    Math.ceil(result.page.total / result.page.limit),
+  );
+  const safePageIndex = result.page.offset / result.page.limit;
+  const visibleEntries = result.page.items;
+  const firstVisible = result.page.total === 0 ? 0 : result.page.offset + 1;
+  const lastVisible = Math.min(
+    result.page.offset + result.page.limit,
+    result.page.total,
+  );
 
   function openDetails(entry: ManageActivityEntry, trigger: HTMLButtonElement) {
     detailTrigger.current = trigger;
@@ -291,7 +316,7 @@ export default function ManageAudit({ entries }: ManageAuditProps) {
   }
 
   function clearFilters() {
-    setFilters(initialFilters);
+    setFilters(initialActivityFilters);
     setPageIndex(0);
     setNotice("");
   }
@@ -588,10 +613,8 @@ export default function ManageAudit({ entries }: ManageAuditProps) {
                 ariaLabel="Activity history table"
                 cellClassName="py-1.5"
                 columns={columns}
-                data={sorted}
+                data={[...visibleEntries]}
                 getRowId={(entry) => entry.id}
-                pagination={{ pageIndex: safePageIndex, pageSize: PAGE_SIZE }}
-                onPaginationChange={(next) => setPageIndex(next.pageIndex)}
               />
             </div>
           </CardContent>

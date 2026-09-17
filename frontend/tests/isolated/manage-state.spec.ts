@@ -2,16 +2,73 @@ import { expect, test } from "@playwright/test";
 import {
   decodeManageSettings,
   executeManageCommand,
+  executeManageRuntimeCommand,
   initialManageSettings,
   initialManageState,
   type ManageCommand,
   type ManageState,
 } from "../../src/components/sample/manage/state";
-import { buildActivityCsv } from "../../src/components/sample/manage/audit";
+import {
+  buildActivityCsv,
+  initialActivityFilters,
+  queryManageActivity,
+} from "../../src/components/sample/manage/audit";
+import { completeCollection } from "../../src/components/sample/sample-collections";
+import { createSampleRuntime } from "../../src/components/sample/sample-runtime";
+import { decodeSampleStoredValue } from "../../src/components/sample/sample-state";
 
 function run(state: ManageState, command: ManageCommand, id = "test-action") {
   return executeManageCommand(state, command, "2026-09-12T12:00:00Z", id);
 }
+
+test("an awaited Manage save validates the current draft and rejects without partial history", async () => {
+  const runtime = createSampleRuntime(decodeSampleStoredValue, {
+    "manage-drafts-v1": { organization: { name: "Ready to save" } },
+  });
+  const pending = executeManageRuntimeCommand(runtime, {
+    type: "save",
+    section: "organization",
+  });
+  runtime.commit((draft) =>
+    draft.update("manage-drafts-v1", {}, { organization: { name: "" } }),
+  );
+  const before = runtime.getSnapshot();
+  const result = await pending;
+  expect(result.ok).toBe(false);
+  expect(runtime.getSnapshot()).toBe(before);
+  expect(runtime.read("manage-drafts-v1", {})).toEqual({
+    organization: { name: "" },
+  });
+});
+
+test("audit filtering reaches later source rows and export covers every filtered page", () => {
+  const entries = Array.from({ length: 30 }, (_, index) => ({
+    ...initialManageState.activity[0],
+    id: `entry-${String(index).padStart(2, "0")}`,
+    target: index < 10 ? "other" : `needle ${index}`,
+  }));
+  const result = queryManageActivity(
+    completeCollection(entries, "audit"),
+    {
+      ...initialActivityFilters,
+      query: "needle",
+      order: "oldest",
+    },
+    5,
+  );
+  expect(result.page.total).toBe(20);
+  expect(result.page.items.map((entry) => entry.id)).toEqual([
+    "entry-15",
+    "entry-16",
+    "entry-17",
+    "entry-18",
+    "entry-19",
+  ]);
+  const csv = buildActivityCsv(result.complete.items);
+  expect(csv).toContain("needle 10");
+  expect(csv).toContain("needle 29");
+  expect(csv).not.toContain("other");
+});
 
 test("saving one section keeps another draft and records only the saved changes", () => {
   let state = run(initialManageState, {
