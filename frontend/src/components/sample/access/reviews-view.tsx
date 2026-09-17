@@ -100,7 +100,13 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
     );
   }
 
-  function createCampaign() {
+  async function createCampaign() {
+    if (controller.isPending()) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
     const targetIds = (() => {
       if (subjectKind === "role")
         return state.identities
@@ -126,7 +132,7 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
         })
         .map((identity) => identity.id);
     })();
-    const result = actions.createReviewCampaign({
+    const result = await actions.createReviewCampaign({
       name: name.trim(),
       reviewerId,
       subjectKind,
@@ -143,12 +149,22 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
     setNotice("Review campaign created.");
   }
 
-  function recordDecision(
+  async function recordDecision(
     reviewId: string,
     targetId: string,
     decision: ReviewDecision,
   ) {
-    const result = actions.recordReviewDecision(reviewId, targetId, decision);
+    if (controller.isPending()) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
+    const result = await actions.recordReviewDecision(
+      reviewId,
+      targetId,
+      decision,
+    );
     if (!result.ok) setError(result.error);
     else {
       setError("");
@@ -156,8 +172,14 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
     }
   }
 
-  function completeCampaign(review: AccessReview) {
-    const result = actions.completeReview(review.id);
+  async function completeCampaign(review: AccessReview) {
+    if (controller.isPending()) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
+    const result = await actions.completeReview(review.id);
     if (!result.ok) setError(result.error);
     else {
       setError("");
@@ -183,7 +205,7 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
         <Button
           type="button"
           className="min-h-11"
-          disabled={!reviewers.length}
+          disabled={!reviewers.length || controller.isPending()}
           onClick={() => setCreateOpen(true)}
         >
           <Plus aria-hidden="true" data-icon="inline-start" /> Create campaign
@@ -220,6 +242,7 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
               <Button
                 type="button"
                 className="min-h-11"
+                disabled={controller.isPending()}
                 onClick={() => setCreateOpen(true)}
               >
                 Create first campaign
@@ -288,12 +311,15 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
                             value={
                               item.decision === "pending" ? [] : [item.decision]
                             }
-                            disabled={review.status === "complete"}
+                            disabled={
+                              review.status === "complete" ||
+                              controller.isPending()
+                            }
                             onValueChange={(values) => {
                               const decision = values[0] as
                                 ReviewDecision | undefined;
                               if (decision)
-                                recordDecision(
+                                void recordDecision(
                                   review.id,
                                   item.targetId,
                                   decision,
@@ -329,7 +355,9 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
                         type="button"
                         className="min-h-11"
                         disabled={
-                          unresolved > 0 || review.decisions.length === 0
+                          unresolved > 0 ||
+                          review.decisions.length === 0 ||
+                          controller.isPending()
                         }
                         onClick={() => completeCampaign(review)}
                       >
@@ -435,7 +463,12 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
             <Button
               type="button"
               className="min-h-11"
-              disabled={!name.trim() || !subjectId || !reviewerId}
+              disabled={
+                !name.trim() ||
+                !subjectId ||
+                !reviewerId ||
+                controller.isPending()
+              }
               onClick={createCampaign}
             >
               Create campaign

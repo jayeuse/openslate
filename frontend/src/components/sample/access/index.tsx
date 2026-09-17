@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/ui/alert";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -76,6 +77,28 @@ function AccessFallback() {
   );
 }
 
+function AccessReadError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="flex h-full items-center justify-center p-5" role="alert">
+      <div className="w-full max-w-lg space-y-4 rounded-lg border p-6">
+        <div>
+          <h1 className="text-xl font-semibold">Access data is unavailable</h1>
+          <p className="text-muted-foreground mt-2 text-sm">{message}</p>
+        </div>
+        <Button className="min-h-11" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function SampleAccess() {
   return (
     <Suspense fallback={<AccessFallback />}>
@@ -92,10 +115,14 @@ function AccessControlCenter() {
   const [requestedSubject, setRequestedSubject] = useState<AccessSubjectRef>();
   const [governanceDialog, setGovernanceDialog] =
     useState<GovernanceDialogTarget | null>(null);
+  const [navigationNotice, setNavigationNotice] = useState("");
+  const resource = controller.resource;
+  const readReady = resource.status === "ready";
 
   const requestedView = searchParams.get("view");
   const requestedUser = searchParams.get("user");
   const hasUserDeepLink =
+    readReady &&
     requestedUser !== null &&
     [
       ...controller.state.identities,
@@ -108,14 +135,31 @@ function AccessControlCenter() {
       : "overview";
 
   useEffect(() => {
-    if (requestedUser === null || hasUserDeepLink) return;
+    if (!readReady || requestedUser === null || hasUserDeepLink) return;
     const next = new URLSearchParams(searchParams.toString());
     next.delete("user");
     const query = next.toString();
     router.replace(`${pathname}${query ? `?${query}` : ""}` as Route);
-  }, [hasUserDeepLink, pathname, requestedUser, router, searchParams]);
+  }, [
+    hasUserDeepLink,
+    pathname,
+    readReady,
+    requestedUser,
+    router,
+    searchParams,
+  ]);
+
+  function blockNavigation(): boolean {
+    if (!controller.isPending()) return false;
+    setNavigationNotice(
+      "Finish the Access change before switching views or leaving this page.",
+    );
+    return true;
+  }
 
   function navigate(view: AccessView, options?: { keepSubject?: boolean }) {
+    if (blockNavigation()) return;
+    setNavigationNotice("");
     if (!options?.keepSubject) setRequestedSubject(undefined);
     const next = new URLSearchParams();
     next.set("view", view);
@@ -127,6 +171,7 @@ function AccessControlCenter() {
   }
 
   function navigateFromOverview(destination: AccessOverviewDestination) {
+    if (blockNavigation()) return;
     if (
       destination === "defaults" ||
       destination === "import" ||
@@ -139,9 +184,21 @@ function AccessControlCenter() {
   }
 
   function openRulesForGroup(groupId: string) {
+    if (blockNavigation()) return;
     setRequestedSubject({ kind: "group", id: groupId });
     navigate("rules", { keepSubject: true });
   }
+
+  function setActiveGovernanceDialog(dialog: GovernanceDialogTarget | null) {
+    if (dialog === null && blockNavigation()) return;
+    setGovernanceDialog(dialog);
+  }
+
+  if (resource.status === "loading") return <AccessFallback />;
+  if (resource.status === "error")
+    return (
+      <AccessReadError message={resource.error} onRetry={resource.reload} />
+    );
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 p-3 sm:px-5 sm:py-4">
@@ -155,13 +212,42 @@ function AccessControlCenter() {
           </p>
         </div>
         <Button asChild variant="outline" className="min-h-11 shrink-0 px-3">
-          <Link href="/manage?view=security">
+          <Link
+            href="/manage?view=security"
+            onClick={(event) => {
+              if (blockNavigation()) event.preventDefault();
+            }}
+          >
             <ShieldCheck aria-hidden="true" />
             Manage security
             <ArrowUpRight aria-hidden="true" />
           </Link>
         </Button>
       </header>
+
+      {navigationNotice ? (
+        <Alert role="status" variant="warning">
+          {navigationNotice}
+        </Alert>
+      ) : null}
+      {resource.refreshing || resource.error ? (
+        <Alert role="status" variant="warning">
+          <span>
+            {resource.refreshing
+              ? "Refreshing Access data…"
+              : `Access data could not be refreshed. Showing the last available result. ${resource.error}`}
+          </span>
+          {!resource.refreshing && resource.error ? (
+            <Button
+              variant="outline"
+              className="min-h-11"
+              onClick={resource.reload}
+            >
+              Retry refresh
+            </Button>
+          ) : null}
+        </Alert>
+      ) : null}
 
       <Tabs
         value={activeView}
@@ -253,7 +339,7 @@ function AccessControlCenter() {
           <GovernanceDialogs
             controller={controller}
             dialog={governanceDialog}
-            onDialogChange={setGovernanceDialog}
+            onDialogChange={setActiveGovernanceDialog}
           />
         </TabsContent>
       </Tabs>
@@ -262,7 +348,7 @@ function AccessControlCenter() {
         <GovernanceDialogs
           controller={controller}
           dialog={governanceDialog}
-          onDialogChange={setGovernanceDialog}
+          onDialogChange={setActiveGovernanceDialog}
           showLauncher={false}
         />
       )}

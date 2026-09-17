@@ -91,6 +91,10 @@ export function GovernanceDialogs({
   const displayedDefaults = defaultsDraft ?? state.defaults;
 
   function setActiveDialog(dialog: GovernanceDialogTarget | null) {
+    if (dialog === null && controller.isPending()) {
+      setError("Finish the Access change before closing this dialog.");
+      return;
+    }
     if (controlledDialog === undefined) setLocalDialog(dialog);
     onDialogChange?.(dialog);
   }
@@ -101,8 +105,14 @@ export function GovernanceDialogs({
     setActiveDialog("defaults");
   }
 
-  function saveDefaults() {
-    const result = actions.updateDefaults(displayedDefaults);
+  async function saveDefaults() {
+    if (controller.isPending()) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
+    const result = await actions.updateDefaults(displayedDefaults);
     if (!result.ok) {
       setError(result.error);
       return;
@@ -141,8 +151,14 @@ export function GovernanceDialogs({
     );
   }
 
-  function applyImport() {
-    const result = actions.importPolicyBundle(importText, importMode);
+  async function applyImport() {
+    if (controller.isPending()) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
+    const result = await actions.importPolicyBundle(importText, importMode);
     if (!result.ok) {
       setError(result.error);
       return;
@@ -170,9 +186,15 @@ export function GovernanceDialogs({
     setRestoreOpen(true);
   }
 
-  function restoreHistory() {
+  async function restoreHistory() {
     if (!selectedHistory) return;
-    const result = actions.applyHistoryRestore(selectedHistory.id);
+    if (controller.isPending()) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
+    const result = await actions.applyHistoryRestore(selectedHistory.id);
     if (!result.ok) {
       setError(result.error);
       return;
@@ -479,7 +501,12 @@ export function GovernanceDialogs({
             >
               Cancel
             </Button>
-            <Button type="button" className="min-h-11" onClick={saveDefaults}>
+            <Button
+              type="button"
+              className="min-h-11"
+              disabled={controller.isPending()}
+              onClick={saveDefaults}
+            >
               Save defaults
             </Button>
           </DialogFooter>
@@ -626,7 +653,9 @@ export function GovernanceDialogs({
               className="min-h-11"
               disabled={
                 !importSummary ||
-                (importMode === "replace" && replaceConfirmation !== "REPLACE")
+                (importMode === "replace" &&
+                  replaceConfirmation !== "REPLACE") ||
+                controller.isPending()
               }
               onClick={applyImport}
             >
@@ -664,7 +693,7 @@ export function GovernanceDialogs({
                     type="button"
                     variant="outline"
                     className="min-h-11"
-                    disabled={!entry.restorable}
+                    disabled={!entry.restorable || controller.isPending()}
                     onClick={() => previewRestore(entry)}
                   >
                     <RotateCcw aria-hidden="true" data-icon="inline-start" />
@@ -691,7 +720,16 @@ export function GovernanceDialogs({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={restoreOpen} onOpenChange={setRestoreOpen}>
+      <Dialog
+        open={restoreOpen}
+        onOpenChange={(open) => {
+          if (!open && controller.isPending()) {
+            setError("Finish the Access change before closing this dialog.");
+            return;
+          }
+          setRestoreOpen(open);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Preview policy restore</DialogTitle>
@@ -726,7 +764,13 @@ export function GovernanceDialogs({
 
       <AlertDialog
         open={restoreConfirmOpen}
-        onOpenChange={setRestoreConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open && controller.isPending()) {
+            setError("Finish the Access change before closing this dialog.");
+            return;
+          }
+          setRestoreConfirmOpen(open);
+        }}
       >
         <AlertDialogContent>
           <AlertDialogTitle>
@@ -738,7 +782,12 @@ export function GovernanceDialogs({
           </AlertDialogDescription>
           <AlertDialogFooter>
             <AlertDialogCancel className="min-h-11">Cancel</AlertDialogCancel>
-            <Button type="button" className="min-h-11" onClick={restoreHistory}>
+            <Button
+              type="button"
+              className="min-h-11"
+              disabled={controller.isPending()}
+              onClick={restoreHistory}
+            >
               Restore policy
             </Button>
           </AlertDialogFooter>

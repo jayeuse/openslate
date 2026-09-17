@@ -46,6 +46,7 @@ import {
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { toast } from "@/components/ui/toast";
+import { completeCollection, pageCollection } from "../sample-collections";
 import { departments } from "./model";
 import type { AccessController, BulkIdentityUpdateInput } from "./controller";
 import { IdentityEditor } from "./identity-editor";
@@ -246,12 +247,28 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
         left.name.localeCompare(right.name)
       );
     });
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePageIndex = Math.min(Math.max(pageIndex, 0), pageCount - 1);
-  const visible = filtered.slice(
-    safePageIndex * pageSize,
-    (safePageIndex + 1) * pageSize,
+  const pageResult = pageCollection(
+    completeCollection(
+      filtered,
+      JSON.stringify([
+        "identities",
+        normalizedQuery,
+        kind,
+        status,
+        roleId,
+        groupId,
+        department,
+        expiry,
+        activity,
+        sort,
+      ]),
+    ),
+    pageIndex * pageSize,
+    pageSize,
   );
+  const pageCount = Math.max(1, Math.ceil(pageResult.total / pageResult.limit));
+  const safePageIndex = pageResult.offset / pageResult.limit;
+  const visible = [...pageResult.items];
   const visibleIds = visible
     .filter((identity) => identity.status !== "deleted")
     .map((identity) => identity.id);
@@ -413,8 +430,16 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
     }
   }
 
-  function applyBulk() {
-    const result = controller.actions.bulkUpdateIdentities(bulkInput);
+  async function applyBulk() {
+    if (controller.isPending()) {
+      toast.add({
+        title: "Another Access change is in progress",
+        description: "Wait for it to finish before applying this bulk update.",
+        type: "error",
+      });
+      return;
+    }
+    const result = await controller.actions.bulkUpdateIdentities(bulkInput);
     if (!result.ok) {
       toast.add({
         title: "Bulk update blocked",
@@ -741,7 +766,11 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
             >
               Clear selection
             </Button>
-            <Button className="min-h-11" onClick={() => setBulkOpen(true)}>
+            <Button
+              className="min-h-11"
+              disabled={controller.isPending()}
+              onClick={() => setBulkOpen(true)}
+            >
               Review bulk action
             </Button>
           </div>
@@ -790,13 +819,8 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
             <DataTable
               ariaLabel="Identity directory"
               columns={identityColumns}
-              data={filtered}
+              data={visible}
               getRowId={(identity) => identity.id}
-              pagination={{ pageIndex: safePageIndex, pageSize }}
-              onPaginationChange={(next) => {
-                setPageIndex(next.pageIndex);
-                if (next.pageSize !== pageSize) setPageSize(next.pageSize);
-              }}
               rowState={(identity) =>
                 selected.includes(identity.id) ? "selected" : undefined
               }
@@ -824,9 +848,9 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-muted-foreground text-sm">
-              Showing {safePageIndex * pageSize + 1}–
-              {Math.min((safePageIndex + 1) * pageSize, filtered.length)} of{" "}
-              {filtered.length} · {pageSize} per page
+              Showing {pageResult.total === 0 ? 0 : pageResult.offset + 1}–
+              {Math.min(pageResult.offset + pageResult.limit, pageResult.total)}{" "}
+              of {pageResult.total} · {pageResult.limit} per page
             </p>
             <PaginationControls
               ariaLabel="Identity pages"
@@ -944,7 +968,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
             </AlertDialogCancel>
             <Button
               className="min-h-11"
-              disabled={!bulkPreview.ok}
+              disabled={!bulkPreview.ok || controller.isPending()}
               onClick={applyBulk}
             >
               Apply to {bulkPreview.affected}

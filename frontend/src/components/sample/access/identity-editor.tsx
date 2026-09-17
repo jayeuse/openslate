@@ -56,8 +56,10 @@ import {
 } from "@/components/ui/sheet";
 import { toast } from "@/components/ui/toast";
 import { departments } from "./model";
+import { applyPatch, changedPatch } from "./editor-helpers";
 import type {
   AccessController,
+  ControllerMutationResult,
   CreateIdentityInput,
   UpdateIdentityPatch,
 } from "./controller";
@@ -232,36 +234,25 @@ function changedIdentityPatch(
   baseline: AccessIdentity,
   draft: AccessIdentity,
 ): UpdateIdentityPatch {
-  const patch: UpdateIdentityPatch = {};
-  if (baseline.name !== draft.name) patch.name = draft.name;
-  if (baseline.status !== draft.status) patch.status = draft.status;
-  if (baseline.roleId !== draft.roleId) patch.roleId = draft.roleId;
-  if (!sameValue(baseline.groupIds, draft.groupIds))
-    patch.groupIds = draft.groupIds;
-  if (baseline.expiresAt !== draft.expiresAt) patch.expiresAt = draft.expiresAt;
-  if (baseline.kind === "internal" && draft.kind === "internal") {
-    if (baseline.email !== draft.email) patch.email = draft.email;
-    if (!sameValue(baseline.departmentIds, draft.departmentIds))
-      patch.departmentIds = draft.departmentIds;
-    if (baseline.primaryDepartmentId !== draft.primaryDepartmentId)
-      patch.primaryDepartmentId = draft.primaryDepartmentId;
-    if (baseline.title !== draft.title) patch.title = draft.title;
-  } else if (baseline.kind === "guest" && draft.kind === "guest") {
-    if (baseline.email !== draft.email) patch.email = draft.email;
-    if (baseline.sponsorId !== draft.sponsorId)
-      patch.sponsorId = draft.sponsorId;
-  } else if (baseline.kind === "service" && draft.kind === "service") {
-    if (baseline.ownerId !== draft.ownerId) patch.ownerId = draft.ownerId;
-    if (baseline.purpose !== draft.purpose) patch.purpose = draft.purpose;
-  }
-  return patch;
-}
-
-function applyPatchForReview(
-  identity: AccessIdentity,
-  patch: UpdateIdentityPatch,
-): AccessIdentity {
-  return { ...identity, ...patch } as AccessIdentity;
+  const fields: EditableField[] = [
+    "name",
+    "status",
+    "roleId",
+    "groupIds",
+    "expiresAt",
+  ];
+  if (baseline.kind === "internal" && draft.kind === "internal")
+    fields.push("email", "departmentIds", "primaryDepartmentId", "title");
+  else if (baseline.kind === "guest" && draft.kind === "guest")
+    fields.push("email", "sponsorId");
+  else if (baseline.kind === "service" && draft.kind === "service")
+    fields.push("ownerId", "purpose");
+  return changedPatch(
+    baseline,
+    draft,
+    fields as (keyof AccessIdentity)[],
+    sameValue,
+  ) as UpdateIdentityPatch;
 }
 
 const fieldLabels: Record<EditableField, string> = {
@@ -461,8 +452,15 @@ export function IdentityEditor({
       ? controller.state.guests.find((guest) => guest.id === existing.id)
           ?.invitation
       : undefined;
+  const pending = controller.isPending();
 
   function requestClose() {
+    if (controller.isPending()) {
+      showError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
     if (dirty) {
       setConfirmClose(true);
       return;
@@ -481,14 +479,15 @@ export function IdentityEditor({
     requestAnimationFrame(() => errorRef.current?.focus());
   }
 
-  function report(
-    result: ReturnType<typeof controller.actions.updateIdentity>,
-  ) {
-    if (!result.ok) {
-      showError(result.error);
+  async function report(
+    result: Promise<ControllerMutationResult>,
+  ): Promise<boolean> {
+    const resolved = await result;
+    if (!resolved.ok) {
+      showError(resolved.error);
       return false;
     }
-    toast.add({ title: result.summary, type: "success" });
+    toast.add({ title: resolved.summary, type: "success" });
     return true;
   }
 
@@ -497,13 +496,19 @@ export function IdentityEditor({
     setPendingReview({
       kind: "update",
       before: copyIdentity(existing),
-      after: applyPatchForReview(existing, patch),
+      after: applyPatch(existing, patch) as AccessIdentity,
       patch,
     });
   }
 
   function persist() {
     if (!draft) return;
+    if (controller.isPending()) {
+      showError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
     if (existing?.status === "deleted") {
       showError("Restore this deleted identity before editing it.");
       return;
@@ -560,24 +565,36 @@ export function IdentityEditor({
     persist();
   }
 
-  function confirmReview() {
+  async function confirmReview() {
     if (!pendingReview) return;
+    if (controller.isPending()) {
+      showError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
     if (pendingReview.kind === "action") {
       const action = pendingReview.action;
-      setPendingReview(null);
       if (action.type === "revoke-session") {
-        report(
-          controller.actions.revokeSession(
-            action.identity.id,
-            action.sessionId,
-          ),
-        );
+        if (
+          await report(
+            controller.actions.revokeSession(
+              action.identity.id,
+              action.sessionId,
+            ),
+          )
+        )
+          setPendingReview(null);
         return;
       }
       if (action.type === "revoke-all-sessions") {
-        report(controller.actions.revokeAllSessions(action.identity.id));
+        if (
+          await report(controller.actions.revokeAllSessions(action.identity.id))
+        )
+          setPendingReview(null);
         return;
       }
+      setPendingReview(null);
       setPendingDestructiveAction(action);
       setConfirmationMode(
         action.type === "delete" ? "delete" : "destructive-action",
@@ -593,11 +610,15 @@ export function IdentityEditor({
         setConfirmationName("");
         return;
       }
-      const result = controller.actions.createIdentity(
-        identityToCreateInput(pendingReview.identity),
+      const accepted = await report(
+        controller.actions.createIdentity(
+          identityToCreateInput(pendingReview.identity),
+        ),
       );
-      setPendingReview(null);
-      if (report(result)) onOpenChange(false);
+      if (accepted) {
+        setPendingReview(null);
+        onOpenChange(false);
+      }
       return;
     }
     const changesAdministratorAccess =
@@ -605,40 +626,53 @@ export function IdentityEditor({
         pendingReview.after.roleId === "sample-admin") &&
       (pendingReview.before.roleId !== pendingReview.after.roleId ||
         pendingReview.before.status !== pendingReview.after.status);
-    setPendingReview(null);
     if (changesAdministratorAccess) {
+      setPendingReview(null);
       setPendingPatch(pendingReview.patch);
       setConfirmationMode("admin-change");
       setConfirmationName("");
       return;
     }
     if (
-      report(
+      await report(
         controller.actions.updateIdentity(
           pendingReview.before.id,
           pendingReview.patch,
         ),
       )
-    )
+    ) {
+      setPendingReview(null);
       onOpenChange(false);
+    }
   }
 
-  function confirmSensitiveAction() {
+  async function confirmSensitiveAction() {
     const confirmationTarget = existing ?? pendingCreateIdentity;
     if (!confirmationTarget || confirmationName !== confirmationTarget.name)
       return;
+    if (controller.isPending()) {
+      showError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
     if (confirmationMode === "admin-change") {
-      setConfirmationMode(null);
-      const result = pendingCreateIdentity
-        ? controller.actions.createIdentity(
-            identityToCreateInput(pendingCreateIdentity),
-          )
-        : controller.actions.updateIdentity(
-            existing?.id ?? "",
-            pendingPatch ?? {},
-          );
-      setPendingCreateIdentity(null);
-      if (report(result)) onOpenChange(false);
+      const accepted = await report(
+        pendingCreateIdentity
+          ? controller.actions.createIdentity(
+              identityToCreateInput(pendingCreateIdentity),
+            )
+          : controller.actions.updateIdentity(
+              existing?.id ?? "",
+              pendingPatch ?? {},
+            ),
+      );
+      if (accepted) {
+        setConfirmationMode(null);
+        setPendingCreateIdentity(null);
+        setPendingPatch(null);
+        onOpenChange(false);
+      }
       return;
     }
     if (!existing) return;
@@ -648,10 +682,12 @@ export function IdentityEditor({
         : pendingDestructiveAction?.type === "revoke-invite"
           ? controller.actions.revokeInvite(existing.id)
           : controller.actions.deleteIdentity(existing.id);
-    setConfirmationMode(null);
-    setConfirmationName("");
-    setPendingDestructiveAction(null);
-    if (report(result)) onOpenChange(false);
+    if (await report(result)) {
+      setConfirmationMode(null);
+      setConfirmationName("");
+      setPendingDestructiveAction(null);
+      onOpenChange(false);
+    }
   }
 
   function disableExistingIdentity() {
@@ -723,507 +759,517 @@ export function IdentityEditor({
           </SheetHeader>
 
           <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
-            <div className="flex-1 space-y-6 overflow-y-auto p-5">
-              {errors.length > 0 && (
-                <div ref={errorRef} id={errorId} tabIndex={-1}>
-                  <Alert variant="destructive">
-                    <CircleAlert className="size-4" />
-                    <p className="font-medium">Check this identity</p>
-                    <ul className="mt-1 list-disc pl-4">
-                      {errors.map((error) => (
-                        <li key={error}>{error}</li>
-                      ))}
-                    </ul>
-                  </Alert>
-                </div>
-              )}
-
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor={nameId}>Name</FieldLabel>
-                  <Input
-                    id={nameId}
-                    autoFocus
-                    className="min-h-11"
-                    value={draft.name}
-                    aria-describedby={errors.length ? errorId : undefined}
-                    aria-invalid={!draft.name.trim() || undefined}
-                    onChange={(event) => update({ name: event.target.value })}
-                  />
-                  {!draft.name.trim() && errors.length > 0 && (
-                    <FieldError>Enter a name.</FieldError>
-                  )}
-                </Field>
-
-                {(draft.kind === "internal" || draft.kind === "guest") && (
-                  <Field>
-                    <FieldLabel htmlFor={`${nameId}-email`}>Email</FieldLabel>
-                    <Input
-                      id={`${nameId}-email`}
-                      type="email"
-                      className="min-h-11"
-                      value={draft.email}
-                      onChange={(event) =>
-                        update({ email: event.target.value })
-                      }
-                    />
-                    <FieldDescription>
-                      Used only to represent invitation state.
-                    </FieldDescription>
-                  </Field>
-                )}
-
-                {draft.kind === "internal" && (
-                  <Field>
-                    <FieldLabel htmlFor={`${nameId}-title`}>
-                      Job title
-                    </FieldLabel>
-                    <Input
-                      id={`${nameId}-title`}
-                      className="min-h-11"
-                      value={draft.title}
-                      onChange={(event) =>
-                        update({ title: event.target.value })
-                      }
-                    />
-                  </Field>
-                )}
-
-                <Field>
-                  <FieldLabel htmlFor={`${nameId}-role`}>Role</FieldLabel>
-                  <NativeSelect
-                    id={`${nameId}-role`}
-                    className="w-full [&_select]:min-h-11"
-                    value={draft.roleId}
-                    onChange={(event) => update({ roleId: event.target.value })}
-                  >
-                    {roles.map((role) => (
-                      <NativeSelectOption key={role.id} value={role.id}>
-                        {role.name}
-                      </NativeSelectOption>
-                    ))}
-                  </NativeSelect>
-                  <FieldDescription>
-                    Every identity has exactly one role.
-                  </FieldDescription>
-                </Field>
-                {draft.kind === "internal" && (
-                  <ExpiryField
-                    id={`${nameId}-internal-expiry`}
-                    value={draft.expiresAt ?? ""}
-                    required={false}
-                    onChange={(expiresAt) =>
-                      update({ expiresAt: expiresAt || undefined })
-                    }
-                  />
-                )}
-              </FieldGroup>
-
-              {draft.kind === "internal" && (
-                <FieldSet>
-                  <FieldLegend>Departments</FieldLegend>
-                  <div className="grid gap-1 sm:grid-cols-2">
-                    {departments.map((name) => {
-                      const id = departmentId(name);
-                      return (
-                        <label
-                          key={id}
-                          className="hover:bg-muted flex min-h-11 items-center gap-3 rounded-md px-3 text-sm"
-                        >
-                          <Checkbox
-                            checked={draft.departmentIds.includes(id)}
-                            onCheckedChange={(checked) => {
-                              const departmentIds = checked
-                                ? [...draft.departmentIds, id]
-                                : draft.departmentIds.filter(
-                                    (item) => item !== id,
-                                  );
-                              update({
-                                departmentIds,
-                                primaryDepartmentId: departmentIds.includes(
-                                  draft.primaryDepartmentId,
-                                )
-                                  ? draft.primaryDepartmentId
-                                  : (departmentIds[0] ?? ""),
-                              });
-                            }}
-                          />
-                          {name}
-                        </label>
-                      );
-                    })}
+            <fieldset disabled={pending} className="contents">
+              <div className="flex-1 space-y-6 overflow-y-auto p-5">
+                {errors.length > 0 && (
+                  <div ref={errorRef} id={errorId} tabIndex={-1}>
+                    <Alert variant="destructive">
+                      <CircleAlert className="size-4" />
+                      <p className="font-medium">Check this identity</p>
+                      <ul className="mt-1 list-disc pl-4">
+                        {errors.map((error) => (
+                          <li key={error}>{error}</li>
+                        ))}
+                      </ul>
+                    </Alert>
                   </div>
-                  <Field>
-                    <FieldLabel htmlFor={`${nameId}-primary`}>
-                      Primary department
-                    </FieldLabel>
-                    <NativeSelect
-                      id={`${nameId}-primary`}
-                      className="w-full [&_select]:min-h-11"
-                      value={draft.primaryDepartmentId}
-                      onChange={(event) =>
-                        update({ primaryDepartmentId: event.target.value })
-                      }
-                    >
-                      <NativeSelectOption value="">
-                        No primary department
-                      </NativeSelectOption>
-                      {draft.departmentIds.map((id) => (
-                        <NativeSelectOption key={id} value={id}>
-                          {departments.find(
-                            (name) => departmentId(name) === id,
-                          ) ?? id}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  </Field>
-                </FieldSet>
-              )}
+                )}
 
-              {draft.kind !== "service" && (
-                <FieldSet>
-                  <FieldLegend>Group membership</FieldLegend>
-                  {controller.state.groups.length === 0 ? (
-                    <p className="text-muted-foreground text-sm">
-                      No groups are available.
-                    </p>
-                  ) : (
-                    <div className="grid gap-1 sm:grid-cols-2">
-                      {controller.state.groups.map((group) => (
-                        <label
-                          key={group.id}
-                          className="hover:bg-muted flex min-h-11 items-center gap-3 rounded-md px-3 text-sm"
-                        >
-                          <Checkbox
-                            checked={draft.groupIds.includes(group.id)}
-                            onCheckedChange={(checked) =>
-                              update({
-                                groupIds: checked
-                                  ? [...draft.groupIds, group.id]
-                                  : draft.groupIds.filter(
-                                      (id) => id !== group.id,
-                                    ),
-                              })
-                            }
-                          />
-                          {group.name}
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </FieldSet>
-              )}
-
-              {draft.kind === "guest" && (
                 <FieldGroup>
                   <Field>
-                    <FieldLabel htmlFor={`${nameId}-sponsor`}>
-                      Sponsor
-                    </FieldLabel>
-                    <NativeSelect
-                      id={`${nameId}-sponsor`}
-                      className="w-full [&_select]:min-h-11"
-                      value={draft.sponsorId}
-                      onChange={(event) =>
-                        update({ sponsorId: event.target.value })
-                      }
-                    >
-                      <NativeSelectOption value="">
-                        Choose a sponsor
-                      </NativeSelectOption>
-                      {internalIdentities.map((identity) => (
-                        <NativeSelectOption
-                          key={identity.id}
-                          value={identity.id}
-                        >
-                          {identity.name}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  </Field>
-                  <ExpiryField
-                    id={`${nameId}-guest-expiry`}
-                    value={draft.expiresAt}
-                    onChange={(expiresAt) => update({ expiresAt })}
-                  />
-                  {guestInvitation && (
-                    <p className="text-muted-foreground text-xs">
-                      Invitation marked sent{" "}
-                      {guestInvitation.sentAt
-                        ? new Date(guestInvitation.sentAt).toLocaleString()
-                        : "without a recorded timestamp"}
-                      {guestInvitation.resendCount > 0
-                        ? ` · Resent ${guestInvitation.resendCount} ${guestInvitation.resendCount === 1 ? "time" : "times"}`
-                        : ""}
-                    </p>
-                  )}
-                </FieldGroup>
-              )}
-
-              {draft.kind === "service" && (
-                <FieldGroup>
-                  <Alert>
-                    <KeyRound className="size-4" />
-                    <p className="font-medium">No credentials are shown</p>
-                    <div className="text-muted-foreground mt-1">
-                      Only owner, purpose, expiry, and review state are
-                      represented.
-                    </div>
-                  </Alert>
-                  <Field>
-                    <FieldLabel htmlFor={`${nameId}-owner`}>Owner</FieldLabel>
-                    <NativeSelect
-                      id={`${nameId}-owner`}
-                      className="w-full [&_select]:min-h-11"
-                      value={draft.ownerId}
-                      onChange={(event) =>
-                        update({ ownerId: event.target.value })
-                      }
-                    >
-                      <NativeSelectOption value="">
-                        Choose an owner
-                      </NativeSelectOption>
-                      {internalIdentities.map((identity) => (
-                        <NativeSelectOption
-                          key={identity.id}
-                          value={identity.id}
-                        >
-                          {identity.name}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor={`${nameId}-purpose`}>
-                      Purpose
-                    </FieldLabel>
+                    <FieldLabel htmlFor={nameId}>Name</FieldLabel>
                     <Input
-                      id={`${nameId}-purpose`}
+                      id={nameId}
+                      autoFocus
                       className="min-h-11"
-                      value={draft.purpose}
-                      onChange={(event) =>
-                        update({ purpose: event.target.value })
-                      }
+                      value={draft.name}
+                      aria-describedby={errors.length ? errorId : undefined}
+                      aria-invalid={!draft.name.trim() || undefined}
+                      onChange={(event) => update({ name: event.target.value })}
                     />
+                    {!draft.name.trim() && errors.length > 0 && (
+                      <FieldError>Enter a name.</FieldError>
+                    )}
+                  </Field>
+
+                  {(draft.kind === "internal" || draft.kind === "guest") && (
+                    <Field>
+                      <FieldLabel htmlFor={`${nameId}-email`}>Email</FieldLabel>
+                      <Input
+                        id={`${nameId}-email`}
+                        type="email"
+                        className="min-h-11"
+                        value={draft.email}
+                        onChange={(event) =>
+                          update({ email: event.target.value })
+                        }
+                      />
+                      <FieldDescription>
+                        Used only to represent invitation state.
+                      </FieldDescription>
+                    </Field>
+                  )}
+
+                  {draft.kind === "internal" && (
+                    <Field>
+                      <FieldLabel htmlFor={`${nameId}-title`}>
+                        Job title
+                      </FieldLabel>
+                      <Input
+                        id={`${nameId}-title`}
+                        className="min-h-11"
+                        value={draft.title}
+                        onChange={(event) =>
+                          update({ title: event.target.value })
+                        }
+                      />
+                    </Field>
+                  )}
+
+                  <Field>
+                    <FieldLabel htmlFor={`${nameId}-role`}>Role</FieldLabel>
+                    <NativeSelect
+                      id={`${nameId}-role`}
+                      className="w-full [&_select]:min-h-11"
+                      value={draft.roleId}
+                      onChange={(event) =>
+                        update({ roleId: event.target.value })
+                      }
+                    >
+                      {roles.map((role) => (
+                        <NativeSelectOption key={role.id} value={role.id}>
+                          {role.name}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
                     <FieldDescription>
-                      Describe the integration or automation this represents.
+                      Every identity has exactly one role.
                     </FieldDescription>
                   </Field>
-                  <ExpiryField
-                    id={`${nameId}-service-expiry`}
-                    value={draft.expiresAt}
-                    onChange={(expiresAt) => update({ expiresAt })}
-                  />
+                  {draft.kind === "internal" && (
+                    <ExpiryField
+                      id={`${nameId}-internal-expiry`}
+                      value={draft.expiresAt ?? ""}
+                      required={false}
+                      onChange={(expiresAt) =>
+                        update({ expiresAt: expiresAt || undefined })
+                      }
+                    />
+                  )}
                 </FieldGroup>
-              )}
 
-              {existing && (
-                <section
-                  aria-labelledby={`${nameId}-access-actions`}
-                  className="space-y-3 border-t pt-5"
-                >
-                  <h3
-                    id={`${nameId}-access-actions`}
-                    className="text-sm font-semibold"
+                {draft.kind === "internal" && (
+                  <FieldSet>
+                    <FieldLegend>Departments</FieldLegend>
+                    <div className="grid gap-1 sm:grid-cols-2">
+                      {departments.map((name) => {
+                        const id = departmentId(name);
+                        return (
+                          <label
+                            key={id}
+                            className="hover:bg-muted flex min-h-11 items-center gap-3 rounded-md px-3 text-sm"
+                          >
+                            <Checkbox
+                              checked={draft.departmentIds.includes(id)}
+                              onCheckedChange={(checked) => {
+                                const departmentIds = checked
+                                  ? [...draft.departmentIds, id]
+                                  : draft.departmentIds.filter(
+                                      (item) => item !== id,
+                                    );
+                                update({
+                                  departmentIds,
+                                  primaryDepartmentId: departmentIds.includes(
+                                    draft.primaryDepartmentId,
+                                  )
+                                    ? draft.primaryDepartmentId
+                                    : (departmentIds[0] ?? ""),
+                                });
+                              }}
+                            />
+                            {name}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <Field>
+                      <FieldLabel htmlFor={`${nameId}-primary`}>
+                        Primary department
+                      </FieldLabel>
+                      <NativeSelect
+                        id={`${nameId}-primary`}
+                        className="w-full [&_select]:min-h-11"
+                        value={draft.primaryDepartmentId}
+                        onChange={(event) =>
+                          update({ primaryDepartmentId: event.target.value })
+                        }
+                      >
+                        <NativeSelectOption value="">
+                          No primary department
+                        </NativeSelectOption>
+                        {draft.departmentIds.map((id) => (
+                          <NativeSelectOption key={id} value={id}>
+                            {departments.find(
+                              (name) => departmentId(name) === id,
+                            ) ?? id}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </Field>
+                  </FieldSet>
+                )}
+
+                {draft.kind !== "service" && (
+                  <FieldSet>
+                    <FieldLegend>Group membership</FieldLegend>
+                    {controller.state.groups.length === 0 ? (
+                      <p className="text-muted-foreground text-sm">
+                        No groups are available.
+                      </p>
+                    ) : (
+                      <div className="grid gap-1 sm:grid-cols-2">
+                        {controller.state.groups.map((group) => (
+                          <label
+                            key={group.id}
+                            className="hover:bg-muted flex min-h-11 items-center gap-3 rounded-md px-3 text-sm"
+                          >
+                            <Checkbox
+                              checked={draft.groupIds.includes(group.id)}
+                              onCheckedChange={(checked) =>
+                                update({
+                                  groupIds: checked
+                                    ? [...draft.groupIds, group.id]
+                                    : draft.groupIds.filter(
+                                        (id) => id !== group.id,
+                                      ),
+                                })
+                              }
+                            />
+                            {group.name}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </FieldSet>
+                )}
+
+                {draft.kind === "guest" && (
+                  <FieldGroup>
+                    <Field>
+                      <FieldLabel htmlFor={`${nameId}-sponsor`}>
+                        Sponsor
+                      </FieldLabel>
+                      <NativeSelect
+                        id={`${nameId}-sponsor`}
+                        className="w-full [&_select]:min-h-11"
+                        value={draft.sponsorId}
+                        onChange={(event) =>
+                          update({ sponsorId: event.target.value })
+                        }
+                      >
+                        <NativeSelectOption value="">
+                          Choose a sponsor
+                        </NativeSelectOption>
+                        {internalIdentities.map((identity) => (
+                          <NativeSelectOption
+                            key={identity.id}
+                            value={identity.id}
+                          >
+                            {identity.name}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </Field>
+                    <ExpiryField
+                      id={`${nameId}-guest-expiry`}
+                      value={draft.expiresAt}
+                      onChange={(expiresAt) => update({ expiresAt })}
+                    />
+                    {guestInvitation && (
+                      <p className="text-muted-foreground text-xs">
+                        Invitation marked sent{" "}
+                        {guestInvitation.sentAt
+                          ? new Date(guestInvitation.sentAt).toLocaleString()
+                          : "without a recorded timestamp"}
+                        {guestInvitation.resendCount > 0
+                          ? ` · Resent ${guestInvitation.resendCount} ${guestInvitation.resendCount === 1 ? "time" : "times"}`
+                          : ""}
+                      </p>
+                    )}
+                  </FieldGroup>
+                )}
+
+                {draft.kind === "service" && (
+                  <FieldGroup>
+                    <Alert>
+                      <KeyRound className="size-4" />
+                      <p className="font-medium">No credentials are shown</p>
+                      <div className="text-muted-foreground mt-1">
+                        Only owner, purpose, expiry, and review state are
+                        represented.
+                      </div>
+                    </Alert>
+                    <Field>
+                      <FieldLabel htmlFor={`${nameId}-owner`}>Owner</FieldLabel>
+                      <NativeSelect
+                        id={`${nameId}-owner`}
+                        className="w-full [&_select]:min-h-11"
+                        value={draft.ownerId}
+                        onChange={(event) =>
+                          update({ ownerId: event.target.value })
+                        }
+                      >
+                        <NativeSelectOption value="">
+                          Choose an owner
+                        </NativeSelectOption>
+                        {internalIdentities.map((identity) => (
+                          <NativeSelectOption
+                            key={identity.id}
+                            value={identity.id}
+                          >
+                            {identity.name}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor={`${nameId}-purpose`}>
+                        Purpose
+                      </FieldLabel>
+                      <Input
+                        id={`${nameId}-purpose`}
+                        className="min-h-11"
+                        value={draft.purpose}
+                        onChange={(event) =>
+                          update({ purpose: event.target.value })
+                        }
+                      />
+                      <FieldDescription>
+                        Describe the integration or automation this represents.
+                      </FieldDescription>
+                    </Field>
+                    <ExpiryField
+                      id={`${nameId}-service-expiry`}
+                      value={draft.expiresAt}
+                      onChange={(expiresAt) => update({ expiresAt })}
+                    />
+                  </FieldGroup>
+                )}
+
+                {existing && (
+                  <section
+                    aria-labelledby={`${nameId}-access-actions`}
+                    className="space-y-3 border-t pt-5"
                   >
-                    Identity actions
-                  </h3>
-                  <div className="flex flex-wrap gap-2">
-                    {(existing.kind === "internal" ||
-                      existing.kind === "guest") &&
-                      existing.status === "pending" && (
-                        <>
+                    <h3
+                      id={`${nameId}-access-actions`}
+                      className="text-sm font-semibold"
+                    >
+                      Identity actions
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {(existing.kind === "internal" ||
+                        existing.kind === "guest") &&
+                        existing.status === "pending" && (
+                          <>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="min-h-11"
+                              disabled={pending}
+                              onClick={() =>
+                                void report(
+                                  controller.actions.resendInvite(existing.id),
+                                )
+                              }
+                            >
+                              <Mail /> Resend invitation
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="min-h-11"
+                              disabled={pending}
+                              onClick={() =>
+                                setPendingReview({
+                                  kind: "action",
+                                  action: {
+                                    type: "revoke-invite",
+                                    identity: copyIdentity(existing),
+                                  },
+                                })
+                              }
+                            >
+                              Revoke invitation
+                            </Button>
+                          </>
+                        )}
+                      {existing.kind === "internal" &&
+                        existing.status === "active" && (
                           <Button
                             type="button"
                             variant="outline"
                             className="min-h-11"
-                            onClick={() =>
-                              report(
-                                controller.actions.resendInvite(existing.id),
-                              )
-                            }
+                            onClick={() => setResetPreview(true)}
                           >
-                            <Mail /> Resend invitation
+                            <KeyRound /> Preview password reset
                           </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="min-h-11"
-                            onClick={() =>
-                              setPendingReview({
-                                kind: "action",
-                                action: {
-                                  type: "revoke-invite",
-                                  identity: copyIdentity(existing),
-                                },
-                              })
-                            }
-                          >
-                            Revoke invitation
-                          </Button>
-                        </>
-                      )}
-                    {existing.kind === "internal" &&
-                      existing.status === "active" && (
+                        )}
+                      {existing.status === "disabled" ||
+                      existing.status === "revoked" ||
+                      existing.status === "deleted" ? (
                         <Button
                           type="button"
                           variant="outline"
                           className="min-h-11"
-                          onClick={() => setResetPreview(true)}
+                          disabled={pending}
+                          onClick={() =>
+                            void report(
+                              controller.actions.restoreIdentity(existing.id),
+                            )
+                          }
                         >
-                          <KeyRound /> Preview password reset
+                          <RotateCcw /> Restore identity
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-11"
+                          disabled={pending}
+                          onClick={disableExistingIdentity}
+                        >
+                          Disable identity
                         </Button>
                       )}
-                    {existing.status === "disabled" ||
-                    existing.status === "revoked" ||
-                    existing.status === "deleted" ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        onClick={() =>
-                          report(
-                            controller.actions.restoreIdentity(existing.id),
-                          )
-                        }
-                      >
-                        <RotateCcw /> Restore identity
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        onClick={disableExistingIdentity}
-                      >
-                        Disable identity
-                      </Button>
-                    )}
-                  </div>
-                </section>
-              )}
+                    </div>
+                  </section>
+                )}
 
-              {existing && (
-                <section
-                  aria-labelledby={`${nameId}-sessions`}
-                  className="space-y-3 border-t pt-5"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <h3
-                      id={`${nameId}-sessions`}
-                      className="text-sm font-semibold"
-                    >
-                      Sessions
-                    </h3>
-                    {sessions.length > 1 && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="min-h-11"
-                        onClick={() =>
-                          setPendingReview({
-                            kind: "action",
-                            action: {
-                              type: "revoke-all-sessions",
-                              identity: copyIdentity(existing),
-                              count: sessions.filter(
-                                (session) => !session.current,
-                              ).length,
-                            },
-                          })
-                        }
+                {existing && (
+                  <section
+                    aria-labelledby={`${nameId}-sessions`}
+                    className="space-y-3 border-t pt-5"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <h3
+                        id={`${nameId}-sessions`}
+                        className="text-sm font-semibold"
                       >
-                        <LogOut /> Revoke all
-                      </Button>
-                    )}
-                  </div>
-                  {sessions.length === 0 ? (
-                    <p className="text-muted-foreground text-sm">
-                      No active sessions.
-                    </p>
-                  ) : (
-                    <ul className="divide-y rounded-md border">
-                      {sessions.map((session) => (
-                        <li
-                          key={session.id}
-                          className="flex items-start gap-3 p-3"
+                        Sessions
+                      </h3>
+                      {sessions.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="min-h-11"
+                          disabled={pending}
+                          onClick={() =>
+                            setPendingReview({
+                              kind: "action",
+                              action: {
+                                type: "revoke-all-sessions",
+                                identity: copyIdentity(existing),
+                                count: sessions.filter(
+                                  (session) => !session.current,
+                                ).length,
+                              },
+                            })
+                          }
                         >
-                          <Laptop className="text-muted-foreground mt-1 size-4 shrink-0" />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium">
-                              {session.label}
-                            </p>
-                            <p className="text-muted-foreground mt-0.5 text-xs">
-                              {session.current
-                                ? "Current session"
-                                : "Remote session"}
-                              {session.lastActiveAt
-                                ? ` · Active ${new Date(session.lastActiveAt).toLocaleString()}`
-                                : ""}
-                            </p>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="size-11 shrink-0"
-                            disabled={session.current}
-                            aria-label={`Revoke ${session.label}`}
-                            onClick={() =>
-                              setPendingReview({
-                                kind: "action",
-                                action: {
-                                  type: "revoke-session",
-                                  identity: copyIdentity(existing),
-                                  sessionId: session.id,
-                                  sessionLabel: session.label,
-                                },
-                              })
-                            }
+                          <LogOut /> Revoke all
+                        </Button>
+                      )}
+                    </div>
+                    {sessions.length === 0 ? (
+                      <p className="text-muted-foreground text-sm">
+                        No active sessions.
+                      </p>
+                    ) : (
+                      <ul className="divide-y rounded-md border">
+                        {sessions.map((session) => (
+                          <li
+                            key={session.id}
+                            className="flex items-start gap-3 p-3"
                           >
-                            <LogOut />
-                          </Button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
-              )}
+                            <Laptop className="text-muted-foreground mt-1 size-4 shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium">
+                                {session.label}
+                              </p>
+                              <p className="text-muted-foreground mt-0.5 text-xs">
+                                {session.current
+                                  ? "Current session"
+                                  : "Remote session"}
+                                {session.lastActiveAt
+                                  ? ` · Active ${new Date(session.lastActiveAt).toLocaleString()}`
+                                  : ""}
+                              </p>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-11 shrink-0"
+                              disabled={session.current || pending}
+                              aria-label={`Revoke ${session.label}`}
+                              onClick={() =>
+                                setPendingReview({
+                                  kind: "action",
+                                  action: {
+                                    type: "revoke-session",
+                                    identity: copyIdentity(existing),
+                                    sessionId: session.id,
+                                    sessionLabel: session.label,
+                                  },
+                                })
+                              }
+                            >
+                              <LogOut />
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                )}
 
-              {existing && existing.status !== "deleted" && (
-                <section
-                  aria-labelledby={`${nameId}-danger`}
-                  className="space-y-3 border-t pt-5"
-                >
-                  <h3
-                    id={`${nameId}-danger`}
-                    className="text-destructive text-sm font-semibold"
+                {existing && existing.status !== "deleted" && (
+                  <section
+                    aria-labelledby={`${nameId}-danger`}
+                    className="space-y-3 border-t pt-5"
                   >
-                    Danger zone
-                  </h3>
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    className="min-h-11"
-                    onClick={() =>
-                      setPendingReview({
-                        kind: "action",
-                        action: {
-                          type: "delete",
-                          identity: copyIdentity(existing),
-                        },
-                      })
-                    }
-                  >
-                    <Trash2 /> Delete identity
-                  </Button>
-                  <p className="text-muted-foreground text-xs">
-                    The last active administrator cannot be disabled, demoted,
-                    or deleted. Exact-name confirmation is required.
-                  </p>
-                </section>
-              )}
-            </div>
+                    <h3
+                      id={`${nameId}-danger`}
+                      className="text-destructive text-sm font-semibold"
+                    >
+                      Danger zone
+                    </h3>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      className="min-h-11"
+                      disabled={pending}
+                      onClick={() =>
+                        setPendingReview({
+                          kind: "action",
+                          action: {
+                            type: "delete",
+                            identity: copyIdentity(existing),
+                          },
+                        })
+                      }
+                    >
+                      <Trash2 /> Delete identity
+                    </Button>
+                    <p className="text-muted-foreground text-xs">
+                      The last active administrator cannot be disabled, demoted,
+                      or deleted. Exact-name confirmation is required.
+                    </p>
+                  </section>
+                )}
+              </div>
+            </fieldset>
 
             <SheetFooter className="border-t p-4">
               <Button
@@ -1235,7 +1281,7 @@ export function IdentityEditor({
                 Cancel
               </Button>
               {existing?.status !== "deleted" && (
-                <Button type="submit" className="min-h-11">
+                <Button type="submit" className="min-h-11" disabled={pending}>
                   {existing ? "Save changes" : "Add identity"}
                 </Button>
               )}
@@ -1347,7 +1393,11 @@ export function IdentityEditor({
             >
               Back to edit
             </DialogClose>
-            <Button className="min-h-11" onClick={confirmReview}>
+            <Button
+              className="min-h-11"
+              disabled={pending}
+              onClick={confirmReview}
+            >
               {pendingReview?.kind === "action"
                 ? pendingReview.action.type === "revoke-session" ||
                   pendingReview.action.type === "revoke-all-sessions"
@@ -1438,6 +1488,7 @@ export function IdentityEditor({
             <Button
               variant="destructive"
               className="min-h-11"
+              disabled={pending}
               onClick={() => {
                 setConfirmClose(false);
                 onOpenChange(false);
@@ -1511,7 +1562,7 @@ export function IdentityEditor({
             <Button
               variant="destructive"
               className="min-h-11"
-              disabled={confirmationName !== confirmationTargetName}
+              disabled={confirmationName !== confirmationTargetName || pending}
               onClick={confirmSensitiveAction}
             >
               {confirmationMode === "delete"

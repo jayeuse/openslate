@@ -291,7 +291,12 @@ export type AccessCommand =
   | { type: "revoke-all-sessions"; identityId: string }
   | { type: "bulk-update-identities"; input: BulkIdentityUpdateInput }
   | { type: "create-role"; input: CreateRoleInput }
-  | { type: "update-role"; roleId: string; patch: UpdateRolePatch }
+  | {
+      type: "update-role";
+      roleId: string;
+      patch: UpdateRolePatch;
+      expected?: Role;
+    }
   | { type: "duplicate-role"; roleId: string; name?: string }
   | { type: "delete-role"; roleId: string }
   | { type: "apply-role-template"; roleId: string; templateId: string }
@@ -300,6 +305,7 @@ export type AccessCommand =
       type: "update-group";
       groupId: string;
       patch: Partial<Pick<AccessGroup, "name" | "description" | "memberIds">>;
+      expected?: AccessGroup;
     }
   | { type: "delete-group"; groupId: string }
   | { type: "set-group-members"; groupId: string; memberIds: string[] }
@@ -1183,6 +1189,13 @@ export function executeAccessCommand(
       const role = state.roles.find((item) => item.id === command.roleId);
       if (!role) return fail("Role not found.");
       if (role.builtin) return fail("Built-in roles are immutable.");
+      if (
+        command.expected &&
+        JSON.stringify(role) !== JSON.stringify(command.expected)
+      )
+        return fail(
+          "This role changed after review. Review the current values before applying your draft.",
+        );
       const name = command.patch.name?.trim() ?? role.name;
       if (!uniqueRoleName(state, name, role.id))
         return fail("Role names must be non-empty and unique.");
@@ -1321,6 +1334,13 @@ export function executeAccessCommand(
       const snapshot = policySnapshot(state);
       const group = state.groups.find((item) => item.id === command.groupId);
       if (!group) return fail("Group not found.");
+      if (
+        command.expected &&
+        JSON.stringify(group) !== JSON.stringify(command.expected)
+      )
+        return fail(
+          "This group changed after review. Review the current values before applying your draft.",
+        );
       const name = command.patch.name?.trim() ?? group.name;
       if (!uniqueGroupName(state, name, group.id))
         return fail("Group names must be non-empty and unique.");

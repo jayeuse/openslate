@@ -39,6 +39,7 @@ import { PaginationControls } from "@/components/ui/pagination-controls";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
+import { completeCollection, pageCollection } from "../sample-collections";
 import type { AccessController } from "./controller";
 import type {
   AccessDecision,
@@ -361,15 +362,27 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
         Boolean(drafts[permission.id] || baseByPermission.has(permission.id)))
     );
   });
-  const pageCount = Math.max(
-    1,
-    Math.ceil(filteredPermissions.length / PAGE_SIZE),
+  const pageResult = pageCollection(
+    completeCollection(
+      filteredPermissions,
+      JSON.stringify([
+        "rules",
+        selection.subject.kind,
+        selection.subject.kind === "everyone"
+          ? "everyone"
+          : selection.subject.id,
+        selection.scope.kind,
+        selection.scope.id,
+        normalizedQuery,
+        modifiedOnly,
+      ]),
+    ),
+    pageIndex * PAGE_SIZE,
+    PAGE_SIZE,
   );
-  const safePageIndex = Math.min(Math.max(pageIndex, 0), pageCount - 1);
-  const visiblePermissions = filteredPermissions.slice(
-    safePageIndex * PAGE_SIZE,
-    (safePageIndex + 1) * PAGE_SIZE,
-  );
+  const pageCount = Math.max(1, Math.ceil(pageResult.total / pageResult.limit));
+  const safePageIndex = pageResult.offset / pageResult.limit;
+  const visiblePermissions = [...pageResult.items];
   const grouped = groupByProduct(visiblePermissions);
 
   function ruleFor(permissionId: string): AccessRule {
@@ -416,16 +429,22 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
     setPageIndex(0);
   }
 
-  function applyChanges() {
-    setImpactOpen(false);
-    setConfirmOpen(false);
+  async function applyChanges() {
+    if (controller.isPending()) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
     if (rulesToApply.length) {
-      const result = actions.upsertRules(rulesToApply);
+      const result = await actions.upsertRules(rulesToApply);
       if (!result.ok) {
         setError(result.error);
         return;
       }
     }
+    setImpactOpen(false);
+    setConfirmOpen(false);
     setDrafts({});
     setBaselines({});
     setConflictResolutions({});
@@ -490,495 +509,511 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
 
   return (
     <section aria-labelledby="rules-title" className="flex flex-col gap-3">
-      <div>
-        <h2 id="rules-title" className="text-xl font-semibold tracking-tight">
-          Access rules
-        </h2>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Edit one subject and one resource scope at a time. Changes remain
-          staged until you review their impact.
-        </p>
-      </div>
+      <fieldset disabled={controller.isPending()} className="contents">
+        <div>
+          <h2 id="rules-title" className="text-xl font-semibold tracking-tight">
+            Access rules
+          </h2>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Edit one subject and one resource scope at a time. Changes remain
+            staged until you review their impact.
+          </p>
+        </div>
 
-      {notice ? <Alert variant="success">{notice}</Alert> : null}
-      {error ? (
-        <Alert role="alert" variant="destructive">
-          {error}
-        </Alert>
-      ) : null}
+        {notice ? <Alert variant="success">{notice}</Alert> : null}
+        {error ? (
+          <Alert role="alert" variant="destructive">
+            {error}
+          </Alert>
+        ) : null}
 
-      <Card>
-        <CardContent className="p-3">
-          <FieldGroup className="grid gap-3 md:grid-cols-2 xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(12rem,1.5fr)_auto]">
-            <Field>
-              <FieldLabel htmlFor="rule-subject-kind">Subject type</FieldLabel>
-              <NativeSelect
-                id="rule-subject-kind"
-                className="w-full [&>select]:min-h-11"
-                value={selection.subject.kind}
-                onChange={(event) => {
-                  const kind = event.target.value as AccessSubjectRef["kind"];
-                  const firstId =
-                    kind === "role"
-                      ? state.roles[0]?.id
-                      : kind === "group"
-                        ? state.groups[0]?.id
-                        : kind === "identity"
-                          ? state.identities[0]?.id
-                          : undefined;
-                  if (kind !== "everyone" && !firstId) return;
-                  if (kind === "everyone") {
-                    requestSelection({ ...selection, subject: { kind } });
-                  } else if (firstId) {
+        <Card>
+          <CardContent className="p-3">
+            <FieldGroup className="grid gap-3 md:grid-cols-2 xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(12rem,1.5fr)_auto]">
+              <Field>
+                <FieldLabel htmlFor="rule-subject-kind">
+                  Subject type
+                </FieldLabel>
+                <NativeSelect
+                  id="rule-subject-kind"
+                  className="w-full [&>select]:min-h-11"
+                  value={selection.subject.kind}
+                  onChange={(event) => {
+                    const kind = event.target.value as AccessSubjectRef["kind"];
+                    const firstId =
+                      kind === "role"
+                        ? state.roles[0]?.id
+                        : kind === "group"
+                          ? state.groups[0]?.id
+                          : kind === "identity"
+                            ? state.identities[0]?.id
+                            : undefined;
+                    if (kind !== "everyone" && !firstId) return;
+                    if (kind === "everyone") {
+                      requestSelection({ ...selection, subject: { kind } });
+                    } else if (firstId) {
+                      requestSelection({
+                        ...selection,
+                        subject: { kind, id: firstId },
+                      });
+                    }
+                  }}
+                >
+                  {subjectKinds.map((kind) => (
+                    <NativeSelectOption key={kind} value={kind}>
+                      {title(kind)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="rule-subject">Subject</FieldLabel>
+                <NativeSelect
+                  id="rule-subject"
+                  className="w-full [&>select]:min-h-11"
+                  disabled={selection.subject.kind === "everyone"}
+                  value={
+                    selection.subject.kind === "everyone"
+                      ? "everyone"
+                      : selection.subject.id
+                  }
+                  onChange={(event) => {
+                    if (selection.subject.kind === "everyone") return;
                     requestSelection({
                       ...selection,
-                      subject: { kind, id: firstId },
+                      subject: {
+                        kind: selection.subject.kind,
+                        id: event.target.value,
+                      },
                     });
-                  }
-                }}
-              >
-                {subjectKinds.map((kind) => (
-                  <NativeSelectOption key={kind} value={kind}>
-                    {title(kind)}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="rule-subject">Subject</FieldLabel>
-              <NativeSelect
-                id="rule-subject"
-                className="w-full [&>select]:min-h-11"
-                disabled={selection.subject.kind === "everyone"}
-                value={
-                  selection.subject.kind === "everyone"
-                    ? "everyone"
-                    : selection.subject.id
-                }
-                onChange={(event) => {
-                  if (selection.subject.kind === "everyone") return;
-                  requestSelection({
-                    ...selection,
-                    subject: {
-                      kind: selection.subject.kind,
-                      id: event.target.value,
-                    },
-                  });
-                }}
-              >
-                {selection.subject.kind === "everyone" ? (
-                  <NativeSelectOption value="everyone">
-                    Everyone
-                  </NativeSelectOption>
-                ) : (
-                  subjectOptions.map((item) => (
-                    <NativeSelectOption key={item.id} value={item.id}>
-                      {item.name}
+                  }}
+                >
+                  {selection.subject.kind === "everyone" ? (
+                    <NativeSelectOption value="everyone">
+                      Everyone
                     </NativeSelectOption>
-                  ))
-                )}
-              </NativeSelect>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="rule-scope-kind">Scope type</FieldLabel>
-              <NativeSelect
-                id="rule-scope-kind"
-                className="w-full [&>select]:min-h-11"
-                value={selection.scope.kind}
-                onChange={(event) => {
-                  const kind = event.target.value as AccessScopeKind;
-                  const first = scopeCatalog.find(
-                    (scope) => scope.kind === kind,
-                  );
-                  if (!first) return;
-                  requestSelection({
-                    ...selection,
-                    scope: { kind, id: first.id },
-                  });
-                }}
-              >
-                {scopeKinds.map((kind) => (
-                  <NativeSelectOption key={kind} value={kind}>
-                    {title(kind)}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="rule-scope">Resource scope</FieldLabel>
-              <NativeSelect
-                id="rule-scope"
-                className="w-full [&>select]:min-h-11"
-                value={selection.scope.id}
-                onChange={(event) =>
-                  requestSelection({
-                    ...selection,
-                    scope: {
-                      kind: selection.scope.kind,
-                      id: event.target.value,
-                    },
-                  })
-                }
-              >
-                {scopesForKind.map((scope) => (
-                  <NativeSelectOption key={scope.id} value={scope.id}>
-                    {scope.name}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="rule-search">Search permissions</FieldLabel>
-              <div className="relative">
-                <Search
-                  aria-hidden="true"
-                  className="text-muted-foreground absolute top-3.5 left-3 size-4"
-                />
-                <Input
-                  id="rule-search"
-                  className="min-h-11 pl-9"
-                  value={query}
+                  ) : (
+                    subjectOptions.map((item) => (
+                      <NativeSelectOption key={item.id} value={item.id}>
+                        {item.name}
+                      </NativeSelectOption>
+                    ))
+                  )}
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="rule-scope-kind">Scope type</FieldLabel>
+                <NativeSelect
+                  id="rule-scope-kind"
+                  className="w-full [&>select]:min-h-11"
+                  value={selection.scope.kind}
                   onChange={(event) => {
-                    setQuery(event.target.value);
+                    const kind = event.target.value as AccessScopeKind;
+                    const first = scopeCatalog.find(
+                      (scope) => scope.kind === kind,
+                    );
+                    if (!first) return;
+                    requestSelection({
+                      ...selection,
+                      scope: { kind, id: first.id },
+                    });
+                  }}
+                >
+                  {scopeKinds.map((kind) => (
+                    <NativeSelectOption key={kind} value={kind}>
+                      {title(kind)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="rule-scope">Resource scope</FieldLabel>
+                <NativeSelect
+                  id="rule-scope"
+                  className="w-full [&>select]:min-h-11"
+                  value={selection.scope.id}
+                  onChange={(event) =>
+                    requestSelection({
+                      ...selection,
+                      scope: {
+                        kind: selection.scope.kind,
+                        id: event.target.value,
+                      },
+                    })
+                  }
+                >
+                  {scopesForKind.map((scope) => (
+                    <NativeSelectOption key={scope.id} value={scope.id}>
+                      {scope.name}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="rule-search">
+                  Search permissions
+                </FieldLabel>
+                <div className="relative">
+                  <Search
+                    aria-hidden="true"
+                    className="text-muted-foreground absolute top-3.5 left-3 size-4"
+                  />
+                  <Input
+                    id="rule-search"
+                    className="min-h-11 pl-9"
+                    value={query}
+                    onChange={(event) => {
+                      setQuery(event.target.value);
+                      setPageIndex(0);
+                    }}
+                    placeholder="Permission, product, or ID"
+                  />
+                </div>
+              </Field>
+              <Field className="flex-row items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                <div>
+                  <FieldLabel htmlFor="modified-rules">
+                    Modified only
+                  </FieldLabel>
+                  <FieldDescription>Hide inherited</FieldDescription>
+                </div>
+                <Switch
+                  id="modified-rules"
+                  className="after:-inset-y-3.5"
+                  checked={modifiedOnly}
+                  onCheckedChange={(checked) => {
+                    setModifiedOnly(checked);
                     setPageIndex(0);
                   }}
-                  placeholder="Permission, product, or ID"
                 />
-              </div>
-            </Field>
-            <Field className="flex-row items-center justify-between gap-3 rounded-lg border px-3 py-2">
-              <div>
-                <FieldLabel htmlFor="modified-rules">Modified only</FieldLabel>
-                <FieldDescription>Hide inherited</FieldDescription>
-              </div>
-              <Switch
-                id="modified-rules"
-                className="after:-inset-y-3.5"
-                checked={modifiedOnly}
-                onCheckedChange={(checked) => {
-                  setModifiedOnly(checked);
-                  setPageIndex(0);
-                }}
-              />
-            </Field>
-          </FieldGroup>
-        </CardContent>
-      </Card>
-
-      {!visiblePermissions.length ? (
-        <Card>
-          <CardContent className="text-muted-foreground py-10 text-center text-sm">
-            No permissions match these filters.
+              </Field>
+            </FieldGroup>
           </CardContent>
         </Card>
-      ) : (
-        [...grouped.entries()].map(([product, entries]) => (
-          <Card key={product}>
-            <CardContent className="p-0">
-              <div className="hidden lg:block">
-                <DataTable
-                  ariaLabel={`${product} permissions`}
-                  cellClassName="p-4 whitespace-normal"
-                  columns={permissionColumns(ruleFor, stage)}
-                  data={entries}
-                  getRowId={(permission) => permission.id}
-                />
-              </div>
-              <div className="divide-y lg:hidden">
-                {entries.map((permission) => {
-                  const rule = ruleFor(permission.id);
-                  return (
-                    <article
-                      key={permission.id}
-                      className="flex flex-col gap-4 p-4"
-                    >
-                      <div>
-                        <h3 className="font-medium">{permission.name}</h3>
-                        <p className="text-muted-foreground mt-1 font-mono text-xs">
-                          {permission.id}
-                        </p>
-                        <Badge variant="secondary" className="mt-2">
-                          {product}
-                        </Badge>
-                      </div>
-                      <RuleControls
-                        rule={rule}
-                        permissionName={permission.name}
-                        idSuffix="mobile"
-                        onChange={stage}
-                      />
-                    </article>
-                  );
-                })}
-              </div>
+
+        {!visiblePermissions.length ? (
+          <Card>
+            <CardContent className="text-muted-foreground py-10 text-center text-sm">
+              No permissions match these filters.
             </CardContent>
           </Card>
-        ))
-      )}
-
-      {pageCount > 1 ? (
-        <PaginationControls
-          ariaLabel="Permission pages"
-          pageCount={pageCount}
-          pageIndex={safePageIndex}
-          onPageIndexChange={setPageIndex}
-        />
-      ) : null}
-
-      <div className="bg-card/95 sticky bottom-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 shadow-sm backdrop-blur">
-        <p className="text-sm">
-          <strong>{pending.length}</strong> staged change
-          {pending.length === 1 ? "" : "s"}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={!dirty}
-            onClick={() => {
-              setPendingSelection(null);
-              setDiscardOpen(true);
-            }}
-          >
-            Discard
-          </Button>
-          <Button
-            type="button"
-            className="min-h-11"
-            disabled={!dirty}
-            onClick={() => setImpactOpen(true)}
-          >
-            Review impact
-          </Button>
-        </div>
-      </div>
-
-      <Dialog open={impactOpen} onOpenChange={setImpactOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Review policy impact</DialogTitle>
-            <DialogDescription>
-              Compare the opening baseline, current policy, and staged draft
-              before applying it.
-            </DialogDescription>
-          </DialogHeader>
-          {conflicts.length ? (
-            <Alert variant="warning">
-              The live policy changed for {conflicts.length} staged permission
-              {conflicts.length === 1 ? "" : "s"}. Unrelated live changes are
-              preserved. Resolve each same-permission conflict explicitly.
-            </Alert>
-          ) : null}
-          <Alert>
-            Protected Administrator access is guarded and unaffected by these
-            draft rules. Active protected administrator
-            {protectedAdministrators.length === 1 ? "" : "s"}:{" "}
-            {protectedAdministrators.length
-              ? protectedAdministrators
-                  .map((identity) => identity.name)
-                  .join(", ")
-              : "none — resolve this critical health finding before relying on the policy"}
-            .
-          </Alert>
-          <div className="flex max-h-[52dvh] flex-col gap-2 overflow-y-auto py-2">
-            {pending.map((rule) => {
-              const permission = permissionCatalog.find(
-                (item) => item.id === rule.permissionId,
-              );
-              const opened = baselines[rule.permissionId];
-              const current = baseByPermission.get(rule.permissionId);
-              const isConflict = conflicts.some(
-                (item) => item.permissionId === rule.permissionId,
-              );
-              const resolution = resolutionIsCurrent(rule)
-                ? conflictResolutions[rule.permissionId]?.choice
-                : undefined;
-              const affected = identitiesAffectedBy(rule);
-              const effect = decisionImpact(current, rule);
-              return (
-                <div
-                  key={rule.permissionId}
-                  className="flex flex-col gap-3 rounded-lg border p-3"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p className="font-medium">
-                        {permission?.name ?? rule.permissionId}
-                      </p>
-                      <p className="text-muted-foreground text-xs">
-                        {permission?.product}
-                      </p>
-                    </div>
-                    {isConflict ? (
-                      <Badge variant="warning">Live conflict</Badge>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Badge variant="outline">
-                      Opened: {opened?.decision ?? "inherit"}
-                    </Badge>
-                    <Badge variant="outline">
-                      Current: {current?.decision ?? "inherit"}
-                    </Badge>
-                    <Badge
-                      variant={
-                        rule.decision === "deny"
-                          ? "destructive"
-                          : rule.decision === "allow"
-                            ? "success"
-                            : "secondary"
-                      }
-                    >
-                      Draft: {rule.decision}
-                    </Badge>
-                    <Badge
-                      variant={
-                        effect === "Removes access"
-                          ? "destructive"
-                          : effect === "Elevates access"
-                            ? "warning"
-                            : "secondary"
-                      }
-                    >
-                      {effect}
-                    </Badge>
-                  </div>
-                  <p className="text-muted-foreground text-sm">
-                    Affected non-protected identities: {affected.length}
-                    {affected.length
-                      ? ` — ${affected
-                          .slice(0, 3)
-                          .map((identity) => identity.name)
-                          .join(
-                            ", ",
-                          )}${affected.length > 3 ? ` and ${affected.length - 3} more` : ""}`
-                      : " — no current identities match this subject"}
-                  </p>
-                  {isConflict ? (
-                    <ToggleGroup
-                      aria-label={`${permission?.name ?? rule.permissionId} conflict resolution`}
-                      value={resolution ? [resolution] : []}
-                      onValueChange={(values) => {
-                        const choice = values[0];
-                        if (choice !== "current" && choice !== "draft") return;
-                        setConflictResolutions((resolutions) => ({
-                          ...resolutions,
-                          [rule.permissionId]: {
-                            choice,
-                            current: structuredClone(current ?? null),
-                          },
-                        }));
-                      }}
-                      variant="outline"
-                      spacing={0}
-                      className="w-full [&>button]:min-h-11 [&>button]:flex-1"
-                    >
-                      <ToggleGroupItem value="current">
-                        Keep current
-                      </ToggleGroupItem>
-                      <ToggleGroupItem value="draft">Use draft</ToggleGroupItem>
-                    </ToggleGroup>
-                  ) : null}
+        ) : (
+          [...grouped.entries()].map(([product, entries]) => (
+            <Card key={product}>
+              <CardContent className="p-0">
+                <div className="hidden lg:block">
+                  <DataTable
+                    ariaLabel={`${product} permissions`}
+                    cellClassName="p-4 whitespace-normal"
+                    columns={permissionColumns(ruleFor, stage)}
+                    data={entries}
+                    getRowId={(permission) => permission.id}
+                  />
                 </div>
-              );
-            })}
-          </div>
-          {broadGrant || destructive ? (
-            <Alert variant="warning">
-              <AlertTriangle aria-hidden="true" className="mr-2 inline" />
-              This change includes {broadGrant ? "a broad grant" : ""}
-              {broadGrant && destructive ? " and " : ""}
-              {destructive ? "a deny that may remove access" : ""}. A separate
-              confirmation is required.
-            </Alert>
-          ) : null}
-          <DialogFooter>
+                <div className="divide-y lg:hidden">
+                  {entries.map((permission) => {
+                    const rule = ruleFor(permission.id);
+                    return (
+                      <article
+                        key={permission.id}
+                        className="flex flex-col gap-4 p-4"
+                      >
+                        <div>
+                          <h3 className="font-medium">{permission.name}</h3>
+                          <p className="text-muted-foreground mt-1 font-mono text-xs">
+                            {permission.id}
+                          </p>
+                          <Badge variant="secondary" className="mt-2">
+                            {product}
+                          </Badge>
+                        </div>
+                        <RuleControls
+                          rule={rule}
+                          permissionName={permission.name}
+                          idSuffix="mobile"
+                          onChange={stage}
+                        />
+                      </article>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          ))
+        )}
+
+        {pageCount > 1 ? (
+          <PaginationControls
+            ariaLabel="Permission pages"
+            pageCount={pageCount}
+            pageIndex={safePageIndex}
+            onPageIndexChange={setPageIndex}
+          />
+        ) : null}
+
+        <div className="bg-card/95 sticky bottom-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 shadow-sm backdrop-blur">
+          <p className="text-sm">
+            <strong>{pending.length}</strong> staged change
+            {pending.length === 1 ? "" : "s"}
+          </p>
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               variant="outline"
               className="min-h-11"
-              onClick={() => setImpactOpen(false)}
-            >
-              Back to editing
-            </Button>
-            <Button
-              type="button"
-              className="min-h-11"
-              disabled={unresolvedConflicts.length > 0}
+              disabled={!dirty || controller.isPending()}
               onClick={() => {
-                if (broadGrant || destructive) {
-                  setImpactOpen(false);
-                  setConfirmOpen(true);
-                } else applyChanges();
-              }}
-            >
-              {unresolvedConflicts.length
-                ? `Resolve ${unresolvedConflicts.length} conflict${unresolvedConflicts.length === 1 ? "" : "s"}`
-                : rulesToApply.length
-                  ? `Apply ${rulesToApply.length} draft choice${rulesToApply.length === 1 ? "" : "s"}`
-                  : "Keep current policy"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogTitle>Confirm sensitive policy change</AlertDialogTitle>
-          <AlertDialogDescription>
-            {broadGrant
-              ? "Everyone will receive one or more explicit permissions. "
-              : ""}
-            {destructive
-              ? "One or more explicit denies may remove access. "
-              : ""}
-            This updates the policy configuration. Native features retain final
-            authorization enforcement.
-          </AlertDialogDescription>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="min-h-11">Cancel</AlertDialogCancel>
-            <Button
-              type="button"
-              variant={destructive ? "destructive" : "default"}
-              className="min-h-11"
-              onClick={applyChanges}
-            >
-              Confirm and apply
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
-        <AlertDialogContent>
-          <AlertDialogTitle>Discard staged changes?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Your unapplied rule decisions, time windows, and locks will be lost.
-          </AlertDialogDescription>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="min-h-11">
-              Keep editing
-            </AlertDialogCancel>
-            <Button
-              type="button"
-              variant="destructive"
-              className="min-h-11"
-              onClick={() => {
-                setDrafts({});
-                setBaselines({});
-                setConflictResolutions({});
-                if (pendingSelection) setSelection(pendingSelection);
                 setPendingSelection(null);
-                setDiscardOpen(false);
-                setPageIndex(0);
+                setDiscardOpen(true);
               }}
             >
-              Discard changes
+              Discard
             </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            <Button
+              type="button"
+              className="min-h-11"
+              disabled={!dirty || controller.isPending()}
+              onClick={() => setImpactOpen(true)}
+            >
+              Review impact
+            </Button>
+          </div>
+        </div>
+
+        <Dialog open={impactOpen} onOpenChange={setImpactOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Review policy impact</DialogTitle>
+              <DialogDescription>
+                Compare the opening baseline, current policy, and staged draft
+                before applying it.
+              </DialogDescription>
+            </DialogHeader>
+            {conflicts.length ? (
+              <Alert variant="warning">
+                The live policy changed for {conflicts.length} staged permission
+                {conflicts.length === 1 ? "" : "s"}. Unrelated live changes are
+                preserved. Resolve each same-permission conflict explicitly.
+              </Alert>
+            ) : null}
+            <Alert>
+              Protected Administrator access is guarded and unaffected by these
+              draft rules. Active protected administrator
+              {protectedAdministrators.length === 1 ? "" : "s"}:{" "}
+              {protectedAdministrators.length
+                ? protectedAdministrators
+                    .map((identity) => identity.name)
+                    .join(", ")
+                : "none — resolve this critical health finding before relying on the policy"}
+              .
+            </Alert>
+            <div className="flex max-h-[52dvh] flex-col gap-2 overflow-y-auto py-2">
+              {pending.map((rule) => {
+                const permission = permissionCatalog.find(
+                  (item) => item.id === rule.permissionId,
+                );
+                const opened = baselines[rule.permissionId];
+                const current = baseByPermission.get(rule.permissionId);
+                const isConflict = conflicts.some(
+                  (item) => item.permissionId === rule.permissionId,
+                );
+                const resolution = resolutionIsCurrent(rule)
+                  ? conflictResolutions[rule.permissionId]?.choice
+                  : undefined;
+                const affected = identitiesAffectedBy(rule);
+                const effect = decisionImpact(current, rule);
+                return (
+                  <div
+                    key={rule.permissionId}
+                    className="flex flex-col gap-3 rounded-lg border p-3"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="font-medium">
+                          {permission?.name ?? rule.permissionId}
+                        </p>
+                        <p className="text-muted-foreground text-xs">
+                          {permission?.product}
+                        </p>
+                      </div>
+                      {isConflict ? (
+                        <Badge variant="warning">Live conflict</Badge>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="outline">
+                        Opened: {opened?.decision ?? "inherit"}
+                      </Badge>
+                      <Badge variant="outline">
+                        Current: {current?.decision ?? "inherit"}
+                      </Badge>
+                      <Badge
+                        variant={
+                          rule.decision === "deny"
+                            ? "destructive"
+                            : rule.decision === "allow"
+                              ? "success"
+                              : "secondary"
+                        }
+                      >
+                        Draft: {rule.decision}
+                      </Badge>
+                      <Badge
+                        variant={
+                          effect === "Removes access"
+                            ? "destructive"
+                            : effect === "Elevates access"
+                              ? "warning"
+                              : "secondary"
+                        }
+                      >
+                        {effect}
+                      </Badge>
+                    </div>
+                    <p className="text-muted-foreground text-sm">
+                      Affected non-protected identities: {affected.length}
+                      {affected.length
+                        ? ` — ${affected
+                            .slice(0, 3)
+                            .map((identity) => identity.name)
+                            .join(
+                              ", ",
+                            )}${affected.length > 3 ? ` and ${affected.length - 3} more` : ""}`
+                        : " — no current identities match this subject"}
+                    </p>
+                    {isConflict ? (
+                      <ToggleGroup
+                        aria-label={`${permission?.name ?? rule.permissionId} conflict resolution`}
+                        value={resolution ? [resolution] : []}
+                        onValueChange={(values) => {
+                          const choice = values[0];
+                          if (choice !== "current" && choice !== "draft")
+                            return;
+                          setConflictResolutions((resolutions) => ({
+                            ...resolutions,
+                            [rule.permissionId]: {
+                              choice,
+                              current: structuredClone(current ?? null),
+                            },
+                          }));
+                        }}
+                        variant="outline"
+                        spacing={0}
+                        className="w-full [&>button]:min-h-11 [&>button]:flex-1"
+                      >
+                        <ToggleGroupItem value="current">
+                          Keep current
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="draft">
+                          Use draft
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+            {broadGrant || destructive ? (
+              <Alert variant="warning">
+                <AlertTriangle aria-hidden="true" className="mr-2 inline" />
+                This change includes {broadGrant ? "a broad grant" : ""}
+                {broadGrant && destructive ? " and " : ""}
+                {destructive ? "a deny that may remove access" : ""}. A separate
+                confirmation is required.
+              </Alert>
+            ) : null}
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => setImpactOpen(false)}
+              >
+                Back to editing
+              </Button>
+              <Button
+                type="button"
+                className="min-h-11"
+                disabled={
+                  unresolvedConflicts.length > 0 || controller.isPending()
+                }
+                onClick={() => {
+                  if (broadGrant || destructive) {
+                    setImpactOpen(false);
+                    setConfirmOpen(true);
+                  } else applyChanges();
+                }}
+              >
+                {unresolvedConflicts.length
+                  ? `Resolve ${unresolvedConflicts.length} conflict${unresolvedConflicts.length === 1 ? "" : "s"}`
+                  : rulesToApply.length
+                    ? `Apply ${rulesToApply.length} draft choice${rulesToApply.length === 1 ? "" : "s"}`
+                    : "Keep current policy"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogTitle>Confirm sensitive policy change</AlertDialogTitle>
+            <AlertDialogDescription>
+              {broadGrant
+                ? "Everyone will receive one or more explicit permissions. "
+                : ""}
+              {destructive
+                ? "One or more explicit denies may remove access. "
+                : ""}
+              This updates the policy configuration. Native features retain
+              final authorization enforcement.
+            </AlertDialogDescription>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="min-h-11">Cancel</AlertDialogCancel>
+              <Button
+                type="button"
+                variant={destructive ? "destructive" : "default"}
+                className="min-h-11"
+                disabled={controller.isPending()}
+                onClick={applyChanges}
+              >
+                Confirm and apply
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
+          <AlertDialogContent>
+            <AlertDialogTitle>Discard staged changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your unapplied rule decisions, time windows, and locks will be
+              lost.
+            </AlertDialogDescription>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="min-h-11">
+                Keep editing
+              </AlertDialogCancel>
+              <Button
+                type="button"
+                variant="destructive"
+                className="min-h-11"
+                disabled={controller.isPending()}
+                onClick={() => {
+                  setDrafts({});
+                  setBaselines({});
+                  setConflictResolutions({});
+                  if (pendingSelection) setSelection(pendingSelection);
+                  setPendingSelection(null);
+                  setDiscardOpen(false);
+                  setPageIndex(0);
+                }}
+              >
+                Discard changes
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </fieldset>
     </section>
   );
 }

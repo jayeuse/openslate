@@ -18,8 +18,23 @@ import {
   previewBulkIdentityUpdate,
   type AccessControllerSnapshot,
 } from "../../../src/components/sample/access/controller-utils";
+import {
+  readAccessProjection,
+  writeAccessProjection,
+} from "../../../src/components/sample/access/controller";
 import { initialManageSessions } from "../../../src/components/sample/manage/sessions";
 import { decodeSampleStoredValue } from "../../../src/components/sample/sample-state";
+import {
+  decodeDashboards,
+  decodeReport,
+  decodeReports,
+  projectAudienceLookup,
+} from "../../../src/components/sample/openview/model";
+import {
+  initialDashboards,
+  initialReport,
+} from "../../../src/components/sample/openview/seeds";
+import type { SampleDraft } from "../../../src/components/sample/sample-runtime";
 
 const context = {
   now: "2026-09-12T12:00:00.000Z",
@@ -40,6 +55,71 @@ test("OpenView dashboard storage remains migration-tolerant for Access", () => {
   expect(
     decodeSampleStoredValue("views-dashboards", legacyDashboards, null),
   ).toBe(legacyDashboards);
+});
+
+test("Access OpenView owner writes survive shared storage decoding and round-trip", () => {
+  const projection = readAccessProjection((_key, initial) => initial);
+  const sourceDashboard = projection.owners.dashboards[0];
+  const role = projection.snapshot.roles[0];
+  if (!sourceDashboard || !role) throw new Error("Expected OpenView seeds.");
+  const dashboard = structuredClone(sourceDashboard);
+  dashboard.id = "sample-dashboard-roundtrip";
+  dashboard.name = "Round-trip dashboard";
+  dashboard.audience = { kind: "role", id: role.id };
+  const reportDraft = structuredClone(projection.owners.reportDraft);
+  reportDraft.id = "sample-report-roundtrip";
+  reportDraft.name = "Round-trip report";
+  reportDraft.audience = { kind: "role", id: role.id };
+  const reportTemplate = {
+    ...structuredClone(reportDraft),
+    id: "sample-report-template-roundtrip",
+    name: "Round-trip template",
+  };
+  const owners = {
+    ...projection.owners,
+    dashboards: [dashboard],
+    reportDraft,
+    reportTemplates: [reportTemplate],
+  };
+  const writes = new Map<string, unknown>();
+  const draft = {
+    update(key: string, _initial: unknown, value: unknown) {
+      writes.set(key, value);
+    },
+  } as unknown as SampleDraft;
+
+  writeAccessProjection(
+    draft,
+    projection.snapshot,
+    owners,
+    projection.manageSessions,
+  );
+
+  const lookup = projectAudienceLookup(
+    projection.snapshot.roles,
+    projection.snapshot.people,
+  );
+  const storedDashboards = decodeSampleStoredValue(
+    "views-dashboards",
+    writes.get("views-dashboards"),
+    initialDashboards,
+  );
+  const storedReportDraft = decodeSampleStoredValue(
+    "views-report-draft",
+    writes.get("views-report-draft"),
+    initialReport,
+  );
+
+  expect(decodeDashboards(storedDashboards, lookup)).toEqual(owners.dashboards);
+  expect(decodeReport(storedReportDraft, lookup)).toEqual(owners.reportDraft);
+  const storedReportTemplates = decodeSampleStoredValue(
+    "views-report-templates",
+    writes.get("views-report-templates"),
+    [],
+  );
+  expect(decodeReports(storedReportTemplates, lookup)).toEqual(
+    owners.reportTemplates,
+  );
 });
 
 function snapshot(): AccessControllerSnapshot {
@@ -739,4 +819,39 @@ test("history remains bounded to the newest 100 local entries", () => {
   expect(state.history).toHaveLength(100);
   expect(state.history[0].id).toBe("history:5");
   expect(state.history.at(-1)?.id).toBe("history:104");
+});
+
+test("role and group saves reject a changed reviewed baseline without altering current state", () => {
+  const state = snapshot();
+  const role = {
+    ...state.roles[1],
+    id: "role:editable",
+    name: "Editable",
+    builtin: false,
+  };
+  state.roles.push(role);
+  const roleCommand = {
+    type: "update-role" as const,
+    roleId: role.id,
+    patch: { name: "Submitted role" },
+    expected: structuredClone(role),
+  };
+  role.description = "Changed after review";
+  const beforeRole = structuredClone(state);
+  const roleResult = executeAccessCommand(state, roleCommand, context);
+  expect(roleResult.ok).toBe(false);
+  expect(state).toEqual(beforeRole);
+
+  const group = state.groups[0];
+  const groupCommand = {
+    type: "update-group" as const,
+    groupId: group.id,
+    patch: { name: "Submitted group" },
+    expected: structuredClone(group),
+  };
+  group.description = "Changed after review";
+  const beforeGroup = structuredClone(state);
+  const groupResult = executeAccessCommand(state, groupCommand, context);
+  expect(groupResult.ok).toBe(false);
+  expect(state).toEqual(beforeGroup);
 });

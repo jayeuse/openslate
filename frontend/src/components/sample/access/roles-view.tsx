@@ -51,8 +51,10 @@ import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { AccessController } from "./controller";
+import type { EditorIntent } from "./editor-helpers";
 import type { Role } from "./model";
 import { RoleEditor } from "./role-group-editors";
+import { completeCollection, pageCollection } from "../sample-collections";
 
 type RolesViewProps = { controller: AccessController };
 type RoleFilter = "all" | "built-in" | "custom";
@@ -86,6 +88,7 @@ export function RolesView({ controller }: RolesViewProps) {
   const [sort, setSort] = useState<RoleSort>("name");
   const [page, setPage] = useState(0);
   const [draft, setDraft] = useState<Role | null>(null);
+  const [draftIntent, setDraftIntent] = useState<EditorIntent>("edit");
   const [templateOpen, setTemplateOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
@@ -110,12 +113,17 @@ export function RolesView({ controller }: RolesViewProps) {
       if (sort === "grants") return right.grants.length - left.grants.length;
       return left.name.localeCompare(right.name);
     });
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, pageCount - 1);
-  const visible = filtered.slice(
-    currentPage * PAGE_SIZE,
-    (currentPage + 1) * PAGE_SIZE,
+  const pageResult = pageCollection(
+    completeCollection(
+      filtered,
+      JSON.stringify(["roles", query.trim().toLowerCase(), filter, sort]),
+    ),
+    page * PAGE_SIZE,
+    PAGE_SIZE,
   );
+  const pageCount = Math.max(1, Math.ceil(pageResult.total / pageResult.limit));
+  const currentPage = pageResult.offset / pageResult.limit;
+  const visible = [...pageResult.items];
   const compared = compareIds
     .map((id) => controller.state.roles.find((role) => role.id === id))
     .filter((role): role is Role => Boolean(role));
@@ -132,9 +140,23 @@ export function RolesView({ controller }: RolesViewProps) {
     });
   }
 
-  function duplicate(role: Role) {
-    const result = controller.actions.duplicateRole(role.id);
+  async function duplicate(role: Role) {
+    if (controller.isPending()) {
+      setMessage("Another Access change is already in progress.");
+      return;
+    }
+    const result = await controller.actions.duplicateRole(role.id);
     setMessage(result.ok ? `Duplicated ${role.name}.` : result.error);
+  }
+
+  function editRole(role: Role) {
+    setDraftIntent("edit");
+    setDraft({ ...role, grants: [...role.grants] });
+  }
+
+  function createRoleFromTemplate(template: Role) {
+    setDraftIntent("create");
+    setDraft(template);
   }
 
   const roleColumns = useMemo<DataTableColumn<Role>[]>(
@@ -164,7 +186,7 @@ export function RolesView({ controller }: RolesViewProps) {
           return (
             <button
               className="focus-visible:outline-ring min-h-11 max-w-md rounded-sm text-left outline-none focus-visible:outline-2"
-              onClick={() => setDraft({ ...role, grants: [...role.grants] })}
+              onClick={() => editRole(role)}
             >
               <span className="flex items-center gap-2 font-medium">
                 {role.name}
@@ -209,14 +231,13 @@ export function RolesView({ controller }: RolesViewProps) {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuGroup>
-                    <DropdownMenuItem
-                      onClick={() =>
-                        setDraft({ ...role, grants: [...role.grants] })
-                      }
-                    >
+                    <DropdownMenuItem onClick={() => editRole(role)}>
                       Edit role
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => duplicate(role)}>
+                    <DropdownMenuItem
+                      disabled={controller.isPending()}
+                      onClick={() => void duplicate(role)}
+                    >
                       <Copy /> Duplicate role
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
@@ -227,7 +248,13 @@ export function RolesView({ controller }: RolesViewProps) {
         },
       },
     ],
-    [compareIds, controller.state.identities, duplicate, memberCount],
+    [
+      compareIds,
+      controller.isPending,
+      controller.state.identities,
+      duplicate,
+      memberCount,
+    ],
   );
 
   return (
@@ -258,7 +285,11 @@ export function RolesView({ controller }: RolesViewProps) {
             <Scale data-icon="inline-start" />
             Compare {compareIds.length || "roles"}
           </Button>
-          <Button className="min-h-11" onClick={() => setTemplateOpen(true)}>
+          <Button
+            className="min-h-11"
+            disabled={controller.isPending()}
+            onClick={() => setTemplateOpen(true)}
+          >
             <Plus data-icon="inline-start" />
             Create role
           </Button>
@@ -336,13 +367,28 @@ export function RolesView({ controller }: RolesViewProps) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" aria-label="Sort roles">
               <DropdownMenuGroup>
-                <DropdownMenuItem onClick={() => setSort("name")}>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSort("name");
+                    setPage(0);
+                  }}
+                >
                   Name
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setSort("members")}>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSort("members");
+                    setPage(0);
+                  }}
+                >
                   Most members
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setSort("grants")}>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSort("grants");
+                    setPage(0);
+                  }}
+                >
                   Most grants
                 </DropdownMenuItem>
               </DropdownMenuGroup>
@@ -363,7 +409,11 @@ export function RolesView({ controller }: RolesViewProps) {
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button className="min-h-11" onClick={() => setTemplateOpen(true)}>
+            <Button
+              className="min-h-11"
+              disabled={controller.isPending()}
+              onClick={() => setTemplateOpen(true)}
+            >
               Create role
             </Button>
           </EmptyContent>
@@ -374,10 +424,8 @@ export function RolesView({ controller }: RolesViewProps) {
             <DataTable
               ariaLabel="Roles directory"
               columns={roleColumns}
-              data={filtered}
+              data={visible}
               getRowId={(role) => role.id}
-              pagination={{ pageIndex: currentPage, pageSize: PAGE_SIZE }}
-              onPaginationChange={(next) => setPage(next.pageIndex)}
             />
           </div>
 
@@ -423,16 +471,15 @@ export function RolesView({ controller }: RolesViewProps) {
                   <Button
                     variant="outline"
                     className="min-h-11 flex-1"
-                    onClick={() =>
-                      setDraft({ ...role, grants: [...role.grants] })
-                    }
+                    onClick={() => editRole(role)}
                   >
                     Edit
                   </Button>
                   <Button
                     variant="ghost"
                     className="min-h-11"
-                    onClick={() => duplicate(role)}
+                    disabled={controller.isPending()}
+                    onClick={() => void duplicate(role)}
                   >
                     Duplicate
                   </Button>
@@ -468,7 +515,7 @@ export function RolesView({ controller }: RolesViewProps) {
                 className="border-border hover:bg-muted focus-visible:outline-ring min-h-24 rounded-lg border p-4 text-left transition-colors outline-none focus-visible:outline-2 motion-reduce:transition-none"
                 onClick={() => {
                   setTemplateOpen(false);
-                  setDraft(draftFromTemplate(template));
+                  createRoleFromTemplate(draftFromTemplate(template));
                 }}
               >
                 <span className="font-medium">{template.name}</span>
@@ -535,6 +582,7 @@ export function RolesView({ controller }: RolesViewProps) {
         key={draft?.id ?? "closed-role"}
         controller={controller}
         draft={draft}
+        intent={draftIntent}
         onClose={() => setDraft(null)}
       />
     </section>

@@ -42,29 +42,24 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { AccessController } from "./controller";
+import {
+  changedPatch,
+  hasThreeWayConflict,
+  resolveThreeWayValue,
+  sameList,
+  type ConflictChoice,
+  type EditorIntent,
+  type FieldConflict,
+} from "./editor-helpers";
 import { permissions, type Role } from "./model";
 import type { AccessGroup } from "./policy";
 
 type EditorProps<T> = {
   controller: AccessController;
   draft: T | null;
+  intent: EditorIntent;
   onClose: () => void;
 };
-
-type ConflictChoice = "current" | "draft";
-type FieldConflict = {
-  id: string;
-  label: string;
-  current: string;
-  draft: string;
-};
-
-function sameList(left: readonly string[], right: readonly string[]): boolean {
-  return (
-    left.length === right.length &&
-    left.every((item, index) => item === right[index])
-  );
-}
 
 function ConflictDialog({
   open,
@@ -173,10 +168,16 @@ function controlId(prefix: string, value: string): string {
   return `${prefix}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
 }
 
-export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
-  const original = draft
-    ? controller.state.roles.find((role) => role.id === draft.id)
-    : undefined;
+export function RoleEditor({
+  controller,
+  draft,
+  intent,
+  onClose,
+}: EditorProps<Role>) {
+  const original =
+    intent === "edit" && draft
+      ? controller.state.roles.find((role) => role.id === draft.id)
+      : undefined;
   const [name, setName] = useState(draft?.name ?? "");
   const [description, setDescription] = useState(draft?.description ?? "");
   const [grants, setGrants] = useState<string[]>(draft?.grants ?? []);
@@ -204,11 +205,7 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
     : 0;
   const roleConflicts: FieldConflict[] = [];
   if (draft && original) {
-    if (
-      original.name !== draft.name &&
-      name !== draft.name &&
-      name !== original.name
-    )
+    if (hasThreeWayConflict(original.name, draft.name, name))
       roleConflicts.push({
         id: "name",
         label: "Role name",
@@ -218,9 +215,7 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
     const baselineDescription = draft.description ?? "";
     const currentDescription = original.description ?? "";
     if (
-      currentDescription !== baselineDescription &&
-      description !== baselineDescription &&
-      description !== currentDescription
+      hasThreeWayConflict(currentDescription, baselineDescription, description)
     )
       roleConflicts.push({
         id: "description",
@@ -228,11 +223,7 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
         current: currentDescription,
         draft: description,
       });
-    if (
-      !sameList(original.grants, draft.grants) &&
-      !sameList(grants, draft.grants) &&
-      !sameList(grants, original.grants)
-    )
+    if (hasThreeWayConflict(original.grants, draft.grants, grants, sameList))
       roleConflicts.push({
         id: "grants",
         label: "Baseline grants",
@@ -241,13 +232,16 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
       });
   }
   const currentGrants = original?.grants ?? [];
-  const resultingGrants =
-    !original ||
-    (draft &&
-      !sameList(grants, draft.grants) &&
-      conflictChoices.grants !== "current")
-      ? grants
-      : currentGrants;
+  const pending = controller.isPending();
+  const resultingGrants = original
+    ? resolveThreeWayValue(
+        currentGrants,
+        draft?.grants ?? currentGrants,
+        grants,
+        conflictChoices.grants,
+        sameList,
+      )
+    : grants;
   const addedGrants = resultingGrants.filter(
     (grant) => !currentGrants.includes(grant),
   );
@@ -256,6 +250,12 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
   );
 
   function requestClose() {
+    if (controller.isPending()) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
     if (dirty) setConfirmDiscard(true);
     else onClose();
   }
@@ -266,23 +266,33 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
       return;
     }
     if (roleConflicts.length) {
-      setConflictChoices({});
       setConflictOpen(true);
       return;
     }
     setConfirmSave(true);
   }
 
-  function saveRole() {
+  async function saveRole() {
     if (!draft) return;
+    if (roleConflicts.some((conflict) => !conflictChoices[conflict.id])) {
+      setConfirmSave(false);
+      setConflictOpen(true);
+      return;
+    }
+    if (pending) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
     const trimmedName = name.trim();
     if (!trimmedName) {
       setError("Enter a role name.");
       setConfirmSave(false);
       return;
     }
-    if (!original) {
-      const result = controller.actions.createRole({
+    if (intent === "create") {
+      const result = await controller.actions.createRole({
         name: trimmedName,
         description: description.trim(),
         grants,
@@ -296,22 +306,39 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
       onClose();
       return;
     }
-    const patch: Parameters<typeof controller.actions.updateRole>[1] = {};
-    if (name !== draft.name && conflictChoices.name !== "current")
-      patch.name = trimmedName;
-    if (
-      description !== (draft.description ?? "") &&
-      conflictChoices.description !== "current"
-    )
-      patch.description = description.trim();
-    if (!sameList(grants, draft.grants) && conflictChoices.grants !== "current")
-      patch.grants = grants;
+    if (!original) {
+      setError(
+        "This role no longer exists. Reload the directory before applying changes.",
+      );
+      setConfirmSave(false);
+      return;
+    }
+    const patch = changedPatch(
+      {
+        name: draft.name,
+        description: draft.description ?? "",
+        grants: draft.grants,
+      },
+      { name: trimmedName, description: description.trim(), grants },
+      ["name", "description", "grants"],
+      (left, right) =>
+        Array.isArray(left) && Array.isArray(right)
+          ? sameList(left, right)
+          : Object.is(left, right),
+    );
+    if (conflictChoices.name === "current") delete patch.name;
+    if (conflictChoices.description === "current") delete patch.description;
+    if (conflictChoices.grants === "current") delete patch.grants;
     if (Object.keys(patch).length === 0) {
       setConfirmSave(false);
       onClose();
       return;
     }
-    const result = controller.actions.updateRole(original.id, patch);
+    const result = await controller.actions.updateRole(
+      original.id,
+      patch,
+      original,
+    );
     if (!result.ok) {
       setError(result.error);
       setConfirmSave(false);
@@ -321,9 +348,21 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
     onClose();
   }
 
-  function deleteRole() {
-    if (!original) return;
-    const result = controller.actions.deleteRole(original.id);
+  async function deleteRole() {
+    if (pending) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
+    if (!original) {
+      setError(
+        "This role no longer exists. Reload the directory before deleting it.",
+      );
+      setConfirmDelete(false);
+      return;
+    }
+    const result = await controller.actions.deleteRole(original.id);
     if (!result.ok) {
       setError(result.error);
       setConfirmDelete(false);
@@ -345,7 +384,11 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
           <SheetHeader className="border-border border-b p-5">
             <div className="flex items-center gap-2">
               <SheetTitle>
-                {original ? `Edit ${original.name}` : "Create role"}
+                {intent === "create"
+                  ? "Create role"
+                  : original
+                    ? `Edit ${original.name}`
+                    : "Edit role"}
               </SheetTitle>
               {isBuiltin && <Badge variant="secondary">Built-in</Badge>}
             </div>
@@ -355,79 +398,86 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5">
-            {isBuiltin && (
-              <Alert>
-                <ShieldCheck />
-                <div className="mt-2">
-                  <p className="font-medium">Protected baseline</p>
-                  <p className="mt-1">
-                    Built-in roles are immutable. Duplicate this role to create
-                    an editable baseline.
+            <fieldset disabled={pending} className="contents">
+              {isBuiltin && (
+                <Alert>
+                  <ShieldCheck />
+                  <div className="mt-2">
+                    <p className="font-medium">Protected baseline</p>
+                    <p className="mt-1">
+                      Built-in roles are immutable. Duplicate this role to
+                      create an editable baseline.
+                    </p>
+                  </div>
+                </Alert>
+              )}
+              <ActionError message={error} />
+              <FieldGroup>
+                <Field data-disabled={isBuiltin}>
+                  <FieldLabel htmlFor="role-name">Role name</FieldLabel>
+                  <Input
+                    id="role-name"
+                    value={name}
+                    disabled={isBuiltin}
+                    onChange={(event) => setName(event.target.value)}
+                  />
+                </Field>
+                <Field data-disabled={isBuiltin}>
+                  <FieldLabel htmlFor="role-description">
+                    Description
+                  </FieldLabel>
+                  <Textarea
+                    id="role-description"
+                    value={description}
+                    disabled={isBuiltin}
+                    onChange={(event) => setDescription(event.target.value)}
+                    placeholder="Explain when this role should be assigned."
+                  />
+                </Field>
+                <FieldSet disabled={isBuiltin}>
+                  <FieldLegend>Baseline grants</FieldLegend>
+                  <p className="text-muted-foreground text-sm">
+                    Selected grants apply before scoped allow and deny rules.
                   </p>
-                </div>
-              </Alert>
-            )}
-            <ActionError message={error} />
-            <FieldGroup>
-              <Field data-disabled={isBuiltin}>
-                <FieldLabel htmlFor="role-name">Role name</FieldLabel>
-                <Input
-                  id="role-name"
-                  value={name}
-                  disabled={isBuiltin}
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </Field>
-              <Field data-disabled={isBuiltin}>
-                <FieldLabel htmlFor="role-description">Description</FieldLabel>
-                <Textarea
-                  id="role-description"
-                  value={description}
-                  disabled={isBuiltin}
-                  onChange={(event) => setDescription(event.target.value)}
-                  placeholder="Explain when this role should be assigned."
-                />
-              </Field>
-              <FieldSet disabled={isBuiltin}>
-                <FieldLegend>Baseline grants</FieldLegend>
-                <p className="text-muted-foreground text-sm">
-                  Selected grants apply before scoped allow and deny rules.
-                </p>
-                <div className="grid gap-1 sm:grid-cols-2">
-                  {permissions.map((permission) => (
-                    <Field
-                      key={permission}
-                      className="min-h-11 flex-row items-center rounded-md px-2"
-                    >
-                      <Checkbox
-                        id={controlId("role-grant", permission)}
-                        checked={grants.includes(permission)}
-                        disabled={isBuiltin}
-                        onCheckedChange={(checked) =>
-                          setGrants((current) =>
-                            checked
-                              ? [...current, permission]
-                              : current.filter((grant) => grant !== permission),
-                          )
-                        }
-                      />
-                      <FieldLabel
-                        htmlFor={controlId("role-grant", permission)}
-                        className="min-w-0 flex-1 font-normal"
+                  <div className="grid gap-1 sm:grid-cols-2">
+                    {permissions.map((permission) => (
+                      <Field
+                        key={permission}
+                        className="min-h-11 flex-row items-center rounded-md px-2"
                       >
-                        {permission}
-                      </FieldLabel>
-                    </Field>
-                  ))}
-                </div>
-              </FieldSet>
-            </FieldGroup>
+                        <Checkbox
+                          id={controlId("role-grant", permission)}
+                          checked={grants.includes(permission)}
+                          disabled={isBuiltin}
+                          onCheckedChange={(checked) =>
+                            setGrants((current) =>
+                              checked
+                                ? [...current, permission]
+                                : current.filter(
+                                    (grant) => grant !== permission,
+                                  ),
+                            )
+                          }
+                        />
+                        <FieldLabel
+                          htmlFor={controlId("role-grant", permission)}
+                          className="min-w-0 flex-1 font-normal"
+                        >
+                          {permission}
+                        </FieldLabel>
+                      </Field>
+                    ))}
+                  </div>
+                </FieldSet>
+              </FieldGroup>
+            </fieldset>
           </div>
           <SheetFooter className="border-border mt-0 border-t p-5">
             {original && !isBuiltin && (
               <Button
                 variant="destructive"
                 className="min-h-11 sm:mr-auto"
+                disabled={pending}
                 onClick={() => setConfirmDelete(true)}
               >
                 Delete role
@@ -442,7 +492,7 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
             </Button>
             <Button
               className="min-h-11"
-              disabled={isBuiltin || !dirty}
+              disabled={isBuiltin || !dirty || pending}
               onClick={requestRoleSave}
             >
               Save role
@@ -470,6 +520,7 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
             <Button
               variant="destructive"
               className="min-h-11"
+              disabled={pending}
               onClick={onClose}
             >
               Discard changes
@@ -540,7 +591,7 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
             >
               Review draft
             </Button>
-            <Button className="min-h-11" onClick={saveRole}>
+            <Button className="min-h-11" disabled={pending} onClick={saveRole}>
               Apply changes
             </Button>
           </AlertDialogFooter>
@@ -579,7 +630,7 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
             <Button
               variant="destructive"
               className="min-h-11"
-              disabled={deleteName !== original?.name}
+              disabled={deleteName !== original?.name || pending}
               onClick={deleteRole}
             >
               Delete role
@@ -594,11 +645,13 @@ export function RoleEditor({ controller, draft, onClose }: EditorProps<Role>) {
 export function GroupEditor({
   controller,
   draft,
+  intent,
   onClose,
 }: EditorProps<AccessGroup>) {
-  const original = draft
-    ? controller.state.groups.find((group) => group.id === draft.id)
-    : undefined;
+  const original =
+    intent === "edit" && draft
+      ? controller.state.groups.find((group) => group.id === draft.id)
+      : undefined;
   const [name, setName] = useState(draft?.name ?? "");
   const [description, setDescription] = useState(draft?.description ?? "");
   const [memberIds, setMemberIds] = useState<string[]>(() =>
@@ -629,11 +682,7 @@ export function GroupEditor({
   );
   const groupConflicts: FieldConflict[] = [];
   if (draft && original) {
-    if (
-      original.name !== draft.name &&
-      name !== draft.name &&
-      name !== original.name
-    )
+    if (hasThreeWayConflict(original.name, draft.name, name))
       groupConflicts.push({
         id: "name",
         label: "Group name",
@@ -641,9 +690,7 @@ export function GroupEditor({
         draft: name,
       });
     if (
-      original.description !== draft.description &&
-      description !== draft.description &&
-      description !== original.description
+      hasThreeWayConflict(original.description, draft.description, description)
     )
       groupConflicts.push({
         id: "description",
@@ -652,9 +699,12 @@ export function GroupEditor({
         draft: description,
       });
     if (
-      !sameList(original.memberIds, draft.memberIds) &&
-      !sameList(memberIds, draft.memberIds) &&
-      !sameList(memberIds, original.memberIds)
+      hasThreeWayConflict(
+        original.memberIds,
+        draft.memberIds,
+        memberIds,
+        sameList,
+      )
     )
       groupConflicts.push({
         id: "memberIds",
@@ -676,13 +726,15 @@ export function GroupEditor({
       });
   }
   const currentMemberIds = original?.memberIds ?? [];
-  const resultingMemberIds =
-    !original ||
-    (draft &&
-      !sameList(memberIds, draft.memberIds) &&
-      conflictChoices.memberIds !== "current")
-      ? memberIds
-      : currentMemberIds;
+  const resultingMemberIds = original
+    ? resolveThreeWayValue(
+        currentMemberIds,
+        draft?.memberIds ?? currentMemberIds,
+        memberIds,
+        conflictChoices.memberIds,
+        sameList,
+      )
+    : memberIds;
   const addedMemberIds = resultingMemberIds.filter(
     (id) => !currentMemberIds.includes(id),
   );
@@ -696,8 +748,15 @@ export function GroupEditor({
   const identityName = (id: string) =>
     controller.state.identities.find((identity) => identity.id === id)?.name ??
     id;
+  const pending = controller.isPending();
 
   function requestClose() {
+    if (controller.isPending()) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
     if (dirty) setConfirmDiscard(true);
     else onClose();
   }
@@ -708,23 +767,33 @@ export function GroupEditor({
       return;
     }
     if (groupConflicts.length) {
-      setConflictChoices({});
       setConflictOpen(true);
       return;
     }
     setConfirmSave(true);
   }
 
-  function saveGroup() {
+  async function saveGroup() {
     if (!draft) return;
+    if (groupConflicts.some((conflict) => !conflictChoices[conflict.id])) {
+      setConfirmSave(false);
+      setConflictOpen(true);
+      return;
+    }
+    if (pending) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
     const trimmedName = name.trim();
     if (!trimmedName) {
       setError("Enter a group name.");
       setConfirmSave(false);
       return;
     }
-    if (!original) {
-      const result = controller.actions.createGroup({
+    if (intent === "create") {
+      const result = await controller.actions.createGroup({
         name: trimmedName,
         description: description.trim(),
         memberIds,
@@ -738,25 +807,39 @@ export function GroupEditor({
       onClose();
       return;
     }
-    const patch: Parameters<typeof controller.actions.updateGroup>[1] = {};
-    if (name !== draft.name && conflictChoices.name !== "current")
-      patch.name = trimmedName;
-    if (
-      description !== draft.description &&
-      conflictChoices.description !== "current"
-    )
-      patch.description = description.trim();
-    if (
-      !sameList(memberIds, draft.memberIds) &&
-      conflictChoices.memberIds !== "current"
-    )
-      patch.memberIds = memberIds;
+    if (!original) {
+      setError(
+        "This group no longer exists. Reload the directory before applying changes.",
+      );
+      setConfirmSave(false);
+      return;
+    }
+    const patch = changedPatch(
+      {
+        name: draft.name,
+        description: draft.description,
+        memberIds: draft.memberIds,
+      },
+      { name: trimmedName, description: description.trim(), memberIds },
+      ["name", "description", "memberIds"],
+      (left, right) =>
+        Array.isArray(left) && Array.isArray(right)
+          ? sameList(left, right)
+          : Object.is(left, right),
+    );
+    if (conflictChoices.name === "current") delete patch.name;
+    if (conflictChoices.description === "current") delete patch.description;
+    if (conflictChoices.memberIds === "current") delete patch.memberIds;
     if (Object.keys(patch).length === 0) {
       setConfirmSave(false);
       onClose();
       return;
     }
-    const result = controller.actions.updateGroup(original.id, patch);
+    const result = await controller.actions.updateGroup(
+      original.id,
+      patch,
+      original,
+    );
     if (!result.ok) {
       setError(result.error);
       setConfirmSave(false);
@@ -766,9 +849,21 @@ export function GroupEditor({
     onClose();
   }
 
-  function deleteGroup() {
-    if (!original) return;
-    const result = controller.actions.deleteGroup(original.id);
+  async function deleteGroup() {
+    if (pending) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
+    if (!original) {
+      setError(
+        "This group no longer exists. Reload the directory before deleting it.",
+      );
+      setConfirmDelete(false);
+      return;
+    }
+    const result = await controller.actions.deleteGroup(original.id);
     if (!result.ok) {
       setError(result.error);
       setConfirmDelete(false);
@@ -787,7 +882,11 @@ export function GroupEditor({
         <SheetContent className="w-[min(92vw,34rem)] gap-0 p-0">
           <SheetHeader className="border-border border-b p-5">
             <SheetTitle>
-              {original ? `Edit ${original.name}` : "Create group"}
+              {intent === "create"
+                ? "Create group"
+                : original
+                  ? `Edit ${original.name}`
+                  : "Edit group"}
             </SheetTitle>
             <SheetDescription>
               Manual groups do not nest. Add internal people and guests
@@ -795,77 +894,84 @@ export function GroupEditor({
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5">
-            <ActionError message={error} />
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="group-name">Group name</FieldLabel>
-                <Input
-                  id="group-name"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="group-description">Description</FieldLabel>
-                <Textarea
-                  id="group-description"
-                  value={description}
-                  onChange={(event) => setDescription(event.target.value)}
-                  placeholder="Explain the shared responsibility or access need."
-                />
-              </Field>
-              <FieldSet>
-                <FieldLegend>Members</FieldLegend>
-                <p className="text-muted-foreground text-sm">
-                  Service identities cannot join groups.
-                </p>
-                <div className="flex max-h-72 flex-col gap-1 overflow-y-auto rounded-md border p-2">
-                  {eligibleIdentities.map((identity) => (
-                    <Field
-                      key={identity.id}
-                      className="hover:bg-muted/50 min-h-11 flex-row items-center rounded-md px-2"
-                    >
-                      <Checkbox
-                        id={`group-member-${identity.id}`}
-                        checked={memberIds.includes(identity.id)}
-                        onCheckedChange={(checked) =>
-                          setMemberIds((current) =>
-                            checked
-                              ? [...current, identity.id]
-                              : current.filter((id) => id !== identity.id),
-                          )
-                        }
-                      />
-                      <FieldLabel
-                        htmlFor={`group-member-${identity.id}`}
-                        className="min-w-0 flex-1 font-normal"
-                      >
-                        <span className="block truncate">{identity.name}</span>
-                        <span className="text-muted-foreground block text-xs capitalize">
-                          {identity.kind}
-                        </span>
-                      </FieldLabel>
-                    </Field>
-                  ))}
-                </div>
-              </FieldSet>
-              <Alert>
-                <Users />
-                <div className="mt-2">
-                  <p className="font-medium">Affected identities</p>
-                  <p className="mt-1">
-                    {impactCopy(memberIds.length, "group")} Scoped rules
-                    assigned to this group will apply to them.
+            <fieldset disabled={pending} className="contents">
+              <ActionError message={error} />
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="group-name">Group name</FieldLabel>
+                  <Input
+                    id="group-name"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="group-description">
+                    Description
+                  </FieldLabel>
+                  <Textarea
+                    id="group-description"
+                    value={description}
+                    onChange={(event) => setDescription(event.target.value)}
+                    placeholder="Explain the shared responsibility or access need."
+                  />
+                </Field>
+                <FieldSet>
+                  <FieldLegend>Members</FieldLegend>
+                  <p className="text-muted-foreground text-sm">
+                    Service identities cannot join groups.
                   </p>
-                </div>
-              </Alert>
-            </FieldGroup>
+                  <div className="flex max-h-72 flex-col gap-1 overflow-y-auto rounded-md border p-2">
+                    {eligibleIdentities.map((identity) => (
+                      <Field
+                        key={identity.id}
+                        className="hover:bg-muted/50 min-h-11 flex-row items-center rounded-md px-2"
+                      >
+                        <Checkbox
+                          id={`group-member-${identity.id}`}
+                          checked={memberIds.includes(identity.id)}
+                          onCheckedChange={(checked) =>
+                            setMemberIds((current) =>
+                              checked
+                                ? [...current, identity.id]
+                                : current.filter((id) => id !== identity.id),
+                            )
+                          }
+                        />
+                        <FieldLabel
+                          htmlFor={`group-member-${identity.id}`}
+                          className="min-w-0 flex-1 font-normal"
+                        >
+                          <span className="block truncate">
+                            {identity.name}
+                          </span>
+                          <span className="text-muted-foreground block text-xs capitalize">
+                            {identity.kind}
+                          </span>
+                        </FieldLabel>
+                      </Field>
+                    ))}
+                  </div>
+                </FieldSet>
+                <Alert>
+                  <Users />
+                  <div className="mt-2">
+                    <p className="font-medium">Affected identities</p>
+                    <p className="mt-1">
+                      {impactCopy(memberIds.length, "group")} Scoped rules
+                      assigned to this group will apply to them.
+                    </p>
+                  </div>
+                </Alert>
+              </FieldGroup>
+            </fieldset>
           </div>
           <SheetFooter className="border-border mt-0 border-t p-5">
             {original && (
               <Button
                 variant="destructive"
                 className="min-h-11 sm:mr-auto"
+                disabled={pending}
                 onClick={() => setConfirmDelete(true)}
               >
                 Delete group
@@ -880,7 +986,7 @@ export function GroupEditor({
             </Button>
             <Button
               className="min-h-11"
-              disabled={!dirty}
+              disabled={!dirty || pending}
               onClick={requestGroupSave}
             >
               Save group
@@ -908,6 +1014,7 @@ export function GroupEditor({
             <Button
               variant="destructive"
               className="min-h-11"
+              disabled={pending}
               onClick={onClose}
             >
               Discard changes
@@ -980,7 +1087,7 @@ export function GroupEditor({
             >
               Review draft
             </Button>
-            <Button className="min-h-11" onClick={saveGroup}>
+            <Button className="min-h-11" disabled={pending} onClick={saveGroup}>
               Apply changes
             </Button>
           </AlertDialogFooter>
@@ -1016,7 +1123,7 @@ export function GroupEditor({
             <Button
               variant="destructive"
               className="min-h-11"
-              disabled={deleteName !== original?.name}
+              disabled={deleteName !== original?.name || pending}
               onClick={deleteGroup}
             >
               Delete group

@@ -1,7 +1,14 @@
 "use client";
 
-import { useSampleState, useSampleTransaction } from "../sample-state";
-import { departments, initialPeople, initialRoles } from "./model";
+import {
+  sampleOperationMessage,
+  useSampleCommands,
+  useSampleResource,
+} from "../sample-async";
+import { useState } from "react";
+import { useSampleRuntime } from "../sample-state";
+import type { SampleDraft, SampleRuntime } from "../sample-runtime";
+import { departments, initialPeople, initialRoles, type Role } from "./model";
 import {
   createPolicyBundle,
   parsePolicyBundle,
@@ -35,6 +42,7 @@ import {
   type AccessCommand,
   type AccessCommandResult,
   type AccessControllerSnapshot,
+  type AccessHealthFinding,
   type BulkIdentityImpact,
   type BulkIdentityUpdateInput,
   type ControllerHistoryEntry,
@@ -45,6 +53,7 @@ import {
   type DeletedInternalIdentity,
   type ManagedGuestIdentity,
   type ResolveAccessInput,
+  type ScopeCatalogEntry,
   type UpdateIdentityPatch,
   type UpdateRolePatch,
 } from "./controller-utils";
@@ -58,18 +67,21 @@ import {
   type BoardAudienceLookup,
   type SampleBoard,
 } from "../boards/model";
-import { initialSavedViews } from "../openview";
 import {
   initialDashboards,
   initialReport,
   initialReportTemplates,
-} from "../openview/analytics";
+  initialSavedViews,
+} from "../openview/seeds";
 import {
   activeAudienceIdentities,
   decodeDashboards,
   decodeReport,
   decodeReports,
   decodeSavedViews,
+  projectAudienceLookup,
+  toLegacyDashboard,
+  toLegacyReport,
   type AudienceLookup,
 } from "../openview/model";
 import {
@@ -117,100 +129,127 @@ const initialGuests: ManagedGuestIdentity[] = initialAccessIdentities
 const initialServices = initialAccessIdentities.filter(
   (identity) => identity.kind === "service",
 );
-export type ControllerMutationResult =
-  | {
-      ok: true;
-      summary: string;
-      value?: Extract<AccessCommandResult, { ok: true }>["value"];
-    }
-  | { ok: false; error: string };
+const initialDeletedIdentities: DeletedInternalIdentity[] =
+  initialDeletedAccessIdentities.map((item) => ({
+    ...item,
+    person:
+      initialPeople.find((person) => person.id === item.identity.id) ??
+      initialPeople[0],
+  }));
 
-function publicResult(result: AccessCommandResult): ControllerMutationResult {
-  if (!result.ok) return result;
-  return {
-    ok: true,
-    summary: result.summary,
-    ...(result.value ? { value: result.value } : {}),
-  };
-}
+export const ACCESS_OWNER_KEYS = [
+  "access-people",
+  "access-roles",
+  "access-guests-v1",
+  "access-services-v1",
+  "access-groups-v1",
+  "access-rules-v1",
+  "boards-list",
+  "boards-announcements",
+  "views-saved",
+  "views-dashboards",
+  "views-report-draft",
+  "views-report-templates",
+  "comms-configuration",
+  "commsCategories",
+  "commsChannels",
+  "access-defaults-v1",
+  "access-templates-v1",
+  "access-reviews-v1",
+  "access-deleted-identities-v1",
+  "manage-sessions",
+  "access-history-v1",
+] as const;
 
-export function useAccessController() {
-  const [people] = useSampleState("access-people", initialPeople);
-  const [roles] = useSampleState("access-roles", initialRoles);
-  const [guestSlice] = useSampleState<VersionedItems<ManagedGuestIdentity>>(
-    "access-guests-v1",
-    { version: 1, items: initialGuests },
+export type AccessReader = <T>(key: string, initial: T) => T;
+export type AccessRuntimeSnapshot = {
+  snapshot: AccessControllerSnapshot;
+  owners: FederatedAccessOwners;
+  manageSessions: ManageSession[];
+  federatedFindings: AccessHealthFinding[];
+};
+
+export function readAccessProjection(
+  read: AccessReader,
+): AccessRuntimeSnapshot {
+  // The pure federated executors may update nested arrays while constructing
+  // their result. Clone each native owner before handing it to a recipe so a
+  // rejected or superseded operation cannot mutate the published snapshot.
+  const people = structuredClone(read("access-people", initialPeople));
+  const roles = structuredClone(read("access-roles", initialRoles));
+  const guestSlice = structuredClone(
+    read<VersionedItems<ManagedGuestIdentity>>("access-guests-v1", {
+      version: 1,
+      items: initialGuests,
+    }),
   );
-  const [serviceSlice] = useSampleState<
-    VersionedItems<(typeof initialServices)[number]>
-  >("access-services-v1", { version: 1, items: initialServices });
-  const [groupSlice] = useSampleState<VersionedItems<AccessGroup>>(
-    "access-groups-v1",
-    { version: 1, items: initialAccessGroups },
+  const serviceSlice = structuredClone(
+    read<VersionedItems<(typeof initialServices)[number]>>(
+      "access-services-v1",
+      { version: 1, items: initialServices },
+    ),
   );
-  const [ruleSlice] = useSampleState<VersionedItems<AccessRule>>(
-    "access-rules-v1",
-    { version: 1, items: initialAccessRules },
+  const groupSlice = structuredClone(
+    read<VersionedItems<AccessGroup>>("access-groups-v1", {
+      version: 1,
+      items: initialAccessGroups,
+    }),
   );
-  const [defaultSlice] = useSampleState<VersionedValue<AccessDefaults>>(
-    "access-defaults-v1",
-    { version: 1, value: initialAccessDefaults },
+  const ruleSlice = structuredClone(
+    read<VersionedItems<AccessRule>>("access-rules-v1", {
+      version: 1,
+      items: initialAccessRules,
+    }),
   );
-  const [templateSlice] = useSampleState("access-templates-v1", {
-    version: 1 as const,
-    items: initialAccessTemplates,
-  });
-  const [reviewSlice] = useSampleState<VersionedItems<AccessReview>>(
-    "access-reviews-v1",
-    { version: 1, items: initialAccessReviews },
+  const defaultSlice = structuredClone(
+    read<VersionedValue<AccessDefaults>>("access-defaults-v1", {
+      version: 1,
+      value: initialAccessDefaults,
+    }),
   );
-  const [deletedSlice] = useSampleState<
-    VersionedItems<DeletedInternalIdentity>
-  >("access-deleted-identities-v1", {
-    version: 1,
-    items: initialDeletedAccessIdentities.map((item) => ({
-      ...item,
-      person:
-        initialPeople.find((person) => person.id === item.identity.id) ??
-        initialPeople[0],
-    })),
-  });
-  const [manageSessions] = useSampleState<ManageSession[]>(
-    "manage-sessions",
-    initialManageSessions,
+  const templateSlice = structuredClone(
+    read("access-templates-v1", {
+      version: 1 as const,
+      items: initialAccessTemplates,
+    }),
   );
-  const [historySlice] = useSampleState<VersionedItems<ControllerHistoryEntry>>(
-    "access-history-v1",
-    { version: 1, items: initialAccessHistory },
+  const reviewSlice = structuredClone(
+    read<VersionedItems<AccessReview>>("access-reviews-v1", {
+      version: 1,
+      items: initialAccessReviews,
+    }),
   );
-  const [rawBoards] = useSampleState<unknown>("boards-list", null);
-  const [rawAnnouncements] = useSampleState<unknown>(
-    "boards-announcements",
-    null,
+  const deletedSlice = structuredClone(
+    read<VersionedItems<DeletedInternalIdentity>>(
+      "access-deleted-identities-v1",
+      { version: 1, items: initialDeletedIdentities },
+    ),
   );
-  const [rawSavedViews] = useSampleState<unknown>(
-    "views-saved",
-    initialSavedViews,
+  const manageSessions = structuredClone(
+    read<ManageSession[]>("manage-sessions", initialManageSessions),
   );
-  const [rawDashboards] = useSampleState<unknown>("views-dashboards", null);
-  const [rawReportDraft] = useSampleState<unknown>(
-    "views-report-draft",
-    initialReport,
+  const historySlice = structuredClone(
+    read<VersionedItems<ControllerHistoryEntry>>("access-history-v1", {
+      version: 1,
+      items: initialAccessHistory,
+    }),
   );
-  const [rawReportTemplates] = useSampleState<unknown>(
+  const rawBoards = read<unknown>("boards-list", null);
+  const rawAnnouncements = read<unknown>("boards-announcements", null);
+  const rawSavedViews = read<unknown>("views-saved", initialSavedViews);
+  const rawDashboards = read<unknown>("views-dashboards", null);
+  const rawReportDraft = read<unknown>("views-report-draft", initialReport);
+  const rawReportTemplates = read<unknown>(
     "views-report-templates",
     initialReportTemplates,
   );
-  const [rawCommsConfiguration] = useSampleState<unknown>(
-    "comms-configuration",
-    null,
+  const rawCommsConfiguration = read<unknown>("comms-configuration", null);
+  const commsCategories = structuredClone(
+    read<Category[]>("commsCategories", CATEGORIES),
   );
-  const [commsCategories] = useSampleState<Category[]>(
-    "commsCategories",
-    CATEGORIES,
+  const commsChannels = structuredClone(
+    read<Channel[]>("commsChannels", CHANNELS),
   );
-  const [commsChannels] = useSampleState<Channel[]>("commsChannels", CHANNELS);
-  const transact = useSampleTransaction();
 
   const openViewAudienceLookup: AudienceLookup = {
     roles: roles.map(({ id, name }) => ({ id, name })),
@@ -226,11 +265,11 @@ export function useAccessController() {
   };
   const boards: SampleBoard[] =
     rawBoards === null
-      ? initialBoards
+      ? structuredClone(initialBoards)
       : decodeBoards(rawBoards, { audienceLookup: boardAudienceLookup });
   const announcements: Announcement[] =
     rawAnnouncements === null
-      ? initialAnnouncements
+      ? structuredClone(initialAnnouncements)
       : decodeBoardAnnouncements(rawAnnouncements, {
           audienceLookup: boardAudienceLookup,
         });
@@ -239,7 +278,7 @@ export function useAccessController() {
     announcements,
     savedViews: decodeSavedViews(rawSavedViews, openViewAudienceLookup),
     dashboards: decodeDashboards(
-      rawDashboards ?? initialDashboards,
+      rawDashboards ?? structuredClone(initialDashboards),
       openViewAudienceLookup,
     ),
     reportDraft: decodeReport(rawReportDraft, openViewAudienceLookup),
@@ -259,123 +298,271 @@ export function useAccessController() {
     departments: boardAudienceLookup.departments,
   });
 
-  const snapshot: AccessControllerSnapshot = {
-    people,
-    roles,
-    guests: guestSlice.items,
-    services: serviceSlice.items,
-    groups: groupSlice.items,
-    rules: [...ruleSlice.items, ...federated.rules],
-    defaults: defaultSlice.value,
-    templates: templateSlice.items,
-    reviews: reviewSlice.items,
-    deletedIdentities: deletedSlice.items,
-    sessions: adaptManageSessions(manageSessions),
-    history: historySlice.items,
-    federatedScopes: federated.scopes,
+  return {
+    snapshot: {
+      people,
+      roles,
+      guests: guestSlice.items,
+      services: serviceSlice.items,
+      groups: groupSlice.items,
+      rules: [...ruleSlice.items, ...federated.rules],
+      defaults: defaultSlice.value,
+      templates: templateSlice.items,
+      reviews: reviewSlice.items,
+      deletedIdentities: deletedSlice.items,
+      sessions: adaptManageSessions(manageSessions),
+      history: historySlice.items,
+      federatedScopes: federated.scopes,
+    },
+    owners,
+    manageSessions,
+    federatedFindings: federated.findings,
   };
+}
 
-  function run(command: AccessCommand): ControllerMutationResult {
-    const result = executeFederatedAccessCommand(snapshot, owners, command, {
-      now: new Date().toISOString(),
-      id: (prefix) => `${prefix}:${crypto.randomUUID()}`,
-    });
-    if (!result.ok) return result;
-    const next = result.state;
-    transact(({ update }) => {
-      update("access-people", initialPeople, next.people);
-      update("access-roles", initialRoles, next.roles);
-      update(
-        "access-guests-v1",
-        { version: 1 as const, items: initialGuests },
-        { version: 1, items: next.guests },
+export function readAccessRuntimeSnapshot(
+  runtime: Pick<SampleRuntime, "read">,
+): AccessRuntimeSnapshot {
+  return readAccessProjection(runtime.read);
+}
+
+function commandKey(command: AccessCommand): string {
+  switch (command.type) {
+    case "create-identity":
+      return "access:identity:create";
+    case "update-identity":
+    case "set-identity-status":
+    case "resend-invite":
+    case "revoke-invite":
+    case "restore-identity":
+    case "delete-identity":
+      return `access:identity:${command.identityId}`;
+    case "revoke-session":
+      return `access:session:${command.sessionId}`;
+    case "revoke-all-sessions":
+      return `access:identity:${command.identityId}:sessions`;
+    case "bulk-update-identities":
+      return "access:identities:bulk";
+    case "create-role":
+      return "access:role:create";
+    case "update-role":
+    case "duplicate-role":
+    case "delete-role":
+    case "apply-role-template":
+      return `access:role:${command.roleId}`;
+    case "create-group":
+      return "access:group:create";
+    case "update-group":
+    case "delete-group":
+    case "set-group-members":
+      return `access:group:${command.groupId}`;
+    case "upsert-rule":
+      return `access:rule:${command.rule.id}`;
+    case "upsert-rules":
+      return "access:rules:bulk";
+    case "delete-rule":
+      return `access:rule:${command.ruleId}`;
+    case "update-defaults":
+      return "access:defaults";
+    case "create-review-campaign":
+      return "access:review:create";
+    case "record-review-decision":
+      return `access:record-review-decision:${command.reviewId}`;
+    case "complete-review":
+      return `access:complete-review:${command.reviewId}`;
+    case "apply-history-restore":
+      return `access:apply-history-restore:${command.historyId}`;
+    case "import-policy-bundle":
+      return "access:policy:import";
+    default:
+      return "access:unknown";
+  }
+}
+
+export function writeAccessProjection(
+  draft: SampleDraft,
+  next: AccessControllerSnapshot,
+  owners: FederatedAccessOwners,
+  previousManageSessions: ManageSession[],
+): void {
+  const openViewAudienceLookup = projectAudienceLookup(next.roles, next.people);
+  const dashboards = decodeDashboards(
+    owners.dashboards,
+    openViewAudienceLookup,
+  );
+  const reportDraft = decodeReport(owners.reportDraft, openViewAudienceLookup);
+  const reportTemplates = decodeReports(
+    owners.reportTemplates,
+    openViewAudienceLookup,
+  );
+  draft.update("access-people", initialPeople, next.people);
+  draft.update("access-roles", initialRoles, next.roles);
+  draft.update(
+    "access-guests-v1",
+    { version: 1 as const, items: initialGuests },
+    { version: 1, items: next.guests },
+  );
+  draft.update(
+    "access-services-v1",
+    { version: 1 as const, items: initialServices },
+    { version: 1, items: next.services },
+  );
+  draft.update(
+    "access-groups-v1",
+    { version: 1 as const, items: initialAccessGroups },
+    { version: 1, items: next.groups },
+  );
+  draft.update(
+    "access-rules-v1",
+    { version: 1 as const, items: initialAccessRules },
+    { version: 1, items: next.rules },
+  );
+  draft.update("boards-list", initialBoards, owners.boards);
+  draft.update(
+    "boards-announcements",
+    initialAnnouncements,
+    owners.announcements,
+  );
+  draft.update<unknown>("views-saved", initialSavedViews, owners.savedViews);
+  draft.update(
+    "views-dashboards",
+    initialDashboards,
+    dashboards.map((dashboard) =>
+      toLegacyDashboard(dashboard, openViewAudienceLookup),
+    ),
+  );
+  draft.update(
+    "views-report-draft",
+    initialReport,
+    toLegacyReport(reportDraft, openViewAudienceLookup),
+  );
+  draft.update(
+    "views-report-templates",
+    initialReportTemplates,
+    reportTemplates.map((report) =>
+      toLegacyReport(report, openViewAudienceLookup),
+    ),
+  );
+  draft.update<unknown>("comms-configuration", null, owners.commsConfiguration);
+  draft.update<Category[]>(
+    "commsCategories",
+    CATEGORIES,
+    owners.commsCategories,
+  );
+  draft.update<Channel[]>("commsChannels", CHANNELS, owners.commsChannels);
+  draft.update(
+    "access-defaults-v1",
+    { version: 1 as const, value: initialAccessDefaults },
+    { version: 1, value: next.defaults },
+  );
+  draft.update(
+    "access-templates-v1",
+    { version: 1 as const, items: initialAccessTemplates },
+    { version: 1, items: next.templates },
+  );
+  draft.update(
+    "access-reviews-v1",
+    { version: 1 as const, items: initialAccessReviews },
+    { version: 1, items: next.reviews },
+  );
+  draft.update(
+    "access-deleted-identities-v1",
+    { version: 1 as const, items: [] as DeletedInternalIdentity[] },
+    { version: 1, items: next.deletedIdentities },
+  );
+  draft.update(
+    "manage-sessions",
+    initialManageSessions,
+    projectManageSessions(next.sessions, previousManageSessions),
+  );
+  draft.update(
+    "access-history-v1",
+    { version: 1 as const, items: [] as ControllerHistoryEntry[] },
+    { version: 1, items: next.history },
+  );
+}
+
+export type ControllerMutationResult =
+  | {
+      ok: true;
+      summary: string;
+      value?: Extract<AccessCommandResult, { ok: true }>["value"];
+    }
+  | { ok: false; error: string };
+
+function publicResult(result: AccessCommandResult): ControllerMutationResult {
+  if (!result.ok) return result;
+  return {
+    ok: true,
+    summary: result.summary,
+    ...(result.value ? { value: result.value } : {}),
+  };
+}
+
+export function useAccessController() {
+  const runtime = useSampleRuntime();
+  const resource = useSampleResource<AccessRuntimeSnapshot>({
+    keys: ACCESS_OWNER_KEYS,
+    queryKey: "access:projection:v1",
+    load: (signal) =>
+      runtime.load((source) => readAccessProjection(source.read), {
+        keys: ACCESS_OWNER_KEYS,
+        signal,
+      }),
+  });
+  const [initialProjection] = useState(() =>
+    readAccessRuntimeSnapshot(runtime),
+  );
+  const commands = useSampleCommands();
+  const projection = resource.data ?? initialProjection;
+  const currentSnapshot = projection.snapshot;
+
+  async function run(
+    command: AccessCommand,
+  ): Promise<ControllerMutationResult> {
+    try {
+      return await commands.run(commandKey(command), (signal) =>
+        runtime.execute<ControllerMutationResult>(
+          (draft) => {
+            const current = readAccessProjection(draft.read);
+            const result = executeFederatedAccessCommand(
+              current.snapshot,
+              current.owners,
+              command,
+              {
+                now: new Date().toISOString(),
+                id: (prefix) => `${prefix}:${crypto.randomUUID()}`,
+              },
+            );
+            if (!result.ok) return draft.reject(publicResult(result));
+            writeAccessProjection(
+              draft,
+              result.state,
+              result.owners,
+              current.manageSessions,
+            );
+            return publicResult(result);
+          },
+          { keys: ACCESS_OWNER_KEYS, signal },
+        ),
       );
-      update(
-        "access-services-v1",
-        { version: 1 as const, items: initialServices },
-        { version: 1, items: next.services },
-      );
-      update(
-        "access-groups-v1",
-        { version: 1 as const, items: initialAccessGroups },
-        { version: 1, items: next.groups },
-      );
-      update(
-        "access-rules-v1",
-        { version: 1 as const, items: initialAccessRules },
-        { version: 1, items: next.rules },
-      );
-      update("boards-list", initialBoards, result.owners.boards);
-      update(
-        "boards-announcements",
-        initialAnnouncements,
-        result.owners.announcements,
-      );
-      update<unknown>(
-        "views-saved",
-        initialSavedViews,
-        result.owners.savedViews,
-      );
-      update<unknown>(
-        "views-dashboards",
-        initialDashboards,
-        result.owners.dashboards,
-      );
-      update<unknown>(
-        "views-report-draft",
-        initialReport,
-        result.owners.reportDraft,
-      );
-      update<unknown>(
-        "views-report-templates",
-        initialReportTemplates,
-        result.owners.reportTemplates,
-      );
-      update<unknown>(
-        "comms-configuration",
-        null,
-        result.owners.commsConfiguration,
-      );
-      update(
-        "access-defaults-v1",
-        { version: 1 as const, value: initialAccessDefaults },
-        { version: 1, value: next.defaults },
-      );
-      update(
-        "access-templates-v1",
-        { version: 1 as const, items: initialAccessTemplates },
-        { version: 1, items: next.templates },
-      );
-      update(
-        "access-reviews-v1",
-        { version: 1 as const, items: initialAccessReviews },
-        { version: 1, items: next.reviews },
-      );
-      update(
-        "access-deleted-identities-v1",
-        { version: 1 as const, items: [] as DeletedInternalIdentity[] },
-        { version: 1, items: next.deletedIdentities },
-      );
-      update(
-        "manage-sessions",
-        initialManageSessions,
-        projectManageSessions(next.sessions, manageSessions),
-      );
-      update(
-        "access-history-v1",
-        { version: 1 as const, items: [] as ControllerHistoryEntry[] },
-        { version: 1, items: next.history },
-      );
-    });
-    return publicResult(result);
+    } catch (error) {
+      return {
+        ok: false,
+        error: sampleOperationMessage(
+          error,
+          "Could not apply this Access change. Try again.",
+        ),
+      };
+    }
   }
 
   const state = {
-    ...snapshot,
-    identities: getControllerIdentities(snapshot),
+    ...currentSnapshot,
+    identities: getControllerIdentities(currentSnapshot),
     health: [
-      ...getAccessHealth(snapshot, new Date().toISOString()),
-      ...federated.findings,
+      ...getAccessHealth(currentSnapshot, new Date().toISOString()),
+      ...projection.federatedFindings,
     ],
   };
   const actions = {
@@ -401,12 +588,12 @@ export function useAccessController() {
       run({ type: "revoke-all-sessions", identityId }),
     previewBulkIdentityUpdate: (
       input: BulkIdentityUpdateInput,
-    ): BulkIdentityImpact => previewBulkIdentityUpdate(snapshot, input),
+    ): BulkIdentityImpact => previewBulkIdentityUpdate(currentSnapshot, input),
     bulkUpdateIdentities: (input: BulkIdentityUpdateInput) =>
       run({ type: "bulk-update-identities", input }),
     createRole: (input: CreateRoleInput) => run({ type: "create-role", input }),
-    updateRole: (roleId: string, patch: UpdateRolePatch) =>
-      run({ type: "update-role", roleId, patch }),
+    updateRole: (roleId: string, patch: UpdateRolePatch, expected?: Role) =>
+      run({ type: "update-role", roleId, patch, expected }),
     duplicateRole: (roleId: string, name?: string) =>
       run({ type: "duplicate-role", roleId, name }),
     deleteRole: (roleId: string) => run({ type: "delete-role", roleId }),
@@ -417,7 +604,8 @@ export function useAccessController() {
     updateGroup: (
       groupId: string,
       patch: Partial<Pick<AccessGroup, "name" | "description" | "memberIds">>,
-    ) => run({ type: "update-group", groupId, patch }),
+      expected?: AccessGroup,
+    ) => run({ type: "update-group", groupId, patch, expected }),
     deleteGroup: (groupId: string) => run({ type: "delete-group", groupId }),
     setGroupMembers: (groupId: string, memberIds: string[]) =>
       run({ type: "set-group-members", groupId, memberIds }),
@@ -425,7 +613,7 @@ export function useAccessController() {
     upsertRules: (rules: AccessRule[]) => run({ type: "upsert-rules", rules }),
     deleteRule: (ruleId: string) => run({ type: "delete-rule", ruleId }),
     resolveAccess: (input: ResolveAccessInput) =>
-      resolveControllerAccess(snapshot, input),
+      resolveControllerAccess(currentSnapshot, input),
     updateDefaults: (patch: Partial<AccessDefaults>) =>
       run({ type: "update-defaults", patch }),
     createReviewCampaign: (input: CreateReviewCampaignInput) =>
@@ -438,11 +626,11 @@ export function useAccessController() {
     completeReview: (reviewId: string) =>
       run({ type: "complete-review", reviewId }),
     previewHistoryRestore: (historyId: string) =>
-      previewHistoryRestore(snapshot, historyId),
+      previewHistoryRestore(currentSnapshot, historyId),
     applyHistoryRestore: (historyId: string) =>
       run({ type: "apply-history-restore", historyId }),
     exportPolicyBundle: (): string =>
-      JSON.stringify(createPolicyBundle(snapshot), null, 2),
+      JSON.stringify(createPolicyBundle(currentSnapshot), null, 2),
     parsePolicyImport: (text: string): ReturnType<typeof parsePolicyBundle> =>
       parsePolicyBundle(text),
     importPolicyBundle: (text: string, mode: "merge" | "replace") =>
@@ -452,12 +640,18 @@ export function useAccessController() {
   return {
     state,
     actions,
+    isPending: commands.isPending,
+    pendingKeys: commands.pendingKeys,
+    resource,
     // Boards owns its content state, while Access remains the policy owner.
     // Expose the current federated owners so Boards can re-project its latest
     // typed visibility without duplicating Access' resolver or write rules.
-    owners,
+    owners: projection.owners,
     permissionCatalog,
-    scopeCatalog: [...coreScopeCatalog, ...federated.scopes],
+    scopeCatalog: [
+      ...coreScopeCatalog,
+      ...(currentSnapshot.federatedScopes ?? []),
+    ] as ScopeCatalogEntry[],
   };
 }
 

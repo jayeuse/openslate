@@ -33,7 +33,9 @@ import { Input } from "@/components/ui/input";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { completeCollection, pageCollection } from "../sample-collections";
 import type { AccessController } from "./controller";
+import type { EditorIntent } from "./editor-helpers";
 import type { AccessGroup, InternalIdentity } from "./policy";
 import { GroupEditor } from "./role-group-editors";
 
@@ -129,6 +131,7 @@ export function GroupsView({
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [draft, setDraft] = useState<AccessGroup | null>(null);
+  const [draftIntent, setDraftIntent] = useState<EditorIntent>("edit");
   const filtered = controller.state.groups
     .filter((group) =>
       `${group.name} ${group.description}`
@@ -136,15 +139,35 @@ export function GroupsView({
         .includes(query.trim().toLowerCase()),
     )
     .sort((left, right) => left.name.localeCompare(right.name));
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, pageCount - 1);
-  const visible = filtered.slice(
-    currentPage * PAGE_SIZE,
-    (currentPage + 1) * PAGE_SIZE,
+  const pageResult = pageCollection(
+    completeCollection(
+      filtered,
+      JSON.stringify(["groups", query.trim().toLowerCase()]),
+    ),
+    page * PAGE_SIZE,
+    PAGE_SIZE,
   );
+  const pageCount = Math.max(1, Math.ceil(pageResult.total / pageResult.limit));
+  const currentPage = pageResult.offset / pageResult.limit;
+  const visible = [...pageResult.items];
   const identityName = (id: string) =>
     controller.state.identities.find((identity) => identity.id === id)?.name ??
     "Unknown identity";
+
+  function editGroup(group: AccessGroup) {
+    setDraftIntent("edit");
+    setDraft({ ...group, memberIds: [...group.memberIds] });
+  }
+
+  function createGroup() {
+    setDraftIntent("create");
+    setDraft({
+      id: `draft:group:${crypto.randomUUID()}`,
+      name: "",
+      description: "",
+      memberIds: [],
+    });
+  }
   const ruleCount = (groupId: string) =>
     controller.state.rules.filter(
       (rule) => rule.subject.kind === "group" && rule.subject.id === groupId,
@@ -159,9 +182,7 @@ export function GroupsView({
           return (
             <button
               className="focus-visible:outline-ring min-h-11 max-w-md rounded-sm text-left outline-none focus-visible:outline-2"
-              onClick={() =>
-                setDraft({ ...group, memberIds: [...group.memberIds] })
-              }
+              onClick={() => editGroup(group)}
             >
               <span className="block font-medium">{group.name}</span>
               <span className="text-muted-foreground block max-w-md truncate text-xs">
@@ -203,9 +224,7 @@ export function GroupsView({
               <Button
                 variant="outline"
                 className="min-h-11"
-                onClick={() =>
-                  setDraft({ ...group, memberIds: [...group.memberIds] })
-                }
+                onClick={() => editGroup(group)}
               >
                 Edit
               </Button>
@@ -237,14 +256,8 @@ export function GroupsView({
         </div>
         <Button
           className="min-h-11"
-          onClick={() =>
-            setDraft({
-              id: `draft:group:${crypto.randomUUID()}`,
-              name: "",
-              description: "",
-              memberIds: [],
-            })
-          }
+          disabled={controller.isPending()}
+          onClick={createGroup}
         >
           <Plus data-icon="inline-start" /> Create group
         </Button>
@@ -298,14 +311,8 @@ export function GroupsView({
               <EmptyContent>
                 <Button
                   className="min-h-11"
-                  onClick={() =>
-                    setDraft({
-                      id: `draft:group:${crypto.randomUUID()}`,
-                      name: "",
-                      description: "",
-                      memberIds: [],
-                    })
-                  }
+                  disabled={controller.isPending()}
+                  onClick={createGroup}
                 >
                   Create group
                 </Button>
@@ -317,10 +324,8 @@ export function GroupsView({
                 <DataTable
                   ariaLabel="Groups directory"
                   columns={groupColumns}
-                  data={filtered}
+                  data={visible}
                   getRowId={(group) => group.id}
-                  pagination={{ pageIndex: currentPage, pageSize: PAGE_SIZE }}
-                  onPaginationChange={(next) => setPage(next.pageIndex)}
                 />
               </div>
 
@@ -332,9 +337,7 @@ export function GroupsView({
                     ruleCount={ruleCount(group.id)}
                     memberNames={group.memberIds.map(identityName)}
                     onOpenRules={onOpenRulesForGroup}
-                    onEdit={() =>
-                      setDraft({ ...group, memberIds: [...group.memberIds] })
-                    }
+                    onEdit={() => editGroup(group)}
                   />
                 ))}
               </div>
@@ -360,6 +363,7 @@ export function GroupsView({
         key={draft?.id ?? "closed-group"}
         controller={controller}
         draft={draft}
+        intent={draftIntent}
         onClose={() => setDraft(null)}
       />
     </section>
