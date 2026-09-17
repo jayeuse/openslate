@@ -58,8 +58,8 @@
   --muted-foreground: #aeb6c0;
   --accent: #2c2e31;
   --accent-foreground: #f1f1f2;
-  --destructive: #ef4444;
-  --destructive-foreground: #ffffff;
+  --destructive: #ff9292;
+  --destructive-foreground: #080808;
   --success: #4ade80;
   --warning: #fbbf24;
   --chart-1: #89a6d0;
@@ -107,7 +107,7 @@
   --accent-foreground: #d0d4ff;
 }
 [data-accent="emerald"] {
-  --primary: #059669;
+  --primary: #046c4e;
   --accent: #ecfdf5;
   --accent-foreground: #047857;
 }
