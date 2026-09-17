@@ -118,12 +118,15 @@ export type AnnouncementFeedProps = {
   timezone?: string;
   personal: BoardPersonalState;
   records?: readonly SampleRecord[];
+  pending?: boolean;
   onSave: (
     announcement: BoardAnnouncement,
     original?: BoardAnnouncement,
-  ) => BoardMutationResult;
-  onAction: (action: AnnouncementAction) => BoardMutationResult;
-  onPersonal: (change: AnnouncementPersonalAction) => BoardMutationResult;
+  ) => Promise<BoardMutationResult>;
+  onAction: (action: AnnouncementAction) => Promise<BoardMutationResult>;
+  onPersonal: (
+    change: AnnouncementPersonalAction,
+  ) => Promise<BoardMutationResult>;
 };
 
 type FeedStatus = "published" | "drafts" | "archive";
@@ -165,6 +168,7 @@ export function AnnouncementFeed({
   timezone = BOARD_TIMEZONE,
   personal,
   records = EMPTY_RECORDS,
+  pending = false,
   onSave,
   onAction,
   onPersonal,
@@ -221,8 +225,8 @@ export function AnnouncementFeed({
     identities: people.map(({ id, name, active }) => ({ id, name, active })),
     departments: departments.map((name) => ({ id: slug(name), name })),
   };
-  const editingAllowed = !preview && canEdit && viewer.active;
-  const managingAllowed = !preview && canManage;
+  const editingAllowed = !pending && !preview && canEdit && viewer.active;
+  const managingAllowed = !pending && !preview && canManage;
   const viewerName =
     people.find((person) => person.id === viewer.id)?.name ??
     "selected identity";
@@ -400,8 +404,9 @@ export function AnnouncementFeed({
     return editorIsNew ? undefined : (editorOriginal ?? undefined);
   }
 
-  function saveDraft() {
+  async function saveDraft() {
     if (!editorDraft) return false;
+    if (pending) return false;
     if (editorDraft.boardId !== boardId) {
       setEditorError(
         "This draft belongs to another board. Return to that board before saving, or discard this draft.",
@@ -421,8 +426,8 @@ export function AnnouncementFeed({
       return false;
     }
     const saved = prepareDraft(editorDraft);
-    const result = safeMutation(() => onSave(saved, mutationOriginal()));
-    if (result && !result.ok) {
+    const result = await safeMutation(() => onSave(saved, mutationOriginal()));
+    if (!result.ok) {
       setEditorError(result.error);
       return false;
     }
@@ -435,8 +440,9 @@ export function AnnouncementFeed({
     return true;
   }
 
-  function publishDraft() {
+  async function publishDraft() {
     if (!editorDraft) return;
+    if (pending) return;
     if (editorDraft.boardId !== boardId) {
       setEditorError(
         "This draft belongs to another board. Return to that board before publishing, or discard this draft.",
@@ -460,8 +466,8 @@ export function AnnouncementFeed({
     const action: AnnouncementAction = scheduled
       ? { type: "schedule", announcement: saved, original: mutationOriginal() }
       : { type: "publish", announcement: saved, original: mutationOriginal() };
-    const actionResult = safeMutation(() => onAction(action));
-    if (actionResult && !actionResult.ok) {
+    const actionResult = await safeMutation(() => onAction(action));
+    if (!actionResult.ok) {
       setEditorError(actionResult.error);
       return;
     }
@@ -475,32 +481,36 @@ export function AnnouncementFeed({
     setActiveStatus(scheduled ? "drafts" : "published");
   }
 
-  function runAction(action: AnnouncementAction, message: string) {
-    if (preview) return;
-    const result = safeMutation(() => onAction(action));
-    if (result && !result.ok) {
+  async function runAction(action: AnnouncementAction, message: string) {
+    if (pending || preview) return;
+    const result = await safeMutation(() => onAction(action));
+    if (!result.ok) {
       setNotice({ kind: "error", message: result.error });
       return;
     }
     setNotice({ kind: "success", message });
   }
 
-  function runPersonal(change: AnnouncementPersonalAction, message: string) {
-    if (preview || !viewer.active) return;
-    const result = safeMutation(() => onPersonal(change));
-    if (result && !result.ok) {
+  async function runPersonal(
+    change: AnnouncementPersonalAction,
+    message: string,
+  ) {
+    if (pending || preview || !viewer.active) return;
+    const result = await safeMutation(() => onPersonal(change));
+    if (!result.ok) {
       setNotice({ kind: "error", message: result.error });
       return;
     }
     setNotice({ kind: "success", message });
   }
 
-  function confirmDelete() {
-    if (!pendingDelete || preview || !canManage || !viewer.active) return;
-    const result = safeMutation(() =>
+  async function confirmDelete() {
+    if (pending || !pendingDelete || preview || !canManage || !viewer.active)
+      return;
+    const result = await safeMutation(() =>
       onAction({ type: "delete", announcementId: pendingDelete.id }),
     );
-    if (result && !result.ok) {
+    if (!result.ok) {
       setNotice({ kind: "error", message: result.error });
       return;
     }
@@ -719,7 +729,11 @@ export function AnnouncementFeed({
               people={people}
               audienceLookup={audienceLookup}
               records={records}
-              canEdit={!preview && (canManage || (canEdit && entry.isAuthor))}
+              canEdit={
+                !pending &&
+                !preview &&
+                (canManage || (canEdit && entry.isAuthor))
+              }
               canManage={managingAllowed}
               preview={preview}
               viewerActive={viewer.active}
@@ -748,6 +762,7 @@ export function AnnouncementFeed({
               : "Save a private draft, then preview or publish it when the message is ready."
           }
           dirty={editorDirty}
+          pending={pending}
           onClose={() => closeEditor(true)}
         >
           <AnnouncementEditor
@@ -787,7 +802,10 @@ export function AnnouncementFeed({
         action="Delete announcement"
         phrase={pendingDelete?.title}
         onCancel={() => setPendingDelete(null)}
-        onConfirm={confirmDelete}
+        onConfirm={() => {
+          void confirmDelete();
+        }}
+        disabled={pending}
       />
     </section>
   );
@@ -1097,8 +1115,8 @@ type AnnouncementEditorProps = {
     >,
   ) => void;
   onDateTimeError: (message: string) => void;
-  onSave: () => boolean;
-  onPublish: () => void;
+  onSave: () => void | Promise<unknown>;
+  onPublish: () => void | Promise<unknown>;
 };
 
 function AnnouncementEditor({
@@ -1120,7 +1138,7 @@ function AnnouncementEditor({
 }: AnnouncementEditorProps) {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSave();
+    void onSave();
   }
 
   function updateDateTime(field: "publishAt" | "expiresAt", value: string) {
@@ -1570,11 +1588,11 @@ function isFutureTimestamp(value: string | null): boolean {
   return Boolean(value) && timestampValue(value) > Date.now();
 }
 
-function safeMutation(
-  callback: () => BoardMutationResult,
-): BoardMutationResult | undefined {
+async function safeMutation(
+  callback: () => Promise<BoardMutationResult>,
+): Promise<BoardMutationResult> {
   try {
-    return callback();
+    return await callback();
   } catch {
     return {
       ok: false,

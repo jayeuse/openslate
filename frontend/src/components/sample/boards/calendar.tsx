@@ -107,28 +107,29 @@ export interface BoardCalendarProps {
     "identityId" | "calendarView" | "reminders"
   >;
   previewAs?: string | null;
+  pending?: boolean;
   onDateChange: (date: string) => void;
   onSave: (
     event: BoardEvent,
     scope: BoardCalendarMutationScope,
     original?: BoardEvent,
-  ) => BoardMutationResult;
+  ) => Promise<BoardMutationResult>;
   onAction: (
     event: BoardEvent,
     action: BoardCalendarEventAction,
-  ) => BoardMutationResult;
+  ) => Promise<BoardMutationResult>;
   onRemind: (
     event: BoardEvent,
     option: BoardReminderOption,
     occurrenceStart: string,
-  ) => BoardMutationResult;
+  ) => Promise<BoardMutationResult | undefined>;
   onCancelReminder: (
     event: BoardEvent,
     occurrenceStart: string,
-  ) => BoardMutationResult;
+  ) => Promise<BoardMutationResult>;
   onPreferenceChange: (
     patch: Partial<Pick<BoardPersonalState, "calendarView">>,
-  ) => BoardMutationResult;
+  ) => Promise<BoardMutationResult>;
 }
 
 type DraftEvent = {
@@ -503,11 +504,11 @@ function isPendingReminder(
   );
 }
 
-function safeEventMutation(
-  callback: () => BoardMutationResult,
-): BoardMutationResult {
+async function safeEventMutation(
+  callback: () => Promise<BoardMutationResult>,
+): Promise<BoardMutationResult> {
   try {
-    return callback();
+    return await callback();
   } catch {
     return {
       ok: false,
@@ -561,6 +562,7 @@ function EventOccurrenceCard({
   onAction,
   onRemind,
   onCancelReminder,
+  pending,
 }: {
   occurrence: EventOccurrence;
   timezone: string;
@@ -574,17 +576,21 @@ function EventOccurrenceCard({
   boardArchived: boolean;
   reminders: readonly BoardReminder[];
   identityId: string;
+  pending?: boolean;
   onEdit: (event: BoardEvent) => void;
   onAction: (event: BoardEvent, action: BoardCalendarEventAction) => void;
   onRemind: (
     event: BoardEvent,
-    occurrenceStart: string,
     option: BoardReminderOption,
-  ) => void;
+    occurrenceStart: string,
+  ) => Promise<BoardMutationResult | undefined>;
   onCancelReminder: (event: BoardEvent, occurrenceStart: string) => void;
 }) {
   const { event } = occurrence;
   const [reminderOpen, setReminderOpen] = useState(false);
+  const [reminderPending, setReminderPending] = useState(false);
+  const [reminderError, setReminderError] = useState<string | null>(null);
+  const reminderBusy = Boolean(pending) || reminderPending;
   const ownEvent = event.authorId === viewer.id;
   const canModerate = capabilities.manage && !previewAs && !boardArchived;
   const canEdit =
@@ -607,6 +613,21 @@ function EventOccurrenceCard({
   const hasMore = Boolean(
     event.details || event.attachments.length || event.links.length,
   );
+
+  async function chooseReminder(option: BoardReminderOption) {
+    if (reminderBusy) return;
+    setReminderPending(true);
+    setReminderError(null);
+    try {
+      const result = await onRemind(event, option, occurrence.occurrenceStart);
+      if (result?.ok) setReminderOpen(false);
+      else if (result) setReminderError(result.error);
+    } catch {
+      setReminderError("The reminder could not be saved. Try again.");
+    } finally {
+      setReminderPending(false);
+    }
+  }
 
   return (
     <article className="group hover:bg-muted/20 flex min-w-0 flex-col gap-4 p-5 transition-colors sm:flex-row sm:items-start">
@@ -707,20 +728,27 @@ function EventOccurrenceCard({
           <Button
             variant="secondary"
             className="min-h-11"
-            disabled={Boolean(previewAs) || boardArchived}
+            disabled={Boolean(previewAs) || boardArchived || reminderBusy}
             onClick={() => onCancelReminder(event, occurrence.occurrenceStart)}
           >
             <BellOff aria-hidden="true" />
             Cancel reminder
           </Button>
         ) : !event.archived ? (
-          <Popover open={reminderOpen} onOpenChange={setReminderOpen}>
+          <Popover
+            open={reminderOpen}
+            onOpenChange={(open) => {
+              if (!open && reminderBusy) return;
+              setReminderOpen(open);
+              if (open) setReminderError(null);
+            }}
+          >
             <PopoverTrigger
               render={
                 <Button
                   variant="outline"
                   className="min-h-11"
-                  disabled={Boolean(previewAs) || boardArchived}
+                  disabled={Boolean(previewAs) || boardArchived || reminderBusy}
                 />
               }
             >
@@ -748,15 +776,18 @@ function EventOccurrenceCard({
                     type="button"
                     variant="ghost"
                     className="min-h-11 justify-start"
-                    onClick={() => {
-                      onRemind(event, occurrence.occurrenceStart, option);
-                      setReminderOpen(false);
-                    }}
+                    disabled={reminderBusy}
+                    onClick={() => chooseReminder(option)}
                   >
                     {label}
                   </Button>
                 ))}
               </div>
+              {reminderError ? (
+                <p className="text-destructive mt-3 text-sm" role="alert">
+                  {reminderError}
+                </p>
+              ) : null}
             </PopoverContent>
           </Popover>
         ) : null}
@@ -929,6 +960,7 @@ function EventList({
   onAction,
   onRemind,
   onCancelReminder,
+  pending,
 }: Omit<React.ComponentProps<typeof EventOccurrenceCard>, "occurrence"> & {
   occurrences: readonly EventOccurrence[];
 }) {
@@ -958,6 +990,7 @@ function EventList({
           boardArchived={boardArchived}
           reminders={reminders}
           identityId={identityId}
+          pending={pending}
           onEdit={onEdit}
           onAction={onAction}
           onRemind={onRemind}
@@ -1343,6 +1376,7 @@ export function BoardCalendar({
   selectedDate,
   personal,
   previewAs,
+  pending = false,
   onDateChange,
   onSave,
   onAction,
@@ -1483,7 +1517,11 @@ export function BoardCalendar({
   );
   const draftDirty = Boolean(draft && serializedDraft(draft) !== draftBaseline);
   const canCreate =
-    capabilities.edit && !boardArchived && !previewAs && viewer.active;
+    !pending &&
+    capabilities.edit &&
+    !boardArchived &&
+    !previewAs &&
+    viewer.active;
   const monthDate = dateKeyToDate(monthRange.start);
   const selectedDateObject = dateKeyToDate(selected);
   const selectedPersonName =
@@ -1530,8 +1568,9 @@ export function BoardCalendar({
     setEditorError("");
   }
 
-  function saveDraft() {
+  async function saveDraft() {
     if (!draft) return;
+    if (pending) return;
     if (draft.boardId !== boardId) {
       setEditorError(
         "This draft belongs to another board. Return to that board before saving, or discard this draft.",
@@ -1617,7 +1656,7 @@ export function BoardCalendar({
       updatedAt: timestamp,
     };
     const scope = nextEvent.recurrence === "none" ? "single" : "series";
-    const result = safeEventMutation(() =>
+    const result = await safeEventMutation(() =>
       onSave(nextEvent, scope, draft.original),
     );
     if (!result.ok) {
@@ -1628,11 +1667,11 @@ export function BoardCalendar({
     closeEditor(false);
   }
 
-  function requestEventAction(
+  async function requestEventAction(
     event: BoardEvent,
     action: BoardCalendarEventAction,
   ) {
-    if (!capabilities.edit || boardArchived || previewAs) return;
+    if (pending || !capabilities.edit || boardArchived || previewAs) return;
     if (action === "archive" && event.archived) return;
     if (action === "restore" && (!event.archived || !capabilities.manage))
       return;
@@ -1644,7 +1683,7 @@ export function BoardCalendar({
       });
       return;
     }
-    const result = safeEventMutation(() => onAction(event, action));
+    const result = await safeEventMutation(() => onAction(event, action));
     if (!result.ok) {
       setStatus(result.error);
       return;
@@ -1652,10 +1691,16 @@ export function BoardCalendar({
     setStatus(action === "archive" ? "Event archived." : "Event restored.");
   }
 
-  function confirmDelete() {
-    if (!pendingDelete || previewAs || boardArchived || !capabilities.manage)
+  async function confirmDelete() {
+    if (
+      pending ||
+      !pendingDelete ||
+      previewAs ||
+      boardArchived ||
+      !capabilities.manage
+    )
       return;
-    const result = safeEventMutation(() =>
+    const result = await safeEventMutation(() =>
       onAction(pendingDelete.event, "delete"),
     );
     if (!result.ok) {
@@ -1670,25 +1715,32 @@ export function BoardCalendar({
     setPendingDelete(null);
   }
 
-  function showReminder(
+  async function showReminder(
     event: BoardEvent,
-    occurrenceStart: string,
     option: BoardReminderOption,
+    occurrenceStart: string,
   ) {
-    if (previewAs || boardArchived) return;
-    const result = safeEventMutation(() =>
-      onRemind(event, option, occurrenceStart),
-    );
+    if (pending || previewAs || boardArchived) return;
+    const result = await safeEventMutation(async () => {
+      const mutation = await onRemind(event, option, occurrenceStart);
+      return (
+        mutation ?? {
+          ok: false,
+          error: "The reminder could not be saved. Try again.",
+        }
+      );
+    });
     if (!result.ok) {
       setStatus(result.error);
-      return;
+      return result;
     }
     setStatus(`Personal reminder set for ${event.title}.`);
+    return result;
   }
 
-  function cancelReminder(event: BoardEvent, occurrenceStart: string) {
-    if (previewAs || boardArchived) return;
-    const result = safeEventMutation(() =>
+  async function cancelReminder(event: BoardEvent, occurrenceStart: string) {
+    if (pending || previewAs || boardArchived) return;
+    const result = await safeEventMutation(() =>
       onCancelReminder(event, occurrenceStart),
     );
     if (!result.ok) {
@@ -1698,11 +1750,11 @@ export function BoardCalendar({
     setStatus(`Reminder canceled for ${event.title}.`);
   }
 
-  function changeCalendarView(value: string[]) {
-    if (previewAs || !viewer.active) return;
+  async function changeCalendarView(value: string[]) {
+    if (pending || previewAs || !viewer.active) return;
     const view = value[0];
     if (view !== "agenda" && view !== "month") return;
-    const result = safeEventMutation(() =>
+    const result = await safeEventMutation(() =>
       onPreferenceChange({ calendarView: view }),
     );
     if (!result.ok) {
@@ -1953,6 +2005,7 @@ export function BoardCalendar({
                   boardArchived={boardArchived}
                   reminders={personal.reminders}
                   identityId={personal.identityId}
+                  pending={pending}
                   onEdit={beginEdit}
                   onAction={requestEventAction}
                   onRemind={showReminder}
@@ -1997,6 +2050,7 @@ export function BoardCalendar({
             boardArchived={boardArchived}
             reminders={personal.reminders}
             identityId={personal.identityId}
+            pending={pending}
             onEdit={beginEdit}
             onAction={requestEventAction}
             onRemind={showReminder}
@@ -2043,6 +2097,7 @@ export function BoardCalendar({
             boardArchived={boardArchived}
             reminders={personal.reminders}
             identityId={personal.identityId}
+            pending={pending}
             onEdit={beginEdit}
             onAction={requestEventAction}
             onRemind={showReminder}
@@ -2070,6 +2125,7 @@ export function BoardCalendar({
             : "Add the details your team needs to plan the day."
         }
         dirty={draftDirty}
+        pending={pending}
         onClose={closeEditor}
       >
         {(requestClose) =>
@@ -2082,7 +2138,10 @@ export function BoardCalendar({
               departments={departments}
               records={records}
               disabled={
-                Boolean(previewAs) || boardArchived || !capabilities.edit
+                pending ||
+                Boolean(previewAs) ||
+                boardArchived ||
+                !capabilities.edit
               }
               error={editorError}
               onChange={(patch) =>
@@ -2116,7 +2175,10 @@ export function BoardCalendar({
         }
         phrase={pendingDelete?.event.title}
         onCancel={() => setPendingDelete(null)}
-        onConfirm={confirmDelete}
+        onConfirm={() => {
+          void confirmDelete();
+        }}
+        disabled={pending}
       />
     </div>
   );

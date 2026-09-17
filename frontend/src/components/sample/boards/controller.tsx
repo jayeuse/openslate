@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { flushSync } from "react-dom";
+import { useEffect, useRef, useState } from "react";
 import {
   useAccessController,
-  type AccessControllerState,
+  ACCESS_OWNER_KEYS,
+  readAccessProjection,
+  type AccessRuntimeSnapshot,
 } from "../access/controller";
 import {
   resolveControllerAccess,
@@ -15,11 +16,13 @@ import {
   type FederatedAccessOwners,
 } from "../access/federated-adapters";
 import { departments } from "../access/model";
+import { useSampleRuntime } from "../sample-state";
+import type { SampleDraft } from "../sample-runtime";
 import {
-  useSampleState,
-  useSampleTransaction,
-  type SampleTransactionDraft,
-} from "../sample-state";
+  sampleOperationMessage,
+  useSampleCommands,
+  useSampleResource,
+} from "../sample-async";
 import { INITIAL_RECORDS, type SampleRecord } from "../sample-data";
 import { releaseLocalAttachment } from "../comms/local-attachments";
 import { datetimeInputToUtc } from "@/lib/date-time";
@@ -44,6 +47,7 @@ import {
 import {
   canViewBoardAudience,
   dueBoardReminders,
+  expandBoardEventOccurrences,
   getReminderDueAt,
   type BoardReminderTiming,
   type BoardViewer,
@@ -52,6 +56,7 @@ import {
   executeBoardCommand,
   type BoardCommand,
   type BoardCommandContext,
+  type BoardMutationResult,
   type BoardsState,
 } from "./commands";
 
@@ -65,6 +70,13 @@ export const BOARD_KEYS = {
   templates: "boards-templates-v1",
   activity: "boards-activity-v1",
 } as const;
+export const BOARD_OWNER_KEYS = [
+  ...Object.values(BOARD_KEYS),
+  "records",
+  "manage-settings",
+  "platformNotifications",
+  ...ACCESS_OWNER_KEYS,
+] as const;
 type RawState = Record<keyof BoardsState, unknown>;
 
 export type BoardReminderCandidate = {
@@ -82,6 +94,22 @@ export type BoardReminderEligibilityOptions = {
   canViewBoard: (boardId: string) => boolean;
   canManageBoard: (boardId: string) => boolean;
 };
+
+export function canSetBoardReminder(
+  event: BoardEvent,
+  viewer: BoardViewer | undefined,
+  canViewBoard: (boardId: string) => boolean,
+  canManageBoard: (boardId: string) => boolean,
+): boolean {
+  return Boolean(
+    viewer &&
+    viewer.active &&
+    (viewer.accessStatus ?? "active") === "active" &&
+    canViewBoard(event.boardId) &&
+    (canManageBoard(event.boardId) ||
+      canViewBoardAudience(event.audience, viewer, event.authorId)),
+  );
+}
 
 export function findEligibleBoardReminders({
   state,
@@ -112,9 +140,7 @@ export function findEligibleBoardReminders({
     if (
       !board ||
       board.status !== "active" ||
-      !canViewBoard(board.id) ||
-      (!canManageBoard(board.id) &&
-        !canViewBoardAudience(event.audience, viewer, event.authorId))
+      !canSetBoardReminder(event, viewer, canViewBoard, canManageBoard)
     )
       return [];
     return [{ reminder, event }];
@@ -151,16 +177,8 @@ export function decodeBoardsState(
     activity: decodeBoardActivity(raw.activity ?? []),
   };
 }
-function read<T>(draft: SampleTransactionDraft, key: string, initial: T): T {
-  let value = initial;
-  draft.update<T>(key, initial, (current) => {
-    value = current;
-    return current;
-  });
-  return value;
-}
 function lookupFrom(
-  state: Pick<AccessControllerState, "roles" | "people">,
+  state: Pick<AccessRuntimeSnapshot["snapshot"], "roles" | "people">,
 ): BoardAudienceLookup {
   return {
     roles: state.roles,
@@ -195,15 +213,47 @@ function boardViewerFor(
       ) ?? [],
   };
 }
+
+function occurrenceDateKey(
+  event: BoardEvent,
+  occurrenceStart: string,
+): string | null {
+  if (event.allDay)
+    return /^\d{4}-\d{2}-\d{2}$/.test(occurrenceStart) ? occurrenceStart : null;
+  const timestamp = Date.parse(occurrenceStart);
+  if (!Number.isFinite(timestamp)) return null;
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: event.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(timestamp));
+  } catch {
+    return null;
+  }
+}
+
+function isCurrentEventOccurrence(
+  event: BoardEvent,
+  occurrenceStart: string,
+): boolean {
+  const date = occurrenceDateKey(event, occurrenceStart);
+  if (!date) return false;
+  return expandBoardEventOccurrences(event, {
+    start: date,
+    end: date,
+  }).occurrences.some((occurrence) => occurrence.start === occurrenceStart);
+}
 function readBoards(
-  draft: SampleTransactionDraft,
+  draft: Pick<SampleDraft, "read">,
   lookup: BoardAudienceLookup,
 ): BoardsState {
   return decodeBoardsState(
     Object.fromEntries(
       Object.entries(BOARD_KEYS).map(([key, storageKey]) => [
         key,
-        read<unknown>(draft, storageKey, null),
+        draft.read<unknown>(storageKey, null),
       ]),
     ) as RawState,
     lookup,
@@ -243,36 +293,6 @@ function attachBoardsPolicy(
     federatedScopes: projection.scopes,
   };
 }
-function currentAccess(
-  draft: SampleTransactionDraft,
-  base: AccessControllerSnapshot,
-): AccessControllerSnapshot {
-  return {
-    ...base,
-    people: read(draft, "access-people", base.people),
-    roles: read(draft, "access-roles", base.roles),
-    rules: read(draft, "access-rules-v1", {
-      version: 1,
-      items: base.rules.filter((rule) => !rule.id.startsWith("native:")),
-    }).items,
-    groups: read(draft, "access-groups-v1", { version: 1, items: base.groups })
-      .items,
-    guests: read(draft, "access-guests-v1", { version: 1, items: base.guests })
-      .items,
-    services: read(draft, "access-services-v1", {
-      version: 1,
-      items: base.services,
-    }).items,
-    defaults: read(draft, "access-defaults-v1", {
-      version: 1,
-      value: base.defaults,
-    }).value,
-    deletedIdentities: read(draft, "access-deleted-identities-v1", {
-      version: 1,
-      items: base.deletedIdentities,
-    }).items,
-  };
-}
 function attachmentIds(state: BoardsState): Set<string> {
   return new Set(
     [
@@ -285,37 +305,144 @@ function attachmentIds(state: BoardsState): Set<string> {
   );
 }
 
-export function useBoardsController(previewIdentityId: string | null = null) {
-  const access = useAccessController();
-  const [boards] = useSampleState<unknown>(BOARD_KEYS.boards, null);
-  const [events] = useSampleState<unknown>(BOARD_KEYS.events, null);
-  const [announcements] = useSampleState<unknown>(
-    BOARD_KEYS.announcements,
-    null,
-  );
-  const [placements] = useSampleState<unknown>(BOARD_KEYS.placements, null);
-  const [personal] = useSampleState<unknown>(BOARD_KEYS.personal, null);
-  const [templates] = useSampleState<unknown>(BOARD_KEYS.templates, null);
-  const [activity] = useSampleState<unknown>(BOARD_KEYS.activity, null);
-  const [records] = useSampleState<SampleRecord[]>("records", INITIAL_RECORDS);
-  const [settings] = useSampleState<Record<string, unknown>>(
-    "manage-settings",
-    {},
-  );
-  const transact = useSampleTransaction();
-  const lookup = lookupFrom(access.state);
+export type BoardsRuntimeSnapshot = {
+  state: BoardsState;
+  access: AccessRuntimeSnapshot;
+  records: SampleRecord[];
+  settings: Record<string, unknown>;
+};
+
+export function readBoardsRuntimeSnapshot(
+  read: <T>(key: string, initial: T) => T,
+): BoardsRuntimeSnapshot {
+  const access = readAccessProjection(read);
+  const lookup = lookupFrom(access.snapshot);
   const state = decodeBoardsState(
-    {
-      boards,
-      events,
-      announcements,
-      placements,
-      personal,
-      templates,
-      activity,
-    },
+    Object.fromEntries(
+      Object.entries(BOARD_KEYS).map(([key, storageKey]) => [
+        key,
+        read<unknown>(storageKey, null),
+      ]),
+    ) as RawState,
     lookup,
   );
+  return {
+    state,
+    access,
+    records: structuredClone(read("records", INITIAL_RECORDS)),
+    settings: structuredClone(read("manage-settings", {})),
+  };
+}
+
+function initialBoardsRuntimeSnapshot(): BoardsRuntimeSnapshot {
+  const initialValues: Record<string, unknown> = {
+    [BOARD_KEYS.boards]: INITIAL_BOARDS,
+    [BOARD_KEYS.events]: INITIAL_EVENTS,
+    [BOARD_KEYS.announcements]: INITIAL_ANNOUNCEMENTS,
+  };
+  return readBoardsRuntimeSnapshot((key, initial) =>
+    Object.hasOwn(initialValues, key)
+      ? (initialValues[key] as typeof initial)
+      : initial,
+  );
+}
+
+function boardCommandKey(command: BoardCommand, actorId: string): string {
+  switch (command.type) {
+    case "create-board":
+      return "boards:board:create";
+    case "save-board":
+      return `boards:board:${command.draft.id}`;
+    case "board-action":
+      return `boards:board:${command.boardId}`;
+    case "save-event":
+      return `boards:event:${command.event.id}`;
+    case "event-action":
+      return `boards:event:${command.eventId}`;
+    case "save-announcement":
+      return `boards:announcement:${command.announcement.id}`;
+    case "announcement-action":
+      return `boards:announcement:${command.announcementId}`;
+    case "place-record":
+      return `boards:placement:${command.placement.id}`;
+    case "remove-placement":
+      return `boards:placement:${command.placementId}`;
+    case "personal":
+      return `boards:personal:${actorId}`;
+    case "save-template":
+      return `boards:template:${command.template.id}`;
+    case "delete-template":
+      return `boards:template:${command.templateId}`;
+  }
+}
+
+function writeBoardsState(
+  draft: SampleDraft,
+  current: BoardsState,
+  next: BoardsState,
+): void {
+  for (const key of Object.keys(BOARD_KEYS) as (keyof BoardsState)[]) {
+    if (JSON.stringify(current[key]) !== JSON.stringify(next[key]))
+      draft.update<unknown>(BOARD_KEYS[key], null, next[key]);
+  }
+}
+
+function removeBoardAccessRules(
+  draft: SampleDraft,
+  current: BoardsState,
+  snapshot: AccessControllerSnapshot,
+  command: BoardCommand,
+): void {
+  if (command.type !== "board-action" || command.action !== "delete") return;
+  const scopeIds = new Set([
+    `board:${command.boardId}`,
+    ...(current.boards
+      .find((board) => board.id === command.boardId)
+      ?.widgets.map(
+        (widget) => `openview:board-widget:${command.boardId}:${widget.id}`,
+      ) ?? []),
+  ]);
+  const currentRules = {
+    version: 1 as const,
+    items: snapshot.rules.filter((rule) => !rule.id.startsWith("native:")),
+  };
+  draft.update("access-rules-v1", currentRules, (rules) => ({
+    ...rules,
+    items: rules.items.filter((rule) => !scopeIds.has(rule.scope.id)),
+  }));
+}
+
+type BoardCommandResolution = BoardCommand | { ok: false; error: string };
+type PersonalPatch =
+  | Partial<BoardPersonalState>
+  | ((current: BoardPersonalState) => Partial<BoardPersonalState>);
+
+function isRejectedBoardCommand(
+  value: BoardCommandResolution,
+): value is { ok: false; error: string } {
+  return "ok" in value;
+}
+
+export function useBoardsController(previewIdentityId: string | null = null) {
+  const runtime = useSampleRuntime();
+  const access = useAccessController();
+  const resource = useSampleResource<BoardsRuntimeSnapshot>({
+    keys: BOARD_OWNER_KEYS,
+    queryKey: "boards:projection:v1",
+    load: (signal) =>
+      runtime.load((source) => readBoardsRuntimeSnapshot(source.read), {
+        keys: BOARD_OWNER_KEYS,
+        signal,
+      }),
+  });
+  const commands = useSampleCommands();
+  const [fallback] = useState(initialBoardsRuntimeSnapshot);
+  const projection = resource.data ?? fallback;
+  const state = projection.state;
+  const accessSnapshot = projection.access.snapshot;
+  const lookup = lookupFrom(accessSnapshot);
+  const records = projection.records;
+  const settings = projection.settings;
   const previousAttachments = useRef<Set<string>>(new Set());
   const retainedFiles = attachmentIds(state);
   const attachmentKey = [...retainedFiles].sort().join("|");
@@ -341,7 +468,7 @@ export function useBoardsController(previewIdentityId: string | null = null) {
         ? "en-US"
         : "en-PH";
   const actorId = previewIdentityId ?? BOARD_MANAGER_ID;
-  const viewer = access.state.people.find((person) => person.id === actorId);
+  const viewer = accessSnapshot.people.find((person) => person.id === actorId);
   const personalState =
     state.personal[actorId] ??
     decodeBoardPersonalState({ identityId: actorId });
@@ -349,18 +476,20 @@ export function useBoardsController(previewIdentityId: string | null = null) {
   function contextFor(
     current: BoardsState,
     snapshot: AccessControllerSnapshot,
+    owners: FederatedAccessOwners,
+    currentRecords: readonly SampleRecord[],
     now: string,
     id: string,
     preview = previewIdentityId !== null,
   ): BoardCommandContext {
-    const policy = attachBoardsPolicy(snapshot, access.owners, current);
+    const policy = attachBoardsPolicy(snapshot, owners, current);
     return {
       actorId,
       preview,
       now,
       id,
       audienceLookup: lookupFrom(snapshot),
-      recordIds: records.map((record) => record.id),
+      recordIds: currentRecords.map((record) => record.id),
       can: (boardId, permission) =>
         resolveControllerAccess(policy, {
           identityId: actorId,
@@ -384,193 +513,321 @@ export function useBoardsController(previewIdentityId: string | null = null) {
   ): boolean {
     return contextFor(
       state,
-      access.state,
+      accessSnapshot,
+      projection.access.owners,
+      records,
       new Date().toISOString(),
       "preview",
     ).can(boardId, permission);
   }
-  function run(command: BoardCommand) {
-    const now = new Date().toISOString();
-    const id = `board-activity-${crypto.randomUUID()}`;
-    const preview = executeBoardCommand(
-      state,
-      command,
-      contextFor(state, access.state, now, id),
-    );
-    if (!preview.result.ok) return preview.result;
-    let committed: ReturnType<typeof executeBoardCommand>["result"] = {
-      ok: false,
-      error:
-        "The board could not be saved. Keep the editor open and try again.",
-    };
-    // Editors need the authoritative transaction outcome before closing.
-    flushSync(() =>
-      transact((draft) => {
-        const snapshot = currentAccess(draft, access.state);
-        const current = readBoards(draft, lookupFrom(snapshot));
-        const result = executeBoardCommand(
-          current,
-          command,
-          contextFor(current, snapshot, now, id),
-        );
-        committed = result.result;
-        if (!committed.ok) return;
-        for (const key of Object.keys(BOARD_KEYS) as (keyof BoardsState)[]) {
-          if (
-            JSON.stringify(current[key]) !== JSON.stringify(result.state[key])
-          )
-            draft.update<unknown>(BOARD_KEYS[key], null, result.state[key]);
-        }
-        if (command.type === "board-action" && command.action === "delete") {
-          const scopeIds = new Set([
-            `board:${command.boardId}`,
-            ...(current.boards
-              .find((board) => board.id === command.boardId)
-              ?.widgets.map(
-                (widget) =>
-                  `openview:board-widget:${command.boardId}:${widget.id}`,
-              ) ?? []),
-          ]);
-          draft.update(
-            "access-rules-v1",
-            { version: 1, items: snapshot.rules },
-            (rules) => ({
-              ...rules,
-              items: rules.items.filter(
-                (rule) =>
-                  !scopeIds.has(rule.scope.id) &&
-                  !rule.id.startsWith("native:"),
-              ),
-            }),
-          );
-        }
-      }),
-    );
-    return committed;
+
+  function isPending(key?: string): boolean {
+    return commands.isPending(key) || access.isPending(key);
   }
-  function updatePersonal(patch: Partial<BoardPersonalState>) {
-    return run({
-      type: "personal",
-      value: { ...personalState, ...patch, identityId: actorId },
+
+  async function runResolved(
+    key: string,
+    resolve: (
+      current: BoardsState,
+      snapshot: AccessRuntimeSnapshot,
+      records: readonly SampleRecord[],
+      now: string,
+    ) => BoardCommandResolution,
+  ): Promise<BoardMutationResult> {
+    try {
+      return await commands.run(key, (signal) =>
+        runtime.execute<BoardMutationResult>(
+          (draft) => {
+            const currentAccess = readAccessProjection(draft.read);
+            const current = readBoards(
+              draft,
+              lookupFrom(currentAccess.snapshot),
+            );
+            const currentRecords = structuredClone(
+              draft.read<SampleRecord[]>("records", INITIAL_RECORDS),
+            );
+            const now = new Date().toISOString();
+            const resolution = resolve(
+              current,
+              currentAccess,
+              currentRecords,
+              now,
+            );
+            if (isRejectedBoardCommand(resolution))
+              return draft.reject(resolution);
+            const result = executeBoardCommand(
+              current,
+              resolution,
+              contextFor(
+                current,
+                currentAccess.snapshot,
+                currentAccess.owners,
+                currentRecords,
+                now,
+                `board-activity-${crypto.randomUUID()}`,
+              ),
+            );
+            if (!result.result.ok) return draft.reject(result.result);
+            writeBoardsState(draft, current, result.state);
+            removeBoardAccessRules(
+              draft,
+              current,
+              currentAccess.snapshot,
+              resolution,
+            );
+            return result.result;
+          },
+          { keys: BOARD_OWNER_KEYS, signal },
+        ),
+      );
+    } catch (error) {
+      return {
+        ok: false,
+        error: sampleOperationMessage(
+          error,
+          "The board could not be updated. Keep the editor open and try again.",
+        ),
+      };
+    }
+  }
+
+  function run(command: BoardCommand): Promise<BoardMutationResult> {
+    return runResolved(boardCommandKey(command, actorId), () => command);
+  }
+
+  function updatePersonal(patch: PersonalPatch): Promise<BoardMutationResult> {
+    return runResolved(`boards:personal:${actorId}`, (current) => {
+      const currentPersonal =
+        current.personal[actorId] ??
+        decodeBoardPersonalState({ identityId: actorId });
+      const nextPatch =
+        typeof patch === "function" ? patch(currentPersonal) : patch;
+      return {
+        type: "personal",
+        value: {
+          ...currentPersonal,
+          ...nextPatch,
+          identityId: actorId,
+        },
+      };
     });
   }
+
   function remind(
     event: BoardsState["events"][number],
     timing: BoardReminderTiming,
     occurrenceStart: string,
-  ) {
-    if (previewIdentityId || !can(event.boardId, "view"))
-      return {
-        ok: false as const,
-        error: "Reminders are unavailable in a read-only preview.",
-      };
-    let start = occurrenceStart;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(start))
-      start = datetimeInputToUtc(`${start}T00:00`, event.timezone);
-    const dueAt = getReminderDueAt({ start }, timing);
-    const key = `${event.id}:${actorId}:${occurrenceStart}`;
-    const reminder = {
-      id: `board-reminder:${key}`,
-      eventId: event.id,
-      identityId: actorId,
-      occurrenceStart,
-      dueAt,
-      status: "pending" as const,
-      createdAt: new Date().toISOString(),
-    };
-    return updatePersonal({
-      reminders: [
-        ...personalState.reminders.filter((item) => item.id !== reminder.id),
-        reminder,
-      ],
-    });
-  }
-  function processReminders() {
-    if (previewIdentityId) return;
-    const now = new Date().toISOString();
-    if (!dueBoardReminders(personalState.reminders, now).length) return;
-    const currentContext = contextFor(
-      state,
-      access.state,
-      now,
-      "board-reminders",
-      false,
-    );
-    const eligible = findEligibleBoardReminders({
-      state,
-      personal: personalState,
-      actorId,
-      viewer: boardViewerFor(actorId, viewer, lookup),
-      now,
-      canViewBoard: (boardId) => currentContext.can(boardId, "view"),
-      canManageBoard: (boardId) => currentContext.can(boardId, "manage"),
-    });
-    if (!eligible.length) return;
-    transact((draft) => {
-      const snapshot = currentAccess(draft, access.state);
-      const currentLookup = lookupFrom(snapshot);
-      const current = readBoards(draft, currentLookup);
-      const own = current.personal[actorId];
-      if (!own) return;
-      const currentContext = contextFor(
-        current,
-        snapshot,
-        now,
-        "board-reminders",
-        false,
-      );
-      const due = findEligibleBoardReminders({
-        state: current,
-        personal: own,
-        actorId,
-        viewer: boardViewerFor(
+  ): Promise<BoardMutationResult> {
+    return runResolved(
+      `boards:reminder:${actorId}:${event.id}:${occurrenceStart}`,
+      (current, currentAccess, currentRecords, now) => {
+        if (previewIdentityId)
+          return {
+            ok: false,
+            error: "Reminders are unavailable in a read-only preview.",
+          };
+        const currentEvent = current.events.find(
+          (item) => item.id === event.id,
+        );
+        if (!currentEvent || currentEvent.archived)
+          return {
+            ok: false,
+            error: "This event is no longer available for reminders.",
+          };
+        const currentBoard = current.boards.find(
+          (board) => board.id === currentEvent.boardId,
+        );
+        const currentContext = contextFor(
+          current,
+          currentAccess.snapshot,
+          currentAccess.owners,
+          currentRecords,
+          now,
+          "board-reminder",
+          false,
+        );
+        if (
+          !currentBoard ||
+          currentBoard.status !== "active" ||
+          !currentContext.can(currentEvent.boardId, "view")
+        )
+          return {
+            ok: false,
+            error: "You no longer have access to this board.",
+          };
+        const currentLookup = lookupFrom(currentAccess.snapshot);
+        const currentViewer = boardViewerFor(
           actorId,
-          snapshot.people.find((person) => person.id === actorId),
+          currentAccess.snapshot.people.find((person) => person.id === actorId),
           currentLookup,
-        ),
-        now,
-        canViewBoard: (boardId) => currentContext.can(boardId, "view"),
-        canManageBoard: (boardId) => currentContext.can(boardId, "manage"),
-      });
-      if (!due.length) return;
-      const ids = new Set(due.map(({ reminder }) => reminder.id));
-      draft.update<unknown>(BOARD_KEYS.personal, null, {
-        ...current.personal,
-        [actorId]: {
-          ...own,
-          reminders: own.reminders.map((item) =>
-            ids.has(item.id) ? { ...item, status: "fired" } : item,
-          ),
-        },
-      });
-      draft.update<
-        { id: string; title: string; recordId?: string; read: boolean }[]
-      >("platformNotifications", [], (notices) => [
-        ...due
-          .filter(
-            ({ reminder }) =>
-              !notices.some((notice) => notice.id === reminder.id),
+        );
+        if (
+          !canSetBoardReminder(
+            currentEvent,
+            currentViewer,
+            (boardId) => currentContext.can(boardId, "view"),
+            (boardId) => currentContext.can(boardId, "manage"),
           )
-          .map(({ reminder, event }) => {
-            return {
-              id: reminder.id,
-              title: `Reminder: ${event.title}`,
-              recordId: event.links.find((link) => link.recordId)?.recordId,
-              read: false,
-            };
-          }),
-        ...notices,
-      ]);
-    });
+        )
+          return {
+            ok: false,
+            error: "You no longer have access to this event.",
+          };
+        if (!isCurrentEventOccurrence(currentEvent, occurrenceStart))
+          return {
+            ok: false,
+            error:
+              "This event occurrence changed. Reopen the calendar before setting a reminder.",
+          };
+        let start = occurrenceStart;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(start))
+          start = datetimeInputToUtc(`${start}T00:00`, currentEvent.timezone);
+        const reminder = {
+          id: `board-reminder:${event.id}:${actorId}:${occurrenceStart}`,
+          eventId: currentEvent.id,
+          identityId: actorId,
+          occurrenceStart,
+          dueAt: getReminderDueAt({ start }, timing),
+          status: "pending" as const,
+          createdAt: now,
+        };
+        const currentPersonal =
+          current.personal[actorId] ??
+          decodeBoardPersonalState({ identityId: actorId });
+        return {
+          type: "personal",
+          value: {
+            ...currentPersonal,
+            reminders: [
+              ...currentPersonal.reminders.filter(
+                (item) => item.id !== reminder.id,
+              ),
+              reminder,
+            ],
+            identityId: actorId,
+          },
+        };
+      },
+    );
   }
-  const unavailable = [boards, events, announcements].some(
-    (value) => value !== null && !Array.isArray(value),
-  );
+
+  function cancelReminder(
+    event: BoardsState["events"][number],
+    occurrenceStart: string,
+  ): Promise<BoardMutationResult> {
+    return runResolved(
+      `boards:reminder:${actorId}:${event.id}:${occurrenceStart}`,
+      (current) => {
+        const currentPersonal =
+          current.personal[actorId] ??
+          decodeBoardPersonalState({ identityId: actorId });
+        return {
+          type: "personal",
+          value: {
+            ...currentPersonal,
+            identityId: actorId,
+            reminders: currentPersonal.reminders.filter(
+              (item) =>
+                item.eventId !== event.id ||
+                item.occurrenceStart !== occurrenceStart,
+            ),
+          },
+        };
+      },
+    );
+  }
+
+  async function processReminders(): Promise<BoardMutationResult | undefined> {
+    if (previewIdentityId || isPending()) return undefined;
+    try {
+      return await commands.run("boards:reminders", (signal) =>
+        runtime.execute<BoardMutationResult | undefined>(
+          (draft) => {
+            const currentAccess = readAccessProjection(draft.read);
+            const currentLookup = lookupFrom(currentAccess.snapshot);
+            const current = readBoards(draft, currentLookup);
+            const own = current.personal[actorId];
+            if (!own) return undefined;
+            const now = new Date().toISOString();
+            const currentContext = contextFor(
+              current,
+              currentAccess.snapshot,
+              currentAccess.owners,
+              draft.read<SampleRecord[]>("records", INITIAL_RECORDS),
+              now,
+              "board-reminders",
+              false,
+            );
+            const due = findEligibleBoardReminders({
+              state: current,
+              personal: own,
+              actorId,
+              viewer: boardViewerFor(
+                actorId,
+                currentAccess.snapshot.people.find(
+                  (person) => person.id === actorId,
+                ),
+                currentLookup,
+              ),
+              now,
+              canViewBoard: (boardId) => currentContext.can(boardId, "view"),
+              canManageBoard: (boardId) =>
+                currentContext.can(boardId, "manage"),
+            });
+            if (!due.length) return undefined;
+            const ids = new Set(due.map(({ reminder }) => reminder.id));
+            draft.update<unknown>(BOARD_KEYS.personal, null, {
+              ...current.personal,
+              [actorId]: {
+                ...own,
+                reminders: own.reminders.map((item) =>
+                  ids.has(item.id) ? { ...item, status: "fired" } : item,
+                ),
+              },
+            });
+            draft.update<
+              { id: string; title: string; recordId?: string; read: boolean }[]
+            >("platformNotifications", [], (notices) => [
+              ...due
+                .filter(
+                  ({ reminder }) =>
+                    !notices.some((notice) => notice.id === reminder.id),
+                )
+                .map(({ reminder, event: dueEvent }) => ({
+                  id: reminder.id,
+                  title: `Reminder: ${dueEvent.title}`,
+                  recordId: dueEvent.links.find((link) => link.recordId)
+                    ?.recordId,
+                  read: false,
+                })),
+              ...notices,
+            ]);
+            return { ok: true };
+          },
+          { keys: BOARD_OWNER_KEYS, signal },
+        ),
+      );
+    } catch (error) {
+      return {
+        ok: false,
+        error: sampleOperationMessage(
+          error,
+          "Reminders could not be updated. Try again.",
+        ),
+      };
+    }
+  }
+
   return {
     state,
     access,
+    accessSnapshot,
+    resource,
+    isPending,
+    pendingKeys: [...new Set([...commands.pendingKeys, ...access.pendingKeys])],
     records,
     viewer,
+    people: accessSnapshot.people,
     actorId,
     personal: personalState,
     lookup,
@@ -580,8 +837,9 @@ export function useBoardsController(previewIdentityId: string | null = null) {
     run,
     updatePersonal,
     remind,
+    cancelReminder,
     processReminders,
-    unavailable,
+    unavailable: resource.status === "error",
   };
 }
 export type BoardsController = ReturnType<typeof useBoardsController>;

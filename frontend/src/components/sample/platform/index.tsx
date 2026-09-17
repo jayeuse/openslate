@@ -5,50 +5,30 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { Bell, Search, Files, ArrowUpRight } from "lucide-react";
-import { initialPeople, type Person } from "@/components/sample/access/model";
-import { initialDesign, type Design } from "@/components/sample/sandbox/model";
-import { useSampleState } from "@/components/sample/sample-state";
+import {
+  sampleOperationMessage,
+  useSampleResource,
+} from "@/components/sample/sample-async";
+import { useSampleRuntime } from "@/components/sample/sample-state";
 import { SearchField } from "@/components/ui/search-field";
 import { PageHeader } from "@/components/page-header";
 import {
-  INITIAL_RECORDS,
-  type SampleRecord,
-} from "@/components/sample/sample-data";
-import { Action, Choice, Panel, Toggle } from "../comms/ui";
-import {
-  MESSAGES,
-  type Message,
-  type RecordThread,
-  type SampleNotification,
-} from "../comms/model";
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Action, Choice, Panel, Toggle } from "../ui";
 import ImportExport from "./import-export";
 import Account from "./account";
-import { useCommsConfiguration } from "../comms/configuration-state";
-import { previewCommsNotification } from "../comms/notification-policy";
-
-const FILES = [
-  {
-    id: "sample-file-checklist",
-    name: "Inspection checklist.pdf",
-    recordId: "sample-sr-1004",
-    type: "PDF",
-    size: "142 KB",
-  },
-  {
-    id: "sample-file-workshop",
-    name: "Workshop photo.jpg",
-    recordId: "sample-sr-1005",
-    type: "Image",
-    size: "840 KB",
-  },
-  {
-    id: "sample-file-report",
-    name: "Service report.xlsx",
-    recordId: "sample-sr-1006",
-    type: "Spreadsheet",
-    size: "28 KB",
-  },
-];
+import {
+  PLATFORM_OWNER_KEYS,
+  pagePlatformSearch,
+  readPlatformSnapshot,
+  usePlatformCommands,
+  type PlatformSnapshot,
+} from "./runtime";
 const TABS = [
   "Search",
   "Notifications",
@@ -67,58 +47,40 @@ function initialTab(): (typeof TABS)[number] {
 }
 export default function SamplePlatform() {
   const [tab, setTab] = useState<(typeof TABS)[number]>(initialTab);
-  useEffect(() => {
-    const sync = () => setTab(initialTab());
-    const click = (event: MouseEvent) => {
-      const anchor =
-        event.target instanceof Element ? event.target.closest("a") : null;
-      if (!anchor) return;
-      const url = new URL(anchor.href, window.location.href);
-      if (
-        url.origin === window.location.origin &&
-        url.pathname === window.location.pathname &&
-        ["#account", "#notifications"].includes(url.hash)
-      )
-        setTab(
-          url.hash === "#account" ? "Account & presence" : "Notifications",
-        );
-    };
-    window.addEventListener("hashchange", sync);
-    document.addEventListener("click", click);
-    return () => {
-      window.removeEventListener("hashchange", sync);
-      document.removeEventListener("click", click);
-    };
-  }, []);
-  const [people] = useSampleState<Person[]>("access-people", initialPeople);
-  const [design] = useSampleState<{
-    past: Design[];
-    present: Design;
-    future: Design[];
-  }>("sandbox.design", { past: [], present: initialDesign, future: [] });
+  const runtime = useSampleRuntime();
+  const platformResource = useSampleResource<PlatformSnapshot>({
+    keys: PLATFORM_OWNER_KEYS,
+    queryKey: "platform:workspace",
+    load: (signal) =>
+      runtime.load((draft) => readPlatformSnapshot(draft.read), {
+        keys: PLATFORM_OWNER_KEYS,
+        signal,
+      }),
+  });
+  const [fallback] = useState<PlatformSnapshot>(() =>
+    readPlatformSnapshot((_, initial) => initial),
+  );
+  const workspace = platformResource.data ?? fallback;
+  const {
+    people,
+    design,
+    records,
+    messages,
+    notifications,
+    preferences,
+    followed,
+    recordThreads,
+    account,
+    sessions,
+    files,
+  } = workspace;
+  const platformCommands = usePlatformCommands();
   const [query, setQuery] = useState("");
   const [fileQuery, setFileQuery] = useState("");
   const [fileId, setFileId] = useState(() =>
     typeof window === "undefined"
       ? ""
       : new URLSearchParams(window.location.search).get("file") || "",
-  );
-  const [records, setRecords] = useSampleState<SampleRecord[]>(
-    "records",
-    INITIAL_RECORDS,
-  );
-  const [messages] = useSampleState<Message[]>("commsMessages", MESSAGES);
-  const [commsConfig] = useCommsConfiguration();
-  const [notifications, setNotifications] = useSampleState<
-    SampleNotification[]
-  >("platformNotifications", []);
-  const [preferences, setPreferences] = useSampleState(
-    "platformNotificationPreferences",
-    { threads: true, records: true, digest: false },
-  );
-  const [followed, setFollowed] = useSampleState<string[]>(
-    "platformFollowedRecords",
-    [],
   );
   const boardsController = useBoardsController();
   const boardRecords = boardsController.state.placements
@@ -130,15 +92,18 @@ export default function SamplePlatform() {
     ) &&
     (boardsController.can(DEFAULT_BOARD_ID, "edit") ||
       boardsController.can(DEFAULT_BOARD_ID, "manage"));
-  const [recordThreads, setRecordThreads] = useSampleState<RecordThread[]>(
-    "commsRecordThreads",
-    [],
-  );
-  const [recordId, setRecordId] = useState(INITIAL_RECORDS[0].id);
+  const [recordId, setRecordId] = useState(workspace.records[0]?.id ?? "");
   const [notice, setNotice] = useState("");
   const selectedRecord =
-    records.find((record) => record.id === recordId) ?? records[0];
-  const file = FILES.find((item) => item.id === fileId);
+    records.find((record) => record.id === recordId) ?? records[0] ?? null;
+  const selectedRecordId = selectedRecord?.id ?? "";
+  const [assigneeDrafts, setAssigneeDrafts] = useState<Record<string, string>>(
+    {},
+  );
+  const [assigneeErrors, setAssigneeErrors] = useState<Record<string, string>>(
+    {},
+  );
+  const file = files.find((item) => item.id === fileId);
   const searchGroups = [
     {
       type: "Users",
@@ -150,7 +115,7 @@ export default function SamplePlatform() {
     },
     {
       type: "Departments",
-      items: design.present.departments.map((item) => ({
+      items: design.departments.map((item) => ({
         id: item.id,
         title: item.name,
         href: `/sandbox?department=${encodeURIComponent(item.id)}`,
@@ -158,7 +123,7 @@ export default function SamplePlatform() {
     },
     {
       type: "Modules",
-      items: design.present.modules.map((item) => ({
+      items: design.modules.map((item) => ({
         id: item.id,
         title: item.name,
         href: `/sandbox?module=${encodeURIComponent(item.id)}`,
@@ -182,7 +147,7 @@ export default function SamplePlatform() {
     },
     {
       type: "Files",
-      items: FILES.map((item) => ({
+      items: files.map((item) => ({
         id: item.id,
         title: item.name,
         href: `/platform?file=${encodeURIComponent(item.id)}`,
@@ -190,12 +155,289 @@ export default function SamplePlatform() {
     },
   ].map((group) => ({
     ...group,
-    items: group.items.filter((item) =>
-      item.title.toLowerCase().includes(query.toLowerCase()),
+    ...pagePlatformSearch(
+      group.items,
+      query,
+      `platform-search:${group.type}:${query.trim().toLowerCase()}`,
     ),
   }));
+  const pendingRecordId = selectedRecord?.id ?? "";
+  const pendingAssignment = pendingRecordId
+    ? platformCommands.isPending(`platform:record:assign:${pendingRecordId}`)
+    : false;
+  const pendingSimulation = pendingRecordId
+    ? platformCommands.isPending(
+        `platform:notification:simulate:${pendingRecordId}`,
+      )
+    : false;
+  const boardPending = boardsController.isPending();
+  const isNavigationPending = () =>
+    platformCommands.isPending() || boardsController.isPending();
+  const navigationPending = isNavigationPending();
+  const assignmentValue = selectedRecord
+    ? (assigneeDrafts[selectedRecord.id] ?? selectedRecord.assignee)
+    : "";
+  const assignmentError = selectedRecord
+    ? assigneeErrors[selectedRecord.id]
+    : undefined;
+  useEffect(() => {
+    const sync = () => {
+      if (isNavigationPending()) return;
+      setTab(initialTab());
+    };
+    const click = (event: MouseEvent) => {
+      const anchor =
+        event.target instanceof Element ? event.target.closest("a") : null;
+      if (!anchor) return;
+      const url = new URL(anchor.href, window.location.href);
+      if (
+        url.origin === window.location.origin &&
+        url.pathname === window.location.pathname &&
+        ["#account", "#notifications"].includes(url.hash)
+      ) {
+        if (isNavigationPending()) {
+          event.preventDefault();
+          return;
+        }
+        setTab(
+          url.hash === "#account" ? "Account & presence" : "Notifications",
+        );
+      }
+    };
+    window.addEventListener("hashchange", sync);
+    document.addEventListener("click", click);
+    return () => {
+      window.removeEventListener("hashchange", sync);
+      document.removeEventListener("click", click);
+    };
+  }, [platformCommands.isPending, boardsController.isPending]);
+  useEffect(() => {
+    if (isNavigationPending() || recordId === selectedRecordId) return;
+    setRecordId(selectedRecordId);
+  }, [
+    recordId,
+    selectedRecordId,
+    platformCommands.isPending,
+    boardsController.isPending,
+  ]);
+  useEffect(() => {
+    if (!selectedRecord) return;
+    const draft = assigneeDrafts[selectedRecord.id];
+    if (draft === undefined || draft !== selectedRecord.assignee) return;
+    setAssigneeDrafts((current) => {
+      if (current[selectedRecord.id] !== draft) return current;
+      const next = { ...current };
+      delete next[selectedRecord.id];
+      return next;
+    });
+    setAssigneeErrors((current) => {
+      if (!(selectedRecord.id in current)) return current;
+      const next = { ...current };
+      delete next[selectedRecord.id];
+      return next;
+    });
+  }, [selectedRecord, assigneeDrafts]);
+  const hasRecordDiscussion = selectedRecord
+    ? recordThreads.some((item) => item.recordId === selectedRecord.id)
+    : false;
+  function commandError(error: unknown, fallback: string): string {
+    return sampleOperationMessage(error, fallback);
+  }
+  async function markAllNotificationsRead() {
+    try {
+      const result = await platformCommands.markAllNotificationsRead();
+      setNotice(
+        result.ok
+          ? result.value
+            ? `${result.value} sample notifications marked as read.`
+            : "All sample notifications are already read."
+          : result.error,
+      );
+    } catch (error) {
+      setNotice(commandError(error, "Notifications could not be updated."));
+    }
+  }
+  async function simulateRecordUpdate() {
+    if (!selectedRecord) return;
+    try {
+      const result = await platformCommands.simulateRecordUpdate(
+        selectedRecord.id,
+      );
+      setNotice(
+        result.ok
+          ? "Sample record update added to notifications."
+          : result.error,
+      );
+    } catch (error) {
+      setNotice(
+        commandError(error, "The sample update could not be simulated."),
+      );
+    }
+  }
+  async function updateNotificationPreference(
+    patch: Parameters<typeof platformCommands.updateNotificationPreferences>[0],
+  ) {
+    try {
+      const result =
+        await platformCommands.updateNotificationPreferences(patch);
+      if (!result.ok) setNotice(result.error);
+    } catch (error) {
+      setNotice(
+        commandError(error, "Notification preferences could not be saved."),
+      );
+    }
+  }
+  async function assignRecord(recordId: string, assignee: string) {
+    const record = records.find((item) => item.id === recordId);
+    if (!record) return;
+    setAssigneeDrafts((current) => ({ ...current, [recordId]: assignee }));
+    setAssigneeErrors((current) => {
+      if (!(recordId in current)) return current;
+      const next = { ...current };
+      delete next[recordId];
+      return next;
+    });
+    try {
+      const result = await platformCommands.updateRecordAssignee(
+        recordId,
+        assignee,
+      );
+      if (result.ok) {
+        setNotice("Sample record assignment updated.");
+        return;
+      }
+      setAssigneeErrors((current) => ({
+        ...current,
+        [recordId]: result.error,
+      }));
+      setNotice(result.error);
+    } catch (error) {
+      const message = commandError(
+        error,
+        "The sample record could not be updated.",
+      );
+      setAssigneeErrors((current) => ({ ...current, [recordId]: message }));
+      setNotice(message);
+    }
+  }
+  function retryRecordAssignment() {
+    if (!selectedRecord) return;
+    const assignee = assigneeDrafts[selectedRecord.id];
+    if (assignee === undefined) return;
+    void assignRecord(selectedRecord.id, assignee);
+  }
+  async function placeRecordOnBoard() {
+    if (!selectedRecord) return;
+    const now = new Date().toISOString();
+    const result = await boardsController.run({
+      type: "place-record",
+      placement: {
+        id: `board-placement-${crypto.randomUUID()}`,
+        boardId: DEFAULT_BOARD_ID,
+        recordId: selectedRecord.id,
+        moduleId: "service-requests",
+        pinned: false,
+        position: boardRecords.length,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    setNotice(
+      result.ok
+        ? "Sample record added to the organization board."
+        : result.error,
+    );
+  }
+  async function startRecordDiscussion() {
+    if (!selectedRecord) return;
+    try {
+      const result = await platformCommands.startRecordDiscussion(
+        selectedRecord.id,
+      );
+      setNotice(
+        result.ok
+          ? "Sample record discussion ready in OpenComms."
+          : result.error,
+      );
+    } catch (error) {
+      setNotice(
+        commandError(error, "The sample discussion could not be started."),
+      );
+    }
+  }
+  async function toggleRecordFollow() {
+    if (!selectedRecord) return;
+    try {
+      const result = await platformCommands.toggleFollow(selectedRecord.id);
+      setNotice(
+        result.ok
+          ? result.value
+            ? "Following this sample record."
+            : "Sample record follow removed."
+          : result.error,
+      );
+    } catch (error) {
+      setNotice(
+        commandError(error, "The sample record follow could not be updated."),
+      );
+    }
+  }
+  if (
+    platformResource.status === "loading" &&
+    platformResource.data === undefined
+  )
+    return (
+      <section
+        aria-label="Platform"
+        className="flex min-h-64 items-center justify-center p-6"
+      >
+        <p role="status" className="text-muted-foreground text-sm">
+          Loading workspace tools…
+        </p>
+      </section>
+    );
+  if (
+    platformResource.status === "error" &&
+    platformResource.data === undefined
+  )
+    return (
+      <section
+        aria-label="Platform"
+        className="flex min-h-64 flex-col items-center justify-center gap-3 p-6 text-center"
+      >
+        <p role="alert" className="text-destructive text-sm">
+          {platformResource.error}
+        </p>
+        <Action
+          type="button"
+          variant="outline"
+          onClick={platformResource.reload}
+        >
+          Try again
+        </Action>
+      </section>
+    );
   return (
     <div className="space-y-6">
+      {(platformResource.refreshing || platformResource.error) && (
+        <div className="bg-muted/50 flex items-center gap-3 rounded-lg border p-3 text-sm">
+          <p role="status" className="text-muted-foreground flex-1">
+            {platformResource.refreshing
+              ? "Refreshing workspace tools…"
+              : `Showing the last saved workspace tools. ${platformResource.error}`}
+          </p>
+          {!platformResource.refreshing && (
+            <Action
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={platformResource.reload}
+            >
+              Retry
+            </Action>
+          )}
+        </div>
+      )}
       <PageHeader
         title="Platform"
         description="Sample search, notifications and workspace tools."
@@ -208,7 +450,9 @@ export default function SamplePlatform() {
           <Action
             key={item}
             variant={tab === item ? "default" : "ghost"}
+            disabled={navigationPending}
             onClick={() => {
+              if (isNavigationPending()) return;
               setTab(item);
               setNotice("");
             }}
@@ -223,9 +467,21 @@ export default function SamplePlatform() {
         </p>
       )}
       {tab === "Import & export" ? (
-        <ImportExport />
+        <ImportExport
+          records={records}
+          people={people}
+          onImport={platformCommands.importRecords}
+          onPrepareExport={platformCommands.loadRecordsForExport}
+          pending={platformCommands.isPending}
+        />
       ) : tab === "Account & presence" ? (
-        <Account />
+        <Account
+          preferences={account}
+          sessions={sessions}
+          onAccountChange={platformCommands.updateAccount}
+          onEndSession={platformCommands.endSession}
+          pending={platformCommands.isPending}
+        />
       ) : tab === "Search" ? (
         <section className="space-y-6">
           <div className="max-w-2xl">
@@ -238,19 +494,31 @@ export default function SamplePlatform() {
           </div>
           <div className="grid items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
             {searchGroups.map((group) => (
-              <Panel key={group.type} title={group.type}>
-                {!group.items.length && (
+              <Panel
+                key={group.type}
+                title={`${group.type}${
+                  group.complete.items.length > group.page.items.length
+                    ? ` · showing ${group.page.items.length} of ${group.complete.items.length}`
+                    : ""
+                }`}
+              >
+                {!group.complete.items.length && (
                   <p className="text-muted-foreground text-sm">
                     No matching {group.type.toLowerCase()}.
                   </p>
                 )}
                 <ul className="divide-y">
-                  {group.items.slice(0, 8).map((item) => (
+                  {group.page.items.map((item) => (
                     <li key={item.id}>
                       {group.type === "Files" ? (
                         <button
                           className="flex min-h-11 w-full items-center justify-between gap-3 py-3 text-left text-sm hover:underline"
-                          onClick={() => {
+                          disabled={navigationPending}
+                          onClick={(event) => {
+                            if (isNavigationPending()) {
+                              event.preventDefault();
+                              return;
+                            }
                             setTab("File library");
                             setFileId(item.id);
                           }}
@@ -283,50 +551,35 @@ export default function SamplePlatform() {
           <Panel title="Notification center">
             <div className="flex flex-wrap gap-2">
               <Action
-                onClick={() =>
-                  setNotifications((items) =>
-                    items.map((item) => ({ ...item, read: true })),
-                  )
+                onClick={() => void markAllNotificationsRead()}
+                disabled={
+                  !notifications.some((item) => !item.read) ||
+                  platformCommands.isPending("platform:notifications:read-all")
                 }
-                disabled={!notifications.some((item) => !item.read)}
               >
                 Mark all as read
               </Action>
               <Action
-                onClick={() => {
-                  if (!preferences.records) {
-                    setNotice(
-                      "Record notifications are off. Enable them to receive this sample update.",
-                    );
-                    return;
-                  }
-                  const preview = previewCommsNotification({
-                    config: commsConfig,
-                    platformPreferences: preferences,
-                    person: people.find((person) => person.id === "sample-eli"),
-                    event: {
-                      kind: "record",
-                      text: `${selectedRecord.title} was updated`,
-                    },
-                  });
-                  if (!preview.allowed) {
-                    setNotice(preview.reason);
-                    return;
-                  }
-                  setNotifications((items) => [
-                    {
-                      id: `sample-notification-${crypto.randomUUID()}`,
-                      title: preview.title,
-                      recordId: selectedRecord.id,
-                      read: false,
-                    },
-                    ...items,
-                  ]);
-                }}
+                aria-describedby={
+                  selectedRecord ? undefined : "record-update-unavailable"
+                }
+                onClick={() => void simulateRecordUpdate()}
+                disabled={!selectedRecord || pendingSimulation}
               >
-                Simulate record update
+                {pendingSimulation
+                  ? "Simulating update…"
+                  : "Simulate record update"}
               </Action>
             </div>
+            {!selectedRecord && (
+              <p
+                id="record-update-unavailable"
+                className="text-muted-foreground text-sm"
+              >
+                Record update simulation is unavailable because this sample
+                workspace has no records.
+              </p>
+            )}
             {!notifications.length && (
               <div className="py-12 text-center">
                 <Bell className="text-muted-foreground mx-auto mb-3 size-7" />
@@ -345,14 +598,23 @@ export default function SamplePlatform() {
                 <div className="flex flex-wrap items-center gap-3">
                   <Action
                     onClick={() =>
-                      setNotifications((items) =>
-                        items.map((value) =>
-                          value.id === item.id
-                            ? { ...value, read: !value.read }
-                            : value,
-                        ),
-                      )
+                      void platformCommands
+                        .toggleNotification(item.id)
+                        .then((result) => {
+                          if (!result.ok) setNotice(result.error);
+                        })
+                        .catch((error: unknown) =>
+                          setNotice(
+                            commandError(
+                              error,
+                              "This notification could not be updated.",
+                            ),
+                          ),
+                        )
                     }
+                    disabled={platformCommands.isPending(
+                      `platform:notification:${item.id}`,
+                    )}
                   >
                     Mark {item.read ? "unread" : "read"}
                   </Action>
@@ -384,33 +646,33 @@ export default function SamplePlatform() {
               control="switch"
               label="Thread reply notifications"
               checked={preferences.threads}
+              disabled={platformCommands.isPending(
+                "platform:notification-preferences",
+              )}
               onCheckedChange={(checked) =>
-                setPreferences((value) => ({
-                  ...value,
-                  threads: checked,
-                }))
+                void updateNotificationPreference({ threads: checked })
               }
             />
             <Toggle
               control="switch"
               label="Record update notifications"
               checked={preferences.records}
+              disabled={platformCommands.isPending(
+                "platform:notification-preferences",
+              )}
               onCheckedChange={(checked) =>
-                setPreferences((value) => ({
-                  ...value,
-                  records: checked,
-                }))
+                void updateNotificationPreference({ records: checked })
               }
             />
             <Toggle
               control="switch"
               label="Daily digest"
               checked={preferences.digest}
+              disabled={platformCommands.isPending(
+                "platform:notification-preferences",
+              )}
               onCheckedChange={(checked) =>
-                setPreferences((value) => ({
-                  ...value,
-                  digest: checked,
-                }))
+                void updateNotificationPreference({ digest: checked })
               }
             />
             <p className="text-muted-foreground text-xs">
@@ -428,27 +690,36 @@ export default function SamplePlatform() {
               onValueChange={setFileQuery}
               placeholder="Find a sample file…"
             />
-            {FILES.filter((item) =>
-              item.name.toLowerCase().includes(fileQuery.toLowerCase()),
-            ).map((item) => (
-              <button
-                key={item.id}
-                className="hover:bg-muted flex min-h-16 w-full items-center gap-3 rounded-lg border p-4 text-left"
-                onClick={() => setFileId(item.id)}
-              >
-                <Files className="size-5 shrink-0" />
-                <span className="min-w-0 flex-1">
-                  <strong className="block truncate text-sm">
-                    {item.name}
-                  </strong>
-                  <span className="text-muted-foreground text-xs">
-                    {item.type} · {item.size} · Bundled example
+            {files
+              .filter((item) =>
+                item.name.toLowerCase().includes(fileQuery.toLowerCase()),
+              )
+              .map((item) => (
+                <button
+                  key={item.id}
+                  className="hover:bg-muted flex min-h-16 w-full items-center gap-3 rounded-lg border p-4 text-left"
+                  disabled={navigationPending}
+                  onClick={(event) => {
+                    if (isNavigationPending()) {
+                      event.preventDefault();
+                      return;
+                    }
+                    setFileId(item.id);
+                  }}
+                >
+                  <Files className="size-5 shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <strong className="block truncate text-sm">
+                      {item.name}
+                    </strong>
+                    <span className="text-muted-foreground text-xs">
+                      {item.type} · {item.size} · Bundled example
+                    </span>
                   </span>
-                </span>
-                <ArrowUpRight className="size-4" />
-              </button>
-            ))}
-            {!FILES.some((item) =>
+                  <ArrowUpRight className="size-4" />
+                </button>
+              ))}
+            {!files.some((item) =>
               item.name.toLowerCase().includes(fileQuery.toLowerCase()),
             ) && (
               <p className="text-muted-foreground text-sm">
@@ -471,7 +742,15 @@ export default function SamplePlatform() {
                   {records.find((record) => record.id === file.recordId)
                     ?.title ?? "Sample service job"}
                 </Link>
-                <Action onClick={() => setFileId("")}>Close details</Action>
+                <Action
+                  disabled={navigationPending}
+                  onClick={() => {
+                    if (isNavigationPending()) return;
+                    setFileId("");
+                  }}
+                >
+                  Close details
+                </Action>
               </>
             ) : (
               <p className="text-muted-foreground text-sm">
@@ -483,126 +762,138 @@ export default function SamplePlatform() {
       ) : (
         <div className="grid items-start gap-5 xl:grid-cols-2">
           <Panel title="Connected record actions">
-            <Choice
-              label="Select sample record"
-              value={selectedRecord.id}
-              onChange={(event) => setRecordId(event.target.value)}
-            >
-              {records.map((record) => (
-                <option key={record.id} value={record.id}>
-                  {record.title}
-                </option>
-              ))}
-            </Choice>
-            <div className="bg-muted/40 rounded-lg p-5">
-              <p className="text-muted-foreground text-xs tracking-widest uppercase">
-                Service job
-              </p>
-              <h3 className="mt-2 text-xl font-semibold">
-                {selectedRecord.title}
-              </h3>
-              <p className="mt-2 text-sm">
-                {selectedRecord.customer} · {selectedRecord.status}
-              </p>
-            </div>
-            <Choice
-              label="Assign record to"
-              value={selectedRecord.assignee}
-              onChange={(event) => {
-                setRecords((items) =>
-                  items.map((item) =>
-                    item.id === selectedRecord.id
-                      ? { ...item, assignee: event.target.value }
-                      : item,
-                  ),
-                );
-                setNotice("Sample record assignment updated.");
-              }}
-            >
-              {Array.from(
-                new Set([
-                  "Unassigned",
-                  ...people
-                    .filter((person) => person.active)
-                    .map((person) => person.name),
-                  selectedRecord.assignee,
-                ]),
-              ).map((person) => (
-                <option key={person}>{person}</option>
-              ))}
-            </Choice>
-            <div className="flex flex-wrap gap-2">
-              <Action
-                onClick={() => {
-                  const now = new Date().toISOString();
-                  const result = boardsController.run({
-                    type: "place-record",
-                    placement: {
-                      id: `board-placement-${crypto.randomUUID()}`,
-                      boardId: DEFAULT_BOARD_ID,
-                      recordId: selectedRecord.id,
-                      moduleId: "service-requests",
-                      pinned: false,
-                      position: boardRecords.length,
-                      createdAt: now,
-                      updatedAt: now,
-                    },
-                  });
-                  setNotice(
-                    result.ok
-                      ? "Sample record added to the organization board."
-                      : result.error,
-                  );
-                }}
-                disabled={
-                  !canPlaceOnBoard || boardRecords.includes(selectedRecord.id)
-                }
-              >
-                {!canPlaceOnBoard
-                  ? "Organization board unavailable"
-                  : boardRecords.includes(selectedRecord.id)
-                    ? "Added to Board"
-                    : "Add record to Board"}
-              </Action>
-              <Action
-                onClick={() => {
-                  if (
-                    !recordThreads.some(
-                      (item) => item.recordId === selectedRecord.id,
+            {selectedRecord ? (
+              <>
+                <Choice
+                  label="Select sample record"
+                  value={selectedRecord.id}
+                  disabled={navigationPending}
+                  onChange={(event) => {
+                    if (isNavigationPending()) return;
+                    setRecordId(event.target.value);
+                  }}
+                >
+                  {records.map((record) => (
+                    <option key={record.id} value={record.id}>
+                      {record.title}
+                    </option>
+                  ))}
+                </Choice>
+                <div className="bg-muted/40 rounded-lg p-5">
+                  <p className="text-muted-foreground text-xs tracking-widest uppercase">
+                    Service job
+                  </p>
+                  <h3 className="mt-2 text-xl font-semibold">
+                    {selectedRecord.title}
+                  </h3>
+                  <p className="mt-2 text-sm">
+                    {selectedRecord.customer} · {selectedRecord.status}
+                  </p>
+                </div>
+                <Choice
+                  label="Assign record to"
+                  value={assignmentValue}
+                  disabled={navigationPending || pendingAssignment}
+                  onChange={(event) => {
+                    if (isNavigationPending()) return;
+                    void assignRecord(selectedRecord.id, event.target.value);
+                  }}
+                >
+                  {Array.from(
+                    new Set([
+                      "Unassigned",
+                      ...people
+                        .filter((person) => person.active)
+                        .map((person) => person.name),
+                      selectedRecord.assignee,
+                      assignmentValue,
+                    ]),
+                  ).map((person) => (
+                    <option key={person}>{person}</option>
+                  ))}
+                </Choice>
+                {assignmentError && (
+                  <div
+                    role="alert"
+                    className="border-destructive/50 bg-destructive/10 space-y-2 rounded-lg border p-3 text-sm"
+                  >
+                    <p>{assignmentError}</p>
+                    <Action
+                      size="sm"
+                      variant="outline"
+                      disabled={navigationPending || pendingAssignment}
+                      onClick={retryRecordAssignment}
+                    >
+                      Retry assignment
+                    </Action>
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Action
+                    onClick={() => void placeRecordOnBoard()}
+                    disabled={
+                      !canPlaceOnBoard ||
+                      boardRecords.includes(selectedRecord.id) ||
+                      boardPending
+                    }
+                  >
+                    {boardPending
+                      ? "Adding to Board…"
+                      : !canPlaceOnBoard
+                        ? "Organization board unavailable"
+                        : boardRecords.includes(selectedRecord.id)
+                          ? "Added to Board"
+                          : "Add record to Board"}
+                  </Action>
+                  <Action
+                    onClick={() => void startRecordDiscussion()}
+                    disabled={platformCommands.isPending(
+                      `platform:record-discussion:${selectedRecord.id}`,
+                    )}
+                  >
+                    {platformCommands.isPending(
+                      `platform:record-discussion:${selectedRecord.id}`,
                     )
-                  )
-                    setRecordThreads((items) => [
-                      ...items,
-                      {
-                        id: `sample-record-thread-${crypto.randomUUID()}`,
-                        recordId: selectedRecord.id,
-                        text: `Discuss ${selectedRecord.title}`,
-                      },
-                    ]);
-                  setNotice("Sample record discussion ready in OpenComms.");
-                }}
-              >
-                Start chat about record
-              </Action>
-              <Action
-                onClick={() =>
-                  setFollowed((items) =>
-                    items.includes(selectedRecord.id)
-                      ? items.filter((id) => id !== selectedRecord.id)
-                      : [...items, selectedRecord.id],
-                  )
-                }
-              >
-                {followed.includes(selectedRecord.id)
-                  ? "Unfollow record"
-                  : "Follow record"}
-              </Action>
-            </div>
-            <p className="text-muted-foreground text-sm">
-              {followed.includes(selectedRecord.id)
-                ? "Following this sample record for future updates."
-                : "Follow this record to keep its changes in your sample notification center."}
-            </p>
+                      ? "Starting discussion…"
+                      : hasRecordDiscussion
+                        ? "Record discussion ready"
+                        : "Start chat about record"}
+                  </Action>
+                  <Action
+                    onClick={() => void toggleRecordFollow()}
+                    disabled={platformCommands.isPending(
+                      `platform:follow:${selectedRecord.id}`,
+                    )}
+                  >
+                    {platformCommands.isPending(
+                      `platform:follow:${selectedRecord.id}`,
+                    )
+                      ? "Updating follow…"
+                      : followed.includes(selectedRecord.id)
+                        ? "Unfollow record"
+                        : "Follow record"}
+                  </Action>
+                </div>
+                <p className="text-muted-foreground text-sm">
+                  {followed.includes(selectedRecord.id)
+                    ? "Following this sample record for future updates."
+                    : "Follow this record to keep its changes in your sample notification center."}
+                </p>
+              </>
+            ) : (
+              <Empty className="min-h-64 border-dashed">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <Files />
+                  </EmptyMedia>
+                  <EmptyTitle>No sample records yet</EmptyTitle>
+                  <EmptyDescription>
+                    Add a sample record through Platform import and export to
+                    use connected record actions.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            )}
           </Panel>
           <Panel title="Continue your workflow">
             <Link
@@ -619,13 +910,19 @@ export default function SamplePlatform() {
               Open record discussion
               <ArrowUpRight className="size-4" />
             </Link>
-            <Link
-              className="flex min-h-14 items-center justify-between rounded-lg border p-4 text-sm"
-              href={`/openview?record=${encodeURIComponent(selectedRecord.id)}`}
-            >
-              View record in OpenView
-              <ArrowUpRight className="size-4" />
-            </Link>
+            {selectedRecord ? (
+              <Link
+                className="flex min-h-14 items-center justify-between rounded-lg border p-4 text-sm"
+                href={`/openview?record=${encodeURIComponent(selectedRecord.id)}`}
+              >
+                View record in OpenView
+                <ArrowUpRight className="size-4" />
+              </Link>
+            ) : (
+              <p className="text-muted-foreground text-sm">
+                Add a sample record to continue to its OpenView page.
+              </p>
+            )}
             <p className="text-muted-foreground text-xs">
               Assignment and links are shared across sample pillars. Live work
               is unaffected.

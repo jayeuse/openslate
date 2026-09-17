@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import {
+  canSetBoardReminder,
   findEligibleBoardReminders,
+  readBoardsRuntimeSnapshot,
   type BoardReminderEligibilityOptions,
 } from "../../../src/components/sample/boards/controller";
 import type { BoardsState } from "../../../src/components/sample/boards/commands";
@@ -183,4 +185,44 @@ test("findEligibleBoardReminders requires an active actor and excludes preview d
       options(state, { viewer: { ...boardViewer, accessStatus: "revoked" } }),
     ),
   ).toEqual([]);
+});
+
+test("canSetBoardReminder rechecks the current event audience before personal writes", () => {
+  const item = event("event-current-audience", "sample-board-organization", {
+    audience: { kind: "identity", id: "sample-mara" },
+  });
+
+  expect(
+    canSetBoardReminder(
+      item,
+      boardViewer,
+      () => true,
+      () => false,
+    ),
+  ).toBe(false);
+  expect(
+    canSetBoardReminder(
+      item,
+      boardViewer,
+      () => true,
+      () => true,
+    ),
+  ).toBe(true);
+});
+
+test("readBoardsRuntimeSnapshot derives Boards and policy owners from the same reader", () => {
+  const board = structuredClone(INITIAL_BOARDS[0]);
+  board.name = "Current board projection";
+  const snapshot = readBoardsRuntimeSnapshot((key, initial) => {
+    if (key === "boards-list") return [board] as typeof initial;
+    return initial;
+  });
+
+  expect(snapshot.state.boards.map((item) => item.name)).toEqual([
+    "Current board projection",
+  ]);
+  expect(snapshot.access.owners.boards.map((item) => item.name)).toEqual([
+    "Current board projection",
+  ]);
+  expect(snapshot.access.snapshot.people.length).toBeGreaterThan(0);
 });

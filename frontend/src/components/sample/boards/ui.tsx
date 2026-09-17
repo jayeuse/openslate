@@ -29,6 +29,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { useDiscardGuard } from "../use-discard-guard";
 
 export function BoardEmpty({
   title,
@@ -61,6 +62,7 @@ export function ConfirmAction({
   phrase,
   onConfirm,
   onCancel,
+  disabled = false,
 }: {
   open: boolean;
   title: string;
@@ -69,6 +71,7 @@ export function ConfirmAction({
   phrase?: string;
   onConfirm: () => void;
   onCancel: () => void;
+  disabled?: boolean;
 }) {
   const [typed, setTyped] = useState("");
   const id = useId();
@@ -76,7 +79,7 @@ export function ConfirmAction({
     <AlertDialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) {
+        if (!next && !disabled) {
           setTyped("");
           onCancel();
         }
@@ -92,6 +95,7 @@ export function ConfirmAction({
             <FieldLabel htmlFor={id}>Type “{phrase}” to confirm</FieldLabel>
             <Input
               id={id}
+              disabled={disabled}
               value={typed}
               autoComplete="off"
               onChange={(event) => setTyped(event.target.value)}
@@ -103,6 +107,7 @@ export function ConfirmAction({
             type="button"
             variant="outline"
             className="min-h-11"
+            disabled={disabled}
             onClick={() => {
               setTyped("");
               onCancel();
@@ -114,11 +119,11 @@ export function ConfirmAction({
             type="button"
             variant="destructive"
             className="min-h-11"
-            disabled={phrase !== undefined && typed !== phrase}
             onClick={() => {
               setTyped("");
               onConfirm();
             }}
+            disabled={disabled || (phrase !== undefined && typed !== phrase)}
           >
             {action}
           </Button>
@@ -133,6 +138,7 @@ export function EditSheet({
   title,
   description,
   dirty,
+  pending = false,
   onClose,
   children,
 }: {
@@ -140,12 +146,29 @@ export function EditSheet({
   title: string;
   description: string;
   dirty: boolean;
+  pending?: boolean;
   onClose: () => void;
   children: ReactNode | ((requestClose: () => void) => ReactNode);
 }) {
-  const [discard, setDiscard] = useState(false);
   const [destination, setDestination] = useState<string | null>(null);
   const router = useRouter();
+  function closeWithDestination() {
+    const target = destination;
+    setDestination(null);
+    onClose();
+    if (target) {
+      const url = new URL(target);
+      if (url.origin === window.location.origin)
+        router.push(`${url.pathname}${url.search}${url.hash}` as Route);
+      else setTimeout(() => window.location.assign(url.href), 0);
+    }
+  }
+  const { discardOpen, requestClose, cancelDiscard, confirmDiscard } =
+    useDiscardGuard({
+      dirty,
+      pending,
+      onClose: closeWithDestination,
+    });
   useEffect(() => {
     if (!open || !dirty) return;
     const preventUnload = (event: BeforeUnloadEvent) => {
@@ -166,8 +189,9 @@ export function EditSheet({
       if (anchor.href === window.location.href) return;
       event.preventDefault();
       event.stopImmediatePropagation();
+      if (pending) return;
       setDestination(anchor.href);
-      setDiscard(true);
+      requestClose();
     };
     window.addEventListener("beforeunload", preventUnload);
     document.addEventListener("click", followLink, true);
@@ -175,11 +199,7 @@ export function EditSheet({
       window.removeEventListener("beforeunload", preventUnload);
       document.removeEventListener("click", followLink, true);
     };
-  }, [open, dirty]);
-  function requestClose() {
-    if (dirty) setDiscard(true);
-    else onClose();
-  }
+  }, [open, dirty, pending, requestClose]);
   return (
     <>
       <Sheet
@@ -200,6 +220,7 @@ export function EditSheet({
             aria-label={`Close ${title.toLowerCase()}`}
             className="absolute top-3 right-3 size-11"
             onClick={requestClose}
+            disabled={pending}
           >
             <X />
           </Button>
@@ -207,25 +228,16 @@ export function EditSheet({
         </SheetContent>
       </Sheet>
       <ConfirmAction
-        open={discard}
+        open={discardOpen}
         title="Discard unsaved changes?"
         description="Your saved content stays as it is. Changes made in this editor will be discarded."
         action="Discard changes"
         onCancel={() => {
-          setDiscard(false);
+          cancelDiscard();
           setDestination(null);
         }}
-        onConfirm={() => {
-          setDiscard(false);
-          onClose();
-          if (destination) {
-            const url = new URL(destination);
-            setDestination(null);
-            if (url.origin === window.location.origin)
-              router.push(`${url.pathname}${url.search}${url.hash}` as Route);
-            else setTimeout(() => window.location.assign(url.href), 0);
-          }
-        }}
+        onConfirm={confirmDiscard}
+        disabled={pending}
       />
     </>
   );

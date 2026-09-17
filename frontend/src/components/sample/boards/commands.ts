@@ -651,8 +651,15 @@ export function executeBoardCommand(
       )
     )
       return fail("This record is already on the board.");
+    const nextPlacement = {
+      ...placement,
+      position: state.placements.filter(
+        (item) => item.boardId === placement.boardId,
+      ).length,
+      updatedAt: context.now,
+    };
     return success(
-      { ...state, placements: [...state.placements, placement] },
+      { ...state, placements: [...state.placements, nextPlacement] },
       placement.boardId,
       "Added record",
       "placement",

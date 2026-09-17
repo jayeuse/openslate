@@ -47,7 +47,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useBoardsController } from "./controller";
+import { useBoardsController, type BoardsController } from "./controller";
 import {
   type Board,
   type BoardSection,
@@ -96,10 +96,52 @@ export default function SampleBoards() {
 }
 
 function BoardsPage() {
-  const router = useRouter();
-  const params = useSearchParams();
   const [preview, setPreview] = useState<string | null>(null);
   const controller = useBoardsController(preview);
+  const resource = controller.resource;
+  if (resource.status === "loading" && !resource.data)
+    return (
+      <div className="flex flex-col gap-3 p-6" role="status" aria-live="polite">
+        <div className="bg-muted h-8 w-48 animate-pulse rounded-lg" />
+        <div className="bg-muted h-24 w-full animate-pulse rounded-xl" />
+        <p className="text-muted-foreground text-sm">Loading Boards…</p>
+      </div>
+    );
+  if (resource.status === "error" && !resource.data)
+    return (
+      <Alert variant="destructive" className="m-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span>{resource.error}</span>
+          <Button
+            className="min-h-11"
+            variant="outline"
+            onClick={resource.reload}
+          >
+            <RefreshCw data-icon="inline-start" /> Retry
+          </Button>
+        </div>
+      </Alert>
+    );
+  return (
+    <BoardsContent
+      controller={controller}
+      preview={preview}
+      setPreview={setPreview}
+    />
+  );
+}
+
+function BoardsContent({
+  controller,
+  preview,
+  setPreview,
+}: {
+  controller: BoardsController;
+  preview: string | null;
+  setPreview: (identityId: string | null) => void;
+}) {
+  const router = useRouter();
+  const params = useSearchParams();
   const { state, personal } = controller;
   const [department, setDepartment] = useState("all");
   const [status, setStatus] = useState("active");
@@ -115,6 +157,7 @@ function BoardsPage() {
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(
     null,
   );
+  const allowNextUnload = useRef(false);
   const [selectedDate, setSelectedDate] = useState(() =>
     new Intl.DateTimeFormat("en-CA", {
       timeZone: controller.timezone,
@@ -127,6 +170,7 @@ function BoardsPage() {
   const dirty =
     editing !== null &&
     JSON.stringify(editing.original) !== JSON.stringify(editing.draft);
+  const commandPending = controller.isPending();
   const visibleBoards = state.boards.filter((board) =>
     controller.can(board.id, "view"),
   );
@@ -157,8 +201,13 @@ function BoardsPage() {
     !!savedBoard &&
     savedBoard.status === "active" &&
     !preview &&
+    !commandPending &&
     (controller.can(board.id, "edit") || controller.can(board.id, "manage"));
-  const manageable = !!board && !preview && controller.can(board.id, "manage");
+  const manageable =
+    !!board &&
+    !preview &&
+    !commandPending &&
+    controller.can(board.id, "manage");
   const viewer: BoardViewer = {
     id: controller.actorId,
     active: controller.viewer?.active ?? false,
@@ -175,7 +224,7 @@ function BoardsPage() {
         name.toLowerCase().replaceAll(" ", "-"),
       ) ?? [],
   };
-  const people = controller.access.state.people;
+  const people = controller.people;
   const roles = controller.lookup.roles ?? [];
   const departments = (controller.lookup.departments ?? []).map(
     (item) => item.name,
@@ -187,13 +236,29 @@ function BoardsPage() {
       (!onlyFavorites || personal.favoriteBoardIds.includes(item.id)),
   );
 
-  function report(result: BoardMutationResult, text: string) {
-    setNotice(
-      result.ok ? { error: false, text } : { error: true, text: result.error },
-    );
-    return result;
+  async function report(
+    result: Promise<BoardMutationResult>,
+    text: string,
+  ): Promise<BoardMutationResult> {
+    try {
+      const outcome = await result;
+      setNotice(
+        outcome.ok
+          ? { error: false, text }
+          : { error: true, text: outcome.error },
+      );
+      return outcome;
+    } catch {
+      const outcome = {
+        ok: false as const,
+        error: "The board could not be updated. Try again.",
+      };
+      setNotice({ error: true, text: outcome.error });
+      return outcome;
+    }
   }
   function navigate(id: string, nextSection?: BoardSection) {
+    if (commandPending) return;
     const target = state.boards.find((item) => item.id === id);
     router.push(
       `/boards?board=${encodeURIComponent(id)}&section=${nextSection ?? target?.defaultSection ?? "overview"}`,
@@ -201,6 +266,7 @@ function BoardsPage() {
     );
   }
   function guarded(action: () => void) {
+    if (commandPending) return;
     if (dirty) setPending(() => action);
     else {
       setEditing(null);
@@ -210,6 +276,7 @@ function BoardsPage() {
   }
   function beginEdit(settings = false) {
     if (!editable || !board) return;
+    allowNextUnload.current = false;
     setEditing({
       original: structuredClone(board),
       draft: structuredClone(board),
@@ -217,9 +284,9 @@ function BoardsPage() {
     setNotice(null);
     if (settings) setDialog("settings");
   }
-  function saveBoard() {
+  async function saveBoard() {
     if (!editing) return;
-    const result = report(
+    const result = await report(
       controller.run({ type: "save-board", ...editing }),
       "Board saved.",
     );
@@ -231,8 +298,17 @@ function BoardsPage() {
     }
   }
   useEffect(() => {
-    if (!dirty) return;
-    const unload = (event: BeforeUnloadEvent) => event.preventDefault();
+    if (!dirty) {
+      allowNextUnload.current = false;
+      return;
+    }
+    const unload = (event: BeforeUnloadEvent) => {
+      if (allowNextUnload.current) {
+        allowNextUnload.current = false;
+        return;
+      }
+      event.preventDefault();
+    };
     const followLink = (event: MouseEvent) => {
       const anchor =
         event.target instanceof Element
@@ -247,9 +323,15 @@ function BoardsPage() {
       )
         return;
       if (anchor.href === window.location.href) return;
+      if (commandPending) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       setPending(() => () => {
+        allowNextUnload.current = true;
         window.location.href = anchor.href;
       });
     };
@@ -259,7 +341,7 @@ function BoardsPage() {
       window.removeEventListener("beforeunload", unload);
       document.removeEventListener("click", followLink, true);
     };
-  }, [dirty]);
+  }, [commandPending, dirty]);
   const timerRef = useRef({ controller, board, editing, preview });
   useEffect(() => {
     timerRef.current = { controller, board, editing, preview };
@@ -273,7 +355,7 @@ function BoardsPage() {
         current.editing
       )
         return;
-      current.controller.processReminders();
+      void current.controller.processReminders();
       if (!current.board || current.board.status === "archived") return;
       const now = Date.now();
       setRecomputed((previous) => {
@@ -303,7 +385,9 @@ function BoardsPage() {
     return () => window.clearInterval(timer);
   }, []);
 
-  function announcementAction(action: AnnouncementAction) {
+  async function announcementAction(
+    action: AnnouncementAction,
+  ): Promise<BoardMutationResult> {
     if (action.type === "publish" || action.type === "schedule")
       return controller.run({
         type: "save-announcement",
@@ -321,22 +405,24 @@ function BoardsPage() {
         action.type === "pin" ? (action.pinned ? "pin" : "unpin") : action.type,
     });
   }
-  function personalAction(action: AnnouncementPersonalAction) {
+  async function personalAction(
+    action: AnnouncementPersonalAction,
+  ): Promise<BoardMutationResult> {
     const key =
       action.type === "read"
         ? "readAnnouncementIds"
         : "bookmarkedAnnouncementIds";
     const enabled = action.type === "read" ? action.read : action.bookmarked;
-    return controller.updatePersonal({
+    return controller.updatePersonal((current) => ({
       [key]: enabled
-        ? [...new Set([...personal[key], action.announcementId])]
-        : personal[key].filter((id) => id !== action.announcementId),
-    });
+        ? [...new Set([...current[key], action.announcementId])]
+        : current[key].filter((id) => id !== action.announcementId),
+    }));
   }
-  function eventAction(
+  async function eventAction(
     event: BoardEvent,
     action: "archive" | "restore" | "delete",
-  ) {
+  ): Promise<BoardMutationResult> {
     return controller.run({
       type: "event-action",
       boardId: event.boardId,
@@ -519,21 +605,21 @@ function BoardsPage() {
                 <DropdownMenuGroup>
                   <DropdownMenuItem
                     className="min-h-11"
-                    disabled={!!preview}
-                    onClick={() =>
-                      report(
-                        controller.updatePersonal({
-                          favoriteBoardIds: personal.favoriteBoardIds.includes(
+                    disabled={!!preview || commandPending}
+                    onClick={() => {
+                      void report(
+                        controller.updatePersonal((current) => ({
+                          favoriteBoardIds: current.favoriteBoardIds.includes(
                             board.id,
                           )
-                            ? personal.favoriteBoardIds.filter(
+                            ? current.favoriteBoardIds.filter(
                                 (id) => id !== board.id,
                               )
-                            : [...personal.favoriteBoardIds, board.id],
-                        }),
+                            : [...current.favoriteBoardIds, board.id],
+                        })),
                         "Favorite updated.",
-                      )
-                    }
+                      );
+                    }}
                   >
                     <Star />{" "}
                     {personal.favoriteBoardIds.includes(board.id)
@@ -542,16 +628,18 @@ function BoardsPage() {
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className="min-h-11"
-                    disabled={!!preview || board.status === "archived"}
-                    onClick={() =>
-                      report(
-                        controller.updatePersonal({
-                          homeBoardId:
-                            personal.homeBoardId === board.id ? null : board.id,
-                        }),
-                        "Home board updated.",
-                      )
+                    disabled={
+                      !!preview || commandPending || board.status === "archived"
                     }
+                    onClick={() => {
+                      void report(
+                        controller.updatePersonal((current) => ({
+                          homeBoardId:
+                            current.homeBoardId === board.id ? null : board.id,
+                        })),
+                        "Home board updated.",
+                      );
+                    }}
                   >
                     <Home />{" "}
                     {personal.homeBoardId === board.id
@@ -607,11 +695,20 @@ function BoardsPage() {
           </div>
         </Alert>
       )}
-      {controller.unavailable && (
+      {controller.resource.status === "ready" && controller.resource.error && (
         <Alert variant="destructive">
-          <div>
-            Some saved board data could not be read. Its content is unavailable;
-            creating a new board remains possible.
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>
+              Boards is showing the last saved content. Refresh failed:{" "}
+              {controller.resource.error}
+            </span>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              onClick={controller.resource.reload}
+            >
+              <RefreshCw data-icon="inline-start" /> Retry refresh
+            </Button>
           </div>
         </Alert>
       )}
@@ -637,16 +734,17 @@ function BoardsPage() {
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
-                      onClick={() =>
-                        report(
+                      onClick={() => {
+                        if (commandPending) return;
+                        void report(
                           controller.run({
                             type: "board-action",
                             boardId: board.id,
                             action: "restore",
                           }),
                           "Board restored.",
-                        )
-                      }
+                        );
+                      }}
                     >
                       Restore board
                     </Button>
@@ -694,7 +792,7 @@ function BoardsPage() {
                 </Button>
                 <Button
                   className="min-h-11"
-                  disabled={!dirty || !editable}
+                  disabled={commandPending || !dirty || !editable}
                   onClick={saveBoard}
                 >
                   <Check />
@@ -705,7 +803,9 @@ function BoardsPage() {
           )}
           <Tabs
             value={section}
-            onValueChange={(value) => navigate(board.id, value as BoardSection)}
+            onValueChange={(value) =>
+              guarded(() => navigate(board.id, value as BoardSection))
+            }
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <TabsList className="w-full sm:w-fit">
@@ -880,16 +980,16 @@ function BoardsPage() {
                                 size="icon"
                                 className="size-11"
                                 aria-label={`Remove linked record ${record?.title ?? "unavailable"}`}
-                                onClick={() =>
-                                  report(
+                                onClick={() => {
+                                  void report(
                                     controller.run({
                                       type: "remove-placement",
                                       boardId: board.id,
                                       placementId: placement.id,
                                     }),
                                     "Record shortcut removed.",
-                                  )
-                                }
+                                  );
+                                }}
                               >
                                 <X />
                               </Button>
@@ -906,6 +1006,7 @@ function BoardsPage() {
                 boardId={board.id}
                 boardName={board.name}
                 boardArchived={board.status === "archived"}
+                pending={commandPending}
                 events={state.events.filter(
                   (event) =>
                     event.boardId === board.id &&
@@ -941,13 +1042,7 @@ function BoardsPage() {
                 onAction={eventAction}
                 onRemind={controller.remind}
                 onCancelReminder={(event, start) =>
-                  controller.updatePersonal({
-                    reminders: personal.reminders.filter(
-                      (item) =>
-                        item.eventId !== event.id ||
-                        item.occurrenceStart !== start,
-                    ),
-                  })
+                  controller.cancelReminder(event, start)
                 }
                 onPreferenceChange={controller.updatePersonal}
               />
@@ -968,6 +1063,7 @@ function BoardsPage() {
                 personal={personal}
                 records={controller.records}
                 timezone={controller.timezone}
+                pending={commandPending}
                 onSave={(announcement, original) =>
                   controller.run({
                     type: "save-announcement",
@@ -1054,21 +1150,24 @@ function BoardsPage() {
                 : "The board and its content become read-only. You can restore it from the Archived filter."
             }
             onCancel={() => setLifecycle(null)}
+            disabled={commandPending}
             onConfirm={() => {
-              if (!lifecycle) return;
+              if (!lifecycle || commandPending) return;
               const action = lifecycle;
-              const result = report(
-                controller.run({
-                  type: "board-action",
-                  boardId: board.id,
-                  action,
-                }),
-                action === "archive" ? "Board archived." : "Board deleted.",
-              );
-              if (result.ok) {
-                setLifecycle(null);
-                if (action === "delete") router.replace("/boards");
-              }
+              void (async () => {
+                const result = await report(
+                  controller.run({
+                    type: "board-action",
+                    boardId: board.id,
+                    action,
+                  }),
+                  action === "archive" ? "Board archived." : "Board deleted.",
+                );
+                if (result.ok) {
+                  setLifecycle(null);
+                  if (action === "delete") router.replace("/boards");
+                }
+              })();
             }}
           />
         </>
@@ -1096,7 +1195,11 @@ function BoardsPage() {
         title="Discard unsaved board changes?"
         description="Your saved board stays as it is. This layout and settings draft will be discarded."
         action="Discard changes"
-        onCancel={() => setPending(null)}
+        disabled={commandPending}
+        onCancel={() => {
+          allowNextUnload.current = false;
+          setPending(null);
+        }}
         onConfirm={() => {
           const action = pending;
           setPending(null);
@@ -1216,6 +1319,7 @@ function AddRecord({
       title="Add linked record"
       description="Add a shortcut to this board. The source record stays in OpenView."
       dirty={false}
+      pending={controller.isPending()}
       onClose={onClose}
     >
       <div className="space-y-5">
@@ -1244,23 +1348,24 @@ function AddRecord({
           disabled={!recordId}
           onClick={() => {
             const now = new Date().toISOString();
-            const result = controller.run({
-              type: "place-record",
-              placement: {
-                id: `board-placement-${crypto.randomUUID()}`,
-                boardId: board.id,
-                recordId,
-                moduleId: "service-requests",
-                pinned: false,
-                position: controller.state.placements.filter(
-                  (item) => item.boardId === board.id,
-                ).length,
-                createdAt: now,
-                updatedAt: now,
-              },
-            });
-            if (result.ok) onClose();
-            else setError(result.error);
+            void controller
+              .run({
+                type: "place-record",
+                placement: {
+                  id: `board-placement-${crypto.randomUUID()}`,
+                  boardId: board.id,
+                  recordId,
+                  moduleId: "service-requests",
+                  pinned: false,
+                  position: 0,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              })
+              .then((result) => {
+                if (result.ok) onClose();
+                else setError(result.error);
+              });
           }}
         >
           Add record

@@ -382,3 +382,42 @@ test("content lifecycle requires manage access even for the author", () => {
     ).result.ok,
   ).toBe(false);
 });
+
+test("record placement uses the current board order when a caller supplied position is stale", () => {
+  const current = state();
+  const boardId = current.boards[0].id;
+  current.placements = [
+    {
+      id: "existing-placement",
+      boardId,
+      recordId: "record-existing",
+      moduleId: "service-requests",
+      position: 0,
+      pinned: false,
+      createdAt: context.now,
+      updatedAt: context.now,
+    },
+  ];
+  const result = executeBoardCommand(
+    current,
+    {
+      type: "place-record",
+      placement: {
+        id: "new-placement",
+        boardId,
+        recordId: "record-new",
+        moduleId: "service-requests",
+        position: 0,
+        pinned: false,
+        createdAt: context.now,
+        updatedAt: "stale",
+      },
+    },
+    { ...context, recordIds: ["record-existing", "record-new"] },
+  );
+
+  expect(result.result.ok).toBe(true);
+  expect(result.state.placements.at(-1)).toEqual(
+    expect.objectContaining({ position: 1, updatedAt: context.now }),
+  );
+});

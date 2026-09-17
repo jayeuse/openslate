@@ -92,12 +92,12 @@ export function CreateBoardSheet({
       setError("This file could not be read. Choose it again.");
     }
   }
-  function create() {
+  async function create() {
     const board = boardFromConfiguration({
       ...configuration,
       name: configuration.name.trim(),
     });
-    const result = controller.run({ type: "create-board", board });
+    const result = await controller.run({ type: "create-board", board });
     if (!result.ok) {
       setError(result.error);
       return;
@@ -110,6 +110,7 @@ export function CreateBoardSheet({
       title="Create board"
       description="Start a private board, then choose who can view it in Board settings."
       dirty={dirty}
+      pending={controller.isPending()}
       onClose={onClose}
     >
       <div className="space-y-6">
@@ -190,7 +191,7 @@ export function CreateBoardSheet({
           className="space-y-5"
           onSubmit={(event) => {
             event.preventDefault();
-            create();
+            void create();
           }}
         >
           <Field>
@@ -270,7 +271,7 @@ export function CreateBoardSheet({
           <Button
             type="submit"
             className="min-h-11 w-full"
-            disabled={!configuration.name.trim()}
+            disabled={controller.isPending() || !configuration.name.trim()}
           >
             <Plus />
             Create private board
@@ -298,6 +299,7 @@ export function BoardSettingsSheet({
       title="Board settings"
       description="These changes join your board draft. Use Save board to apply them."
       dirty={false}
+      pending={controller.isPending()}
       onClose={onClose}
     >
       <div className="space-y-6">
@@ -398,7 +400,11 @@ export function BoardSettingsSheet({
             additional rules from Access still apply.
           </p>
         </fieldset>
-        <Button className="min-h-11 w-full" onClick={onClose}>
+        <Button
+          className="min-h-11 w-full"
+          disabled={controller.isPending()}
+          onClick={onClose}
+        >
           Done · return to board draft
         </Button>
       </div>
@@ -434,13 +440,16 @@ export function BoardToolsSheet({
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-  const editable = !preview && controller.can(board.id, "manage");
+  const commandPending = controller.isPending();
+  const editable =
+    !preview && !commandPending && controller.can(board.id, "manage");
   return (
     <EditSheet
       open
       title="Board tools"
       description="Reuse the structure and review recent activity in this local workspace."
       dirty={false}
+      pending={commandPending}
       onClose={onClose}
     >
       <Tabs defaultValue="access">
@@ -461,7 +470,7 @@ export function BoardToolsSheet({
             value={preview ? controller.actorId : "manager"}
             options={[
               { value: "manager", label: "Mara · authoring" },
-              ...controller.access.state.people
+              ...controller.people
                 .filter((person) => person.active)
                 .map((person) => ({
                   value: person.id,
@@ -518,7 +527,7 @@ export function BoardToolsSheet({
           <div className="grid gap-2 sm:grid-cols-2">
             <Button
               variant="outline"
-              disabled={!editable}
+              disabled={!editable || commandPending}
               onClick={onDuplicate}
             >
               Duplicate structure
@@ -530,10 +539,10 @@ export function BoardToolsSheet({
           </div>
           <form
             className="space-y-3"
-            onSubmit={(event) => {
+            onSubmit={async (event) => {
               event.preventDefault();
               const now = new Date().toISOString();
-              const result = controller.run({
+              const result = await controller.run({
                 type: "save-template",
                 template: {
                   ...board,
@@ -558,7 +567,7 @@ export function BoardToolsSheet({
                 id="board-template-name"
                 maxLength={80}
                 required
-                disabled={!editable}
+                disabled={!editable || commandPending}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
               />
@@ -566,7 +575,7 @@ export function BoardToolsSheet({
             <Button
               variant="secondary"
               className="min-h-11"
-              disabled={!editable || !name.trim()}
+              disabled={!editable || commandPending || !name.trim()}
             >
               Save template
             </Button>
@@ -643,14 +652,18 @@ export function BoardToolsSheet({
         description="Boards created from this template remain available."
         action="Delete template"
         onCancel={() => setDeleting(null)}
+        disabled={commandPending}
         onConfirm={() => {
           if (!deleting) return;
-          const result = controller.run({
-            type: "delete-template",
-            templateId: deleting,
-          });
-          setMessage(result.ok ? "Template deleted." : result.error);
-          if (result.ok) setDeleting(null);
+          void controller
+            .run({
+              type: "delete-template",
+              templateId: deleting,
+            })
+            .then((result) => {
+              setMessage(result.ok ? "Template deleted." : result.error);
+              if (result.ok) setDeleting(null);
+            });
         }}
       />
     </EditSheet>
