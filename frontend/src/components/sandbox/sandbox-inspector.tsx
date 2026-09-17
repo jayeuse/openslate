@@ -42,6 +42,18 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import type { SandboxCommandResult } from "@/components/sample/sandbox/async";
+
+type SandboxCommand =
+  | void
+  | SandboxCommandResult<unknown>
+  | PromiseLike<SandboxCommandResult<unknown> | void>;
+
+function commandFailed(
+  result: void | SandboxCommandResult<unknown>,
+): result is { ok: false; error: string } {
+  return result?.ok === false;
+}
 
 export type SandboxInspectorTargetKind =
   "department" | "module" | "field" | "link";
@@ -55,20 +67,24 @@ export interface SandboxInspectorProps {
   /** Render the persistent outline, properties, or both for legacy callers. */
   mode?: "combined" | "outline" | "properties";
   state: SandboxState;
-  onRenameDepartment: (departmentId: string, name: string) => void;
-  onRenameModule: (moduleId: string, name: string) => void;
-  onUpdateField: (fieldId: string, patch: UpdateSandboxFieldPatch) => void;
-  onUpdateLinkLabel: (linkId: string, label: string) => void;
+  onRenameDepartment: (departmentId: string, name: string) => SandboxCommand;
+  onRenameModule: (moduleId: string, name: string) => SandboxCommand;
+  onUpdateField: (
+    fieldId: string,
+    patch: UpdateSandboxFieldPatch,
+  ) => SandboxCommand;
+  onUpdateLinkLabel: (linkId: string, label: string) => SandboxCommand;
   onDeleteSelected: (target: SandboxInspectorTarget) => void;
   onAddField: (moduleId: string, type: SandboxFieldType) => void;
   onAddModule: (departmentId: string) => void;
   onAddDepartment: () => void;
-  onMoveModule?: (moduleId: string, departmentId: string) => void;
+  onMoveModule?: (moduleId: string, departmentId: string) => SandboxCommand;
   onSelect: (cellId: string) => void;
   onEdit?: (cellId: string) => void;
   onAddRelationship?: () => void;
   onDuplicate?: (target: SandboxInspectorTarget) => void;
   onToggleLifecycle?: (target: SandboxInspectorTarget) => void;
+  pending?: boolean;
 }
 
 const FIELD_TYPES = Object.keys(FIELD_TYPE_META) as SandboxFieldType[];
@@ -95,7 +111,7 @@ interface OutlineNameProps {
   editingValue: string;
   onBeginEdit: (id: string, value: string) => void;
   onEditingValueChange: (value: string) => void;
-  onCommit: (id: string, currentValue: string) => void;
+  onCommit: (id: string, currentValue: string) => SandboxCommand;
   onCancel: () => void;
 }
 
@@ -119,11 +135,13 @@ function OutlineName({
         aria-label={`Edit ${kind} name`}
         onClick={(event) => event.stopPropagation()}
         onChange={(event) => onEditingValueChange(event.target.value)}
-        onBlur={() => onCommit(id, value)}
+        onBlur={() => {
+          void onCommit(id, value);
+        }}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             event.preventDefault();
-            onCommit(id, value);
+            void onCommit(id, value);
           } else if (event.key === "Escape") {
             event.preventDefault();
             onCancel();
@@ -169,10 +187,13 @@ export function SandboxInspector({
   onAddRelationship,
   onDuplicate,
   onToggleLifecycle,
+  pending = false,
 }: SandboxInspectorProps) {
   const { selectedCellId } = state;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
+  const [editingError, setEditingError] = useState("");
+  const committingId = useRef<string | null>(null);
   const [structureQuery, setStructureQuery] = useState("");
   const [openContextMenu, setOpenContextMenu] = useState<string | null>(null);
   const [contextMenuAnchor, setContextMenuAnchor] =
@@ -205,20 +226,41 @@ export function SandboxInspector({
     onSelect(id);
     setEditingId(id);
     setEditingValue(value);
+    setEditingError("");
   }
 
-  function commitEdit(id: string, currentValue: string): void {
+  async function commitEdit(
+    id: string,
+    currentValue: string,
+  ): Promise<SandboxCommandResult<unknown> | void> {
+    if (committingId.current === id) return;
     const nextValue = editingValue.trim();
-    if (nextValue.length > 0 && nextValue !== currentValue) {
-      if (state.departments.some((item) => item.id === id)) {
-        onRenameDepartment(id, nextValue);
-      } else if (state.modules.some((item) => item.id === id)) {
-        onRenameModule(id, nextValue);
-      } else if (state.fields.some((item) => item.id === id)) {
-        onUpdateField(id, { name: nextValue });
-      }
+    if (nextValue.length === 0 || nextValue === currentValue) {
+      setEditingId(null);
+      setEditingError("");
+      return;
     }
-    setEditingId(null);
+    committingId.current = id;
+    setEditingError("");
+    try {
+      let result: void | SandboxCommandResult<unknown> = undefined;
+      if (state.departments.some((item) => item.id === id)) {
+        result = await onRenameDepartment(id, nextValue);
+      } else if (state.modules.some((item) => item.id === id)) {
+        result = await onRenameModule(id, nextValue);
+      } else if (state.fields.some((item) => item.id === id)) {
+        result = await onUpdateField(id, { name: nextValue });
+      }
+      if (commandFailed(result)) {
+        setEditingError(result.error);
+        return result;
+      }
+      setEditingId(null);
+      setEditingError("");
+      return result;
+    } finally {
+      committingId.current = null;
+    }
   }
 
   function rowContextMenu(
@@ -235,6 +277,7 @@ export function SandboxInspector({
         <ContextMenuGroup>
           <ContextMenuItem
             className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+            disabled={pending}
             onClick={() => beginEdit(id, name)}
           >
             <Pencil aria-hidden="true" />
@@ -243,7 +286,8 @@ export function SandboxInspector({
           {onToggleLifecycle ? (
             <ContextMenuItem
               className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-              onClick={() => onToggleLifecycle({ kind, id })}
+              disabled={pending}
+              onClick={() => void onToggleLifecycle({ kind, id })}
             >
               {closed ? "Reopen" : "Close"} {kind}
             </ContextMenuItem>
@@ -251,7 +295,8 @@ export function SandboxInspector({
           {onDuplicate ? (
             <ContextMenuItem
               className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-              onClick={() => onDuplicate({ kind, id })}
+              disabled={pending}
+              onClick={() => void onDuplicate({ kind, id })}
             >
               Duplicate {kind}
             </ContextMenuItem>
@@ -262,6 +307,7 @@ export function SandboxInspector({
           <ContextMenuItem
             className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
             variant="destructive"
+            disabled={pending}
             onClick={() => onDeleteSelected({ kind, id })}
           >
             <Trash2 aria-hidden="true" />
@@ -280,6 +326,7 @@ export function SandboxInspector({
           size="icon"
           className="size-11 shrink-0 xl:size-8"
           aria-label={`Edit relationship ${name}`}
+          disabled={pending}
           onClick={() => onEdit?.(id)}
         >
           <Pencil className="size-3.5" aria-hidden="true" />
@@ -289,6 +336,7 @@ export function SandboxInspector({
           size="icon"
           className="text-muted-foreground hover:text-destructive size-11 shrink-0 xl:size-8"
           aria-label={`Delete relationship ${name}`}
+          disabled={pending}
           onClick={() => onDeleteSelected({ kind: "link", id })}
         >
           <Trash2 className="size-3.5" aria-hidden="true" />
@@ -367,6 +415,7 @@ export function SandboxInspector({
               ? onAddModule(parentId!)
               : onAddField(parentId!, "text")
         }
+        disabled={pending}
         className="text-muted-foreground hover:text-foreground mt-1 h-11 w-full justify-start px-2 text-xs font-normal xl:h-9"
       >
         Add{" "}
@@ -388,17 +437,29 @@ export function SandboxInspector({
     return (
       <div className="min-w-0">
         {editingId === item.id ? (
-          <OutlineName
-            id={item.id}
-            value={item.name}
-            kind={kind}
-            editingId={editingId}
-            editingValue={editingValue}
-            onBeginEdit={beginEdit}
-            onEditingValueChange={setEditingValue}
-            onCommit={commitEdit}
-            onCancel={() => setEditingId(null)}
-          />
+          <>
+            <OutlineName
+              id={item.id}
+              value={item.name}
+              kind={kind}
+              editingId={editingId}
+              editingValue={editingValue}
+              onBeginEdit={beginEdit}
+              onEditingValueChange={setEditingValue}
+              onCommit={commitEdit}
+              onCancel={() => {
+                if (committingId.current !== item.id) {
+                  setEditingId(null);
+                  setEditingError("");
+                }
+              }}
+            />
+            {editingError ? (
+              <p className="text-destructive px-2 py-1 text-xs" role="alert">
+                {editingError}
+              </p>
+            ) : null}
+          </>
         ) : (
           <ContextMenu
             open={openContextMenu === menuId}
@@ -761,7 +822,7 @@ export function SandboxInspector({
                 variant="ghost"
                 size="sm"
                 data-testid="inspector-add-relationship"
-                disabled={state.modules.length < 2}
+                disabled={pending || state.modules.length < 2}
                 onClick={onAddRelationship}
                 className="text-muted-foreground mt-1 min-h-11 w-full justify-start px-2 text-xs font-normal xl:min-h-9"
               >
@@ -827,7 +888,7 @@ export function SandboxInspector({
                   data-testid="inspector-dept-name"
                   value={department.name}
                   onChange={(event) =>
-                    onRenameDepartment(department.id, event.target.value)
+                    void onRenameDepartment(department.id, event.target.value)
                   }
                 />
               </Field>
@@ -847,6 +908,7 @@ export function SandboxInspector({
                   variant="outline"
                   size="sm"
                   data-testid="inspector-dept-add-module"
+                  disabled={pending}
                   onClick={() => onAddModule(department.id)}
                 >
                   + Add module
@@ -854,6 +916,7 @@ export function SandboxInspector({
               </div>
               <DestructiveAction
                 label="Delete department"
+                pending={pending}
                 onClick={() =>
                   onDeleteSelected({ kind: "department", id: department.id })
                 }
@@ -869,7 +932,7 @@ export function SandboxInspector({
                   data-testid="inspector-module-name"
                   value={sandboxModule.name}
                   onChange={(event) =>
-                    onRenameModule(sandboxModule.id, event.target.value)
+                    void onRenameModule(sandboxModule.id, event.target.value)
                   }
                 />
               </Field>
@@ -883,9 +946,9 @@ export function SandboxInspector({
                   aria-label="Parent department"
                   className="w-full [&_select]:h-11 xl:[&_select]:h-8"
                   value={sandboxModule.departmentId}
-                  disabled={onMoveModule === undefined}
+                  disabled={pending || onMoveModule === undefined}
                   onChange={(event) =>
-                    onMoveModule?.(sandboxModule.id, event.target.value)
+                    void onMoveModule?.(sandboxModule.id, event.target.value)
                   }
                 >
                   {state.departments.map((item) => (
@@ -912,6 +975,7 @@ export function SandboxInspector({
                     variant="outline"
                     size="sm"
                     data-testid="inspector-module-add-field"
+                    disabled={pending}
                     onClick={() => onAddField(sandboxModule.id, "text")}
                   >
                     + Add field
@@ -949,6 +1013,7 @@ export function SandboxInspector({
               </div>
               <DestructiveAction
                 label="Delete module"
+                pending={pending}
                 onClick={() =>
                   onDeleteSelected({ kind: "module", id: sandboxModule.id })
                 }
@@ -963,7 +1028,7 @@ export function SandboxInspector({
                   data-testid="inspector-field-name"
                   value={field.name}
                   onChange={(event) =>
-                    onUpdateField(field.id, { name: event.target.value })
+                    void onUpdateField(field.id, { name: event.target.value })
                   }
                 />
               </Field>
@@ -975,10 +1040,11 @@ export function SandboxInspector({
                   aria-label="Field type"
                   className="w-full [&_select]:h-11 xl:[&_select]:h-8"
                   value={field.type}
+                  disabled={pending}
                   onChange={(event) => {
                     const { value } = event.target;
                     if (isSandboxFieldType(value)) {
-                      onUpdateField(field.id, { type: value });
+                      void onUpdateField(field.id, { type: value });
                     }
                   }}
                 >
@@ -994,8 +1060,9 @@ export function SandboxInspector({
                   id="inspector-field-required"
                   data-testid="inspector-field-required"
                   checked={field.required}
+                  disabled={pending}
                   onCheckedChange={(checked) =>
-                    onUpdateField(field.id, { required: checked })
+                    void onUpdateField(field.id, { required: checked })
                   }
                 />
                 <FieldLabel htmlFor="inspector-field-required">
@@ -1012,7 +1079,9 @@ export function SandboxInspector({
                   value={field.description}
                   placeholder="What is this field for?"
                   onChange={(event) =>
-                    onUpdateField(field.id, { description: event.target.value })
+                    void onUpdateField(field.id, {
+                      description: event.target.value,
+                    })
                   }
                 />
               </Field>
@@ -1034,6 +1103,7 @@ export function SandboxInspector({
               </div>
               <DestructiveAction
                 label="Delete field"
+                pending={pending}
                 onClick={() =>
                   onDeleteSelected({ kind: "field", id: field.id })
                 }
@@ -1068,7 +1138,7 @@ export function SandboxInspector({
                   value={link.label}
                   placeholder="e.g. supplied by"
                   onChange={(event) =>
-                    onUpdateLinkLabel(link.id, event.target.value)
+                    void onUpdateLinkLabel(link.id, event.target.value)
                   }
                 />
               </Field>
@@ -1089,6 +1159,7 @@ export function SandboxInspector({
               </Field>
               <DestructiveAction
                 label="Delete relationship"
+                pending={pending}
                 onClick={() => onDeleteSelected({ kind: "link", id: link.id })}
               />
             </div>
@@ -1110,6 +1181,7 @@ export function SandboxInspector({
                   variant="outline"
                   size="sm"
                   data-testid="inspector-empty-add-department"
+                  disabled={pending}
                   onClick={onAddDepartment}
                   className="w-full"
                 >
@@ -1147,9 +1219,11 @@ export function SandboxInspector({
 function DestructiveAction({
   label,
   onClick,
+  pending = false,
 }: {
   label: string;
   onClick: () => void;
+  pending?: boolean;
 }) {
   return (
     <div className="border-border mt-3 border-t pt-4">
@@ -1163,6 +1237,7 @@ function DestructiveAction({
         size="sm"
         data-testid="inspector-delete"
         onClick={onClick}
+        disabled={pending}
       >
         {label}
       </Button>

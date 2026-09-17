@@ -107,6 +107,7 @@ import {
   type FieldConfig,
   type FieldTypeName,
 } from "./model";
+import { SandboxCommandError, type SandboxCommandResult } from "./async";
 import type { SandboxCreateRequest } from "./sandbox-controls";
 import {
   SANDBOX_INSPECTOR_PANEL_MAX_WIDTH,
@@ -356,14 +357,16 @@ function FieldSettings({
   onMove,
   onLifecycle,
   autoFocus = false,
+  pending = false,
 }: {
   field: Field;
   index: number;
   count: number;
-  onSave: (field: Field) => void;
-  onMove: (delta: number) => void;
-  onLifecycle: () => void;
+  onSave: (field: Field) => Promise<SandboxCommandResult<unknown>>;
+  onMove: (delta: number) => Promise<SandboxCommandResult<unknown>>;
+  onLifecycle: () => Promise<SandboxCommandResult<unknown>>;
   autoFocus?: boolean;
+  pending?: boolean;
 }) {
   const [draft, setDraft] = useState(() => draftForField(field));
   const [error, setError] = useState("");
@@ -379,228 +382,251 @@ function FieldSettings({
   const controlId = (suffix: string) => `sandbox-field-${field.id}-${suffix}`;
   return (
     <FieldGroup className="mt-3 gap-3">
-      <FormField>
-        <FieldLabel htmlFor={controlId("name")}>{prefix} name</FieldLabel>
-        <Input
-          id={controlId("name")}
-          autoFocus={autoFocus}
-          data-sandbox-field-name={field.id}
-          value={draft.name}
-          maxLength={80}
-          onChange={(event) => update("name", event.target.value)}
-        />
-      </FormField>
-      <FormField>
-        <FieldLabel htmlFor={controlId("description")}>
-          {prefix} description
-        </FieldLabel>
-        <Input
-          id={controlId("description")}
-          value={draft.description}
-          maxLength={1000}
-          onChange={(event) => update("description", event.target.value)}
-        />
-      </FormField>
-      <FormField>
-        <FieldLabel htmlFor={controlId("type")}>{prefix} field type</FieldLabel>
-        <NativeSelect
-          id={controlId("type")}
-          className="w-full [&_select]:min-h-10"
-          value={draft.type}
-          onChange={(event) =>
-            update("type", event.target.value as FieldTypeName)
-          }
-        >
-          {FIELD_TYPES.map((entry) => (
-            <NativeSelectOption key={entry.kind} value={entry.name}>
-              {entry.name}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-      </FormField>
-      {draft.type === "Checkbox" ? (
+      <fieldset disabled={pending} className="contents">
+        <FormField>
+          <FieldLabel htmlFor={controlId("name")}>{prefix} name</FieldLabel>
+          <Input
+            id={controlId("name")}
+            autoFocus={autoFocus}
+            data-sandbox-field-name={field.id}
+            value={draft.name}
+            maxLength={80}
+            onChange={(event) => update("name", event.target.value)}
+          />
+        </FormField>
+        <FormField>
+          <FieldLabel htmlFor={controlId("description")}>
+            {prefix} description
+          </FieldLabel>
+          <Input
+            id={controlId("description")}
+            value={draft.description}
+            maxLength={1000}
+            onChange={(event) => update("description", event.target.value)}
+          />
+        </FormField>
+        <FormField>
+          <FieldLabel htmlFor={controlId("type")}>
+            {prefix} field type
+          </FieldLabel>
+          <NativeSelect
+            id={controlId("type")}
+            className="w-full [&_select]:min-h-10"
+            value={draft.type}
+            onChange={(event) =>
+              update("type", event.target.value as FieldTypeName)
+            }
+          >
+            {FIELD_TYPES.map((entry) => (
+              <NativeSelectOption key={entry.kind} value={entry.name}>
+                {entry.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </FormField>
+        {draft.type === "Checkbox" ? (
+          <FormField className="min-h-11 flex-row items-center gap-2 xl:min-h-0">
+            <Checkbox
+              id={controlId("default-checked")}
+              checked={draft.checked}
+              onCheckedChange={(checked) => update("checked", checked)}
+            />
+            <FieldLabel htmlFor={controlId("default-checked")}>
+              {prefix} default checked
+            </FieldLabel>
+          </FormField>
+        ) : (
+          <FormField>
+            <FieldLabel htmlFor={controlId("default-value")}>
+              {prefix} default value
+            </FieldLabel>
+            <Input
+              id={controlId("default-value")}
+              type={
+                draft.type === "Date"
+                  ? "date"
+                  : draft.type === "Date/Time"
+                    ? "datetime-local"
+                    : draft.type === "Number" || draft.type === "Integer"
+                      ? "number"
+                      : "text"
+              }
+              value={draft.defaultValue}
+              onChange={(event) => update("defaultValue", event.target.value)}
+            />
+          </FormField>
+        )}
+        {["Text", "Long text", "Email", "URL"].includes(draft.type) ? (
+          <FormField>
+            <FieldLabel htmlFor={controlId("maximum-length")}>
+              {prefix} maximum length
+            </FieldLabel>
+            <Input
+              id={controlId("maximum-length")}
+              type="number"
+              min="1"
+              value={draft.maxLength}
+              onChange={(event) => update("maxLength", event.target.value)}
+            />
+          </FormField>
+        ) : null}
+        {draft.type === "Number" || draft.type === "Integer" ? (
+          <FieldGroup className="grid grid-cols-2 gap-2">
+            <FormField>
+              <FieldLabel htmlFor={controlId("minimum")}>
+                {prefix} minimum
+              </FieldLabel>
+              <Input
+                id={controlId("minimum")}
+                type="number"
+                value={draft.min}
+                onChange={(event) => update("min", event.target.value)}
+              />
+            </FormField>
+            <FormField>
+              <FieldLabel htmlFor={controlId("maximum")}>
+                {prefix} maximum
+              </FieldLabel>
+              <Input
+                id={controlId("maximum")}
+                type="number"
+                value={draft.max}
+                onChange={(event) => update("max", event.target.value)}
+              />
+            </FormField>
+            <FormField data-disabled={draft.type === "Integer" || undefined}>
+              <FieldLabel htmlFor={controlId("step")}>{prefix} step</FieldLabel>
+              <Input
+                id={controlId("step")}
+                type="number"
+                value={draft.type === "Integer" ? "1" : draft.step}
+                disabled={draft.type === "Integer"}
+                onChange={(event) => update("step", event.target.value)}
+              />
+            </FormField>
+          </FieldGroup>
+        ) : null}
+        {draft.type === "Date" || draft.type === "Date/Time" ? (
+          <FieldGroup className="grid grid-cols-2 gap-2">
+            <FormField>
+              <FieldLabel htmlFor={controlId("earliest")}>
+                {prefix} earliest
+              </FieldLabel>
+              <Input
+                id={controlId("earliest")}
+                type={draft.type === "Date" ? "date" : "datetime-local"}
+                value={draft.earliest}
+                onChange={(event) => update("earliest", event.target.value)}
+              />
+            </FormField>
+            <FormField>
+              <FieldLabel htmlFor={controlId("latest")}>
+                {prefix} latest
+              </FieldLabel>
+              <Input
+                id={controlId("latest")}
+                type={draft.type === "Date" ? "date" : "datetime-local"}
+                value={draft.latest}
+                onChange={(event) => update("latest", event.target.value)}
+              />
+            </FormField>
+          </FieldGroup>
+        ) : null}
+        {draft.type === "Select" ? (
+          <FormField>
+            <FieldLabel htmlFor={controlId("options")}>
+              {prefix} options
+            </FieldLabel>
+            <Input
+              id={controlId("options")}
+              value={draft.options}
+              onChange={(event) => update("options", event.target.value)}
+            />
+          </FormField>
+        ) : null}
         <FormField className="min-h-11 flex-row items-center gap-2 xl:min-h-0">
           <Checkbox
-            id={controlId("default-checked")}
-            checked={draft.checked}
-            onCheckedChange={(checked) => update("checked", checked)}
+            id={controlId("required")}
+            checked={draft.required}
+            onCheckedChange={(checked) => update("required", checked)}
           />
-          <FieldLabel htmlFor={controlId("default-checked")}>
-            {prefix} default checked
-          </FieldLabel>
+          <FieldLabel htmlFor={controlId("required")}>Required</FieldLabel>
         </FormField>
-      ) : (
-        <FormField>
-          <FieldLabel htmlFor={controlId("default-value")}>
-            {prefix} default value
-          </FieldLabel>
-          <Input
-            id={controlId("default-value")}
-            type={
-              draft.type === "Date"
-                ? "date"
-                : draft.type === "Date/Time"
-                  ? "datetime-local"
-                  : draft.type === "Number" || draft.type === "Integer"
-                    ? "number"
-                    : "text"
-            }
-            value={draft.defaultValue}
-            onChange={(event) => update("defaultValue", event.target.value)}
-          />
+        <FormField data-invalid={Boolean(error) || undefined}>
+          <FieldError className="text-xs">{error}</FieldError>
         </FormField>
-      )}
-      {["Text", "Long text", "Email", "URL"].includes(draft.type) ? (
-        <FormField>
-          <FieldLabel htmlFor={controlId("maximum-length")}>
-            {prefix} maximum length
-          </FieldLabel>
-          <Input
-            id={controlId("maximum-length")}
-            type="number"
-            min="1"
-            value={draft.maxLength}
-            onChange={(event) => update("maxLength", event.target.value)}
-          />
-        </FormField>
-      ) : null}
-      {draft.type === "Number" || draft.type === "Integer" ? (
-        <FieldGroup className="grid grid-cols-2 gap-2">
-          <FormField>
-            <FieldLabel htmlFor={controlId("minimum")}>
-              {prefix} minimum
-            </FieldLabel>
-            <Input
-              id={controlId("minimum")}
-              type="number"
-              value={draft.min}
-              onChange={(event) => update("min", event.target.value)}
-            />
-          </FormField>
-          <FormField>
-            <FieldLabel htmlFor={controlId("maximum")}>
-              {prefix} maximum
-            </FieldLabel>
-            <Input
-              id={controlId("maximum")}
-              type="number"
-              value={draft.max}
-              onChange={(event) => update("max", event.target.value)}
-            />
-          </FormField>
-          <FormField data-disabled={draft.type === "Integer" || undefined}>
-            <FieldLabel htmlFor={controlId("step")}>{prefix} step</FieldLabel>
-            <Input
-              id={controlId("step")}
-              type="number"
-              value={draft.type === "Integer" ? "1" : draft.step}
-              disabled={draft.type === "Integer"}
-              onChange={(event) => update("step", event.target.value)}
-            />
-          </FormField>
-        </FieldGroup>
-      ) : null}
-      {draft.type === "Date" || draft.type === "Date/Time" ? (
-        <FieldGroup className="grid grid-cols-2 gap-2">
-          <FormField>
-            <FieldLabel htmlFor={controlId("earliest")}>
-              {prefix} earliest
-            </FieldLabel>
-            <Input
-              id={controlId("earliest")}
-              type={draft.type === "Date" ? "date" : "datetime-local"}
-              value={draft.earliest}
-              onChange={(event) => update("earliest", event.target.value)}
-            />
-          </FormField>
-          <FormField>
-            <FieldLabel htmlFor={controlId("latest")}>
-              {prefix} latest
-            </FieldLabel>
-            <Input
-              id={controlId("latest")}
-              type={draft.type === "Date" ? "date" : "datetime-local"}
-              value={draft.latest}
-              onChange={(event) => update("latest", event.target.value)}
-            />
-          </FormField>
-        </FieldGroup>
-      ) : null}
-      {draft.type === "Select" ? (
-        <FormField>
-          <FieldLabel htmlFor={controlId("options")}>
-            {prefix} options
-          </FieldLabel>
-          <Input
-            id={controlId("options")}
-            value={draft.options}
-            onChange={(event) => update("options", event.target.value)}
-          />
-        </FormField>
-      ) : null}
-      <FormField className="min-h-11 flex-row items-center gap-2 xl:min-h-0">
-        <Checkbox
-          id={controlId("required")}
-          checked={draft.required}
-          onCheckedChange={(checked) => update("required", checked)}
-        />
-        <FieldLabel htmlFor={controlId("required")}>Required</FieldLabel>
-      </FormField>
-      <FormField data-invalid={Boolean(error) || undefined}>
-        <FieldError className="text-xs">{error}</FieldError>
-      </FormField>
-      <ButtonGroup
-        aria-label={`${field.name} field actions`}
-        className="w-full flex-wrap justify-between"
-      >
-        <ButtonGroup aria-label={`${field.name} save actions`}>
-          <Button
-            size="sm"
-            onClick={() => {
-              const result = buildField(field, draft);
-              if (typeof result === "string") setError(result);
-              else onSave(result);
-            }}
-          >
-            Save field changes
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setDraft(draftForField(field));
-              setError("");
-            }}
-          >
-            Cancel
-          </Button>
-        </ButtonGroup>
         <ButtonGroup
-          aria-label={`${field.name} ordering and lifecycle actions`}
+          aria-label={`${field.name} field actions`}
+          className="w-full flex-wrap justify-between"
         >
-          <Button
-            size="icon"
-            variant="outline"
-            aria-label={`Move ${field.name} up`}
-            disabled={index === 0}
-            onClick={() => onMove(-1)}
+          <ButtonGroup aria-label={`${field.name} save actions`}>
+            <Button
+              size="sm"
+              disabled={pending}
+              onClick={async () => {
+                const result = buildField(field, draft);
+                if (typeof result === "string") setError(result);
+                else {
+                  const saved = await onSave(result);
+                  if (!saved.ok) setError(saved.error);
+                }
+              }}
+            >
+              Save field changes
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => {
+                setDraft(draftForField(field));
+                setError("");
+              }}
+            >
+              Cancel
+            </Button>
+          </ButtonGroup>
+          <ButtonGroup
+            aria-label={`${field.name} ordering and lifecycle actions`}
           >
-            <ArrowUp aria-hidden="true" />
-          </Button>
-          <Button
-            size="icon"
-            variant="outline"
-            aria-label={`Move ${field.name} down`}
-            disabled={index === count - 1}
-            onClick={() => onMove(1)}
-          >
-            <ArrowDown aria-hidden="true" />
-          </Button>
-          <Button variant="outline" size="sm" onClick={onLifecycle}>
-            {field.closed ? "Reopen" : "Close"} field
-          </Button>
+            <Button
+              size="icon"
+              variant="outline"
+              aria-label={`Move ${field.name} up`}
+              disabled={pending || index === 0}
+              onClick={async () => {
+                const result = await onMove(-1);
+                if (!result.ok) setError(result.error);
+              }}
+            >
+              <ArrowUp aria-hidden="true" />
+            </Button>
+            <Button
+              size="icon"
+              variant="outline"
+              aria-label={`Move ${field.name} down`}
+              disabled={pending || index === count - 1}
+              onClick={async () => {
+                const result = await onMove(1);
+                if (!result.ok) setError(result.error);
+              }}
+            >
+              <ArrowDown aria-hidden="true" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pending}
+              onClick={async () => {
+                const result = await onLifecycle();
+                if (!result.ok) setError(result.error);
+              }}
+            >
+              {field.closed ? "Reopen" : "Close"} field
+            </Button>
+          </ButtonGroup>
         </ButtonGroup>
-      </ButtonGroup>
+      </fieldset>
     </FieldGroup>
   );
 }
@@ -1054,6 +1080,18 @@ function deletionTargetName(
   );
 }
 
+function updateProjectedFieldOrThrow(
+  design: Design,
+  id: string,
+  patch: Parameters<typeof updateProjectedField>[2],
+): Design {
+  if (!sampleField(design, id))
+    throw new SandboxCommandError(
+      "This field was deleted. Keep the field edit open and try again.",
+    );
+  return updateProjectedField(design, id, patch);
+}
+
 export function Designer({
   initialSelected,
   focusTargetId,
@@ -1064,16 +1102,21 @@ export function Designer({
   onViewPreferenceChange,
   createRequest,
   onCreateRequestHandled,
+  pending,
 }: {
   initialSelected: string;
   focusTargetId: string | null;
   design: Design;
-  change: (d: DesignUpdate) => void;
+  change: (
+    d: DesignUpdate,
+    commandKey?: string,
+  ) => Promise<SandboxCommandResult<Design>>;
   initializeLayout: (layout: SandboxCanvasLayout) => void;
   notify: (s: string) => void;
   onViewPreferenceChange: () => void;
   createRequest: SandboxCreateRequest | null;
   onCreateRequestHandled: (id: number) => void;
+  pending: boolean;
 }) {
   const [viewPreferences, setViewPreferences] =
     useState<SandboxViewPreferences>(loadSandboxViewPreferences);
@@ -1361,18 +1404,29 @@ export function Designer({
     setDeleteTarget(target);
   }
 
-  function duplicateTarget(target: SandboxInspectorTarget): void {
-    const result = duplicateDesignTarget(design, target);
-    if (!result) return;
-    change(result.design);
-    setSelected(result.selected);
+  async function duplicateTarget(
+    target: SandboxInspectorTarget,
+  ): Promise<void> {
+    if (pending) return;
+    const selectedId = { current: "" };
+    const result = await change((current) => {
+      const duplicated = duplicateDesignTarget(current, target);
+      if (!duplicated) return current;
+      selectedId.current = duplicated.selected;
+      return duplicated.design;
+    });
+    if (!result.ok || !selectedId.current) return;
+    setSelected(selectedId.current);
     notify(
       `${target.kind.charAt(0).toUpperCase()}${target.kind.slice(1)} duplicated. Undo restores the previous design.`,
     );
   }
 
-  function toggleLifecycle(target: SandboxInspectorTarget): void {
-    change((previous) => {
+  async function toggleLifecycle(
+    target: SandboxInspectorTarget,
+  ): Promise<void> {
+    if (pending) return;
+    const result = await change((previous) => {
       if (target.kind === "department")
         return {
           ...previous,
@@ -1409,85 +1463,131 @@ export function Designer({
       }
       return previous;
     });
+    if (!result.ok) notify(result.error);
   }
-  function renameDepartment(id: string, nextName: string) {
-    change((previous) => ({
-      ...previous,
-      departments: previous.departments.map((item) =>
-        item.id === id ? { ...item, name: nextName } : item,
-      ),
-    }));
+  async function renameDepartment(
+    id: string,
+    nextName: string,
+  ): Promise<SandboxCommandResult<Design>> {
+    const result = await change((previous) => {
+      if (!previous.departments.some((item) => item.id === id))
+        throw new SandboxCommandError(
+          "This department was deleted. Keep the edit open and try again.",
+        );
+      return {
+        ...previous,
+        departments: previous.departments.map((item) =>
+          item.id === id ? { ...item, name: nextName } : item,
+        ),
+      };
+    }, `sandbox.design.department:${id}`);
+    if (!result.ok) notify(result.error);
+    return result;
   }
-  function renameModule(id: string, nextName: string) {
-    change((previous) => ({
-      ...previous,
-      modules: previous.modules.map((item) =>
-        item.id === id ? { ...item, name: nextName } : item,
-      ),
-    }));
+  async function renameModule(
+    id: string,
+    nextName: string,
+  ): Promise<SandboxCommandResult<Design>> {
+    const result = await change((previous) => {
+      if (!previous.modules.some((item) => item.id === id))
+        throw new SandboxCommandError(
+          "This module was deleted. Keep the edit open and try again.",
+        );
+      return {
+        ...previous,
+        modules: previous.modules.map((item) =>
+          item.id === id ? { ...item, name: nextName } : item,
+        ),
+      };
+    }, `sandbox.design.module:${id}`);
+    if (!result.ok) notify(result.error);
+    return result;
   }
-  function moveModule(id: string, departmentId: string) {
-    change((previous) => ({
-      ...previous,
-      modules: previous.modules.map((item) =>
-        item.id === id ? { ...item, department: departmentId } : item,
-      ),
-    }));
+  async function moveModule(
+    id: string,
+    departmentId: string,
+  ): Promise<SandboxCommandResult<Design>> {
+    const result = await change((previous) => {
+      if (!previous.modules.some((item) => item.id === id))
+        throw new SandboxCommandError(
+          "This module was deleted. Keep the move open and try again.",
+        );
+      if (!previous.departments.some((item) => item.id === departmentId))
+        throw new SandboxCommandError(
+          "This department was deleted. Choose another destination.",
+        );
+      return {
+        ...previous,
+        modules: previous.modules.map((item) =>
+          item.id === id ? { ...item, department: departmentId } : item,
+        ),
+      };
+    }, `sandbox.design.module-parent:${id}`);
+    if (!result.ok) notify(result.error);
+    return result;
   }
-  function addFromCanvas(
+  async function addFromCanvas(
     kind: SandboxDropKind,
     parentId: string | null,
     fieldType: SandboxFieldType = "text",
     position?: { x: number; y: number },
-  ) {
+  ): Promise<void> {
+    if (pending) return;
     const id = uid();
-    if (kind === "department")
-      change((previous) => ({
-        ...previous,
-        departments: [
-          ...previous.departments,
-          { id, name: "New department", closed: false },
-        ],
-      }));
-    if (kind === "module" && parentId)
-      change((previous) => ({
-        ...previous,
-        modules: [
-          ...previous.modules,
-          {
-            id,
-            department: parentId,
-            name: "New module",
-            closed: false,
-            fields: [],
-            x: 0,
-            y: 0,
-          },
-        ],
-      }));
-    if (kind === "field" && parentId)
-      change((previous) => ({
-        ...previous,
-        modules: previous.modules.map((item) =>
-          item.id === parentId
-            ? {
-                ...item,
-                fields: [
-                  ...item.fields,
-                  {
-                    id,
-                    name: `${sampleTypes[fieldType]} field`,
-                    type: sampleTypes[fieldType],
-                    required: false,
-                    value: "",
-                    options: "",
-                    closed: false,
-                  },
-                ],
-              }
-            : item,
-        ),
-      }));
+    const result = await change((previous) => {
+      if (kind === "department")
+        return {
+          ...previous,
+          departments: [
+            ...previous.departments,
+            { id, name: "New department", closed: false },
+          ],
+        };
+      if (kind === "module" && parentId)
+        return {
+          ...previous,
+          modules: [
+            ...previous.modules,
+            {
+              id,
+              department: parentId,
+              name: "New module",
+              closed: false,
+              fields: [],
+              x: 0,
+              y: 0,
+            },
+          ],
+        };
+      if (kind === "field" && parentId)
+        return {
+          ...previous,
+          modules: previous.modules.map((item) =>
+            item.id === parentId
+              ? {
+                  ...item,
+                  fields: [
+                    ...item.fields,
+                    {
+                      id,
+                      name: `${sampleTypes[fieldType]} field`,
+                      type: sampleTypes[fieldType],
+                      required: false,
+                      value: "",
+                      options: "",
+                      closed: false,
+                    },
+                  ],
+                }
+              : item,
+          ),
+        };
+      return previous;
+    });
+    if (!result.ok) {
+      notify(result.error);
+      return;
+    }
     setSelected(
       kind === "field" && parentId ? canvasFieldId(parentId, id) : id,
     );
@@ -1512,8 +1612,9 @@ export function Designer({
     setTarget(relationship.target);
     setCardinality(relationship.cardinality);
   }
-  function removeSelected() {
+  async function removeSelected(): Promise<void> {
     if (!deleteTarget) return;
+    if (pending) return;
     const fallbackId =
       deleteTarget.kind === "module"
         ? design.modules.find((item) => item.id === deleteTarget.id)?.department
@@ -1526,9 +1627,11 @@ export function Designer({
                 ?.id;
     deleteFallbackId.current = fallbackId ?? null;
     deleteOpener.current = null;
-    change((previous) => {
+    const nextFallbackId = { current: "" };
+    const result = await change((previous) => {
       const field = sampleField(previous, deleteTarget.id);
-      if (deleteTarget.kind === "field" && field)
+      if (deleteTarget.kind === "field" && field) {
+        nextFallbackId.current = field.moduleId;
         return {
           ...previous,
           modules: previous.modules.map((item) =>
@@ -1542,13 +1645,19 @@ export function Designer({
               : item,
           ),
         };
-      if (deleteTarget.kind === "link")
+      }
+      if (deleteTarget.kind === "link") {
+        const relationship = previous.relationships.find(
+          (item) => item.id === deleteTarget.id,
+        );
+        nextFallbackId.current = relationship?.source ?? "";
         return {
           ...previous,
           relationships: previous.relationships.filter(
             (item) => item.id !== deleteTarget.id,
           ),
         };
+      }
       const removed = new Set(
         previous.modules
           .filter((item) =>
@@ -1558,6 +1667,12 @@ export function Designer({
           )
           .map((item) => item.id),
       );
+      nextFallbackId.current =
+        deleteTarget.kind === "department"
+          ? (previous.departments.find((item) => item.id !== deleteTarget.id)
+              ?.id ?? "")
+          : (previous.modules.find((item) => item.id !== deleteTarget.id)?.id ??
+            "");
       return {
         ...previous,
         departments: previous.departments.filter(
@@ -1570,8 +1685,12 @@ export function Designer({
         ),
       };
     });
+    if (!result.ok) {
+      notify(result.error);
+      return;
+    }
     setDeleteTarget(null);
-    setSelected(fallbackId ?? "");
+    setSelected(nextFallbackId.current || fallbackId || "");
     notify("Item deleted from sample design. Undo restores it.");
   }
   function deleteFinalFocus(): HTMLElement | null {
@@ -1611,55 +1730,95 @@ export function Designer({
     setEditorError("");
     setSource(selectedModule?.id ?? design.modules[0]?.id ?? "");
   }
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (pending || !name.trim()) return;
+    const submittedName = name.trim();
     if (editor === "department") {
       const id = uid();
-      change({
-        ...design,
+      const result = await change((current) => ({
+        ...current,
         departments: [
-          ...design.departments,
-          { id, name: name.trim(), closed: false },
+          ...current.departments,
+          { id, name: submittedName, closed: false },
         ],
-      });
+      }));
+      if (!result.ok) {
+        setEditorError(result.error);
+        return;
+      }
       setSelected(id);
+      setEditor("");
+      setPane("Structure");
+      notify(`${submittedName} saved in the sample design.`);
+      return;
     }
     if (editor === "module" && department) {
       const id = uid();
-      change({
-        ...design,
+      const departmentId = department.id;
+      const result = await change((current) => ({
+        ...current,
         modules: [
-          ...design.modules,
+          ...current.modules,
           {
             id,
-            name: name.trim(),
-            department: department.id,
+            name: submittedName,
+            department: departmentId,
             closed: false,
             fields: [],
             x: 0,
             y: 0,
           },
         ],
-      });
+      }));
+      if (!result.ok) {
+        setEditorError(result.error);
+        return;
+      }
       setSelected(id);
+      setEditor("");
+      setPane("Structure");
+      notify(`${submittedName} saved in the sample design.`);
+      return;
     }
-    if (editor === "rename")
-      change(
-        selectedModule
-          ? {
-              ...design,
-              modules: design.modules.map((m) =>
-                m.id === selectedModule.id ? { ...m, name: name.trim() } : m,
-              ),
-            }
-          : {
-              ...design,
-              departments: design.departments.map((d) =>
-                d.id === department?.id ? { ...d, name: name.trim() } : d,
-              ),
-            },
-      );
+    if (editor === "rename") {
+      const moduleId = selectedModule?.id;
+      const departmentId = department?.id;
+      const result = await change((current) => {
+        if (moduleId) {
+          if (!current.modules.some((item) => item.id === moduleId))
+            throw new SandboxCommandError(
+              "This module was deleted. Refresh the designer and try again.",
+            );
+          return {
+            ...current,
+            modules: current.modules.map((item) =>
+              item.id === moduleId ? { ...item, name: submittedName } : item,
+            ),
+          };
+        }
+        if (
+          !departmentId ||
+          !current.departments.some((item) => item.id === departmentId)
+        )
+          throw new SandboxCommandError(
+            "This department was deleted. Refresh the designer and try again.",
+          );
+        return {
+          ...current,
+          departments: current.departments.map((item) =>
+            item.id === departmentId ? { ...item, name: submittedName } : item,
+          ),
+        };
+      });
+      if (!result.ok) {
+        setEditorError(result.error);
+        return;
+      }
+      setEditor("");
+      notify(`${submittedName} saved in the sample design.`);
+      return;
+    }
     if (editor === "field" && selectedModule) {
       const result = buildField(
         {
@@ -1691,63 +1850,95 @@ export function Designer({
         setEditorError(result);
         return;
       }
-      change({
-        ...design,
-        modules: design.modules.map((m) =>
-          m.id === selectedModule.id
-            ? { ...m, fields: [...m.fields, result] }
-            : m,
-        ),
+      const moduleId = selectedModule.id;
+      const saved = await change((current) => {
+        if (!current.modules.some((item) => item.id === moduleId))
+          throw new SandboxCommandError(
+            "This module was deleted. Keep the field draft open and try again.",
+          );
+        return {
+          ...current,
+          modules: current.modules.map((item) =>
+            item.id === moduleId
+              ? { ...item, fields: [...item.fields, result] }
+              : item,
+          ),
+        };
       });
+      if (!saved.ok) {
+        setEditorError(saved.error);
+        return;
+      }
+      setEditor("");
+      notify(`${submittedName} saved in the sample design.`);
+      return;
     }
     if (editor === "relationship" && source && target) {
       if (source === target) {
         setRelationshipError("Source and target modules must be different.");
         return;
       }
-      if (
-        !design.modules.some((item) => item.id === source) ||
-        !design.modules.some((item) => item.id === target)
-      ) {
-        setRelationshipError("Choose existing source and target modules.");
-        return;
-      }
-      if (
-        design.relationships.some(
-          (item) =>
-            item.id !== editingRelationship &&
-            item.source === source &&
-            item.target === target,
+      const relationshipId = editingRelationship;
+      const saved = await change((previous) => {
+        if (
+          !previous.modules.some((item) => item.id === source) ||
+          !previous.modules.some((item) => item.id === target)
         )
-      ) {
-        setRelationshipError(
-          "A relationship between these modules already exists.",
-        );
+          throw new SandboxCommandError(
+            "Choose existing source and target modules.",
+          );
+        if (
+          previous.relationships.some(
+            (item) =>
+              item.id !== relationshipId &&
+              item.source === source &&
+              item.target === target,
+          )
+        )
+          throw new SandboxCommandError(
+            "A relationship between these modules already exists.",
+          );
+        if (
+          relationshipId &&
+          !previous.relationships.some((item) => item.id === relationshipId)
+        )
+          throw new SandboxCommandError(
+            "This relationship was deleted. Keep the editor open and try again.",
+          );
+        return {
+          ...previous,
+          relationships: relationshipId
+            ? previous.relationships.map((item) =>
+                item.id === relationshipId
+                  ? {
+                      ...item,
+                      name: submittedName,
+                      source,
+                      target,
+                      cardinality,
+                    }
+                  : item,
+              )
+            : [
+                ...previous.relationships,
+                {
+                  id: uid(),
+                  name: submittedName,
+                  source,
+                  target,
+                  cardinality,
+                },
+              ],
+        };
+      });
+      if (!saved.ok) {
+        setRelationshipError(saved.error);
         return;
       }
-      change((previous) => ({
-        ...previous,
-        relationships: editingRelationship
-          ? previous.relationships.map((item) =>
-              item.id === editingRelationship
-                ? { ...item, name: name.trim(), source, target, cardinality }
-                : item,
-            )
-          : [
-              ...previous.relationships,
-              {
-                id: uid(),
-                name: name.trim(),
-                source,
-                target,
-                cardinality,
-              },
-            ],
-      }));
+      setEditor("");
+      notify(`${submittedName} saved in the sample design.`);
+      return;
     }
-    setEditor("");
-    if (editor === "department" || editor === "module") setPane("Structure");
-    notify(`${name.trim()} saved in the sample design.`);
   }
   const editorNameLabel = `${editor === "rename" ? "Item" : editor.charAt(0).toUpperCase() + editor.slice(1)} name`;
   const editorForm = (
@@ -1764,6 +1955,7 @@ export function Designer({
             id="sandbox-editor-name"
             autoFocus
             required
+            disabled={pending}
             maxLength={80}
             value={name}
             onChange={(e) => {
@@ -1781,6 +1973,7 @@ export function Designer({
               <NativeSelect
                 id="sandbox-editor-field-type"
                 className="w-full [&_select]:min-h-10"
+                disabled={pending}
                 value={type}
                 onChange={(e) => {
                   setType(e.target.value);
@@ -1800,6 +1993,7 @@ export function Designer({
               </FieldLabel>
               <Input
                 id="sandbox-editor-default-value"
+                disabled={pending}
                 value={value}
                 onChange={(e) => {
                   setValue(e.target.value);
@@ -1815,6 +2009,7 @@ export function Designer({
                 <Input
                   id="sandbox-editor-select-options"
                   required
+                  disabled={pending}
                   value={options}
                   onChange={(e) => {
                     setOptions(e.target.value);
@@ -1826,6 +2021,7 @@ export function Designer({
             <FormField className="min-h-11 flex-row items-center gap-2 xl:min-h-0">
               <Checkbox
                 id="sandbox-editor-required"
+                disabled={pending}
                 checked={required}
                 onCheckedChange={setRequired}
               />
@@ -1844,6 +2040,7 @@ export function Designer({
               <NativeSelect
                 id="sandbox-editor-source-module"
                 className="w-full [&_select]:min-h-10"
+                disabled={pending}
                 value={source}
                 onChange={(e) => {
                   setSource(e.target.value);
@@ -1864,6 +2061,7 @@ export function Designer({
               <NativeSelect
                 id="sandbox-editor-target-module"
                 className="w-full [&_select]:min-h-10"
+                disabled={pending}
                 value={target}
                 onChange={(e) => {
                   setTarget(e.target.value);
@@ -1884,6 +2082,7 @@ export function Designer({
               <NativeSelect
                 id="sandbox-editor-cardinality"
                 className="w-full [&_select]:min-h-10"
+                disabled={pending}
                 value={cardinality}
                 onChange={(e) => setCardinality(e.target.value)}
               >
@@ -1915,7 +2114,7 @@ export function Designer({
         ) : null}
       </FieldGroup>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit">
+        <Button type="submit" disabled={pending}>
           {editor === "rename"
             ? "Save name"
             : editingRelationship
@@ -1925,6 +2124,7 @@ export function Designer({
         <Button
           type="button"
           variant="ghost"
+          disabled={pending}
           onClick={() => {
             setEditor("");
             setEditorError("");
@@ -2059,17 +2259,27 @@ export function Designer({
                   onRenameDepartment={renameDepartment}
                   onRenameModule={renameModule}
                   onUpdateField={(id, patch) =>
-                    change((previous) =>
-                      updateProjectedField(previous, id, patch),
+                    change(
+                      (previous) =>
+                        updateProjectedFieldOrThrow(previous, id, patch),
+                      `sandbox.design.field:${id}`,
                     )
                   }
                   onUpdateLinkLabel={(id, label) =>
-                    change((previous) => ({
-                      ...previous,
-                      relationships: previous.relationships.map((item) =>
-                        item.id === id ? { ...item, name: label } : item,
-                      ),
-                    }))
+                    change((previous) => {
+                      if (
+                        !previous.relationships.some((item) => item.id === id)
+                      )
+                        throw new SandboxCommandError(
+                          "This relationship was deleted. Keep the edit open and try again.",
+                        );
+                      return {
+                        ...previous,
+                        relationships: previous.relationships.map((item) =>
+                          item.id === id ? { ...item, name: label } : item,
+                        ),
+                      };
+                    }, `sandbox.design.link:${id}`)
                   }
                   onDeleteSelected={requestDelete}
                   onDuplicate={duplicateTarget}
@@ -2085,6 +2295,7 @@ export function Designer({
                     setType(sampleTypes[fieldType]);
                   }}
                   onMoveModule={moveModule}
+                  pending={pending}
                   onAddRelationship={() => {
                     setSelected(
                       selectedModule?.id ?? design.modules[0]?.id ?? "",
@@ -2270,11 +2481,15 @@ export function Designer({
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-                          onClick={() => {
-                            change((previous) => ({
+                          onClick={async () => {
+                            const result = await change((previous) => ({
                               ...previous,
                               layout: arrangedLayout(previous),
                             }));
+                            if (!result.ok) {
+                              notify(result.error);
+                              return;
+                            }
                             setCanvasAction("Canvas automatically arranged.");
                           }}
                         >
@@ -2282,11 +2497,15 @@ export function Designer({
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-                          onClick={() => {
-                            change((previous) => ({
+                          onClick={async () => {
+                            const result = await change((previous) => ({
                               ...previous,
                               layout: resetLayout(previous),
                             }));
+                            if (!result.ok) {
+                              notify(result.error);
+                              return;
+                            }
                             setCanvasAction("Canvas layout reset.");
                           }}
                         >
@@ -2362,30 +2581,57 @@ export function Designer({
                     onRenameDepartment={renameDepartment}
                     onRenameModule={renameModule}
                     onUpdateField={(id, patch) =>
-                      change((previous) =>
-                        updateProjectedField(previous, id, patch),
+                      change(
+                        (previous) =>
+                          updateProjectedFieldOrThrow(previous, id, patch),
+                        `sandbox.design.field:${id}`,
                       )
                     }
+                    pending={pending}
                     onDrop={addFromCanvas}
                     onConnect={connectModules}
                     onMove={(id, parentId) => {
                       if (parentId)
                         pendingMove.current = { id, department: parentId };
                     }}
-                    onLayoutChange={(layout) => {
+                    onLayoutChange={async (layout) => {
                       const moved = pendingMove.current;
                       pendingMove.current = null;
-                      change((previous) => ({
-                        ...previous,
-                        layout,
-                        modules: moved
-                          ? previous.modules.map((item) =>
-                              item.id === moved.id
-                                ? { ...item, department: moved.department }
-                                : item,
+                      const result = await change((previous) => {
+                        if (moved) {
+                          if (
+                            !previous.modules.some(
+                              (item) => item.id === moved.id,
                             )
-                          : previous.modules,
-                      }));
+                          )
+                            throw new SandboxCommandError(
+                              "The moved module was deleted. Refresh the designer and try again.",
+                            );
+                          if (
+                            !previous.departments.some(
+                              (item) => item.id === moved.department,
+                            )
+                          )
+                            throw new SandboxCommandError(
+                              "The destination department was deleted. Choose another destination.",
+                            );
+                        }
+                        return {
+                          ...previous,
+                          layout,
+                          modules: moved
+                            ? previous.modules.map((item) =>
+                                item.id === moved.id
+                                  ? {
+                                      ...item,
+                                      department: moved.department,
+                                    }
+                                  : item,
+                              )
+                            : previous.modules,
+                        };
+                      }, "sandbox.design.layout");
+                      if (!result.ok) notify(result.error);
                     }}
                   />
                 </div>
@@ -2488,31 +2734,26 @@ export function Designer({
                       <Button
                         data-sandbox-inspector-primary
                         variant="outline"
+                        disabled={pending}
                         onClick={() => open("rename")}
                       >
                         Rename {selectedModule ? "module" : "department"}
                       </Button>
                       <Button
                         variant="outline"
-                        onClick={() => {
-                          if (selectedModule)
-                            change({
-                              ...design,
-                              modules: design.modules.map((m) =>
-                                m.id === selectedModule.id
-                                  ? { ...m, closed: !m.closed }
-                                  : m,
-                              ),
+                        disabled={pending}
+                        onClick={async () => {
+                          if (selectedModule) {
+                            await toggleLifecycle({
+                              kind: "module",
+                              id: selectedModule.id,
                             });
-                          else if (department)
-                            change({
-                              ...design,
-                              departments: design.departments.map((d) =>
-                                d.id === department.id
-                                  ? { ...d, closed: !d.closed }
-                                  : d,
-                              ),
+                          } else if (department) {
+                            await toggleLifecycle({
+                              kind: "department",
+                              id: department.id,
                             });
+                          }
                         }}
                       >
                         {(selectedModule ?? department)?.closed
@@ -2520,7 +2761,11 @@ export function Designer({
                           : "Close"}{" "}
                         {selectedModule ? "module" : "department"}
                       </Button>
-                      <Button variant="outline" onClick={() => open("module")}>
+                      <Button
+                        variant="outline"
+                        disabled={pending}
+                        onClick={() => open("module")}
+                      >
                         Add module
                       </Button>
                     </ButtonGroup>
@@ -2540,17 +2785,24 @@ export function Designer({
                                   size="sm"
                                   variant="ghost"
                                   aria-label="Move department earlier"
-                                  disabled={index === 0}
-                                  onClick={() =>
-                                    change((previous) => ({
-                                      ...previous,
-                                      departments: reorder(
-                                        previous.departments,
-                                        index,
-                                        -1,
-                                      ),
-                                    }))
-                                  }
+                                  disabled={pending || index === 0}
+                                  onClick={async () => {
+                                    const result = await change((previous) => {
+                                      const currentIndex =
+                                        previous.departments.findIndex(
+                                          (item) => item.id === department.id,
+                                        );
+                                      return {
+                                        ...previous,
+                                        departments: reorder(
+                                          previous.departments,
+                                          currentIndex,
+                                          -1,
+                                        ),
+                                      };
+                                    });
+                                    if (!result.ok) notify(result.error);
+                                  }}
                                 >
                                   Earlier
                                 </Button>
@@ -2559,18 +2811,26 @@ export function Designer({
                                   variant="ghost"
                                   aria-label="Move department later"
                                   disabled={
+                                    pending ||
                                     index === design.departments.length - 1
                                   }
-                                  onClick={() =>
-                                    change((previous) => ({
-                                      ...previous,
-                                      departments: reorder(
-                                        previous.departments,
-                                        index,
-                                        1,
-                                      ),
-                                    }))
-                                  }
+                                  onClick={async () => {
+                                    const result = await change((previous) => {
+                                      const currentIndex =
+                                        previous.departments.findIndex(
+                                          (item) => item.id === department.id,
+                                        );
+                                      return {
+                                        ...previous,
+                                        departments: reorder(
+                                          previous.departments,
+                                          currentIndex,
+                                          1,
+                                        ),
+                                      };
+                                    });
+                                    if (!result.ok) notify(result.error);
+                                  }}
                                 >
                                   Later
                                 </Button>
@@ -2595,24 +2855,39 @@ export function Designer({
                               const scopedIndex = siblings.findIndex(
                                 (item) => item.id === selectedModule.id,
                               );
-                              const move = (delta: number) => {
-                                const reordered = reorder(
-                                  siblings,
-                                  scopedIndex,
-                                  delta,
-                                );
-                                change((previous) => {
+                              const move = async (delta: number) => {
+                                const result = await change((previous) => {
+                                  const currentModule = previous.modules.find(
+                                    (item) => item.id === selectedModule.id,
+                                  );
+                                  if (!currentModule) return previous;
+                                  const currentSiblings =
+                                    previous.modules.filter(
+                                      (item) =>
+                                        item.department ===
+                                        currentModule.department,
+                                    );
+                                  const currentIndex =
+                                    currentSiblings.findIndex(
+                                      (item) => item.id === selectedModule.id,
+                                    );
+                                  const reordered = reorder(
+                                    currentSiblings,
+                                    currentIndex,
+                                    delta,
+                                  );
                                   let cursor = 0;
                                   return {
                                     ...previous,
                                     modules: previous.modules.map((item) =>
                                       item.department ===
-                                      selectedModule.department
+                                      currentModule.department
                                         ? reordered[cursor++]
                                         : item,
                                     ),
                                   };
                                 });
+                                if (!result.ok) notify(result.error);
                               };
                               return (
                                 <>
@@ -2620,8 +2895,8 @@ export function Designer({
                                     size="sm"
                                     variant="ghost"
                                     aria-label="Move module earlier"
-                                    disabled={scopedIndex === 0}
-                                    onClick={() => move(-1)}
+                                    disabled={pending || scopedIndex === 0}
+                                    onClick={() => void move(-1)}
                                   >
                                     Earlier
                                   </Button>
@@ -2630,9 +2905,10 @@ export function Designer({
                                     variant="ghost"
                                     aria-label="Move module later"
                                     disabled={
+                                      pending ||
                                       scopedIndex === siblings.length - 1
                                     }
-                                    onClick={() => move(1)}
+                                    onClick={() => void move(1)}
                                   >
                                     Later
                                   </Button>
@@ -2689,59 +2965,96 @@ export function Designer({
                                 index={i}
                                 count={selectedModule.fields.length}
                                 onSave={(nextField) =>
-                                  change((previous) => ({
-                                    ...previous,
-                                    modules: previous.modules.map((item) =>
-                                      item.id === selectedModule.id
-                                        ? {
-                                            ...item,
-                                            fields: item.fields.map((entry) =>
-                                              entry.id === f.id
-                                                ? nextField
-                                                : entry,
-                                            ),
-                                          }
-                                        : item,
-                                    ),
-                                  }))
+                                  change((previous) => {
+                                    const currentModule = previous.modules.find(
+                                      (item) => item.id === selectedModule.id,
+                                    );
+                                    if (!currentModule)
+                                      throw new SandboxCommandError(
+                                        "This module was deleted. Keep the field draft open and try again.",
+                                      );
+                                    if (
+                                      !currentModule.fields.some(
+                                        (item) => item.id === f.id,
+                                      )
+                                    )
+                                      throw new SandboxCommandError(
+                                        "This field was deleted. Keep the field draft open and try again.",
+                                      );
+                                    return {
+                                      ...previous,
+                                      modules: previous.modules.map((item) =>
+                                        item.id === currentModule.id
+                                          ? {
+                                              ...item,
+                                              fields: item.fields.map(
+                                                (entry) =>
+                                                  entry.id === f.id
+                                                    ? nextField
+                                                    : entry,
+                                              ),
+                                            }
+                                          : item,
+                                      ),
+                                    };
+                                  })
                                 }
                                 onMove={(delta) =>
-                                  change((previous) => ({
-                                    ...previous,
-                                    modules: previous.modules.map((item) =>
-                                      item.id === selectedModule.id
-                                        ? {
-                                            ...item,
-                                            fields: reorder(
-                                              item.fields,
-                                              i,
-                                              delta,
-                                            ),
-                                          }
-                                        : item,
-                                    ),
-                                  }))
+                                  change((previous) => {
+                                    const currentModule = previous.modules.find(
+                                      (item) => item.id === selectedModule.id,
+                                    );
+                                    if (!currentModule) return previous;
+                                    const currentIndex =
+                                      currentModule.fields.findIndex(
+                                        (item) => item.id === f.id,
+                                      );
+                                    if (currentIndex < 0) return previous;
+                                    return {
+                                      ...previous,
+                                      modules: previous.modules.map((item) =>
+                                        item.id === currentModule.id
+                                          ? {
+                                              ...item,
+                                              fields: reorder(
+                                                item.fields,
+                                                currentIndex,
+                                                delta,
+                                              ),
+                                            }
+                                          : item,
+                                      ),
+                                    };
+                                  })
                                 }
                                 onLifecycle={() =>
-                                  change((previous) => ({
-                                    ...previous,
-                                    modules: previous.modules.map((item) =>
-                                      item.id === selectedModule.id
-                                        ? {
-                                            ...item,
-                                            fields: item.fields.map((entry) =>
-                                              entry.id === f.id
-                                                ? {
-                                                    ...entry,
-                                                    closed: !entry.closed,
-                                                  }
-                                                : entry,
-                                            ),
-                                          }
-                                        : item,
-                                    ),
-                                  }))
+                                  change((previous) => {
+                                    const currentModule = previous.modules.find(
+                                      (item) => item.id === selectedModule.id,
+                                    );
+                                    if (!currentModule) return previous;
+                                    return {
+                                      ...previous,
+                                      modules: previous.modules.map((item) =>
+                                        item.id === currentModule.id
+                                          ? {
+                                              ...item,
+                                              fields: item.fields.map(
+                                                (entry) =>
+                                                  entry.id === f.id
+                                                    ? {
+                                                        ...entry,
+                                                        closed: !entry.closed,
+                                                      }
+                                                    : entry,
+                                              ),
+                                            }
+                                          : item,
+                                      ),
+                                    };
+                                  })
                                 }
+                                pending={pending}
                                 autoFocus={
                                   focusTargetId ===
                                   canvasFieldId(selectedModule.id, f.id)
@@ -2887,7 +3200,7 @@ export function Designer({
       <Dialog
         open={editor === "relationship"}
         onOpenChange={(open) => {
-          if (!open) setEditor("");
+          if (!open && !pending) setEditor("");
         }}
       >
         <DialogContent className="max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11">
@@ -2900,7 +3213,7 @@ export function Designer({
       <AlertDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null);
+          if (!open && !pending) setDeleteTarget(null);
         }}
       >
         <AlertDialogContent
@@ -2912,10 +3225,17 @@ export function Designer({
             {currentDeleteImpact?.detail}
           </AlertDialogDescription>
           <AlertDialogFooter>
-            <Button variant="destructive" onClick={removeSelected}>
+            <Button
+              variant="destructive"
+              disabled={pending}
+              onClick={removeSelected}
+            >
               Confirm delete
             </Button>
-            <AlertDialogCancel render={<Button variant="ghost" />}>
+            <AlertDialogCancel
+              disabled={pending}
+              render={<Button variant="ghost" />}
+            >
               Cancel
             </AlertDialogCancel>
           </AlertDialogFooter>

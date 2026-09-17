@@ -39,6 +39,18 @@ import {
   snapSandboxPosition,
   toCells,
 } from "@/lib/sandbox/x6-adapter";
+import type { SandboxCommandResult } from "@/components/sample/sandbox/async";
+
+type SandboxCommand =
+  | void
+  | SandboxCommandResult<unknown>
+  | PromiseLike<SandboxCommandResult<unknown> | void>;
+
+function commandFailed(
+  result: void | SandboxCommandResult<unknown>,
+): result is { ok: false; error: string } {
+  return result?.ok === false;
+}
 
 export type SandboxCanvasLayout = Record<
   string,
@@ -70,23 +82,27 @@ export interface SandboxCanvasProps {
   /** Optional geometry owner; omitted preserves graph-local positioning. */
   layout?: SandboxCanvasLayout;
   /** Emits a full snapshot after a user geometry action settles, never on sync. */
-  onLayoutChange?: (layout: SandboxCanvasLayout) => void;
+  onLayoutChange?: (layout: SandboxCanvasLayout) => SandboxCommand;
   gridVisible?: boolean;
   snapEnabled?: boolean;
   onViewChange?: (view: SandboxCanvasViewState) => void;
   onSelect: (cellId: string | null) => void;
-  onRenameDepartment: (departmentId: string, name: string) => void;
-  onRenameModule: (moduleId: string, name: string) => void;
-  onUpdateField: (fieldId: string, patch: UpdateSandboxFieldPatch) => void;
+  onRenameDepartment: (departmentId: string, name: string) => SandboxCommand;
+  onRenameModule: (moduleId: string, name: string) => SandboxCommand;
+  onUpdateField: (
+    fieldId: string,
+    patch: UpdateSandboxFieldPatch,
+  ) => SandboxCommand;
   onDrop: (
     kind: SandboxDropKind,
     parentId: string | null,
     fieldType?: SandboxFieldType,
     position?: { x: number; y: number },
-  ) => void;
+  ) => SandboxCommand;
   onConnect: (sourceModuleId: string, targetModuleId: string) => void;
   onMove: (nodeId: string, parentId: string | null) => void;
   graphRef?: MutableRefObject<SandboxCanvasApi | null>;
+  pending?: boolean;
 }
 
 interface SandboxCanvasRuntime {
@@ -474,6 +490,7 @@ export function SandboxCanvas({
   onConnect,
   onMove,
   graphRef,
+  pending = false,
 }: SandboxCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -482,10 +499,12 @@ export function SandboxCanvas({
   const freeMoveRef = useRef(false);
   const gridVisibleRef = useRef(gridVisible);
   const snapEnabledRef = useRef(snapEnabled);
+  const pendingRef = useRef(pending);
   const syncingRef = useRef(false);
   const appliedLayoutRef = useRef<SandboxCanvasLayout | undefined>(undefined);
   const [editor, setEditor] = useState<CanvasEditor | null>(null);
   const editorRef = useRef<CanvasEditor | null>(null);
+  const editorCommitRef = useRef<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
   const [paletteDragKind, setPaletteDragKind] =
@@ -526,6 +545,9 @@ export function SandboxCanvas({
     stateRef.current = state;
   });
   useEffect(() => {
+    pendingRef.current = pending;
+  }, [pending]);
+  useEffect(() => {
     gridVisibleRef.current = gridVisible;
     snapEnabledRef.current = snapEnabled;
     const graph = runtimeRef.current?.graph;
@@ -557,8 +579,10 @@ export function SandboxCanvas({
     graph.use(history);
     runtimeRef.current = { graph, history };
     appliedLayoutRef.current = undefined;
-    const emitLayout = (): void => {
-      if (syncingRef.current || !callbacksRef.current.onLayoutChange) return;
+    let layoutQueue = Promise.resolve();
+    const emitLayout = (): Promise<void> => {
+      if (syncingRef.current || !callbacksRef.current.onLayoutChange)
+        return Promise.resolve();
       const enabled = history.isEnabled();
       history.disable();
       fitDepartmentFrames(graph);
@@ -579,9 +603,14 @@ export function SandboxCanvas({
           );
         })
       )
-        return;
+        return Promise.resolve();
       appliedLayoutRef.current = next;
-      callbacksRef.current.onLayoutChange(next);
+      layoutQueue = layoutQueue
+        .catch(() => undefined)
+        .then(async () => {
+          await callbacksRef.current.onLayoutChange?.(next);
+        });
+      return layoutQueue;
     };
 
     const emitViewState = (): void => {
@@ -801,7 +830,7 @@ export function SandboxCanvas({
           const cell = graph.getCellById(nodeId);
           if (cell !== null && cell.isNode()) {
             cell.setPosition(snappedPosition);
-            emitLayout();
+            void emitLayout();
             return;
           }
           pendingPositionsRef.current.set(nodeId, snappedPosition);
@@ -948,7 +977,7 @@ export function SandboxCanvas({
         resizeGesture.node.setSize(resizeGesture.width, resizeGesture.height);
       resizeGesture = null;
       graph.stopBatch("department-resize");
-      emitLayout();
+      void emitLayout();
     };
     const resizeKeyDown = (event: KeyboardEvent): void => {
       if (
@@ -984,7 +1013,7 @@ export function SandboxCanvas({
         // Keyboard deltas are exact; only pointer resizing snaps to the grid.
         true,
       );
-      emitLayout();
+      void emitLayout();
     };
     const swallowResizeMouse = (event: MouseEvent): void => {
       if (
@@ -1108,7 +1137,7 @@ export function SandboxCanvas({
       setDropTargetId(null);
       if (syncingRef.current) return;
       if (nodeKindOf(node) !== "module") {
-        emitLayout();
+        void emitLayout();
         return;
       }
       const currentParent = node.getParent();
@@ -1126,14 +1155,14 @@ export function SandboxCanvas({
         if (currentParent.id !== sandboxModule.departmentId) {
           callbacksRef.current.onMove(node.id, currentParent.id);
         }
-        emitLayout();
+        void emitLayout();
         return;
       }
       // X6 removes a module from its department on a blank drop but emits no
       // `node:embedded` event. Restore the canonical parent without adding a
       // second history entry, preserving the exact dragged coordinates.
       restoreCanonicalParent(node);
-      emitLayout();
+      void emitLayout();
     });
     graph.on("edge:connected", ({ edge, isNew }) => {
       if (!isNew || syncingRef.current) {
@@ -1202,7 +1231,7 @@ export function SandboxCanvas({
               : 0,
           { ui: true },
         );
-        emitLayout();
+        void emitLayout();
         return;
       }
       if (event.key !== "Enter" && event.key !== " ") {
@@ -1605,34 +1634,56 @@ export function SandboxCanvas({
     }
   }, [dropTargetId, layout, movingNodeId, state]);
 
-  function commitEditor(value: string): void {
+  async function commitEditor(value: string): Promise<void> {
     const activeEditor = editorRef.current;
-    if (activeEditor === null) {
+    if (
+      activeEditor === null ||
+      pendingRef.current ||
+      editorCommitRef.current === activeEditor.id
+    ) {
       return;
     }
     const nextValue = value.trim();
     if (nextValue === "") {
       return;
     }
-    if (activeEditor.property === "type") {
-      if (!isFieldType(nextValue)) {
-        return;
+    if (activeEditor.property === "type" && !isFieldType(nextValue)) return;
+    editorCommitRef.current = activeEditor.id;
+    try {
+      let result: void | SandboxCommandResult<unknown>;
+      if (activeEditor.property === "type") {
+        if (!isFieldType(nextValue)) return;
+        result = await callbacksRef.current.onUpdateField(activeEditor.id, {
+          type: nextValue,
+        });
+      } else if (activeEditor.target === "department") {
+        result = await callbacksRef.current.onRenameDepartment(
+          activeEditor.id,
+          nextValue,
+        );
+      } else if (activeEditor.target === "module") {
+        result = await callbacksRef.current.onRenameModule(
+          activeEditor.id,
+          nextValue,
+        );
+      } else {
+        result = await callbacksRef.current.onUpdateField(activeEditor.id, {
+          name: nextValue,
+        });
       }
-      callbacksRef.current.onUpdateField(activeEditor.id, {
-        type: nextValue,
-      });
-    } else if (activeEditor.target === "department") {
-      callbacksRef.current.onRenameDepartment(activeEditor.id, nextValue);
-    } else if (activeEditor.target === "module") {
-      callbacksRef.current.onRenameModule(activeEditor.id, nextValue);
-    } else {
-      callbacksRef.current.onUpdateField(activeEditor.id, { name: nextValue });
+      if (commandFailed(result)) return;
+      if (editorRef.current?.id === activeEditor.id) closeEditor();
+    } finally {
+      if (editorCommitRef.current === activeEditor.id)
+        editorCommitRef.current = null;
     }
-    closeEditor();
   }
 
-  function handleCanvasDrop(event: DragEvent<HTMLDivElement>): void {
+  async function handleCanvasDrop(
+    event: DragEvent<HTMLDivElement>,
+  ): Promise<void> {
     event.preventDefault();
+    if (pendingRef.current) return;
     setPaletteDragKind(null);
     setDropTargetId(null);
     setDropError(null);
@@ -1657,7 +1708,7 @@ export function SandboxCanvas({
       "application/x-sandbox-field-type",
     );
     const fieldType = isFieldType(rawFieldType) ? rawFieldType : undefined;
-    callbacksRef.current.onDrop(
+    const result = await callbacksRef.current.onDrop(
       rawKind,
       resolution.parentId,
       fieldType,
@@ -1665,6 +1716,7 @@ export function SandboxCanvas({
         ? { x: point.x, y: point.y }
         : snapSandboxPosition({ x: point.x, y: point.y }),
     );
+    if (commandFailed(result)) setDropError(result.error);
   }
 
   function handleCanvasDragOver(event: DragEvent<HTMLDivElement>): void {
@@ -1773,6 +1825,7 @@ export function SandboxCanvas({
             <select
               aria-label="Canvas field type"
               autoFocus
+              disabled={pending}
               className="border-primary bg-card text-foreground ring-ring/30 h-7 w-full rounded border px-1 text-[10px] font-semibold uppercase shadow-md ring-2 outline-none"
               value={editor.value}
               onChange={(event) => {
@@ -1781,16 +1834,16 @@ export function SandboxCanvas({
                     ? current
                     : { ...current, value: event.target.value },
                 );
-                commitEditor(event.target.value);
+                void commitEditor(event.target.value);
               }}
-              onBlur={(event) => commitEditor(event.currentTarget.value)}
+              onBlur={(event) => void commitEditor(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   event.preventDefault();
                   closeEditor();
                 } else if (event.key === "Enter") {
                   event.preventDefault();
-                  commitEditor(event.currentTarget.value);
+                  void commitEditor(event.currentTarget.value);
                 }
               }}
             >
@@ -1804,6 +1857,7 @@ export function SandboxCanvas({
             <input
               aria-label="Canvas name editor"
               autoFocus
+              disabled={pending}
               className="border-primary bg-card text-foreground ring-ring/30 h-7 w-full rounded border px-2 text-xs shadow-md ring-2 outline-none"
               value={editor.value}
               onChange={(event) =>
@@ -1813,14 +1867,14 @@ export function SandboxCanvas({
                     : { ...current, value: event.target.value },
                 )
               }
-              onBlur={(event) => commitEditor(event.currentTarget.value)}
+              onBlur={(event) => void commitEditor(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   event.preventDefault();
                   closeEditor();
                 } else if (event.key === "Enter") {
                   event.preventDefault();
-                  commitEditor(event.currentTarget.value);
+                  void commitEditor(event.currentTarget.value);
                 }
               }}
             />

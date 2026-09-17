@@ -42,19 +42,24 @@ import {
   parseSandboxFile,
   type SandboxFileV1,
 } from "./file-format";
+import type { SandboxCommandResult } from "./async";
 import { SANDBOX_LIMITS, type SandboxValidationIssue } from "./validation";
 
 type SandboxControlsProps = {
   design: Design;
   versions: Version[];
   issues: SandboxValidationIssue[];
-  onCreateCheckpoint: (name: string, note: string) => void;
-  onCreateRelease: (note: string) => void;
-  onImport: (file: SandboxFileV1) => void;
+  onCreateCheckpoint: (
+    name: string,
+    note: string,
+  ) => Promise<SandboxCommandResult<Version>>;
+  onCreateRelease: (note: string) => Promise<SandboxCommandResult<Version>>;
+  onImport: (file: SandboxFileV1) => Promise<SandboxCommandResult<unknown>>;
   onCreate: (kind: SandboxCreateKind) => void;
-  onResetDesign: () => void;
-  onClearData: () => void;
+  onResetDesign: () => Promise<SandboxCommandResult<unknown>>;
+  onClearData: () => Promise<SandboxCommandResult<unknown>>;
   onSelectIssue: (issue: SandboxValidationIssue) => void;
+  pending: boolean;
 };
 
 export type SandboxCreateKind =
@@ -76,6 +81,7 @@ export function SandboxControls({
   onResetDesign,
   onClearData,
   onSelectIssue,
+  pending,
 }: SandboxControlsProps) {
   const [checkpointOpen, setCheckpointOpen] = useState(false);
   const [checkpointName, setCheckpointName] = useState("");
@@ -90,6 +96,7 @@ export function SandboxControls({
   const [importInputKey, setImportInputKey] = useState(0);
   const [resetOpen, setResetOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
+  const [commandError, setCommandError] = useState("");
   const resetOpener = useRef<HTMLButtonElement | null>(null);
   const clearOpener = useRef<HTMLButtonElement | null>(null);
   const errors = issues.filter((issue) => issue.severity === "error");
@@ -149,7 +156,7 @@ export function SandboxControls({
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <Button aria-label="Create">
+              <Button aria-label="Create" disabled={pending}>
                 <Plus />
                 Create
               </Button>
@@ -188,22 +195,46 @@ export function SandboxControls({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button variant="outline" onClick={() => setCheckpointOpen(true)}>
+        <Button
+          variant="outline"
+          disabled={pending}
+          onClick={() => {
+            setCommandError("");
+            setCheckpointOpen(true);
+          }}
+        >
           <Save />
           Create checkpoint
         </Button>
-        <Button onClick={() => setReleaseOpen(true)}>
+        <Button
+          disabled={pending}
+          onClick={() => {
+            setCommandError("");
+            setReleaseOpen(true);
+          }}
+        >
           <PackageCheck />
           Create local release
         </Button>
-        <Button variant="outline" onClick={() => setPortabilityOpen(true)}>
+        <Button
+          variant="outline"
+          disabled={pending}
+          onClick={() => {
+            setCommandError("");
+            setPortabilityOpen(true);
+          }}
+        >
           <Upload />
           Import or export
         </Button>
         <Button
           ref={resetOpener}
           variant="ghost"
-          onClick={() => setResetOpen(true)}
+          disabled={pending}
+          onClick={() => {
+            setCommandError("");
+            setResetOpen(true);
+          }}
         >
           <RotateCcw />
           Reset design
@@ -211,7 +242,11 @@ export function SandboxControls({
         <Button
           ref={clearOpener}
           variant="ghost"
-          onClick={() => setClearOpen(true)}
+          disabled={pending}
+          onClick={() => {
+            setCommandError("");
+            setClearOpen(true);
+          }}
         >
           <Trash2 />
           Clear Sandbox data
@@ -253,7 +288,13 @@ export function SandboxControls({
         </Alert>
       )}
 
-      <Dialog open={checkpointOpen} onOpenChange={setCheckpointOpen}>
+      <Dialog
+        open={checkpointOpen}
+        onOpenChange={(open) => {
+          if (!open && pending) return;
+          setCheckpointOpen(open);
+        }}
+      >
         <DialogContent className="max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11">
           <DialogTitle>Create checkpoint</DialogTitle>
           <DialogDescription>
@@ -268,6 +309,7 @@ export function SandboxControls({
                 id="sandbox-checkpoint-name"
                 autoFocus
                 required
+                disabled={pending}
                 maxLength={80}
                 value={checkpointName}
                 onChange={(event) => setCheckpointName(event.target.value)}
@@ -279,6 +321,7 @@ export function SandboxControls({
               </FieldLabel>
               <Textarea
                 id="sandbox-checkpoint-note"
+                disabled={pending}
                 maxLength={500}
                 value={checkpointNote}
                 onChange={(event) => setCheckpointNote(event.target.value)}
@@ -286,16 +329,25 @@ export function SandboxControls({
             </Field>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCheckpointOpen(false)}>
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() => setCheckpointOpen(false)}
+            >
               Cancel
             </Button>
             <Button
-              disabled={!checkpointName.trim()}
-              onClick={() => {
-                onCreateCheckpoint(
+              disabled={pending || !checkpointName.trim()}
+              onClick={async () => {
+                setCommandError("");
+                const result = await onCreateCheckpoint(
                   checkpointName.trim(),
                   checkpointNote.trim(),
                 );
+                if (!result.ok) {
+                  setCommandError(result.error);
+                  return;
+                }
                 setCheckpointName("");
                 setCheckpointNote("");
                 setCheckpointOpen(false);
@@ -304,12 +356,18 @@ export function SandboxControls({
               Save checkpoint
             </Button>
           </DialogFooter>
+          {commandError ? (
+            <Alert role="alert" variant="destructive">
+              {commandError}
+            </Alert>
+          ) : null}
         </DialogContent>
       </Dialog>
 
       <Dialog
         open={releaseOpen}
         onOpenChange={(open) => {
+          if (!open && pending) return;
           setReleaseOpen(open);
           if (!open) setReleaseNote("");
         }}
@@ -351,6 +409,7 @@ export function SandboxControls({
               <Textarea
                 id="sandbox-release-note"
                 autoFocus
+                disabled={pending}
                 maxLength={500}
                 value={releaseNote}
                 onChange={(event) => setReleaseNote(event.target.value)}
@@ -363,13 +422,22 @@ export function SandboxControls({
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setReleaseOpen(false)}>
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() => setReleaseOpen(false)}
+            >
               Cancel release
             </Button>
             <Button
-              disabled={errors.length > 0}
-              onClick={() => {
-                onCreateRelease(releaseNote.trim());
+              disabled={pending || errors.length > 0}
+              onClick={async () => {
+                setCommandError("");
+                const result = await onCreateRelease(releaseNote.trim());
+                if (!result.ok) {
+                  setCommandError(result.error);
+                  return;
+                }
                 setReleaseOpen(false);
                 setReleaseNote("");
               }}
@@ -377,12 +445,18 @@ export function SandboxControls({
               Confirm local release
             </Button>
           </DialogFooter>
+          {commandError ? (
+            <Alert role="alert" variant="destructive">
+              {commandError}
+            </Alert>
+          ) : null}
         </DialogContent>
       </Dialog>
 
       <Dialog
         open={portabilityOpen}
         onOpenChange={(open) => {
+          if (!open && pending) return;
           setPortabilityOpen(open);
           if (!open) {
             clearStagedImport();
@@ -401,6 +475,7 @@ export function SandboxControls({
               <Field className="flex-row items-center gap-2">
                 <Checkbox
                   id="sandbox-include-versions"
+                  disabled={pending}
                   checked={includeVersions}
                   onCheckedChange={setIncludeVersions}
                 />
@@ -411,7 +486,7 @@ export function SandboxControls({
                   Include checkpoints and local releases
                 </FieldLabel>
               </Field>
-              <Button variant="outline" onClick={exportJson}>
+              <Button variant="outline" disabled={pending} onClick={exportJson}>
                 <Download />
                 Export JSON
               </Button>
@@ -432,6 +507,7 @@ export function SandboxControls({
                 <Input
                   id="sandbox-import-file"
                   key={importInputKey}
+                  disabled={pending}
                   type="file"
                   accept="application/json,.json"
                   onChange={stageImport}
@@ -450,26 +526,48 @@ export function SandboxControls({
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button
-                      onClick={() => {
-                        onImport(staged);
+                      disabled={pending}
+                      onClick={async () => {
+                        setCommandError("");
+                        const result = await onImport(staged);
+                        if (!result.ok) {
+                          setCommandError(result.error);
+                          setImportError(result.error);
+                          return;
+                        }
                         clearStagedImport();
                         setPortabilityOpen(false);
                       }}
                     >
                       Replace sandbox
                     </Button>
-                    <Button variant="outline" onClick={clearStagedImport}>
+                    <Button
+                      variant="outline"
+                      disabled={pending}
+                      onClick={clearStagedImport}
+                    >
                       Cancel import
                     </Button>
                   </div>
                 </div>
               )}
+              {commandError ? (
+                <Alert role="alert" variant="destructive">
+                  {commandError}
+                </Alert>
+              ) : null}
             </section>
           </div>
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+      <AlertDialog
+        open={resetOpen}
+        onOpenChange={(open) => {
+          if (!open && pending) return;
+          setResetOpen(open);
+        }}
+      >
         <AlertDialogContent
           className="max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11"
           finalFocus={() => resetOpener.current}
@@ -481,23 +579,44 @@ export function SandboxControls({
             stay in this tab.
           </AlertDialogDescription>
           <AlertDialogFooter>
-            <Button variant="outline" onClick={() => setResetOpen(false)}>
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() => setResetOpen(false)}
+            >
               Cancel reset
             </Button>
             <Button
               variant="destructive"
-              onClick={() => {
-                onResetDesign();
+              disabled={pending}
+              onClick={async () => {
+                setCommandError("");
+                const result = await onResetDesign();
+                if (!result.ok) {
+                  setCommandError(result.error);
+                  return;
+                }
                 setResetOpen(false);
               }}
             >
               Reset current design
             </Button>
           </AlertDialogFooter>
+          {commandError ? (
+            <Alert role="alert" variant="destructive">
+              {commandError}
+            </Alert>
+          ) : null}
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={clearOpen} onOpenChange={setClearOpen}>
+      <AlertDialog
+        open={clearOpen}
+        onOpenChange={(open) => {
+          if (!open && pending) return;
+          setClearOpen(open);
+        }}
+      >
         <AlertDialogContent
           className="max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11"
           finalFocus={() => clearOpener.current}
@@ -510,19 +629,34 @@ export function SandboxControls({
             Recovery is available until reload or your next Sandbox change.
           </AlertDialogDescription>
           <AlertDialogFooter>
-            <Button variant="outline" onClick={() => setClearOpen(false)}>
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() => setClearOpen(false)}
+            >
               Cancel clear
             </Button>
             <Button
               variant="destructive"
-              onClick={() => {
-                onClearData();
+              disabled={pending}
+              onClick={async () => {
+                setCommandError("");
+                const result = await onClearData();
+                if (!result.ok) {
+                  setCommandError(result.error);
+                  return;
+                }
                 setClearOpen(false);
               }}
             >
               Clear Sandbox data
             </Button>
           </AlertDialogFooter>
+          {commandError ? (
+            <Alert role="alert" variant="destructive">
+              {commandError}
+            </Alert>
+          ) : null}
         </AlertDialogContent>
       </AlertDialog>
     </>
