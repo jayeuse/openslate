@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { serializeCsv } from "@/lib/csv";
 import type { SampleRecord } from "../sample-data";
+import type {
+  Dashboard as LegacyDashboard,
+  Report as LegacyReport,
+} from "./seeds";
 
 export const OPENVIEW_SECTIONS = [
   "views",
@@ -477,6 +481,22 @@ export type AudienceLookup = {
   identities?: { id: string; name: string }[];
 };
 
+/** Project access owners into the audience lookup shared by every OpenView surface. */
+export function projectAudienceLookup(
+  roles: readonly { id: string; name: string }[],
+  people: readonly {
+    id: string;
+    name: string;
+    active: boolean;
+    accessStatus?: string;
+  }[],
+): AudienceLookup {
+  return {
+    roles: roles.map(({ id, name }) => ({ id, name })),
+    identities: activeAudienceIdentities(people),
+  };
+}
+
 export function activeAudienceIdentities(
   people: readonly {
     id: string;
@@ -790,6 +810,77 @@ export function audienceLabel(
   if (audience.kind === "role")
     return `Role: ${lookup.roles?.find((role) => role.id === audience.id)?.name ?? "Unresolved"}`;
   return `User: ${lookup.identities?.find((identity) => identity.id === audience.id)?.name ?? "Unresolved"}`;
+}
+
+function legacyRefresh(refresh: RefreshCadence): string {
+  if (refresh === "one-minute") return "Every minute";
+  if (refresh === "five-minutes") return "Every 5 minutes";
+  return "Manual";
+}
+
+function legacyWidgetType(type: OpenViewWidget["type"]): string {
+  if (type === "summary") return "Summary";
+  if (type === "workload") return "Workload";
+  if (type === "chart") return "Chart";
+  return "OpenView";
+}
+
+/** Serialize typed dashboard owners in the legacy shape accepted by Access and old tabs. */
+export function toLegacyDashboard(
+  dashboard: Dashboard,
+  lookup: AudienceLookup,
+): LegacyDashboard {
+  return {
+    id: dashboard.id,
+    name: dashboard.name,
+    permission: audienceLabel(dashboard.audience, lookup),
+    audience: structuredClone(dashboard.audience),
+    refresh: legacyRefresh(dashboard.refresh),
+    widgets: dashboard.widgets.map((widget) => ({
+      id: widget.id,
+      name: widget.name,
+      type: legacyWidgetType(widget.type),
+      size: widget.size === "full" ? "Full" : "Half",
+      permission: audienceLabel(widget.audience, lookup),
+      refresh: legacyRefresh(widget.refresh),
+      pinned: widget.pinned,
+      moduleId: widget.moduleId,
+      audience: structuredClone(widget.audience),
+      fields: [...widget.fields],
+      filters: structuredClone(widget.filters),
+      metric: widget.metric,
+      visualization: widget.visualization,
+    })),
+  };
+}
+
+function legacySchedule(schedule: Report["schedule"]): string {
+  if (schedule.cadence === "daily") return "Daily at 09:00";
+  if (schedule.cadence === "weekly") return "Weekly on Monday at 09:00";
+  if (schedule.cadence === "monthly") return "Monthly on the 1st at 09:00";
+  return "Manual";
+}
+
+/** Serialize typed report owners in the legacy shape accepted by Access and old tabs. */
+export function toLegacyReport(
+  report: Report,
+  lookup: AudienceLookup = {},
+): LegacyReport {
+  return {
+    id: report.id,
+    name: report.name,
+    subtitle: report.subtitle,
+    moduleId: report.moduleId,
+    fields: [...report.fields],
+    grouping: report.grouping ?? "None",
+    totals: report.totals,
+    schedule: legacySchedule(report.schedule),
+    audience: structuredClone(report.audience),
+    audienceLabel: audienceLabel(report.audience, lookup),
+    permission: audienceLabel(report.audience, lookup),
+    filters: structuredClone(report.filters),
+    sorts: structuredClone(report.sorts),
+  };
 }
 
 export function decodeSavedViews(
@@ -1399,7 +1490,9 @@ export function groupRows(
   const groups = new Map<string, OpenViewRow[]>();
   for (const row of rows) {
     const label = String(row.values[field] ?? "Unspecified");
-    groups.set(label, [...(groups.get(label) ?? []), row]);
+    const groupedRows = groups.get(label);
+    if (groupedRows) groupedRows.push(row);
+    else groups.set(label, [row]);
   }
   return [...groups].map(([label, groupedRows]) => ({
     label,

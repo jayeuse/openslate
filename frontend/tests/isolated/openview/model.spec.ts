@@ -25,6 +25,7 @@ import {
   isUnresolvedAudience,
   normalizeChartSettings,
   parseOpenViewUrl,
+  projectAudienceLookup,
   safeOpenViewFilename,
   selectRows,
   serializeOpenViewCsv,
@@ -93,6 +94,39 @@ test("module adapters expose three read-only datasets with field-compatible rows
       ),
     ),
   ).toBe(true);
+});
+
+test("audience projection shares roles and active identities while failing closed", () => {
+  const lookup = projectAudienceLookup(
+    [
+      { id: "role-ops", name: "Operations" },
+      { id: "role-deleted", name: "Former role" },
+    ],
+    [
+      { id: "person-active", name: "Active user", active: true },
+      { id: "person-inactive", name: "Inactive user", active: false },
+      {
+        id: "person-revoked",
+        name: "Revoked user",
+        active: true,
+        accessStatus: "revoked",
+      },
+    ],
+  );
+
+  expect(lookup).toEqual({
+    roles: [
+      { id: "role-ops", name: "Operations" },
+      { id: "role-deleted", name: "Former role" },
+    ],
+    identities: [{ id: "person-active", name: "Active user" }],
+  });
+  expect(
+    decodeAudienceRef({ kind: "identity", id: "person-inactive" }, lookup),
+  ).toEqual({
+    kind: "private",
+    unresolved: { kind: "identity", id: "person-inactive" },
+  });
 });
 
 test("operational defaults expose a curated planning surface anchored to the sample snapshot", () => {
@@ -529,6 +563,34 @@ test("filters compose with AND/OR logic, sort rules stay capped at three, and gr
   expect(
     selectRows(rows, { ...INITIAL_OPENVIEW_VIEW, filters, sorts }),
   ).toHaveLength(1);
+});
+
+test("grouping preserves large collection order and does not mutate its input", () => {
+  const rows = Array.from({ length: 50_000 }, (_, index): OpenViewRow => ({
+    id: `large-${index}`,
+    moduleId: "service-requests",
+    values:
+      index < 49_998
+        ? { status: "Open" }
+        : index === 49_998
+          ? { status: "Closed" }
+          : {},
+  }));
+  const original = structuredClone(rows);
+
+  const groups = groupRows(rows, "status");
+
+  expect(groups.map((group) => group.label)).toEqual([
+    "Open",
+    "Closed",
+    "Unspecified",
+  ]);
+  expect(groups[0]?.rows).toHaveLength(49_998);
+  expect(groups[0]?.rows[0]?.id).toBe("large-0");
+  expect(groups[0]?.rows.at(-1)?.id).toBe("large-49997");
+  expect(groups[1]?.rows.map((row) => row.id)).toEqual(["large-49998"]);
+  expect(groups[2]?.rows.map((row) => row.id)).toEqual(["large-49999"]);
+  expect(rows).toEqual(original);
 });
 
 test("stored view and dashboard migrations recover legacy state without trusting display-name ownership", () => {
