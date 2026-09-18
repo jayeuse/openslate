@@ -9,13 +9,13 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.departments.router import router as departments_router
-from app.systems.fields.router import (
+from app.systems.sandbox.departments.router import router as departments_router
+from app.systems.sandbox.fields.router import (
     module_fields_router,
 )
-from app.systems.fields.router import router as fields_router
-from app.systems.modules.router import router as modules_router
-from app.systems.records.router import router as records_router
+from app.systems.sandbox.fields.router import router as fields_router
+from app.systems.sandbox.modules.router import router as modules_router
+from app.systems.sandbox.records.router import router as records_router
 
 
 def test_routers_expose_crud_restore_and_reorder_contract() -> None:

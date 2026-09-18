@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from uuid import UUID
 
-EXPECTED_ALEMBIC_HEAD = "fc105d5b6283"
+EXPECTED_ALEMBIC_HEAD = "523d35659ba3"
 EXPECTED_PROJECT_ID = "openslate"
 EXPECTED_DATABASE_PORT = 54322
 EXPECTED_DATABASE_HOST = "127.0.0.1"
@@ -25,6 +25,9 @@ APPLICATION_TABLES = (
     "lifecycle_confirmation_challenges",
     "lifecycle_rate_limit_buckets",
     "lifecycle_rate_limit_failures",
+    "workspace_profiles",
+    "saved_views",
+    "files",
 )
 NON_PRESERVED_TABLES = (
     "departments",
@@ -37,14 +40,18 @@ NON_PRESERVED_TABLES = (
     "lifecycle_confirmation_challenges",
     "lifecycle_rate_limit_buckets",
     "lifecycle_rate_limit_failures",
+    "saved_views",
+    "files",
 )
 DELETE_ORDER = (
     "lifecycle_confirmation_challenges",
     "lifecycle_rate_limit_failures",
     "lifecycle_rate_limit_buckets",
+    "saved_views",
     "relationship_edges",
     "audit_logs",
     "security_events",
+    "files",
     "records",
     "fields",
     "modules",
@@ -54,6 +61,7 @@ DELETE_ORDER = (
 )
 
 _RESET_ADVISORY_LOCK_KEY = 8_341_721
+_SCANNER_LEADER_LOCK_KEY = 57_168_423_129_478_012
 _COUNT_STATEMENTS = (
     ("users", "SELECT count(*) FROM public.users"),
     ("roles", "SELECT count(*) FROM public.roles"),
@@ -76,6 +84,9 @@ _COUNT_STATEMENTS = (
         "lifecycle_rate_limit_failures",
         "SELECT count(*) FROM public.lifecycle_rate_limit_failures",
     ),
+    ("workspace_profiles", "SELECT count(*) FROM public.workspace_profiles"),
+    ("saved_views", "SELECT count(*) FROM public.saved_views"),
+    ("files", "SELECT count(*) FROM public.files"),
 )
 
 _PUBLIC_TABLES_STATEMENT = """
@@ -95,6 +106,12 @@ SELECT id, created_at, deleted_at, is_deleted, updated_at, performed_by,
        email, username, status, role_id
   FROM public.users
  WHERE id = %s
+"""
+_WORKSPACE_STATEMENT = """
+SELECT id, singleton_key, display_name, legal_name, description, contact_email,
+       contact_phone, postal_address, logo_file_id, timezone, locale, revision,
+       deleted_at, is_deleted, performed_by
+  FROM public.workspace_profiles
 """
 _ROLES_STATEMENT = """
 SELECT id, created_at, deleted_at, is_deleted, updated_at, performed_by,
@@ -136,7 +153,10 @@ LOCK TABLE public.alembic_version,
            public.relationship_edges,
            public.lifecycle_confirmation_challenges,
            public.lifecycle_rate_limit_buckets,
-           public.lifecycle_rate_limit_failures
+           public.lifecycle_rate_limit_failures,
+           public.workspace_profiles,
+           public.saved_views,
+           public.files
  IN ACCESS EXCLUSIVE MODE NOWAIT
 """
 
@@ -181,6 +201,44 @@ class RoleSnapshot:
 
 
 @dataclass(frozen=True)
+class WorkspaceSnapshot:
+    id: UUID
+    singleton_key: object
+    display_name: object
+    legal_name: object
+    description: object
+    contact_email: object
+    contact_phone: object
+    postal_address: object
+    logo_file_id: object
+    timezone: object
+    locale: object
+    revision: object
+    deleted_at: object
+    is_deleted: object
+    performed_by: object
+
+
+def stable_snapshot_payload(snapshot: object) -> dict[str, object]:
+    """Return a deterministic, JSON-safe snapshot without exposing it in output."""
+    def stable(value: object) -> object:
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, Mapping):
+            return {str(key): stable(item) for key, item in sorted(value.items(), key=str)}
+        if isinstance(value, (list, tuple)):
+            return [stable(item) for item in value]
+        isoformat = getattr(value, "isoformat", None)
+        return isoformat() if callable(isoformat) else value if value is None or isinstance(
+            value, (str, int, float, bool)
+        ) else str(value)
+
+    fields = getattr(snapshot, "__dataclass_fields__", None)
+    names = fields.keys() if fields is not None else vars(snapshot).keys()
+    return {name: stable(getattr(snapshot, name)) for name in names}
+
+
+@dataclass(frozen=True)
 class ResetPlan:
     """Immutable read-only reset plan and the state it protects."""
 
@@ -198,4 +256,6 @@ class ResetPlan:
     profile_snapshot: ProfileSnapshot
     admin_role_snapshot: RoleSnapshot
     member_role_snapshot: RoleSnapshot
+    workspace_snapshot: WorkspaceSnapshot
+    storage_object_keys: tuple[str, ...]
     alembic_head: str

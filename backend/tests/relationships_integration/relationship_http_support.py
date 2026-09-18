@@ -23,8 +23,8 @@ from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.core.middleware.request_context import get_request_context
 from app.main import create_app
-from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext, set_audit_actor
-from app.systems.users.models import User
+from app.systems.access.users.models import User
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, set_audit_actor
 from tests.conftest import _assert_alembic_head, _guard_integration_database
 from tests.conftest import guarded_create_engine as create_engine
 

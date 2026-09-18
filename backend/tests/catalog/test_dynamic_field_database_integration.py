@@ -7,9 +7,9 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from app.core.database.session import AuditSession
-from app.systems.fields.models import FieldType
-from app.systems.modules.models import Module
-from app.systems.modules.router import accept_module_schema
+from app.systems.sandbox.fields.models import FieldType
+from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.modules.router import accept_module_schema
 from tests.catalog.dynamic_field_support import (
     _seed_committed_module,
 )

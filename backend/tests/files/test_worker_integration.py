@@ -2,8 +2,8 @@
 
 import pytest
 
-from app.systems.files import worker
-from app.systems.files.scan_processing import WorkerHalted
+from app.systems.platform.files import worker
+from app.systems.platform.files.scan_processing import WorkerHalted
 
 pytestmark = pytest.mark.integration
 

@@ -183,9 +183,10 @@ cd backend
 uv run alembic upgrade head
 ```
 
-To clear only Alembic-owned application data while keeping the existing sample
-administrator usable, stop the FastAPI and frontend processes, keep the local
-Supabase stack running, and run the guarded reset utility from `backend/`:
+To clear local application data and private file objects while keeping the
+existing sample administrator usable, stop FastAPI and the file scanner, keep
+the local Supabase stack running, and run the guarded reset utility from
+`backend/`:
 
 ```bash
 # Read-only plan: review the preserved administrator and per-table counts.
@@ -196,18 +197,27 @@ uv run python scripts/reset_application_data.py --execute
 ```
 
 The utility accepts only the loopback Supabase database at
-`127.0.0.1:54322/postgres`, requires `MIGRATION_DATABASE_URL` and
-`ADMIN_EMAIL`, verifies the running Supabase project and Alembic head, and
-fails closed on schema drift. Every application profile except `ADMIN_EMAIL`'s
+`127.0.0.1:54322/postgres` and local Storage API at `127.0.0.1:54321`. It
+requires `MIGRATION_DATABASE_URL`, `ADMIN_EMAIL`, `SUPABASE_URL`,
+`SUPABASE_SECRET_KEY`, and the canonical `BACKEND_PORT=8000`; verifies the
+running Supabase project and Alembic head; and fails closed on schema drift or
+an active API/scanner. Every application profile except `ADMIN_EMAIL`'s
 matching profile is deleted, along with all domain, relationship, audit, and
-lifecycle rows and every custom role. The utility refuses to run when another
-effective administrator exists; pending, disabled, and soft-deleted
+lifecycle rows, saved views, file metadata, and every custom role. It resets
+the workspace singleton's editable fields to their migration defaults while
+preserving its ID. The utility refuses to run when another effective
+administrator exists; pending, disabled, and soft-deleted
 admin-shaped profiles are reset. It preserves the matching active administrator
 profile and the required `admin` and `member` roles. Supabase-managed schemas
-and all Auth identities remain unchanged. Because deleted profiles are removed,
-retained `performed_by` references to them are intentionally cleared by the
-database's `ON DELETE SET NULL` behavior; retained non-admin Auth identities
-cannot access FastAPI after their application profiles are removed.
+and all Auth identities remain unchanged. After the database commit it deletes
+all objects visible in the private `openslate-files` bucket, including objects
+without matching file rows. Storage deletion cannot share the database
+transaction: if it fails, the utility reports that the database was already
+reset and requires a fresh dry run before retrying cleanup. Because deleted
+profiles are removed, retained `performed_by` references to them are
+intentionally cleared by the database's `ON DELETE SET NULL` behavior;
+retained non-admin Auth identities cannot access FastAPI after their
+application profiles are removed.
 
 This utility is local-only. It is not a release rollback or a hosted recovery
 mechanism; recovery requires the separately selected backup and restore process.
@@ -299,11 +309,14 @@ closed otherwise.
   integrations.
 - `backend/app/common/` contains shared dependencies, exceptions, and
   utilities.
-- `backend/app/systems/` is organized by business capability. Domain systems
-  own their CRUD routers, schemas, validation, and persistence behavior.
+- `backend/app/systems/` groups capability packages under product domains:
+  `sandbox` for organization structure, `access` for identity/roles, `manage`
+  for workspace/audit, `openview` for saved views, and `platform` for files.
+  `boards` and `comms` are reserved. This backend grouping does not connect
+  the frontend's local sample features to the API.
 - `backend/migrations/` is the only supported path for application schema
   changes.
-- `backend/app/systems/audit/` owns transactional ORM listeners,
+- `backend/app/systems/manage/audit/` owns transactional ORM listeners,
   before/after diffing, redaction, and administrator-only audit reads.
 - `frontend/src/app/` contains App Router routes; reusable primitives live
   under `frontend/src/components/ui/`.

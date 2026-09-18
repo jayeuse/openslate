@@ -41,6 +41,14 @@ else:
         SAMPLE_USER_SPECS,
     )
 
+DOMAIN_LIST_PATHS = (
+    "/api/departments",
+    "/api/modules",
+    "/api/fields",
+    "/api/records",
+)
+SAMPLE_ROLE_NAMES = frozenset({"manager", "staff"})
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -85,6 +93,67 @@ class ApiClient:
         return json.loads(body) if body else None
 
 
+def _list_items(
+    client: ApiClient,
+    path: str,
+    *,
+    limit: int,
+    offset: int,
+) -> tuple[list[Mapping[str, Any]], bool]:
+    response = client.request(
+        "GET",
+        path,
+        query={"limit": limit, "offset": offset, "deleted": "include"},
+    )
+    if not isinstance(response, Mapping):
+        raise RuntimeError(f"Unable to inspect {path}: API returned no list response")
+    items = response.get("items")
+    if not isinstance(items, list) or not all(isinstance(item, Mapping) for item in items):
+        raise RuntimeError(f"Unable to inspect {path}: API returned an invalid list response")
+    pagination = response.get("pagination")
+    if not isinstance(pagination, Mapping) or not isinstance(pagination.get("has_more"), bool):
+        raise RuntimeError(f"Unable to inspect {path}: API returned invalid pagination")
+    return items, pagination["has_more"]
+
+
+def _preflight_seed(client: ApiClient) -> dict[str, str]:
+    role_items: list[Mapping[str, Any]] = []
+    role_offset = 0
+    while True:
+        page_items, has_more = _list_items(
+            client,
+            "/api/roles",
+            limit=100,
+            offset=role_offset,
+        )
+        role_items.extend(page_items)
+        if not has_more:
+            break
+        if not page_items:
+            raise RuntimeError(
+                "Unable to inspect roles: API returned an empty page with more results"
+            )
+        role_offset += len(page_items)
+
+    role_ids: dict[str, str] = {}
+    for item in role_items:
+        role_name = item.get("role")
+        role_id = item.get("id")
+        if not isinstance(role_name, str) or not isinstance(role_id, str):
+            raise RuntimeError("Unable to inspect roles: API returned an invalid role")
+        role_ids[role_name.lower()] = role_id
+
+    existing_sample_roles = SAMPLE_ROLE_NAMES.intersection(role_ids)
+    if existing_sample_roles:
+        raise RuntimeError("Sample data seeder is one-time: sample roles already exist")
+
+    for path in DOMAIN_LIST_PATHS:
+        items, _has_more = _list_items(client, path, limit=1, offset=0)
+        if items:
+            raise RuntimeError("Sample data seeder is one-time: domain data already exists")
+    return role_ids
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
     settings = get_seed_settings()
@@ -93,8 +162,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         token=settings.supabase_access_token.get_secret_value(),
     )
 
-    roles_response = client.request("GET", "/api/roles", query={"limit": 100}) or {}
-    role_ids = {item["role"].lower(): item["id"] for item in roles_response.get("items", [])}
+    role_ids = _preflight_seed(client)
     if "admin" not in role_ids:
         raise RuntimeError("The seeded admin role is missing")
     client.request(

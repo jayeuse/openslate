@@ -7,10 +7,10 @@ from fastapi import HTTPException
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
-import app.systems.users.account_operations as users_router
-import app.systems.users.roles_router as roles_router
-from app.systems.users.models import UserStatus
-from app.systems.users.schemas import UserUpdate
+import app.systems.access.users.account_operations as users_router
+import app.systems.access.users.roles_router as roles_router
+from app.systems.access.users.models import UserStatus
+from app.systems.access.users.schemas import UserUpdate
 from tests.users.user_administration_support import (  # noqa: F401,F811
     TEST_DATABASE_URL,
     _AdminFixture,

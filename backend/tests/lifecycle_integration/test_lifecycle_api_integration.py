@@ -14,8 +14,8 @@ from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.main import create_app
-from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.lifecycle.exceptions import LifecyclePasswordServiceUnavailable
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.sandbox.lifecycle.exceptions import LifecyclePasswordServiceUnavailable
 from tests.api_integration_support import create_owned_admin, delete_owned_admin
 from tests.conftest import _assert_alembic_head, _guard_integration_database
 from tests.conftest import guarded_create_engine as create_engine
@@ -186,7 +186,7 @@ def test_registered_close_password_callback_starts_without_request_transaction(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.lifecycle.challenge_verification.SupabasePasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.SupabasePasswordGrantClient",
             PasswordClient,
         )
         closed = client.request(
@@ -220,7 +220,7 @@ def test_registered_close_rejects_invalid_confirmation_without_provider_call(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.lifecycle.challenge_verification.SupabasePasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.SupabasePasswordGrantClient",
             PasswordClient,
         )
         response = client.request(
@@ -262,7 +262,7 @@ def test_registered_close_maps_provider_failure_and_consumed_token_replay(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.lifecycle.challenge_verification.SupabasePasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.SupabasePasswordGrantClient",
             FailingPasswordClient,
         )
         failed = client.request(
@@ -281,7 +281,7 @@ def test_registered_close_maps_provider_failure_and_consumed_token_replay(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.lifecycle.challenge_verification.SupabasePasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.SupabasePasswordGrantClient",
             PasswordClient,
         )
         closed = client.request(
@@ -330,7 +330,7 @@ def test_registered_close_rejects_plan_drift_after_provider_success(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.lifecycle.challenge_verification.SupabasePasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.SupabasePasswordGrantClient",
             PasswordClient,
         )
         response = client.request(
@@ -371,11 +371,11 @@ def test_registered_module_purge_succeeds_when_enabled(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.lifecycle.router.get_settings",
+            "app.systems.sandbox.lifecycle.router.get_settings",
             lambda: SimpleNamespace(lifecycle_purge_enabled=True),
         )
         monkeypatch.setattr(
-            "app.systems.lifecycle.challenge_verification.SupabasePasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.SupabasePasswordGrantClient",
             PasswordClient,
         )
         closed = client.request(
@@ -430,11 +430,11 @@ def test_registered_purge_refuses_when_disabled_before_provider(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.lifecycle.router.get_settings",
+            "app.systems.sandbox.lifecycle.router.get_settings",
             lambda: SimpleNamespace(lifecycle_purge_enabled=False),
         )
         monkeypatch.setattr(
-            "app.systems.lifecycle.challenge_verification.SupabasePasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.SupabasePasswordGrantClient",
             PasswordClient,
         )
         response = client.request("POST", f"/api/modules/{module.json()['id']}/purge/preview")

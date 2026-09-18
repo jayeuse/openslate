@@ -5,8 +5,8 @@ from fastapi import HTTPException
 
 from app.core.database.session import AuditSession
 from app.core.integrations.supabase import SupabaseAdminError
-from app.systems.users.coordination import active_admin_count
-from app.systems.users.models import UserStatus
+from app.systems.access.users.coordination import active_admin_count
+from app.systems.access.users.models import UserStatus
 from tests.users.user_transaction_support import (
     UserTransactionFixture,
     user_api_fixture,  # noqa: F401

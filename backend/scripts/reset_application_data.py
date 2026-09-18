@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +46,12 @@ if __package__:
     from .reset_planning import (
         build_reset_plan as _build_reset_plan,
     )
+    from .reset_storage import (  # type: ignore[import-not-found]
+        ResetStorage,
+        read_supabase_status_storage_url,
+        require_api_stopped,
+        validate_local_storage_url,
+    )
 else:
     from reset_execution import (
         _validate_postconditions as _execution_validate_postconditions,
@@ -81,6 +87,12 @@ else:
     from reset_planning import (
         build_reset_plan as _build_reset_plan,
     )
+    from reset_storage import (
+        ResetStorage,
+        read_supabase_status_storage_url,
+        require_api_stopped,
+        validate_local_storage_url,
+    )
 
 
 __all__ = (
@@ -100,22 +112,41 @@ __all__ = (
     "_read_counts",
     "_read_profile",
     "_read_roles",
+    "ResetStorage",
     "_validate_postconditions",
     "apply_reset",
     "build_reset_plan",
     "main",
     "parse_supabase_status_database_url",
     "read_supabase_status_database_url",
+    "read_supabase_status_storage_url",
+    "require_api_stopped",
     "required_environment",
+    "required_storage_environment",
     "validate_local_database_url",
     "validate_local_project",
+    "validate_local_storage_url",
 )
 
 
-def build_reset_plan(connection: Any, sample_email: str) -> ResetPlan:
+def required_storage_environment(mapping: Mapping[str, str]) -> tuple[str, str, str]:
+    """Return the Storage and API-writer settings required for execute safety."""
+    values = []
+    for name in ("SUPABASE_URL", "SUPABASE_SECRET_KEY", "BACKEND_PORT"):
+        value = mapping.get(name, "")
+        if not isinstance(value, str) or not value.strip():
+            raise ResetError(f"{name} is required")
+        values.append(value.strip())
+    return values[0], values[1], values[2]
+
+
+def build_reset_plan(
+    connection: Any, sample_email: str, *, storage_object_keys: tuple[str, ...] = ()
+) -> ResetPlan:
     return _build_reset_plan(
         connection,
         sample_email,
+        storage_object_keys=storage_object_keys,
         read_profile_fn=_read_profile,
         read_roles_fn=_read_roles,
     )
@@ -137,13 +168,20 @@ def apply_reset(
     execute: bool = False,
     stdin_is_tty: bool = False,
     confirmation: str | None = None,
+    storage: Any | None = None,
+    backend_port: str | None = None,
 ) -> None:
+    if execute and stdin_is_tty and confirmation == plan.impact_digest:
+        if backend_port is None:
+            raise ResetError("BACKEND_PORT is required for execute mode")
+        require_api_stopped(backend_port)
     _execute_reset(
         connection,
         plan,
         execute=execute,
         stdin_is_tty=stdin_is_tty,
         confirmation=confirmation,
+        storage=storage,
         read_profile_fn=_read_profile,
         read_roles_fn=_read_roles,
         build_plan_fn=build_reset_plan,
@@ -168,6 +206,7 @@ def _print_plan(plan: ResetPlan) -> None:
     print(f"auth_user_count={plan.auth_user_count}")
     print(f"profiles_to_delete={plan.profiles_to_delete}")
     print(f"inactive_admin_profiles_to_delete={plan.inactive_admin_profiles_to_delete}")
+    print(f"storage_objects_to_delete={len(plan.storage_object_keys)}")
     print("counts:")
     for table_name in APPLICATION_TABLES:
         print(f"  {table_name}={plan.counts[table_name]}")
@@ -180,14 +219,20 @@ def main(argv: Sequence[str] | None = None) -> None:
     connection: Any = None
     try:
         migration_url, sample_email = required_environment(os.environ)
+        storage_url, storage_secret, backend_port = required_storage_environment(os.environ)
         root = Path(__file__).resolve().parents[2]
         validate_local_database_url(migration_url)
         validate_local_project(root)
         status_url = read_supabase_status_database_url()
         validate_local_database_url(migration_url, expected_url=status_url)
+        storage_status_url = read_supabase_status_storage_url()
+        validate_local_storage_url(storage_url, expected_url=storage_status_url)
 
         connection = connect(_psycopg_database_url(migration_url))
-        plan = build_reset_plan(connection, sample_email)
+        storage = ResetStorage(storage_url, storage_secret)
+        plan = build_reset_plan(
+            connection, sample_email, storage_object_keys=storage.list_object_keys()
+        )
         _print_plan(plan)
 
         if args.execute:
@@ -200,6 +245,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 execute=True,
                 stdin_is_tty=True,
                 confirmation=confirmation,
+                storage=storage,
+                backend_port=backend_port,
             )
             print("Application data reset completed; Auth identities were preserved.")
     except SystemExit:

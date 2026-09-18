@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select, text
 
-from app.systems.users.models import Role, User
+from app.systems.access.users.models import Role, User
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def actor(guarded_db):
 def file_request():
     from fastapi import Request
 
-    from app.systems.files.providers import transfer_slot
+    from app.systems.platform.files.providers import transfer_slot
 
     with transfer_slot() as lease:
         request = Request({"type": "http", "state": {"file_transfer_lease": lease}})

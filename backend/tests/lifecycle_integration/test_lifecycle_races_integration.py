@@ -15,18 +15,18 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.audit.models import AuditLog
-from app.systems.departments.models import Department
-from app.systems.lifecycle.exceptions import (
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.audit.models import AuditLog
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.lifecycle.exceptions import (
     LifecyclePlanDriftError,
     LifecyclePreflightError,
     LifecycleUnavailable,
 )
-from app.systems.lifecycle.planner import plan_lifecycle
-from app.systems.lifecycle.schemas import LifecycleOperation, LifecycleTargetType
-from app.systems.lifecycle.service import execute_lifecycle
-from app.systems.modules.models import Module
+from app.systems.sandbox.lifecycle.planner import plan_lifecycle
+from app.systems.sandbox.lifecycle.schemas import LifecycleOperation, LifecycleTargetType
+from app.systems.sandbox.lifecycle.service import execute_lifecycle
+from app.systems.sandbox.modules.models import Module
 from tests.conftest import _guard_integration_database
 from tests.conftest import guarded_create_engine as create_engine
 

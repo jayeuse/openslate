@@ -7,20 +7,20 @@ import pytest
 from pydantic import SecretStr
 
 from app.core.config import Settings
-from app.systems.lifecycle.exceptions import (
+from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleActorBlocked,
     LifecycleInvalidCredentials,
     LifecyclePasswordRateLimited,
     LifecyclePasswordServiceUnavailable,
 )
-from app.systems.lifecycle.models import (
+from app.systems.sandbox.lifecycle.models import (
     LifecycleChallengeStatus,
     LifecycleConfirmationChallenge,
     LifecycleOperation,
     LifecycleRateLimitBucket,
 )
-from app.systems.lifecycle.password import SupabasePasswordGrantClient
-from app.systems.lifecycle.service import begin_verification, hash_challenge_token
+from app.systems.sandbox.lifecycle.password import SupabasePasswordGrantClient
+from app.systems.sandbox.lifecycle.service import begin_verification, hash_challenge_token
 from tests.config_support import settings_values
 
 CHALLENGE_TOKEN = token_urlsafe(32)
@@ -95,12 +95,15 @@ def test_in_flight_verifications_reserve_the_actor_failure_budget() -> None:
     db.scalar.return_value = pending
 
     with (
-        patch("app.systems.lifecycle.challenge_store._challenge_for_token", return_value=pending),
         patch(
-            "app.systems.lifecycle.challenge_store._refresh_failure_bucket",
+            "app.systems.sandbox.lifecycle.challenge_store._challenge_for_token",
+            return_value=pending,
+        ),
+        patch(
+            "app.systems.sandbox.lifecycle.challenge_store._refresh_failure_bucket",
             return_value=bucket,
         ),
-        patch("app.systems.lifecycle.challenge_store._blocked_until", return_value=None),
+        patch("app.systems.sandbox.lifecycle.challenge_store._blocked_until", return_value=None),
         pytest.raises(LifecycleActorBlocked),
     ):
         begin_verification(

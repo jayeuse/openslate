@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import text
 
-from app.systems.lifecycle.service import hash_challenge_token
+from app.systems.sandbox.lifecycle.service import hash_challenge_token
 from tests.lifecycle_integration.test_lifecycle_api_integration import (  # noqa: F401
     LifecycleApiClient,
 )
@@ -58,7 +58,7 @@ def test_registered_close_rejects_expired_challenge_before_password_provider(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.lifecycle.challenge_verification.SupabasePasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.SupabasePasswordGrantClient",
             PasswordClient,
         )
         response = client.request(

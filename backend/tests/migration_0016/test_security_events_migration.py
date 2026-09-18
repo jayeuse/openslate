@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import text
 
-from app.systems.audit.models import SecurityEvent
+from app.systems.manage.audit.models import SecurityEvent
 
 
 @pytest.mark.integration

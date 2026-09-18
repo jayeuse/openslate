@@ -10,26 +10,26 @@ from fastapi import FastAPI
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-import app.systems.audit.router as audit_router
-import app.systems.auth.router as auth_router
-import app.systems.departments.router as departments_router
-import app.systems.fields.router as fields_router
-import app.systems.lifecycle.router as lifecycle_router
-import app.systems.modules.router as modules_router
-import app.systems.records.router as records_router
-import app.systems.relationships.router as relationships_router
-import app.systems.users.roles_router as roles_router
-import app.systems.users.router as users_router
-from app.systems.lifecycle.schemas import (
+import app.systems.access.auth.router as auth_router
+import app.systems.access.users.roles_router as roles_router
+import app.systems.access.users.router as users_router
+import app.systems.manage.audit.router as audit_router
+import app.systems.sandbox.departments.router as departments_router
+import app.systems.sandbox.fields.router as fields_router
+import app.systems.sandbox.lifecycle.router as lifecycle_router
+import app.systems.sandbox.modules.router as modules_router
+import app.systems.sandbox.records.router as records_router
+import app.systems.sandbox.relationships.router as relationships_router
+from app.systems.access.users.models import UserRole
+from app.systems.access.users.permissions import ALL_CAPABILITIES, Capability
+from app.systems.sandbox.lifecycle.schemas import (
     LifecycleImpactResponse,
     LifecycleMutationResponse,
     LifecycleOperation,
     LifecyclePurgePreviewResponse,
     LifecycleTargetType,
 )
-from app.systems.relationships.schemas import RelationshipResponse
-from app.systems.users.models import UserRole
-from app.systems.users.permissions import ALL_CAPABILITIES, Capability
+from app.systems.sandbox.relationships.schemas import RelationshipResponse
 
 from .support import (
     _client,

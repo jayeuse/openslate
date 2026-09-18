@@ -71,7 +71,7 @@ backup/PITR, restore, and monitoring do not.
 
 ## R6 — Last-administrator invariant relies on mutex plus revalidation, with a cross-system crash window
 
-**Current design:** User/role updates, deletes, activation, and restore use `backend/app/systems/users/account_operations.py` with `backend/app/systems/users/coordination.py` to lock the literal admin role and target rows (`require_fresh_exact_admin` plus `with_for_update`), evaluate the projected active-admin count, and revalidate admin plus unchanged user/role state after remote Auth calls before committing. `backend/app/systems/users/reconciliation.py` provides explicit Auth realignment.
+**Current design:** User/role updates, deletes, activation, and restore use `backend/app/systems/access/users/account_operations.py` with `backend/app/systems/access/users/coordination.py` to lock the literal admin role and target rows (`require_fresh_exact_admin` plus `with_for_update`), evaluate the projected active-admin count, and revalidate admin plus unchanged user/role state after remote Auth calls before committing. `backend/app/systems/access/users/reconciliation.py` provides explicit Auth realignment.
 
 **Problem:** The single-database race is now serialized, but activation/restore enable the Auth identity before the local commit. A crash between provider success and local finalization still leaves Auth enabled while the local profile is not active.
 
@@ -115,7 +115,7 @@ budget before public production exposure.
 
 ## R9 — Auth/local user operations can diverge across the crash/provider/session boundary
 
-**Current design:** User invite/resend/accept/disable/enable/restore/reconcile spans Supabase Auth and short local SQL phases with durable correlated `SecurityEvent` attempt/outcome rows (`operation_id`), no destructive compensation after Auth success (pending trigger profile is left for acceptance/retry), local-first disable/delete with `tokens_valid_after` cutoff, fail-closed activation/restore with post-Auth revalidation, and explicit `POST /users/{user_id}/reconcile-auth` realignment. Invitation preflight/finalization and acceptance capture immutable actor/target/email/role primitives before provider I/O and start a fresh request transaction for revalidation; the implementation is split across `backend/app/systems/users/service.py`, `backend/app/systems/users/acceptance.py`, `backend/app/systems/users/account_operations.py`, `backend/app/systems/users/coordination.py`, and `backend/app/systems/users/reconciliation.py`, with `backend/app/common/dependencies/auth.py:get_verified_pending_identity`. Acceptance depends on private FastAPI via `/session/password`; the BFF denies `auth/invitations/accept`, and bootstrap concurrent-loser/external residuals remain pending without destructive compensation.
+**Current design:** User invite/resend/accept/disable/enable/restore/reconcile spans Supabase Auth and short local SQL phases with durable correlated `SecurityEvent` attempt/outcome rows (`operation_id`), no destructive compensation after Auth success (pending trigger profile is left for acceptance/retry), local-first disable/delete with `tokens_valid_after` cutoff, fail-closed activation/restore with post-Auth revalidation, and explicit `POST /users/{user_id}/reconcile-auth` realignment. Invitation preflight/finalization and acceptance capture immutable actor/target/email/role primitives before provider I/O and start a fresh request transaction for revalidation; the implementation is split across `backend/app/systems/access/users/service.py`, `backend/app/systems/access/users/acceptance.py`, `backend/app/systems/access/users/account_operations.py`, `backend/app/systems/access/users/coordination.py`, and `backend/app/systems/access/users/reconciliation.py`, with `backend/app/common/dependencies/auth.py:get_verified_pending_identity`. Acceptance depends on private FastAPI via `/session/password`; the BFF denies `auth/invitations/accept`, and bootstrap concurrent-loser/external residuals remain pending without destructive compensation.
 
 Invitation provenance is classified centrally: `pending` is always ineligible; a non-pending profile with a sent invitation and no acceptance is unaccepted; an accepted non-pending profile is established; and a non-pending profile with neither timestamp remains a legacy account. Deleted unaccepted invitations remain deleted and their email identities remain reserved; recovery or reuse requires a separately approved procedure. Pending-to-disabled returns `409`, pending deletion preserves pending status, and known corrupted active profiles are denied authentication and excluded from active-administrator counts. No acceptance timestamp is guessed or backfilled.
 
@@ -176,15 +176,15 @@ disposable release coverage for application behavior.
 
 ## R13 — Placeholder capabilities can be mistaken for working features
 
-**Current design:** Files, reports, views, businesses, and admin packages exist without runtime wiring; Storage has only a bucket foundation.
+**Current design:** Existing backend capabilities are nested under the product domains: Sandbox owns organization structure, Access identity/roles, Manage workspace/audit, OpenView saved views, and Platform files. `boards` and `comms` remain reserved; nested `reports`, `businesses`, and `admin` remain placeholders.
 
-**Problem:** Folder names and stale docstrings imply behavior that does not exist.
+**Problem:** Product-domain names can be mistaken for working feature parity or page-restricted services. Audit, lifecycle, and files still serve other domains.
 
-**Consequence:** Incorrect dependency/design assumptions and unsafe file-feature activation.
+**Consequence:** Incorrect dependency/design assumptions and speculative duplicate implementations.
 
-**Affected:** Backend package tree, docs, Storage.
+**Affected:** Backend package tree and architecture documentation.
 
-**Recommended direction:** Mark placeholders explicitly or remove stale scaffolding until requirements and security design exist.
+**Recommended direction:** Keep placeholders explicitly marked and cross-domain dependencies documented; define behavior, authorization, persistence, and API contracts before activating a reserved feature.
 
 ## R14 — Browser-side SecurityEvent producers are incomplete
 

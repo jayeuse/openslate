@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.systems.files import providers, scan_processing
+from app.systems.platform.files import providers, scan_processing
 
 
 @pytest.mark.parametrize("finish_fails", [False, True])

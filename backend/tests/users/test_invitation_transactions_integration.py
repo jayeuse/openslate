@@ -19,8 +19,8 @@ from app.core.database.session import AuditSession
 from app.core.integrations.supabase import SupabaseAdminClient, SupabaseAdminError
 from app.core.middleware.request_context import get_request_context
 from app.main import create_app
-from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.models import Role, User, UserRole, UserStatus
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from tests.conftest import guarded_create_engine as create_engine
 
 pytestmark = pytest.mark.integration

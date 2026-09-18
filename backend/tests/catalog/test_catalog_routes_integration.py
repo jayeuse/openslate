@@ -13,15 +13,15 @@ from uuid6 import uuid7
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
-from app.systems.departments.models import Department
-from app.systems.departments.router import router as departments_router
-from app.systems.fields.models import Field, FieldType
-from app.systems.fields.router import module_fields_router
-from app.systems.fields.router import router as fields_router
-from app.systems.modules.models import Module
-from app.systems.modules.router import router as modules_router
-from app.systems.records.models import Record
-from app.systems.records.router import router as records_router
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.departments.router import router as departments_router
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.fields.router import module_fields_router
+from app.systems.sandbox.fields.router import router as fields_router
+from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.modules.router import router as modules_router
+from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.records.router import router as records_router
 from tests.catalog.dynamic_field_support import (
     _seed_committed_module,
     _seed_committed_record,

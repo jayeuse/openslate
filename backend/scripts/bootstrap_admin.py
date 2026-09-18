@@ -24,10 +24,10 @@ from app.common.normalization import normalize_email, normalize_username
 from app.core.config import Settings, get_admin_settings, get_settings
 from app.core.database.session import AuditSession, get_engine
 from app.core.integrations.supabase import SupabaseAdminClient
-from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.auth.schemas import InvitationCreate
-from app.systems.users.models import Role, User, UserRole, UserStatus
-from app.systems.users.service import InvitationError, invite_user
+from app.systems.access.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.schemas import InvitationCreate
+from app.systems.access.users.service import InvitationError, invite_user
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 
 LOCAL_ENVIRONMENTS = frozenset({"development", "dev", "local"})
 

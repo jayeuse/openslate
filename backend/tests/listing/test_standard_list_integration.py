@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.listing import ListQuerySpec, StandardListRequest, execute_standard_list
-from app.systems.departments.models import Department
+from app.systems.sandbox.departments.models import Department
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = [

@@ -8,11 +8,16 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from uuid6 import uuid7
 
-from app.systems.fields.models import Field, FieldType
-from app.systems.records.export import encode_csv, format_cell
-from app.systems.records.models import Record
-from app.systems.records.query import comparison_value
-from app.systems.records.query_schemas import FieldReference, QueryDefinition, QueryFilter
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.records.export import encode_csv, format_cell
+from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.records.query import comparison_value
+from app.systems.sandbox.records.query_schemas import (
+    FieldReference,
+    QueryDefinition,
+    QueryFilter,
+    RecordQuery,
+)
 
 
 def field(kind: FieldType, **kwargs: object) -> Field:
@@ -86,6 +91,22 @@ def test_query_bounds_and_operator_allowlist():
         QueryDefinition(columns=[reference, reference])
 
 
+@pytest.mark.parametrize(
+    ("offset", "valid"),
+    [(10_000, True), (10_001, True), (100_001, True), (-1, False)],
+)
+def test_record_query_accepts_nonnegative_interactive_and_export_offset(
+    offset: int, valid: bool
+):
+    payload = {"module_id": uuid7(), "definition": {}, "offset": offset}
+
+    if valid:
+        assert RecordQuery(**payload).offset == offset
+    else:
+        with pytest.raises(ValidationError):
+            RecordQuery(**payload)
+
+
 def test_csv_escapes_formulas_quotes_and_preserves_decimal():
     text = field(FieldType.TEXT)
     number = field(FieldType.DECIMAL)
@@ -125,7 +146,7 @@ def test_export_regional_date_preserves_calendar_day_and_instant_offset():
 
 
 def test_csv_exact_byte_limit_includes_header_and_utf8():
-    from app.systems.records.export import MAX_BYTES
+    from app.systems.sandbox.records.export import MAX_BYTES
 
     item = field(FieldType.TEXT)
     row = Record(id=uuid7(), data={str(item.id): "x"})
@@ -142,7 +163,7 @@ def test_csv_exact_byte_limit_includes_header_and_utf8():
 def test_export_event_failure_rolls_back_and_fails_closed(monkeypatch):
     from sqlalchemy.exc import OperationalError
 
-    from app.systems.records.export import commit_export_event
+    from app.systems.sandbox.records.export import commit_export_event
 
     class UnavailableSession:
         rolled_back = False

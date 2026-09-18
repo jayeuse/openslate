@@ -8,12 +8,12 @@ from fastapi.testclient import TestClient
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.systems.files import service
-from app.systems.files.providers import get_scanner, transfer_slot
-from app.systems.files.router import router
-from app.systems.files.schemas import FileResponse
-from app.systems.files.storage import get_storage
-from app.systems.users.models import Role, User
+from app.systems.access.users.models import Role, User
+from app.systems.platform.files import service
+from app.systems.platform.files.providers import get_scanner, transfer_slot
+from app.systems.platform.files.router import router
+from app.systems.platform.files.schemas import FileResponse
+from app.systems.platform.files.storage import get_storage
 
 
 def test_scan_endpoint_returns_202_location_without_provider_access(monkeypatch):

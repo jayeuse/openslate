@@ -17,12 +17,12 @@ from uuid6 import uuid7
 from app.common.dependencies import get_current_user
 from app.core.database.session import AuditSession, dispose_database_resources
 from app.main import create_app
-from app.systems.departments.models import Department
-from app.systems.fields.models import Field, FieldType
-from app.systems.modules.models import Module
-from app.systems.records import export as export_service
-from app.systems.records.models import Record
-from app.systems.users.models import User
+from app.systems.access.users.models import User
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records import export as export_service
+from app.systems.sandbox.records.models import Record
 from tests.api_integration_support import create_owned_admin, delete_owned_admin
 from tests.conftest import guarded_create_engine as create_engine
 

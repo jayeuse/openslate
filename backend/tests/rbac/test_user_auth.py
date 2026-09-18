@@ -10,15 +10,15 @@ from fastapi import FastAPI
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-import app.systems.users.reconciliation as reconciliation
-import app.systems.users.service as users_service
+import app.systems.access.users.reconciliation as reconciliation
+import app.systems.access.users.service as users_service
 from app.common.dependencies.auth import (
     VerifiedPendingIdentity,
     get_verified_pending_identity,
 )
 from app.core.integrations.supabase import SupabaseAdminClient
-from app.systems.users.models import UserRole
-from app.systems.users.permissions import ALL_CAPABILITIES
+from app.systems.access.users.models import UserRole
+from app.systems.access.users.permissions import ALL_CAPABILITIES
 
 from .support import _client, make_role, make_user
 

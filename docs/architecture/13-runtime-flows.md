@@ -79,7 +79,7 @@ Evidence: frontend login/session/BFF files, `backend/app/core/security/supabase.
 ## 3. Administrator invitation and password setup
 
 1. Administration UI sends entered email, username, and role ID to `POST /bff/users`; backend schemas/services normalize identity values.
-2. `backend/app/systems/users/router.py:create_user` requires an administrator and delegates to `backend/app/systems/users/service.py:invite_user`.
+2. `backend/app/systems/access/users/router.py:create_user` requires an administrator and delegates to `backend/app/systems/access/users/service.py:invite_user`.
 3. `SupabaseAdminClient.invite_user` uses the server-only secret to call Auth.
 4. Migration `0010`'s Auth trigger inserts a pending local member profile with the same UUID.
 5. The service verifies the exact trigger placeholder profile state, applies the requested email/username/role, keeps it `pending` with `invitation_sent_at`, and commits; after Auth success it never destructively compensates and leaves the trigger profile pending on finalization failure.

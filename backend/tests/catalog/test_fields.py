@@ -5,17 +5,17 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.fields.models import FieldType
-from app.systems.fields.router import (
+from app.systems.sandbox.fields.models import FieldType
+from app.systems.sandbox.fields.router import (
     reorder_module_fields,
     update_field,
 )
-from app.systems.fields.schemas import FieldCreate, FieldReorder, FieldUpdate
-from app.systems.fields.validation import (
+from app.systems.sandbox.fields.schemas import FieldCreate, FieldReorder, FieldUpdate
+from app.systems.sandbox.fields.validation import (
     field_config,
     validate_module_schema,
 )
-from app.systems.records.models import Record
+from app.systems.sandbox.records.models import Record
 from tests.catalog.field_record_support import _make_validation_client, make_field, make_module
 
 
@@ -134,6 +134,29 @@ def test_module_schema_validator_reuses_field_config_and_relationship_metadata()
     field.relationship_multiple_targets = False
     field.relationship_multiple_sources = True
     validate_module_schema([field])
+
+
+@pytest.mark.parametrize(
+    ("attribute", "value", "message"),
+    [
+        ("position", True, "Field positions must be nonnegative integers"),
+        ("position", -1, "Field positions must be nonnegative integers"),
+        ("type", "unsupported", "Field types are unsupported"),
+        ("config", [], "Field configuration must be an object"),
+    ],
+)
+def test_module_schema_rejects_malformed_persisted_field_shape(
+    attribute: str, value: object, message: str
+) -> None:
+    field = make_field(uuid7())
+    if attribute == "config":
+        # The ORM normally rejects this assignment; persisted legacy rows may still contain it.
+        field.__dict__[attribute] = value
+    else:
+        setattr(field, attribute, value)
+
+    with pytest.raises(ValueError, match=message):
+        validate_module_schema([field])
 
 
 def test_audit_redaction_only_change_preserves_schema_acceptance() -> None:

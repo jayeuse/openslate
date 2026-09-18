@@ -10,11 +10,14 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.audit.models import AuditAction
-from app.systems.records.models import Record
-from app.systems.relationships.models import RelationshipEdge
-from app.systems.relationships.schemas import RelationshipAvailability, RelationshipListRequest
-from app.systems.relationships.service import (
+from app.systems.manage.audit.models import AuditAction
+from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.relationships.models import RelationshipEdge
+from app.systems.sandbox.relationships.schemas import (
+    RelationshipAvailability,
+    RelationshipListRequest,
+)
+from app.systems.sandbox.relationships.service import (
     RelationshipConflict,
     assign_relationship,
     create_relationship,

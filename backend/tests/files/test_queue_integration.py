@@ -7,16 +7,16 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.systems.files import service
-from app.systems.files.models import File
-from app.systems.files.providers import (
+from app.systems.platform.files import service
+from app.systems.platform.files.models import File
+from app.systems.platform.files.providers import (
     ProviderUnavailable,
     ScannerExecutionUncertain,
     ScannerPolicyRejected,
     ScanVerdict,
 )
-from app.systems.files.scan_processing import WorkerHalted, process_next
-from app.systems.files.worker import acknowledge_engine_replacement
+from app.systems.platform.files.scan_processing import WorkerHalted, process_next
+from app.systems.platform.files.worker import acknowledge_engine_replacement
 from tests.files.test_integration import Store, reserve
 
 pytestmark = pytest.mark.integration
@@ -129,7 +129,7 @@ def test_revoked_requester_suspends_without_engine_access_and_new_actor_can_adop
 ):
     from sqlalchemy import select, text
 
-    from app.systems.users.models import Role, User
+    from app.systems.access.users.models import Role, User
 
     db = guarded_db
     original_id = actor.id

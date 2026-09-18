@@ -5,6 +5,7 @@ import json
 import subprocess
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import uuid4
@@ -13,9 +14,9 @@ import pytest
 from clamdpy.exceptions import BufferTooLongError, ConnectionError, ResponseError
 from clamdpy.models import ScanResult, VersionInfo
 
-from app.systems.files import providers
-from app.systems.files.clamav import ClamAVScanner
-from app.systems.files.clamav_client import run
+from app.systems.platform.files import providers
+from app.systems.platform.files.clamav import ClamAVScanner
+from app.systems.platform.files.clamav_client import run
 
 
 def test_configured_scanner_is_not_the_unavailable_provider(monkeypatch):
@@ -40,7 +41,7 @@ def test_scanner_worker_requires_complete_scanner_configuration(monkeypatch):
 
 
 def test_scanner_worker_reports_missing_configuration_safely(monkeypatch, capsys):
-    from app.systems.files import worker
+    from app.systems.platform.files import worker
 
     monkeypatch.setattr(worker.sys, "argv", ["scanner-worker"])
     monkeypatch.setattr(worker, "get_scanner", lambda **_: (_ for _ in ()).throw(
@@ -194,6 +195,7 @@ def test_deadline_kills_and_reaps_client_with_scrubbed_environment(monkeypatch, 
         "TZ": "UTC",
         "LC_ALL": "C",
     }
+    assert start.call_args.kwargs["cwd"] == Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize(
@@ -276,7 +278,7 @@ def test_child_known_failure_preserves_exception_contract(monkeypatch, sdk, erro
 def test_runner_applies_linux_resource_limits_and_emits_only_verdict(monkeypatch, sdk):
     from io import BytesIO, StringIO
 
-    from app.systems.files import clamav_client
+    from app.systems.platform.files import clamav_client
 
     client, path, _ = sdk
     limits = Mock()
@@ -318,7 +320,7 @@ def test_unconfigured_provider_probe_and_scan_fail_closed(monkeypatch):
 
 
 def test_cleanup_stays_within_total_deadline_and_remains_uncertain(monkeypatch, sdk):
-    from app.systems.files import clamav
+    from app.systems.platform.files import clamav
 
     process = Mock(returncode=None)
     process.communicate.side_effect = [

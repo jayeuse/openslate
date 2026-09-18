@@ -46,7 +46,7 @@ not a report of a currently running process.
 | PostgreSQL shadow database               | `127.0.0.1:54320`                                                           | Implemented by CLI configuration | `[db].shadow_port`; no application code connects to it directly.                                                                                                                                 |
 | Supabase Studio                          | `127.0.0.1:54323`                                                           | Implemented                      | `[studio]` in `supabase/config.toml`; it is an operator UI, not the application data API.                                                                                                        |
 | Mailpit local SMTP UI/service            | `127.0.0.1:54324`                                                           | Implemented                      | `[local_smtp]`; invitation mail is delivered here by local Auth.                                                                                                                                 |
-| Supabase Storage                         | Supabase local platform surface; no separate application port is configured | Implemented application integration | The private `openslate-files` bucket is accessed by `backend/app/systems/files/storage.py`; FastAPI owns authorization and no browser object policy grants access. |
+| Supabase Storage                         | Supabase local platform surface; no separate application port is configured | Implemented application integration | The private `openslate-files` bucket is accessed by `backend/app/systems/platform/files/storage.py`; FastAPI owns authorization and no browser object policy grants access. |
 | Supabase Realtime                        | Supabase local API surface; no table publication is configured              | Partially implemented            | `[realtime].enabled`; migration 0010 and `frontend/src/components/realtime-provider.tsx` use private Broadcast only.                                                                             |
 
 The ports are published by Supabase CLI-managed containers. The repository does
@@ -111,7 +111,7 @@ the checked-in local platform:
 | Storage vector support                      | Absent                               | `[storage.vector].enabled = false`.                                                                                |
 | Supabase migrations                         | Absent as an application-schema path | `[db.migrations].enabled = false`; Alembic owns the schema.                                                        |
 | Supabase seed files                         | Absent as a supported seed contract  | `[db.seed].enabled = false`; sample data is sent through the FastAPI API by `backend/scripts/seed_sample_data.py`. |
-| File scanner worker                         | Implemented entry point              | `python -m app.systems.files.worker` processes the durable file queue. There is no general scheduler or broker. |
+| File scanner worker                         | Implemented entry point              | `python -m app.systems.platform.files.worker` processes the durable file queue. There is no general scheduler or broker. |
 | Reverse proxy or TLS terminator             | Absent                               | `infra/caddy/` is empty; local API TLS is disabled and the host processes bind directly.                           |
 | Local container orchestration | Implemented | Existing root `compose.yaml` starts backend/frontend/ClamAV through `scripts/environment.py compose`; Supabase stays CLI-managed. No Kubernetes or hosted infrastructure is defined. |
 
@@ -247,7 +247,7 @@ operator-selected absolute paths. `SCANNER_DEFINITIONS` and
    | `checked_at` | UTC time of successful official-feed verification |
    | `signature_hashes` | Definition basenames mapped to lowercase SHA-256 hashes |
 
-   `backend/app/systems/files/clamav_client.py:ServingManifest` is the schema.
+   `backend/app/systems/platform/files/clamav_client.py:ServingManifest` is the schema.
    Readiness fails closed if the engine version/date differs, verification is
    older than 24 hours, or daily definitions are older than 72 hours. Future
    timestamps also fail. Preserve the exact manifest and definition hashes;
@@ -273,7 +273,7 @@ operator-selected absolute paths. `SCANNER_DEFINITIONS` and
      --pids-limit 64 --tmpfs /tmp:rw,noexec,nosuid,size=128m,mode=1777 \
      --env-file "$WORKER_ENV_FILE" --env LOG_DIR=/tmp/logs \
      --mount "type=bind,src=$SCANNER_DEPLOYMENT_RECORD/manifest.json,dst=/run/clamav/manifest.json,readonly" \
-     "$BACKEND_IMAGE" python -m app.systems.files.worker
+     "$BACKEND_IMAGE" python -m app.systems.platform.files.worker
    docker network connect openslate-scanner openslate-file-worker
    docker start openslate-file-worker
    ```
@@ -295,7 +295,7 @@ alone does not prove that old work stopped.
 
 After completing steps 1–5 above and confirming old engine termination, replace
 the worker container with the same settings and the command
-`python -m app.systems.files.worker --acknowledge-engine-replacement`. This
+`python -m app.systems.platform.files.worker --acknowledge-engine-replacement`. This
 operator-only command obtains leadership, fences old claims and resumes eligible
 due work; preserve the acknowledgement in the deployment record. It does not
 replace the engine itself. Do not configure automatic worker restart or invoke

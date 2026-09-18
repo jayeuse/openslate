@@ -47,8 +47,8 @@ def test_checker_failure_is_not_a_healthy_result(monkeypatch, capsys) -> None:
 def test_operation_matching_and_grace_period(integration_db) -> None:
     # Insert via the trusted event writer; read in a separate transaction below
     # is unnecessary because this fixture contains all rows in its rollback scope.
-    from app.systems.audit.schemas import SecurityEventIngestRequest
-    from app.systems.audit.service import append_security_event
+    from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+    from app.systems.manage.audit.service import append_security_event
 
     now = datetime.now(UTC)
     unresolved, resolved, partial, recent = [uuid7() for _ in range(4)]

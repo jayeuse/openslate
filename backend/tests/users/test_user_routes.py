@@ -7,19 +7,19 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-import app.systems.users.account_operations as users_router
-import app.systems.users.reconciliation as reconciliation
+import app.systems.access.users.account_operations as users_router
+import app.systems.access.users.reconciliation as reconciliation
 from app.core.integrations.supabase import SupabaseAdminClient, SupabaseAdminError
-from app.systems.audit.service import SecurityEventPersistenceError
-from app.systems.users.account_operations import (
+from app.systems.access.users.account_operations import (
     delete_user,
     restore_user,
     update_user,
 )
-from app.systems.users.coordination import lock_active_role as _active_role
-from app.systems.users.models import Role, User, UserRole, UserStatus
-from app.systems.users.roles_router import delete_role, update_role
-from app.systems.users.schemas import RoleUpdate, UserUpdate
+from app.systems.access.users.coordination import lock_active_role as _active_role
+from app.systems.access.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.roles_router import delete_role, update_role
+from app.systems.access.users.schemas import RoleUpdate, UserUpdate
+from app.systems.manage.audit.service import SecurityEventPersistenceError
 
 
 def make_role(name: str, *, deleted: bool = False) -> Role:
@@ -109,6 +109,30 @@ def test_built_in_role_permissions_can_be_updated() -> None:
     db.commit.assert_called_once()
 
 
+@pytest.mark.parametrize("payload", [RoleUpdate(), RoleUpdate(role=None)])
+def test_role_patch_rejects_empty_or_null_input_before_database_work(payload: RoleUpdate) -> None:
+    db = Mock(spec=Session)
+
+    with pytest.raises(HTTPException) as error:
+        update_role(uuid7(), payload, Mock(), db)
+
+    assert error.value.status_code == 422
+    assert error.value.detail == "At least one non-null field is required"
+    db.scalar.assert_not_called()
+
+
+@pytest.mark.parametrize("payload", [UserUpdate(), UserUpdate(username=None)])
+def test_user_patch_rejects_empty_or_null_input_before_database_work(payload: UserUpdate) -> None:
+    db = Mock(spec=Session)
+
+    with pytest.raises(HTTPException) as error:
+        update_user(uuid7(), payload, Mock(), db)
+
+    assert error.value.status_code == 422
+    assert error.value.detail == "At least one non-null field is required"
+    db.scalar.assert_not_called()
+
+
 def test_role_with_active_users_cannot_be_deleted() -> None:
     role = make_role("editor")
     admin = make_user("admin", make_role(UserRole.ADMIN))
@@ -125,6 +149,20 @@ def test_role_with_active_users_cannot_be_deleted() -> None:
 
     assert error.value.status_code == 409
     assert role.is_deleted is False
+
+
+def test_deleting_an_already_deleted_role_keeps_the_inactive_conflict() -> None:
+    admin_role = make_role(UserRole.ADMIN)
+    admin = make_user("admin", admin_role)
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [admin_role, admin, None]
+
+    with pytest.raises(HTTPException) as error:
+        delete_role(uuid7(), admin, db)
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "Role is not active"
+    db.commit.assert_not_called()
 
 
 @pytest.mark.parametrize("status", [

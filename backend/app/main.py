@@ -24,22 +24,22 @@ from app.core.middleware.request_context import (
 )
 from app.core.observability import configure_observability_logging, log_event
 from app.core.readiness import dispose_readiness_resources, is_database_ready
-from app.systems.audit.router import internal_security_events_router, security_events_router
-from app.systems.audit.router import router as audit_router
-from app.systems.auth.router import router as auth_router
-from app.systems.departments.router import router as departments_router
-from app.systems.fields.router import module_fields_router
-from app.systems.fields.router import router as fields_router
-from app.systems.files.lifecycle_router import router as file_lifecycle_router
-from app.systems.files.providers import transfer_slot
-from app.systems.files.router import router as files_router
-from app.systems.lifecycle.router import router as lifecycle_router
-from app.systems.modules.router import router as modules_router
-from app.systems.records.query_router import router as record_queries_router
-from app.systems.records.router import router as records_router
-from app.systems.relationships.router import router as relationships_router
-from app.systems.views.router import router as views_router
-from app.systems.workspace.router import router as workspace_router
+from app.systems.access.auth.router import router as auth_router
+from app.systems.manage.audit.router import internal_security_events_router, security_events_router
+from app.systems.manage.audit.router import router as audit_router
+from app.systems.manage.workspace.router import router as workspace_router
+from app.systems.openview.views.router import router as views_router
+from app.systems.platform.files.lifecycle_router import router as file_lifecycle_router
+from app.systems.platform.files.providers import transfer_slot
+from app.systems.platform.files.router import router as files_router
+from app.systems.sandbox.departments.router import router as departments_router
+from app.systems.sandbox.fields.router import module_fields_router
+from app.systems.sandbox.fields.router import router as fields_router
+from app.systems.sandbox.lifecycle.router import router as lifecycle_router
+from app.systems.sandbox.modules.router import router as modules_router
+from app.systems.sandbox.records.query_router import router as record_queries_router
+from app.systems.sandbox.records.router import router as records_router
+from app.systems.sandbox.relationships.router import router as relationships_router
 
 
 def _request_route(request: Request) -> str:
@@ -126,6 +126,7 @@ def create_app() -> FastAPI:
         transfer = file_transfer_policy(request.url.path, request.method)
         capacity = ExitStack()
         body_limit = transfer.request_bytes if transfer else settings.request_body_max_bytes
+        deadline = None
         try:
             if transfer is not None:
                 request.state.file_transfer_lease = capacity.enter_context(transfer_slot())
@@ -140,7 +141,9 @@ def create_app() -> FastAPI:
                     content={"detail": "Request body is too large"},
                 )
             else:
-                async with asyncio.timeout(transfer.deadline_seconds if transfer else None):
+                async with asyncio.timeout(
+                    transfer.deadline_seconds if transfer else None
+                ) as deadline:
                     if not await _read_bounded_body(request, body_limit):
                         response = JSONResponse(
                             status_code=413,
@@ -155,15 +158,20 @@ def create_app() -> FastAPI:
                 headers=error.headers,
             )
         except TimeoutError:
-            response = JSONResponse(
-                status_code=504,
-                content={
-                    "detail": {
-                        "code": "file_timeout",
-                        "message": "File operation timed out; inspect its state before retrying",
-                    }
-                },
-            )
+            if transfer is not None and deadline is not None and deadline.expired():
+                response = JSONResponse(
+                    status_code=504,
+                    content={
+                        "detail": {
+                            "code": "file_timeout",
+                            "message": (
+                                "File operation timed out; inspect its state before retrying"
+                            ),
+                        }
+                    },
+                )
+            else:
+                response = _unexpected_error_response(request, context)
         except (OperationalError, SQLAlchemyTimeoutError):
             response = _database_unavailable_response(request, context)
         except Exception:

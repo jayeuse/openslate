@@ -13,10 +13,10 @@ from sqlalchemy.orm import Session, joinedload
 from app.common.normalization import normalize_email
 from app.core.database import get_db
 from app.core.security.supabase import verify_supabase_jwt
-from app.systems.audit.context import set_audit_actor
-from app.systems.users.eligibility import is_established_user
-from app.systems.users.models import Role, User, UserRole
-from app.systems.users.permissions import Capability, has_capability
+from app.systems.access.users.eligibility import is_established_user
+from app.systems.access.users.models import Role, User, UserRole
+from app.systems.access.users.permissions import Capability, has_capability
+from app.systems.manage.audit.context import set_audit_actor
 
 oauth2_scheme = HTTPBearer(auto_error=True)
 

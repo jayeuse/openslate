@@ -7,16 +7,19 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-import app.systems.lifecycle.execution as lifecycle_execution
-from app.systems.audit.models import AuditLog
-from app.systems.departments.models import Department
-from app.systems.fields.models import Field, FieldType
-from app.systems.lifecycle.exceptions import LifecyclePlanDriftError, LifecyclePreflightError
-from app.systems.lifecycle.planner import plan_lifecycle
-from app.systems.lifecycle.schemas import LifecycleBlockerCode, LifecycleTargetType
-from app.systems.lifecycle.service import purge_lifecycle
-from app.systems.modules.models import Module
-from app.systems.records.models import Record
+import app.systems.sandbox.lifecycle.execution as lifecycle_execution
+from app.systems.manage.audit.models import AuditLog
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.lifecycle.exceptions import (
+    LifecyclePlanDriftError,
+    LifecyclePreflightError,
+)
+from app.systems.sandbox.lifecycle.planner import plan_lifecycle
+from app.systems.sandbox.lifecycle.schemas import LifecycleBlockerCode, LifecycleTargetType
+from app.systems.sandbox.lifecycle.service import purge_lifecycle
+from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.models import Record
 from tests.lifecycle_integration.lifecycle_integration_support import (
     _close_rows,
     _item,

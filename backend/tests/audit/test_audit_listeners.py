@@ -4,19 +4,19 @@ from types import SimpleNamespace
 import pytest
 from uuid6 import uuid7
 
-from app.systems.audit.context import AuditContext
-from app.systems.audit.listeners import (
+from app.systems.access.users.models import User
+from app.systems.manage.audit.context import AuditContext
+from app.systems.manage.audit.listeners import (
     PENDING_CHANGES_KEY,
     capture_changes,
     clear_pending_changes,
     create_audit_logs,
     reject_bulk_mutations,
 )
-from app.systems.audit.models import AuditAction, AuditLog
-from app.systems.audit.snapshots import REDACTED
-from app.systems.fields.models import Field, FieldType
-from app.systems.records.models import Record
-from app.systems.users.models import User
+from app.systems.manage.audit.models import AuditAction, AuditLog
+from app.systems.manage.audit.snapshots import REDACTED
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.records.models import Record
 
 FIRST_RECORD_CANARY = token_urlsafe(32)
 SECOND_RECORD_CANARY = token_urlsafe(32)

@@ -39,7 +39,7 @@ Purge is **Implemented but disabled by default** (`Settings.lifecycle_purge_enab
 | User              | Direct soft delete/restore and enable/disable coordination | Restore/enable                                             | No lifecycle purge API   | Supabase Auth and local state are separate systems.                             |
 | Role              | Direct soft delete/restore where allowed                   | Restore                                                    | No lifecycle purge API   | Built-in/protected-role rules are application-enforced.                         |
 
-Sources: capability routers, `backend/app/systems/lifecycle/router.py`, `backend/app/systems/lifecycle/planning_scope.py`, `backend/app/systems/lifecycle/planning.py`, `backend/app/systems/lifecycle/planning_preflight.py`, `backend/app/systems/lifecycle/challenge_store.py`, `backend/app/systems/lifecycle/challenge_verification.py`, and `backend/app/systems/lifecycle/execution.py` (with compatibility exports from `planner.py` and `service.py`).
+Sources: capability routers, `backend/app/systems/sandbox/lifecycle/router.py`, `backend/app/systems/sandbox/lifecycle/planning_scope.py`, `backend/app/systems/sandbox/lifecycle/planning.py`, `backend/app/systems/sandbox/lifecycle/planning_preflight.py`, `backend/app/systems/sandbox/lifecycle/challenge_store.py`, `backend/app/systems/sandbox/lifecycle/challenge_verification.py`, and `backend/app/systems/sandbox/lifecycle/execution.py` (with compatibility exports from `planner.py` and `service.py`).
 
 ## Close preview and confirmation
 
@@ -148,15 +148,15 @@ Challenge/password-state commits are separate from the final domain transaction.
 
 ## Source references
 
-- `backend/app/systems/lifecycle/router.py`
-- `backend/app/systems/lifecycle/planning_scope.py:load_lifecycle_scope`, `LifecyclePlan`, and canonical digest helpers
-- `backend/app/systems/lifecycle/planning.py:plan_lifecycle`, `impact_response`
-- `backend/app/systems/lifecycle/planning_preflight.py:reopen_blockers`
-- `backend/app/systems/lifecycle/challenge_store.py:issue_challenge`, `begin_verification`
-- `backend/app/systems/lifecycle/challenge_verification.py:verify_challenge`, `consume_challenge`
-- `backend/app/systems/lifecycle/execution.py:execute_lifecycle`, `close_lifecycle`, `reopen_lifecycle`, `purge_lifecycle`
-- `backend/app/systems/lifecycle/planner.py` and `service.py` compatibility exports
-- `backend/app/systems/lifecycle/password.py:SupabasePasswordGrantClient`
-- `backend/app/systems/lifecycle/models.py`
-- `backend/app/systems/audit/listeners.py`
+- `backend/app/systems/sandbox/lifecycle/router.py`
+- `backend/app/systems/sandbox/lifecycle/planning_scope.py:load_lifecycle_scope`, `LifecyclePlan`, and canonical digest helpers
+- `backend/app/systems/sandbox/lifecycle/planning.py:plan_lifecycle`, `impact_response`
+- `backend/app/systems/sandbox/lifecycle/planning_preflight.py:reopen_blockers`
+- `backend/app/systems/sandbox/lifecycle/challenge_store.py:issue_challenge`, `begin_verification`
+- `backend/app/systems/sandbox/lifecycle/challenge_verification.py:verify_challenge`, `consume_challenge`
+- `backend/app/systems/sandbox/lifecycle/execution.py:execute_lifecycle`, `close_lifecycle`, `reopen_lifecycle`, `purge_lifecycle`
+- `backend/app/systems/sandbox/lifecycle/planner.py` and `service.py` compatibility exports
+- `backend/app/systems/sandbox/lifecycle/password.py:SupabasePasswordGrantClient`
+- `backend/app/systems/sandbox/lifecycle/models.py`
+- `backend/app/systems/manage/audit/listeners.py`
 - `frontend/src/components/lifecycle-dialog.tsx`

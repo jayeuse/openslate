@@ -6,7 +6,7 @@ from uuid6 import uuid7
 
 from app.core.database import session as database_session
 from app.core.middleware.request_context import RequestContext, get_request_context
-from app.systems.audit.context import AuditContext, get_audit_context, set_audit_actor
+from app.systems.manage.audit.context import AuditContext, get_audit_context, set_audit_actor
 
 
 def test_audit_context_defaults_to_system() -> None:

@@ -42,7 +42,7 @@ FastAPI validation and most application errors use the default `{ "detail": ... 
 
 ## Lifecycle status and code map
 
-`backend/app/systems/lifecycle/router.py:_error_response` converts `LifecycleError` into the structured detail object for lifecycle-router endpoints. Compatibility restore routes use plain string details. The exception classes in `backend/app/systems/lifecycle/exceptions.py` provide the following implemented mapping:
+`backend/app/systems/sandbox/lifecycle/router.py:_error_response` converts `LifecycleError` into the structured detail object for lifecycle-router endpoints. Compatibility restore routes use plain string details. The exception classes in `backend/app/systems/sandbox/lifecycle/exceptions.py` provide the following implemented mapping:
 
 | Origin/class or code                                                                                                                                                                                                           | Status | Response code/detail behavior                                                                                                                                                     |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -133,10 +133,10 @@ visibility is incomplete even though the BFF emits safe structured logs.
 
 - `backend/app/main.py:create_app` for request IDs, bounded request bodies, readiness, and process-boundary failure handling.
 - `backend/app/common/dependencies/auth.py:get_current_user` and `require_roles`.
-- `_commit` helpers in `backend/app/systems/departments/router.py`, `modules/router.py`, `fields/router.py`, `records/router.py`, and `users/router.py`.
-- `backend/app/systems/relationships/service.py:RelationshipError`, lock helpers, and `_commit`.
-- `backend/app/systems/lifecycle/exceptions.py`, `router.py:_error_response`, `service.py`, and `password.py`.
-- `backend/app/systems/users/service.py:invite_user` and `backend/app/core/integrations/supabase.py:SupabaseAdminClient`.
-- `backend/app/systems/audit/listeners.py:broadcast_committed_changes`.
+- `_commit` helpers in `backend/app/systems/sandbox/departments/router.py`, `modules/router.py`, `fields/router.py`, `records/router.py`, and `users/router.py`.
+- `backend/app/systems/sandbox/relationships/service.py:RelationshipError`, lock helpers, and `_commit`.
+- `backend/app/systems/sandbox/lifecycle/exceptions.py`, `router.py:_error_response`, `service.py`, and `password.py`.
+- `backend/app/systems/access/users/service.py:invite_user` and `backend/app/core/integrations/supabase.py:SupabaseAdminClient`.
+- `backend/app/systems/manage/audit/listeners.py:broadcast_committed_changes`.
 - `frontend/src/app/bff/[...path]/route.ts:handle` and `frontend/src/lib/api.ts:apiFetch`.
 - `backend/scripts/check_operational_health.py` and `backend/app/core/observability.py`.

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.common.dependencies.auth as auth_dependencies
-from app.systems.users.models import Role, User, UserRole
+from app.systems.access.users.models import Role, User, UserRole
 
 MOCK_ACCESS_TOKEN = token_urlsafe(32)
 

@@ -18,9 +18,9 @@ from app.common.dependencies.auth import (
 from app.common.listing import ListQueryResult, PaginationMetadata
 from app.core.database import get_db
 from app.main import create_app
-from app.systems.fields.models import Field, FieldType
-from app.systems.modules.models import Module
-from app.systems.users.models import Role, User, UserRole
+from app.systems.access.users.models import Role, User, UserRole
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.modules.models import Module
 
 
 def _persisted(entity: Any, *, deleted: bool = False) -> Any:

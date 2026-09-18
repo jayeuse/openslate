@@ -13,8 +13,8 @@ def test_custom_role_cannot_export_and_writer_cannot_query() -> None:
     from uuid6 import uuid7
 
     from app.common.dependencies import get_current_user
-    from app.systems.users.models import Role, User
-    from app.systems.users.permissions import ALL_CAPABILITIES
+    from app.systems.access.users.models import Role, User
+    from app.systems.access.users.permissions import ALL_CAPABILITIES
 
     custom = User(
         id=uuid7(), role=Role(role="custom", permissions={key: True for key in ALL_CAPABILITIES})
