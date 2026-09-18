@@ -7,12 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.audit.models import AuditAction, AuditLog
-from app.systems.audit.snapshots import REDACTED
-from app.systems.departments.models import Department
-from app.systems.fields.models import Field, FieldType
-from app.systems.modules.models import Module
-from app.systems.records.models import Record
+from app.systems.manage.audit.models import AuditAction, AuditLog
+from app.systems.manage.audit.snapshots import REDACTED
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.models import Record
 
 UPDATED_RENAMED_CANARY = token_urlsafe(32)
 UPDATED_CLOSED_CANARY = token_urlsafe(32)

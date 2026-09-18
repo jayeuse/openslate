@@ -2,9 +2,9 @@ from record_queries.test_database import setup_rows
 from uuid6 import uuid7
 from views.test_access import actor
 
-from app.systems.files.models import File
-from app.systems.lifecycle.planning import plan_lifecycle
-from app.systems.views.models import SavedView
+from app.systems.openview.views.models import SavedView
+from app.systems.platform.files.models import File
+from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 
 
 def test_purge_lists_and_blocks_unpurged_attachments_and_lists_saved_views(query_db):
@@ -44,10 +44,10 @@ def test_purge_lists_and_blocks_unpurged_attachments_and_lists_saved_views(query
 def test_parent_purge_deletes_confirmed_file_inventory_and_views_through_audit(query_db):
     from sqlalchemy import select
 
-    from app.systems.audit.models import AuditLog
-    from app.systems.lifecycle.execution import execute_lifecycle
-    from app.systems.modules.models import Module
-    from app.systems.records.models import Record
+    from app.systems.manage.audit.models import AuditLog
+    from app.systems.sandbox.lifecycle.execution import execute_lifecycle
+    from app.systems.sandbox.modules.models import Module
+    from app.systems.sandbox.records.models import Record
 
     owner = actor(query_db)
     module, _, records = setup_rows(query_db, "text", ["value"])
@@ -87,7 +87,7 @@ def test_parent_purge_deletes_confirmed_file_inventory_and_views_through_audit(q
 
 
 def test_close_does_not_archive_file_or_view(query_db):
-    from app.systems.lifecycle.execution import execute_lifecycle
+    from app.systems.sandbox.lifecycle.execution import execute_lifecycle
 
     owner = actor(query_db)
     module, _, records = setup_rows(query_db, "text", ["value"])

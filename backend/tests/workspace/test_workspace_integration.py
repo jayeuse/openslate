@@ -6,9 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.systems.audit.models import AuditLog
-from app.systems.audit.snapshots import REDACTED
-from app.systems.workspace.models import WorkspaceProfile
+from app.systems.manage.audit.models import AuditLog
+from app.systems.manage.audit.snapshots import REDACTED
+from app.systems.manage.workspace.models import WorkspaceProfile
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = [

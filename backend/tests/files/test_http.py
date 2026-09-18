@@ -8,8 +8,8 @@ from fastapi.testclient import TestClient
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.systems.files.router import router
-from app.systems.users.models import Role, User
+from app.systems.access.users.models import Role, User
+from app.systems.platform.files.router import router
 
 
 @pytest.fixture

@@ -4,14 +4,14 @@ from secrets import token_urlsafe
 
 from uuid6 import uuid7
 
-from app.systems.audit.models import AuditLog
-from app.systems.audit.snapshots import (
+from app.systems.access.users.models import User
+from app.systems.manage.audit.models import AuditLog
+from app.systems.manage.audit.snapshots import (
     REDACTED,
     build_update_snapshot,
     serialize_record,
     serialize_value,
 )
-from app.systems.users.models import User
 
 BINARY_CANARY = token_urlsafe(32)
 OLD_FIELD_CANARY = token_urlsafe(32)

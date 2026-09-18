@@ -9,11 +9,11 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db, model_registry  # noqa: F401
-from app.systems.fields.models import Field, FieldType
-from app.systems.fields.router import router as fields_router
-from app.systems.modules.models import Module
-from app.systems.records.router import router as records_router
-from app.systems.users.models import UserRole
+from app.systems.access.users.models import UserRole
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.fields.router import router as fields_router
+from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.router import router as records_router
 
 
 def make_module(*, deleted: bool = False) -> Module:

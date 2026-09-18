@@ -4,7 +4,7 @@
 
 ## Required workflow
 
-Every schema change starts in `backend/app/systems/<capability>/models.py`, never in a hand-written migration or raw SQL.
+Every schema change starts in `backend/app/systems/<page>/<capability>/models.py`, never in a hand-written migration or raw SQL.
 
 1. Edit the model first. Register new ORM classes in `backend/app/core/database/model_registry.py`, or Alembic autogenerate cannot see them.
 2. From `backend/`, run `uv run alembic revision --autogenerate -m "<change>"`.
@@ -17,3 +17,4 @@ Every schema change starts in `backend/app/systems/<capability>/models.py`, neve
 - Do not change schema with raw SQL or the Supabase Data API and call it complete; schema changes flow from models through Alembic.
 - Changes that also need RLS policies, grants, functions, or data backfills still start with the model change; add those operations deliberately to the generated revision.
 - Never edit an applied revision.
+- Historical revision `20260819_0009` has a no-op upgrade relative to `0008`, but its downgrade does not restore the `0008` field-type constraint. Treat that downgrade boundary as unsupported; use a reviewed forward fix or backup restoration rather than editing either applied revision.

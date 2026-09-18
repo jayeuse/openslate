@@ -13,15 +13,15 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-import app.systems.users.account_operations as account_operations
-import app.systems.users.reconciliation as reconciliation
+import app.systems.access.users.account_operations as account_operations
+import app.systems.access.users.reconciliation as reconciliation
 from app.common.dependencies import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.main import create_app
-from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.models import Role, User, UserRole, UserStatus
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from tests.conftest import guarded_create_engine as create_engine
 
 

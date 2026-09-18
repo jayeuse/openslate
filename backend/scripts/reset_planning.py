@@ -26,6 +26,7 @@ if __package__:
         _PROFILE_STATEMENT,
         _PUBLIC_TABLES_STATEMENT,
         _ROLES_STATEMENT,
+        _WORKSPACE_STATEMENT,
         APPLICATION_TABLES,
         EXPECTED_ALEMBIC_HEAD,
         EXPECTED_DATABASE_HOST,
@@ -37,6 +38,8 @@ if __package__:
         ResetError,
         ResetPlan,
         RoleSnapshot,
+        WorkspaceSnapshot,
+        stable_snapshot_payload,
     )
 else:
     from reset_models import (
@@ -49,6 +52,7 @@ else:
         _PROFILE_STATEMENT,
         _PUBLIC_TABLES_STATEMENT,
         _ROLES_STATEMENT,
+        _WORKSPACE_STATEMENT,
         APPLICATION_TABLES,
         EXPECTED_ALEMBIC_HEAD,
         EXPECTED_DATABASE_HOST,
@@ -60,6 +64,8 @@ else:
         ResetError,
         ResetPlan,
         RoleSnapshot,
+        WorkspaceSnapshot,
+        stable_snapshot_payload,
     )
 
 
@@ -150,8 +156,11 @@ def validate_local_project(root: Path | str) -> None:
         with config_path.open("rb") as config_file:
             config = tomllib.load(config_file)
         database = config.get("db")
+        project_id = config.get("project_id")
+        if project_id == "env(SUPABASE_PROJECT_ID)":
+            project_id = os.environ.get("SUPABASE_PROJECT_ID")
         if (
-            config.get("project_id") != EXPECTED_PROJECT_ID
+            project_id != EXPECTED_PROJECT_ID
             or not isinstance(database, dict)
             or database.get("port") != EXPECTED_DATABASE_PORT
         ):
@@ -178,23 +187,11 @@ def _optional_normalized_email(value: object) -> str | None:
     return normalized or None
 
 
-def _execute(connection: Any, statement: str, params: tuple[object, ...] | None = None) -> Any:
-    with connection.cursor() as cursor:
-        if params is None:
-            cursor.execute(statement)
-        else:
-            cursor.execute(statement, params)
-        return cursor
-
-
 def _fetchall(
     connection: Any, statement: str, params: tuple[object, ...] | None = None
 ) -> list[tuple[object, ...]]:
     with connection.cursor() as cursor:
-        if params is None:
-            cursor.execute(statement)
-        else:
-            cursor.execute(statement, params)
+        cursor.execute(statement, params)
         return list(cursor.fetchall())
 
 
@@ -283,6 +280,19 @@ def _read_profile(connection: Any, user_id: UUID) -> ProfileSnapshot:
     )
 
 
+def _read_workspace(connection: Any) -> WorkspaceSnapshot:
+    rows = _fetchall(connection, _WORKSPACE_STATEMENT)
+    if len(rows) != 1 or len(rows[0]) != 15:
+        raise ResetError("The workspace singleton is missing or ambiguous")
+    row = rows[0]
+    return WorkspaceSnapshot(
+        id=_as_uuid(row[0]), singleton_key=row[1], display_name=row[2], legal_name=row[3],
+        description=row[4], contact_email=row[5], contact_phone=row[6], postal_address=row[7],
+        logo_file_id=row[8], timezone=row[9], locale=row[10], revision=row[11],
+        deleted_at=row[12], is_deleted=row[13], performed_by=row[14],
+    )
+
+
 def _read_roles(connection: Any) -> tuple[RoleSnapshot, ...]:
     snapshots: list[RoleSnapshot] = []
     for row in _fetchall(connection, _ROLES_STATEMENT):
@@ -344,32 +354,8 @@ def _read_counts(connection: Any) -> Mapping[str, int]:
     return MappingProxyType(counts)
 
 
-def _stable_value(value: object) -> object:
-    if isinstance(value, UUID):
-        return str(value)
-    if isinstance(value, Mapping):
-        return {
-            str(key): _stable_value(item)
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-        }
-    if isinstance(value, (list, tuple)):
-        return [_stable_value(item) for item in value]
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    isoformat = getattr(value, "isoformat", None)
-    if callable(isoformat):
-        return isoformat()
-    return str(value)
-
-
-def _snapshot_payload(snapshot: object) -> dict[str, object]:
-    values = getattr(snapshot, "__dataclass_fields__", None)
-    field_names = values.keys() if values is not None else vars(snapshot).keys()
-    return {field_name: _stable_value(getattr(snapshot, field_name)) for field_name in field_names}
-
-
 def _expected_snapshot_payload(snapshot: object, preserved_admin_id: UUID) -> dict[str, object]:
-    payload = _snapshot_payload(snapshot)
+    payload: dict[str, object] = stable_snapshot_payload(snapshot)
     performed_by = getattr(snapshot, "performed_by", None)
     if performed_by is not None:
         try:
@@ -388,20 +374,22 @@ def _impact_digest(plan: ResetPlan) -> str:
         "profiles_to_delete": plan.profiles_to_delete,
         "inactive_admin_profiles_to_delete": plan.inactive_admin_profiles_to_delete,
         "auth_user_count": plan.auth_user_count,
-        "auth_identity": _snapshot_payload(plan.auth_identity),
-        "auth_identities": [_snapshot_payload(item) for item in plan.auth_identities],
-        "profile_before": _snapshot_payload(plan.profile_snapshot),
+        "auth_identity": stable_snapshot_payload(plan.auth_identity),
+        "auth_identities": [stable_snapshot_payload(item) for item in plan.auth_identities],
+        "profile_before": stable_snapshot_payload(plan.profile_snapshot),
         "profile_expected_after": _expected_snapshot_payload(
             plan.profile_snapshot, plan.preserved_admin_id
         ),
-        "admin_role_before": _snapshot_payload(plan.admin_role_snapshot),
+        "admin_role_before": stable_snapshot_payload(plan.admin_role_snapshot),
         "admin_role_expected_after": _expected_snapshot_payload(
             plan.admin_role_snapshot, plan.preserved_admin_id
         ),
-        "member_role_before": _snapshot_payload(plan.member_role_snapshot),
+        "member_role_before": stable_snapshot_payload(plan.member_role_snapshot),
         "member_role_expected_after": _expected_snapshot_payload(
             plan.member_role_snapshot, plan.preserved_admin_id
         ),
+        "workspace_before": stable_snapshot_payload(plan.workspace_snapshot),
+        "storage_object_keys": list(plan.storage_object_keys),
         "preserved_admin_id": str(plan.preserved_admin_id),
         "preserved_admin_role_id": str(plan.preserved_admin_role_id),
         "preserved_member_role_id": str(plan.preserved_member_role_id),
@@ -415,6 +403,7 @@ def build_reset_plan(
     connection: Any,
     sample_email: str,
     *,
+    storage_object_keys: tuple[str, ...] = (),
     read_profile_fn: Callable[[Any, UUID], ProfileSnapshot] = _read_profile,
     read_roles_fn: Callable[[Any], tuple[RoleSnapshot, ...]] = _read_roles,
 ) -> ResetPlan:
@@ -447,6 +436,15 @@ def build_reset_plan(
             or _optional_normalized_email(profile.email) != normalized_email
         ):
             raise ResetError("The administrator profile is not active and preserved")
+        workspace = _read_workspace(connection)
+        if workspace.singleton_key is not True or workspace.is_deleted is not False:
+            raise ResetError("The workspace singleton is invalid")
+        if (
+            any(not isinstance(key, str) or not key for key in storage_object_keys)
+            or tuple(sorted(storage_object_keys)) != storage_object_keys
+            or len(set(storage_object_keys)) != len(storage_object_keys)
+        ):
+            raise ResetError("The Storage object inventory is invalid")
 
         roles = read_roles_fn(connection)
         active_admin_roles = [
@@ -490,6 +488,8 @@ def build_reset_plan(
             profile_snapshot=profile,
             admin_role_snapshot=admin_role,
             member_role_snapshot=member_role,
+            workspace_snapshot=workspace,
+            storage_object_keys=storage_object_keys,
             alembic_head=alembic_head,
         )
         return replace(plan, impact_digest=_impact_digest(plan))

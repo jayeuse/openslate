@@ -5,7 +5,7 @@ from threading import Event, Thread
 import pytest
 from fastapi import HTTPException
 
-from app.systems.files.providers import transfer_slot
+from app.systems.platform.files.providers import transfer_slot
 
 
 def test_response_timeout_keeps_capacity_until_worker_exits():
@@ -53,7 +53,7 @@ def test_worker_starting_after_middleware_timeout_is_not_admitted():
 def test_missing_request_admission_fails_closed():
     from fastapi import Request
 
-    from app.systems.files.providers import hold_file_worker
+    from app.systems.platform.files.providers import hold_file_worker
 
     request = Request({"type": "http"})
     with pytest.raises(HTTPException) as caught:
@@ -73,7 +73,7 @@ def test_worker_release_is_idempotent_without_releasing_other_request():
 
 
 def test_storage_cleanup_fence_denies_capacity_without_losing_slots(monkeypatch):
-    from app.systems.files import providers
+    from app.systems.platform.files import providers
 
     monkeypatch.setattr(providers, "_storage_cleanup_uncertain", True, raising=False)
     with pytest.raises(HTTPException):
@@ -85,7 +85,7 @@ def test_storage_cleanup_fence_denies_capacity_without_losing_slots(monkeypatch)
 
 
 def test_fence_set_during_acquire_returns_newly_acquired_slot(monkeypatch):
-    from app.systems.files import providers
+    from app.systems.platform.files import providers
 
     original = providers._slots
 

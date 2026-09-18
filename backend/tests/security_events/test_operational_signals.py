@@ -6,8 +6,8 @@ from sqlalchemy.exc import OperationalError
 from uuid6 import uuid7
 
 from app.core.integrations.supabase import SupabaseAdminError
-from app.systems.audit import listeners, service
-from app.systems.audit.schemas import SecurityEventIngestRequest
+from app.systems.manage.audit import listeners, service
+from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 
 SQL_CANARY = token_urlsafe(32)
 PASSWORD_CANARY = token_urlsafe(32)

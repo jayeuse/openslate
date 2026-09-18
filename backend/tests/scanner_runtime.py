@@ -235,8 +235,9 @@ class DisposableScanner:
         sdk_code = "\n".join(
             [
                 "import json,sys; from dataclasses import asdict; from hashlib import sha256",
-                "from uuid import uuid4; from app.systems.files.clamav import ClamAVScanner",
-                "from app.systems.files.providers import "
+                "from uuid import uuid4; from app.systems.platform.files.clamav import "
+                "ClamAVScanner",
+                "from app.systems.platform.files.providers import "
                 "ProviderUnavailable, ScannerPolicyRejected, ScannerExecutionUncertain",
                 "content=sys.stdin.buffer.read(26214401)",
                 "try:",
@@ -437,7 +438,7 @@ class DisposableScanner:
             self._run(
                 ["network", "create", "--label", f"openslate.test.run={self.run_id}", self.egress]
             )
-        arguments = ["-m", "app.systems.files.worker"]
+        arguments = ["-m", "app.systems.platform.files.worker"]
         if acknowledge_engine_replacement:
             arguments.append("--acknowledge-engine-replacement")
         self.containers.add(self.worker)

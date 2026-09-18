@@ -4,7 +4,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session, joinedload
 from uuid6 import uuid7
 
-from app.systems.users.models import Role, User
+from app.systems.access.users.models import Role, User
 from tests.conftest import guarded_create_engine as create_engine
 
 

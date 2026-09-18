@@ -9,13 +9,13 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.audit.models import AuditLog
-from app.systems.departments.models import Department
-from app.systems.fields.models import Field, FieldType
-from app.systems.modules.models import Module
-from app.systems.records.models import Record
-from app.systems.relationships.models import RelationshipEdge
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.audit.models import AuditLog
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.relationships.models import RelationshipEdge
 from tests.conftest import guarded_create_engine as create_engine
 
 

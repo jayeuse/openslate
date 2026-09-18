@@ -8,9 +8,9 @@ import pytest
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.fields.impact import RECORD_IMPACT_BATCH_SIZE, validate_change_impact
-from app.systems.fields.models import Field, FieldType
-from app.systems.records.models import Record
+from app.systems.sandbox.fields.impact import RECORD_IMPACT_BATCH_SIZE, validate_change_impact
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.records.models import Record
 
 
 class _TrackingResult:

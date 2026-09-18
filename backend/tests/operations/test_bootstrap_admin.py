@@ -5,8 +5,8 @@ import pytest
 from uuid6 import uuid7
 
 from app.core.config import Settings
-from app.systems.auth.schemas import InvitationCreate
-from app.systems.users.models import Role, UserRole
+from app.systems.access.users.models import Role, UserRole
+from app.systems.access.users.schemas import InvitationCreate
 from scripts import bootstrap_admin as bootstrap
 
 

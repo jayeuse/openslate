@@ -1,13 +1,14 @@
 """Provider boundary proves immutable requests and bounded/controlled failure behavior."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import httpx
 import pytest
 
 from app.core.config import Settings
-from app.systems.files.providers import ProviderUnavailable
-from app.systems.files.storage import SupabaseStorage
+from app.systems.platform.files.providers import ProviderUnavailable
+from app.systems.platform.files.storage import SupabaseStorage
 from tests.config_support import settings_values
 
 
@@ -48,7 +49,7 @@ def storage(handler, *, real=False):
     @contextmanager
     def context():
         if not real:
-            with patch("app.systems.files.storage.httpx.Client", client):
+            with patch("app.systems.platform.files.storage.httpx.Client", client):
                 yield
             return
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -56,7 +57,7 @@ def storage(handler, *, real=False):
         thread.start()
         provider.base_url = f"http://127.0.0.1:{server.server_port}"
         try:
-            with patch("app.systems.files.storage.httpx.Client", client):
+            with patch("app.systems.platform.files.storage.httpx.Client", client):
                 yield
         finally:
             server.shutdown()
@@ -71,7 +72,7 @@ def child_reply(provider, max_bytes=25 * 1024 * 1024):
     import json
     from types import SimpleNamespace
 
-    from app.systems.files import storage_download_client
+    from app.systems.platform.files import storage_download_client
 
     request = json.dumps(
         {
@@ -175,18 +176,20 @@ def test_download_deadline_closes_physical_connection_and_releases_capacity(
     from threading import Event, Thread
     from time import monotonic
 
-    from app.systems.files.providers import transfer_slot
+    from app.systems.platform.files.providers import transfer_slot
 
     original = subprocess.Popen
     children = []
+    spawns = []
 
     def spawn(*args, **kwargs):
+        spawns.append(kwargs)
         child = original(*args, **kwargs)
         children.append(child)
         return child
 
-    monkeypatch.setattr("app.systems.files.storage.subprocess.Popen", spawn)
-    monkeypatch.setattr("app.systems.files.storage.DOWNLOAD_SECONDS", 5, raising=False)
+    monkeypatch.setattr("app.systems.platform.files.storage.subprocess.Popen", spawn)
+    monkeypatch.setattr("app.systems.platform.files.storage.DOWNLOAD_SECONDS", 5, raising=False)
     accepted, closed = Event(), Event()
     socket_errors = []
     listener = socket.socket()
@@ -237,6 +240,7 @@ def test_download_deadline_closes_physical_connection_and_releases_capacity(
                 provider.download("opaque")
         assert accepted.is_set()
         assert len(children) == 1 and children[0].returncode is not None
+        assert spawns[0]["cwd"] == Path(__file__).resolve().parents[2]
         assert monotonic() - started < 5
         assert closed.wait(1), f"socket closure unconfirmed: {socket_errors}"
         with transfer_slot(), transfer_slot():
@@ -262,7 +266,9 @@ def test_invalid_child_response_is_unavailable(monkeypatch, reply, exit_code):
 
     child = Mock(returncode=exit_code)
     child.communicate.return_value = (reply, None)
-    monkeypatch.setattr("app.systems.files.storage.subprocess.Popen", Mock(return_value=child))
+    monkeypatch.setattr(
+        "app.systems.platform.files.storage.subprocess.Popen", Mock(return_value=child)
+    )
     provider = SupabaseStorage(
         _settings(supabase_url="http://storage.test", supabase_secret_key="test")
     )
@@ -274,14 +280,14 @@ def test_unreaped_child_fences_new_downloads_and_keeps_secrets_off_argv(monkeypa
     import subprocess
     from unittest.mock import Mock
 
-    from app.systems.files import providers
+    from app.systems.platform.files import providers
 
     monkeypatch.setattr(providers, "_storage_cleanup_uncertain", False)
     monkeypatch.setenv("UNRELATED_DATABASE_SECRET", "must-not-inherit")
     child = Mock()
     child.communicate.side_effect = subprocess.TimeoutExpired("fixed child", 1)
     spawn = Mock(return_value=child)
-    monkeypatch.setattr("app.systems.files.storage.subprocess.Popen", spawn)
+    monkeypatch.setattr("app.systems.platform.files.storage.subprocess.Popen", spawn)
     provider = SupabaseStorage(
         _settings(supabase_url="http://private-storage.test", supabase_secret_key="private-secret")
     )
@@ -326,7 +332,7 @@ def test_real_child_crash_or_malformed_frame_is_unavailable(monkeypatch, program
         children.append(child)
         return child
 
-    monkeypatch.setattr("app.systems.files.storage.subprocess.Popen", spawn)
+    monkeypatch.setattr("app.systems.platform.files.storage.subprocess.Popen", spawn)
     provider = SupabaseStorage(
         _settings(supabase_url="http://storage.test", supabase_secret_key="test")
     )

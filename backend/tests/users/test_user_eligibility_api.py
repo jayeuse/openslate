@@ -10,12 +10,12 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.common.dependencies.auth as auth_dependencies
-import app.systems.users.account_operations as users_router
-import app.systems.users.reconciliation as reconciliation
+import app.systems.access.users.account_operations as users_router
+import app.systems.access.users.reconciliation as reconciliation
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.main import create_app
-from app.systems.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.models import Role, User, UserRole, UserStatus
 
 MOCK_ACCESS_TOKEN = token_urlsafe(32)
 

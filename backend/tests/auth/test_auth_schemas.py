@@ -1,19 +1,14 @@
-import importlib
-from typing import Any, cast
+from typing import Any
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
-
-def _invitation_schema() -> type[BaseModel]:
-    schemas = importlib.import_module("app.systems.auth.schemas")
-    schema = getattr(schemas, "InvitationCreate", None)
-    assert isinstance(schema, type), "InvitationCreate is not implemented"
-    return cast(type[BaseModel], schema)
+from app.systems.access.users.schemas import InvitationCreate, UserCreate
+from app.systems.manage.workspace.schemas import WorkspaceUpdate
 
 
 def test_invitation_normalizes_email_and_username() -> None:
-    invitation = _invitation_schema()(
+    invitation = InvitationCreate(
         email=" ADMIN@Example.COM ",
         username=" Test_User ",
     )
@@ -31,9 +26,28 @@ def test_invitation_requires_email_and_username(missing_field: str) -> None:
     values.pop(missing_field)
 
     with pytest.raises(ValidationError):
-        _invitation_schema()(**values)
+        InvitationCreate(**values)
 
 
 def test_invitation_rejects_invalid_email() -> None:
     with pytest.raises(ValidationError):
-        _invitation_schema()(email="not-an-email", username="admin")
+        InvitationCreate(email="not-an-email", username="admin")
+
+
+@pytest.mark.parametrize(
+    "email",
+    [
+        "admin@@example.com",
+        "admin @example.com",
+        "admin@example .com",
+        "admin@exa\tmple.com",
+        "admin@\nexample.com",
+    ],
+)
+def test_email_boundaries_reject_multiple_at_and_embedded_whitespace(email: str) -> None:
+    with pytest.raises(ValidationError):
+        InvitationCreate(email=email, username="admin")
+    with pytest.raises(ValidationError):
+        UserCreate(email=email, username="admin")
+    with pytest.raises(ValidationError):
+        WorkspaceUpdate(revision=1, contact_email=email)

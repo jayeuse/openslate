@@ -9,20 +9,21 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.fields.models import FieldType
-from app.systems.fields.schemas import FieldCreate
-from app.systems.fields.validation import (
+from app.systems.sandbox.fields.models import FieldType
+from app.systems.sandbox.fields.schemas import FieldCreate
+from app.systems.sandbox.fields.validation import (
     field_config,
     validate_field_value,
+    validate_record_data,
 )
-from app.systems.modules.models import Module
-from app.systems.records.models import Record
-from app.systems.records.router import (
+from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.records.router import (
     RecordValidationError,
     update_record,
     validate_record_mutation,
 )
-from app.systems.records.schemas import RecordUpdate
+from app.systems.sandbox.records.schemas import RecordUpdate
 from tests.catalog.field_record_support import make_field, make_module
 
 REJECTED_VALUE_CANARY = token_urlsafe(32)
@@ -176,6 +177,46 @@ def test_decimal_validation_enforces_lexical_limits_and_exact_bounds() -> None:
         validate_field_value(field, "+1")
     with pytest.raises(ValueError):
         validate_field_value(field, "01")
+
+
+@pytest.mark.parametrize(
+    ("field_type", "config", "value", "message"),
+    [
+        (FieldType.NUMBER, {"minimum": 2}, 1, "below its minimum"),
+        (FieldType.NUMBER, {"maximum": 0}, 1, "exceeds its maximum"),
+        (FieldType.NUMBER, {"minimum": "zero"}, 1, "invalid numeric configuration"),
+        (FieldType.DECIMAL, {"minimum": "2"}, "1", "below its minimum"),
+        (FieldType.DECIMAL, {"minimum": 0}, "1", "invalid decimal configuration"),
+        (FieldType.SELECT, {}, "open", "configured options"),
+    ],
+)
+def test_record_validation_rejects_malformed_persisted_field_configuration(
+    field_type: FieldType, config: dict[str, object], value: object, message: str
+) -> None:
+    field = make_field(uuid7(), field_type, config=config)
+
+    with pytest.raises(ValueError, match=message):
+        validate_field_value(field, value)
+
+
+def test_record_data_validation_rejects_unknown_relationship_and_missing_required_values() -> None:
+    module_id = uuid7()
+    required = make_field(module_id, required=True)
+    relationship = make_field(module_id, FieldType.RELATIONSHIP)
+    relationship.relationship_target_module_id = uuid7()
+    relationship.relationship_multiple_targets = False
+    relationship.relationship_multiple_sources = False
+
+    with pytest.raises(ValueError, match="Unknown or inactive field"):
+        validate_record_data({str(uuid7()): "extra"}, [required, relationship])
+    with pytest.raises(ValueError, match="managed separately"):
+        validate_record_data(
+            {str(required.id): "present", str(relationship.id): "unexpected"},
+            [required, relationship],
+        )
+    with pytest.raises(ValueError, match="is required"):
+        validate_record_data({}, [required, relationship])
+    validate_record_data({str(required.id): "present"}, [required, relationship])
 
 
 def test_record_mutation_aggregates_errors_and_normalizes_active_values() -> None:

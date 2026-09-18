@@ -3,8 +3,8 @@ from unittest.mock import Mock
 from uuid6 import uuid7
 
 from app.core.integrations.supabase import SupabaseAdminClient, SupabaseAuthUser
-from app.systems.auth.schemas import InvitationCreate
-from app.systems.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.schemas import InvitationCreate
 
 
 def role(name: str = UserRole.MEMBER, *, deleted: bool = False) -> Role:

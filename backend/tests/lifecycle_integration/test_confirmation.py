@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.lifecycle.exceptions import (
+from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleActorBlocked,
     LifecycleActorMismatch,
     LifecycleChallengeBindingMismatch,
@@ -22,10 +22,10 @@ from app.systems.lifecycle.exceptions import (
     LifecycleUnsupportedOperation,
     LifecycleVerificationInProgress,
 )
-from app.systems.lifecycle.models import LifecycleChallengeStatus as Status
-from app.systems.lifecycle.models import LifecycleConfirmationChallenge as Challenge
-from app.systems.lifecycle.models import LifecycleRateLimitBucket, LifecycleRateLimitFailure
-from app.systems.lifecycle.service import (
+from app.systems.sandbox.lifecycle.models import LifecycleChallengeStatus as Status
+from app.systems.sandbox.lifecycle.models import LifecycleConfirmationChallenge as Challenge
+from app.systems.sandbox.lifecycle.models import LifecycleRateLimitBucket, LifecycleRateLimitFailure
+from app.systems.sandbox.lifecycle.service import (
     begin_verification,
     consume_challenge,
     expire_challenge,

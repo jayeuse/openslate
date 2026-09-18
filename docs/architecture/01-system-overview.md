@@ -58,7 +58,7 @@ The browser uses Next.js session route handlers and a catch-all backend-for-fron
 | PostgreSQL        | Application schema, constraints, JSONB state, RLS, audit and lifecycle persistence | `backend/app/**/models.py`, `backend/migrations/`                        |
 | Supabase Auth     | Identity, password, invitation delivery, access/refresh tokens                     | `supabase/config.toml`, `backend/app/core/integrations/supabase.py`      |
 | Supabase Realtime | Private Broadcast invalidation only                                                | migration `0010`, `audit/listeners.py`, `realtime-provider.tsx`          |
-| Supabase Storage  | Private objects addressed only by FastAPI metadata and transfer services          | `backend/app/systems/files/`, migrations `17cf3df01f7a` and `c8a1056a0758` |
+| Supabase Storage  | Private objects addressed only by FastAPI metadata and transfer services          | `backend/app/systems/platform/files/`, migrations `17cf3df01f7a` and `c8a1056a0758` |
 | Alembic/scripts   | Schema delivery, runtime DB login, first administrator, sample data                | `backend/migrations/`, `backend/scripts/`                                |
 | GitHub Actions    | Backend and frontend verification, not deployment                                  | `.github/workflows/`                                                     |
 
@@ -92,11 +92,11 @@ The repository shows these designs, but it does not contain the original histori
 
 | Change                    | Start here                                                                    |
 | ------------------------- | ----------------------------------------------------------------------------- |
-| Domain model or invariant | Matching `backend/app/systems/<capability>/` package and Alembic migration    |
+| Domain model or invariant | Matching `backend/app/systems/<page>/<capability>/` package and Alembic migration    |
 | API request/response      | Capability router/schema plus `frontend/src/lib/api.ts`                       |
 | Page workflow             | Matching `frontend/src/app/**/page.tsx` and shared component                  |
 | Login/session behavior    | `frontend/src/app/session/`, `frontend/src/app/bff/`, backend auth dependency |
-| Close/reopen/purge        | `backend/app/systems/lifecycle/` and `frontend/src/components/lifecycle-*`    |
-| Audit behavior            | `backend/app/systems/audit/`                                                  |
+| Close/reopen/purge        | `backend/app/systems/sandbox/lifecycle/` and `frontend/src/components/lifecycle-*`    |
+| Audit behavior            | `backend/app/systems/manage/audit/`                                                  |
 | Local platform            | `supabase/config.toml`, `.env.example`, root `README.md`                      |
 | Schema delivery           | `backend/migrations/` and provisioning scripts                                |

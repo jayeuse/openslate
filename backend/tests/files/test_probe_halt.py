@@ -2,8 +2,8 @@
 
 from contextlib import nullcontext
 
-from app.systems.files import scan_processing, worker
-from app.systems.files.providers import ScannerExecutionUncertain
+from app.systems.platform.files import scan_processing, worker
+from app.systems.platform.files.providers import ScannerExecutionUncertain
 
 
 def test_uncertain_probe_stops_cli_without_claiming_or_reprobing(monkeypatch, capsys):

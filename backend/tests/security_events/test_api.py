@@ -10,7 +10,7 @@ from app.common.dependencies.auth import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.main import create_app
-from app.systems.users.models import User, UserRole
+from app.systems.access.users.models import User, UserRole
 
 from .support import _make_event, _payload_values, _SecurityEventDatabase, _user
 

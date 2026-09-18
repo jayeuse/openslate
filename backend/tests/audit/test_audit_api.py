@@ -6,8 +6,8 @@ from fastapi import HTTPException
 from sqlalchemy.dialects import postgresql
 from uuid6 import uuid7
 
-from app.systems.audit.models import AuditAction, AuditLog
-from app.systems.audit.router import (
+from app.systems.manage.audit.models import AuditAction, AuditLog
+from app.systems.manage.audit.router import (
     AuditLogExportRequest,
     AuditLogListRequest,
     export_audit_logs,

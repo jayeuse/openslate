@@ -4,10 +4,10 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app.systems.files import service
-from app.systems.files.models import File
-from app.systems.files.providers import ProviderUnavailable
-from app.systems.users.models import User
+from app.systems.access.users.models import User
+from app.systems.platform.files import service
+from app.systems.platform.files.models import File
+from app.systems.platform.files.providers import ProviderUnavailable
 from tests.files.test_integration import Store, reserve
 
 pytestmark = pytest.mark.integration
@@ -18,19 +18,19 @@ def test_purge_rejects_active_or_current_logo_and_deletes_only_archived_inventor
 ):
     from types import SimpleNamespace
 
-    from app.systems.files.lifecycle_router import purge_impact
-    from app.systems.files.purge import purge_confirmed
-    from app.systems.workspace.models import WorkspaceProfile
+    from app.systems.manage.workspace.models import WorkspaceProfile
+    from app.systems.platform.files.lifecycle_router import purge_impact
+    from app.systems.platform.files.purge import purge_confirmed
 
     db = guarded_db
     actor_id = actor.id
     file_id, content = reserve(db, actor)
     monkeypatch.setattr(
-        "app.systems.files.lifecycle_router.get_settings",
+        "app.systems.platform.files.lifecycle_router.get_settings",
         lambda: SimpleNamespace(lifecycle_purge_enabled=True),
     )
     monkeypatch.setattr(
-        "app.systems.files.purge.get_settings",
+        "app.systems.platform.files.purge.get_settings",
         lambda: SimpleNamespace(lifecycle_purge_enabled=True),
     )
     with pytest.raises(HTTPException) as caught:
@@ -68,8 +68,8 @@ def test_changed_file_after_password_verification_rejects_purge(
 
     from fastapi import Response
 
-    from app.systems.files import lifecycle_router
-    from app.systems.lifecycle.schemas import LifecyclePurgeRequest
+    from app.systems.platform.files import lifecycle_router
+    from app.systems.sandbox.lifecycle.schemas import LifecyclePurgeRequest
 
     db = guarded_db
     actor_id = actor.id
@@ -79,7 +79,7 @@ def test_changed_file_after_password_verification_rejects_purge(
         lifecycle_router, "get_settings", lambda: SimpleNamespace(lifecycle_purge_enabled=True)
     )
     monkeypatch.setattr(
-        "app.systems.files.purge.get_settings",
+        "app.systems.platform.files.purge.get_settings",
         lambda: SimpleNamespace(lifecycle_purge_enabled=True),
     )
     digest = lifecycle_router.purge_impact(db, actor_id, file_id).impact_digest
@@ -112,7 +112,7 @@ def test_delete_provider_failure_keeps_inventory_and_resume_confirmed_delete(
 ):
     from types import SimpleNamespace
 
-    from app.systems.files.purge import purge_confirmed
+    from app.systems.platform.files.purge import purge_confirmed
 
     db = guarded_db
     actor_id = actor.id
@@ -121,7 +121,7 @@ def test_delete_provider_failure_keeps_inventory_and_resume_confirmed_delete(
     service.upload(db, actor_id, file_id, content, storage)
     service.archive(db, actor_id, file_id)
     monkeypatch.setattr(
-        "app.systems.files.purge.get_settings",
+        "app.systems.platform.files.purge.get_settings",
         lambda: SimpleNamespace(lifecycle_purge_enabled=True),
     )
     original = storage.delete
@@ -139,7 +139,7 @@ def test_delete_provider_failure_keeps_inventory_and_resume_confirmed_delete(
 
 
 def test_definitive_upload_rejection_is_purgeable_not_unresolved(guarded_db, actor):
-    from app.systems.files.providers import ProviderRejected
+    from app.systems.platform.files.providers import ProviderRejected
 
     db = guarded_db
     actor_id = actor.id
@@ -162,8 +162,8 @@ def test_purge_preview_issues_actor_bound_token_and_missing_token_does_not_delet
 
     from fastapi import Response
 
-    from app.systems.files import lifecycle_router
-    from app.systems.lifecycle.schemas import LifecyclePurgeRequest
+    from app.systems.platform.files import lifecycle_router
+    from app.systems.sandbox.lifecycle.schemas import LifecyclePurgeRequest
 
     db = guarded_db
     actor_id = actor.id

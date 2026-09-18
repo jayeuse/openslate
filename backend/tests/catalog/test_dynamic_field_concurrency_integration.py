@@ -7,15 +7,15 @@ from sqlalchemy import text
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.fields.models import FieldType
-from app.systems.fields.router import create_field
-from app.systems.fields.schemas import FieldCreate
-from app.systems.lifecycle.exceptions import LifecycleUnavailable
-from app.systems.lifecycle.schemas import LifecycleTargetType
-from app.systems.lifecycle.service import close_lifecycle
-from app.systems.modules.router import accept_module_schema
-from app.systems.records.router import create_record
-from app.systems.records.schemas import RecordCreate
+from app.systems.sandbox.fields.models import FieldType
+from app.systems.sandbox.fields.router import create_field
+from app.systems.sandbox.fields.schemas import FieldCreate
+from app.systems.sandbox.lifecycle.exceptions import LifecycleUnavailable
+from app.systems.sandbox.lifecycle.schemas import LifecycleTargetType
+from app.systems.sandbox.lifecycle.service import close_lifecycle
+from app.systems.sandbox.modules.router import accept_module_schema
+from app.systems.sandbox.records.router import create_record
+from app.systems.sandbox.records.schemas import RecordCreate
 from tests.catalog.dynamic_field_support import (
     _hold_module_lock,
     _seed_committed_module,

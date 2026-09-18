@@ -140,7 +140,7 @@ Supabase Auth owns the identity and password. The local `User` must be active, n
 
 User invitation is a cross-system operation: Auth creates an identity, a database trigger creates a pending member profile, and the users service finalizes the requested profile. Disable/enable ordering is designed to fail closed, but an external failure can temporarily leave Auth and local state divergent.
 
-Evidence: `common/dependencies/auth.py`, `systems/users/`, migration `0010`.
+Evidence: `common/dependencies/auth.py`, `systems/access/users/`, migration `0010`.
 
 ## Lifecycle model
 

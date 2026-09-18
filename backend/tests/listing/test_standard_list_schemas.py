@@ -52,6 +52,17 @@ def test_standard_list_request_normalizes_search() -> None:
     assert ExampleListRequest(search="   ").search is None
 
 
+@pytest.mark.parametrize(("search", "valid"), [("x" * 100, True), ("x" * 101, False)])
+def test_standard_list_request_bounds_trimmed_search(search: str, valid: bool) -> None:
+    value = f"  {search}  "
+
+    if valid:
+        assert ExampleListRequest(search=value).search == search
+    else:
+        with pytest.raises(ValidationError):
+            ExampleListRequest(search=value)
+
+
 def test_standard_list_request_exposes_endpoint_sort_enum() -> None:
     request = ExampleListRequest(sort_by=ExampleSortField.CREATED_AT, sort_order="desc")
 

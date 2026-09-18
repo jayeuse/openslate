@@ -5,10 +5,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-import app.systems.users.account_operations as users_router
+import app.systems.access.users.account_operations as users_router
 from app.core.integrations.supabase import SupabaseAdminClient
-from app.systems.users.models import UserRole, UserStatus
-from app.systems.users.schemas import UserUpdate
+from app.systems.access.users.models import UserRole, UserStatus
+from app.systems.access.users.schemas import UserUpdate
 from tests.users.user_invitations_support import profile, role
 
 

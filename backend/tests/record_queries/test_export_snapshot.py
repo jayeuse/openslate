@@ -5,11 +5,11 @@ from record_queries.test_database import request_for, setup_rows
 from sqlalchemy.orm import Session
 
 from app.core.database.session import AuditSession
-from app.systems.departments.models import Department
-from app.systems.fields.models import Field
-from app.systems.modules.models import Module
-from app.systems.records import export as exporter
-from app.systems.records.models import Record
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.fields.models import Field
+from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records import export as exporter
+from app.systems.sandbox.records.models import Record
 
 
 def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, monkeypatch):
@@ -62,8 +62,8 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
     from app.common.dependencies import get_current_user
     from app.core.database import get_db
     from app.main import app
-    from app.systems.audit.models import SecurityEvent
-    from app.systems.users.models import Role, User
+    from app.systems.access.users.models import Role, User
+    from app.systems.manage.audit.models import SecurityEvent
 
     engine = query_db.get_bind().engine
     actor_id = uuid7()

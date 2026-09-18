@@ -7,11 +7,11 @@ import pytest
 from fastapi import Response
 from uuid6 import uuid7
 
-from app.systems.lifecycle.router import (
+from app.systems.sandbox.lifecycle.router import (
     _preview,
     _purge,
 )
-from app.systems.lifecycle.schemas import (
+from app.systems.sandbox.lifecycle.schemas import (
     LifecycleCloseRequest,
     LifecycleImpactResponse,
     LifecyclePurgeRequest,
@@ -56,8 +56,8 @@ def test_preview_returns_opaque_token_and_no_store_header() -> None:
     response = Response()
 
     with (
-        patch("app.systems.lifecycle.router.plan_lifecycle") as plan,
-        patch("app.systems.lifecycle.router.issue_challenge", return_value=issued),
+        patch("app.systems.sandbox.lifecycle.router.plan_lifecycle") as plan,
+        patch("app.systems.sandbox.lifecycle.router.issue_challenge", return_value=issued),
     ):
         plan.return_value.response.return_value = _impact()
         plan.return_value.impact_digest = "digest"
@@ -83,15 +83,17 @@ def test_purge_binds_confirmation_to_purge_operation_and_target() -> None:
 
     with (
         patch(
-            "app.systems.lifecycle.router.get_settings",
+            "app.systems.sandbox.lifecycle.router.get_settings",
             return_value=SimpleNamespace(lifecycle_purge_enabled=True),
         ),
         patch(
-            "app.systems.lifecycle.router.challenge_impact_digest", return_value="digest"
+            "app.systems.sandbox.lifecycle.router.challenge_impact_digest", return_value="digest"
         ) as digest,
-        patch("app.systems.lifecycle.router.verify_challenge", return_value=challenge) as verify,
-        patch("app.systems.lifecycle.router.plan_lifecycle") as plan,
-        patch("app.systems.lifecycle.router.purge_lifecycle", return_value=impact),
+        patch(
+            "app.systems.sandbox.lifecycle.router.verify_challenge", return_value=challenge
+        ) as verify,
+        patch("app.systems.sandbox.lifecycle.router.plan_lifecycle") as plan,
+        patch("app.systems.sandbox.lifecycle.router.purge_lifecycle", return_value=impact),
     ):
         plan.return_value.impact_digest = "digest"
         result = _purge(

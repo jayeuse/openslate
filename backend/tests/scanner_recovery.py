@@ -27,7 +27,7 @@ from sqlalchemy import Connection, create_engine, text
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.systems.files.worker import LEADER_LOCK
+from app.systems.platform.files.worker import LEADER_LOCK
 
 if TYPE_CHECKING:
     from tests.scanner_runtime import DisposableScanner
@@ -163,7 +163,7 @@ def _replace_engine(scanner: "DisposableScanner") -> None:
         timeout=30,
     )
     code = (
-        "import json,sys; from app.systems.files.clamav import ClamAVScanner; "
+        "import json,sys; from app.systems.platform.files.clamav import ClamAVScanner; "
         "scanner=ClamAVScanner(sys.argv[1],3310,sys.argv[2]); "
         "scanner.probe(); print(json.dumps({'ready':True}))"
     )

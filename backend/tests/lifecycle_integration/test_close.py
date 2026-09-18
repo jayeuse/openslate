@@ -5,15 +5,15 @@ import pytest
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.lifecycle.exceptions import (
+from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleClosedAncestorError,
     LifecyclePlanDriftError,
     LifecyclePreflightError,
 )
-from app.systems.lifecycle.planner import plan_lifecycle
-from app.systems.lifecycle.schemas import LifecycleBlockerCode, LifecycleTargetType
-from app.systems.lifecycle.service import close_lifecycle, reopen_lifecycle
-from app.systems.modules.models import Module
+from app.systems.sandbox.lifecycle.planner import plan_lifecycle
+from app.systems.sandbox.lifecycle.schemas import LifecycleBlockerCode, LifecycleTargetType
+from app.systems.sandbox.lifecycle.service import close_lifecycle, reopen_lifecycle
+from app.systems.sandbox.modules.models import Module
 from tests.lifecycle_integration.lifecycle_integration_support import _item  # noqa: F401
 
 pytestmark = [

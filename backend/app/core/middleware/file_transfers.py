@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.systems.files.providers import TransferLease
+from app.systems.platform.files.providers import TransferLease
 
 
 @dataclass(frozen=True)

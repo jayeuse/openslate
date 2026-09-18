@@ -4,11 +4,11 @@ from uuid import UUID
 
 from uuid6 import uuid7
 
-import app.systems.audit.models as audit_models
-import app.systems.audit.schemas as audit_schemas
-import app.systems.audit.service as audit_service
-from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.users.models import Role, User, UserRole
+import app.systems.manage.audit.models as audit_models
+import app.systems.manage.audit.schemas as audit_schemas
+import app.systems.manage.audit.service as audit_service
+from app.systems.access.users.models import Role, User, UserRole
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 
 
 def _security_event_model() -> type[Any]:

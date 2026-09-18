@@ -8,11 +8,15 @@ import pytest
 from fastapi import HTTPException
 from PIL import Image
 
-from app.systems.files import service
-from app.systems.files.models import File
-from app.systems.files.providers import ProviderUnavailable, ScanVerdict, UnavailableScanner
-from app.systems.files.scan_processing import process_next
-from app.systems.files.schemas import FileCreate
+from app.systems.platform.files import service
+from app.systems.platform.files.models import File
+from app.systems.platform.files.providers import (
+    ProviderUnavailable,
+    ScanVerdict,
+    UnavailableScanner,
+)
+from app.systems.platform.files.scan_processing import process_next
+from app.systems.platform.files.schemas import FileCreate
 
 pytestmark = pytest.mark.integration
 
@@ -184,12 +188,12 @@ def test_registered_attachment_flow_obeys_parent_and_transfer_contracts(
 
     from app.common.dependencies import get_current_user
     from app.core.database import get_db
-    from app.systems.departments.models import Department
-    from app.systems.files.providers import get_scanner
-    from app.systems.files.router import router
-    from app.systems.files.storage import get_storage
-    from app.systems.modules.models import Module
-    from app.systems.records.models import Record
+    from app.systems.platform.files.providers import get_scanner
+    from app.systems.platform.files.router import router
+    from app.systems.platform.files.storage import get_storage
+    from app.systems.sandbox.departments.models import Department
+    from app.systems.sandbox.modules.models import Module
+    from app.systems.sandbox.records.models import Record
 
     db = guarded_db
     department = Department(department_name=str(uuid4()))
@@ -203,7 +207,7 @@ def test_registered_attachment_flow_obeys_parent_and_transfer_contracts(
     content = output.getvalue()
     storage = Store(db)
     app = FastAPI()
-    from app.systems.files.providers import transfer_slot
+    from app.systems.platform.files.providers import transfer_slot
 
     @app.middleware("http")
     async def file_capacity(request, call_next):

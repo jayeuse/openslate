@@ -8,13 +8,13 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.systems.files import service
-from app.systems.files.models import File
-from app.systems.files.purge import purge_confirmed
-from app.systems.files.quota import lock_quota
-from app.systems.files.schemas import FileCreate
-from app.systems.files.validation import ValidatedContent
-from app.systems.files.worker import expire_unused_reservations
+from app.systems.platform.files import service
+from app.systems.platform.files.models import File
+from app.systems.platform.files.purge import purge_confirmed
+from app.systems.platform.files.quota import lock_quota
+from app.systems.platform.files.schemas import FileCreate
+from app.systems.platform.files.validation import ValidatedContent
+from app.systems.platform.files.worker import expire_unused_reservations
 from tests.files.test_integration import Store, reserve
 
 pytestmark = pytest.mark.integration
@@ -142,7 +142,7 @@ def test_full_quarantine_does_not_prevent_confirmed_cleanup(guarded_db, actor, m
     db.commit()
     file_id = ready.id
     monkeypatch.setattr(
-        "app.systems.files.purge.get_settings",
+        "app.systems.platform.files.purge.get_settings",
         lambda: SimpleNamespace(lifecycle_purge_enabled=True),
     )
     assert purge_confirmed(db, actor_id, file_id, Store(db)).state == "purged"

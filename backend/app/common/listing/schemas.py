@@ -20,7 +20,7 @@ class StandardListRequest[SortFieldT: StrEnum](BaseModel):
     offset: int = Field(default=0, ge=0)
     sort_by: SortFieldT | None = None
     sort_order: SortOrder = SortOrder.ASC
-    search: str | None = None
+    search: str | None = Field(default=None, max_length=100)
     deleted: DeletedFilter = DeletedFilter.EXCLUDE
 
     @field_validator("search", mode="before")

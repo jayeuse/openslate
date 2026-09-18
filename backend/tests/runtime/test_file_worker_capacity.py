@@ -10,8 +10,8 @@ from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.core.middleware.file_transfers import FileTransferPolicy
 from app.main import create_app
-from app.systems.files import service
-from app.systems.files.storage import get_storage
+from app.systems.platform.files import service
+from app.systems.platform.files.storage import get_storage
 
 
 @pytest.mark.parametrize("blocking_stage", ["provider", "dependency"])

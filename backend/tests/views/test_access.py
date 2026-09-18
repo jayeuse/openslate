@@ -1,14 +1,16 @@
+from unittest.mock import patch
+
 import pytest
 from fastapi import HTTPException, Response
 from pydantic import ValidationError
 from record_queries.test_database import setup_rows
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from uuid6 import uuid7
 
-from app.systems.records.query_schemas import QueryDefinition
-from app.systems.users.models import Role, User
-from app.systems.views.models import SavedView
-from app.systems.views.router import (
+from app.systems.access.users.models import Role, User
+from app.systems.manage.audit.models import AuditLog
+from app.systems.openview.views.models import SavedView
+from app.systems.openview.views.router import (
     ViewList,
     archive_view,
     create_view,
@@ -16,7 +18,8 @@ from app.systems.views.router import (
     list_views,
     update_view,
 )
-from app.systems.views.schemas import ViewCreate, ViewUpdate
+from app.systems.openview.views.schemas import ViewCreate, ViewUpdate
+from app.systems.sandbox.records.query_schemas import QueryDefinition
 
 pytestmark = pytest.mark.integration
 
@@ -90,6 +93,38 @@ def test_private_updates_revision_and_archives_without_exposing_predicates(query
     archive_view(view.id, owner, query_db)
     assert query_db.get(SavedView, view.id).is_deleted
     assert list_views(owner, query_db, ViewList(module_id=module.id))["items"] == []
+
+
+def test_same_normalized_view_patch_does_not_commit_or_bump_revision(query_db):
+    owner = actor(query_db)
+    module, _, _ = setup_rows(query_db, "text", [])
+    view = create_view(
+        ViewCreate(module_id=module.id, name="Original", definition=QueryDefinition()),
+        owner,
+        query_db,
+        Response(),
+    )
+    before_events = query_db.scalar(
+        select(func.count()).select_from(AuditLog).where(AuditLog.entity_id == view.id)
+    )
+
+    import app.systems.openview.views.router as views_router
+
+    with patch.object(views_router, "commit", wraps=views_router.commit) as commit_view:
+        unchanged = update_view(
+            view.id,
+            ViewUpdate(revision=1, name=" Original ", definition=QueryDefinition()),
+            owner,
+            query_db,
+        )
+
+    assert unchanged.name == "Original"
+    assert unchanged.revision == 1
+    commit_view.assert_not_called()
+    after_events = query_db.scalar(
+        select(func.count()).select_from(AuditLog).where(AuditLog.entity_id == view.id)
+    )
+    assert after_events == before_events
 
 
 def test_view_mutation_rejects_client_owner_visibility_and_empty_patch():

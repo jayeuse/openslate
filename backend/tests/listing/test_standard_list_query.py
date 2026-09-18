@@ -7,7 +7,7 @@ from sqlalchemy.dialects import postgresql
 
 from app.common.listing.query import ListQuerySpec, build_standard_list_statements
 from app.common.listing.schemas import StandardListRequest
-from app.systems.departments.models import Department
+from app.systems.sandbox.departments.models import Department
 
 
 class DepartmentSortField(StrEnum):

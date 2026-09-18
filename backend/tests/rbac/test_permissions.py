@@ -9,13 +9,13 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.common.dependencies.auth import require_capability
-from app.systems.users.models import UserRole
-from app.systems.users.permissions import (
+from app.systems.access.users.models import UserRole
+from app.systems.access.users.permissions import (
     ALL_CAPABILITIES,
     Capability,
     effective_permissions,
 )
-from app.systems.users.schemas import RoleCreate, RoleUpdate
+from app.systems.access.users.schemas import RoleCreate, RoleUpdate
 
 from .support import make_role, make_user
 

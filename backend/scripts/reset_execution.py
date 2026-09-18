@@ -11,19 +11,21 @@ if __package__:
         _LOCK_APPLICATION_STATEMENT,
         _LOCK_AUTH_STATEMENT,
         _RESET_ADVISORY_LOCK_KEY,
+        _SCANNER_LEADER_LOCK_KEY,
+        DELETE_ORDER,
         NON_PRESERVED_TABLES,
         ResetError,
         ResetPlan,
+        stable_snapshot_payload,
     )
     from .reset_planning import (  # type: ignore[import-not-found]
-        _execute,
         _expected_snapshot_payload,
         _read_alembic_head,
         _read_auth_users,
         _read_profile,
         _read_roles,
+        _read_workspace,
         _single_value,
-        _snapshot_payload,
         build_reset_plan,
     )
 else:
@@ -32,19 +34,21 @@ else:
         _LOCK_APPLICATION_STATEMENT,
         _LOCK_AUTH_STATEMENT,
         _RESET_ADVISORY_LOCK_KEY,
+        _SCANNER_LEADER_LOCK_KEY,
+        DELETE_ORDER,
         NON_PRESERVED_TABLES,
         ResetError,
         ResetPlan,
+        stable_snapshot_payload,
     )
     from reset_planning import (
-        _execute,
         _expected_snapshot_payload,
         _read_alembic_head,
         _read_auth_users,
         _read_profile,
         _read_roles,
+        _read_workspace,
         _single_value,
-        _snapshot_payload,
         build_reset_plan,
     )
 
@@ -55,6 +59,11 @@ def _begin_transaction(connection: Any) -> None:
     if status is not None and getattr(status, "name", str(status)) != "IDLE":
         return
     connection.execute("BEGIN")
+
+
+def _execute(connection: Any, statement: str, params: tuple[object, ...] | None = None) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(statement, params) if params is not None else cursor.execute(statement)
 
 
 def _rollback_safely(connection: Any) -> None:
@@ -85,7 +94,7 @@ def _validate_postconditions(
 
     profile = read_profile(connection, plan.preserved_admin_id)
     if (
-        _snapshot_payload(profile)
+        stable_snapshot_payload(profile)
         != _expected_snapshot_payload(plan.profile_snapshot, plan.preserved_admin_id)
         or profile.role_id != plan.preserved_admin_role_id
     ):
@@ -98,12 +107,32 @@ def _validate_postconditions(
     }:
         raise ResetError("The preserved role set changed")
     role_by_id = {role.id: role for role in roles}
-    if _snapshot_payload(role_by_id[plan.preserved_admin_role_id]) != _expected_snapshot_payload(
-        plan.admin_role_snapshot, plan.preserved_admin_id
-    ) or _snapshot_payload(role_by_id[plan.preserved_member_role_id]) != _expected_snapshot_payload(
-        plan.member_role_snapshot, plan.preserved_admin_id
-    ):
+    admin_after = stable_snapshot_payload(role_by_id[plan.preserved_admin_role_id])
+    admin_expected = _expected_snapshot_payload(plan.admin_role_snapshot, plan.preserved_admin_id)
+    member_after = stable_snapshot_payload(role_by_id[plan.preserved_member_role_id])
+    member_expected = _expected_snapshot_payload(plan.member_role_snapshot, plan.preserved_admin_id)
+    if admin_after != admin_expected or member_after != member_expected:
         raise ResetError("The preserved roles changed")
+
+    workspace = _read_workspace(connection)
+    if (
+        workspace.id != plan.workspace_snapshot.id
+        or workspace.singleton_key is not True
+        or workspace.display_name != "OpenSlate"
+        or workspace.legal_name is not None
+        or workspace.description is not None
+        or workspace.contact_email is not None
+        or workspace.contact_phone is not None
+        or workspace.postal_address is not None
+        or workspace.logo_file_id is not None
+        or workspace.timezone != "UTC"
+        or workspace.locale != "en-US"
+        or workspace.revision != 1
+        or workspace.deleted_at is not None
+        or workspace.is_deleted is not False
+        or workspace.performed_by is not None
+    ):
+        raise ResetError("The workspace reset postcondition was not met")
 
     auth_count, auth_identities = _read_auth_users(connection)
     if auth_count != plan.auth_user_count or auth_identities != plan.auth_identities:
@@ -120,6 +149,7 @@ def apply_reset(
     execute: bool = False,
     stdin_is_tty: bool = False,
     confirmation: str | None = None,
+    storage: Any | None = None,
     read_profile_fn: Callable[..., Any] | None = None,
     read_roles_fn: Callable[..., Any] | None = None,
     build_plan_fn: Callable[..., ResetPlan] | None = None,
@@ -131,39 +161,53 @@ def apply_reset(
         raise ResetError("Execute mode requires a TTY")
     if confirmation != plan.impact_digest:
         raise ResetError("An exact impact-digest confirmation is required")
+    if storage is None:
+        raise ResetError("Storage cleanup must be configured for execute mode")
 
+    committed = False
     try:
         _begin_transaction(connection)
         _execute(connection, "SET LOCAL lock_timeout = '5s'")
         _execute(connection, "SET LOCAL statement_timeout = '30s'")
         _execute(connection, "SELECT pg_advisory_xact_lock(%s)", (_RESET_ADVISORY_LOCK_KEY,))
+        scanner_stopped = _single_value(
+            connection, "SELECT pg_try_advisory_xact_lock(%s)", (_SCANNER_LEADER_LOCK_KEY,)
+        )
+        if scanner_stopped is not True:
+            raise ResetError("The scanner worker must be stopped before reset")
         _execute(connection, _LOCK_AUTH_STATEMENT)
         _execute(connection, _LOCK_APPLICATION_STATEMENT)
 
-        locked_plan = (build_plan_fn or build_reset_plan)(connection, plan.sample_email)
+        locked_plan = (build_plan_fn or build_reset_plan)(
+            connection, plan.sample_email, storage_object_keys=storage.list_object_keys()
+        )
         if locked_plan.impact_digest != plan.impact_digest:
             raise ResetError("The reset plan changed; run a fresh dry run and confirmation")
 
-        _execute(connection, "DELETE FROM public.lifecycle_confirmation_challenges")
-        _execute(connection, "DELETE FROM public.lifecycle_rate_limit_failures")
-        _execute(connection, "DELETE FROM public.lifecycle_rate_limit_buckets")
-        _execute(connection, "DELETE FROM public.relationship_edges")
-        _execute(connection, "DELETE FROM public.audit_logs")
-        _execute(connection, "DELETE FROM public.security_events")
-        _execute(connection, "DELETE FROM public.records")
-        _execute(connection, "DELETE FROM public.fields")
-        _execute(connection, "DELETE FROM public.modules")
-        _execute(connection, "DELETE FROM public.departments")
         _execute(
             connection,
-            "DELETE FROM public.users WHERE id <> %s",
-            (locked_plan.preserved_admin_id,),
+            """UPDATE public.workspace_profiles SET display_name = 'OpenSlate',
+               legal_name = NULL, description = NULL, contact_email = NULL,
+               contact_phone = NULL, postal_address = NULL,
+               logo_file_id = NULL, timezone = 'UTC', locale = 'en-US', revision = 1,
+               performed_by = NULL WHERE id = %s""",
+            (locked_plan.workspace_snapshot.id,),
         )
-        _execute(
-            connection,
-            "DELETE FROM public.roles WHERE id NOT IN (%s, %s)",
-            (locked_plan.preserved_admin_role_id, locked_plan.preserved_member_role_id),
-        )
+        for table_name in DELETE_ORDER:
+            if table_name == "users":
+                _execute(
+                    connection,
+                    "DELETE FROM public.users WHERE id <> %s",
+                    (locked_plan.preserved_admin_id,),
+                )
+            elif table_name == "roles":
+                _execute(
+                    connection,
+                    "DELETE FROM public.roles WHERE id NOT IN (%s, %s)",
+                    (locked_plan.preserved_admin_role_id, locked_plan.preserved_member_role_id),
+                )
+            else:
+                _execute(connection, f"DELETE FROM public.{table_name}")
         _validate_postconditions(
             connection,
             locked_plan,
@@ -171,9 +215,23 @@ def apply_reset(
             read_roles_fn=read_roles_fn,
         )
         connection.commit()
+        committed = True
     except ResetError:
         _rollback_safely(connection)
         raise
     except Exception:
         _rollback_safely(connection)
         raise ResetError("Unable to apply application-data reset") from None
+    if committed:
+        try:
+            storage.delete_and_verify_empty(locked_plan.storage_object_keys)
+        except Exception:
+            try:
+                remaining = str(len(storage.list_object_keys()))
+            except Exception:
+                remaining = "unknown"
+            raise ResetError(
+                "Application data reset committed but Storage cleanup is incomplete "
+                f"({remaining} Storage-visible objects remain); "
+                "run a fresh dry run before retrying"
+            ) from None

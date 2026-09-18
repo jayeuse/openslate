@@ -15,7 +15,7 @@ from uuid6 import uuid7
 
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession
-from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from tests.config_support import settings_environment
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)

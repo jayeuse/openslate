@@ -17,14 +17,14 @@ from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.main import create_app
-from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.files import service
-from app.systems.files.models import File
-from app.systems.files.storage import get_storage
-from app.systems.users.models import Role, User
-from app.systems.workspace.models import WorkspaceProfile
-from app.systems.workspace.router import update_workspace
-from app.systems.workspace.schemas import WorkspaceUpdate
+from app.systems.access.users.models import Role, User
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.router import update_workspace
+from app.systems.manage.workspace.schemas import WorkspaceUpdate
+from app.systems.platform.files import service
+from app.systems.platform.files.models import File
+from app.systems.platform.files.storage import get_storage
 
 pytestmark = pytest.mark.integration
 

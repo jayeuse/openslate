@@ -9,14 +9,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.middleware.request_context import get_request_context
-from app.systems.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 
 
 class AuditSession(Session):
     """Application session with transactional ORM audit hooks."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        from app.systems.audit import listeners as _audit_listeners  # noqa: F401
+        from app.systems.manage.audit import listeners as _audit_listeners  # noqa: F401
 
         super().__init__(*args, **kwargs)
 

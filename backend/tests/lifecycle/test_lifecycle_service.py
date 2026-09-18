@@ -1,9 +1,13 @@
 from datetime import UTC, datetime
+from unittest.mock import Mock, patch
 
+import pytest
 from uuid6 import uuid7
 
-from app.systems.lifecycle.planner import canonical_lifecycle_digest
-from app.systems.lifecycle.schemas import (
+from app.systems.sandbox.lifecycle.exceptions import LifecycleInvalidTarget
+from app.systems.sandbox.lifecycle.planner import canonical_lifecycle_digest
+from app.systems.sandbox.lifecycle.planning import plan_lifecycle
+from app.systems.sandbox.lifecycle.schemas import (
     LifecycleBlocker,
     LifecycleBlockerCode,
     LifecycleEdgeState,
@@ -65,3 +69,12 @@ def test_digest_is_order_independent_and_binds_operation_actor_and_destructive_i
         rows,
         edges=[edge.model_copy(update={"is_deleted": False})],
     )
+
+
+def test_generic_lifecycle_planning_rejects_file_before_loading_a_scope() -> None:
+    with patch(
+        "app.systems.sandbox.lifecycle.planning.load_lifecycle_scope",
+        side_effect=AssertionError("file must use its dedicated lifecycle route"),
+    ):
+        with pytest.raises(LifecycleInvalidTarget, match="Unsupported lifecycle target: file"):
+            plan_lifecycle(Mock(), "file", uuid7(), "purge", None)

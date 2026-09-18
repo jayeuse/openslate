@@ -79,6 +79,43 @@ def test_database_availability_failure_is_mapped_to_safe_503_with_diagnostic_id(
     assert "private database detail" not in response.text
 
 
+def test_non_file_timeout_is_not_mislabeled_as_a_file_transfer_timeout() -> None:
+    app = create_app()
+
+    @app.get("/api/test-downstream-timeout")
+    def test_downstream_timeout() -> None:
+        raise TimeoutError("unrelated downstream timeout")
+
+    response = TestClient(app).get("/api/test-downstream-timeout")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal server error"}
+
+
+def test_expired_file_transfer_deadline_uses_file_timeout_response(monkeypatch) -> None:
+    import app.main as main
+    from app.core.middleware.file_transfers import FileTransferPolicy
+
+    monkeypatch.setattr(
+        main,
+        "file_transfer_policy",
+        lambda path, method: (
+            FileTransferPolicy(1024, 0) if path == "/api/test-file-timeout" else None
+        ),
+    )
+    app = create_app()
+
+    @app.get("/api/test-file-timeout")
+    async def test_file_timeout() -> None:
+        await asyncio.sleep(0.01)
+        return {"status": "unreachable"}
+
+    response = TestClient(app).get("/api/test-file-timeout")
+
+    assert response.status_code == 504
+    assert response.json()["detail"]["code"] == "file_timeout"
+
+
 def test_actual_request_body_over_limit_is_rejected_despite_false_content_length() -> None:
     app = create_app()
     client = TestClient(app)
@@ -124,7 +161,7 @@ def test_file_content_limit_is_scoped_to_real_uuid_transfer_paths() -> None:
 
 
 def test_file_capacity_is_acquired_before_buffering_and_released_on_denial() -> None:
-    from app.systems.files.providers import transfer_slot
+    from app.systems.platform.files.providers import transfer_slot
 
     client = TestClient(create_app())
     url = "/api/files/019c0000-0000-7000-8000-000000000001/content"

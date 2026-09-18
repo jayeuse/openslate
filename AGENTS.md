@@ -13,7 +13,7 @@
 - Root owns orchestration/documentation and Supabase CLI commands; run Python/uv/Alembic in `backend/`, npm/Playwright in `frontend/`.
 - Local development is Supabase CLI plus host-run FastAPI and Next.js. Do not add root Compose, another database UI, a reverse proxy, or filesystem storage as the supported local path.
 - FastAPI owns application data access; never write application data through Supabase Data API. Alembic owns application schema; no application migrations/seeds under `supabase/`.
-- Backend `app/core/` owns infrastructure, `app/common/` shared application code, and `app/systems/<capability>/` domain behavior. Active capabilities: auth, users, roles, departments, modules, fields, records, relationships, lifecycle, audit. Other systems remain placeholders until requested.
+- Backend `app/core/` owns infrastructure, `app/common/` shared application code, and `app/systems/<page>/<capability>/` domain behavior. Active capabilities are grouped under `access`, `sandbox`, `openview`, `manage`, and `platform`; `boards` and `comms` remain reserved. Package location does not make cross-domain audit or lifecycle behavior page-restricted.
 
 ## Task scope and approval
 

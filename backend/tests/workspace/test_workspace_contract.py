@@ -8,18 +8,18 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from uuid6 import uuid7
 
-from app.systems.files.models import File
-from app.systems.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.platform.files.models import File
 
 
 def _router_module() -> ModuleType:
-    from app.systems.workspace import router
+    from app.systems.manage.workspace import router
 
     return router
 
 
 def _schemas_module() -> ModuleType:
-    from app.systems.workspace import schemas
+    from app.systems.manage.workspace import schemas
 
     return schemas
 
@@ -294,8 +294,8 @@ def test_workspace_response_contract_has_only_public_profile_fields() -> None:
 
 
 def test_workspace_model_redacts_contact_fields_from_audit_snapshots() -> None:
-    from app.systems.audit.snapshots import REDACTED, serialize_record
-    from app.systems.workspace.models import WorkspaceProfile
+    from app.systems.manage.audit.snapshots import REDACTED, serialize_record
+    from app.systems.manage.workspace.models import WorkspaceProfile
 
     profile = WorkspaceProfile(
         display_name="OpenSlate",

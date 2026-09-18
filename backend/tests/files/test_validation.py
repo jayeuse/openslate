@@ -3,7 +3,7 @@
 import pytest
 from fastapi import HTTPException
 
-from app.systems.files.validation import validate_content
+from app.systems.platform.files.validation import validate_content
 
 
 @pytest.mark.parametrize(
@@ -39,13 +39,13 @@ def test_malformed_office_xml_returns_controlled_rejection():
 def test_parser_deadline_returns_controlled_failure(monkeypatch):
     import subprocess
 
-    from app.systems.files.validation_worker import validate_bounded
+    from app.systems.platform.files.validation_worker import validate_bounded
 
     def timeout(*args, **kwargs):
         assert kwargs["timeout"] == 60
         raise subprocess.TimeoutExpired("parser", 60)
 
-    monkeypatch.setattr("app.systems.files.validation_worker.subprocess.run", timeout)
+    monkeypatch.setattr("app.systems.platform.files.validation_worker.subprocess.run", timeout)
     with pytest.raises(HTTPException) as caught:
         validate_bounded("document.pdf", b"%PDF-1.7")
     assert caught.value.status_code == 503
