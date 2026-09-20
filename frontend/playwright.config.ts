@@ -34,17 +34,10 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
-const syntheticEnvironment = {
+export const syntheticEnvironment = {
   BACKEND_URL: "http://backend.invalid",
-  SUPABASE_SERVER_URL: "http://supabase.invalid",
-  LOG_DIR: "/tmp/openslate-frontend-logs",
-  BFF_REQUEST_BODY_LIMIT_BYTES: "1048576",
-  BFF_RESPONSE_BODY_LIMIT_BYTES: "8388608",
-  BFF_REQUEST_DEADLINE_MS: "60000",
   PORT: target.port,
   HOSTNAME: target.hostname,
-  NEXT_PUBLIC_SUPABASE_URL: "http://supabase.invalid",
-  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "synthetic-publishable-key",
   NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: "false",
 };
 const frontendEnvironment: Record<string, string> =

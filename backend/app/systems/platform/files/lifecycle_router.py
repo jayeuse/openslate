@@ -15,7 +15,7 @@ from app.core.database import get_db
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.files.access import error, load
-from app.systems.platform.files.providers import Storage, hold_file_worker
+from app.systems.platform.files.providers import StorageBackend, hold_file_worker
 from app.systems.platform.files.purge import purge_confirmed
 from app.systems.platform.files.schemas import FileResponse
 from app.systems.platform.files.storage import get_storage
@@ -127,7 +127,7 @@ def execute(
     payload: LifecyclePurgeRequest,
     user: Admin,
     db: DB,
-    storage: Annotated[Storage, Depends(get_storage)],
+    storage: Annotated[StorageBackend, Depends(get_storage)],
     response: Response,
 ) -> FileResponse:
     with hold_file_worker(request):

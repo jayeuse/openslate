@@ -29,9 +29,16 @@ from app.systems.manage.audit.router import internal_security_events_router, sec
 from app.systems.manage.audit.router import router as audit_router
 from app.systems.manage.workspace.router import router as workspace_router
 from app.systems.openview.views.router import router as views_router
+from app.systems.platform.events.hub import (
+    EventHub,
+    PostgresInvalidationListener,
+    subscriber_capacity,
+)
+from app.systems.platform.events.router import router as events_router
 from app.systems.platform.files.lifecycle_router import router as file_lifecycle_router
 from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router as files_router
+from app.systems.platform.notifications.worker import SmtpOutboxWorker
 from app.systems.sandbox.departments.router import router as departments_router
 from app.systems.sandbox.fields.router import module_fields_router
 from app.systems.sandbox.fields.router import router as fields_router
@@ -91,11 +98,15 @@ def _unexpected_error_response(request: Request, context: RequestContext) -> JSO
 
 
 @asynccontextmanager
-async def application_lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_observability_logging()
+    app.state.events_listener.start()
+    app.state.smtp_outbox_worker.start()
     try:
         yield
     finally:
+        app.state.events_listener.stop()
+        app.state.smtp_outbox_worker.stop()
         dispose_readiness_resources()
         dispose_database_resources()
 
@@ -104,6 +115,10 @@ def create_app() -> FastAPI:
     settings = get_settings()
     configure_observability_logging()
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=application_lifespan)
+    events_hub = EventHub(max_subscribers=subscriber_capacity(settings.server_max_concurrency))
+    app.state.events_hub = events_hub
+    app.state.events_listener = PostgresInvalidationListener(events_hub)
+    app.state.smtp_outbox_worker = SmtpOutboxWorker(settings)
 
     app.add_middleware(
         CORSMiddleware,
@@ -209,6 +224,7 @@ def create_app() -> FastAPI:
     app.include_router(views_router, prefix="/api")
     app.include_router(workspace_router, prefix="/api")
     app.include_router(files_router, prefix="/api")
+    app.include_router(events_router, prefix="/api")
     app.include_router(file_lifecycle_router, prefix="/api")
     app.include_router(relationships_router, prefix="/api")
     app.include_router(lifecycle_router, prefix="/api")

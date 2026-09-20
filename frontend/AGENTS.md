@@ -28,10 +28,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Data access and auth
 
-- Workspace screens currently use local sample business data and interaction state, as described in `frontend/README.md`. Preserve that data flow for UI work; do not reconnect business APIs or realtime merely because backend helpers exist. Existing-account sign-in, session validation/refresh, logout, and protected invitation acceptance remain connected.
+- Workspace screens currently use local sample business data and interaction state, as described in `frontend/README.md`. Preserve that data flow for UI work; do not reconnect business APIs or server events merely because backend helpers exist. Existing-account sign-in, session validation/refresh, logout, and protected invitation acceptance remain connected.
 - Authenticated pages live under `src/app/(app)/`, whose layout mounts `AppPage` (auth gate + shell) once for the group; do not wrap pages individually or implement a second cookie/auth gate. `proxy.ts` sets CSP and security headers only — it is not auth.
-- When a feature uses authorized backend integration, domain requests go through `apiFetch()` to `/bff/[...path]`; the BFF converts cookies to a Bearer token and refreshes the Supabase session on a backend 401. Never call `BACKEND_URL` or Supabase directly from pages.
-- Sessions use HttpOnly `openslate_access`/`openslate_refresh` cookies managed by the `/session/*` route handlers; the browser never sees tokens.
+- When a feature uses authorized backend integration, domain requests go through `apiFetch()` to the same-origin `/api` gateway. It sends the CSRF header for cookie-authenticated mutations and performs the documented FastAPI refresh flow. Never bypass the same-origin API boundary from pages.
+- Sessions use HttpOnly `openslate_access`/`openslate_refresh` cookies issued by FastAPI; the browser never sees tokens. There are no Next proxy or session route handlers.
 - Feature adapters own typed reads and confirmed commands. Local sample screens use the shared runtime, `useSampleResource`, and `useSampleCommands`; keep ephemeral drafts local and await acceptance before clearing or navigating. Preserve loading/retry, last-good refresh data, cancellation, and pending guards. Future authorized backend adapters use schema-required `apiFetch`; do not add a second state or form library without demonstrated need.
 
 ## Features
@@ -39,7 +39,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Current workspace routes are `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`; their screens live under `src/components/systems/`. Inspect the target screen and state provider before choosing a pattern.
 - Legacy module, department, administration, and workspace routes redirect to the current workspace. Do not restore retired pages or components to satisfy an older example.
 - Use explicit `CompleteCollection` and `PageResult` boundaries. Filter/sort before paging; complete exports and aggregates cannot use a visible page. Render a prepared page without a second table slice. Future backend pagination must preserve the frontend feature contract; retired list helpers are not an integration template.
-- Workspace screens currently do not subscribe to realtime. Any explicitly requested integration must preserve private Broadcast invalidation without row snapshots and avoid discarding in-progress form state.
+- Workspace screens currently do not subscribe to server events. Any explicitly requested integration must preserve authenticated SSE invalidation without row snapshots and avoid discarding in-progress form state.
 
 ## Styling
 
@@ -49,11 +49,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## Tests and verification
 
 - Follow the root test workflow: focused case, passing feature batch, then the lean frontend gate. Run all retained frontend tests only when the work unit stabilizes or before push.
-- Playwright Test is the lightweight runner for `tests/isolated/` and `tests/http/`; no browser binaries or browser projects are used. Add isolated tests for rules and state, and HTTP tests only for a real Next.js request boundary.
-- When preparing to push, use the root `python3 scripts/prepush.py --base <base-ref>` command. Its frontend lane runs formatting, lint, type checking, the retained isolated and HTTP tests, and one native-or-container production build. Use `npm run verify` to repair a failed frontend gate. Local npm commands generate `frontend/.env.local` from canonical root `.env`; never source the root `.env` into npm or Next.
+- Playwright Test is the lightweight runner for `tests/isolated/`; no browser binaries or browser projects are used. Add isolated tests for rules and state. Add an HTTP project test only when a real Next.js request boundary exists.
+- When preparing to push, use the root `python3 scripts/prepush.py --base <base-ref>` command. Its frontend lane runs formatting, lint, type checking, the retained isolated tests, and one native-or-container production build. Use `npm run verify` to repair a failed frontend gate. Local npm commands generate `frontend/.env.local` from canonical root `.env`; never source the root `.env` into npm or Next.
+- `tooling/` contains frontend-owned Node launchers. Developers invoke them through `npm` scripts; repository-wide automation remains in the root `scripts/` directory.
 
 ## TDD and acceptance
 
 - Before creating/extending tests, changing behavior, fixing bugs, or refactoring, read and follow [tdd-workflow](../.agents/skills/tdd-workflow/SKILL.md). It owns test admission, sequencing, and exceptions; this guide owns project runners.
 - Workers must report the skill path actually read and the focused failing/passing test evidence, or the applicable exception. A reference or announcement alone does not prove TDD execution.
-- Frontend acceptance is formatting, ESLint, TypeScript, the retained isolated and HTTP tests, and one production build. There is no frontend browser suite or numerical line-coverage requirement. Backend coverage policy is unchanged.
+- Frontend acceptance is formatting, ESLint, TypeScript, the retained isolated tests, and one production build. There is no frontend browser suite or numerical line-coverage requirement. Backend coverage policy is unchanged.

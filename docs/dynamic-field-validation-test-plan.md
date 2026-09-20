@@ -36,7 +36,7 @@ Not in scope:
 
 ## Environment and safety
 
-PostgreSQL checks require an explicitly authorized disposable database. The full-stack runner creates an isolated loopback Supabase stack with a per-run namespace; tests reject unrecognized targets.
+PostgreSQL checks require an explicitly authorized disposable database. The full-stack runner creates an isolated loopback PostgreSQL database with a per-run identity; tests reject unrecognized targets.
 
 Application operations run through `TEST_DATABASE_URL`. Tests that commit fixtures clean only their generated UUIDs through the owner-capable `MIGRATION_DATABASE_URL`. No table-wide reset or user-data cleanup is performed.
 
@@ -131,4 +131,4 @@ These tests distinguish transient NOWAIT contention from committed-state conflic
 - Ordinary browser `number`/`int` values can lose JavaScript precision outside the safe integer range; exact values should use decimal strings.
 - Dynamic record audit redaction is UUID-keyed.
 - PostgreSQL relationship cardinality remains application-enforced rather than constrained directly by the database.
-- The suite uses router/service calls plus registered API and real PostgreSQL checks for deterministic concurrency. It does not run a live browser→BFF→FastAPI→database workflow.
+- The suite uses router/service calls plus registered API and real PostgreSQL checks for deterministic concurrency. It does not run a live browser→gateway→FastAPI→database workflow.

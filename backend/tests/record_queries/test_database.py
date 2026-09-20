@@ -1,8 +1,6 @@
 """SQL behavior tests; run only on the guarded disposable full-stack database."""
 
 import os
-import re
-from urllib.parse import urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -15,6 +13,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query import query_records
 from app.systems.sandbox.records.query_schemas import RecordQuery
+from tests.conftest import _guard_integration_database
 
 pytestmark = pytest.mark.integration
 
@@ -24,17 +23,12 @@ def query_db(request):
     value = os.getenv("TEST_DATABASE_URL")
     if not value:
         pytest.skip("Disposable PostgreSQL not configured")
-    target = urlsplit(value)
-    if not (
-        os.getenv("E2E_ALLOW_MUTATIONS") == "true"
-        and re.fullmatch(r"[a-f0-9]{32}", os.getenv("OPENSLATE_FULLSTACK_RUN_ID", ""))
-        and target.hostname == "127.0.0.1"
-        and target.port == 55322
-        and target.path == "/postgres"
-        and target.username
-        and target.password
-    ):
-        raise RuntimeError("Query tests require explicitly authorized disposable full-stack DB")
+    try:
+        _guard_integration_database(value)
+    except RuntimeError:
+        raise RuntimeError(
+            "Query tests require explicitly authorized disposable full-stack DB"
+        ) from None
     return request.getfixturevalue("integration_owner_db")
 
 

@@ -4,14 +4,11 @@ from unittest.mock import Mock, patch
 from uuid import UUID
 
 import pytest
-from pydantic import SecretStr
 
-from app.core.config import Settings
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleActorBlocked,
     LifecycleInvalidCredentials,
     LifecyclePasswordRateLimited,
-    LifecyclePasswordServiceUnavailable,
 )
 from app.systems.sandbox.lifecycle.models import (
     LifecycleChallengeStatus,
@@ -19,35 +16,13 @@ from app.systems.sandbox.lifecycle.models import (
     LifecycleOperation,
     LifecycleRateLimitBucket,
 )
-from app.systems.sandbox.lifecycle.password import SupabasePasswordGrantClient
+from app.systems.sandbox.lifecycle.password import LocalPasswordGrantClient
 from app.systems.sandbox.lifecycle.service import begin_verification, hash_challenge_token
-from tests.config_support import settings_values
 
 CHALLENGE_TOKEN = token_urlsafe(32)
-TEMPORARY_ACCESS_TOKEN = token_urlsafe(32)
 CONFIRMATION_PASSWORD = token_urlsafe(32)
-PASSWORD_CANARY = token_urlsafe(32)
-MALFORMED_RESPONSE_TOKEN = token_urlsafe(32)
 
 ACTOR_ID = UUID("00000000-0000-0000-0000-000000000123")
-PUBLISHABLE_KEY = token_urlsafe(32)
-
-
-def _settings() -> Settings:
-    return Settings(
-        **settings_values(
-            database_url="postgresql+psycopg://localhost/test",
-            supabase_url="https://example.supabase.co",
-            supabase_publishable_key=SecretStr(PUBLISHABLE_KEY),
-        )
-    )
-
-
-def _response(status_code: int, payload: object) -> Mock:
-    response = Mock()
-    response.status_code = status_code
-    response.json.return_value = payload
-    return response
 
 
 def test_challenge_tokens_are_256_bit_and_only_the_hash_is_persistable() -> None:
@@ -119,81 +94,45 @@ def test_in_flight_verifications_reserve_the_actor_failure_budget() -> None:
     db.rollback.assert_called_once()
 
 
-def test_password_grant_revokes_only_the_temporary_session() -> None:
-    access_token = TEMPORARY_ACCESS_TOKEN
-    http_client = Mock()
-    http_client.post.side_effect = [
-        _response(
-            200,
-            {"access_token": access_token, "user": {"id": str(ACTOR_ID)}},
-        ),
-        _response(204, {}),
-    ]
+def test_local_password_grant_returns_the_authenticated_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock()
+    monkeypatch.setattr(
+        "app.systems.sandbox.lifecycle.password.authenticate_password",
+        lambda *_args: type("User", (), {"id": ACTOR_ID})(),
+    )
 
-    returned_id = SupabasePasswordGrantClient(
-        _settings(), http_client=http_client
-    ).verify_password("actor@example.com", CONFIRMATION_PASSWORD)
+    returned_id = LocalPasswordGrantClient(db).verify_password(
+        "actor@example.com", CONFIRMATION_PASSWORD
+    )
 
     assert returned_id == ACTOR_ID
-    assert http_client.post.call_count == 2
-    grant_call = http_client.post.call_args_list[0]
-    assert grant_call.args[0] == "/auth/v1/token?grant_type=password"
-    assert grant_call.kwargs["json"] == {
-        "email": "actor@example.com",
-        "password": CONFIRMATION_PASSWORD,
-    }
-    revoke_call = http_client.post.call_args_list[1]
-    assert revoke_call.args[0] == "/auth/v1/logout?scope=local"
-    assert revoke_call.kwargs["json"] is None
-    assert revoke_call.kwargs["headers"]["Authorization"] == f"Bearer {access_token}"
 
 
 @pytest.mark.parametrize(
-    ("status", "error"),
+    ("exception", "expected"),
     [
-        (400, LifecycleInvalidCredentials),
-        (401, LifecycleInvalidCredentials),
-        (429, LifecyclePasswordRateLimited),
-        (503, LifecyclePasswordServiceUnavailable),
+        ("InvalidCredentials", LifecycleInvalidCredentials),
+        ("IdentityRateLimited", LifecyclePasswordRateLimited),
     ],
 )
-def test_password_grant_maps_upstream_failures_without_retry(
-    status: int, error: type[Exception]
+def test_local_password_grant_maps_identity_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    exception: str,
+    expected: type[Exception],
 ) -> None:
-    http_client = Mock()
-    http_client.post.return_value = _response(status, {"error": "redacted upstream detail"})
+    from app.systems.access.identity.service import IdentityRateLimited, InvalidCredentials
 
-    with pytest.raises(error) as raised:
-        SupabasePasswordGrantClient(_settings(), http_client=http_client).verify_password(
-            "actor@example.com", PASSWORD_CANARY
-        )
-
-    assert http_client.post.call_count == 1
-    assert PASSWORD_CANARY not in str(raised.value)
-    assert "redacted upstream detail" not in str(raised.value)
-    assert PUBLISHABLE_KEY not in str(raised.value)
-
-
-def test_password_grant_rejects_malformed_success_without_leaking_session_data() -> None:
-    http_client = Mock()
-    http_client.post.return_value = _response(
-        200,
-        {"access_token": MALFORMED_RESPONSE_TOKEN, "user": {"id": "not-a-uuid"}},
+    failure = (
+        InvalidCredentials("invalid")
+        if exception == "InvalidCredentials"
+        else IdentityRateLimited("rate")
     )
-    http_client.post.side_effect = [
-        _response(
-            200,
-            {"access_token": MALFORMED_RESPONSE_TOKEN, "user": {"id": "not-a-uuid"}},
-        ),
-        _response(204, {}),
-    ]
+    monkeypatch.setattr(
+        "app.systems.sandbox.lifecycle.password.authenticate_password",
+        Mock(side_effect=failure),
+    )
 
-    with pytest.raises(LifecyclePasswordServiceUnavailable):
-        SupabasePasswordGrantClient(_settings(), http_client=http_client).verify_password(
-            "actor@example.com", PASSWORD_CANARY
-        )
-
-    assert http_client.post.call_count == 2
-    revoke_call = http_client.post.call_args_list[1]
-    assert revoke_call.args[0] == "/auth/v1/logout?scope=local"
-    assert revoke_call.kwargs["headers"]["Authorization"] == f"Bearer {MALFORMED_RESPONSE_TOKEN}"
+    with pytest.raises(expected):
+        LocalPasswordGrantClient(Mock()).verify_password("actor@example.com", CONFIRMATION_PASSWORD)

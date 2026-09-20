@@ -34,7 +34,7 @@ def test_serialize_value_handles_common_database_values() -> None:
     assert serialize_value(BINARY_CANARY.encode()) == REDACTED
 
 
-def test_serialize_record_contains_only_supabase_profile_fields() -> None:
+def test_serialize_record_contains_only_local_profile_fields() -> None:
     user = User(
         id=uuid7(),
         email="alice@example.com",

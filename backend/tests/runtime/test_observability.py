@@ -30,10 +30,10 @@ def test_log_event_emits_only_the_allowlisted_safe_fields() -> None:
             route="/api/users/{user_id}",
             status=502,
             duration_ms=11,
-            reason_code="supabase_auth_transport_error",
+            reason_code="identity_transport_error",
             operation_id="operation-id",
             actor_id="actor-id",
-            upstream="supabase_auth",
+            upstream="identity",
         )
     finally:
         logger.removeHandler(handler)
@@ -50,10 +50,10 @@ def test_log_event_emits_only_the_allowlisted_safe_fields() -> None:
         "route": "/api/users/{user_id}",
         "status": 502,
         "duration_ms": 11,
-        "reason_code": "supabase_auth_transport_error",
+        "reason_code": "identity_transport_error",
         "operation_id": "operation-id",
         "actor_id": "actor-id",
-        "upstream": "supabase_auth",
+        "upstream": "identity",
     }
 
 
@@ -167,7 +167,7 @@ def test_sink_closed_terminal_and_short_write_do_not_escape(tmp_path, monkeypatc
         "route": "/api/records",
         "method": "POST",
         "reason_code": "transport_failure",
-        "upstream": "supabase",
+            "upstream": "identity",
         "request_id": "request",
         "operation_id": "operation",
     }

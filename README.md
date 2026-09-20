@@ -1,38 +1,39 @@
 # OpenSlate
 
 OpenSlate is a self-hosted foundation for configurable business operations. It
-uses a host-run FastAPI backend and Next.js frontend with the Supabase CLI as
-the local platform for PostgreSQL, Auth, Realtime, Storage, Studio, and
-Mailpit.
+uses a host-run FastAPI backend and Next.js frontend with vanilla PostgreSQL,
+private local file bytes, and a same-origin Caddy gateway.
 
 ## Stack and boundaries
 
 - Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS 4, and Playwright
 - Backend: Python 3.12+, FastAPI, Pydantic, SQLAlchemy, and Alembic
-- Local platform: Supabase CLI with PostgreSQL 17
-- Authentication: Supabase Auth; global public signup and anonymous sign-in
-  are disabled. The email/password provider remains enabled only so invited
-  users can accept invitations and sign in.
+- Local platform: one disposable PostgreSQL 17 container for development and CI
+- Authentication: FastAPI Identity with Argon2 credentials, local PostgreSQL
+  sessions/action tokens, signed JWTs, HttpOnly browser cookies plus CSRF, and
+  bearer tokens for CLI use
 - Auditing: application ORM mutations only, with transactional minimal diffs
   and sensitive-value redaction
-- Realtime: private Supabase Broadcast invalidation events only; event payloads
-  do not contain row snapshots
-- Storage: Supabase Storage only; the local filesystem is not an application
-  storage backend
+- Invalidation: authenticated SSE driven by PostgreSQL `LISTEN`/`NOTIFY`; event
+  payloads do not contain row snapshots
+- Files: PostgreSQL metadata plus private local filesystem quarantine and ready
+  object bytes
 
-The FastAPI API owns application reads and writes. Alembic owns the application
-schema. Supabase's Data API intentionally exposes only the managed
-`graphql_public` surface, not the application schema. Do not write application
-data through PostgREST/Data API, Studio, direct SQL, or external database
-clients.
+The FastAPI API owns application reads and writes, identity, file access, and
+SSE authorization. Alembic owns the application schema. Do not write
+application data through direct SQL or external database clients.
 
 Audit logs cover normal application ORM entity mutations in the same
-transaction as the business change. Supabase Auth, Studio, direct SQL, Alembic,
-Data API operations, and external clients are outside the application audit
-boundary. Bulk and raw ORM mutation statements remain unsupported because they
+transaction as the business change. Alembic, direct SQL, filesystem byte
+operations, and external clients are outside the application audit boundary.
+Bulk and raw ORM mutation statements remain unsupported because they
 cannot produce reliable per-record snapshots.
 
 ## Environment configuration
+
+Repository automation, backend operator commands, and frontend launch helpers
+use distinct locations. See the [command layout](scripts/README.md) before
+adding or moving a command.
 
 Edit only the ignored root `.env`, using `.env.example` as its structure. It
 contains secrets, the existing administrator's local sign-in details, stack
@@ -43,8 +44,8 @@ replacement values or legacy aliases.
 
 `frontend/.env.local` is generated from a fixed allowlist by local `npm run dev`,
 `npm run build`, and `npm start`. Do not edit it or source root `.env` into
-Next.js. Administrator credentials, owner database credentials, and private
-Supabase keys are excluded. Public frontend settings are baked in at build
+Next.js. Administrator credentials, owner/bootstrap database credentials, and
+JWT signing material are excluded. Public frontend settings are baked in at build
 time, so changing them requires a rebuild. See the
 [configuration inventory](docs/architecture/17-configuration.md) for ownership.
 
@@ -60,49 +61,46 @@ uv run --directory backend python ../scripts/environment.py check
 Run these commands from the repository root unless a directory is shown.
 
 1. For a new checkout, copy `.env.example` to `.env` and restrict its access.
-   Keep an existing configured `.env`. Review the stack ports before starting
-   Supabase; `supabase/config.toml` reads them directly from root `.env`.
+   Keep an existing configured `.env`. Start the documented disposable
+   PostgreSQL service before applying the schema.
 
    ```bash
    cp .env.example .env
    chmod 600 .env
-   supabase start
-   supabase status -o env
+   ./scripts/dev.py db
    ```
 
-2. Fill the blank secret and administrator fields in root `.env`. Treat the
-   complete Supabase status output as secret. Map `DB_URL` to
-   `MIGRATION_DATABASE_URL`, using the `postgresql+psycopg://` scheme; map
-   `ANON_KEY` to `SUPABASE_PUBLISHABLE_KEY` and `SERVICE_ROLE_KEY` to
-   `SUPABASE_SECRET_KEY`. Confirm `API_URL` agrees with the configured
-   `SUPABASE_URL`. Keep the example's port references in connection URLs.
-   Generate a private `SECURITY_EVENT_SERVER_KEY`. Choose the runtime login's
-   password once and URL-encode it only in `DATABASE_URL`, whose username is
-   `openslate_runtime`.
+2. Fill the blank secret and administrator fields in root `.env`. Use
+   PostgreSQL psycopg URLs for `DATABASE_BOOTSTRAP_URL`,
+   `MIGRATION_DATABASE_URL`, the constrained runtime `DATABASE_URL`, and the
+   read-only `DATABASE_INSPECTOR_URL` used by pgweb.
+   Generate `AUTH_JWT_SECRET` and `SECURITY_EVENT_SERVER_KEY`; configure
+   `PUBLIC_ORIGIN`, `CORS_ORIGINS`, and an absolute `FILES_STORAGE_ROOT`.
 
    `ADMIN_EMAIL`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD` describe the existing
    local administrator/test account. Saving these values does not create an
-   account or change its password. `SUPABASE_ACCESS_TOKEN` is needed only for
-   the optional sample-data seed command.
+   account or change its password.
 
-3. Install backend dependencies, apply the schema using the owner connection,
-   and provision the runtime login using the password in `DATABASE_URL`:
+3. Install backend dependencies, provision the owner/runtime/inspector roles
+   through the cluster-admin connection, then apply the schema using the owner
+   connection:
 
    ```bash
    # backend/
    uv sync --locked
+   uv run python operations/provision_database_role.py
    uv run alembic upgrade head
    uv run alembic check
-   uv run python scripts/provision_database_role.py
    ```
 
-4. For an installation without an administrator, run the invitation bootstrap
-   using `ADMIN_EMAIL` and `ADMIN_USERNAME`. Open the invitation in Mailpit and
-   set the password in the app. Bootstrap does not apply `ADMIN_PASSWORD`:
+4. For an installation without an administrator, run the local bootstrap using
+   `ADMIN_EMAIL` and `ADMIN_USERNAME`. SMTP is optional and disabled by default.
+   A disabled installation uses the local temporary-password setup flow. Enable
+   SMTP only after configuring and validating every `SMTP_*` setting.
 
    ```bash
    # backend/
-   uv run python scripts/bootstrap_admin.py
+   uv run python operations/bootstrap_admin.py
    ```
 
 5. Start host services in separate terminals. Their bind addresses and ports
@@ -117,114 +115,165 @@ Run these commands from the repository root unless a directory is shown.
    npm run dev
    ```
 
-With the example ports, the app is at [localhost:3000](http://localhost:3000),
-FastAPI docs at [localhost:8000/docs](http://localhost:8000/docs), Studio at
-[127.0.0.1:54323](http://127.0.0.1:54323), and Mailpit at
-[127.0.0.1:54324](http://127.0.0.1:54324). Supabase API/database ports are
-`SUPABASE_API_PORT` and `SUPABASE_DB_PORT`. Verify local platform bindings with
-`supabase status` before use. Do not apply PostgreSQL network restrictions that
-block Supabase's internal service connections.
+6. Start the containerized HTTPS gateway from the repository root:
+
+   ```bash
+   ./scripts/dev.py caddy
+   ```
+
+   On Windows, replace `./scripts/dev.py` with `py scripts/dev.py` in the
+   developer commands.
+
+With the example development ports, open OpenSlate at
+[localhost:3448](https://localhost:3448). FastAPI docs remain available to the
+developer at [localhost:8000/docs](http://localhost:8000/docs). The first
+browser visit may require accepting Caddy's local development certificate.
+Caddy is the installation-style HTTPS gateway. During `npm run dev`,
+[localhost:3000](http://localhost:3000) is also supported: Next.js proxies its
+same-origin `/api/*` requests to the configured FastAPI development origin.
 
 ## Local containers with Compose
 
-The existing root `compose.yaml` can run the backend, frontend, and ClamAV
-independently. Supabase remains CLI-managed; migrations and account setup stay
-separate. Use the environment helper for every Compose command. It validates
-root `.env`, derives Docker-reachable service URLs in memory, and passes only
-each service's allowed settings. JWT issuer identity stays unchanged. No second
-database URL or generated Compose secret file is needed.
+The root Compose configuration is for local developer services. PostgreSQL is
+the only database container; the `gateway` profile runs Caddy and the `db-ui`
+profile runs pgweb. Migrations, role provisioning, and first local administrator
+creation remain explicit commands. The environment helper validates the settings
+for each selected service, generates private runtime files only for pgweb or
+Caddy, and passes only each service's allowed settings. PostgreSQL always binds
+to loopback.
 
 From the repository root:
 
 ```bash
-uv run --directory backend python ../scripts/environment.py compose config --quiet
-uv run --directory backend python ../scripts/environment.py compose up -d --build backend frontend
-uv run --directory backend python ../scripts/environment.py compose ps
-uv run --directory backend python ../scripts/environment.py compose logs -f backend frontend
-uv run --directory backend python ../scripts/environment.py compose down
+./scripts/dev.py db          # PostgreSQL only
+./scripts/dev.py pgweb       # Optional database UI
+./scripts/dev.py caddy       # HTTPS gateway
+./scripts/dev.py containers  # All three containers
+./scripts/dev.py status
+./scripts/dev.py stop
 ```
 
-Stop any host servers using the configured application ports before starting
-their containers. Repeat `up -d --build` after source or public frontend setting
-changes. `down` leaves Supabase and its data intact; use `supabase stop`
-separately. Full rendered Compose configuration contains secrets; use
-`config --quiet` for routine validation.
+FastAPI and Next.js run on the host through the commands in Local setup; Compose
+does not build or run them. `down` leaves the development database volume intact
+unless it is explicitly removed. Full rendered Compose configuration contains
+secrets; use `config --quiet` for routine validation.
 
-Before starting `clamav`, set `SCANNER_DEFINITIONS` to an existing absolute path
-containing verified immutable definitions, following the
-[scanner provisioning procedure](docs/architecture/11-infrastructure.md#daily-definition-maintenance-and-first-provisioning).
-Compose mounts definitions read-only and does not refresh them. The separate
-scanner worker also requires `FILES_CLAMAV_HOST`, `FILES_CLAMAV_PORT`, and the
-matching readable `FILES_CLAMAV_MANIFEST_PATH`; starting the engine alone does
-not process uploads.
+The gateway configuration is regenerated from `.env` at
+`.agent-runtime/caddy/Caddyfile`. On Docker Desktop, Caddy reaches the host-run
+FastAPI and Next.js processes through Docker's host gateway and publishes only
+HTTPS port `3448` on loopback. On native Linux, the same command selects a
+host-network Caddy container so it can reach the documented loopback upstreams;
+the generated Caddyfile binds only `GATEWAY_BIND_HOST`. Its local certificate
+authority is retained in the `caddy-data` volume across container restarts.
 
-The app ports use `COMPOSE_BIND_HOST`; ClamAV has no published port and uses an
-internal network. All three services run as non-root with read-only roots and
-dropped capabilities. Logs use `CONTAINER_LOG_DIR` in temporary container
-storage. This Compose path targets local Docker Desktop; Linux deployments must
-make the Supabase host ports reachable through the Docker host gateway without
-publishing them publicly.
+### Optional pgweb database UI
+
+After role provisioning, start pgweb from the repository root through the
+environment helper:
+
+```bash
+./scripts/dev.py pgweb
+```
+
+Open [localhost:8081](http://localhost:8081). pgweb is pinned to a reviewed
+image, binds only to loopback, and connects with the dedicated
+`openslate_inspector` login. PostgreSQL permits that login to read application
+tables and rejects inserts, updates, deletes, schema changes, role changes, and
+database creation. Its generated passfile is readable by pgweb's non-root UID,
+while its `.agent-runtime/pgweb` directory is owner-only on the host. The pgweb
+process also runs with its read-only mode enabled.
+
+The UI can display all data in the local development database, so keep it on
+loopback and stop it when it is no longer needed:
+
+```bash
+./scripts/dev.py stop pgweb
+```
+
+pgweb is a developer inspection tool. It is not included in the Windows/macOS
+customer application or exposed through Caddy.
+
+The PostgreSQL Compose path does not provision ClamAV. The repository has no
+cross-platform `dev.py` scanner service: its reproducible real-engine path is
+the Linux amd64 disposable full-stack runner, which builds the pinned image,
+uses the checked-in one-shot FreshClam configuration to fetch definitions,
+validates the resulting manifest, starts the isolated engine, and starts the
+file worker in its own container:
+
+```bash
+# backend/
+uv run python -m tests.fullstack_runner
+```
+
+Do not reuse that runner's temporary definitions or manifest for ordinary
+development. A separately operated scanner must provide an immutable verified
+definition generation and matching `FILES_CLAMAV_HOST`, `FILES_CLAMAV_PORT`,
+and `FILES_CLAMAV_MANIFEST_PATH` in root `.env`. Only after those prerequisites
+are healthy, start the durable worker from `backend/`:
+
+```bash
+uv run python -m app.systems.platform.files.worker
+```
+
+The worker exits safely when the scanner configuration or its leadership
+session is unavailable. Native Windows/macOS scanner packaging remains a
+customer-installation release gate.
 
 ## Stop and reset
 
-Stop the local platform while preserving its data:
+Stop local development services while preserving their data:
 
 ```bash
-supabase stop
+./scripts/dev.py stop
 ```
 
-For a destructive local database reset, run the platform reset and then apply
-the application schema again:
+For a destructive disposable database reset, remove only the documented local
+PostgreSQL volume, restart the database, then apply the application schema:
 
 ```bash
-supabase start
-supabase db reset
+docker compose rm --stop --force postgres
+docker volume rm openslate_postgres-data
+./scripts/dev.py db
 cd backend
+uv run python operations/provision_database_role.py
 uv run alembic upgrade head
 ```
 
 To clear local application data and private file objects while keeping the
-existing sample administrator usable, stop FastAPI and the file scanner, keep
-the local Supabase stack running, and run the guarded reset utility from
-`backend/`:
+existing sample administrator usable, stop FastAPI and the file scanner, then
+run the guarded reset utility from `backend/`:
 
 ```bash
 # Read-only plan: review the preserved administrator and per-table counts.
-uv run python scripts/reset_application_data.py
+uv run python operations/reset_application_data.py
 
 # Rebuild the plan, then enter its impact digest exactly when prompted.
-uv run python scripts/reset_application_data.py --execute
+uv run python operations/reset_application_data.py --execute
 ```
 
-The utility accepts only the loopback Supabase database at
-`127.0.0.1:54322/postgres` and local Storage API at `127.0.0.1:54321`. It
-requires `MIGRATION_DATABASE_URL`, `ADMIN_EMAIL`, `SUPABASE_URL`,
-`SUPABASE_SECRET_KEY`, and the canonical `BACKEND_PORT=8000`; verifies the
-running Supabase project and Alembic head; and fails closed on schema drift or
-an active API/scanner. Every application profile except `ADMIN_EMAIL`'s
+The utility requires the configured disposable PostgreSQL connections,
+`ADMIN_EMAIL`, and the canonical `BACKEND_PORT=8000`; it verifies Alembic head
+and fails closed on schema drift or an active API/scanner. Every application profile except `ADMIN_EMAIL`'s
 matching profile is deleted, along with all domain, relationship, audit, and
 lifecycle rows, saved views, file metadata, and every custom role. It resets
 the workspace singleton's editable fields to their migration defaults while
 preserving its ID. The utility refuses to run when another effective
 administrator exists; pending, disabled, and soft-deleted
 admin-shaped profiles are reset. It preserves the matching active administrator
-profile and the required `admin` and `member` roles. Supabase-managed schemas
-and all Auth identities remain unchanged. After the database commit it deletes
-all objects visible in the private `openslate-files` bucket, including objects
-without matching file rows. Storage deletion cannot share the database
+profile and the required `admin` and `member` roles. After the database commit
+it deletes private local objects, including objects without matching file rows.
+Filesystem deletion cannot share the database
 transaction: if it fails, the utility reports that the database was already
 reset and requires a fresh dry run before retrying cleanup. Because deleted
 profiles are removed, retained `performed_by` references to them are
 intentionally cleared by the database's `ON DELETE SET NULL` behavior;
-retained non-admin Auth identities cannot access FastAPI after their
-application profiles are removed.
+retained non-admin identities cannot access FastAPI after their application
+profiles are removed.
 
 This utility is local-only. It is not a release rollback or a hosted recovery
 mechanism; recovery requires the separately selected backup and restore process.
 
-Never add application SQL files under `supabase/migrations` or use Supabase
-seed files. Schema changes go through `backend/migrations/` and are checked
-with Alembic.
+Schema changes go through `backend/migrations/` and are checked with Alembic.
 
 ## Domain API
 
@@ -234,21 +283,19 @@ expose `POST`, `GET`, `PATCH`, soft `DELETE`, and restore where applicable.
 Records validate active field definitions, required values, select options, and
 JSON value types.
 
-The authentication integration uses Supabase Auth JWTs. Admin invitations are
-sent through the server-only Supabase secret key and delivered to local
-Mailpit. The browser uses only the publishable key. Realtime is a private
-Broadcast channel used to invalidate client data; it is not a second data API.
-Files belong in Supabase Storage and must not be mounted from a root `storage/`
-directory.
+FastAPI Identity issues short-lived signed JWTs, stores local sessions and
+action tokens in PostgreSQL, and manages HttpOnly browser cookies plus CSRF.
+Optional SMTP delivery uses a PostgreSQL outbox with encrypted payloads,
+bounded retry, and one-time invitation/recovery links. It remains healthy when
+disabled. Authenticated SSE invalidates client caches without carrying row
+data. Files live in the private configured storage root and are mediated by
+FastAPI.
 
 ## Verification
 
-After the platform is running and Alembic has applied the schema:
+After PostgreSQL is running and Alembic has applied the schema:
 
 ```bash
-# root
-supabase status
-
 # backend/
 uv run alembic check
 uv run ruff check .
@@ -263,7 +310,7 @@ npm test
 ```
 
 From the repository root, run a backend section with
-`python3 scripts/test.py backend section runtime --layer isolated`. From
+`python3 scripts/run_tests.py backend section runtime --layer isolated`. From
 `frontend/`, run `npm run test:section -- security --layer isolated` or
 `npm run test:affected -- --list`. See the [testing workflow](docs/architecture/16-testing-architecture.md)
 for sections, affected selection, and full verification.
@@ -275,33 +322,37 @@ it in source control:
 TEST_DATABASE_URL="$DATABASE_URL" uv run pytest tests/test_audit_integration.py
 ```
 
+## Proposed customer installation
+
+The [deployment architecture](docs/architecture/12-deployment-architecture.md)
+describes a future Windows or macOS server app that one customer installs on a
+host computer for browser and installable web-app access by their team. It
+specifies platform packaging, automatic setup and safe retry, updates, backups,
+and recovery. The repository now has a development native Manager shell and a
+guarded encrypted-backup command, but no signed customer installer or bundled
+native services. The local developer setup above remains the supported path.
+
 ## Future hosted deployment
 
 Hosted deployment is not implemented or production-ready. The approved contract
 and release order are in [Deployment architecture](docs/architecture/12-deployment-architecture.md):
-one trust domain per deployment with isolated Auth, PostgreSQL, Storage, secrets,
-backups, and administrator population; shared tenancy is deferred. FastAPI is
-private in the hosted topology. Only the required Supabase Auth, JWKS, and
-Realtime surfaces remain public, under controlled provider policy. The frontend
-uses `/bff/*`; direct Next `/api` and API documentation rewrites are not part of
-the contract.
+one trust domain per deployment with isolated local identity, PostgreSQL,
+private files, secrets, backups, and administrator population; shared tenancy
+is deferred. Caddy is the browser-facing origin and FastAPI remains private
+behind its same-origin `/api` route.
 
 CI verifies both standalone images but does not publish or deploy them. The
-frontend image requires public Supabase build arguments and receives
-`BACKEND_URL` only at runtime; neither image migrates, provisions, bootstraps,
-or starts Supabase.
+frontend image uses same-origin API paths; neither image migrates, provisions,
+or bootstraps the database.
 
-Provider, registry, secret manager, SMTP, RPO/RTO, retention, actual backup
-implementation, and hosted topology remain selections/blockers. No
-provider-neutral infrastructure is checked in.
+Registry, secret manager, SMTP provider, RPO/RTO, retention, full restore
+procedure, and hosted topology remain selections or blockers. The SMTP outbox
+and backup command are application foundations; they do not choose or operate
+those external services for a hosted deployment.
 
-Migration `0010` requires an owner-capable path for policy DDL on
-`realtime.messages` and permission to provision the application database
-roles. Local Supabase supplies that path through a tightly scoped CLI-only
-fallback. Before a hosted cutover, verify the hosted migration principal can
-perform those operations or apply the Realtime policy through a separately
-approved owner-capable deployment step; the migration intentionally fails
-closed otherwise.
+The vanilla PostgreSQL baseline requires the owner migration connection and
+separate runtime-role provisioning. Before a hosted cutover, verify that the
+deployment principal has the documented owner/bootstrap capabilities.
 
 ## Repository architecture
 
@@ -321,4 +372,4 @@ closed otherwise.
 - `frontend/src/app/` contains App Router routes; reusable primitives live
   under `frontend/src/components/ui/`.
 - `infra/docker/` retains standalone backend and frontend deployment images;
-  local orchestration is Supabase CLI plus host-run services.
+  local development uses PostgreSQL plus host-run services.

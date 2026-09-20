@@ -5,9 +5,9 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from uuid6 import uuid7
 
-from app.core.integrations.supabase import SupabaseAdminError
 from app.systems.manage.audit import listeners, service
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+from app.systems.platform.events.models import InvalidationEvent
 
 SQL_CANARY = token_urlsafe(32)
 PASSWORD_CANARY = token_urlsafe(32)
@@ -49,12 +49,12 @@ def test_persistence_failure_is_logged_without_payload(monkeypatch, caplog) -> N
 
 def test_realtime_failure_remains_best_effort_and_is_visible(monkeypatch, caplog) -> None:
     class CommittedSession:
-        info = {listeners.REALTIME_INVALIDATION_KEY: True}
+        info = {listeners.REALTIME_INVALIDATION_KEY: [InvalidationEvent(entity="records")]}
 
-    def unavailable(event):
-        raise SupabaseAdminError("private provider response")
+    def unavailable(events):
+        raise RuntimeError("private event transport response")
 
-    monkeypatch.setattr(listeners, "broadcast_invalidation", unavailable)
+    monkeypatch.setattr(listeners, "publish_invalidations", unavailable)
     with caplog.at_level(logging.WARNING):
         listeners.broadcast_committed_changes(CommittedSession())
     assert "realtime_invalidation_failure" in caplog.text

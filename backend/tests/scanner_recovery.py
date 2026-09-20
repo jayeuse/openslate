@@ -11,7 +11,6 @@ import re
 import subprocess
 import sys
 import time
-import tomllib
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,12 +27,12 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.systems.platform.files.worker import LEADER_LOCK
+from tests.postgres_runtime import assert_runner_database_url
 
 if TYPE_CHECKING:
     from tests.scanner_runtime import DisposableScanner
 
 API = "http://127.0.0.1:8008"
-AUTH = "http://127.0.0.1:55321"
 MANIFEST = "/run/scanner-manifest.json"
 
 
@@ -41,18 +40,20 @@ def _guard(
     scanner: "DisposableScanner", application_env: dict[str, str], admin_identity: dict[str, str]
 ) -> None:
     target = urlsplit(application_env["DATABASE_URL"])
-    config = tomllib.loads((scanner.private / "supabase/config.toml").read_text())
+    try:
+        assert_runner_database_url(
+            application_env["DATABASE_URL"],
+            application_env,
+            allowed_roles=frozenset({"openslate_runtime"}),
+        )
+    except RuntimeError:
+        disposable_database = False
+    else:
+        disposable_database = target.path == "/openslate"
     if (
         re.fullmatch(r"[a-f0-9]{32}", scanner.run_id) is None
-        or target.hostname != "127.0.0.1"
-        or target.port != 55322
-        or target.username != "openslate_runtime"
-        or target.path != "/postgres"
-        or application_env["SUPABASE_URL"] != AUTH
+        or not disposable_database
         or application_env["ENVIRONMENT"] != "test"
-        or config["project_id"] != f"p5-{scanner.run_id}"
-        or config["api"]["port"] != 55321
-        or config["db"]["port"] != 55322
         or admin_identity["email"] != f"p5-{scanner.run_id}-admin@example.com"
         or scanner.worker != f"openslate-scan-worker-e2e-{scanner.run_id}"
         or scanner.container != f"openslate-clamav-e2e-{scanner.run_id}"
@@ -72,13 +73,11 @@ def _guard(
 
 
 def _headers(application_env: dict[str, str], identity: dict[str, str]) -> dict[str, str]:
-    # JWTs deliberately expire after 60 seconds in this fixture; authenticate at
-    # each API phase rather than using a token across engine startup.
+    # Authenticate at each API phase rather than reusing a token across engine startup.
     with httpx.Client(timeout=10, trust_env=False) as client:
         response = client.post(
-            AUTH + "/auth/v1/token?grant_type=password",
-            headers={"apikey": application_env["SUPABASE_PUBLISHABLE_KEY"]},
-            json={"email": identity["email"], "password": identity["password"]},
+            API + "/api/auth/token",
+            json={"identifier": identity["email"], "password": identity["password"]},
         )
     if response.status_code != 200:
         raise RuntimeError("Recovery fixture authentication failed")
@@ -157,7 +156,8 @@ def _replace_engine(scanner: "DisposableScanner") -> None:
             scanner.network,
             "--mount",
             f"type=bind,src={scanner.definitions},dst=/var/lib/clamav,readonly",
-            "--env", "FILES_CLAMAV_PORT=3310",
+            "--env",
+            "FILES_CLAMAV_PORT=3310",
             image,
         ],
         timeout=30,

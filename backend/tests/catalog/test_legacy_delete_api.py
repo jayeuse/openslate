@@ -71,7 +71,7 @@ def test_registered_delete_requires_authentication(route_template: str) -> None:
     response = _client(database).delete(route_template.format(id=uuid7()))
 
     assert response.status_code == 401
-    assert response.json() == {"detail": "Not authenticated"}
+    assert response.json() == {"detail": "Invalid authentication credentials"}
     assert response.headers["www-authenticate"] == "Bearer"
     database.get.assert_not_called()
 

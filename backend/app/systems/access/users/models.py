@@ -5,30 +5,18 @@ from uuid import UUID
 
 from sqlalchemy import (
     CheckConstraint,
-    Column,
     DateTime,
     ForeignKey,
     String,
-    Table,
     UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.common.normalization import normalize_email, normalize_username
 from app.core.base_model import BaseModel
-from app.core.database.base import Base
-
-auth_users = Table(
-    "users",
-    Base.metadata,
-    Column("id", PostgreSQLUUID(as_uuid=True), primary_key=True),
-    schema="auth",
-    info={"external": True},
-)
 
 
 class UserRole(StrEnum):
@@ -74,11 +62,6 @@ class User(BaseModel):
         ),
     )
 
-    id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True),
-        ForeignKey(auth_users.c.id, ondelete="CASCADE", use_alter=True),
-        primary_key=True,
-    )
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
 
     username: Mapped[str] = mapped_column(String(100), index=True, nullable=False)

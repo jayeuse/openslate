@@ -56,7 +56,7 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
 
 def test_registered_query_and_export_share_rows_and_commit_event(query_db):
     from fastapi.testclient import TestClient
-    from sqlalchemy import select, text
+    from sqlalchemy import select
     from uuid6 import uuid7
 
     from app.common.dependencies import get_current_user
@@ -68,13 +68,16 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
     engine = query_db.get_bind().engine
     actor_id = uuid7()
     with AuditSession(engine) as setup:
-        setup.connection().execute(
-            text("INSERT INTO auth.users (id,email) VALUES (:id,:email)"),
-            {"id": actor_id, "email": f"p7-export-{actor_id}@example.com"},
+        role = setup.scalar(select(Role).where(Role.role == "admin"))
+        assert role is not None
+        actor = User(
+            id=actor_id,
+            email=f"p7-export-{actor_id}@example.com",
+            username=f"p7_export_{actor_id.hex[:12]}",
+            role_id=role.id,
+            status="active",
         )
-        actor = setup.get(User, actor_id)
-        actor.role = setup.scalar(select(Role).where(Role.role == "admin"))
-        actor.status = "active"
+        setup.add(actor)
         module, field, records = setup_rows(setup, "decimal", ["2", "10"])
         setup.commit()
         module_id, field_id, department_id = module.id, field.id, module.department_id
@@ -122,7 +125,4 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
                 cleanup.flush()
             cleanup.delete(cleanup.get(User, actor_id))
             cleanup.flush()
-            cleanup.connection().execute(
-                text("DELETE FROM auth.users WHERE id=:id"), {"id": actor_id}
-            )
             cleanup.commit()

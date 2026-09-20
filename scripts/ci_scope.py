@@ -26,10 +26,7 @@ GATE_NAMES: Final[tuple[str, ...]] = (
 
 _FRONTEND_PREFIX = "frontend/"
 _BACKEND_PREFIX = "backend/"
-_CONTAINER_PREFIXES: Final[tuple[str, ...]] = (
-    "infra/",
-    "supabase/",
-)
+_CONTAINER_PREFIXES: Final[tuple[str, ...]] = ("infra/",)
 _CONTAINER_PATHS: Final[frozenset[str]] = frozenset(
     {
         ".dockerignore",
@@ -45,8 +42,8 @@ _FRONTEND_IMAGE_PATHS: Final[frozenset[str]] = frozenset(
         "frontend/package.json",
         "frontend/package-lock.json",
         "frontend/next.config.ts",
-        "frontend/scripts/run-next.mjs",
-        "frontend/scripts/start-standalone.mjs",
+        "frontend/tooling/run-next.mjs",
+        "frontend/tooling/start-standalone.mjs",
         "frontend/src/lib/environment.ts",
         "infra/docker/frontend.Dockerfile",
         "scripts/build_frontend_image.py",
@@ -65,6 +62,7 @@ _TOOLING_PREFIXES: Final[tuple[str, ...]] = (
     ".codex/",
     ".agents/",
     "scripts/",
+    "tests/tooling/",
 )
 _FRONTEND_TOOLING_PATHS: Final[frozenset[str]] = frozenset(
     {
@@ -72,8 +70,6 @@ _FRONTEND_TOOLING_PATHS: Final[frozenset[str]] = frozenset(
         ".github/workflows/frontend-compatibility.yml",
         ".github/workflows/fullstack.yml",
         "scripts/build_frontend_image.py",
-        "scripts/test_build_frontend_image.py",
-        "scripts/test_ci_workflows.py",
     }
 )
 _KNOWN_ROOT_FILES: Final[frozenset[str]] = frozenset(
@@ -318,15 +314,9 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
     container_run = (
         broad or bool(container_paths) or frontend_container_run or backend_container_run
     )
-    frontend_image_definitions = tuple(
-        sorted(_FRONTEND_IMAGE_PATHS.intersection(functional))
-    )
-    backend_image_definitions = tuple(
-        sorted(_BACKEND_IMAGE_PATHS.intersection(functional))
-    )
-    container_reason_paths = (
-        container_paths or frontend_paths or backend_paths or tooling_paths
-    )
+    frontend_image_definitions = tuple(sorted(_FRONTEND_IMAGE_PATHS.intersection(functional)))
+    backend_image_definitions = tuple(sorted(_BACKEND_IMAGE_PATHS.intersection(functional)))
+    container_reason_paths = container_paths or frontend_paths or backend_paths or tooling_paths
 
     frontend_reason = (
         f"Frontend paths changed: {_path_list(frontend_paths)}"

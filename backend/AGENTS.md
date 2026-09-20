@@ -1,6 +1,6 @@
 # Backend Guide
 
-FastAPI application data API: Python 3.12, synchronous SQLAlchemy 2 + Alembic, and Supabase Auth for identities. Run commands from `backend/` (`uv run ...`); the project is not installed as a package.
+FastAPI application data API: Python 3.12, synchronous SQLAlchemy 2 + Alembic, and local Identity in PostgreSQL. Run commands from `backend/` (`uv run ...`); the project is not installed as a package.
 
 The deployment profile is one full stack per client (single tenant, micro–medium SMB, on-premise first). Keep the synchronous stack; do not introduce async SQLAlchemy, keyset pagination, or tenant-scoped schemas without an explicit decision.
 
@@ -14,7 +14,7 @@ The deployment profile is one full stack per client (single tenant, micro–medi
 ## Tooling and style
 
 - Every file under `backend/` must contain no more than 500 lines. Migration files under `backend/migrations/` are exempt.
-- Require Python `>=3.12,<3.15`; Ruff rules are `E,F,I,B,UP` with line length 100; mypy is strict with Pydantic and SQLAlchemy plugins. Check with `uv run ruff check . && uv run mypy app scripts`.
+- Require Python `>=3.12,<3.15`; Ruff rules are `E,F,I,B,UP` with line length 100; mypy is strict with Pydantic and SQLAlchemy plugins. Check with `uv run ruff check . && uv run mypy app operations`.
 - Use plain `sqlalchemy.orm.Session` from `get_db`, `create_engine`, and `db.commit()` in routes/services. Do not refactor to async SQLAlchemy.
 - Prefer typed code: `Mapped[...]` ORM columns, `Annotated[..., Depends(...)]`, `StrEnum`, and typed Pydantic v2 schemas. Responses use `from_attributes=True`; request models use `extra="forbid"` when silently ignored input is unsafe.
 - Keep simple use cases in routers. Do not add generic repositories, a global error envelope, or service-per-feature layers without an explicit need.
@@ -24,14 +24,14 @@ The deployment profile is one full stack per client (single tenant, micro–medi
 - Domain models inherit `app.core.base_model.BaseModel` (`UUIDv7 id`, timestamps, soft-delete fields, and `performed_by`). Audit/lifecycle support tables inherit `Base` directly and disable audit.
 - Register every ORM model in `app/core/database/model_registry.py`; Alembic autogenerate only sees imported registry models.
 - Schema flow is models → `migrations/AGENTS.md` → `uv run alembic revision --autogenerate` → review → `uv run alembic upgrade head` and `uv run alembic check`.
-- Tables with `info={"external": True}` are Supabase Auth placeholders: exclude them from autogenerate and never migrate or alter them.
+- Identity, session, action-token, and rate-limit tables are application-owned models and must be registered like other ORM models.
 - Soft delete is explicit (`is_deleted`/`deleted_at`); `BaseModel` does not filter automatically. Deleted-aware lists use `execute_standard_list`.
 
 ## Mutations and audit
 
 - Every mutation uses the request-provided `AuditSession` (`get_db`) and individual ORM instance changes. Bulk ORM `update()`/`delete()` and raw ORM mutation execution are rejected by audit listeners.
 - Routes/services own `commit()` and `rollback()`; roll back before translating `IntegrityError` or concurrency failures into safe HTTP responses.
-- Audit covers application ORM mutations only, not Auth, Alembic, Studio, or direct SQL. Record minimal diffs and redact keys such as `password`, `token`, `secret`, and `api_key`.
+- Audit covers application ORM mutations only, not Alembic or direct SQL. Record minimal diffs and redact keys such as `password`, `token`, `secret`, and `api_key`.
 
 ## API conventions
 
@@ -45,8 +45,8 @@ The deployment profile is one full stack per client (single tenant, micro–medi
 
 - Follow the root non-negotiable test workflow: focused case, passing feature batch, affected PostgreSQL integration, then pre-push gates. Run full suites only when preparing to push; edits, commits, and routine handoffs use focused checks.
 - Run `COVERAGE_BASE_REF=<base-ref> uv run python -m tests.fullstack_runner --backend-coverage-only` for the full backend coverage gate only when preparing to push. The configured pytest default is 90%; the runner includes complete disposable PostgreSQL tests and the changed-line gate. Use `uv run pytest --no-cov -k <name>` for focused iteration; this does not satisfy the coverage gate.
-- PostgreSQL integration tests require the runner-owned disposable Supabase database (exact `127.0.0.1:55322/postgres`, current Alembic head), explicit mutation flag, generated run identity, and private credentials manifest. Never reuse the personal database on port 54322. Tests use `pytest.mark.integration`; override `get_db`/`get_current_user` with `dependency_overrides` and build rows with local `make_*` helpers, not a factory module.
-- `scripts/bootstrap_admin.py` invites the first administrator once; `provision_database_role.py` creates least-privilege `openslate_runtime` (reads canonical root `.env`); `seed_sample_data.py` seeds through the API with an admin token; `reset_application_data.py` is dry-run by default and requires `--execute`, a TTY, and exact digest confirmation.
+- PostgreSQL integration tests require the runner-owned disposable PostgreSQL database at the current Alembic head, explicit mutation flag, generated run identity, and private credentials manifest. Never reuse a personal database. Tests use `pytest.mark.integration`; override `get_db`/`get_current_user` with `dependency_overrides` and build rows with local `make_*` helpers, not a factory module.
+- `operations/` contains backend-owned operator commands. `bootstrap_admin.py` invites the first administrator once; `provision_database_role.py` creates least-privilege `openslate_runtime` and the optional read-only `openslate_inspector` login (reads canonical root `.env`); `seed_sample_data.py` seeds through the API with an admin token; `reset_application_data.py` is dry-run by default and requires `--execute`, a TTY, and exact digest confirmation. Repository-wide automation remains in root `scripts/`.
 
 ## TDD and coverage
 

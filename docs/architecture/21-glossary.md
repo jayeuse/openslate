@@ -1,43 +1,16 @@
 # Glossary
 
-> **Scope:** Canonical domain, lifecycle, authorization, data, and infrastructure terms used across the architecture set.
-> **Audience:** Anyone reading or editing OpenSlate architecture documentation.
-> **Related documents:** [System overview](01-system-overview.md), [Domain architecture](03-domain-architecture.md), [Lifecycle](09-lifecycle-and-state-management.md)
-
-| Term                     | Canonical meaning in OpenSlate                                                                                                                                                                               |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Active user              | Local user with `status = active`, not soft-deleted, and assigned an active role.                                                                                                                            |
-| Administrator            | Active local user whose role name is exactly `admin`.                                                                                                                                                        |
-| Alembic                  | Sole application-schema migration system.                                                                                                                                                                    |
-| Application data API     | FastAPI routes under `/api`; not the Supabase Data API.                                                                                                                                                      |
-| Audit boundary           | Normal application ORM mutations through `AuditSession`; excludes direct SQL, Auth, Studio, Alembic, Data API, and external clients.                                                                         |
-| Audit log                | Immutable-at-application-layer row containing action, entity, minimal before/after data, actor, and request metadata.                                                                                        |
-| BFF                      | Next.js backend-for-frontend route `/bff/[...path]` that converts HttpOnly cookie session state into authenticated FastAPI requests.                                                                         |
-| Blocker                  | Lifecycle preflight condition that prevents a transition, such as a naming conflict or invalid reopened schema.                                                                                              |
-| Canonical decimal string | Decimal wire value with no exponent, plus sign, or leading-zero syntax; trailing fractional zeroes and negative zero are normalized, within 38 integer and 18 fractional digits.                             |
-| Challenge                | Short-lived, hashed, actor/operation/target/digest-bound lifecycle confirmation record.                                                                                                                      |
-| Close                    | Soft lifecycle transition to `is_deleted = true` with a deletion timestamp. Use “close,” not “archive,” as the canonical action.                                                                             |
-| Closed field value       | Record JSON value belonging to a closed field; retained and immutable during active record updates.                                                                                                          |
-| Department               | Top-level organizational container for modules.                                                                                                                                                              |
-| Field                    | Ordered typed schema definition owned by a module.                                                                                                                                                           |
-| Impact digest            | Canonical hash of a lifecycle plan, used to detect drift between preview and execution.                                                                                                                      |
-| Invalidation             | Opaque Realtime Broadcast event telling clients to refetch; contains no row snapshot.                                                                                                                        |
-| Local profile            | Application `public.users` row keyed to a Supabase Auth identity.                                                                                                                                            |
-| Member                   | Seeded non-admin role name; its domain API authority comes only from explicitly granted capabilities.                                                                                                        |
-| Module                   | Configurable record type within a department.                                                                                                                                                                |
-| Open                     | Canonical usable state where `is_deleted = false`; opposite of closed.                                                                                                                                       |
-| Permissions              | Strict flat JSON object containing a subset of the ten known capabilities with boolean values; omitted values deny. Malformed historical documents are readable but ineffective for non-admin authorization. |
-| Purge                    | Irreversible physical deletion after gated lifecycle planning; disabled by default.                                                                                                                          |
-| Record                   | Module instance with primitive/select values stored as JSONB keyed by field UUID.                                                                                                                            |
-| Relationship edge        | Directed stored link from a source record to a target record under a relationship field.                                                                                                                     |
-| Relationship field       | Field that defines target module and source/target cardinality; its values are stored as edges, not record JSON.                                                                                             |
-| Reopen                   | Lifecycle transition from closed to open after conflict and validity preflight.                                                                                                                              |
-| Restore                  | Compatibility route/action for reopening directly soft-deleted entities such as records/users; prefer “reopen” for hierarchical lifecycle operations.                                                        |
-| Role                     | Local named authorization category. The exact `admin` role is implicitly granted all capabilities; other roles are evaluated by their permission document.                                                   |
-| Runtime role             | PostgreSQL login `openslate_runtime`, provisioned for FastAPI and inheriting `openslate_app`.                                                                                                                |
-| Schema acceptance        | Module flag set when the backend validates the active field schema for record creation; it is not continuously synchronized with later lifecycle close/reopen state.                                         |
-| Soft delete              | Persistence mechanism behind close: retain row while setting deletion state.                                                                                                                                 |
-| Supabase Auth            | External identity, password, invitation, and token authority.                                                                                                                                                |
-| Supabase CLI platform    | Local PostgreSQL/Auth/Realtime/Storage/Studio/Mailpit services managed from `supabase/config.toml`.                                                                                                          |
-| Tenant                   | Independent trust domain. The supported model is one trust domain per deployment; no tenant key or tenant/RLS isolation is implemented.                                                                      |
-| UUIDv7                   | Time-ordered UUID generated for most application-owned rows.                                                                                                                                                 |
+| Term | Meaning |
+| --- | --- |
+| Action token | One-time, purpose-bound local token for invitation, recovery, or password actions. |
+| `AuditSession` | SQLAlchemy session that captures supported application ORM mutations. |
+| Caddy gateway | Same-origin reverse proxy from the canonical browser origin to Next.js and FastAPI. |
+| Identity session | Server-side PostgreSQL state for refresh rotation, revocation, and browser/CLI credentials. |
+| Owner connection | High-privilege migration connection used only by Alembic. |
+| Runtime connection | Constrained PostgreSQL login used by FastAPI. |
+| SMTP delivery outbox | PostgreSQL queue containing encrypted optional invitation or recovery delivery payloads for the bounded SMTP worker. |
+| Quarantine object | Private file byte object awaiting verified scan/promotion. |
+| Ready object | Immutable private file byte object that passed scanner and integrity checks. |
+| SSE invalidation | Authenticated opaque signal that asks a client to refetch authorized data. |
+| Setup-only session | Limited identity session that may complete password activation but cannot enter the workspace. |
+| Workspace sample state | Browser-local placeholder data used by UI-first screens. |

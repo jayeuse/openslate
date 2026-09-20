@@ -6,6 +6,205 @@ import {
   ApiContractError,
   getApiFieldErrors,
 } from "../../../src/lib/api";
+
+test("uses the same-origin API path and includes the CSRF cookie for mutations", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalDocument = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "document",
+  );
+  const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { cookie: "openslate_csrf=csrf%20value; other=ignored" },
+  });
+  globalThis.fetch = async (input, init) => {
+    requests.push({ input, init });
+    return Response.json({ id: "record-1" });
+  };
+  try {
+    await expect(
+      apiFetch("/records/one", z.object({ id: z.string() }), {
+        method: "PATCH",
+        body: JSON.stringify({ title: "Changed" }),
+      }),
+    ).resolves.toEqual({ id: "record-1" });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].input).toBe("/api/records/one");
+    expect(new Headers(requests[0].init?.headers).get("X-CSRF-Token")).toBe(
+      "csrf value",
+    );
+    expect(requests[0].init?.credentials).toBe("same-origin");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDocument)
+      Object.defineProperty(globalThis, "document", originalDocument);
+    else Reflect.deleteProperty(globalThis, "document");
+  }
+});
+
+test("retries a rejected API request once after a successful refresh", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalDocument = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "document",
+  );
+  const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { cookie: "openslate_csrf=csrf-token" },
+  });
+  globalThis.fetch = async (input, init) => {
+    requests.push({ input, init });
+    if (requests.length === 1) return new Response(null, { status: 401 });
+    if (requests.length === 2) return new Response(null, { status: 204 });
+    return Response.json({ id: "record-1" });
+  };
+  try {
+    await expect(
+      apiFetch("/records/one", z.object({ id: z.string() }), {
+        method: "DELETE",
+      }),
+    ).resolves.toEqual({ id: "record-1" });
+    expect(requests.map(({ input }) => input)).toEqual([
+      "/api/records/one",
+      "/api/auth/session",
+      "/api/auth/refresh",
+      "/api/records/one",
+    ]);
+    expect(requests[2].init).toMatchObject({
+      method: "POST",
+      credentials: "same-origin",
+    });
+    expect(new Headers(requests[2].init?.headers).get("X-CSRF-Token")).toBe(
+      "csrf-token",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDocument)
+      Object.defineProperty(globalThis, "document", originalDocument);
+    else Reflect.deleteProperty(globalThis, "document");
+  }
+});
+
+test("concurrent rejected requests share one refresh before each retries once", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "navigator",
+  );
+  const requests: Array<RequestInfo | URL> = [];
+  const attempts = new Map<string, number>();
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: {},
+  });
+  globalThis.fetch = async (input) => {
+    requests.push(input);
+    const path = String(input);
+    if (path === "/api/auth/session")
+      return Response.json({ authenticated: false });
+    if (path === "/api/auth/refresh")
+      return Response.json({ authenticated: true, setup_required: false });
+    const attempt = (attempts.get(path) ?? 0) + 1;
+    attempts.set(path, attempt);
+    return attempt === 1
+      ? new Response(null, { status: 401 })
+      : Response.json({ id: path });
+  };
+  try {
+    await expect(
+      Promise.all([
+        apiFetch("/records/one", z.object({ id: z.string() })),
+        apiFetch("/records/two", z.object({ id: z.string() })),
+      ]),
+    ).resolves.toEqual([
+      { id: "/api/records/one" },
+      { id: "/api/records/two" },
+    ]);
+    expect(
+      requests.filter((path) => path === "/api/auth/refresh"),
+    ).toHaveLength(1);
+    expect(attempts).toEqual(
+      new Map([
+        ["/api/records/one", 2],
+        ["/api/records/two", 2],
+      ]),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalNavigator)
+      Object.defineProperty(globalThis, "navigator", originalNavigator);
+    else Reflect.deleteProperty(globalThis, "navigator");
+  }
+});
+
+test("keeps the original API failure readable when refresh is rejected", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const location = { href: "/openview" };
+  const requests: Array<RequestInfo | URL> = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { location },
+  });
+  globalThis.fetch = async (input) => {
+    requests.push(input);
+    return requests.length === 1
+      ? Response.json({ detail: "Session expired" }, { status: 401 })
+      : Response.json({ detail: "Session expired" }, { status: 401 });
+  };
+  try {
+    await expect(apiFetch("/records/one", z.object({}))).rejects.toMatchObject({
+      status: 401,
+      message: "Session expired",
+    });
+    expect(requests).toEqual([
+      "/api/records/one",
+      "/api/auth/session",
+      "/api/auth/refresh",
+    ]);
+    expect(location.href).toBe("/login");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow)
+      Object.defineProperty(globalThis, "window", originalWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("does not navigate or refresh when an auth request opts out of refresh", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const location = { href: "/auth/recovery" };
+  const requests: Array<RequestInfo | URL> = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { location },
+  });
+  globalThis.fetch = async (input) => {
+    requests.push(input);
+    return Response.json(
+      { detail: "Invalid authentication credentials" },
+      { status: 401 },
+    );
+  };
+  try {
+    await expect(
+      apiFetch("/auth/login", z.object({}), {
+        method: "POST",
+        refreshOnUnauthorized: false,
+      }),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(requests).toEqual(["/api/auth/login"]);
+    expect(location.href).toBe("/auth/recovery");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow)
+      Object.defineProperty(globalThis, "window", originalWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
 for (const aborted of [true, false]) {
   test(`${aborted ? "does not navigate for an aborted" : "navigates for a current"} 401 after its body resolves`, async () => {
     const originalFetch = globalThis.fetch;

@@ -50,11 +50,15 @@ jobs:
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --locked
       - name: Run Ruff
-        run: uv run ruff check . ../scripts
+        run: uv run ruff check . ../scripts ../tests/tooling ../packaging/backup
       - name: Run mypy
-        run: uv run mypy app scripts ../scripts/ci_scope.py ../scripts/prepush.py
+        run: uv run mypy app operations ../scripts/ci_scope.py ../scripts/prepush.py ../scripts/run_tests.py ../packaging/backup/backup_installation.py
+      - name: Run packaging backup contracts
+        run: >-
+          uv run pytest ../packaging/backup/tests/test_backup_installation.py
+          --no-cov --basetemp .backup-contracts
       - name: Verify test selection and tooling
-        run: uv run python -m unittest discover -s ../scripts -p 'test_*.py'
+        run: uv run python -m unittest discover -s ../tests/tooling -t .. -p 'test_*.py'
 
   coverage:
     needs: changes
@@ -76,9 +80,6 @@ jobs:
           version: latest
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
-      - uses: supabase/setup-cli@v3
-        with:
-          version: latest
       - run: uv sync --locked
       - name: Complete disposable PostgreSQL tests and coverage gates
         env:

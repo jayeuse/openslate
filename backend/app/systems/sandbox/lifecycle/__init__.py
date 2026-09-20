@@ -29,7 +29,7 @@ __all__ = [
     "reopen_lifecycle",
     "purge_lifecycle",
 ]
-from app.systems.sandbox.lifecycle.password import PasswordGrantClient, SupabasePasswordGrantClient
+from app.systems.sandbox.lifecycle.password import LocalPasswordGrantClient, PasswordGrantClient
 from app.systems.sandbox.lifecycle.service import (
     begin_verification,
     consume_challenge,
@@ -44,7 +44,7 @@ from app.systems.sandbox.lifecycle.service import (
 
 __all__ = [
     "PasswordGrantClient",
-    "SupabasePasswordGrantClient",
+    "LocalPasswordGrantClient",
     "begin_verification",
     "consume_challenge",
     "expire_challenge",

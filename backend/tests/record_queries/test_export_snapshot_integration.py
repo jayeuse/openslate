@@ -1,10 +1,8 @@
 """Registered export API evidence against the guarded disposable PostgreSQL stack."""
 
 import os
-import re
 from collections.abc import Generator
 from dataclasses import dataclass
-from urllib.parse import urlsplit
 from uuid import UUID
 
 import pytest
@@ -24,6 +22,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records import export as export_service
 from app.systems.sandbox.records.models import Record
 from tests.api_integration_support import create_owned_admin, delete_owned_admin
+from tests.conftest import _guard_integration_database
 from tests.conftest import guarded_create_engine as create_engine
 
 pytestmark = pytest.mark.integration
@@ -32,21 +31,15 @@ pytestmark = pytest.mark.integration
 def _disposable_urls() -> tuple[str, str]:
     runtime_url = os.getenv("DATABASE_URL")
     owner_url = os.getenv("MIGRATION_DATABASE_URL")
-    run_id = os.getenv("OPENSLATE_FULLSTACK_RUN_ID", "")
     if runtime_url is None or owner_url is None:
         pytest.skip("Disposable runtime and migration database URLs are required")
-    if os.getenv("E2E_ALLOW_MUTATIONS") != "true" or re.fullmatch(r"[a-f0-9]{32}", run_id) is None:
-        pytest.skip("Explicit disposable mutation authorization is required")
     for database_url in (runtime_url, owner_url):
-        target = urlsplit(database_url)
-        if (
-            target.hostname != "127.0.0.1"
-            or target.port != 55322
-            or target.path.rstrip("/") != "/postgres"
-            or not target.username
-            or not target.password
-        ):
-            raise RuntimeError("Export integration tests require the owned disposable database")
+        try:
+            _guard_integration_database(database_url)
+        except RuntimeError:
+            raise RuntimeError(
+                "Export integration tests require the owned disposable database"
+            ) from None
     return runtime_url, owner_url
 
 
@@ -108,9 +101,7 @@ class _ExportFixture:
     def payload(self) -> dict[str, object]:
         return {
             "module_id": str(self.module_id),
-            "definition": {
-                "columns": [{"field_id": str(self.field_id), "expected_type": "text"}]
-            },
+            "definition": {"columns": [{"field_id": str(self.field_id), "expected_type": "text"}]},
         }
 
     def cleanup(self) -> None:

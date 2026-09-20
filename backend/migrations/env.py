@@ -16,20 +16,6 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def include_object(
-    object_: object,
-    _name: str | None,
-    type_: str,
-    _reflected: bool,
-    _compare_to: object | None,
-) -> bool:
-    """Keep Supabase-managed metadata placeholders out of app migrations."""
-
-    if type_ == "table" and bool(getattr(object_, "info", {}).get("external")):
-        return False
-    return True
-
-
 def run_migrations_offline() -> None:
     context.configure(
         url=config.get_main_option("sqlalchemy.url"),
@@ -37,7 +23,6 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
-        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -54,7 +39,6 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
-            include_object=include_object,
         )
         with context.begin_transaction():
             context.run_migrations()

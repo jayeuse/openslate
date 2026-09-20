@@ -1,364 +1,362 @@
-"""Provider boundary proves immutable requests and bounded/controlled failure behavior."""
+"""Private filesystem storage contracts at the provider boundary."""
 
+import os
+from hashlib import sha256
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
 
-import httpx
 import pytest
+from sqlalchemy import CheckConstraint, SmallInteger
 
-from app.core.config import Settings
-from app.systems.platform.files.providers import ProviderUnavailable
-from app.systems.platform.files.storage import SupabaseStorage
-from tests.config_support import settings_values
-
-
-def _settings(**overrides: object) -> Settings:
-    return Settings(**settings_values(**overrides), _env_file=None)
-
-
-def storage(handler, *, real=False):
-    from contextlib import contextmanager
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from threading import Thread
-
-    original = httpx.Client
-
-    def client(**kwargs):
-        return original(transport=httpx.MockTransport(handler), **kwargs)
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            response = handler(
-                httpx.Request("GET", "http://storage.test" + self.path, headers=dict(self.headers))
-            )
-            self.send_response(response.status_code)
-            for name, value in response.headers.items():
-                if name.lower() != "content-length":
-                    self.send_header(name, value)
-            self.send_header("Content-Length", str(len(response.content)))
-            self.end_headers()
-            self.wfile.write(response.content)
-
-        def log_message(self, *args):
-            pass
-
-    provider = SupabaseStorage(
-        _settings(supabase_url="http://storage.test", supabase_secret_key="test")
-    )
-
-    @contextmanager
-    def context():
-        if not real:
-            with patch("app.systems.platform.files.storage.httpx.Client", client):
-                yield
-            return
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        thread = Thread(target=server.serve_forever)
-        thread.start()
-        provider.base_url = f"http://127.0.0.1:{server.server_port}"
-        try:
-            with patch("app.systems.platform.files.storage.httpx.Client", client):
-                yield
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(5)
-
-    return provider, context()
-
-
-def child_reply(provider, max_bytes=25 * 1024 * 1024):
-    import io
-    import json
-    from types import SimpleNamespace
-
-    from app.systems.platform.files import storage_download_client
-
-    request = json.dumps(
-        {
-            "url": provider.base_url + provider._path("opaque"),
-            "headers": provider.headers,
-            "max_bytes": max_bytes,
-        }
-    ).encode()
-    output = io.BytesIO()
-    with (
-        patch.object(
-            storage_download_client.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(request))
-        ),
-        patch.object(storage_download_client.sys, "stdout", SimpleNamespace(buffer=output)),
-    ):
-        storage_download_client.main()
-    return output.getvalue()
-
-
-def test_upload_uses_generated_key_without_overwrite():
-    def handler(request):
-        assert request.method == "POST"
-        assert request.url.path == "/storage/v1/object/openslate-files/opaque"
-        assert request.headers["x-upsert"] == "false"
-        assert request.content == b"content"
-        return httpx.Response(200)
-
-    provider, context = storage(handler)
-    with context:
-        provider.upload("opaque", b"content", "application/pdf")
-
-
-def test_unknown_write_outcome_is_not_retried():
-    calls = []
-
-    def handler(request):
-        calls.append(request)
-        raise httpx.ReadTimeout("transport failed")
-
-    provider, context = storage(handler)
-    with context, pytest.raises(ProviderUnavailable):
-        provider.upload("opaque", b"content", "application/pdf")
-    assert len(calls) == 1
-
-
-def test_absent_object_returns_none_and_delete_is_repeatable():
-    provider, context = storage(
-        lambda request: httpx.Response(404, json={"code": "NoSuchKey"}), real=True
-    )
-    with context:
-        assert provider.download("opaque") is None
-        provider.delete("opaque")
-        provider.delete("opaque")
-
-
-def test_download_excess_is_rejected():
-    provider, context = storage(lambda request: httpx.Response(200, content=b"oversized"))
-    with context:
-        assert child_reply(provider, max_bytes=4) == b"E\0\0\0\0"
-
-
-def test_supabase_legacy_http400_no_such_key_is_confirmed_absence():
-    provider, context = storage(
-        lambda request: httpx.Response(
-            400,
-            json={
-                "code": "NoSuchKey",
-                "statusCode": "404",
-                "error": "not_found",
-                "message": "Object not found",
-            },
-        )
-    )
-    with context:
-        assert child_reply(provider) == b"N\0\0\0\0"
-        provider.delete("opaque")
-
-
-@pytest.mark.parametrize(
-    "status,payload",
-    [
-        (400, {"code": "AccessDenied", "statusCode": "403"}),
-        (404, {"code": "NoSuchBucket", "statusCode": "404"}),
-        (400, {"error": "not_found", "statusCode": "404"}),
-    ],
+from app.systems.platform.files.models import File
+from app.systems.platform.files.providers import (
+    ProviderRejected,
+    ProviderUnavailable,
+    ProviderWriteRejected,
 )
-def test_provider_errors_do_not_masquerade_as_deleted_objects(status, payload):
-    provider, context = storage(lambda request: httpx.Response(status, json=payload))
-    with context:
-        assert child_reply(provider) == b"E\0\0\0\0"
-        with pytest.raises(ProviderUnavailable):
-            provider.delete("opaque")
-
-
-@pytest.mark.parametrize("send_headers", [False, True])
-def test_download_deadline_closes_physical_connection_and_releases_capacity(
-    monkeypatch, send_headers
-):
-    import socket
-    import subprocess
-    from threading import Event, Thread
-    from time import monotonic
-
-    from app.systems.platform.files.providers import transfer_slot
-
-    original = subprocess.Popen
-    children = []
-    spawns = []
-
-    def spawn(*args, **kwargs):
-        spawns.append(kwargs)
-        child = original(*args, **kwargs)
-        children.append(child)
-        return child
-
-    monkeypatch.setattr("app.systems.platform.files.storage.subprocess.Popen", spawn)
-    monkeypatch.setattr("app.systems.platform.files.storage.DOWNLOAD_SECONDS", 5, raising=False)
-    accepted, closed = Event(), Event()
-    socket_errors = []
-    listener = socket.socket()
-    listener.bind(("127.0.0.1", 0))
-    listener.listen()
-    listener.settimeout(8)
-
-    def serve():
-        try:
-            connection, _ = listener.accept()
-            with connection:
-                connection.settimeout(8)
-                connection.recv(8192)
-                accepted.set()
-                if send_headers:
-                    connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 60000\r\n\r\nx")
-                if send_headers:
-                    from select import select
-
-                    watchdog = monotonic() + 8
-                    while monotonic() < watchdog:
-                        # Deliberately trickle less than a client chunk across the budget.
-                        if select([connection], [], [], 0.05)[0]:
-                            if connection.recv(1) == b"":
-                                closed.set()
-                            break
-                        connection.sendall(b"x")
-                elif connection.recv(1) == b"":
-                    closed.set()
-        except (ConnectionResetError, BrokenPipeError):
-            # Killing a connected peer may reset TCP rather than deliver EOF.
-            closed.set()
-        except (TimeoutError, OSError) as error:
-            socket_errors.append(type(error).__name__)
-
-    thread = Thread(target=serve)
-    thread.start()
-    provider = SupabaseStorage(
-        _settings(
-            supabase_url=f"http://127.0.0.1:{listener.getsockname()[1]}",
-            supabase_secret_key="owned-test-secret",
-        )
-    )
-    started = monotonic()
-    try:
-        with transfer_slot() as lease, transfer_slot():
-            with lease.retain_worker(), pytest.raises(ProviderUnavailable):
-                provider.download("opaque")
-        assert accepted.is_set()
-        assert len(children) == 1 and children[0].returncode is not None
-        assert spawns[0]["cwd"] == Path(__file__).resolve().parents[2]
-        assert monotonic() - started < 5
-        assert closed.wait(1), f"socket closure unconfirmed: {socket_errors}"
-        with transfer_slot(), transfer_slot():
-            pass
-    finally:
-        listener.close()
-        thread.join(9)
-        assert not thread.is_alive()
-
-
-@pytest.mark.parametrize(
-    "reply,exit_code",
-    [
-        (b"", 0),
-        (b"D\0\0\0\x02x", 0),
-        (b"N\0\0\0\x01x", 0),
-        (b"X\0\0\0\0", 0),
-        (b"D\0\0\0\0", 1),
-    ],
+from app.systems.platform.files.storage import LocalFilesystemStorage
+from app.systems.platform.files.windows_storage import (
+    CreateFileWindowsFilesystem,
+    WindowsLocalFilesystemStorage,
 )
-def test_invalid_child_response_is_unavailable(monkeypatch, reply, exit_code):
-    from unittest.mock import Mock
 
-    child = Mock(returncode=exit_code)
-    child.communicate.return_value = (reply, None)
-    monkeypatch.setattr(
-        "app.systems.platform.files.storage.subprocess.Popen", Mock(return_value=child)
-    )
-    provider = SupabaseStorage(
-        _settings(supabase_url="http://storage.test", supabase_secret_key="test")
-    )
+
+def _storage(tmp_path: Path) -> LocalFilesystemStorage:
+    return LocalFilesystemStorage(tmp_path / "private-files")
+
+
+class _WindowsFilesystem:
+    def __init__(self) -> None:
+        self.files: dict[Path, bytes] = {}
+
+    def write_new(self, path: Path, content: bytes) -> None:
+        if path in self.files:
+            raise ProviderRejected("exists")
+        self.files[path] = content
+
+    def read(self, path: Path, *, allow_oversized: bool = False) -> bytes | None:
+        return self.files.get(path)
+
+    def delete(self, path: Path) -> None:
+        self.files.pop(path, None)
+
+
+def test_quarantine_upload_then_clean_promotion_exposes_exact_ready_bytes(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    key = "a" * 32
+    content = b"clean bytes"
+
+    storage.upload(key, content, "application/octet-stream")
+
+    assert storage.download(key) is None
+    assert storage.read_quarantine(key) == content
+    assert storage.stat(key, quarantine=True).digest == sha256(content).hexdigest()
+    storage.promote(key, expected_digest=sha256(content).hexdigest(), expected_size=len(content))
+    assert storage.read_quarantine(key) == content
+    assert storage.download(key) == content
+    assert storage.stat(key, quarantine=False).size == len(content)
+
+
+def test_storage_rejects_traversal_and_symlink_escape(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    prefix = storage.quarantine_root / "b0"
+    prefix.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ProviderRejected):
+        storage.upload("../" + "a" * 32, b"bytes", "application/octet-stream")
     with pytest.raises(ProviderUnavailable):
-        provider.download("opaque")
+        storage.upload("b" + "0" * 31, b"bytes", "application/octet-stream")
+    assert not any(outside.iterdir())
 
 
-def test_unreaped_child_fences_new_downloads_and_keeps_secrets_off_argv(monkeypatch):
-    import subprocess
-    from unittest.mock import Mock
+def test_upload_never_overwrites_an_immutable_quarantine_object(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    key = "c" * 32
+    storage.upload(key, b"first", "application/octet-stream")
 
-    from app.systems.platform.files import providers
-
-    monkeypatch.setattr(providers, "_storage_cleanup_uncertain", False)
-    monkeypatch.setenv("UNRELATED_DATABASE_SECRET", "must-not-inherit")
-    child = Mock()
-    child.communicate.side_effect = subprocess.TimeoutExpired("fixed child", 1)
-    spawn = Mock(return_value=child)
-    monkeypatch.setattr("app.systems.platform.files.storage.subprocess.Popen", spawn)
-    provider = SupabaseStorage(
-        _settings(supabase_url="http://private-storage.test", supabase_secret_key="private-secret")
-    )
-    with pytest.raises(providers.StorageCleanupUncertain):
-        provider.download("private-key")
-    child.kill.assert_called_once()
-    assert providers._storage_cleanup_uncertain
-    with pytest.raises(providers.StorageCleanupUncertain):
-        provider.download("another-key")
-    spawn.assert_called_once()
-    assert "private" not in str(spawn.call_args.args)
-    assert "UNRELATED_DATABASE_SECRET" not in spawn.call_args.kwargs["env"]
-    assert spawn.call_args.kwargs["stderr"] == subprocess.DEVNULL
-    request = child.communicate.call_args_list[0].args[0]
-    assert b"private-secret" in request and b"private-key" in request
+    with pytest.raises(ProviderRejected):
+        storage.upload(key, b"second", "application/octet-stream")
+    assert storage.read_quarantine(key) == b"first"
 
 
-def test_successful_download_crosses_child_boundary():
-    def handler(request):
-        assert request.method == "GET"
-        assert request.url.path == "/storage/v1/object/openslate-files/opaque"
-        assert request.headers["apikey"] == "test"
-        assert request.headers["authorization"] == "Bearer test"
-        return httpx.Response(200, content=b"exact bytes")
+def test_storage_rejects_bytes_above_the_private_object_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = _storage(tmp_path)
+    monkeypatch.setattr("app.systems.platform.files.storage.MAX_BYTES", 4)
 
-    provider, context = storage(handler, real=True)
-    with context:
-        assert child_reply(provider) == b"D\0\0\0\x0bexact bytes"
-        assert provider.download("opaque") == b"exact bytes"
+    with pytest.raises(ProviderRejected):
+        storage.upload("c" * 32, b"five!", "application/octet-stream")
 
 
-@pytest.mark.parametrize("program", ["import os; os._exit(7)", "print('malformed')"])
-def test_real_child_crash_or_malformed_frame_is_unavailable(monkeypatch, program):
-    import subprocess
-    import sys
+def test_delete_is_idempotent_across_quarantine_and_ready_locations(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    key = "d" * 32
+    storage.upload(key, b"bytes", "application/octet-stream")
+    storage.delete(key)
+    storage.delete(key)
 
-    original = subprocess.Popen
-    children = []
+    assert storage.read_quarantine(key) is None
+    assert storage.download(key) is None
 
-    def spawn(*args, **kwargs):
-        child = original([sys.executable, "-c", program], **kwargs)
-        children.append(child)
-        return child
 
-    monkeypatch.setattr("app.systems.platform.files.storage.subprocess.Popen", spawn)
-    provider = SupabaseStorage(
-        _settings(supabase_url="http://storage.test", supabase_secret_key="test")
-    )
+def test_pre_install_write_failure_is_definitive_and_leaves_no_partial_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = _storage(tmp_path)
+    key = "e" * 32
+
+    def fail_fsync(_: int) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("app.systems.platform.files.storage.os.fsync", fail_fsync)
+    with pytest.raises(ProviderWriteRejected):
+        storage.upload(key, b"bytes", "application/octet-stream")
+    assert storage.read_quarantine(key) is None
+
+
+def test_post_install_write_failure_remains_unresolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = _storage(tmp_path)
+    key = "0" * 32
+    original_fsync = os.fsync
+    calls = 0
+
+    def fail_after_install(descriptor: int) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise OSError("metadata sync failed after install")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr("app.systems.platform.files.storage.os.fsync", fail_after_install)
+    with pytest.raises(ProviderUnavailable) as caught:
+        storage.upload(key, b"bytes", "application/octet-stream")
+    assert type(caught.value) is ProviderUnavailable
+    assert storage.read_quarantine(key) == b"bytes"
+
+
+def test_ready_read_permission_failure_is_translated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = _storage(tmp_path)
+    key = "1" * 32
+    storage.upload(key, b"bytes", "application/octet-stream")
+    storage.promote(key, expected_digest=sha256(b"bytes").hexdigest(), expected_size=5)
+
+    original_open = os.open
+
+    def deny(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        if path == key:
+            raise PermissionError("denied")
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr("app.systems.platform.files.storage.os.open", deny)
     with pytest.raises(ProviderUnavailable):
-        provider.download("opaque")
-    assert len(children) == 1 and children[0].poll() is not None
+        storage.download(key)
 
 
-def test_download_redirect_is_not_followed_or_retried():
-    calls = []
+@pytest.mark.skipif(os.name == "nt", reason="Windows ACL verification belongs to the installer")
+def test_private_storage_uses_owner_only_permissions(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    key = "2" * 32
+    storage.upload(key, b"bytes", "application/octet-stream")
 
-    def handler(request):
-        calls.append(request)
-        return httpx.Response(302, headers={"Location": "/unexpected"})
-
-    provider, context = storage(handler, real=True)
-    with context, pytest.raises(ProviderUnavailable):
-        provider.download("opaque")
-    assert len(calls) == 1
+    object_path = storage.quarantine_root / key[:2] / key
+    assert storage.root.stat().st_mode & 0o777 == 0o700
+    assert object_path.stat().st_mode & 0o777 == 0o600
 
 
-def test_oversized_absence_error_is_not_trusted():
-    provider, context = storage(
-        lambda request: httpx.Response(
-            404, content=b'{"code":"NoSuchKey","padding":"' + b"x" * 8192 + b'"}'
-        )
+def test_promotion_retains_exact_quarantine_bytes_until_metadata_is_durable(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    key = "f" * 32
+    content = b"bytes"
+    storage.upload(key, content, "application/octet-stream")
+    digest = sha256(content).hexdigest()
+
+    storage.promote(key, expected_digest=digest, expected_size=len(content))
+    assert storage.download(key) == content
+    assert storage.read_quarantine(key) == content
+    storage.promote(key, expected_digest=digest, expected_size=len(content))
+    assert storage.read_quarantine(key) == content
+    assert storage.download(key) == content
+
+
+def test_promotion_rejects_post_scan_integrity_mismatch(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    key = "3" * 32
+    storage.upload(key, b"changed", "application/octet-stream")
+
+    with pytest.raises(ProviderRejected):
+        storage.promote(key, expected_digest=sha256(b"clean").hexdigest(), expected_size=5)
+    assert storage.download(key) is None
+
+
+def test_delete_removes_an_oversized_corrupt_private_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = _storage(tmp_path)
+    key = "4" * 32
+    storage.upload(key, b"bytes", "application/octet-stream")
+    monkeypatch.setattr("app.systems.platform.files.storage.MAX_BYTES", 4)
+
+    with pytest.raises(ProviderUnavailable):
+        storage.read_quarantine(key)
+    storage.delete(key)
+    object_path = storage.quarantine_root / key[:2] / key
+    assert not object_path.exists()
+
+
+def test_leaf_symlink_is_rejected_without_reading_its_target(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    key = "5" * 32
+    outside = tmp_path / "outside-bytes"
+    outside.write_bytes(b"outside")
+    target = storage.quarantine_root / key[:2]
+    target.mkdir()
+    (target / key).symlink_to(outside)
+
+    with pytest.raises(ProviderUnavailable):
+        storage.read_quarantine(key)
+
+
+def test_new_shard_fsyncs_its_parent_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = _storage(tmp_path)
+    key = "6" * 32
+    fsynced_inodes: set[tuple[int, int]] = set()
+    original_fsync = os.fsync
+
+    def track(descriptor: int) -> None:
+        metadata = os.fstat(descriptor)
+        fsynced_inodes.add((metadata.st_dev, metadata.st_ino))
+        original_fsync(descriptor)
+
+    monkeypatch.setattr("app.systems.platform.files.storage.os.fsync", track)
+    storage.upload(key, b"bytes", "application/octet-stream")
+    metadata = storage.quarantine_root.stat()
+    assert (metadata.st_dev, metadata.st_ino) in fsynced_inodes
+
+
+def test_windows_adapter_keeps_quarantine_when_copying_verified_ready_bytes(tmp_path: Path) -> None:
+    filesystem = _WindowsFilesystem()
+    storage = WindowsLocalFilesystemStorage(tmp_path / "private-files", filesystem)
+    key = "7" * 32
+    content = b"bytes"
+    digest = sha256(content).hexdigest()
+    storage.upload(key, content, "application/octet-stream")
+    storage.promote(key, expected_digest=digest, expected_size=len(content))
+
+    assert storage.read_quarantine(key) == content
+    assert storage.download(key) == content
+
+
+@pytest.mark.parametrize("partial,flush", [(True, True), (False, False)])
+def test_windows_handle_writer_rejects_partial_writes_and_flush_failures(
+    partial: bool, flush: bool
+) -> None:
+    adapter = object.__new__(CreateFileWindowsFilesystem)
+
+    class Kernel:
+        def WriteFile(self, handle, buffer, size, written, unused):
+            written.value = size - 1 if partial else size
+            return True
+
+        def FlushFileBuffers(self, handle):
+            return flush
+
+    adapter.kernel32 = Kernel()
+    adapter.ctypes = SimpleNamespace(
+        create_string_buffer=lambda value: value,
+        byref=lambda value: value,
     )
-    with context:
-        assert child_reply(provider) == b"E\0\0\0\0"
+    adapter.wintypes = SimpleNamespace(DWORD=lambda: SimpleNamespace(value=0))
+
+    with pytest.raises(ProviderUnavailable):
+        adapter._write_chunks(1, b"bytes")
+
+
+@pytest.mark.parametrize("failure", ["location_containment", "parent_open"])
+def test_windows_write_closes_location_handle_on_directory_setup_failure(
+    tmp_path: Path, failure: str
+) -> None:
+    adapter = object.__new__(CreateFileWindowsFilesystem)
+    location = tmp_path / "objects"
+    location.mkdir()
+    path = location / "aa" / ("a" * 32)
+    closed: list[int] = []
+    shares: list[int] = []
+
+    class Kernel:
+        def CloseHandle(self, handle: int) -> None:
+            closed.append(handle)
+
+    def open_handle(
+        opened_path: Path,
+        access: int,
+        disposition: int,
+        *,
+        directory: bool = False,
+        share: int = 0,
+    ) -> int:
+        del access, disposition, directory
+        shares.append(share)
+        if opened_path == location:
+            return 11
+        raise ProviderUnavailable("parent unavailable")
+
+    adapter.kernel32 = Kernel()
+    adapter._open = open_handle
+    adapter._require_contained = (
+        (lambda _handle: (_ for _ in ()).throw(ProviderUnavailable("escaped")))
+        if failure == "location_containment"
+        else lambda _handle: None
+    )
+
+    with pytest.raises(ProviderUnavailable):
+        adapter.write_new(path, b"bytes")
+
+    assert closed == [11]
+    assert shares[0] == 0x00000003
+
+
+def test_windows_temporary_write_failure_closes_and_removes_partial_file(tmp_path: Path) -> None:
+    adapter = object.__new__(CreateFileWindowsFilesystem)
+    temporary = tmp_path / ".partial.tmp"
+    closed: list[int] = []
+    deleted: list[Path] = []
+
+    class Kernel:
+        def CloseHandle(self, handle: int) -> None:
+            closed.append(handle)
+
+    adapter.kernel32 = Kernel()
+    adapter._open = lambda *_args, **_kwargs: 17
+    adapter._require_contained = lambda _handle: None
+    adapter._write_chunks = lambda _handle, _content: (_ for _ in ()).throw(
+        ProviderUnavailable("flush failed")
+    )
+    adapter.delete = deleted.append
+
+    with pytest.raises(ProviderUnavailable):
+        adapter._write_temporary(temporary, b"partial")
+
+    assert closed == [17]
+    assert deleted == [temporary]
+
+
+def test_file_inventory_reserves_a_nullable_positive_encryption_version() -> None:
+    column = File.__table__.c.enc_version
+    checks = {
+        str(constraint.sqltext)
+        for constraint in File.__table__.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert column.nullable is True
+    assert isinstance(column.type, SmallInteger)
+    assert "enc_version IS NULL OR enc_version > 0" in checks

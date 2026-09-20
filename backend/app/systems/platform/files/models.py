@@ -4,7 +4,16 @@ from datetime import datetime
 from typing import ClassVar
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base_model import BaseModel
@@ -45,6 +54,9 @@ class File(BaseModel):
             "AND scanner_version IS NOT NULL AND signature_version IS NOT NULL)",
             name="ck_files_ready_verdict",
         ),
+        CheckConstraint(
+            "enc_version IS NULL OR enc_version > 0", name="ck_files_enc_version"
+        ),
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset(
         {
@@ -72,6 +84,7 @@ class File(BaseModel):
     expected_size: Mapped[int] = mapped_column(Integer, nullable=False)
     actual_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    enc_version: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     object_key: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     state: Mapped[str] = mapped_column(String(30), nullable=False, default="awaiting_upload")
     operation_id: Mapped[UUID | None] = mapped_column(nullable=True)

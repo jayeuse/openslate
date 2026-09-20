@@ -14,7 +14,7 @@ from app.systems.access.users.models import User
 from app.systems.platform.files import service
 from app.systems.platform.files.access import authorize, error, load, parent
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import Storage, hold_file_worker
+from app.systems.platform.files.providers import StorageBackend, hold_file_worker
 from app.systems.platform.files.schemas import (
     FileCreate,
     FileListRequest,
@@ -27,7 +27,7 @@ from app.systems.platform.files.storage import get_storage
 router = APIRouter(prefix="/files", tags=["files"])
 DB = Annotated[Session, Depends(get_db)]
 Actor = Annotated[User, Depends(get_current_user)]
-Store = Annotated[Storage, Depends(get_storage)]
+Store = Annotated[StorageBackend, Depends(get_storage)]
 SPEC = ListQuerySpec(
     sort_fields={
         FileSortField.CREATED_AT: cast(ColumnElement[Any], File.created_at),

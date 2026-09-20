@@ -1,4 +1,4 @@
-"""User account lifecycle routes and Supabase Auth coordination."""
+"""User account lifecycle routes backed by local identity."""
 
 from datetime import UTC, datetime
 from typing import Annotated
@@ -10,7 +10,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies import require_fresh_exact_admin, require_roles
 from app.core.database import get_db
-from app.core.integrations.supabase import SupabaseAdminClient, SupabaseAdminError
+from app.systems.access.identity.service import invalidate_action_tokens
 from app.systems.access.users.coordination import (
     active_admin_count,
     advance_token_cutoff,
@@ -22,7 +22,6 @@ from app.systems.access.users.coordination import (
     lock_active_role,
     lock_user,
     unavailable,
-    user_state,
 )
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import Role, User, UserRole, UserStatus
@@ -62,20 +61,6 @@ def _record_security_event(
         )
     except SecurityEventPersistenceError as error:
         raise unavailable("Unable to record security event") from error
-
-
-def _enable_auth_user(user_id: UUID) -> None:
-    try:
-        SupabaseAdminClient().enable_user(user_id)
-    except SupabaseAdminError as error:
-        raise unavailable("Unable to restore user authentication") from error
-
-
-def _disable_auth_user(user_id: UUID) -> None:
-    try:
-        SupabaseAdminClient().disable_user(user_id)
-    except SupabaseAdminError as error:
-        raise unavailable("Unable to disable user authentication") from error
 
 
 def _record_outcome(
@@ -169,7 +154,6 @@ def _activate_user(
     requested_role_id: UUID | None,
 ) -> User:
     operation_id = uuid7()
-    initial_state = user_state(user)
     _record_outcome(
         "user.authentication_activation",
         SecurityEventOutcome.ATTEMPT,
@@ -177,43 +161,26 @@ def _activate_user(
         actor_id,
         target_id,
     )
-    db.rollback()
     try:
-        _enable_auth_user(target_id)
-    except HTTPException:
-        _record_outcome(
-            "user.authentication_activation",
-            SecurityEventOutcome.FAILURE,
-            operation_id,
-            actor_id,
-            target_id,
-            "unable to enable user authentication",
-        )
-        raise
-    try:
-        require_fresh_exact_admin(db, actor_id)
-        finalized_user = lock_user(db, target_id)
-        if user_state(finalized_user) != initial_state:
-            raise conflict("User changed while authentication was enabled")
         finalized_role = (
             lock_active_role(db, requested_role_id)
             if role_change_requested and requested_role_id is not None
-            else finalized_user.role
+            else user.role
         )
         if finalized_role is None or finalized_role.is_deleted:
             raise conflict("User role is not active")
         ensure_projected_admin_remains(
             db,
-            finalized_user,
+            user,
             destination_role=finalized_role,
             destination_status=UserStatus.ACTIVE.value,
         )
         if role_change_requested:
-            finalized_user.role_id = finalized_role.id
-            finalized_user.role = finalized_role
+            user.role_id = finalized_role.id
+            user.role = finalized_role
         if payload.username is not None:
-            finalized_user.username = payload.username
-        finalized_user.status = UserStatus.ACTIVE.value
+            user.username = payload.username
+        user.status = UserStatus.ACTIVE.value
         commit(db, "Username unavailable")
     except HTTPException as error:
         if db.in_transaction():
@@ -234,7 +201,7 @@ def _activate_user(
         actor_id,
         target_id,
     )
-    return finalized_user
+    return user
 
 
 def _disable_user(
@@ -262,6 +229,7 @@ def _disable_user(
         user.username = payload.username
     user.status = UserStatus.DISABLED.value
     advance_token_cutoff(user)
+    invalidate_action_tokens(db, user.id)
     try:
         commit(db, "Username unavailable")
     except HTTPException as error:
@@ -274,18 +242,6 @@ def _disable_user(
             "local disable finalization failed",
         )
         raise error
-    try:
-        _disable_auth_user(target_id)
-    except HTTPException:
-        _record_outcome(
-            "user.authentication_disable",
-            SecurityEventOutcome.PARTIAL,
-            operation_id,
-            actor_id,
-            target_id,
-            "unable to disable user authentication",
-        )
-        raise
     _record_outcome(
         "user.authentication_disable",
         SecurityEventOutcome.SUCCESS,
@@ -318,6 +274,7 @@ def delete_user(
     if user.status != UserStatus.PENDING.value:
         user.status = UserStatus.DISABLED.value
     advance_token_cutoff(user)
+    invalidate_action_tokens(db, user.id)
     _record_outcome(
         "user.authentication_disable",
         SecurityEventOutcome.ATTEMPT,
@@ -337,18 +294,6 @@ def delete_user(
             "local delete finalization failed",
         )
         raise error
-    try:
-        _disable_auth_user(target_id)
-    except HTTPException:
-        _record_outcome(
-            "user.authentication_disable",
-            SecurityEventOutcome.PARTIAL,
-            operation_id,
-            actor_id,
-            target_id,
-            "unable to disable user authentication",
-        )
-        raise
     _record_outcome(
         "user.authentication_disable",
         SecurityEventOutcome.SUCCESS,
@@ -374,7 +319,6 @@ def restore_user(
     if not is_established_user(user):
         raise conflict("Unaccepted invitations cannot be restored")
     restored_role = lock_active_role(db, user.role_id)
-    initial_state = user_state(user)
     operation_id = uuid7()
     _record_outcome(
         "user.authentication_restore",
@@ -383,36 +327,19 @@ def restore_user(
         actor_id,
         target_id,
     )
-    db.rollback()
     try:
-        _enable_auth_user(target_id)
-    except HTTPException:
-        _record_outcome(
-            "user.authentication_restore",
-            SecurityEventOutcome.FAILURE,
-            operation_id,
-            actor_id,
-            target_id,
-            "unable to enable user authentication",
-        )
-        raise
-    try:
-        require_fresh_exact_admin(db, actor_id)
-        revalidated = lock_user(db, target_id)
-        if not revalidated.is_deleted or user_state(revalidated) != initial_state:
-            raise conflict("User changed while authentication was enabled")
-        restored_role = lock_active_role(db, revalidated.role_id)
+        restored_role = lock_active_role(db, user.role_id)
         ensure_projected_admin_remains(
             db,
-            revalidated,
+            user,
             destination_role=restored_role,
             destination_status=UserStatus.ACTIVE.value,
         )
-        revalidated.role = restored_role
-        revalidated.role_id = restored_role.id
-        revalidated.is_deleted = False
-        revalidated.deleted_at = None
-        revalidated.status = UserStatus.ACTIVE.value
+        user.role = restored_role
+        user.role_id = restored_role.id
+        user.is_deleted = False
+        user.deleted_at = None
+        user.status = UserStatus.ACTIVE.value
         commit(db, "Unable to restore user")
     except HTTPException as error:
         if db.in_transaction():
@@ -433,4 +360,4 @@ def restore_user(
         actor_id,
         target_id,
     )
-    return revalidated
+    return user

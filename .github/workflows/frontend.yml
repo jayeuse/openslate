@@ -13,20 +13,9 @@ permissions:
   contents: read
 
 env:
-  OPENSLATE_ENV_SOURCE: process
   TEST_LAYER: all
   BASE_URL: http://127.0.0.1:3104
   PLAYWRIGHT_CONFIGURATION: process
-  BACKEND_URL: http://backend.invalid
-  SUPABASE_SERVER_URL: http://supabase.invalid
-  LOG_DIR: /tmp/openslate-frontend-logs
-  BFF_REQUEST_BODY_LIMIT_BYTES: "1048576"
-  BFF_RESPONSE_BODY_LIMIT_BYTES: "8388608"
-  BFF_REQUEST_DEADLINE_MS: "60000"
-  PORT: "3104"
-  HOSTNAME: 127.0.0.1
-  NEXT_PUBLIC_SUPABASE_URL: http://supabase.invalid
-  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: synthetic-publishable-key
   NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: "false"
   DOCKER_BUILD_RECORD_UPLOAD: "false"
 
@@ -57,12 +46,17 @@ jobs:
         working-directory: frontend
         run: npm ci --prefer-offline --no-audit --no-fund
 
+      - name: Install pinned Playwright Chromium
+        if: steps.scope.outputs.run_frontend == 'true'
+        working-directory: frontend
+        run: npm exec --no -- playwright install --with-deps chromium
+
       - name: Check formatting, lint, and types
         if: steps.scope.outputs.run_frontend == 'true'
         working-directory: frontend
         run: npm run check
 
-      - name: Run isolated and HTTP tests
+      - name: Run retained frontend tests
         if: steps.scope.outputs.run_frontend == 'true'
         working-directory: frontend
         run: npm test
@@ -87,8 +81,6 @@ jobs:
           push: false
           tags: openslate-frontend:ci
           build-args: |
-            NEXT_PUBLIC_SUPABASE_URL=http://supabase.invalid
-            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=synthetic-publishable-key
             NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED=false
           cache-from: type=gha,scope=openslate-frontend
           cache-to: type=gha,mode=max,scope=openslate-frontend
@@ -97,11 +89,10 @@ jobs:
         if: steps.scope.outputs.run_frontend_container == 'true'
         run: >-
           docker run --rm --entrypoint /bin/sh openslate-frontend:ci -c
-          'test -z "${BACKEND_URL+x}" && test -z "${SUPABASE_SERVER_URL+x}" &&
-          test -z "${DATABASE_URL+x}" && test -z "${MIGRATION_DATABASE_URL+x}" &&
-          test -z "${SUPABASE_SECRET_KEY+x}" && test -z "${SECURITY_EVENT_SERVER_KEY+x}" &&
-          test -z "${LOG_DIR+x}" && test -z "${NEXT_PUBLIC_SUPABASE_URL+x}" &&
-          test -z "${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY+x}" &&
+          'test -z "${BACKEND_URL+x}" && test -z "${DATABASE_URL+x}" &&
+          test -z "${MIGRATION_DATABASE_URL+x}" && test -z "${DATABASE_BOOTSTRAP_URL+x}" &&
+          test -z "${AUTH_JWT_SECRET+x}" && test -z "${SECURITY_EVENT_SERVER_KEY+x}" &&
+          test -z "${LOG_DIR+x}" &&
           test -z "${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED+x}"'
 
       - name: No frontend checks required

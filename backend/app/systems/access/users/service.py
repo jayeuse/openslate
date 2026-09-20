@@ -1,3 +1,6 @@
+"""Local user invitations coordinated with the Identity capability."""
+
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -9,11 +12,15 @@ from sqlalchemy.orm import Session, joinedload
 from uuid6 import uuid7
 
 from app.common.dependencies import require_fresh_exact_admin
-from app.common.normalization import normalize_email
 from app.core.base_model import utc_now
-from app.core.integrations.supabase import (
-    SupabaseAdminClient,
-    SupabaseAdminError,
+from app.core.security.passwords import PasswordPolicyError
+from app.systems.access.identity.delivery import queue_action_delivery
+from app.systems.access.identity.models import ActionTokenPurpose
+from app.systems.access.identity.service import (
+    create_credential,
+    generated_temporary_password,
+    issue_action_token,
+    replace_password,
 )
 from app.systems.access.users.models import Role, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
@@ -22,7 +29,9 @@ from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import (
     SecurityEventPersistenceError,
     append_committed_security_event,
+    append_security_event,
 )
+from app.systems.platform.notifications.outbox import smtp_delivery_enabled
 
 
 class InvitationError(RuntimeError):
@@ -30,7 +39,14 @@ class InvitationError(RuntimeError):
 
 
 class InvitationConflict(InvitationError):
-    """An invitation conflicts with an existing local identity."""
+    """An invitation conflicts with a local identity."""
+
+
+@dataclass(frozen=True, slots=True)
+class IssuedInvitation:
+    user: User
+    delivery: str
+    temporary_password: str | None
 
 
 def _security_event(
@@ -58,87 +74,75 @@ def _security_event(
         raise InvitationError("Unable to record security event") from error
 
 
-def _member_role(db: Session) -> Role:
+def _record_invitation_failure(operation_id: UUID, actor_id: UUID | None) -> None:
+    """Record a secondary failure event without replacing the primary safe error."""
+
     try:
-        role = db.scalar(
-            select(Role)
-            .where(Role.role == UserRole.MEMBER, Role.is_deleted.is_(False))
-            .execution_options(populate_existing=True)
-            .with_for_update()
+        _security_event(
+            event_type="user.invitation",
+            outcome=SecurityEventOutcome.FAILURE,
+            operation_id=operation_id,
+            actor_id=actor_id,
         )
-    except SQLAlchemyError as error:
-        db.rollback()
-        raise InvitationError("Unable to lock default member role") from error
-    if role is None:
-        db.rollback()
-        raise InvitationError("Default member role is not configured")
-    if not isinstance(role, Role):
-        db.rollback()
-        raise InvitationError("Unable to lock default member role")
-    return role
+    except InvitationError:
+        pass
 
 
 def _lock_role(db: Session, role_id: UUID) -> Role:
-    try:
-        role = db.scalar(
-            select(Role)
-            .where(Role.id == role_id, Role.is_deleted.is_(False))
-            .execution_options(populate_existing=True)
-            .with_for_update()
-        )
-    except SQLAlchemyError as error:
-        db.rollback()
-        raise InvitationError("Unable to lock invitation role") from error
-    if role is None:
-        db.rollback()
-        raise InvitationError("Role is not active")
+    role = db.scalar(
+        select(Role).where(Role.id == role_id, Role.is_deleted.is_(False)).with_for_update()
+    )
     if not isinstance(role, Role):
-        db.rollback()
-        raise InvitationError("Unable to lock invitation role")
+        raise InvitationError("Role is not active")
     return role
 
 
 def _lock_role_any_state(db: Session, role_id: UUID) -> Role | None:
-    try:
-        role = db.scalar(
-            select(Role)
-            .where(Role.id == role_id)
-            .execution_options(populate_existing=True)
-            .with_for_update()
-        )
-    except SQLAlchemyError as error:
-        db.rollback()
-        raise InvitationError("Unable to lock invitation role") from error
+    role = db.scalar(select(Role).where(Role.id == role_id).with_for_update())
     if role is not None and not isinstance(role, Role):
-        db.rollback()
         raise InvitationError("Unable to lock invitation role")
     return role
 
 
-def _lock_admin_role(db: Session) -> Role:
-    try:
-        role = db.scalar(
-            select(Role)
-            .where(Role.role == UserRole.ADMIN, Role.is_deleted.is_(False))
-            .execution_options(populate_existing=True)
-            .with_for_update()
-        )
-    except SQLAlchemyError as error:
-        db.rollback()
-        raise InvitationError("Unable to lock administrator membership") from error
+def _member_role(db: Session) -> Role:
+    role = db.scalar(
+        select(Role)
+        .where(Role.role == UserRole.MEMBER, Role.is_deleted.is_(False))
+        .with_for_update()
+    )
     if not isinstance(role, Role):
-        db.rollback()
+        raise InvitationError("Default member role is not configured")
+    return role
+
+
+def _lock_admin_role(db: Session) -> Role:
+    role = db.scalar(
+        select(Role)
+        .where(Role.role == UserRole.ADMIN, Role.is_deleted.is_(False))
+        .with_for_update()
+    )
+    if not isinstance(role, Role):
         raise InvitationError("Unable to lock administrator membership")
     return role
 
 
+def _lock_profile(db: Session, user_id: UUID) -> User | None:
+    profile = db.scalar(
+        select(User)
+        .options(joinedload(User.role))
+        .where(User.id == user_id)
+        .with_for_update(of=User)
+    )
+    if profile is not None and not isinstance(profile, User):
+        raise InvitationError("Unable to lock invitation profile")
+    return profile
+
+
 def _other_non_deleted_assignment_exists(
-    db: Session,
-    role_id: UUID,
-    excluded_user_id: UUID,
+    db: Session, role_id: UUID, excluded_user_id: UUID
 ) -> bool:
-    try:
-        count = db.scalar(
+    return bool(
+        db.scalar(
             select(func.count())
             .select_from(User)
             .where(
@@ -147,44 +151,10 @@ def _other_non_deleted_assignment_exists(
                 User.is_deleted.is_(False),
             )
         )
-    except SQLAlchemyError as error:
-        db.rollback()
-        raise InvitationError("Unable to inspect administrator membership") from error
-    return bool(count)
+    )
 
 
-def _lock_profile(db: Session, user_id: UUID) -> User | None:
-    try:
-        profile = db.scalar(
-            select(User)
-            .options(joinedload(User.role))
-            .where(User.id == user_id)
-            .execution_options(populate_existing=True)
-            .with_for_update(of=User)
-        )
-    except SQLAlchemyError as error:
-        db.rollback()
-        raise InvitationError("Unable to lock invitation profile") from error
-    if profile is not None and not isinstance(profile, User):
-        db.rollback()
-        raise InvitationError("Unable to lock invitation profile")
-    return profile
-
-
-def _profile_state(
-    profile: User,
-) -> tuple[
-    UUID,
-    str,
-    str,
-    UUID,
-    str,
-    bool,
-    datetime | None,
-    datetime | None,
-    datetime | None,
-    datetime | None,
-]:
+def _profile_state(profile: User) -> tuple[UUID, str, str, UUID, str, bool, datetime | None]:
     return (
         profile.id,
         profile.email,
@@ -192,9 +162,6 @@ def _profile_state(
         profile.role_id,
         profile.status,
         profile.is_deleted,
-        profile.deleted_at,
-        profile.invitation_sent_at,
-        profile.invitation_accepted_at,
         profile.tokens_valid_after,
     )
 
@@ -207,205 +174,150 @@ def invite_user(
     db: Session,
     payload: InvitationCreate,
     *,
-    client: SupabaseAdminClient | None = None,
     actor_id: UUID | None = None,
     bootstrap: bool = False,
+    temporary_password: str | None = None,
+    delivery: str = "temporary_password",
 ) -> User:
-    """Invite an Auth user, then finalize its trigger-created local profile.
-
-    Only the explicit bootstrap call may omit an application actor.  All
-    request-facing callers must provide the freshly authorized administrator.
-    """
+    """Create a pending local user with a one-time credential and invite token."""
 
     if (actor_id is None) != bootstrap:
         raise InvitationError("Invitation actor is required outside bootstrap")
     operation_id = uuid7()
-    if actor_id is not None:
-        require_fresh_exact_admin(db, actor_id)
-    if payload.role_id is None:
-        member_role = _member_role(db)
-        role = member_role
-    else:
-        role = _lock_role(db, payload.role_id)
-        member_role = role if role.role == UserRole.MEMBER else _member_role(db)
-    expected_member_role_state = _role_state(member_role)
-    expected_role_state = _role_state(role)
-    try:
-        existing_profile = db.scalar(
-            select(User)
-            .where(or_(User.email == payload.email, User.username == payload.username))
-            .execution_options(populate_existing=True)
-            .with_for_update(of=User)
-        )
-    except SQLAlchemyError as error:
-        db.rollback()
-        raise InvitationError("Unable to inspect invitation profile") from error
-    if existing_profile is not None and not isinstance(existing_profile, User):
-        db.rollback()
-        raise InvitationError("Unable to inspect invitation profile")
-    existing_profile_id = existing_profile.id if existing_profile is not None else None
-
-    # No request transaction or row lock may survive into Auth HTTP.
-    db.rollback()
-    _security_event(
-        event_type="user.invitation",
-        outcome=SecurityEventOutcome.ATTEMPT,
-        operation_id=operation_id,
-        actor_id=actor_id,
-        subject_id=existing_profile_id,
-    )
-    if existing_profile is not None:
-        _security_event(
-            event_type="user.invitation",
-            outcome=SecurityEventOutcome.FAILURE,
-            operation_id=operation_id,
-            actor_id=actor_id,
-            subject_id=existing_profile_id,
-            reason="email or username is already in use",
-        )
-        raise InvitationConflict("Email or username is already in use")
-
-    try:
-        auth_client = client or SupabaseAdminClient()
-        auth_user = auth_client.invite_user(payload.email, payload.username)
-    except SupabaseAdminError as error:
-        _security_event(
-            event_type="user.invitation",
-            outcome=SecurityEventOutcome.FAILURE,
-            operation_id=operation_id,
-            actor_id=actor_id,
-            reason="unable to send invitation",
-        )
-        if error.status_code in {409, 422}:
-            raise InvitationConflict("Email is already in use") from error
-        raise InvitationError("Unable to send invitation") from error
-
+    if delivery == "email" and not smtp_delivery_enabled():
+        raise InvitationError("Email delivery is unavailable")
     try:
         if actor_id is not None:
             require_fresh_exact_admin(db, actor_id)
-        if bootstrap and role.role == UserRole.ADMIN:
-            current_role = _lock_admin_role(db)
-            current_member_role = _member_role(db)
-        else:
-            current_member_role = _member_role(db)
-            if role.id == current_member_role.id:
-                current_role = current_member_role
-            else:
-                current_role = _lock_role(db, role.id)
-        if _role_state(current_member_role) != expected_member_role_state:
-            raise InvitationError("Default member role changed before invitation finalization")
-        if _role_state(current_role) != expected_role_state:
-            raise InvitationError("Invitation role changed before finalization")
-        if bootstrap and current_role.role == UserRole.ADMIN:
-            if _other_non_deleted_assignment_exists(db, current_role.id, auth_user.id):
-                raise InvitationError("An administrator reservation already exists")
-        profile = _lock_profile(db, auth_user.id)
-        if profile is None:
-            raise InvitationError("Unable to finalize invitation")
-        expected_profile_state = (
-            auth_user.id,
-            normalize_email(auth_user.email),
-            f"auth_{auth_user.id.hex}",
-            member_role.id,
-            UserStatus.PENDING.value,
-            False,
-            None,
-            None,
-            None,
-            None,
+        role = _member_role(db) if payload.role_id is None else _lock_role(db, payload.role_id)
+        existing = db.scalar(
+            select(User)
+            .where(or_(User.email == payload.email, User.username == payload.username))
+            .with_for_update(of=User)
         )
-        if _profile_state(profile) != expected_profile_state:
-            raise InvitationError("Invitation profile changed before finalization")
-        profile.email = payload.email
-        profile.username = payload.username
-        profile.role_id = current_role.id
-        profile.role = current_role
-        profile.status = UserStatus.PENDING.value
-        profile.invitation_sent_at = utc_now()
-        profile.invitation_accepted_at = None
-        profile.is_deleted = False
-        profile.deleted_at = None
+        if existing is not None:
+            raise InvitationConflict("Email or username is already in use")
+        if (
+            bootstrap
+            and role.role == UserRole.ADMIN
+            and _other_non_deleted_assignment_exists(db, role.id, UUID(int=0))
+        ):
+            raise InvitationError("An administrator reservation already exists")
+        user = User(
+            email=payload.email,
+            username=payload.username,
+            role_id=role.id,
+            role=role,
+            status=UserStatus.PENDING.value,
+            invitation_sent_at=utc_now(),
+        )
+        db.add(user)
+        db.flush()
+        initial_password = temporary_password or generated_temporary_password()
+        create_credential(
+            db,
+            user.id,
+            initial_password,
+            temporary=True,
+        )
+        if delivery == "email":
+            raw_token = issue_action_token(
+                db, user.id, ActionTokenPurpose.INVITATION, created_by=actor_id
+            )
+            queue_action_delivery(db, user.id, ActionTokenPurpose.INVITATION, raw_token)
+        append_security_event(
+            db,
+            SecurityEventIngestRequest(
+                event_type="user.invitation",
+                outcome=SecurityEventOutcome.SUCCESS,
+                source="users.service",
+                operation_id=operation_id,
+                actor_id=actor_id,
+                subject_id=user.id,
+            ),
+        )
         db.commit()
-    except HTTPException:
+    except (InvitationError, PasswordPolicyError) as error:
         db.rollback()
-        _security_event(
-            event_type="user.invitation",
-            outcome=SecurityEventOutcome.PARTIAL,
-            operation_id=operation_id,
-            actor_id=actor_id,
-            subject_id=auth_user.id,
-            reason="invitation local finalization failed",
-        )
+        _record_invitation_failure(operation_id, actor_id)
+        if isinstance(error, PasswordPolicyError):
+            raise InvitationError("Temporary password does not meet policy") from error
         raise
-    except IntegrityError as error:
+    except (IntegrityError, SQLAlchemyError) as error:
         db.rollback()
-        _security_event(
-            event_type="user.invitation",
-            outcome=SecurityEventOutcome.PARTIAL,
-            operation_id=operation_id,
-            actor_id=actor_id,
-            subject_id=auth_user.id,
-            reason="invitation local finalization failed",
-        )
+        _record_invitation_failure(operation_id, actor_id)
         raise InvitationConflict("Email or username is already in use") from error
-    except SQLAlchemyError as error:
+    return user
+
+
+def create_invitation(
+    db: Session,
+    payload: InvitationCreate,
+    *,
+    actor_id: UUID,
+) -> IssuedInvitation:
+    """Create an invitation and return plaintext only when it was generated for display."""
+
+    generated = (
+        generated_temporary_password()
+        if payload.delivery == "temporary_password" and payload.temporary_password is None
+        else None
+    )
+    user = invite_user(
+        db,
+        payload,
+        actor_id=actor_id,
+        temporary_password=payload.temporary_password or generated,
+        delivery=payload.delivery,
+    )
+    return IssuedInvitation(user, payload.delivery, generated)
+
+
+def resend_invitation(db: Session, user_id: UUID, *, actor_id: UUID) -> User:
+    """Invalidate a prior setup link and issue a local replacement."""
+
+    operation_id = uuid7()
+    try:
+        require_fresh_exact_admin(db, actor_id)
+        profile = _lock_profile(db, user_id)
+        if profile is None or profile.is_deleted or profile.status != UserStatus.PENDING.value:
+            raise InvitationError("Invitation is not pending")
+        profile.invitation_sent_at = utc_now()
+        issue_action_token(db, profile.id, ActionTokenPurpose.INVITATION, created_by=actor_id)
+        db.commit()
+    except (InvitationError, HTTPException, SQLAlchemyError) as error:
         db.rollback()
         _security_event(
-            event_type="user.invitation",
-            outcome=SecurityEventOutcome.PARTIAL,
+            event_type="user.invitation_resend",
+            outcome=SecurityEventOutcome.FAILURE,
             operation_id=operation_id,
             actor_id=actor_id,
-            subject_id=auth_user.id,
-            reason="invitation local finalization failed",
+            subject_id=user_id,
         )
-        raise InvitationError("Unable to finalize invitation") from error
-    except InvitationError as error:
-        db.rollback()
-        _security_event(
-            event_type="user.invitation",
-            outcome=SecurityEventOutcome.PARTIAL,
-            operation_id=operation_id,
-            actor_id=actor_id,
-            subject_id=auth_user.id,
-            reason="invitation local finalization failed",
-        )
-        raise error
+        if isinstance(error, InvitationError):
+            raise
+        raise InvitationError("Unable to resend invitation") from error
     _security_event(
-        event_type="user.invitation",
+        event_type="user.invitation_resend",
         outcome=SecurityEventOutcome.SUCCESS,
         operation_id=operation_id,
         actor_id=actor_id,
-        subject_id=auth_user.id,
+        subject_id=user_id,
     )
     return profile
 
 
-def resend_invitation(
+def resend_invitation_delivery(
     db: Session,
     user_id: UUID,
     *,
     actor_id: UUID,
-    client: SupabaseAdminClient | None = None,
-) -> User:
-    """Resend a pending invitation without deleting its Auth identity."""
+    delivery: str,
+    temporary_password: str | None,
+) -> IssuedInvitation:
+    """Rotate either the local setup secret or the single-use email action token."""
 
     operation_id = uuid7()
-    require_fresh_exact_admin(db, actor_id)
-    profile = _lock_profile(db, user_id)
-    if (
-        profile is None
-        or profile.is_deleted
-        or profile.status != UserStatus.PENDING.value
-        or profile.invitation_sent_at is None
-        or profile.role is None
-        or profile.role.is_deleted
-    ):
-        db.rollback()
-        raise InvitationError("Invitation is not pending")
-    initial_role = _lock_role(db, profile.role_id)
-    initial_state = (_profile_state(profile), _role_state(initial_role))
-    email = profile.email
-    db.rollback()
     _security_event(
         event_type="user.invitation_resend",
         outcome=SecurityEventOutcome.ATTEMPT,
@@ -414,60 +326,72 @@ def resend_invitation(
         subject_id=user_id,
     )
     try:
-        auth_client = client or SupabaseAdminClient()
-        auth_client.resend_invitation(email)
-    except SupabaseAdminError as error:
+        if delivery == "email" and not smtp_delivery_enabled():
+            raise InvitationError("Email delivery is unavailable")
+        require_fresh_exact_admin(db, actor_id)
+        profile = _lock_profile(db, user_id)
+        if profile is None or profile.is_deleted or profile.status != UserStatus.PENDING.value:
+            raise InvitationError("Invitation is not pending")
+        generated = (
+            generated_temporary_password()
+            if delivery == "temporary_password" and temporary_password is None
+            else None
+        )
+        replacement = (
+            generated_temporary_password()
+            if delivery == "email"
+            else temporary_password or generated
+        )
+        replace_password(db, profile, replacement or "", temporary=True)
+        if delivery == "email":
+            raw_token = issue_action_token(
+                db, profile.id, ActionTokenPurpose.INVITATION, created_by=actor_id
+            )
+            queue_action_delivery(db, profile.id, ActionTokenPurpose.INVITATION, raw_token)
+        profile.invitation_sent_at = utc_now()
+        append_security_event(
+            db,
+            SecurityEventIngestRequest(
+                event_type="user.invitation_resend",
+                outcome=SecurityEventOutcome.SUCCESS,
+                source="users.service",
+                operation_id=operation_id,
+                actor_id=actor_id,
+                subject_id=profile.id,
+            ),
+        )
+        db.commit()
+    except PasswordPolicyError as error:
+        db.rollback()
         _security_event(
             event_type="user.invitation_resend",
             outcome=SecurityEventOutcome.FAILURE,
             operation_id=operation_id,
             actor_id=actor_id,
             subject_id=user_id,
-            reason="unable to resend invitation",
+            reason="local invitation resend failed",
         )
-        raise InvitationError("Unable to resend invitation") from error
-
-    try:
-        require_fresh_exact_admin(db, actor_id)
-        finalized = _lock_profile(db, user_id)
-        if finalized is None:
-            raise InvitationError("Invitation changed while it was resent")
-        finalized_role = _lock_role(db, finalized.role_id)
-        finalized_state = (_profile_state(finalized), _role_state(finalized_role))
-        if finalized_state != initial_state:
-            raise InvitationError("Invitation changed while it was resent")
-        finalized.role = finalized_role
-        finalized.invitation_sent_at = utc_now()
-        db.commit()
+        raise InvitationError("Temporary password does not meet policy") from error
     except HTTPException:
         db.rollback()
         _security_event(
             event_type="user.invitation_resend",
-            outcome=SecurityEventOutcome.PARTIAL,
+            outcome=SecurityEventOutcome.FAILURE,
             operation_id=operation_id,
             actor_id=actor_id,
             subject_id=user_id,
-            reason="invitation resend local finalization failed",
+            reason="fresh invitation authorization failed",
         )
         raise
-    except (InvitationError, IntegrityError, SQLAlchemyError) as error:
+    except (InvitationError, SQLAlchemyError) as error:
         db.rollback()
         _security_event(
             event_type="user.invitation_resend",
-            outcome=SecurityEventOutcome.PARTIAL,
+            outcome=SecurityEventOutcome.FAILURE,
             operation_id=operation_id,
             actor_id=actor_id,
             subject_id=user_id,
-            reason="invitation resend local finalization failed",
+            reason="local invitation resend failed",
         )
-        if isinstance(error, InvitationError):
-            raise error
-        raise InvitationError("Unable to finalize invitation resend") from error
-    _security_event(
-        event_type="user.invitation_resend",
-        outcome=SecurityEventOutcome.SUCCESS,
-        operation_id=operation_id,
-        actor_id=actor_id,
-        subject_id=user_id,
-    )
-    return finalized
+        raise InvitationError("Unable to resend invitation") from error
+    return IssuedInvitation(profile, delivery, generated)

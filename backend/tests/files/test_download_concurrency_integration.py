@@ -10,7 +10,7 @@ import pytest
 from fastapi import Depends, Request
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import event, inspect, select, text
+from sqlalchemy import event, inspect, select
 from sqlalchemy.orm import joinedload
 
 from app.common.dependencies import get_current_user
@@ -39,14 +39,16 @@ def committed_logo(guarded_db):
     Image.new("RGB", (2, 2)).save(output, format="PNG")
     content = output.getvalue()
     with AuditSession(engine) as db:
-        db.connection().execute(
-            text("INSERT INTO auth.users (id,email) VALUES (:id,:email)"),
-            {"id": actor_id, "email": f"logo-concurrency-{actor_id}@example.com"},
+        role_id = db.scalar(select(Role.id).where(Role.role == "admin"))
+        assert role_id is not None
+        actor = User(
+            id=actor_id,
+            email=f"logo-concurrency-{actor_id}@example.com",
+            username=f"logo_{actor_id.hex[:12]}",
+            role_id=role_id,
+            status="active",
         )
-        actor = db.get(User, actor_id)
-        actor.role_id = db.scalar(select(Role.id).where(Role.role == "admin"))
-        actor.status = "active"
-        actor.invitation_sent_at = None
+        db.add(actor)
         file = File(
             id=file_id,
             purpose="workspace_logo",
@@ -95,8 +97,11 @@ def committed_logo(guarded_db):
                 column.key: getattr(profile, column.key)
                 for column in inspect(WorkspaceProfile).column_attrs
             } == profile_snapshot
-        with engine.begin() as connection:
-            connection.execute(text("DELETE FROM auth.users WHERE id=:id"), {"id": actor_id})
+        with AuditSession(engine) as db:
+            actor = db.get(User, actor_id)
+            if actor is not None:
+                db.delete(actor)
+            db.commit()
 
 
 def client_for(engine, actor_id, storage):

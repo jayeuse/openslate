@@ -1,109 +1,108 @@
-"""Storage API safety contracts for the local reset utility."""
+"""Private-filesystem safety contracts for the local reset utility."""
 
-import json
-import subprocess
+from __future__ import annotations
 
-import httpx
+import socket
+
 import pytest
 
-from scripts.reset_models import ResetError
-from scripts.reset_storage import ResetStorage, require_api_stopped, validate_local_storage_url
+from operations.reset_models import ResetError
+from operations.reset_storage import ResetStorage, require_api_stopped
 
 
-def test_storage_inventory_includes_orphans_deletes_in_bounded_batches_and_verifies_empty() -> None:
-    objects = [f"object-{number}" for number in range(1_001)] + ["orphan-not-in-files"]
-    nested_objects = ["nested-orphan-not-in-files"]
-    deleted: list[list[str]] = []
+def _private_root(tmp_path):
+    root = tmp_path / "private-files"
+    (root / "objects" / "aa").mkdir(parents=True)
+    (root / "quarantine" / "bb").mkdir(parents=True)
+    return root
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/storage/v1/object/list/openslate-files":
-            payload = json.loads(request.content)
-            offset = payload["offset"]
-            limit = payload["limit"]
-            if payload["prefix"] == "":
-                page = objects[offset : offset + limit]
-                rows = [{"name": key, "id": key} for key in page]
-                if offset + limit >= len(objects):
-                    rows.append({"name": "nested", "id": None})
-                return httpx.Response(200, json=rows)
-            if payload["prefix"] == "nested/":
-                page = nested_objects[offset : offset + limit]
-                return httpx.Response(200, json=[{"name": key, "id": key} for key in page])
-            return httpx.Response(400)
-        if request.url.path == "/storage/v1/object/openslate-files":
-            prefixes = json.loads(request.content)["prefixes"]
-            deleted.append(prefixes)
-            for key in prefixes:
-                (nested_objects if key.startswith("nested/") else objects).remove(
-                    key.removeprefix("nested/")
-                )
-            return httpx.Response(200, json={})
-        return httpx.Response(404)
 
-    transport = httpx.MockTransport(handler)
-    storage = ResetStorage(
-        "http://127.0.0.1:54321",
-        "test-secret",
-        client_factory=lambda **kwargs: httpx.Client(transport=transport, **kwargs),
-    )
+def test_private_storage_inventory_deletes_confirmed_files_and_proves_empty(tmp_path) -> None:
+    root = _private_root(tmp_path)
+    (root / "objects" / "aa" / "ready").write_bytes(b"ready")
+    (root / "quarantine" / "bb" / "pending").write_bytes(b"pending")
+    storage = ResetStorage(root)
 
     inventory = storage.list_object_keys()
-    assert inventory[-1] == "orphan-not-in-files"
-    assert "nested/nested-orphan-not-in-files" in inventory
+
+    assert inventory == ("objects/aa/ready", "quarantine/bb/pending")
     storage.delete_and_verify_empty(inventory)
-
-    assert objects == [] and nested_objects == []
-    assert [len(batch) for batch in deleted] == [1_000, 3]
+    assert storage.list_object_keys() == ()
 
 
-def test_storage_inventory_failure_never_leaks_object_keys() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, text="private-object-key")
+def test_private_storage_rejects_symlinked_inventory_and_escape_plan(tmp_path) -> None:
+    root = _private_root(tmp_path)
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"private")
+    (root / "objects" / "aa" / "escape").symlink_to(outside)
+    storage = ResetStorage(root)
 
-    storage = ResetStorage(
-        "http://127.0.0.1:54321",
-        "test-secret",
-        client_factory=lambda **kwargs: httpx.Client(
-            transport=httpx.MockTransport(handler), **kwargs
-        ),
-    )
+    with pytest.raises(ResetError, match="inventory"):
+        storage.list_object_keys()
+    with pytest.raises(ResetError, match="inventory"):
+        storage.delete_and_verify_empty(("objects/../../outside",))
+    assert outside.read_bytes() == b"private"
 
-    with pytest.raises(ResetError) as error:
+
+def test_private_storage_rejects_missing_or_symlinked_root(tmp_path) -> None:
+    with pytest.raises(ResetError, match="FILES_STORAGE_ROOT"):
+        ResetStorage(tmp_path / "missing")
+
+    target = _private_root(tmp_path)
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(ResetError, match="FILES_STORAGE_ROOT"):
+        ResetStorage(link)
+
+
+def test_private_storage_rejects_directory_replacement_and_inventory_errors(
+    tmp_path, monkeypatch
+) -> None:
+    root = _private_root(tmp_path)
+    object_path = root / "objects" / "aa" / "ready"
+    object_path.write_bytes(b"ready")
+    storage = ResetStorage(root)
+    inventory = storage.list_object_keys()
+    (root / "objects").rename(root / "objects-old")
+    (root / "objects").mkdir()
+    with pytest.raises(ResetError, match="plan changed"):
+        storage.delete_and_verify_empty(inventory)
+
+    root = _private_root(tmp_path / "replaced-root")
+    storage = ResetStorage(root)
+    root.rename(tmp_path / "replaced-root-old")
+    _private_root(tmp_path / "replaced-root")
+    with pytest.raises(ResetError, match="inventory"):
         storage.list_object_keys()
 
-    assert "private-object-key" not in str(error.value)
-
-
-def test_storage_inventory_rejects_duplicate_object_keys() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json=[{"name": "duplicate", "id": "first"}, {"name": "duplicate", "id": "second"}],
-        )
-
-    storage = ResetStorage(
-        "http://127.0.0.1:54321",
-        "test-secret",
-        client_factory=lambda **kwargs: httpx.Client(
-            transport=httpx.MockTransport(handler), **kwargs
-        ),
+    root = _private_root(tmp_path / "second")
+    storage = ResetStorage(root)
+    monkeypatch.setattr(
+        "operations.reset_storage.os.listdir", lambda _fd: (_ for _ in ()).throw(OSError())
     )
-
-    with pytest.raises(ResetError, match="ambiguous"):
+    with pytest.raises(ResetError, match="inventory"):
         storage.list_object_keys()
 
 
-def test_local_storage_and_api_writer_admission_fail_closed() -> None:
-    assert validate_local_storage_url(
-        "http://127.0.0.1:54321", expected_url="http://127.0.0.1:54321/"
-    ) is None
-    assert require_api_stopped(
-        "8000", lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1)
-    ) is None
+def test_api_writer_admission_is_cross_platform_and_fail_closed(monkeypatch) -> None:
+    def refused(*_args, **_kwargs):
+        raise ConnectionRefusedError
 
-    with pytest.raises(ResetError, match="API server must be stopped"):
-        require_api_stopped(
-            "8000", lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0)
-        )
-    with pytest.raises(ResetError, match="Storage API"):
-        validate_local_storage_url("http://127.0.0.1:54322")
+    monkeypatch.setattr(socket, "create_connection", refused)
+    assert require_api_stopped("127.0.0.1", "8000") is None
+    assert require_api_stopped("::1", "8000") is None
+
+    class Connected:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(socket, "create_connection", lambda *_args, **_kwargs: Connected())
+    with pytest.raises(ResetError, match="must be stopped"):
+        require_api_stopped("::", "8000")
+    with pytest.raises(ResetError, match="valid"):
+        require_api_stopped("127.0.0.1", "invalid")
+    with pytest.raises(ResetError, match="not supported"):
+        require_api_stopped("192.168.1.10", "8000")

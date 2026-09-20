@@ -39,7 +39,7 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
-import { Toaster } from "@/components/ui/toast";
+import { toast, Toaster } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import {
   Sidebar,
@@ -53,6 +53,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
+import { signOut } from "@/lib/auth-api";
 
 const SIDEBAR_COLLAPSED_KEY = "openslate-sidebar-collapsed";
 const SIDEBAR_WIDTH_KEY = "openslate-sidebar-width";
@@ -149,14 +150,16 @@ export function AppShell({
 
   async function logout() {
     try {
-      await fetch("/session/logout", {
-        method: "POST",
-        credentials: "same-origin",
-      });
-    } finally {
+      await signOut();
       void clearVerifiedWorkspaceSessionSnapshot(verifiedUserId);
       releaseAllLocalAttachments();
       router.replace("/login");
+    } catch {
+      toast.add({
+        title: "Could not sign out",
+        description: "Your workspace is still active. Try again.",
+        type: "error",
+      });
     }
   }
 

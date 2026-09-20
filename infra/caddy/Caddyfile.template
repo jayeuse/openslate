@@ -1,0 +1,79 @@
+{
+    auto_https disable_redirects
+
+    servers {
+        timeouts {
+            read_body 30s
+            read_header 30s
+            idle 5m
+        }
+    }
+}
+
+https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
+    bind {{LISTEN_ADDRESS}}
+    tls {{TLS_DIRECTIVE}}
+
+    @events path /api/events
+    handle @events {
+        reverse_proxy {{UPSTREAM_HOST}}:{{BACKEND_PORT}} {
+            # Do not buffer or compress server-sent events.  FastAPI must send
+            # its initial response headers within response_header_timeout.
+            flush_interval -1
+            stream_timeout 24h
+            header_up -Accept-Encoding
+            header_up Host {http.request.hostport}
+            header_up Origin {http.request.header.Origin}
+            header_up X-Request-ID {http.request.header.X-Request-ID}
+            header_up X-Forwarded-Host {http.request.hostport}
+            header_up X-Forwarded-Proto {http.request.scheme}
+            transport http {
+                compression off
+                dial_timeout 5s
+                response_header_timeout 30s
+            }
+        }
+    }
+
+    @api path /api /api/*
+    handle @api {
+        reverse_proxy {{UPSTREAM_HOST}}:{{BACKEND_PORT}} {
+            header_up Host {http.request.hostport}
+            header_up Origin {http.request.header.Origin}
+            header_up X-Request-ID {http.request.header.X-Request-ID}
+            header_up X-Forwarded-Host {http.request.hostport}
+            header_up X-Forwarded-Proto {http.request.scheme}
+            transport http {
+                dial_timeout 5s
+                response_header_timeout 60s
+            }
+        }
+    }
+
+    handle {
+        reverse_proxy {{UPSTREAM_HOST}}:{{FRONTEND_PORT}} {
+            header_up Host {http.request.hostport}
+            header_up Origin {http.request.header.Origin}
+            header_up X-Request-ID {http.request.header.X-Request-ID}
+            header_up X-Forwarded-Host {http.request.hostport}
+            header_up X-Forwarded-Proto {http.request.scheme}
+            transport http {
+                dial_timeout 5s
+                response_header_timeout 60s
+            }
+        }
+    }
+}
+
+# This loopback listener is used only by Compose health checks. It leaves public
+# TLS and virtual hosts untouched in both bridged and native-Linux host modes.
+http://127.0.0.1:{{HEALTH_PORT}} {
+    bind 127.0.0.1
+
+    @health path /api/health
+    handle @health {
+        reverse_proxy {{UPSTREAM_HOST}}:{{BACKEND_PORT}}
+    }
+
+    respond 404
+}

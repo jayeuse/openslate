@@ -11,8 +11,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 PUBLIC_BUILD_KEYS = (
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
     "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED",
 )
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

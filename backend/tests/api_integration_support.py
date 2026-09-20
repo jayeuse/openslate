@@ -24,16 +24,10 @@ def create_owned_admin(runtime_url: str, owner_url: str, prefix: str) -> User:
             )
             if role_id is None:
                 raise RuntimeError("The local database must contain an active admin role")
-            connection.execute(
-                text("INSERT INTO auth.users (id, email) VALUES (:id, :email)"),
-                {"id": actor_id, "email": email},
-            )
             updated = connection.execute(
                 text(
-                    "UPDATE public.users SET email = :email, username = :username, "
-                    "status = 'active', role_id = :role_id, is_deleted = false, "
-                    "deleted_at = NULL, invitation_sent_at = NULL, "
-                    "invitation_accepted_at = NULL WHERE id = :id"
+                    "INSERT INTO public.users (id, email, username, status, role_id) "
+                    "VALUES (:id, :email, :username, 'active', :role_id)"
                 ),
                 {
                     "id": actor_id,
@@ -43,7 +37,7 @@ def create_owned_admin(runtime_url: str, owner_url: str, prefix: str) -> User:
                 },
             )
             if updated.rowcount != 1:
-                raise RuntimeError("The Auth profile trigger did not create the owned profile")
+                raise RuntimeError("The owned administrator could not be created")
     finally:
         owner_engine.dispose()
 
@@ -85,6 +79,5 @@ def delete_owned_admin(owner_url: str, actor_id: UUID) -> None:
                 {"id": actor_id},
             )
             connection.execute(text("DELETE FROM public.users WHERE id = :id"), {"id": actor_id})
-            connection.execute(text("DELETE FROM auth.users WHERE id = :id"), {"id": actor_id})
     finally:
         owner_engine.dispose()

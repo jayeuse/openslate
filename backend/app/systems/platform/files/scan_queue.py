@@ -13,6 +13,7 @@ RETRY_DELAYS = (30, 120, 600, 1800)
 MAX_ATTEMPTS = 5
 LEASE_SECONDS = 240
 UNRESOLVED = "scan_execution_unresolved"
+PROMOTION_UNRESOLVED = "promotion_metadata_unresolved"
 
 
 def enqueue_uploaded(file: File, *, now: datetime | None = None) -> None:

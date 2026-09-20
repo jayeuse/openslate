@@ -12,7 +12,6 @@ from app.core.config import (
     get_admin_settings,
     get_migration_settings,
     get_provision_settings,
-    get_seed_settings,
     read_environment,
 )
 from app.core.config.environment import environment_inputs
@@ -74,16 +73,15 @@ def test_operation_loaders_read_canonical_values_and_report_missing_names(
     environment = tmp_path / ".env"
     environment.write_text(
         "ADMIN_EMAIL=admin@example.test\nADMIN_USERNAME=admin\nADMIN_PASSWORD=test-password\n"
-        "BACKEND_URL=http://backend.test\nSUPABASE_ACCESS_TOKEN=test-token\n"
         "ENVIRONMENT=test\nDATABASE_URL=postgresql+psycopg://openslate_runtime:pass@127.0.0.1/db\n"
-        "MIGRATION_DATABASE_URL=postgresql+psycopg://postgres:pass@127.0.0.1/db\n",
+        "MIGRATION_DATABASE_URL=postgresql+psycopg://openslate_owner:pass@127.0.0.1/db\n"
+        "DATABASE_BOOTSTRAP_URL=postgresql+psycopg://postgres:pass@127.0.0.1/db\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(settings_module, "DOTENV_PATH", environment)
     monkeypatch.delenv("OPENSLATE_ENV_SOURCE", raising=False)
 
     assert get_admin_settings().admin_username == "admin"
-    assert get_seed_settings().backend_url == "http://backend.test"
     assert get_provision_settings().environment == "test"
 
     environment.write_text("ADMIN_EMAIL=admin@example.test\n", encoding="utf-8")
@@ -94,10 +92,10 @@ def test_operation_loaders_read_canonical_values_and_report_missing_names(
 
 def test_settings_rejects_blank_and_malformed_canonical_values() -> None:
     values = settings_values(
-        supabase_publishable_key=" ",
+        auth_jwt_secret=" ",
         backend_port="not-a-port",
         log_dir="relative-logs",
-        supabase_url="not-a-url",
+        public_origin="not-a-url",
         database_url="postgresql://test:test-password@127.0.0.1/test",
         lifecycle_purge_enabled="yes",
         cors_origins="[invalid-origin-list",
@@ -107,15 +105,38 @@ def test_settings_rejects_blank_and_malformed_canonical_values() -> None:
         Settings(**values, _env_file=None)
 
     rendered = str(error.value)
-    assert "supabase_publishable_key" in rendered
+    assert "auth_jwt_secret" in rendered
     assert "backend_port" in rendered
     assert "log_dir" in rendered
-    assert "supabase_url" in rendered
+    assert "public_origin" in rendered
     assert "database_url" in rendered
     assert "lifecycle_purge_enabled" in rendered
     assert "cors_origins" in rendered
     assert "not-a-port" not in rendered
     assert "invalid-origin-list" not in rendered
+
+
+def test_settings_rejects_an_undersized_jwt_signing_secret() -> None:
+    with pytest.raises(ValidationError) as error:
+        Settings(**settings_values(auth_jwt_secret="too-short"), _env_file=None)
+
+    assert "auth_jwt_secret" in str(error.value)
+
+
+@pytest.mark.parametrize("concurrency", [1, 2])
+def test_settings_reserve_capacity_for_connection_admission_sse_and_http(
+    concurrency: int,
+) -> None:
+    with pytest.raises(ValidationError) as error:
+        Settings(**settings_values(server_max_concurrency=concurrency), _env_file=None)
+
+    assert "server_max_concurrency" in str(error.value)
+
+
+def test_settings_accepts_the_minimum_sse_safe_concurrency() -> None:
+    settings = Settings(**settings_values(server_max_concurrency=3), _env_file=None)
+
+    assert settings.server_max_concurrency == 3
 
 
 def test_missing_local_admin_values_cannot_be_filled_from_the_shell(

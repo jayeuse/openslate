@@ -1,0 +1,79 @@
+name: Native Manager development artifacts
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.artifact }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            artifact: openslate-manager-macos-development
+          - os: windows-2025
+            artifact: openslate-manager-windows-development
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: latest
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Install locked packaging dependencies
+        run: uv sync --locked --group manager
+      - name: Run manager boundary tests
+        run: >-
+          uv run --group manager python -m unittest discover
+          -s ../tests/tooling -t .. -p 'test_native_manager.py'
+      - name: Lint the manager package
+        run: >-
+          uv run --group manager ruff check ../packaging/manager
+          ../scripts/build_native_manager.py ../tests/tooling/test_native_manager.py
+      - name: Type-check the manager package
+        working-directory: packaging/manager
+        run: >-
+          uv run --project ../../backend --group manager mypy
+          --explicit-package-bases openslate_manager main.py
+      - name: Type-check the manager builder
+        env:
+          MYPYPATH: ../packaging/manager
+        run: uv run --group manager mypy ../scripts/build_native_manager.py
+      - name: Build unsigned host-native development artifact
+        run: >-
+          uv run --group manager python ../scripts/build_native_manager.py
+          --origin https://manager-ci.invalid --version 0.0.0-ci
+          --output-dir ../dist/native-manager
+      - name: Archive the macOS app bundle
+        if: matrix.os == 'macos-14'
+        run: >-
+          ditto -c -k --sequesterRsrc --keepParent
+          "../dist/native-manager/OpenSlate Manager.app"
+          "../dist/${{ matrix.artifact }}.zip"
+      - name: Archive the Windows application folder
+        if: matrix.os == 'windows-2025'
+        shell: pwsh
+        run: >-
+          Compress-Archive -LiteralPath '..\dist\native-manager\OpenSlate Manager'
+          -DestinationPath '..\dist\${{ matrix.artifact }}.zip' -Force
+      - name: Upload unsigned development artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.zip
+          if-no-files-found: error
+          retention-days: 7

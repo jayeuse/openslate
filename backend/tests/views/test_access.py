@@ -4,7 +4,7 @@ import pytest
 from fastapi import HTTPException, Response
 from pydantic import ValidationError
 from record_queries.test_database import setup_rows
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from uuid6 import uuid7
 
 from app.systems.access.users.models import Role, User
@@ -26,12 +26,17 @@ pytestmark = pytest.mark.integration
 
 def actor(db):
     actor_id = uuid7()
-    db.connection().execute(
-        text("INSERT INTO auth.users (id, email) VALUES (:id, :email)"),
-        {"id": actor_id, "email": f"p7-{actor_id}@example.com"},
+    role = db.scalar(select(Role).where(Role.role == "member"))
+    assert role is not None
+    user = User(
+        id=actor_id,
+        email=f"p7-{actor_id}@example.com",
+        username=f"p7_{actor_id.hex[:12]}",
+        status="active",
+        role_id=role.id,
     )
-    user = db.scalar(select(User).where(User.id == actor_id))
-    assert user is not None
+    db.add(user)
+    db.flush()
     return user
 
 
