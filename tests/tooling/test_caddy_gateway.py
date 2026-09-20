@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import secrets
 import shutil
@@ -30,7 +29,6 @@ class CaddyGatewayTests(unittest.TestCase):
             "https_port": 443,
             "health_port": 3449,
             "backend_port": 8100,
-            "frontend_port": 3100,
             "tls_mode": "internal",
             "cert_file": None,
             "key_file": None,
@@ -38,21 +36,23 @@ class CaddyGatewayTests(unittest.TestCase):
         settings.update(overrides)
         return generate_config.render_config(**settings)  # type: ignore[arg-type]
 
-    def test_routes_are_ordered_and_private_upstreams_stay_on_loopback(self) -> None:
+    def test_production_routes_are_ordered_and_use_only_the_fastapi_upstream(self) -> None:
         rendered = self.render()
 
         self.assertLess(rendered.index("handle @events"), rendered.index("handle @api"))
         self.assertLess(rendered.index("handle @api"), rendered.index("    handle {"))
         self.assertIn("@events path /api/events", rendered)
         self.assertIn("@api path /api /api/*", rendered)
-        self.assertEqual(rendered.count("reverse_proxy 127.0.0.1:8100"), 3)
-        self.assertIn("reverse_proxy 127.0.0.1:3100", rendered)
+        self.assertEqual(rendered.count("reverse_proxy 127.0.0.1:8100"), 4)
+        self.assertNotIn("FRONTEND_PORT", rendered)
+        self.assertNotIn("frontend", rendered.lower())
         self.assertIn("bind 0.0.0.0", rendered)
         self.assertEqual(rendered.count("    bind "), 2)
         self.assertEqual(rendered.count("https://"), 1)
         self.assertIn("http://127.0.0.1:3449 {\n    bind 127.0.0.1", rendered)
         self.assertIn("@health path /api/health", rendered)
         self.assertIn("auto_https disable_redirects", rendered)
+        self.assertIn('Strict-Transport-Security "max-age=31536000"', rendered)
         self.assertNotIn("reverse_proxy 0.0.0.0", rendered)
         self.assertNotIn(":5432", rendered)
         self.assertNotIn(":3310", rendered)
@@ -71,61 +71,15 @@ class CaddyGatewayTests(unittest.TestCase):
     def test_container_gateway_uses_the_explicit_host_upstream(self) -> None:
         rendered = self.render(upstream_host="host.docker.internal")
 
-        self.assertEqual(rendered.count("reverse_proxy host.docker.internal:8100"), 3)
-        self.assertIn("reverse_proxy host.docker.internal:3100", rendered)
+        self.assertEqual(rendered.count("reverse_proxy host.docker.internal:8100"), 4)
         self.assertNotIn("reverse_proxy 127.0.0.1", rendered)
 
-    def test_compose_fallback_cannot_mount_the_unrendered_template(self) -> None:
+    def test_local_compose_keeps_the_gateway_behind_an_opt_in_profile(self) -> None:
         compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
 
-        self.assertIn(
-            "source: ${CADDY_CONFIG_PATH:-./.agent-runtime/caddy/Caddyfile}",
-            compose,
-        )
-        self.assertNotIn(
-            "source: ${CADDY_CONFIG_PATH:-./infra/caddy/Caddyfile.template}",
-            compose,
-        )
-
-    @unittest.skipUnless(shutil.which("docker"), "Docker Compose is unavailable")
-    def test_linux_gateway_overlay_effectively_uses_host_network(self) -> None:
-        environment = {
-            **os.environ,
-            "POSTGRES_BOOTSTRAP_PASSWORD": "compose-control-only",
-            "POSTGRES_DATABASE": "openslate",
-            "POSTGRES_PORT": "54322",
-            "GATEWAY_BIND_HOST": "127.0.0.1",
-            "GATEWAY_PORT": "3448",
-        }
-        completed = subprocess.run(
-            [
-                "docker",
-                "compose",
-                "--env-file",
-                os.devnull,
-                "-f",
-                "compose.yaml",
-                "-f",
-                "infra/caddy/compose.linux.yaml",
-                "--profile",
-                "gateway",
-                "config",
-                "--format",
-                "json",
-            ],
-            cwd=ROOT,
-            env=environment,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        caddy = json.loads(completed.stdout)["services"]["caddy"]
-        self.assertEqual(caddy["network_mode"], "host")
-        self.assertNotIn("ports", caddy)
-        self.assertNotIn("networks", caddy)
-        self.assertNotIn("extra_hosts", caddy)
+        self.assertIn("  caddy:", compose)
+        self.assertIn('profiles: ["gateway"]', compose)
+        self.assertIn("source: ${CADDY_CONFIG_PATH:-./.agent-runtime/caddy/Caddyfile}", compose)
 
     def test_forwarding_contract_is_present_for_every_upstream(self) -> None:
         rendered = self.render()
@@ -133,6 +87,7 @@ class CaddyGatewayTests(unittest.TestCase):
             "header_up Host {http.request.hostport}",
             "header_up Origin {http.request.header.Origin}",
             "header_up X-Request-ID {http.request.header.X-Request-ID}",
+            "header_up X-Forwarded-For {http.request.remote.host}",
             "header_up X-Forwarded-Host {http.request.hostport}",
             "header_up X-Forwarded-Proto {http.request.scheme}",
         ):
@@ -228,14 +183,11 @@ class CaddyGatewayTests(unittest.TestCase):
                 key_file=Path("/srv/openslate/tls/private-key.pem"),
             )
 
-    def test_generator_rejects_each_colliding_listener_pair(self) -> None:
+    def test_generator_rejects_each_production_host_listener_collision(self) -> None:
         for overrides, labels in (
             ({"https_port": 3449}, ("HTTPS_PORT", "HEALTH_PORT")),
             ({"backend_port": 3449}, ("HEALTH_PORT", "BACKEND_PORT")),
-            ({"frontend_port": 3449}, ("HEALTH_PORT", "FRONTEND_PORT")),
             ({"https_port": 8100}, ("HTTPS_PORT", "BACKEND_PORT")),
-            ({"https_port": 3100}, ("HTTPS_PORT", "FRONTEND_PORT")),
-            ({"frontend_port": 8100}, ("BACKEND_PORT", "FRONTEND_PORT")),
         ):
             with self.subTest(overrides=overrides):
                 with self.assertRaises(generate_config.ConfigurationError) as raised:
@@ -244,7 +196,9 @@ class CaddyGatewayTests(unittest.TestCase):
                 self.assertIn(labels[0], str(raised.exception))
                 self.assertIn(labels[1], str(raised.exception))
 
-    def test_bridged_generator_allows_container_ports_but_rejects_shared_upstreams(self) -> None:
+    def test_bridged_production_generator_allows_the_container_and_fastapi_port_to_match(
+        self,
+    ) -> None:
         rendered = self.render(
             https_port=8100,
             backend_port=8100,
@@ -253,15 +207,6 @@ class CaddyGatewayTests(unittest.TestCase):
 
         self.assertIn("https://portal.example.invalid:8100", rendered)
         self.assertIn("reverse_proxy 127.0.0.1:8100", rendered)
-        with self.assertRaises(generate_config.ConfigurationError) as raised:
-            self.render(
-                backend_port=8100,
-                frontend_port=8100,
-                require_host_namespace_separation=False,
-            )
-
-        self.assertIn("BACKEND_PORT", str(raised.exception))
-        self.assertIn("FRONTEND_PORT", str(raised.exception))
 
     def test_loopback_public_host_uses_a_distinct_private_health_listener(self) -> None:
         rendered = self.render(public_host="127.0.0.1")
@@ -279,10 +224,13 @@ class CaddyGatewayTests(unittest.TestCase):
         self.assertLess(nginx.index("location = /api {"), nginx.index("location /api/"))
         self.assertIn("proxy_buffering off", nginx)
         self.assertIn("proxy_read_timeout 24h", nginx)
-        self.assertEqual(nginx.count("proxy_pass http://127.0.0.1:"), 4)
+        self.assertEqual(nginx.count("proxy_pass http://127.0.0.1:<BACKEND_PORT>;"), 4)
         self.assertEqual(nginx.count("proxy_set_header Host $http_host;"), 4)
+        self.assertEqual(nginx.count("proxy_set_header X-Forwarded-For $remote_addr;"), 4)
         self.assertEqual(nginx.count("proxy_set_header X-Forwarded-Host $http_host;"), 4)
         self.assertNotIn("Access-Control-Allow-Origin", nginx + iis)
+        self.assertIn("Strict-Transport-Security", nginx)
+        self.assertIn("Strict-Transport-Security", iis)
         self.assertNotIn("-----BEGIN", nginx + iis)
         ElementTree.fromstring(iis)
         for variable in (
@@ -296,7 +244,7 @@ class CaddyGatewayTests(unittest.TestCase):
             self.assertIn(f'<add name="{variable}" />', iis)
         self.assertLess(iis.index('name="OpenSlate SSE"'), iis.index('name="OpenSlate API"'))
         self.assertIn("127.0.0.1:&lt;BACKEND_PORT&gt;", iis)
-        self.assertIn("127.0.0.1:&lt;FRONTEND_PORT&gt;", iis)
+        self.assertNotIn("FRONTEND_PORT", nginx + iis)
 
     def test_cli_writes_a_resolved_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -311,8 +259,6 @@ class CaddyGatewayTests(unittest.TestCase):
                     str(output),
                     "--backend-port",
                     "8100",
-                    "--frontend-port",
-                    "3100",
                 ],
                 check=False,
                 capture_output=True,
@@ -321,6 +267,28 @@ class CaddyGatewayTests(unittest.TestCase):
 
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(output.read_text(encoding="utf-8"), self.render())
+
+    def test_cli_rejects_removed_development_gateway_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "Caddyfile"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(CADDY_DIR / "generate_config.py"),
+                    "--public-host",
+                    "portal.example.invalid",
+                    "--output",
+                    str(output),
+                    "--frontend-dev-port",
+                    "3000",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("--frontend-dev-port", completed.stderr)
 
     def test_cli_rejects_colliding_listener_ports(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -375,7 +343,6 @@ class CaddyGatewayTests(unittest.TestCase):
                         https_port=3448,
                         health_port=3449,
                         backend_port=8080,
-                        frontend_port=8080,
                         upstream_host="health-upstream",
                     ),
                     encoding="utf-8",
@@ -388,7 +355,6 @@ class CaddyGatewayTests(unittest.TestCase):
                         https_port=3448,
                         health_port=3449,
                         backend_port=8080,
-                        frontend_port=8080,
                         upstream_host="health-upstream",
                     ),
                     encoding="utf-8",

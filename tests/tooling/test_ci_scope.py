@@ -44,52 +44,40 @@ class CiScopeTests(unittest.TestCase):
                 ),
             )
 
-    def test_frontend_changes_never_select_backend_or_container_by_default(self):
+    def test_frontend_changes_select_the_unified_server_image(self):
         for path in (
             "frontend/src/components/systems/manage/page.tsx",
             "frontend/tests/isolated/manage-state.spec.ts",
-            ".github/workflows/frontend.yml",
-            ".github/workflows/frontend-compatibility.yml",
-            ".github/workflows/fullstack.yml",
         ):
             with self.subTest(path=path):
                 scope = ci_scope.classify_paths([path], base_ref="base")
                 self.assertTrue(scope.decisions["frontend"].run)
                 self.assertFalse(scope.decisions["backend"].run)
-                self.assertFalse(scope.decisions["containers"].run)
-                self.assertFalse(scope.decisions["frontend_container"].run)
-                self.assertFalse(scope.decisions["backend_container"].run)
+                self.assertTrue(scope.decisions["server_image"].run)
 
-    def test_frontend_container_inputs_are_narrow_and_explicit(self):
+    def test_unified_server_image_inputs_are_explicit(self):
         for path in (
             "frontend/package-lock.json",
             "frontend/next.config.ts",
-            "frontend/tooling/start-standalone.mjs",
             "frontend/src/lib/environment.ts",
-            "infra/docker/frontend.Dockerfile",
-            "scripts/build_frontend_image.py",
+            "infra/docker/backend.Dockerfile",
+            "compose.yaml",
         ):
             with self.subTest(path=path):
                 scope = ci_scope.classify_paths([path], base_ref="base")
-                self.assertTrue(scope.decisions["frontend_container"].run)
-                self.assertTrue(scope.decisions["containers"].run)
-                self.assertFalse(scope.decisions["backend"].run)
-                self.assertFalse(scope.decisions["backend_container"].run)
+                self.assertTrue(scope.decisions["server_image"].run)
 
-    def test_backend_changes_keep_backend_and_container_gates(self):
+    def test_backend_changes_keep_backend_and_unified_server_image_gates(self):
         scope = ci_scope.classify_paths(
             ["backend/app/systems/users/service.py"], base_ref="base"
         )
         self.assertTrue(scope.decisions["backend"].run)
-        self.assertTrue(scope.decisions["backend_container"].run)
-        self.assertTrue(scope.decisions["containers"].run)
+        self.assertTrue(scope.decisions["server_image"].run)
         self.assertFalse(scope.decisions["frontend"].run)
-        self.assertFalse(scope.decisions["frontend_container"].run)
 
-    def test_shared_docker_context_rebuilds_both_images(self):
+    def test_shared_docker_context_rebuilds_the_unified_server_image(self):
         scope = ci_scope.classify_paths([".dockerignore"], base_ref="base")
-        self.assertTrue(scope.decisions["frontend_container"].run)
-        self.assertTrue(scope.decisions["backend_container"].run)
+        self.assertTrue(scope.decisions["server_image"].run)
 
     def test_shared_tooling_remains_fail_closed(self):
         scope = ci_scope.classify_paths(["scripts/prepush.py"], base_ref="base")
@@ -100,7 +88,6 @@ class CiScopeTests(unittest.TestCase):
     def test_repository_tooling_tests_remain_known_and_fail_closed(self):
         for path in (
             "tests/tooling/test_environment.py",
-            "tests/tooling/test_build_frontend_image.py",
             "tests/tooling/test_ci_workflows.py",
         ):
             with self.subTest(path=path):
@@ -155,12 +142,8 @@ class CiScopeTests(unittest.TestCase):
                     "reason_frontend",
                     "run_backend",
                     "reason_backend",
-                    "run_containers",
-                    "reason_containers",
-                    "run_frontend_container",
-                    "reason_frontend_container",
-                    "run_backend_container",
-                    "reason_backend_container",
+                    "run_server_image",
+                    "reason_server_image",
                     "run_docs",
                     "reason_docs",
                 ],

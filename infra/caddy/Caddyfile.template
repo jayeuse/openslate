@@ -13,6 +13,7 @@
 https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
     bind {{LISTEN_ADDRESS}}
     tls {{TLS_DIRECTIVE}}
+    header Strict-Transport-Security "max-age=31536000"
 
     @events path /api/events
     handle @events {
@@ -25,6 +26,7 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
             header_up Host {http.request.hostport}
             header_up Origin {http.request.header.Origin}
             header_up X-Request-ID {http.request.header.X-Request-ID}
+            header_up X-Forwarded-For {http.request.remote.host}
             header_up X-Forwarded-Host {http.request.hostport}
             header_up X-Forwarded-Proto {http.request.scheme}
             transport http {
@@ -41,6 +43,7 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
             header_up Host {http.request.hostport}
             header_up Origin {http.request.header.Origin}
             header_up X-Request-ID {http.request.header.X-Request-ID}
+            header_up X-Forwarded-For {http.request.remote.host}
             header_up X-Forwarded-Host {http.request.hostport}
             header_up X-Forwarded-Proto {http.request.scheme}
             transport http {
@@ -51,10 +54,11 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
     }
 
     handle {
-        reverse_proxy {{UPSTREAM_HOST}}:{{FRONTEND_PORT}} {
+        reverse_proxy {{UPSTREAM_HOST}}:{{BACKEND_PORT}} {
             header_up Host {http.request.hostport}
             header_up Origin {http.request.header.Origin}
             header_up X-Request-ID {http.request.header.X-Request-ID}
+            header_up X-Forwarded-For {http.request.remote.host}
             header_up X-Forwarded-Host {http.request.hostport}
             header_up X-Forwarded-Proto {http.request.scheme}
             transport http {

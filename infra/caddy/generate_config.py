@@ -8,13 +8,13 @@ import ipaddress
 import re
 from pathlib import Path, PureWindowsPath
 
-TEMPLATE_PATH = Path(__file__).with_name("Caddyfile.template")
+PRODUCTION_TEMPLATE_PATH = Path(__file__).with_name("Caddyfile.template")
 _PLACEHOLDER = re.compile(r"\{\{([A-Z_]+)\}\}")
 _HOSTNAME = re.compile(
     r"(?=.{1,253}\Z)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*"
     r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\Z"
 )
-_LISTENER_PORT_LABELS = ("HTTPS_PORT", "HEALTH_PORT", "BACKEND_PORT", "FRONTEND_PORT")
+_LISTENER_PORT_LABELS = ("HTTPS_PORT", "HEALTH_PORT", "BACKEND_PORT")
 
 
 class ConfigurationError(ValueError):
@@ -92,28 +92,25 @@ def validate_listener_ports(
     https_port: int,
     health_port: int,
     backend_port: int,
-    frontend_port: int,
-    labels: tuple[str, str, str, str] = _LISTENER_PORT_LABELS,
+    labels: tuple[str, ...] = _LISTENER_PORT_LABELS,
     require_host_namespace_separation: bool = True,
-    published_gateway_port: int | None = None,
-    published_gateway_label: str = "GATEWAY_PORT",
 ) -> None:
     """Reject collisions in Caddy and, when applicable, its host namespace."""
-    ports = (https_port, health_port, backend_port, frontend_port)
+    ports = (https_port, health_port, backend_port)
+    if len(labels) != len(ports):
+        raise ConfigurationError("listener labels do not match listener ports")
     pairs = (
-        ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+        tuple(
+            (first, second)
+            for first in range(len(ports))
+            for second in range(first + 1, len(ports))
+        )
         if require_host_namespace_separation
-        else ((0, 1), (2, 3))
+        else ((0, 1),)
     )
     for first, second in pairs:
         if ports[first] == ports[second]:
             raise ConfigurationError(f"{labels[second]} conflicts with {labels[first]}")
-    if published_gateway_port is not None:
-        for index in (2, 3):
-            if published_gateway_port == ports[index]:
-                raise ConfigurationError(
-                    f"{published_gateway_label} conflicts with {labels[index]}"
-                )
 
 
 def render_config(
@@ -123,7 +120,6 @@ def render_config(
     https_port: int,
     health_port: int = 3449,
     backend_port: int,
-    frontend_port: int,
     tls_mode: str,
     upstream_host: str = "127.0.0.1",
     cert_file: Path | None = None,
@@ -150,12 +146,10 @@ def render_config(
     rendered_https_port = _port(str(https_port))
     rendered_health_port = _port(str(health_port))
     rendered_backend_port = _port(str(backend_port))
-    rendered_frontend_port = _port(str(frontend_port))
     validate_listener_ports(
         https_port=rendered_https_port,
         health_port=rendered_health_port,
         backend_port=rendered_backend_port,
-        frontend_port=rendered_frontend_port,
         require_host_namespace_separation=require_host_namespace_separation,
     )
 
@@ -165,13 +159,11 @@ def render_config(
         "HTTPS_PORT": str(rendered_https_port),
         "HEALTH_PORT": str(rendered_health_port),
         "BACKEND_PORT": str(rendered_backend_port),
-        "FRONTEND_PORT": str(rendered_frontend_port),
         "UPSTREAM_HOST": _site_host(_public_host(upstream_host)),
         "TLS_DIRECTIVE": tls_directive,
     }
-    rendered = _PLACEHOLDER.sub(
-        lambda match: replacements[match.group(1)], TEMPLATE_PATH.read_text(encoding="utf-8")
-    )
+    template = PRODUCTION_TEMPLATE_PATH.read_text(encoding="utf-8")
+    rendered = _PLACEHOLDER.sub(lambda match: replacements[match.group(1)], template)
     remaining = _PLACEHOLDER.search(rendered)
     if remaining:
         raise ConfigurationError(f"unreplaced template variable: {remaining.group(1)}")
@@ -186,7 +178,6 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--https-port", default=443, type=_port)
     parser.add_argument("--health-port", default=3449, type=_port)
     parser.add_argument("--backend-port", default=8000, type=_port)
-    parser.add_argument("--frontend-port", default=3000, type=_port)
     parser.add_argument("--upstream-host", default="127.0.0.1", type=_public_host)
     parser.add_argument("--tls-mode", choices=("internal", "custom"), default="internal")
     parser.add_argument("--cert-file", type=_absolute_path)
@@ -203,7 +194,6 @@ def main() -> None:
             https_port=arguments.https_port,
             health_port=arguments.health_port,
             backend_port=arguments.backend_port,
-            frontend_port=arguments.frontend_port,
             tls_mode=arguments.tls_mode,
             upstream_host=arguments.upstream_host,
             cert_file=arguments.cert_file,

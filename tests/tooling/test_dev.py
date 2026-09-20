@@ -19,6 +19,19 @@ spec.loader.exec_module(dev)
 
 
 class DeveloperCommandTests(unittest.TestCase):
+    def test_direct_cli_imports_its_environment_helper(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(DEV_PATH), "--help"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("frontend", result.stdout)
+        self.assertIn("caddy", result.stdout)
+
     def test_named_commands_expand_to_the_supported_compose_actions(self) -> None:
         expected = {
             "db": ["up", "-d", "postgres"],
@@ -27,16 +40,14 @@ class DeveloperCommandTests(unittest.TestCase):
             "containers": [
                 "--profile",
                 "db-ui",
-                "--profile",
-                "gateway",
                 "up",
                 "-d",
                 "--force-recreate",
+                "postgres",
                 "pgweb",
-                "caddy",
             ],
-            "status": ["--profile", "db-ui", "--profile", "gateway", "ps"],
-            "stop": ["--profile", "db-ui", "--profile", "gateway", "stop"],
+            "status": ["--profile", "db-ui", "ps"],
+            "stop": ["--profile", "db-ui", "stop"],
         }
 
         for name, compose_arguments in expected.items():
@@ -64,6 +75,15 @@ class DeveloperCommandTests(unittest.TestCase):
             ["--profile", "db-ui", "stop", "pgweb"],
         )
 
+    def test_caddy_is_an_explicit_opt_in_action(self) -> None:
+        self.assertEqual(
+            dev.build_command("caddy")[-6:],
+            ["--profile", "gateway", "up", "-d", "--force-recreate", "caddy"],
+        )
+        self.assertEqual(
+            dev.build_command("stop", "caddy")[-4:],
+            ["--profile", "gateway", "stop", "caddy"],
+        )
 
 if __name__ == "__main__":
     unittest.main()

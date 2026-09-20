@@ -358,6 +358,37 @@ textarea:focus-visible {
   transition: none;
 }
 
+@media (max-width: 1279px) {
+  [data-sandbox-page] button,
+  body:has([data-sandbox-page]) [role="dialog"] button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  [data-sandbox-page] input:not([type="checkbox"]):not([type="radio"]),
+  [data-sandbox-page] select,
+  [data-sandbox-page] [role="combobox"],
+  body:has([data-sandbox-page])
+    [role="dialog"]
+    input:not([type="checkbox"]):not([type="radio"]),
+  body:has([data-sandbox-page]) [role="dialog"] select,
+  body:has([data-sandbox-page]) [role="dialog"] [role="combobox"] {
+    min-height: 44px;
+  }
+
+  body:has([data-sandbox-page])
+    [data-sandbox-portal]
+    :is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]),
+  [data-sandbox-page] label:has(input:is([type="checkbox"], [type="radio"])),
+  body:has([data-sandbox-page])
+    [role="dialog"]
+    label:has(input:is([type="checkbox"], [type="radio"])),
+  body:has([data-sandbox-page]) [data-sandbox-touch-label] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 /* Shared studio chrome: quiet surfaces and consistently reachable controls. */
 .app-shell [data-slot="sidebar-menu-button"] {
   min-height: 2.75rem;
@@ -397,4 +428,13 @@ textarea:focus-visible {
     ) {
     min-height: 2.75rem;
   }
+}
+
+/* Base UI normally injects this rule. Keep it compiled so CSP can disable runtime styles. */
+.base-ui-disable-scrollbar {
+  scrollbar-width: none;
+}
+
+.base-ui-disable-scrollbar::-webkit-scrollbar {
+  display: none;
 }

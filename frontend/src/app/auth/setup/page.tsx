@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ArrowRight, KeyRound } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -31,13 +31,15 @@ function classifySetupFailure(error: unknown): SetupFailure {
 
 export default function AuthSetupPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [invitationToken, setInvitationToken] = useState<string | null>(null);
-  const temporaryPasswordSetup = searchParams.get("temporary") === "1";
+  const [temporaryPasswordSetup, setTemporaryPasswordSetup] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     const captured = consumeInvitationToken(window.location, window.history);
     setInvitationToken((current) => retainInvitationToken(current, captured));
+    setTemporaryPasswordSetup(
+      new URLSearchParams(window.location.search).get("temporary") === "1",
+    );
     setHydrated(true);
   }, []);
   const [currentPassword, setCurrentPassword] = useState("");

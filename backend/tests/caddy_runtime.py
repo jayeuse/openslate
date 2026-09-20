@@ -29,7 +29,6 @@ def render_gateway_config(
         "{{HTTPS_PORT}}": str(GATEWAY_PORT),
         "{{HEALTH_PORT}}": str(HEALTH_PORT),
         "{{BACKEND_PORT}}": "8008",
-        "{{FRONTEND_PORT}}": "3008",
         "{{UPSTREAM_HOST}}": upstream_host,
         "{{TLS_DIRECTIVE}}": "internal",
     }

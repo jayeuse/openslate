@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ipaddress
-import json
 from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar, Literal
@@ -14,6 +13,7 @@ from pydantic import Field, FilePath, SecretStr, ValidationError, field_validato
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
+from app.core.config.development import is_local_development_host, is_relaxed_development
 from app.core.config.environment import ConfigurationError, environment_inputs
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
@@ -113,8 +113,8 @@ class Settings(EnvironmentSettings):
     security_event_server_key: SecretStr = Field(validation_alias="SECURITY_EVENT_SERVER_KEY")
     lifecycle_purge_enabled: bool = Field(validation_alias="LIFECYCLE_PURGE_ENABLED")
     files_storage_root: Path = Field(validation_alias="FILES_STORAGE_ROOT")
-    cors_origins: list[str] = Field(min_length=1, validation_alias="CORS_ORIGINS")
     public_origin: str = Field(validation_alias="PUBLIC_ORIGIN")
+    web_assets_root: Path | None = Field(default=None, validation_alias="WEB_ASSETS_ROOT")
     request_body_max_bytes: int = Field(gt=0, validation_alias="REQUEST_BODY_MAX_BYTES")
     database_pool_size: int = Field(gt=0, validation_alias="DATABASE_POOL_SIZE")
     database_max_overflow: int = Field(ge=0, validation_alias="DATABASE_MAX_OVERFLOW")
@@ -144,15 +144,12 @@ class Settings(EnvironmentSettings):
     server_max_concurrency: int = Field(ge=3, validation_alias="SERVER_MAX_CONCURRENCY")
     server_keep_alive_seconds: int = Field(gt=0, validation_alias="SERVER_KEEP_ALIVE_SECONDS")
 
-    @field_validator("cors_origins", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def parse_cors_origins(cls, value: object) -> object:
-        if not isinstance(value, str):
-            return value
-        try:
-            return json.loads(value)
-        except ValueError:
-            raise ValueError("must be a JSON array") from None
+    def reject_removed_runtime_settings(cls, value: object) -> object:
+        if isinstance(value, dict) and {"CORS_ORIGINS", "cors_origins"} & value.keys():
+            raise ValueError("CORS_ORIGINS is no longer supported")
+        return value
 
     @field_validator("auth_jwt_secret")
     @classmethod
@@ -161,16 +158,17 @@ class Settings(EnvironmentSettings):
             raise ValueError("must be at least 32 bytes")
         return value
 
-    @field_validator("log_dir", "files_storage_root")
+    @field_validator("log_dir", "files_storage_root", "web_assets_root")
     @classmethod
-    def require_absolute_path(cls, value: Path) -> Path:
+    def require_absolute_path(cls, value: Path | None) -> Path | None:
+        if value is None:
+            return None
         if not value.is_absolute():
             raise ValueError("must be an absolute path")
         return value
 
     @field_validator(
         "auth_jwt_issuer",
-        "public_origin",
     )
     @classmethod
     def require_http_url(cls, value: str) -> str:
@@ -178,6 +176,31 @@ class Settings(EnvironmentSettings):
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("must be an HTTP(S) URL")
         return value
+
+    @field_validator("public_origin")
+    @classmethod
+    def normalize_public_origin(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("must be an HTTP(S) origin")
+        try:
+            port = parsed.port
+        except ValueError:
+            raise ValueError("must be an HTTP(S) origin") from None
+        scheme = parsed.scheme.lower()
+        host = parsed.hostname.lower()
+        rendered_host = f"[{host}]" if ":" in host else host
+        if port is None or (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
+            return f"{scheme}://{rendered_host}"
+        return f"{scheme}://{rendered_host}:{port}"
 
     @field_validator("lifecycle_purge_enabled", mode="before")
     @classmethod
@@ -198,7 +221,26 @@ class Settings(EnvironmentSettings):
         raise ValueError("must be true or false")
 
     @model_validator(mode="after")
+    def validate_public_origin_transport(self) -> Settings:
+        parsed = urlsplit(self.public_origin)
+        if self.environment == "test":
+            return self
+        if is_relaxed_development(self) and is_local_development_host(parsed.hostname or ""):
+            if self.auth_jwt_issuer != self.public_origin:
+                raise ValueError(
+                    "AUTH_JWT_ISSUER must exactly match PUBLIC_ORIGIN in development"
+                )
+            return self
+        if parsed.scheme == "https":
+            return self
+        if self.environment == "development":
+            raise ValueError("PUBLIC_ORIGIN must use HTTPS or local development HTTP")
+        raise ValueError("PUBLIC_ORIGIN must use HTTPS outside development and test")
+
+    @model_validator(mode="after")
     def validate_smtp_configuration(self) -> Settings:
+        if self.environment not in {"development", "test"} and self.web_assets_root is None:
+            raise ValueError("WEB_ASSETS_ROOT is required outside development and test")
         values = (
             self.smtp_host,
             self.smtp_port,
@@ -228,7 +270,7 @@ class Settings(EnvironmentSettings):
             raise ValueError("SMTP sender is invalid")
         if self.smtp_transport == "plain" and (
             self.environment not in {"development", "test"}
-            or not _is_loopback_smtp_host(self.smtp_host)
+            or not _is_loopback_host(self.smtp_host)
         ):
             raise ValueError("Plain SMTP is allowed only for loopback development")
         try:
@@ -238,7 +280,9 @@ class Settings(EnvironmentSettings):
         return self
 
 
-def _is_loopback_smtp_host(host: str) -> bool:
+def _is_loopback_host(host: str | None) -> bool:
+    if host is None:
+        return False
     if host.lower() == "localhost":
         return True
     try:

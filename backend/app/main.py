@@ -2,14 +2,17 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import ExitStack, asynccontextmanager
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exception_handlers import http_exception_handler
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse, Response
 
 from app.core.config import get_settings
+from app.core.config.development import is_relaxed_development
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import dispose_database_resources
 from app.core.middleware.file_transfers import (
@@ -22,8 +25,10 @@ from app.core.middleware.request_context import (
     bind_request_context,
     reset_request_context,
 )
+from app.core.middleware.trusted_hosts import ExactTrustedHostMiddleware
 from app.core.observability import configure_observability_logging, log_event
 from app.core.readiness import dispose_readiness_resources, is_database_ready
+from app.core.static_site import StaticSite
 from app.systems.access.auth.router import router as auth_router
 from app.systems.manage.audit.router import internal_security_events_router, security_events_router
 from app.systems.manage.audit.router import router as audit_router
@@ -114,19 +119,30 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_observability_logging()
-    app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=application_lifespan)
+    development = settings.environment in {"development", "test"}
+    app = FastAPI(
+        title=settings.app_name,
+        version="0.1.0",
+        lifespan=application_lifespan,
+        docs_url="/api/docs" if development else None,
+        redoc_url=None,
+        openapi_url="/api/openapi.json" if development else None,
+    )
+    static_site = (
+        StaticSite.load(settings.web_assets_root) if settings.web_assets_root is not None else None
+    )
+    app.state.static_site = static_site
     events_hub = EventHub(max_subscribers=subscriber_capacity(settings.server_max_concurrency))
     app.state.events_hub = events_hub
     app.state.events_listener = PostgresInvalidationListener(events_hub)
     app.state.smtp_outbox_worker = SmtpOutboxWorker(settings)
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    relaxed_development = is_relaxed_development(settings)
+    if not relaxed_development:
+        app.add_middleware(
+            ExactTrustedHostMiddleware,
+            allowed_hosts=_trusted_hosts(settings.public_origin, environment=settings.environment),
+        )
     app.add_middleware(FileDispatchMiddleware)
 
     @app.middleware("http")
@@ -140,14 +156,20 @@ def create_app() -> FastAPI:
         started = time.perf_counter()
         transfer = file_transfer_policy(request.url.path, request.method)
         capacity = ExitStack()
-        body_limit = transfer.request_bytes if transfer else settings.request_body_max_bytes
+        body_limit = (
+            transfer.request_bytes
+            if transfer is not None
+            else None
+            if relaxed_development
+            else settings.request_body_max_bytes
+        )
         deadline = None
         try:
             if transfer is not None:
                 request.state.file_transfer_lease = capacity.enter_context(transfer_slot())
             declared_size = request.headers.get("content-length")
             response: Response
-            if declared_size is not None and _is_body_too_large(
+            if body_limit is not None and declared_size is not None and _is_body_too_large(
                 declared_size,
                 body_limit,
             ):
@@ -159,7 +181,7 @@ def create_app() -> FastAPI:
                 async with asyncio.timeout(
                     transfer.deadline_seconds if transfer else None
                 ) as deadline:
-                    if not await _read_bounded_body(request, body_limit):
+                    if body_limit is not None and not await _read_bounded_body(request, body_limit):
                         response = JSONResponse(
                             status_code=413,
                             content={"detail": "Request body is too large"},
@@ -197,8 +219,10 @@ def create_app() -> FastAPI:
             reset_request_context(token)
             raise
         try:
-            if request.url.path.startswith(("/api/workspace", "/api/views", "/api/files")):
-                response.headers["Cache-Control"] = "no-store"
+            if request.url.path.startswith("/api"):
+                response.headers.setdefault("Cache-Control", "no-store")
+            if not relaxed_development:
+                _add_security_headers(response)
             response.headers.update(_request_headers(context))
             log_event(
                 "http_request",
@@ -250,7 +274,45 @@ def create_app() -> FastAPI:
             headers={"Cache-Control": "no-store"},
         )
 
+    @app.exception_handler(StarletteHTTPException)
+    async def route_not_found(
+        request: Request, error: StarletteHTTPException
+    ) -> Response:
+        if error.status_code != 404:
+            return await http_exception_handler(request, error)
+        path = request.url.path
+        if path == "/api" or path.startswith("/api/"):
+            return JSONResponse(
+                status_code=404,
+                content={"detail": error.detail},
+                headers=error.headers,
+            )
+        if static_site is not None:
+            if request.method in {"GET", "HEAD"}:
+                return static_site.response_for(path)
+            if path in static_site.pages:
+                return Response(status_code=405, headers={"Allow": "GET, HEAD"})
+        return await http_exception_handler(request, error)
+
     return app
+
+
+def _trusted_hosts(public_origin: str, *, environment: str) -> list[str]:
+    host = urlsplit(public_origin).hostname
+    assert host is not None
+    allowed = [host, "localhost", "127.0.0.1", "::1"]
+    if environment == "test":
+        allowed.append("testserver")
+    return allowed
+
+
+def _add_security_headers(response: Response) -> None:
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Permissions-Policy", "camera=(), geolocation=(), microphone=(), payment=()"
+    )
 
 
 app = create_app()

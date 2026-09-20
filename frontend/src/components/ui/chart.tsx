@@ -5,10 +5,8 @@ import { cn } from "@/lib/utils";
 import * as RechartsPrimitive from "recharts";
 import type { TooltipValueType } from "recharts";
 
-// Format: { THEME_NAME: CSS_SELECTOR }
-const THEMES = { light: "", dark: ".dark" } as const;
-
 const INITIAL_DIMENSION = { width: 320, height: 200 } as const;
+type ChartTheme = "light" | "dark";
 type TooltipNameType = number | string;
 
 export type ChartConfig = Record<
@@ -18,7 +16,7 @@ export type ChartConfig = Record<
     icon?: React.ComponentType;
   } & (
     | { color?: string; theme?: never }
-    | { color?: never; theme: Record<keyof typeof THEMES, string> }
+    | { color?: never; theme: Record<ChartTheme, string> }
   )
 >;
 
@@ -44,6 +42,7 @@ function ChartContainer({
   children,
   config,
   initialDimension = INITIAL_DIMENSION,
+  style,
   ...props
 }: React.ComponentProps<"div"> & {
   config: ChartConfig;
@@ -57,19 +56,21 @@ function ChartContainer({
 }) {
   const uniqueId = React.useId();
   const chartId = `chart-${id ?? uniqueId.replace(/:/g, "")}`;
+  const theme = useChartTheme();
+  const chartStyle = chartColors(config, theme);
 
   return (
     <ChartContext.Provider value={{ config }}>
       <div
         data-slot="chart"
         data-chart={chartId}
+        style={{ ...chartStyle, ...style }}
         className={cn(
           "[&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-grid_line[stroke='#ccc']]:stroke-border/50 [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-border [&_.recharts-radial-bar-background-sector]:fill-muted [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted [&_.recharts-reference-line_[stroke='#ccc']]:stroke-border flex aspect-video justify-center text-xs [&_.recharts-dot[stroke='#fff']]:stroke-transparent [&_.recharts-layer]:outline-hidden [&_.recharts-sector]:outline-hidden [&_.recharts-sector[stroke='#fff']]:stroke-transparent [&_.recharts-surface]:outline-hidden",
           className,
         )}
         {...props}
       >
-        <ChartStyle id={chartId} config={config} />
         <RechartsPrimitive.ResponsiveContainer
           initialDimension={initialDimension}
         >
@@ -80,38 +81,35 @@ function ChartContainer({
   );
 }
 
-const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
-  const colorConfig = Object.entries(config).filter(
-    ([, config]) => config.theme ?? config.color,
-  );
-
-  if (!colorConfig.length) {
-    return null;
-  }
-
-  return (
-    <style
-      dangerouslySetInnerHTML={{
-        __html: Object.entries(THEMES)
-          .map(
-            ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
-${colorConfig
-  .map(([key, itemConfig]) => {
-    const color =
-      itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ??
-      itemConfig.color;
-    return color ? `  --color-${key}: ${color};` : null;
-  })
-  .join("\n")}
+function currentTheme(): ChartTheme {
+  if (typeof document === "undefined") return "light";
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
-`,
-          )
-          .join("\n"),
-      }}
-    />
-  );
-};
+
+function useChartTheme(): ChartTheme {
+  const [theme, setTheme] = React.useState(currentTheme);
+
+  React.useEffect(() => {
+    const root = document.documentElement;
+    const observer = new MutationObserver(() => setTheme(currentTheme()));
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+
+  return theme;
+}
+
+function chartColors(
+  config: ChartConfig,
+  theme: ChartTheme,
+): React.CSSProperties {
+  return Object.fromEntries(
+    Object.entries(config).flatMap(([key, itemConfig]) => {
+      const color = itemConfig.theme?.[theme] ?? itemConfig.color;
+      return color === undefined ? [] : [[`--color-${key}`, color]];
+    }),
+  ) as React.CSSProperties;
+}
 
 const ChartTooltip = RechartsPrimitive.Tooltip;
 
@@ -381,5 +379,4 @@ export {
   ChartTooltipContent,
   ChartLegend,
   ChartLegendContent,
-  ChartStyle,
 };

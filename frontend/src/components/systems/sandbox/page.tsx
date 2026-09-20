@@ -428,41 +428,6 @@ export default function SampleSandbox() {
           </Button>
         </Alert>
       ) : null}
-      <style jsx global>{`
-        @media (max-width: 1279px) {
-          [data-sandbox-page] button,
-          body:has([data-sandbox-page]) [role="dialog"] button {
-            min-width: 44px;
-            min-height: 44px;
-          }
-          [data-sandbox-page] input:not([type="checkbox"]):not([type="radio"]),
-          [data-sandbox-page] select,
-          [data-sandbox-page] [role="combobox"],
-          body:has([data-sandbox-page])
-            [role="dialog"]
-            input:not([type="checkbox"]):not([type="radio"]),
-          body:has([data-sandbox-page]) [role="dialog"] select,
-          body:has([data-sandbox-page]) [role="dialog"] [role="combobox"] {
-            min-height: 44px;
-          }
-          body:has([data-sandbox-page])
-            [data-sandbox-portal]
-            :is(
-              [role="menuitem"],
-              [role="menuitemcheckbox"],
-              [role="menuitemradio"]
-            ),
-          [data-sandbox-page]
-            label:has(input:is([type="checkbox"], [type="radio"])),
-          body:has([data-sandbox-page])
-            [role="dialog"]
-            label:has(input:is([type="checkbox"], [type="radio"])),
-          body:has([data-sandbox-page]) [data-sandbox-touch-label] {
-            min-width: 44px;
-            min-height: 44px;
-          }
-        }
-      `}</style>
       <header className="space-y-2 xl:flex xl:flex-wrap xl:items-end xl:justify-between xl:gap-4 xl:space-y-0">
         <div className="flex items-center justify-between gap-2 xl:contents">
           <div className="flex min-w-0 items-center gap-2 xl:flex-wrap xl:gap-3">

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start and inspect OpenSlate's local development containers."""
+"""Start and inspect OpenSlate's local development dependencies."""
 
 from __future__ import annotations
 
@@ -19,16 +19,14 @@ _ACTIONS: Final[dict[str, tuple[str, ...]]] = {
     "containers": (
         "--profile",
         "db-ui",
-        "--profile",
-        "gateway",
         "up",
         "-d",
         "--force-recreate",
+        "postgres",
         "pgweb",
-        "caddy",
     ),
-    "status": ("--profile", "db-ui", "--profile", "gateway", "ps"),
-    "stop": ("--profile", "db-ui", "--profile", "gateway", "stop"),
+    "status": ("--profile", "db-ui", "ps"),
+    "stop": ("--profile", "db-ui", "stop"),
 }
 
 _STOP_TARGETS: Final[dict[str, tuple[str, ...]]] = {
@@ -67,7 +65,7 @@ def main(
     parser.add_argument(
         "action",
         choices=tuple(_ACTIONS),
-        help="container group to start, or status/stop",
+        help="dependency group to start, or status/stop",
     )
     parser.add_argument(
         "target",

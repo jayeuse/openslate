@@ -8,7 +8,6 @@
   "scripts": {
     "dev": "node tooling/run-next.mjs dev",
     "build": "node tooling/run-next.mjs build",
-    "start": "node tooling/start-standalone.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings=0",
@@ -39,7 +38,6 @@
     "react-dom": "19.3.0",
     "react-resizable-panels": "^4.12.4",
     "recharts": "^3.8.0",
-    "server-only": "^0.0.1",
     "tailwind-merge": "^3.6.0",
     "zod": "^4.6.2"
   },

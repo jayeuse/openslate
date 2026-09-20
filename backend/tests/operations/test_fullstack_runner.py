@@ -16,6 +16,50 @@ from tests.postgres_runtime import (
 )
 
 
+class _RunnerPostgres:
+    network = "test-network"
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def start(self) -> None:
+        pass
+
+    def urls(self) -> dict[str, str]:
+        return {
+            "DATABASE_URL": "postgresql+psycopg://runtime@127.0.0.1/openslate",
+            "MIGRATION_DATABASE_URL": "postgresql+psycopg://owner@127.0.0.1/openslate",
+            "DATABASE_INSPECTOR_URL": "postgresql+psycopg://inspector@127.0.0.1/openslate",
+        }
+
+    def write_manifest(self) -> Path:
+        manifest = self.root / "database.json"
+        manifest.write_text("{}")
+        return manifest
+
+    def stop(self) -> None:
+        pass
+
+
+def _stub_fullstack_prerequisites(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run: object
+) -> MagicMock:
+    scanner = MagicMock()
+    scanner.observations = {}
+    monkeypatch.setattr(runner, "BACKEND", tmp_path / "backend")
+    monkeypatch.setattr(runner, "FRONTEND", tmp_path / "frontend")
+    monkeypatch.setattr(runner, "DisposablePostgres", lambda *_args: _RunnerPostgres(tmp_path))
+    monkeypatch.setattr(runner, "DisposableScanner", lambda *_args: scanner)
+    monkeypatch.setattr(runner, "run_backend_coverage", lambda *_args: 0)
+    monkeypatch.setattr(
+        runner,
+        "seed",
+        lambda *_args: {"admin": {"email": "admin@example.test", "password": "password"}},
+    )
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    return scanner
+
+
 def test_disposable_caddy_uses_a_pinned_image_loopback_gateway_and_owned_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -331,6 +375,78 @@ def test_private_file_storage_is_created_before_the_scanner_worker_starts(tmp_pa
     assert storage_root == tmp_path / "private-files"
     assert storage_root.is_dir()
     assert storage_root.stat().st_mode & 0o077 == 0
+
+
+def test_backend_coverage_does_not_require_an_unbuilt_static_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The backend CI lane must run from a checkout before the frontend export exists."""
+    observed: dict[str, str] = {}
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> MagicMock:
+        commands.append(command)
+        return MagicMock()
+
+    _stub_fullstack_prerequisites(monkeypatch, tmp_path, run)
+    monkeypatch.setattr(runner, "FRONTEND", tmp_path / "frontend-without-export")
+
+    def coverage(_run, _backend, _private, environment, _run_id) -> int:
+        observed.update(environment)
+        return 0
+
+    monkeypatch.setattr(runner, "run_backend_coverage", coverage)
+
+    assert runner.main(["--backend-coverage-only"]) == 0
+    assert "WEB_ASSETS_ROOT" not in observed
+    assert ["npm", "run", "build", "--", "--webpack"] not in commands
+
+
+def test_fullstack_stops_before_fastapi_when_static_build_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commands: list[list[str]] = []
+    start_fastapi = MagicMock()
+
+    def run(command: list[str], **_kwargs: object) -> MagicMock:
+        commands.append(command)
+        if command == ["npm", "run", "build", "--", "--webpack"]:
+            raise subprocess.CalledProcessError(1, command)
+        return MagicMock()
+
+    scanner = _stub_fullstack_prerequisites(monkeypatch, tmp_path, run)
+    monkeypatch.setattr(runner.subprocess, "Popen", start_fastapi)
+
+    assert runner.main([]) == 1
+    assert commands[-1] == ["npm", "run", "build", "--", "--webpack"]
+    start_fastapi.assert_not_called()
+    scanner.stop.assert_called_once()
+
+
+def test_fullstack_assigns_static_assets_after_a_successful_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    launched_environment: dict[str, str] = {}
+
+    def run(command: list[str], **_kwargs: object) -> MagicMock:
+        if command == ["npm", "run", "build", "--", "--webpack"]:
+            events.append("build")
+        return MagicMock()
+
+    _stub_fullstack_prerequisites(monkeypatch, tmp_path, run)
+    monkeypatch.setattr(runner, "FRONTEND", tmp_path / "frontend")
+
+    def start_fastapi(*_args: object, **kwargs: object) -> None:
+        events.append("fastapi")
+        launched_environment.update(kwargs["env"])
+        raise RuntimeError("stop after FastAPI configuration")
+
+    monkeypatch.setattr(runner.subprocess, "Popen", start_fastapi)
+
+    assert runner.main([]) == 1
+    assert events == ["build", "fastapi"]
+    assert launched_environment["WEB_ASSETS_ROOT"] == str(runner.FRONTEND / "out")
 
 
 def test_fullstack_summary_preserves_result_and_observations_contract(tmp_path: Path) -> None:

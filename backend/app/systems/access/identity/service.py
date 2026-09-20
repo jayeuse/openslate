@@ -86,9 +86,12 @@ def recovery_request_permitted(
     *,
     source: str | None,
     now: datetime | None = None,
+    enforce_rate_limit: bool = True,
 ) -> bool:
     """Consume recipient and source recovery budgets without leaking identity state."""
 
+    if not enforce_rate_limit:
+        return True
     return _recovery_request_permitted(db, identifier, source=source, now_value=now)
 
 
@@ -154,14 +157,22 @@ def authenticate_password(
     *,
     source: str | None = None,
     now: datetime | None = None,
+    enforce_rate_limit: bool = True,
 ) -> User:
     timestamp = _now(now)
-    cleanup_expired_rate_limit_buckets(db, now=timestamp)
     normalized = _normalize_identifier(identifier)
-    fingerprint = _login_fingerprint(normalized, source)
-    bucket = _lock_rate_limit_bucket(db, fingerprint)
-    if bucket is not None and bucket.blocked_until is not None and bucket.blocked_until > timestamp:
-        raise IdentityRateLimited("Too many attempts")
+    fingerprint: str | None = None
+    bucket = None
+    if enforce_rate_limit:
+        cleanup_expired_rate_limit_buckets(db, now=timestamp)
+        fingerprint = _login_fingerprint(normalized, source)
+        bucket = _lock_rate_limit_bucket(db, fingerprint)
+        if (
+            bucket is not None
+            and bucket.blocked_until is not None
+            and bucket.blocked_until > timestamp
+        ):
+            raise IdentityRateLimited("Too many attempts")
     user = db.scalar(
         select(User)
         .options(joinedload(User.role))
@@ -182,7 +193,9 @@ def authenticate_password(
         and password_valid
     )
     if not valid:
-        _record_failed_login(db, fingerprint, bucket, timestamp)
+        if enforce_rate_limit:
+            assert fingerprint is not None
+            _record_failed_login(db, fingerprint, bucket, timestamp)
         raise InvalidCredentials("Invalid credentials")
     if user is None or credential is None:  # narrow type after the compound predicate
         raise InvalidCredentials("Invalid credentials")
@@ -190,9 +203,11 @@ def authenticate_password(
         credential.temporary_password_expires_at is None
         or credential.temporary_password_expires_at <= timestamp
     ):
-        _record_failed_login(db, fingerprint, bucket, timestamp)
+        if enforce_rate_limit:
+            assert fingerprint is not None
+            _record_failed_login(db, fingerprint, bucket, timestamp)
         raise InvalidCredentials("Invalid credentials")
-    if bucket is not None:
+    if enforce_rate_limit and bucket is not None:
         db.delete(bucket)
     return user
 

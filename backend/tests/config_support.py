@@ -17,7 +17,6 @@ def settings_values(**overrides: Any) -> dict[str, Any]:
         "security_event_server_key": "test-security-event-key",
         "lifecycle_purge_enabled": False,
         "files_storage_root": "/tmp/openslate-test-files",
-        "cors_origins": ["http://frontend.test"],
         "public_origin": "http://frontend.test",
         "request_body_max_bytes": 1_048_576,
         "database_pool_size": 5,
@@ -42,4 +41,4 @@ def settings_environment() -> dict[str, str]:
     return {
         name.upper(): str(value).lower() if isinstance(value, bool) else str(value)
         for name, value in settings_values().items()
-    } | {"CORS_ORIGINS": '["http://frontend.test"]'}
+    }

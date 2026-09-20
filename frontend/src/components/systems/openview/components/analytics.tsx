@@ -2532,7 +2532,7 @@ function printExport(request: ExportRequest): boolean {
         .join("")}</tbody></table>`
     : `<table><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table>`;
   printWindow.document.write(
-    `<!doctype html><html><head><title>${escapeHtml(request.title)}</title><style>body{font:14px system-ui,sans-serif;color:#171819;padding:32px}h1{font-size:24px;margin:0 0 4px}p{color:#5f6368;margin:0 0 24px}table{border-collapse:collapse;width:100%;margin-top:20px}caption{text-align:left;font-weight:600;margin-bottom:8px}th,td{text-align:left;border-bottom:1px solid #ddd;padding:10px 8px}.group th{background:#f2f2f2}.total td,.grand-total td{font-weight:600;text-align:right}.chart{width:100%;max-width:760px}.chart svg{display:block;width:100%;height:auto}.legend{display:flex;flex-wrap:wrap;gap:16px;margin:8px 0 20px}.legend span{display:inline-flex;align-items:center;gap:6px}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px}@media print{body{padding:0}}</style></head><body><h1>${escapeHtml(request.title)}</h1>${subtitle}<p>${sampleContext}</p>${chartContent}</body></html>`,
+    `<!doctype html><html><head><title>${escapeHtml(request.title)}</title><link rel="stylesheet" href="/openview-print.css"></head><body><h1>${escapeHtml(request.title)}</h1>${subtitle}<p>${sampleContext}</p>${chartContent}</body></html>`,
   );
   printWindow.document.close();
   printWindow.focus();
