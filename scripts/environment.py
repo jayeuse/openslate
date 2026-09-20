@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import json
+import ipaddress
 import os
 import re
 import subprocess
@@ -22,7 +22,10 @@ COMPOSE_CONTROL_PASSWORD = "compose-control-only"
 COMPOSE_GLOBAL_OPTIONS_WITH_VALUE = frozenset({"--profile"})
 sys.path.insert(0, str(ROOT / "backend"))
 
+from app.core.config.development import is_local_development_host  # noqa: E402
 from app.core.config.environment import ConfigurationError, read_environment  # noqa: E402
+
+__all__ = ("ConfigurationError", "read_environment")
 
 SETTINGS_KEYS = (
     "ENVIRONMENT",
@@ -35,7 +38,6 @@ SETTINGS_KEYS = (
     "AUTH_REFRESH_TOKEN_DAYS",
     "SECURITY_EVENT_SERVER_KEY",
     "LIFECYCLE_PURGE_ENABLED",
-    "CORS_ORIGINS",
     "PUBLIC_ORIGIN",
     "FILES_STORAGE_ROOT",
     "REQUEST_BODY_MAX_BYTES",
@@ -74,15 +76,14 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         "POSTGRES_HOST",
         "POSTGRES_PORT",
         "POSTGRES_DATABASE",
-        "FRONTEND_BIND_HOST",
-        "FRONTEND_PORT",
+        "FRONTEND_DEV_PORT",
+        "WEB_ASSETS_ROOT",
         "FILES_CLAMAV_PORT",
         "PGWEB_BIND_HOST",
         "PGWEB_PORT",
         "GATEWAY_PUBLIC_HOST",
         "GATEWAY_BIND_HOST",
         "GATEWAY_PORT",
-        "FRONTEND_URL",
         "BACKEND_URL",
         "DATABASE_BOOTSTRAP_URL",
         "MIGRATION_DATABASE_URL",
@@ -92,9 +93,6 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         "ADMIN_USERNAME",
         "ADMIN_PASSWORD",
         "SEED_ACCESS_TOKEN",
-        "FRONTEND_LOG_DIR",
-        "CONTAINER_BIND_HOST",
-        "CONTAINER_LOG_DIR",
         "CLAMAV_MEMORY_LIMIT",
         "CLAMAV_CPUS",
         "CLAMAV_PIDS_LIMIT",
@@ -110,20 +108,12 @@ COMPOSE_EXCLUDED_KEYS = ROOT_ENVIRONMENT_KEYS | frozenset(
     }
 )
 PORT_KEYS = (
-    "FRONTEND_PORT",
+    "FRONTEND_DEV_PORT",
     "BACKEND_PORT",
     "POSTGRES_PORT",
     "PGWEB_PORT",
-    "GATEWAY_PORT",
     "FILES_CLAMAV_PORT",
 )
-LEGACY_KEYS = frozenset(
-    {
-        "COMPOSE_DATABASE_URL",
-    }
-)
-
-
 def required(values: dict[str, str], name: str) -> str:
     value = values.get(name)
     if value is None or not value.strip():
@@ -150,6 +140,25 @@ def http_url(values: dict[str, str], name: str) -> str:
     except ValueError:
         raise ConfigurationError(f"Invalid HTTP URL configuration: {name}") from None
     return value
+
+
+def is_loopback_bind_host(value: str) -> bool:
+    """Return whether the FastAPI listener remains private to this machine."""
+    if value == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def is_local_development_origin(value: str, *, frontend_port: int) -> bool:
+    """Accept the local browser addresses that Next can proxy to loopback FastAPI."""
+    parsed = urlsplit(value)
+    host = parsed.hostname
+    if parsed.scheme not in {"http", "https"} or host is None or parsed.port != frontend_port:
+        return False
+    return is_local_development_host(host)
 
 
 def absolute_path(values: dict[str, str], name: str) -> str:
@@ -185,24 +194,6 @@ def postgres_host(values: dict[str, str]) -> str:
     if value != "127.0.0.1":
         raise ConfigurationError("POSTGRES_HOST must remain on IPv4 loopback")
     return value
-
-
-def frontend_environment(values: dict[str, str], *, container: bool = False) -> dict[str, str]:
-    result = {
-        "BACKEND_URL": http_url(values, "BACKEND_URL"),
-        "LOG_DIR": absolute_path(values, "FRONTEND_LOG_DIR"),
-        "PORT": str(port(values, "FRONTEND_PORT")),
-        "HOSTNAME": required(values, "FRONTEND_BIND_HOST"),
-        "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED": required(values, "LIFECYCLE_PURGE_ENABLED"),
-    }
-    if result["NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED"] not in {"true", "false"}:
-        raise ConfigurationError(
-            "Expected true or false for configuration: LIFECYCLE_PURGE_ENABLED"
-        )
-    if container:
-        result["LOG_DIR"] = absolute_path(values, "CONTAINER_LOG_DIR")
-        result["HOSTNAME"] = required(values, "CONTAINER_BIND_HOST")
-    return result
 
 
 def compose_environment(values: dict[str, str], *, services: set[str]) -> dict[str, str]:
@@ -269,7 +260,7 @@ def pgpass_field(value: str, name: str) -> str:
 
 
 def write_caddy_config(values: dict[str, str]) -> Path:
-    """Render the container gateway configuration without exposing application secrets."""
+    """Render the opt-in production gateway configuration without application secrets."""
     generator = caddy_generator()
     validate_gateway_ports(values, generator)
     linux_host_network = sys.platform.startswith("linux")
@@ -284,7 +275,6 @@ def write_caddy_config(values: dict[str, str]) -> Path:
             ),
             health_port=CADDY_HEALTH_PORT,
             backend_port=port(values, "BACKEND_PORT"),
-            frontend_port=port(values, "FRONTEND_PORT"),
             tls_mode="internal",
             upstream_host="127.0.0.1" if linux_host_network else "host.docker.internal",
             require_host_namespace_separation=linux_host_network,
@@ -309,7 +299,7 @@ def write_caddy_config(values: dict[str, str]) -> Path:
 
 
 def caddy_generator() -> Any:
-    """Load the checked-in generator shared by validation and rendering."""
+    """Load the checked-in production gateway generator."""
     spec = importlib.util.spec_from_file_location(
         "openslate_caddy_config", CADDY_GENERATOR_PATH
     )
@@ -321,47 +311,35 @@ def caddy_generator() -> Any:
 
 
 def validate_gateway_ports(values: dict[str, str], generator: Any) -> None:
-    """Reject host-port collisions before a gateway config reaches Compose."""
+    """Reject collisions in the opt-in gateway's active host namespace."""
     try:
         if sys.platform.startswith("linux"):
             generator.validate_listener_ports(
                 https_port=port(values, "GATEWAY_PORT"),
                 health_port=CADDY_HEALTH_PORT,
                 backend_port=port(values, "BACKEND_PORT"),
-                frontend_port=port(values, "FRONTEND_PORT"),
-                labels=(
-                    "GATEWAY_PORT",
-                    "CADDY_HEALTH_PORT",
-                    "BACKEND_PORT",
-                    "FRONTEND_PORT",
-                ),
+                labels=("GATEWAY_PORT", "CADDY_HEALTH_PORT", "BACKEND_PORT"),
             )
         else:
             generator.validate_listener_ports(
                 https_port=CADDY_CONTAINER_PORT,
                 health_port=CADDY_HEALTH_PORT,
                 backend_port=port(values, "BACKEND_PORT"),
-                frontend_port=port(values, "FRONTEND_PORT"),
-                labels=(
-                    "CADDY_HTTPS_PORT",
-                    "CADDY_HEALTH_PORT",
-                    "BACKEND_PORT",
-                    "FRONTEND_PORT",
-                ),
+                labels=("CADDY_HTTPS_PORT", "CADDY_HEALTH_PORT", "BACKEND_PORT"),
                 require_host_namespace_separation=False,
-                published_gateway_port=port(values, "GATEWAY_PORT"),
             )
+            if port(values, "GATEWAY_PORT") == port(values, "BACKEND_PORT"):
+                raise generator.ConfigurationError("GATEWAY_PORT conflicts with BACKEND_PORT")
     except generator.ConfigurationError as error:
         raise ConfigurationError(str(error)) from None
 
 
 def validate(values: dict[str, str], *, operations: bool = True) -> None:
-    legacy = sorted(LEGACY_KEYS.intersection(values))
-    if legacy:
-        raise ConfigurationError("Remove retired configuration names: " + ", ".join(legacy))
+    unknown = sorted(set(values) - ROOT_ENVIRONMENT_KEYS)
+    if unknown:
+        raise ConfigurationError("Unknown configuration names: " + ", ".join(unknown))
     for name in SETTINGS_KEYS:
         required(values, name)
-    frontend_environment(values)
     for name in PORT_KEYS:
         port(values, name)
     for name in (
@@ -374,20 +352,21 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
     postgres_host(values)
     if required(values, "PGWEB_BIND_HOST") != "127.0.0.1":
         raise ConfigurationError("PGWEB_BIND_HOST must remain on IPv4 loopback")
-    http_url(values, "PUBLIC_ORIGIN")
-    http_url(values, "AUTH_JWT_ISSUER")
-    if urlsplit(http_url(values, "FRONTEND_URL")).port != port(values, "FRONTEND_PORT"):
-        raise ConfigurationError("Configuration disagrees: FRONTEND_URL and FRONTEND_PORT")
+    public_origin = http_url(values, "PUBLIC_ORIGIN")
+    auth_jwt_issuer = http_url(values, "AUTH_JWT_ISSUER")
     if urlsplit(http_url(values, "BACKEND_URL")).port != port(values, "BACKEND_PORT"):
         raise ConfigurationError("Configuration disagrees: BACKEND_URL and BACKEND_PORT")
-    public_origin = urlsplit(http_url(values, "PUBLIC_ORIGIN"))
-    if (
-        public_origin.scheme != "https"
-        or public_origin.hostname != required(values, "GATEWAY_PUBLIC_HOST").casefold()
-        or public_origin.port != port(values, "GATEWAY_PORT")
+    if required(values, "ENVIRONMENT") == "development" and is_loopback_bind_host(
+        required(values, "BACKEND_BIND_HOST")
     ):
-        raise ConfigurationError("Configuration disagrees: PUBLIC_ORIGIN and gateway settings")
-    validate_gateway_ports(values, caddy_generator())
+        frontend_port = port(values, "FRONTEND_DEV_PORT")
+        if not is_local_development_origin(public_origin, frontend_port=frontend_port):
+            raise ConfigurationError(
+                "Development PUBLIC_ORIGIN must use a permitted local or LAN IP, "
+                "and FRONTEND_DEV_PORT when BACKEND_BIND_HOST is loopback"
+            )
+        if auth_jwt_issuer != public_origin:
+            raise ConfigurationError("Development AUTH_JWT_ISSUER must match PUBLIC_ORIGIN")
     database_url(values, "DATABASE_URL", "openslate_runtime")
     if operations:
         database_url(values, "MIGRATION_DATABASE_URL", "openslate_owner")
@@ -401,30 +380,31 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
             raise ConfigurationError("DATABASE_BOOTSTRAP_URL must use a cluster-admin login")
     absolute_path(values, "LOG_DIR")
     absolute_path(values, "FILES_STORAGE_ROOT")
+    if "WEB_ASSETS_ROOT" in values:
+        absolute_path(values, "WEB_ASSETS_ROOT")
     from pydantic import ValidationError
 
     from app.core.config import Settings
 
     inputs: dict[str, object] = {name.lower(): values[name] for name in SETTINGS_KEYS}
+    if "WEB_ASSETS_ROOT" in values:
+        inputs["web_assets_root"] = values["WEB_ASSETS_ROOT"]
     for name in SMTP_KEYS:
         if name in values:
             inputs[name.lower()] = values[name]
     try:
-        inputs["cors_origins"] = json.loads(values["CORS_ORIGINS"])
         Settings.model_validate(inputs)
-    except (ValidationError, ValueError) as error:
-        if isinstance(error, ValidationError):
-            names = sorted(
-                {
-                    str(item["loc"][0]).upper()
-                    for item in error.errors(include_input=False)
-                    if item["loc"]
-                }
-            )
-            raise ConfigurationError(
-                "Invalid configuration: " + (", ".join(names) if names else "settings")
-            ) from None
-        raise ConfigurationError("Invalid configuration: CORS_ORIGINS") from None
+    except ValidationError as error:
+        names = sorted(
+            {
+                str(item["loc"][0]).upper()
+                for item in error.errors(include_input=False)
+                if item["loc"]
+            }
+        )
+        raise ConfigurationError(
+            "Invalid configuration: " + (", ".join(names) if names else "settings")
+        ) from None
 
 
 def write_environment(path: Path, values: dict[str, str]) -> None:
@@ -480,7 +460,7 @@ def compose_subcommand(arguments: list[str]) -> str | None:
 
 
 def compose_files(arguments: list[str]) -> list[Path]:
-    """Select the Linux host-network overlay whenever Compose manages Caddy."""
+    """Use the host-network overlay only for the opt-in Caddy profile on Linux."""
     files = [ROOT / "compose.yaml"]
     gateway_profile = any(
         arguments[index : index + 2] == ["--profile", "gateway"]
@@ -508,7 +488,14 @@ def run_compose(
         for option in ("-f", str(path))
     ]
     return subprocess.run(
-        ["docker", "compose", "--env-file", os.devnull, *compose_file_arguments, *arguments],
+        [
+            "docker",
+            "compose",
+            "--env-file",
+            os.devnull,
+            *compose_file_arguments,
+            *arguments,
+        ],
         cwd=ROOT,
         env=child_env,
         check=False,
@@ -517,7 +504,7 @@ def run_compose(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("check", "frontend", "compose"))
+    parser.add_argument("command", choices=("check", "compose"))
     parser.add_argument("arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
@@ -530,10 +517,6 @@ def main(argv: list[str] | None = None) -> int:
                 return run_compose(args.arguments, compose_control_environment(), {})
 
         values = read_environment(ROOT / ".env")
-        if args.command == "frontend":
-            write_environment(ROOT / "frontend/.env.local", frontend_environment(values))
-            print("Frontend environment refreshed from root .env (no backend or database secrets).")
-            return 0
         if args.command == "check":
             validate(values)
             if args.arguments:

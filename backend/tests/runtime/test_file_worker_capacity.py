@@ -94,7 +94,7 @@ def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
                 "raw_path": b"/api/files/019c0000-0000-7000-8000-000000000001/content",
                 "query_string": b"",
                 "root_path": "",
-                "headers": [],
+                "headers": [(b"host", b"localhost")],
                 "client": ("127.0.0.1", 1234),
                 "server": ("localhost", 80),
             }
@@ -171,7 +171,7 @@ def test_disconnected_response_releases_transfer_capacity(monkeypatch, disconnec
             "path": "/api/files/019c0000-0000-7000-8000-000000000001/content",
             "query_string": b"",
             "root_path": "",
-            "headers": [],
+            "headers": [(b"host", b"localhost")],
             "client": ("127.0.0.1", 1234),
             "server": ("localhost", 80),
         }

@@ -1,36 +1,65 @@
 import type { NextConfig } from "next";
+import { isIP } from "node:net";
+import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
 
-import {
-  developmentApiRewrites,
-  validatePublicEnvironment,
-} from "./src/lib/environment";
+function isLoopbackBackendHost(host: string): boolean {
+  if (host === "localhost" || host === "::1") return true;
+  return isIP(host) === 4 && host.startsWith("127.");
+}
 
-validatePublicEnvironment();
+function developmentBackendOrigin(): string {
+  const backendHost = process.env.BACKEND_BIND_HOST;
+  const backendPort = Number(process.env.BACKEND_PORT);
 
-const nextConfig: NextConfig = {
-  output: "standalone",
-  reactStrictMode: true,
-  typedRoutes: true,
-  experimental: {
-    proxyClientMaxBodySize: "25mb",
-  },
-  rewrites: () => developmentApiRewrites(),
-  async headers() {
-    return [
-      {
-        source: "/:path*",
-        headers: [
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "DENY" },
-          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          {
-            key: "Permissions-Policy",
-            value: "camera=(), geolocation=(), microphone=(), payment=()",
-          },
-        ],
-      },
-    ];
-  },
-};
+  if (!backendHost || !isLoopbackBackendHost(backendHost))
+    throw new Error(
+      "BACKEND_BIND_HOST must be a loopback host for Next development",
+    );
+  if (!Number.isInteger(backendPort) || backendPort < 1 || backendPort > 65_535)
+    throw new Error(
+      "BACKEND_PORT must be set to a valid port for Next development",
+    );
 
-export default nextConfig;
+  // Next parses external rewrite hostnames with path-to-regexp, which cannot
+  // compile a literal IPv6 address. The launcher forces localhost to resolve
+  // IPv6 first when the FastAPI listener is bound to ::1.
+  const hostname = backendHost === "::1" ? "localhost" : backendHost;
+  return `http://${hostname}:${backendPort}`;
+}
+
+function developmentOriginHost(): string {
+  const hostname = process.env.OPENSLATE_DEV_ORIGIN_HOST;
+  if (!hostname || /[\s*/?#]/.test(hostname))
+    throw new Error(
+      "OPENSLATE_DEV_ORIGIN_HOST must be one exact hostname for Next development",
+    );
+  return hostname;
+}
+
+export default function createNextConfig(phase: string): NextConfig {
+  const isDevelopment = phase === PHASE_DEVELOPMENT_SERVER;
+  const baseConfig = {
+    reactStrictMode: true,
+    typedRoutes: true,
+    images: { unoptimized: true },
+  };
+
+  if (!isDevelopment) return { ...baseConfig, output: "export" };
+
+  const backendOrigin = developmentBackendOrigin();
+  const allowedDevOrigin = developmentOriginHost();
+
+  return {
+    ...baseConfig,
+    allowedDevOrigins: [allowedDevOrigin],
+    experimental: { proxyClientMaxBodySize: "25mb" },
+    async rewrites() {
+      return [
+        {
+          source: "/api/:path*",
+          destination: `${backendOrigin}/api/:path*`,
+        },
+      ];
+    },
+  };
+}

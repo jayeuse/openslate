@@ -108,10 +108,16 @@ def recovery_request_permitted(
 
 
 def invitation_completion_permitted(
-    db: Session, *, source: str | None, now_value: datetime | None = None
+    db: Session,
+    *,
+    source: str | None,
+    now_value: datetime | None = None,
+    enforce_rate_limit: bool = True,
 ) -> bool:
     """Consume an anonymous admission budget before invitation audit events."""
 
+    if not enforce_rate_limit:
+        return True
     timestamp = now(now_value)
     cleanup_expired_buckets(db, now_value=timestamp)
     fingerprint = rate_limit_fingerprint("invitation-completion-source", source or "", None)

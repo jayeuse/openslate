@@ -91,7 +91,7 @@ def test_registered_delete_requires_write_capability(route_template: str) -> Non
 def test_registered_delete_openapi_documents_conflict_without_204() -> None:
     database = Mock(spec=Session)
     actor = SimpleNamespace(role=SimpleNamespace(role="admin"))
-    paths = _client(database, actor).get("/openapi.json").json()["paths"]
+    paths = _client(database, actor).get("/api/openapi.json").json()["paths"]
 
     for route_template in _OPENAPI_DELETE_PATHS:
         responses = paths[route_template]["delete"]["responses"]

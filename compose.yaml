@@ -1,6 +1,6 @@
 name: openslate
 
-# Development uses host-run FastAPI and Next.js. pgweb is an optional database UI.
+# Development uses host-run FastAPI and a local-only Next.js HMR server. pgweb is optional.
 services:
   postgres:
     image: postgres:17@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232
@@ -77,7 +77,6 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - type: bind
-        # scripts/environment.py renders this file before invoking Compose.
         source: ${CADDY_CONFIG_PATH:-./.agent-runtime/caddy/Caddyfile}
         target: /etc/caddy/Caddyfile
         read_only: true

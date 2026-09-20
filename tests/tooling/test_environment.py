@@ -1,8 +1,7 @@
-"""Configuration projection keeps database and application secrets out of the frontend."""
+"""Configuration validation keeps service boundaries explicit."""
 
 import importlib.util
 import io
-import json
 import os
 import sys
 import tempfile
@@ -50,36 +49,165 @@ class EnvironmentProjectionTests(unittest.TestCase):
 
         self.assertFalse(names - environment.ROOT_ENVIRONMENT_KEYS)
 
-    def test_frontend_receives_only_its_safe_runtime_values(self) -> None:
+    def test_static_asset_root_must_be_absolute(self) -> None:
+        values = {**fixture(), "WEB_ASSETS_ROOT": "relative/assets"}
+
+        with self.assertRaises(environment.ConfigurationError) as raised:
+            environment.validate(values)
+
+        self.assertIn("WEB_ASSETS_ROOT", str(raised.exception))
+
+    def test_development_does_not_require_a_static_asset_root(self) -> None:
         values = fixture()
-        result = environment.frontend_environment(values)
-        self.assertEqual(
-            set(result),
-            {
-                "BACKEND_URL",
-                "LOG_DIR",
-                "PORT",
-                "HOSTNAME",
-                "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED",
-            },
-        )
-        for name in (
-            "DATABASE_URL",
-            "MIGRATION_DATABASE_URL",
-            "DATABASE_BOOTSTRAP_URL",
-            "DATABASE_INSPECTOR_URL",
-            "AUTH_JWT_SECRET",
+        values.pop("WEB_ASSETS_ROOT", None)
+
+        environment.validate(values)
+
+    def test_loopback_development_accepts_local_next_origins_without_gateway_settings(self) -> None:
+        values = fixture()
+        environment.validate(values)
+
+        for origin in (
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://[::1]:3000",
+            "http://192.168.1.20:3000",
+            "http://169.254.10.20:3000",
+            "https://192.168.1.20:3000",
         ):
-            self.assertNotIn(name, result)
-            self.assertNotIn(values[name], result.values())
+            with self.subTest(origin=origin):
+                environment.validate(
+                    {
+                        **values,
+                        "PUBLIC_ORIGIN": origin,
+                        "AUTH_JWT_ISSUER": origin,
+                    }
+                )
 
-    def test_development_cors_allows_gateway_and_direct_frontend_origins(self) -> None:
+        caddy_free = dict(values)
+        for name in ("GATEWAY_PUBLIC_HOST", "GATEWAY_BIND_HOST", "GATEWAY_PORT"):
+            caddy_free.pop(name)
+        environment.validate(caddy_free)
+
+    def test_loopback_development_rejects_reserved_and_non_unicast_origins(self) -> None:
         values = fixture()
 
-        self.assertEqual(
-            json.loads(values["CORS_ORIGINS"]),
-            [values["PUBLIC_ORIGIN"], values["FRONTEND_URL"]],
+        for origin in (
+            "https://0.0.0.0:3000",
+            "https://192.0.2.1:3000",
+            "https://224.0.0.1:3000",
+            "https://[::]:3000",
+            "https://[2001:db8::1]:3000",
+            "https://[ff02::1]:3000",
+        ):
+            with self.subTest(origin=origin):
+                with self.assertRaises(environment.ConfigurationError) as raised:
+                    environment.validate(
+                        {
+                            **values,
+                            "PUBLIC_ORIGIN": origin,
+                            "AUTH_JWT_ISSUER": origin,
+                        }
+                    )
+                self.assertIn("PUBLIC_ORIGIN", str(raised.exception))
+
+    def test_loopback_development_requires_local_origin_matching_next_port_and_issuer(self) -> None:
+        values = fixture()
+        cases = (
+            ("PUBLIC_ORIGIN", "http://localhost:3001"),
+            ("PUBLIC_ORIGIN", "https://example.test:3000"),
+            ("AUTH_JWT_ISSUER", "http://localhost:3000"),
         )
+
+        for name, value in cases:
+            with self.subTest(name=name, value=value):
+                invalid = {
+                    **values,
+                    "PUBLIC_ORIGIN": "http://192.168.1.20:3000",
+                    "AUTH_JWT_ISSUER": "http://192.168.1.20:3000",
+                    name: value,
+                }
+                with self.assertRaises(environment.ConfigurationError) as raised:
+                    environment.validate(invalid)
+                self.assertIn(name, str(raised.exception))
+
+    def test_loopback_development_rejects_issuer_that_differs_after_origin_normalization(
+        self,
+    ) -> None:
+        values = {
+            **fixture(),
+            "PUBLIC_ORIGIN": "http://localhost:3000/",
+            "AUTH_JWT_ISSUER": "http://localhost:3000/",
+        }
+
+        with self.assertRaises(environment.ConfigurationError) as raised:
+            environment.validate(values)
+
+        self.assertIn("SETTINGS", str(raised.exception).upper())
+
+    def test_non_loopback_development_retains_strict_http_transport(self) -> None:
+        values = {
+            **fixture(),
+            "BACKEND_BIND_HOST": "0.0.0.0",
+            "PUBLIC_ORIGIN": "http://192.168.1.20:3000",
+            "AUTH_JWT_ISSUER": "http://192.168.1.20:3000",
+        }
+
+        with self.assertRaises(environment.ConfigurationError) as raised:
+            environment.validate(values)
+
+        self.assertNotIn("192.168.1.20", str(raised.exception))
+
+
+    def test_opt_in_gateway_renders_the_production_fastapi_upstream(self) -> None:
+        values = fixture()
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.object(environment, "ROOT", Path(directory)),
+                patch.object(environment.sys, "platform", "darwin"),
+            ):
+                caddy = environment.write_caddy_config(values).read_text(encoding="utf-8")
+
+        self.assertIn("https://localhost:3448", caddy)
+        self.assertIn("reverse_proxy host.docker.internal:8000", caddy)
+        self.assertNotIn("frontend", caddy.lower())
+
+    def test_linux_opt_in_gateway_uses_host_network_and_loopback_upstream(self) -> None:
+        values = {**fixture(), "GATEWAY_PORT": "4443"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.object(environment, "ROOT", Path(directory)),
+                patch.object(environment.sys, "platform", "linux"),
+            ):
+                caddy = environment.write_caddy_config(values).read_text(encoding="utf-8")
+                compose_files = environment.compose_files(
+                    ["--profile", "gateway", "up", "-d", "caddy"]
+                )
+
+        self.assertIn("https://localhost:4443", caddy)
+        self.assertIn("bind 127.0.0.1", caddy)
+        self.assertIn("reverse_proxy 127.0.0.1:8000", caddy)
+        self.assertNotIn("host.docker.internal", caddy)
+        self.assertEqual(
+            compose_files,
+            [Path(directory) / "compose.yaml", environment.LINUX_CADDY_COMPOSE_PATH],
+        )
+
+    def test_opt_in_gateway_rejects_a_published_host_port_collision(self) -> None:
+        values = {**fixture(), "GATEWAY_PORT": "8000"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.object(environment, "ROOT", Path(directory)),
+                patch.object(environment.sys, "platform", "darwin"),
+                self.assertRaises(environment.ConfigurationError) as raised,
+            ):
+                environment.write_caddy_config(values)
+
+        self.assertIn("GATEWAY_PORT", str(raised.exception))
+        self.assertIn("BACKEND_PORT", str(raised.exception))
 
     def test_database_urls_require_distinct_expected_roles(self) -> None:
         values = fixture()
@@ -129,7 +257,6 @@ class EnvironmentProjectionTests(unittest.TestCase):
             with (
                 patch.object(environment, "ROOT", root),
                 patch.object(environment, "write_pgweb_passfile") as write_pgweb_passfile,
-                patch.object(environment, "write_caddy_config") as write_caddy_config,
                 patch.object(environment.subprocess, "run") as run,
             ):
                 run.return_value.returncode = 0
@@ -137,12 +264,10 @@ class EnvironmentProjectionTests(unittest.TestCase):
                 self.assertEqual(environment.main(["compose", "up", "-d", "postgres"]), 0)
 
             write_pgweb_passfile.assert_not_called()
-            write_caddy_config.assert_not_called()
             child = run.call_args.kwargs["env"]
             self.assertEqual(child["POSTGRES_DATABASE"], "openslate")
             self.assertNotIn("DATABASE_URL", child)
             self.assertNotIn("PGWEB_PASSFILE_PATH", child)
-            self.assertNotIn("CADDY_CONFIG_PATH", child)
 
     def test_pgweb_listener_must_remain_on_ipv4_loopback(self) -> None:
         values = {**fixture(), "PGWEB_BIND_HOST": "0.0.0.0"}
@@ -225,192 +350,14 @@ class EnvironmentProjectionTests(unittest.TestCase):
         self.assertNotIn("SMTP_PASSWORD", compose)
         self.assertNotIn("SMTP_DELIVERY_ENCRYPTION_KEY", compose)
 
-    def test_caddy_uses_distinct_external_and_container_ports(self) -> None:
-        values = {
-            **fixture(),
-            "GATEWAY_PORT": "4443",
-            "PUBLIC_ORIGIN": "https://localhost:4443",
-            "AUTH_JWT_ISSUER": "https://localhost:4443",
-        }
-
-        result = environment.compose_environment(values, services={"caddy"})
-
-        self.assertEqual(result["GATEWAY_PORT"], "4443")
-        with tempfile.TemporaryDirectory() as directory:
-            with (
-                patch.object(environment, "ROOT", Path(directory)),
-                patch.object(environment.sys, "platform", "darwin"),
-            ):
-                caddy = environment.write_caddy_config(values).read_text(encoding="utf-8")
-        self.assertIn("https://localhost:3448", caddy)
-        compose = (environment.ROOT / "compose.yaml").read_text(encoding="utf-8")
-        self.assertIn('"${GATEWAY_BIND_HOST:-127.0.0.1}:${GATEWAY_PORT:-3448}:3448"', compose)
-        self.assertIn("http://127.0.0.1:3449/api/health", compose)
-
-    def test_docker_desktop_gateway_can_target_a_host_backend_on_its_container_port(self) -> None:
-        values = {
-            **fixture(),
-            "GATEWAY_PORT": "4443",
-            "PUBLIC_ORIGIN": "https://localhost:4443",
-            "AUTH_JWT_ISSUER": "https://localhost:4443",
-            "BACKEND_PORT": "3448",
-            "BACKEND_URL": "http://localhost:3448",
-        }
-
-        with tempfile.TemporaryDirectory() as directory:
-            with (
-                patch.object(environment, "ROOT", Path(directory)),
-                patch.object(environment.sys, "platform", "darwin"),
-            ):
-                caddy = environment.write_caddy_config(values).read_text(encoding="utf-8")
-
-        self.assertIn("https://localhost:3448", caddy)
-        self.assertIn("reverse_proxy host.docker.internal:3448", caddy)
-
-    def test_docker_desktop_rejects_shared_host_listener_ports(self) -> None:
-        for updates, labels in (
-            ({"GATEWAY_PORT": "8000"}, ("GATEWAY_PORT", "BACKEND_PORT")),
-            ({"GATEWAY_PORT": "3000"}, ("GATEWAY_PORT", "FRONTEND_PORT")),
-            ({"FRONTEND_PORT": "8000"}, ("BACKEND_PORT", "FRONTEND_PORT")),
-        ):
-            with self.subTest(updates=updates):
-                values = {**fixture(), **updates}
-                if "GATEWAY_PORT" in updates:
-                    origin = f"https://localhost:{updates['GATEWAY_PORT']}"
-                    values["PUBLIC_ORIGIN"] = origin
-                    values["AUTH_JWT_ISSUER"] = origin
-                if "FRONTEND_PORT" in updates:
-                    values["FRONTEND_URL"] = f"http://localhost:{updates['FRONTEND_PORT']}"
-
-                with patch.object(environment.sys, "platform", "darwin"):
-                    with self.assertRaises(environment.ConfigurationError) as raised:
-                        environment.validate(values)
-
-                self.assertIn(labels[0], str(raised.exception))
-                self.assertIn(labels[1], str(raised.exception))
-
-    def test_docker_desktop_caddy_render_rejects_a_shared_published_gateway_port(self) -> None:
-        values = {
-            **fixture(),
-            "GATEWAY_PORT": "8000",
-            "PUBLIC_ORIGIN": "https://localhost:8000",
-            "AUTH_JWT_ISSUER": "https://localhost:8000",
-        }
-
-        with tempfile.TemporaryDirectory() as directory:
-            with (
-                patch.object(environment, "ROOT", Path(directory)),
-                patch.object(environment.sys, "platform", "darwin"),
-                self.assertRaises(environment.ConfigurationError) as raised,
-            ):
-                environment.write_caddy_config(values)
-
-        self.assertIn("GATEWAY_PORT", str(raised.exception))
-        self.assertIn("BACKEND_PORT", str(raised.exception))
-
-    def test_linux_gateway_uses_host_network_and_loopback_upstreams(self) -> None:
-        values = {
-            **fixture(),
-            "GATEWAY_PORT": "4443",
-            "PUBLIC_ORIGIN": "https://localhost:4443",
-            "AUTH_JWT_ISSUER": "https://localhost:4443",
-        }
-
-        with tempfile.TemporaryDirectory() as directory:
-            with (
-                patch.object(environment, "ROOT", Path(directory)),
-                patch.object(environment.sys, "platform", "linux"),
-            ):
-                caddy = environment.write_caddy_config(values).read_text(encoding="utf-8")
-                compose_files = environment.compose_files(
-                    ["--profile", "gateway", "up", "-d", "caddy"]
-                )
-
-        self.assertIn("https://localhost:4443", caddy)
-        self.assertIn("bind 127.0.0.1", caddy)
-        self.assertEqual(caddy.count("reverse_proxy 127.0.0.1:8000"), 3)
-        self.assertIn("reverse_proxy 127.0.0.1:3000", caddy)
-        self.assertNotIn("host.docker.internal", caddy)
-        self.assertEqual(
-            compose_files,
-            [Path(directory) / "compose.yaml", environment.LINUX_CADDY_COMPOSE_PATH],
-        )
-
-    def test_linux_gateway_overlay_removes_bridge_port_and_network_settings(self) -> None:
-        overlay = environment.LINUX_CADDY_COMPOSE_PATH.read_text(encoding="utf-8")
-
-        self.assertIn("network_mode: host", overlay)
-        self.assertIn("ports: !reset []", overlay)
-        self.assertIn("networks: !reset []", overlay)
-        self.assertIn("extra_hosts: !reset []", overlay)
-
-    def test_linux_gateway_rejects_each_colliding_listener_pair(self) -> None:
-        for updates, labels in (
-            ({"GATEWAY_PORT": "3449"}, ("GATEWAY_PORT", "CADDY_HEALTH_PORT")),
-            ({"BACKEND_PORT": "3449"}, ("CADDY_HEALTH_PORT", "BACKEND_PORT")),
-            ({"FRONTEND_PORT": "3449"}, ("CADDY_HEALTH_PORT", "FRONTEND_PORT")),
-            ({"GATEWAY_PORT": "8000"}, ("GATEWAY_PORT", "BACKEND_PORT")),
-            ({"GATEWAY_PORT": "3000"}, ("GATEWAY_PORT", "FRONTEND_PORT")),
-            ({"FRONTEND_PORT": "8000"}, ("BACKEND_PORT", "FRONTEND_PORT")),
-        ):
-            with self.subTest(updates=updates):
-                values = {**fixture(), **updates}
-                if "GATEWAY_PORT" in updates:
-                    origin = f"https://localhost:{updates['GATEWAY_PORT']}"
-                    values["PUBLIC_ORIGIN"] = origin
-                    values["AUTH_JWT_ISSUER"] = origin
-                if "BACKEND_PORT" in updates:
-                    values["BACKEND_URL"] = f"http://localhost:{updates['BACKEND_PORT']}"
-                if "FRONTEND_PORT" in updates:
-                    values["FRONTEND_URL"] = f"http://localhost:{updates['FRONTEND_PORT']}"
-
-                with patch.object(environment.sys, "platform", "linux"):
-                    with self.assertRaises(environment.ConfigurationError) as raised:
-                        environment.validate(values)
-
-                self.assertIn(labels[0], str(raised.exception))
-                self.assertIn(labels[1], str(raised.exception))
-
-    def test_caddy_healthcheck_uses_an_unpublished_private_listener(self) -> None:
-        values = {**fixture(), "GATEWAY_PUBLIC_HOST": "portal.example.test"}
-
-        result = environment.compose_environment(values, services={"caddy"})
-
-        self.assertNotIn("GATEWAY_PUBLIC_HOST", result)
-        compose = (environment.ROOT / "compose.yaml").read_text(encoding="utf-8")
-        self.assertIn("http://127.0.0.1:3449/api/health", compose)
-        self.assertNotIn("3449:", compose)
-
-    def test_retired_compose_name_is_rejected_without_echoing_values(self) -> None:
-        values = {**fixture(), "COMPOSE_DATABASE_URL": "private-canary"}
-        with self.assertRaises(environment.ConfigurationError) as raised:
-            environment.validate(values)
-        self.assertIn("COMPOSE_DATABASE_URL", str(raised.exception))
-        self.assertNotIn("private-canary", str(raised.exception))
-
-    def test_caddy_generation_translates_invalid_values_without_echoing_them(self) -> None:
-        values = {**fixture(), "GATEWAY_PUBLIC_HOST": "bad\nCaddyfile"}
-
-        with tempfile.TemporaryDirectory() as directory:
-            with patch.object(environment, "ROOT", Path(directory)):
+    def test_unknown_and_retired_names_are_rejected_without_echoing_values(self) -> None:
+        for name in ("COMPOSE_DATABASE_URL", "FRONTEND_PORT", "CORS_ORIGINS"):
+            with self.subTest(name=name):
+                values = {**fixture(), name: "private-canary"}
                 with self.assertRaises(environment.ConfigurationError) as raised:
-                    environment.write_caddy_config(values)
-
-        self.assertEqual(str(raised.exception), "Invalid gateway configuration")
-        self.assertNotIn("Caddyfile", str(raised.exception))
-
-    def test_failed_frontend_projection_keeps_existing_file(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "frontend").mkdir()
-            previous = root / "frontend/.env.local"
-            previous.write_text("previous\n")
-            environment.write_environment(root / ".env", {**fixture(), "FRONTEND_PORT": ""})
-            output = io.StringIO()
-            with patch.object(environment, "ROOT", root), redirect_stderr(output):
-                self.assertEqual(environment.main(["frontend"]), 2)
-            self.assertEqual(previous.read_text(), "previous\n")
-            self.assertIn("FRONTEND_PORT", output.getvalue())
+                    environment.validate(values)
+                self.assertIn(name, str(raised.exception))
+                self.assertNotIn("private-canary", str(raised.exception))
 
     def test_compose_uses_projected_values_instead_of_stale_shell(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -422,7 +369,6 @@ class EnvironmentProjectionTests(unittest.TestCase):
             with (
                 patch.object(environment, "ROOT", root),
                 patch.dict(os.environ, {"DATABASE_URL": "stale", "SMTP_PASSWORD": "stale"}),
-                patch.object(environment.sys, "platform", "darwin"),
                 patch.object(environment.subprocess, "run") as run,
                 redirect_stdout(io.StringIO()),
             ):
@@ -433,12 +379,9 @@ class EnvironmentProjectionTests(unittest.TestCase):
                             "compose",
                             "--profile",
                             "db-ui",
-                            "--profile",
-                            "gateway",
                             "up",
                             "-d",
                             "pgweb",
-                            "caddy",
                         ]
                     ),
                     0,
@@ -456,15 +399,6 @@ class EnvironmentProjectionTests(unittest.TestCase):
                     passfile.read_text(),
                     "postgres:5432:openslate:openslate_inspector:inspector-canary\n",
                 )
-                caddyfile = Path(child["CADDY_CONFIG_PATH"])
-                self.assertEqual(caddyfile.parent.stat().st_mode & 0o777, 0o700)
-                self.assertEqual(caddyfile.stat().st_mode & 0o777, 0o644)
-                caddy = caddyfile.read_text()
-                self.assertIn("https://localhost:3448", caddy)
-                self.assertIn("bind 0.0.0.0", caddy)
-                self.assertIn("reverse_proxy host.docker.internal:8000", caddy)
-                self.assertIn("reverse_proxy host.docker.internal:3000", caddy)
-                self.assertIn("auto_https disable_redirects", caddy)
 
     def test_control_commands_use_safe_compose_defaults_without_optional_runtime_files(
         self,
@@ -473,7 +407,7 @@ class EnvironmentProjectionTests(unittest.TestCase):
             root = Path(directory)
             environment.write_environment(root / ".env", {})
             for arguments in (
-                ["compose", "--profile", "db-ui", "--profile", "gateway", "ps"],
+                ["compose", "--profile", "db-ui", "ps"],
                 ["compose", "--profile", "db-ui", "stop", "pgweb"],
             ):
                 with self.subTest(arguments=arguments):
@@ -482,12 +416,10 @@ class EnvironmentProjectionTests(unittest.TestCase):
                         patch.dict(
                             os.environ,
                             {
-                                "CADDY_CONFIG_PATH": "/private/stale-caddyfile",
                                 "PGWEB_PASSFILE_PATH": "/private/stale-pgpass",
                             },
                         ),
                         patch.object(environment, "write_pgweb_passfile") as write_pgweb_passfile,
-                        patch.object(environment, "write_caddy_config") as write_caddy_config,
                         patch.object(environment.subprocess, "run") as run,
                     ):
                         run.return_value.returncode = 0
@@ -495,17 +427,15 @@ class EnvironmentProjectionTests(unittest.TestCase):
                         self.assertEqual(environment.main(arguments), 0)
 
                     write_pgweb_passfile.assert_not_called()
-                    write_caddy_config.assert_not_called()
                     child = run.call_args.kwargs["env"]
                     self.assertEqual(child["POSTGRES_BOOTSTRAP_PASSWORD"], "compose-control-only")
                     self.assertNotIn("PGWEB_PASSFILE_PATH", child)
-                    self.assertNotIn("CADDY_CONFIG_PATH", child)
 
     def test_control_commands_reach_docker_without_a_readable_environment_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for arguments in (
-                ["compose", "--profile", "db-ui", "--profile", "gateway", "ps"],
+                ["compose", "--profile", "db-ui", "ps"],
                 ["compose", "--profile", "db-ui", "stop", "pgweb"],
             ):
                 with self.subTest(arguments=arguments):
@@ -556,8 +486,8 @@ class EnvironmentProjectionTests(unittest.TestCase):
 
     def test_control_parser_only_bypasses_environment_for_the_actual_subcommand(self) -> None:
         cases = {
-            ("--profile", "db-ui", "--profile", "gateway", "ps"): "ps",
-            ("--profile=db-ui", "--profile=gateway", "stop", "pgweb"): "stop",
+            ("--profile", "db-ui", "--profile", "unused", "ps"): "ps",
+            ("--profile=db-ui", "--profile=unused", "stop", "pgweb"): "stop",
             ("--profile", "stop", "up", "-d", "postgres"): "up",
             ("--profile=ps", "up", "-d", "postgres"): "up",
             ("--profile=", "ps"): None,
@@ -586,13 +516,12 @@ class EnvironmentProjectionTests(unittest.TestCase):
                     run.assert_not_called()
                     self.assertIn("Environment file is unavailable", output.getvalue())
 
-    def test_start_check_and_frontend_remain_closed_when_environment_is_missing(self) -> None:
+    def test_start_and_check_remain_closed_when_environment_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for arguments in (
                 ["compose", "up", "-d", "postgres"],
                 ["check"],
-                ["frontend"],
             ):
                 with self.subTest(arguments=arguments):
                     output = io.StringIO()
@@ -610,7 +539,6 @@ class EnvironmentProjectionTests(unittest.TestCase):
 
         self.assertIn("docker compose rm --stop --force postgres", readme)
         self.assertIn("docker volume rm openslate_postgres-data", readme)
-        self.assertNotIn("docker compose --profile db-ui --profile gateway down -v", readme)
 
 
 if __name__ == "__main__":

@@ -35,10 +35,10 @@ function requiredEnvironment(name: string): string {
 }
 
 export const syntheticEnvironment = {
-  BACKEND_URL: "http://backend.invalid",
-  PORT: target.port,
-  HOSTNAME: target.hostname,
-  NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: "false",
+  FRONTEND_DEV_PORT: target.port,
+  BACKEND_BIND_HOST: "127.0.0.1",
+  BACKEND_PORT: "1",
+  PUBLIC_ORIGIN: target.origin,
 };
 const frontendEnvironment: Record<string, string> =
   configurationMode === "synthetic"
@@ -86,7 +86,7 @@ export default defineConfig({
     testLayer === "isolated"
       ? undefined
       : {
-          command: isolatedCommand("npm run dev -- --from-process"),
+          command: isolatedCommand("npm run dev"),
           url: baseURL,
           env: frontendEnvironment,
           reuseExistingServer: !isCI,

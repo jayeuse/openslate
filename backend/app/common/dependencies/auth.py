@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import get_settings
+from app.core.config.development import browser_origin_is_permitted
 from app.core.database import get_db
 from app.core.security.tokens import TokenType, decode_token
 from app.systems.access.identity.models import IdentitySession
@@ -70,8 +71,7 @@ def get_current_identity(
 
 
 def _validate_cookie_mutation(request: Request, db: Session, session_id: UUID) -> None:
-    origin = request.headers.get("origin")
-    if origin is None or origin not in get_settings().cors_origins:
+    if not browser_origin_is_permitted(get_settings(), request.headers.get("origin")):
         raise _unauthorized()
     session = db.get(IdentitySession, session_id)
     if session is None or not validate_csrf(session, request.headers.get("X-CSRF-Token", "")):

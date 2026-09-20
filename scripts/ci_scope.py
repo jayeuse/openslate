@@ -18,16 +18,14 @@ from typing import Final
 GATE_NAMES: Final[tuple[str, ...]] = (
     "frontend",
     "backend",
-    "containers",
-    "frontend_container",
-    "backend_container",
+    "server_image",
     "docs",
 )
 
 _FRONTEND_PREFIX = "frontend/"
 _BACKEND_PREFIX = "backend/"
-_CONTAINER_PREFIXES: Final[tuple[str, ...]] = ("infra/",)
-_CONTAINER_PATHS: Final[frozenset[str]] = frozenset(
+_SERVER_IMAGE_PREFIXES: Final[tuple[str, ...]] = ("infra/", "contracts/")
+_SERVER_IMAGE_PATHS: Final[frozenset[str]] = frozenset(
     {
         ".dockerignore",
         ".env.example",
@@ -37,24 +35,6 @@ _CONTAINER_PATHS: Final[frozenset[str]] = frozenset(
         "docker-compose.yml",
     }
 )
-_FRONTEND_IMAGE_PATHS: Final[frozenset[str]] = frozenset(
-    {
-        "frontend/package.json",
-        "frontend/package-lock.json",
-        "frontend/next.config.ts",
-        "frontend/tooling/run-next.mjs",
-        "frontend/tooling/start-standalone.mjs",
-        "frontend/src/lib/environment.ts",
-        "infra/docker/frontend.Dockerfile",
-        "scripts/build_frontend_image.py",
-    }
-)
-_BACKEND_IMAGE_PATHS: Final[frozenset[str]] = frozenset(
-    {
-        "infra/docker/backend.Dockerfile",
-    }
-)
-_SHARED_DOCKER_PREFIXES: Final[tuple[str, ...]] = ("contracts/",)
 _DOC_PREFIXES: Final[tuple[str, ...]] = ("docs/",)
 _DOC_SUFFIXES: Final[tuple[str, ...]] = (".md", ".mdx", ".rst")
 _TOOLING_PREFIXES: Final[tuple[str, ...]] = (
@@ -63,14 +43,6 @@ _TOOLING_PREFIXES: Final[tuple[str, ...]] = (
     ".agents/",
     "scripts/",
     "tests/tooling/",
-)
-_FRONTEND_TOOLING_PATHS: Final[frozenset[str]] = frozenset(
-    {
-        ".github/workflows/frontend.yml",
-        ".github/workflows/frontend-compatibility.yml",
-        ".github/workflows/fullstack.yml",
-        "scripts/build_frontend_image.py",
-    }
 )
 _KNOWN_ROOT_FILES: Final[frozenset[str]] = frozenset(
     {
@@ -206,12 +178,11 @@ def _is_known_path(path: str) -> bool:
             (
                 _FRONTEND_PREFIX,
                 _BACKEND_PREFIX,
-                *_CONTAINER_PREFIXES,
+                *_SERVER_IMAGE_PREFIXES,
                 *_TOOLING_PREFIXES,
-                *_SHARED_DOCKER_PREFIXES,
             )
         )
-        or path in _CONTAINER_PATHS
+        or path in _SERVER_IMAGE_PATHS
         or path in _KNOWN_ROOT_FILES
     )
 
@@ -259,70 +230,29 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
             decisions={
                 "frontend": _decision(False, "Documentation-only changes"),
                 "backend": _decision(False, "Documentation-only changes"),
-                "containers": _decision(False, "Documentation-only changes"),
-                "frontend_container": _decision(False, "Documentation-only changes"),
-                "backend_container": _decision(False, "Documentation-only changes"),
+                "server_image": _decision(False, "Documentation-only changes"),
                 "docs": _decision(True, docs_reason),
             },
         )
 
     frontend_paths = tuple(path for path in functional if path.startswith(_FRONTEND_PREFIX))
     backend_paths = tuple(path for path in functional if path.startswith(_BACKEND_PREFIX))
-    container_paths = tuple(
+    server_image_paths = tuple(
         path
         for path in functional
-        if path.startswith(_CONTAINER_PREFIXES) or path in _CONTAINER_PATHS
+        if path.startswith(_SERVER_IMAGE_PREFIXES) or path in _SERVER_IMAGE_PATHS
     )
     tooling_paths = tuple(path for path in functional if path.startswith(_TOOLING_PREFIXES))
-    broad_tooling_paths = tuple(
-        path
-        for path in tooling_paths
-        if path not in _FRONTEND_IMAGE_PATHS and path not in _FRONTEND_TOOLING_PATHS
-    )
-    frontend_tooling_paths = tuple(
-        path for path in tooling_paths if path in _FRONTEND_TOOLING_PATHS
-    )
-    shared_docker_paths = tuple(
-        path
-        for path in functional
-        if path.startswith(_SHARED_DOCKER_PREFIXES) or path in _CONTAINER_PATHS
-    )
-    infrastructure_paths = tuple(
-        path
-        for path in functional
-        if path.startswith(_CONTAINER_PREFIXES)
-        and path not in _FRONTEND_IMAGE_PATHS
-        and path not in _BACKEND_IMAGE_PATHS
-    )
-
-    broad = bool(broad_tooling_paths)
-    frontend_run = broad or bool(frontend_paths) or bool(frontend_tooling_paths)
+    broad = bool(tooling_paths)
+    frontend_run = broad or bool(frontend_paths)
     backend_run = broad or bool(backend_paths)
-    frontend_container_run = (
-        broad
-        or bool(shared_docker_paths)
-        or bool(infrastructure_paths)
-        or bool(_FRONTEND_IMAGE_PATHS.intersection(functional))
+    server_image_run = (
+        broad or bool(frontend_paths) or bool(backend_paths) or bool(server_image_paths)
     )
-    backend_container_run = (
-        broad
-        or bool(backend_paths)
-        or bool(shared_docker_paths)
-        or bool(infrastructure_paths)
-        or bool(_BACKEND_IMAGE_PATHS.intersection(functional))
-    )
-    container_run = (
-        broad or bool(container_paths) or frontend_container_run or backend_container_run
-    )
-    frontend_image_definitions = tuple(sorted(_FRONTEND_IMAGE_PATHS.intersection(functional)))
-    backend_image_definitions = tuple(sorted(_BACKEND_IMAGE_PATHS.intersection(functional)))
-    container_reason_paths = container_paths or frontend_paths or backend_paths or tooling_paths
 
     frontend_reason = (
         f"Frontend paths changed: {_path_list(frontend_paths)}"
         if frontend_paths
-        else f"Frontend CI/tooling paths changed: {_path_list(frontend_tooling_paths)}"
-        if frontend_tooling_paths
         else f"Shared CI/tooling paths changed: {_path_list(tooling_paths)}"
         if broad
         else "No frontend paths changed"
@@ -334,25 +264,16 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
         if broad
         else "No backend paths changed"
     )
-    frontend_container_reason = (
-        f"Shared/unknown tooling paths changed: {_path_list(broad_tooling_paths)}"
+    server_image_reason = (
+        f"Shared CI/tooling paths changed: {_path_list(tooling_paths)}"
         if broad
-        else f"Shared Docker context paths changed: {_path_list(shared_docker_paths)}"
-        if shared_docker_paths
-        else f"Frontend image input changed: {_path_list(frontend_image_definitions)}"
-        if frontend_container_run
-        else "No frontend image inputs changed"
-    )
-    backend_container_reason = (
-        f"Shared/unknown tooling paths changed: {_path_list(broad_tooling_paths)}"
-        if broad
-        else f"Shared Docker context paths changed: {_path_list(shared_docker_paths)}"
-        if shared_docker_paths
-        else f"Backend image paths changed: {_path_list(backend_paths)}"
+        else f"Frontend paths changed: {_path_list(frontend_paths)}"
+        if frontend_paths
+        else f"Backend paths changed: {_path_list(backend_paths)}"
         if backend_paths
-        else f"Backend image definition changed: {_path_list(backend_image_definitions)}"
-        if backend_container_run
-        else "No backend image inputs changed"
+        else f"Server image inputs changed: {_path_list(server_image_paths)}"
+        if server_image_paths
+        else "No unified server image inputs changed"
     )
 
     return ChangeScope(
@@ -367,22 +288,9 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
                 backend_run,
                 backend_reason,
             ),
-            "containers": _decision(
-                container_run,
-                (
-                    f"Container/tooling or application paths changed: "
-                    f"{_path_list(container_reason_paths)}"
-                )
-                if container_run
-                else "No container-affecting paths changed",
-            ),
-            "frontend_container": _decision(
-                frontend_container_run,
-                frontend_container_reason,
-            ),
-            "backend_container": _decision(
-                backend_container_run,
-                backend_container_reason,
+            "server_image": _decision(
+                server_image_run,
+                server_image_reason,
             ),
             "docs": _decision(bool(docs), docs_reason),
         },

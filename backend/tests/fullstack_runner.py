@@ -41,7 +41,6 @@ ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
 FRONTEND = ROOT / "frontend"
 API = "http://127.0.0.1:8008"
-FRONTEND_WEB = "http://127.0.0.1:3008"
 WEB = f"https://localhost:{GATEWAY_PORT}"
 
 __all__ = (
@@ -176,7 +175,7 @@ def main(arguments=()):
         output = BACKEND / "test-results/coverage"
         if output.exists():
             shutil.rmtree(output)
-    for port in () if backend_only else (8008, 3008, GATEWAY_PORT):
+    for port in () if backend_only else (8008, GATEWAY_PORT):
         with socket.socket() as listener:
             try:
                 listener.bind(("127.0.0.1", port))
@@ -251,7 +250,6 @@ def main(arguments=()):
             "AUTH_REFRESH_TOKEN_DAYS": "7",
             "LIFECYCLE_PURGE_ENABLED": "false",
             "SECURITY_EVENT_SERVER_KEY": secrets.token_urlsafe(32),
-            "CORS_ORIGINS": json.dumps([WEB]),
             "PUBLIC_ORIGIN": WEB,
             "LOG_DIR": str(private / "api-logs"),
             "FILES_STORAGE_ROOT": str(private_files),
@@ -306,6 +304,9 @@ def main(arguments=()):
                 )
             )
             fixture.chmod(0o600)
+            stage = "static frontend build"
+            run(["npm", "run", "build", "--", "--webpack"], FRONTEND)
+            api_env["WEB_ASSETS_ROOT"] = str(FRONTEND / "out")
             stage = "FastAPI startup"
             processes.append(
                 subprocess.Popen(
@@ -334,35 +335,13 @@ def main(arguments=()):
             scanner.start_worker(api_env, postgres.network)
             stage = "bounded admission and recovery"
             admission = measure_admission()
-            frontend_env = {
-                **base_env,
-                "NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED": "false",
-                "PORT": "3008",
-                "HOSTNAME": "127.0.0.1",
-            }
-            stage = "production frontend build"
-            run(
-                ["npm", "run", "build", "--", "--from-process", "--webpack"], FRONTEND, frontend_env
-            )
-            stage = "production frontend startup"
-            processes.append(
-                subprocess.Popen(
-                    ["npm", "run", "start", "--", "--from-process"],
-                    cwd=FRONTEND,
-                    env=frontend_env,
-                    stdout=log,
-                    stderr=log,
-                    start_new_session=True,
-                )
-            )
-            wait_for(FRONTEND_WEB + "/login", processes[-1])
             stage = "Caddy gateway startup"
             caddy = DisposableCaddy(private, run_id, base_env, log)
             caddy.start()
             wait_for(WEB + "/login", caddy, verify=False)
             stage = "browser acceptance"
             test_env = {
-                **frontend_env,
+                **base_env,
                 "BASE_URL": WEB,
                 "OPENSLATE_FULLSTACK_FIXTURE": str(fixture),
                 "OPENSLATE_FULLSTACK_RUN_ID": run_id,

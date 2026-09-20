@@ -1,6 +1,6 @@
 # Native Linux containers cannot reach host-loopback services through the bridge.
-# The gateway therefore shares the host network and still binds only the address
-# rendered from GATEWAY_BIND_HOST. Docker Desktop keeps compose.yaml's bridged path.
+# The opt-in gateway therefore shares the host network and binds only the
+# address rendered from GATEWAY_BIND_HOST. Docker Desktop uses compose.yaml.
 services:
   caddy:
     network_mode: host

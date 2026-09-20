@@ -24,7 +24,7 @@ class Settings:
     auth_jwt_audience = "openslate-api"
     auth_access_token_minutes = 15
     auth_refresh_token_days = 7
-    cors_origins = ["http://frontend.test"]
+    public_origin = "http://frontend.test"
 
 
 def settings() -> Settings:

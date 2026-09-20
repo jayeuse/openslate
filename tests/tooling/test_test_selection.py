@@ -107,20 +107,6 @@ class TestSelectionTests(unittest.TestCase):
                     for name in ("notifications", "configuration", "tools", "message-policy")
                 }.issubset(selected))
 
-    def test_retained_redirects_include_workspace_and_navigation_checks(self):
-        for path in [
-            "frontend/src/app/(app)/departments/[...legacyPath]/page.tsx",
-            "frontend/src/app/(app)/modules/[...legacyPath]/page.tsx",
-            "frontend/src/app/(app)/administration/[...legacyPath]/page.tsx",
-            "frontend/src/app/(app)/settings/workspace/page.tsx",
-            "frontend/src/app/(app)/workspace/page.tsx",
-        ]:
-            with self.subTest(path=path):
-                self.assertEqual(
-                    runner.affected_sections("frontend", [path]),
-                    {"sample", "shell"},
-                )
-
     def test_shared_and_unknown_application_changes_select_every_section(self):
         for path in [
             "backend/app/core/config/settings.py",

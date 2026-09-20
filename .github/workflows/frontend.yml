@@ -16,8 +16,6 @@ env:
   TEST_LAYER: all
   BASE_URL: http://127.0.0.1:3104
   PLAYWRIGHT_CONFIGURATION: process
-  NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: "false"
-  DOCKER_BUILD_RECORD_UPLOAD: "false"
 
 jobs:
   verify:
@@ -62,43 +60,13 @@ jobs:
         run: npm test
 
       - name: Build the production frontend
-        if: >-
-          steps.scope.outputs.run_frontend == 'true' &&
-          steps.scope.outputs.run_frontend_container != 'true'
+        if: steps.scope.outputs.run_frontend == 'true'
         working-directory: frontend
-        run: npm run build -- --from-process
-
-      - uses: docker/setup-buildx-action@v3
-        if: steps.scope.outputs.run_frontend_container == 'true'
-
-      - name: Build the production frontend container
-        if: steps.scope.outputs.run_frontend_container == 'true'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: infra/docker/frontend.Dockerfile
-          load: true
-          push: false
-          tags: openslate-frontend:ci
-          build-args: |
-            NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED=false
-          cache-from: type=gha,scope=openslate-frontend
-          cache-to: type=gha,mode=max,scope=openslate-frontend
-
-      - name: Assert the frontend container environment boundary
-        if: steps.scope.outputs.run_frontend_container == 'true'
-        run: >-
-          docker run --rm --entrypoint /bin/sh openslate-frontend:ci -c
-          'test -z "${BACKEND_URL+x}" && test -z "${DATABASE_URL+x}" &&
-          test -z "${MIGRATION_DATABASE_URL+x}" && test -z "${DATABASE_BOOTSTRAP_URL+x}" &&
-          test -z "${AUTH_JWT_SECRET+x}" && test -z "${SECURITY_EVENT_SERVER_KEY+x}" &&
-          test -z "${LOG_DIR+x}" &&
-          test -z "${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED+x}"'
+        run: npm run build
 
       - name: No frontend checks required
         if: >-
-          steps.scope.outputs.run_frontend != 'true' &&
-          steps.scope.outputs.run_frontend_container != 'true'
+          steps.scope.outputs.run_frontend != 'true'
         env:
           REASON: ${{ steps.scope.outputs.reason_frontend }}
         run: |

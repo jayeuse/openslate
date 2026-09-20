@@ -135,7 +135,7 @@ def test_invitation_completion_is_limited_before_durable_audit_attempt(
         auth_router.complete_invitation(payload, _request(), db)
 
     assert error.value.status_code == 429
-    admission.assert_called_once_with(db, source="127.0.0.1")
+    admission.assert_called_once_with(db, source="127.0.0.1", enforce_rate_limit=True)
     begin.assert_not_called()
     consume.assert_not_called()
     db.commit.assert_called_once()

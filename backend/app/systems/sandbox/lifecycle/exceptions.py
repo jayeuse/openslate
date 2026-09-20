@@ -104,8 +104,8 @@ class LifecycleActorBlocked(LifecycleError):
 
 
 class LifecycleActorMismatch(LifecycleError):
-    # Reserve 401 for the bearer session itself; the BFF retries 401 requests
-    # with the same body after refreshing that session.
+    # Reserve 401 for the bearer session itself; the browser can refresh that
+    # session and retry the same request body.
     status_code = HTTPStatus.FORBIDDEN
     code = "actor_mismatch"
 

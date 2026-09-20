@@ -1,12 +1,14 @@
 # OpenSlate
 
 OpenSlate is a self-hosted foundation for configurable business operations. It
-uses a host-run FastAPI backend and Next.js frontend with vanilla PostgreSQL,
-private local file bytes, and a same-origin Caddy gateway.
+uses FastAPI as its production application server, a static Next.js frontend,
+vanilla PostgreSQL, private local file bytes, and Caddy for production and
+production-level acceptance.
 
 ## Stack and boundaries
 
-- Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS 4, and Playwright
+- Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS 4, and Playwright;
+  Node.js is build and local-development tooling only
 - Backend: Python 3.12+, FastAPI, Pydantic, SQLAlchemy, and Alembic
 - Local platform: one disposable PostgreSQL 17 container for development and CI
 - Authentication: FastAPI Identity with Argon2 credentials, local PostgreSQL
@@ -19,8 +21,8 @@ private local file bytes, and a same-origin Caddy gateway.
 - Files: PostgreSQL metadata plus private local filesystem quarantine and ready
   object bytes
 
-The FastAPI API owns application reads and writes, identity, file access, and
-SSE authorization. Alembic owns the application schema. Do not write
+FastAPI owns static UI delivery, application reads and writes, identity, file
+access, and SSE authorization. Alembic owns the application schema. Do not write
 application data through direct SQL or external database clients.
 
 Audit logs cover normal application ORM entity mutations in the same
@@ -42,11 +44,15 @@ and ports in one place. Missing, blank, invalid, duplicate, or unresolved
 configuration fails with the variable name; application code supplies no
 replacement values or legacy aliases.
 
-`frontend/.env.local` is generated from a fixed allowlist by local `npm run dev`,
-`npm run build`, and `npm start`. Do not edit it or source root `.env` into
-Next.js. Administrator credentials, owner/bootstrap database credentials, and
-JWT signing material are excluded. Public frontend settings are baked in at build
-time, so changing them requires a rebuild. See the
+The static frontend has no production runtime environment file. In daily
+development, Next.js is the browser origin and its development-only `/api`
+proxy reaches the loopback FastAPI server. Its launcher parses
+`FRONTEND_DEV_PORT`, `BACKEND_BIND_HOST`, `BACKEND_PORT`, and `PUBLIC_ORIGIN`
+from root configuration, then passes only the three direct nonsecret values and
+the derived exact HMR-origin hostname to Next.js. It never forwards the full
+root environment or its secrets.
+Administrator credentials, owner/bootstrap database credentials, JWT signing
+material, and service paths stay out of browser files. See the
 [configuration inventory](docs/architecture/17-configuration.md) for ownership.
 
 Validate configuration from the repository root after installing backend
@@ -75,7 +81,8 @@ Run these commands from the repository root unless a directory is shown.
    `MIGRATION_DATABASE_URL`, the constrained runtime `DATABASE_URL`, and the
    read-only `DATABASE_INSPECTOR_URL` used by pgweb.
    Generate `AUTH_JWT_SECRET` and `SECURITY_EVENT_SERVER_KEY`; configure
-   `PUBLIC_ORIGIN`, `CORS_ORIGINS`, and an absolute `FILES_STORAGE_ROOT`.
+   `PUBLIC_ORIGIN`, an absolute `WEB_ASSETS_ROOT` for production-like serving,
+   and an absolute `FILES_STORAGE_ROOT`.
 
    `ADMIN_EMAIL`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD` describe the existing
    local administrator/test account. Saving these values does not create an
@@ -103,8 +110,8 @@ Run these commands from the repository root unless a directory is shown.
    uv run python operations/bootstrap_admin.py
    ```
 
-5. Start host services in separate terminals. Their bind addresses and ports
-   come from root `.env`:
+5. Start local development services in separate terminals. FastAPI listens on
+   loopback; Next.js is the daily browser origin and proxies `/api` to it:
 
    ```bash
    # backend/
@@ -112,59 +119,77 @@ Run these commands from the repository root unless a directory is shown.
 
    # frontend/
    npm ci
+
+   # frontend/
    npm run dev
    ```
 
-6. Start the containerized HTTPS gateway from the repository root:
-
-   ```bash
-   ./scripts/dev.py caddy
-   ```
-
-   On Windows, replace `./scripts/dev.py` with `py scripts/dev.py` in the
-   developer commands.
-
 With the example development ports, open OpenSlate at
-[localhost:3448](https://localhost:3448). FastAPI docs remain available to the
-developer at [localhost:8000/docs](http://localhost:8000/docs). The first
-browser visit may require accepting Caddy's local development certificate.
-Caddy is the installation-style HTTPS gateway. During `npm run dev`,
-[localhost:3000](http://localhost:3000) is also supported: Next.js proxies its
-same-origin `/api/*` requests to the configured FastAPI development origin.
+[localhost:3000](http://localhost:3000). FastAPI docs remain available to the
+developer at [localhost:8000/api/docs](http://localhost:8000/api/docs). With a
+loopback FastAPI bind, development also accepts a loopback, private, or
+link-local IP on `FRONTEND_DEV_PORT`; Next proxies it back to FastAPI. The
+`development` policy deliberately relaxes local transport controls. Test and
+production-level Caddy/full-stack paths retain strict origin and host checks,
+response headers, body limits, concurrency limits, and rate limits.
+
+For opt-in LAN UI testing, start Next with an explicit listener override and
+set `PUBLIC_ORIGIN` and `AUTH_JWT_ISSUER` to the matching private or link-local
+browser URL before starting FastAPI:
+
+```bash
+npm run dev -- --hostname 0.0.0.0
+```
+
+FastAPI remains loopback-bound; the Next development proxy carries API traffic
+to it. This is a development-only path.
+
+Caddy, its local certificate, and its gateway URL are not part of daily
+development. The installed `gateway` Compose profile stays disabled until an
+operator explicitly starts it for a manually prepared production preview:
+
+```bash
+./scripts/dev.py caddy
+./scripts/dev.py stop caddy
+```
+
+Use the isolated full-stack acceptance path for production-level Caddy testing;
+it is separate from daily development.
 
 ## Local containers with Compose
 
 The root Compose configuration is for local developer services. PostgreSQL is
-the only database container; the `gateway` profile runs Caddy and the `db-ui`
-profile runs pgweb. Migrations, role provisioning, and first local administrator
-creation remain explicit commands. The environment helper validates the settings
-for each selected service, generates private runtime files only for pgweb or
-Caddy, and passes only each service's allowed settings. PostgreSQL always binds
-to loopback.
+the only daily container; the optional `db-ui` profile runs pgweb. The installed
+`gateway` profile is disabled by default and is used only for a manually
+prepared production preview. Migrations, role provisioning, and first local
+administrator creation remain explicit commands. The environment helper
+validates the settings for each selected service, generates private runtime
+files only when required, and passes only each service's allowed settings.
+PostgreSQL always binds to loopback.
 
 From the repository root:
 
 ```bash
 ./scripts/dev.py db          # PostgreSQL only
 ./scripts/dev.py pgweb       # Optional database UI
-./scripts/dev.py caddy       # HTTPS gateway
-./scripts/dev.py containers  # All three containers
+./scripts/dev.py containers  # PostgreSQL and optional database UI
 ./scripts/dev.py status
 ./scripts/dev.py stop
 ```
 
-FastAPI and Next.js run on the host through the commands in Local setup; Compose
-does not build or run them. `down` leaves the development database volume intact
+FastAPI and local `next dev` run on the host through the commands in Local
+setup; Compose does not build or run them. Daily development opens the Next.js
+origin directly, which proxies `/api` to FastAPI. Production has no frontend
+process: FastAPI serves the static export from `WEB_ASSETS_ROOT`, while Caddy
+has one FastAPI upstream. `down` leaves the development database volume intact
 unless it is explicitly removed. Full rendered Compose configuration contains
 secrets; use `config --quiet` for routine validation.
 
-The gateway configuration is regenerated from `.env` at
-`.agent-runtime/caddy/Caddyfile`. On Docker Desktop, Caddy reaches the host-run
-FastAPI and Next.js processes through Docker's host gateway and publishes only
-HTTPS port `3448` on loopback. On native Linux, the same command selects a
-host-network Caddy container so it can reach the documented loopback upstreams;
-the generated Caddyfile binds only `GATEWAY_BIND_HOST`. Its local certificate
-authority is retained in the `caddy-data` volume across container restarts.
+For an isolated production-level gateway check, run this from `backend/`:
+
+```bash
+uv run python -m tests.fullstack_runner --acceptance-only
+```
 
 ### Optional pgweb database UI
 
@@ -338,12 +363,12 @@ Hosted deployment is not implemented or production-ready. The approved contract
 and release order are in [Deployment architecture](docs/architecture/12-deployment-architecture.md):
 one trust domain per deployment with isolated local identity, PostgreSQL,
 private files, secrets, backups, and administrator population; shared tenancy
-is deferred. Caddy is the browser-facing origin and FastAPI remains private
-behind its same-origin `/api` route.
+is deferred. Caddy is the browser-facing origin with one FastAPI upstream;
+FastAPI serves the same-origin static UI, `/api`, and SSE.
 
-CI verifies both standalone images but does not publish or deploy them. The
-frontend image uses same-origin API paths; neither image migrates, provisions,
-or bootstraps the database.
+CI verifies the unified FastAPI server artifact but does not publish or deploy
+it. Its build includes the static frontend export and no Node.js runtime; the
+artifact does not migrate, provision, or bootstrap the database.
 
 Registry, secret manager, SMTP provider, RPO/RTO, retention, full restore
 procedure, and hosted topology remain selections or blockers. The SMTP outbox
@@ -371,5 +396,5 @@ deployment principal has the documented owner/bootstrap capabilities.
   before/after diffing, redaction, and administrator-only audit reads.
 - `frontend/src/app/` contains App Router routes; reusable primitives live
   under `frontend/src/components/ui/`.
-- `infra/docker/` retains standalone backend and frontend deployment images;
-  local development uses PostgreSQL plus host-run services.
+- `infra/docker/` retains the unified FastAPI deployment image; local
+  development uses PostgreSQL plus host-run FastAPI and `next dev`.

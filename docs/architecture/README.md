@@ -4,7 +4,7 @@
 > **Audience:** Developers and operators who need to become productive in this repository.
 > **Related documents:** [System overview](01-system-overview.md), [Runtime flows](13-runtime-flows.md), [Glossary](21-glossary.md)
 
-OpenSlate is a self-hosted foundation for configurable business operations. Authorized users work with departments, modules, fields, records, and relationships through a Next.js frontend backed by FastAPI, PostgreSQL, private filesystem files, and authenticated SSE. The implemented system uses deployment-global capability authorization, administrator-only management controls, application-level validation, lifecycle planning, and ORM audit capture.
+OpenSlate is a self-hosted foundation for configurable business operations. Authorized users work with departments, modules, fields, records, and relationships through a static Next.js frontend served by FastAPI, vanilla PostgreSQL, private filesystem files, and authenticated SSE. The implemented system uses deployment-global capability authorization, administrator-only management controls, application-level validation, lifecycle planning, and ORM audit capture.
 
 ## Purpose and accuracy
 
@@ -18,12 +18,11 @@ To keep the set accurate, update the relevant document with the source change, u
 
 ```mermaid
 flowchart LR
-    Admin[Administrator browser] --> Gateway[Caddy same-origin gateway]
-    Gateway --> Next["Next.js 16 pages"]
-    Gateway --> API["FastAPI validation + authorization"]
+    Admin[Administrator browser] --> Gateway[Production Caddy gateway]
+    Gateway --> API["FastAPI: static UI, validation, authorization, SSE"]
     API -->|SQLAlchemy runtime role| PG[(PostgreSQL 17)]
     API -->|opaque notification| Events[Authenticated SSE]
-    Events -->|refetch signal| Next
+    Events -->|refetch signal| Browser
     Alembic[Alembic + operational scripts] --> PG
     Files["Private local files"] --- API
 ```
@@ -62,7 +61,7 @@ The browser does not write application data directly. FastAPI issues HttpOnly se
 | [08 — Authentication and authorization](08-authentication-authorization.md) | Local identity, JWT/session checks, roles, invitations, and failures.                     |
 | [09 — Lifecycle and state management](09-lifecycle-and-state-management.md) | Open/closed/purged state, previews, challenges, locks, cascades, and visibility.         |
 | [10 — Audit and history](10-audit-and-history.md)                           | ORM capture, minimal redacted diffs, transaction behavior, and audit limits.             |
-| [11 — Infrastructure](11-infrastructure.md)                                 | Local PostgreSQL and host-process topology, platform gateway routing, scanner boundary, and startup order. |
+| [11 — Infrastructure](11-infrastructure.md)                                 | Local PostgreSQL and host-process topology, production gateway boundary, scanner boundary, and startup order. |
 | [12 — Deployment architecture](12-deployment-architecture.md)               | Current release state and proposed Windows/macOS server-app installation and operations. |
 | [13 — Runtime flows](13-runtime-flows.md)                                   | Startup, login, invitation, schema/record, lifecycle, and invalidation traces.           |
 | [14 — Security architecture](14-security-architecture.md)                   | Implemented controls, partial/absent controls, trust boundaries, and deployment gates.   |
@@ -83,18 +82,19 @@ The browser does not write application data directly. FastAPI issues HttpOnly se
 - Normal domain mutations use audited ORM sessions and explicit commits.
 - Close/reopen is the default hierarchical lifecycle; purge is explicit and disabled by default.
 - Authenticated SSE carries private invalidation events, never row snapshots.
+- Production Caddy has one FastAPI upstream. Next.js is a static-export build tool; daily `next dev` is the direct hot-reload browser origin and proxies `/api` to FastAPI.
 - Local infrastructure is a disposable PostgreSQL container plus host-run application processes; Dockerfiles do not constitute deployment orchestration.
 
 ## System boundaries
 
 ### In this repository
 
-- Next.js application and same-origin API client
-- FastAPI application and domain behavior
+- Static Next.js export and same-origin API client
+- FastAPI static-site delivery and domain behavior
 - SQLAlchemy models and Alembic migrations
 - Local identity configuration and invitation template
 - Runtime-role/admin/sample-data scripts
-- Standalone backend/frontend Dockerfiles
+- Unified FastAPI deployment artifact with the static frontend export
 - Verification-only GitHub Actions and test suites
 
 ### External or undefined

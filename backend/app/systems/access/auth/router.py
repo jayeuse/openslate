@@ -16,6 +16,7 @@ from app.common.dependencies import (
 )
 from app.core.base_model import utc_now
 from app.core.config import get_settings
+from app.core.config.development import browser_origin_is_permitted, is_relaxed_development
 from app.core.database import get_db
 from app.systems.access.auth.cookies import (
     clear_browser_session as _clear_browser_session,
@@ -93,8 +94,12 @@ router = APIRouter()
 
 
 def _require_browser_origin(request: Request) -> None:
-    if request.headers.get("origin") not in get_settings().cors_origins:
+    if not browser_origin_is_permitted(get_settings(), request.headers.get("origin")):
         raise HTTPException(status_code=403, detail="Invalid request origin")
+
+
+def _anonymous_rate_limits_enabled() -> bool:
+    return not is_relaxed_development(get_settings())
 
 
 def _require_refresh_csrf(request: Request) -> str:
@@ -115,7 +120,11 @@ def login(
     _require_browser_origin(request)
     try:
         user = authenticate_password(
-            db, payload.identifier, payload.password, source=_source(request)
+            db,
+            payload.identifier,
+            payload.password,
+            source=_source(request),
+            enforce_rate_limit=_anonymous_rate_limits_enabled(),
         )
         issued = issue_session(db, user, user_agent=request.headers.get("user-agent"))
         db.commit()
@@ -166,7 +175,11 @@ def issue_bearer_token(
     _reject_mixed_credentials(request)
     try:
         user = authenticate_password(
-            db, payload.identifier, payload.password, source=_source(request)
+            db,
+            payload.identifier,
+            payload.password,
+            source=_source(request),
+            enforce_rate_limit=_anonymous_rate_limits_enabled(),
         )
         issued = issue_session(db, user, user_agent=request.headers.get("user-agent"))
         if issued.setup_only:
@@ -409,7 +422,12 @@ def request_recovery(
     user = db.scalar(select(User).where(or_(User.email == identifier, User.username == identifier)))
     if (
         smtp_delivery_enabled()
-        and recovery_request_permitted(db, identifier, source=_source(request))
+        and recovery_request_permitted(
+            db,
+            identifier,
+            source=_source(request),
+            enforce_rate_limit=_anonymous_rate_limits_enabled(),
+        )
         and user is not None
         and not user.is_deleted
         and user.status == UserStatus.ACTIVE.value
@@ -448,7 +466,11 @@ def complete_invitation(
 ) -> Response:
     _require_browser_origin(request)
     try:
-        permitted = invitation_completion_permitted(db, source=_source(request))
+        permitted = invitation_completion_permitted(
+            db,
+            source=_source(request),
+            enforce_rate_limit=_anonymous_rate_limits_enabled(),
+        )
         db.commit()
     except SQLAlchemyError as error:
         db.rollback()

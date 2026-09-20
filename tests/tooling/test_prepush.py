@@ -26,14 +26,15 @@ class PrepushTests(unittest.TestCase):
         self.assertLess(names.index("frontend-check"), names.index("frontend-tests"))
         self.assertLess(names.index("frontend-check"), names.index("frontend-browser-install"))
         self.assertLess(names.index("frontend-browser-install"), names.index("frontend-tests"))
-        self.assertLess(names.index("frontend-tests"), names.index("frontend-container-build"))
-        self.assertNotIn("frontend-build", names)
+        self.assertLess(names.index("frontend-tests"), names.index("frontend-build"))
         self.assertLess(names.index("backend-ruff"), names.index("backend-coverage"))
         self.assertLess(names.index("backend-mypy"), names.index("backend-coverage"))
         self.assertIn("../scripts", plan.steps[names.index("backend-ruff")].command)
         self.assertIn("../tests/tooling", plan.steps[names.index("backend-ruff")].command)
         self.assertIn("operations", plan.steps[names.index("backend-mypy")].command)
         self.assertIn("../scripts/ci_scope.py", plan.steps[names.index("backend-mypy")].command)
+        self.assertIn("../scripts/environment.py", plan.steps[names.index("backend-mypy")].command)
+        self.assertIn("../scripts/dev.py", plan.steps[names.index("backend-mypy")].command)
         self.assertIn("../scripts/run_tests.py", plan.steps[names.index("backend-mypy")].command)
         self.assertEqual(
             plan.steps[names.index("frontend-tests")].command,
@@ -44,18 +45,12 @@ class PrepushTests(unittest.TestCase):
             ("npm", "exec", "--no", "--", "playwright", "install", "chromium"),
         )
         self.assertEqual(
-            plan.steps[names.index("frontend-container-build")].command[:2],
-            ("python3", "scripts/build_frontend_image.py"),
-        )
-        self.assertEqual(
             plan.steps[names.index("backend-coverage")].serial_group,
             "backend-postgres",
         )
         backend_lane = [step.name for step in plan.steps if step.lane == "backend"]
-        self.assertLess(
-            backend_lane.index("backend-coverage"),
-            backend_lane.index("backend-container-build"),
-        )
+        self.assertIn("backend-coverage", backend_lane)
+        self.assertIn("server-image-build", names)
         self.assertNotIn("fullstack", names)
         self.assertNotIn("frontend-browser", names)
         self.assertNotIn("frontend-coverage-plan", names)
@@ -79,7 +74,7 @@ class PrepushTests(unittest.TestCase):
             ),
         )
 
-    def test_plan_builds_only_the_changed_application_image(self):
+    def test_plan_builds_the_unified_server_image_for_each_application_change(self):
         frontend_scope = ci_scope.classify_paths(
             ["frontend/src/components/systems/manage/page.tsx"], base_ref="base"
         )
@@ -93,15 +88,13 @@ class PrepushTests(unittest.TestCase):
         backend_names = [
             step.name for step in prepush.build_plan(backend_scope, Path("/repo")).steps
         ]
-        self.assertNotIn("frontend-container-build", frontend_names)
         self.assertIn("frontend-build", frontend_names)
-        self.assertNotIn("backend-container-build", frontend_names)
-        self.assertNotIn("frontend-container-build", backend_names)
-        self.assertIn("backend-container-build", backend_names)
+        self.assertIn("server-image-build", frontend_names)
+        self.assertIn("server-image-build", backend_names)
 
-    def test_container_only_frontend_change_builds_once_without_tests(self):
+    def test_server_image_only_change_builds_once_without_application_tests(self):
         plan = prepush.build_plan(
-            ci_scope.classify_paths(["infra/docker/frontend.Dockerfile"], base_ref="base"),
+            ci_scope.classify_paths(["infra/docker/backend.Dockerfile"], base_ref="base"),
             Path("/repo"),
         )
         names = [step.name for step in plan.steps]
@@ -109,8 +102,7 @@ class PrepushTests(unittest.TestCase):
         self.assertNotIn("frontend-check", names)
         self.assertNotIn("frontend-tests", names)
         self.assertNotIn("frontend-build", names)
-        self.assertEqual(names.count("frontend-container-build"), 1)
-        self.assertIn("frontend-container-boundary", names)
+        self.assertEqual(names.count("server-image-build"), 1)
 
     def test_resource_lanes_run_serially_on_the_local_host(self):
         calls = []

@@ -114,8 +114,8 @@ def affected_sections(project: str, paths: list[str]) -> set[str]:
                 else:
                     return all_sections
             else:
-                # Backend contracts can affect the BFF, session boundary and
-                # workspace entry points. Keep a conservative cross-stack batch.
+                # Backend contracts can affect the browser session boundary and
+                # application entry points. Keep a conservative cross-stack batch.
                 return all_sections
             continue
         if project == "backend":
@@ -129,18 +129,6 @@ def affected_sections(project: str, paths: list[str]) -> set[str]:
                 selected.update(("sample", "sandbox"))
             elif "/sandbox/" in path or "/lib/sandbox" in path:
                 selected.update(("sample", "sandbox"))
-            elif any(
-                route in path
-                for route in (
-                    "/app/(app)/departments/",
-                    "/app/(app)/modules/",
-                    "/app/(app)/administration/",
-                    "/app/(app)/settings/workspace/",
-                    "/app/(app)/onboarding/",
-                    "/app/(app)/workspace/",
-                )
-            ):
-                selected.update(("sample", "shell"))
             elif "/app/login/" in path or "/app/auth/" in path or "/app/setup/" in path:
                 selected.update(("security", "public"))
             else:

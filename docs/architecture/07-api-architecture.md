@@ -2,7 +2,12 @@
 
 > **Scope:** HTTP contracts, browser boundary, and SSE.
 
-FastAPI routes are mounted below `/api`. Caddy forwards the same-origin `/api` and `/api/events` paths to FastAPI; all other browser paths go to Next.js. The browser does not receive a database credential or a server-side signing secret.
+FastAPI routes are mounted below `/api`. In production, Caddy forwards the
+same-origin browser origin to one FastAPI upstream; FastAPI serves exact static
+UI exports alongside `/api` and `/api/events`. Daily development opens `next
+dev` directly, whose development-only `/api` proxy reaches loopback FastAPI.
+The browser does not receive a database credential or a server-side signing
+secret.
 
 Cookie-authenticated browser mutations require an exact allowed `Origin` and `X-CSRF-Token`. Browser login, refresh, logout, setup, and session status are FastAPI routes. CLI clients use bearer tokens from the token endpoints. A request containing ambiguous cookie and bearer credentials is rejected.
 

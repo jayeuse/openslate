@@ -1,8 +1,13 @@
-<!-- Replace the angle-bracket placeholders before use.  This requires IIS URL
-     Rewrite and ARR.  FastAPI and Next must still bind to loopback addresses. -->
+<!-- Replace the angle-bracket placeholders before use. This requires IIS URL
+     Rewrite and ARR. FastAPI must bind to a loopback address. -->
 <configuration>
   <system.webServer>
     <proxy enabled="true" preserveHostHeader="true" />
+    <httpProtocol>
+      <customHeaders>
+        <add name="Strict-Transport-Security" value="max-age=31536000" />
+      </customHeaders>
+    </httpProtocol>
     <rewrite>
       <!-- URL Rewrite may deny these changes unless this collection is allowed
            at server level. Move it to applicationHost.config if delegated
@@ -40,7 +45,7 @@
         </rule>
         <rule name="OpenSlate UI" stopProcessing="true">
           <match url=".*" />
-          <action type="Rewrite" url="http://127.0.0.1:&lt;FRONTEND_PORT&gt;/{R:0}" />
+          <action type="Rewrite" url="http://127.0.0.1:&lt;BACKEND_PORT&gt;/{R:0}" />
           <serverVariables>
             <set name="HTTP_ORIGIN" value="{HTTP_ORIGIN}" />
             <set name="HTTP_X_REQUEST_ID" value="{HTTP_X_REQUEST_ID}" />

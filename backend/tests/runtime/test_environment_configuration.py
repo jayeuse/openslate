@@ -98,7 +98,6 @@ def test_settings_rejects_blank_and_malformed_canonical_values() -> None:
         public_origin="not-a-url",
         database_url="postgresql://test:test-password@127.0.0.1/test",
         lifecycle_purge_enabled="yes",
-        cors_origins="[invalid-origin-list",
     )
 
     with pytest.raises(ValidationError) as error:
@@ -111,9 +110,13 @@ def test_settings_rejects_blank_and_malformed_canonical_values() -> None:
     assert "public_origin" in rendered
     assert "database_url" in rendered
     assert "lifecycle_purge_enabled" in rendered
-    assert "cors_origins" in rendered
     assert "not-a-port" not in rendered
     assert "invalid-origin-list" not in rendered
+
+
+def test_settings_rejects_the_removed_cors_origins_runtime_setting() -> None:
+    with pytest.raises(ValidationError, match="CORS_ORIGINS is no longer supported"):
+        Settings(**settings_values(CORS_ORIGINS='["https://legacy.example.test"]'), _env_file=None)
 
 
 def test_settings_rejects_an_undersized_jwt_signing_secret() -> None:
