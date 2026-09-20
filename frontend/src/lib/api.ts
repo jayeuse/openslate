@@ -242,6 +242,23 @@ function safeApiContractError(): ApiContractError {
 
 export type ApiFieldErrors = Record<string, string[]>;
 
+export type ApiRequestInit = RequestInit & {
+  refreshOnUnauthorized?: boolean;
+};
+
+const CSRF_COOKIE = "openslate_csrf";
+const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+type RefreshResult = "current" | "refreshed" | "rejected" | "unavailable";
+type BrowserLocks = {
+  request<T>(
+    name: string,
+    options: { mode: "exclusive" },
+    callback: () => Promise<T>,
+  ): Promise<T>;
+};
+
+let refreshInFlight: Promise<RefreshResult> | null = null;
+
 function isErrorDetail(
   value: unknown,
 ): value is { code?: unknown; message?: unknown; blockers?: unknown } {
@@ -293,6 +310,124 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
+function csrfToken(): string | null {
+  if (typeof document === "undefined") return null;
+  for (const segment of document.cookie.split(";")) {
+    const [name, ...value] = segment.trim().split("=");
+    if (name !== CSRF_COOKIE) continue;
+    try {
+      return decodeURIComponent(value.join("="));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function requestHeaders(init: RequestInit): Headers {
+  const headers = new Headers(init.headers);
+  const method = (init.method ?? "GET").toUpperCase();
+  if (UNSAFE_METHODS.has(method)) {
+    const token = csrfToken();
+    if (token) headers.set("X-CSRF-Token", token);
+  }
+  return headers;
+}
+
+function navigateToLogin(): void {
+  // This module deliberately has no Next router dependency so feature adapters
+  // can use it directly. The current protected shell is discarded after a
+  // confirmed unusable session.
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+  if (typeof window !== "undefined") window.location.href = "/login";
+}
+
+async function sendApiRequest(
+  path: string,
+  init: RequestInit,
+): Promise<Response> {
+  return fetch(`/api${path}`, {
+    ...init,
+    credentials: "same-origin",
+    headers: requestHeaders(init),
+  });
+}
+
+async function hasAuthenticatedSession(): Promise<boolean> {
+  const response = await sendApiRequest("/auth/session", {
+    cache: "no-store",
+  });
+  if (!response.ok) return false;
+  try {
+    const body: unknown = await response.json();
+    return isRecord(body) && body.authenticated === true;
+  } catch {
+    return false;
+  }
+}
+
+async function refreshAfterSessionRecheck(): Promise<RefreshResult> {
+  try {
+    if (await hasAuthenticatedSession()) return "current";
+    const refresh = await sendApiRequest("/auth/refresh", {
+      method: "POST",
+      cache: "no-store",
+    });
+    if (refresh.ok) return "refreshed";
+    return refresh.status === 401 ? "rejected" : "unavailable";
+  } catch {
+    return "unavailable";
+  }
+}
+
+function browserLocks(): BrowserLocks | null {
+  if (typeof navigator === "undefined" || !("locks" in navigator)) return null;
+  const locks = navigator.locks;
+  return locks ? (locks as unknown as BrowserLocks) : null;
+}
+
+export async function refreshBrowserSession(): Promise<RefreshResult> {
+  if (refreshInFlight) return refreshInFlight;
+  const locks = browserLocks();
+  const refresh = locks
+    ? locks.request(
+        "openslate-auth-refresh",
+        { mode: "exclusive" },
+        refreshAfterSessionRecheck,
+      )
+    : refreshAfterSessionRecheck();
+  refreshInFlight = refresh;
+  try {
+    return await refresh;
+  } finally {
+    if (refreshInFlight === refresh) refreshInFlight = null;
+  }
+}
+
+export async function apiRequest(
+  path: string,
+  init: ApiRequestInit = {},
+): Promise<Response> {
+  const { refreshOnUnauthorized = true, ...requestInit } = init;
+  const response = await sendApiRequest(path, requestInit);
+  if (
+    response.status !== 401 ||
+    !refreshOnUnauthorized ||
+    path === "/auth/refresh" ||
+    requestInit.signal?.aborted
+  ) {
+    return response;
+  }
+
+  const refreshed = await refreshBrowserSession();
+  if (refreshed !== "current" && refreshed !== "refreshed") {
+    if (!requestInit.signal?.aborted) navigateToLogin();
+    return response;
+  }
+  if (response.body) void response.body.cancel().catch(() => undefined);
+  return sendApiRequest(path, requestInit);
+}
+
 async function parseResponse(
   response: Response,
   signal?: AbortSignal | null,
@@ -334,13 +469,14 @@ async function parseResponse(
 export async function apiFetch<Schema extends z.ZodType>(
   path: string,
   schema: Schema,
-  init: RequestInit = {},
+  init: ApiRequestInit = {},
 ): Promise<z.output<Schema>> {
+  const { refreshOnUnauthorized, ...requestInit } = init;
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
-  const response = await fetch(`/bff${path}`, {
-    ...init,
-    credentials: "same-origin",
+  const response = await apiRequest(path, {
+    ...requestInit,
+    refreshOnUnauthorized,
     headers,
   });
   try {
@@ -357,11 +493,10 @@ export async function apiFetch<Schema extends z.ZodType>(
     if (
       error instanceof ApiError &&
       error.status === 401 &&
+      init.refreshOnUnauthorized !== false &&
       !init.signal?.aborted
     ) {
-      // This utility has no router instance; hard navigation clears the expired shell.
-      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-      if (typeof window !== "undefined") window.location.href = "/login";
+      navigateToLogin();
       throw error;
     }
     throw error;

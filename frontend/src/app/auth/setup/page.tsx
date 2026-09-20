@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ArrowRight, KeyRound } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,47 +13,58 @@ import {
   FieldLabel,
   FieldError,
 } from "@/components/ui/field";
+import { ApiError } from "@/lib/api";
+import { changePassword, completeInvitation } from "@/lib/auth-api";
+import {
+  consumeInvitationToken,
+  retainInvitationToken,
+} from "@/lib/invitation-token";
 
 type SetupFailure = "retryable" | "session" | "unavailable" | "uncertain";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function classifySetupFailure(response: Response, body: unknown): SetupFailure {
-  // Success was already checked by the caller. An incomplete success response
-  // cannot prove that a password mutation did not happen.
-  if (response.ok) return "uncertain";
-  if (response.status === 401) return "session";
-  if (response.status >= 500) {
-    const detail = isRecord(body) ? body.detail : undefined;
-    return detail === "Authentication service unavailable" ||
-      detail === "Authentication service timed out"
-      ? "unavailable"
-      : "uncertain";
-  }
-  if (
-    isRecord(body) &&
-    body.detail === "Password set, but account setup could not be completed"
-  )
-    return "uncertain";
+function classifySetupFailure(error: unknown): SetupFailure {
+  if (!(error instanceof ApiError)) return "uncertain";
+  if (error.status === 401) return "session";
+  if (error.status >= 500) return "unavailable";
   return "retryable";
 }
 
 export default function AuthSetupPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [invitationToken, setInvitationToken] = useState<string | null>(null);
+  const temporaryPasswordSetup = searchParams.get("temporary") === "1";
   const [hydrated, setHydrated] = useState(false);
-  useEffect(() => setHydrated(true), []);
+  useEffect(() => {
+    const captured = consumeInvitationToken(window.location, window.history);
+    setInvitationToken((current) => retainInvitationToken(current, captured));
+    setHydrated(true);
+  }, []);
+  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [mismatch, setMismatch] = useState(false);
   const [error, setError] = useState("");
   const [failure, setFailure] = useState<SetupFailure | null>(null);
   const [pending, setPending] = useState(false);
+  const missingInvitationLink =
+    hydrated && !temporaryPasswordSetup && !invitationToken;
+  const setupFailure = missingInvitationLink ? "session" : failure;
+  const setupError = missingInvitationLink
+    ? "This invitation link is invalid or incomplete. Request a new invitation."
+    : error;
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending || failure === "session" || failure === "uncertain") return;
+    if (pending || setupFailure === "session" || setupFailure === "uncertain")
+      return;
+    if (!invitationToken && !temporaryPasswordSetup) {
+      setFailure("session");
+      setError(
+        "This invitation link is invalid or incomplete. Request a new invitation.",
+      );
+      return;
+    }
     setMismatch(password !== confirmation);
     if (password !== confirmation) {
       document.getElementById("confirmation")?.focus();
@@ -63,27 +74,15 @@ export default function AuthSetupPage() {
     setFailure(null);
     setPending(true);
     try {
-      let response: Response;
-      try {
-        response = await fetch("/session/password", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "same-origin",
-          body: JSON.stringify({ password, confirmation }),
-        });
-      } catch {
-        setFailure("uncertain");
-        setError(
-          "Password setup may have completed. Return to sign in to confirm before trying again.",
-        );
-        return;
-      }
-      const body: unknown = await response.json().catch(() => null);
-      if (response.ok && isRecord(body) && body.authenticated === true) {
+      if (temporaryPasswordSetup) {
+        await changePassword(currentPassword, password);
         router.replace("/openview");
-        return;
+      } else {
+        await completeInvitation(invitationToken as string, password);
+        router.replace("/login");
       }
-      const kind = classifySetupFailure(response, body);
+    } catch (error) {
+      const kind = classifySetupFailure(error);
       setFailure(kind);
       if (kind === "session")
         setError(
@@ -122,17 +121,23 @@ export default function AuthSetupPage() {
           <div className="bg-accent text-accent-foreground mb-5 grid size-11 place-items-center rounded-full">
             <KeyRound size={20} aria-hidden="true" />
           </div>
-          <h1 className="text-2xl font-semibold">Set your password</h1>
+          <h1 className="text-2xl font-semibold">
+            {temporaryPasswordSetup
+              ? "Change your password"
+              : "Set your password"}
+          </h1>
           <p className="text-muted-foreground mt-2 text-sm">
-            Finish setting up your invited OpenSlate account.
+            {temporaryPasswordSetup
+              ? "Choose a password to finish setting up your account."
+              : "Finish setting up your invited OpenSlate account."}
           </p>
         </div>
-        {error && (
+        {setupError && (
           <div className="mb-5 space-y-3">
             <Alert role="alert" variant="destructive">
-              {error}
+              {setupError}
             </Alert>
-            {failure === "session" || failure === "uncertain" ? (
+            {setupFailure === "session" || setupFailure === "uncertain" ? (
               <Button asChild variant="outline" className="w-full">
                 <a href="/login">Return to sign in</a>
               </Button>
@@ -140,6 +145,31 @@ export default function AuthSetupPage() {
           </div>
         )}
         <form className="space-y-5" onSubmit={submit}>
+          {temporaryPasswordSetup ? (
+            <Field className="space-y-2">
+              <FieldLabel htmlFor="current-password">
+                Temporary password
+              </FieldLabel>
+              <FieldControl
+                render={
+                  <Input
+                    id="current-password"
+                    type="password"
+                    disabled={
+                      !hydrated ||
+                      pending ||
+                      setupFailure === "session" ||
+                      setupFailure === "uncertain"
+                    }
+                    autoComplete="current-password"
+                    required
+                    value={currentPassword}
+                    onChange={(event) => setCurrentPassword(event.target.value)}
+                  />
+                }
+              />
+            </Field>
+          ) : null}
           <Field className="space-y-2">
             <FieldLabel htmlFor="password">Password</FieldLabel>
             <FieldControl
@@ -150,8 +180,9 @@ export default function AuthSetupPage() {
                   disabled={
                     !hydrated ||
                     pending ||
-                    failure === "session" ||
-                    failure === "uncertain"
+                    missingInvitationLink ||
+                    setupFailure === "session" ||
+                    setupFailure === "uncertain"
                   }
                   autoComplete="new-password"
                   minLength={12}
@@ -174,8 +205,9 @@ export default function AuthSetupPage() {
                   disabled={
                     !hydrated ||
                     pending ||
-                    failure === "session" ||
-                    failure === "uncertain"
+                    missingInvitationLink ||
+                    setupFailure === "session" ||
+                    setupFailure === "uncertain"
                   }
                   autoComplete="new-password"
                   minLength={12}
@@ -197,8 +229,9 @@ export default function AuthSetupPage() {
             disabled={
               !hydrated ||
               pending ||
-              failure === "session" ||
-              failure === "uncertain"
+              missingInvitationLink ||
+              setupFailure === "session" ||
+              setupFailure === "uncertain"
             }
           >
             {pending ? (

@@ -19,8 +19,13 @@ from app.common.listing import (
 from app.core.database import get_db
 from app.systems.access.users.coordination import get_user as load_user
 from app.systems.access.users.models import User, UserRole
-from app.systems.access.users.schemas import InvitationCreate, UserCreate, UserResponse
-from app.systems.access.users.service import InvitationConflict, InvitationError, invite_user
+from app.systems.access.users.schemas import (
+    InvitationCreate,
+    InvitationResponse,
+    UserCreate,
+    UserResponse,
+)
+from app.systems.access.users.service import InvitationConflict, InvitationError, create_invitation
 
 router = APIRouter(prefix="/users", tags=["users"])
 AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
@@ -79,14 +84,14 @@ def get_user(
     return load_user(db, user_id)
 
 
-@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=InvitationResponse, status_code=status.HTTP_201_CREATED)
 def create_user(
     payload: UserCreate,
     admin: AdminUser,
     db: Annotated[Session, Depends(get_db)],
-) -> User:
+) -> InvitationResponse:
     try:
-        return invite_user(
+        issued = create_invitation(
             db,
             InvitationCreate(
                 email=payload.email,
@@ -105,3 +110,8 @@ def create_user(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Unable to send invitation",
         ) from error
+    return InvitationResponse(
+        user=UserResponse.model_validate(issued.user),
+        delivery=issued.delivery,
+        temporary_password=issued.temporary_password,
+    )

@@ -5,9 +5,12 @@ import pytest
 from uuid6 import uuid7
 
 from app.systems.access.users.models import User
+from app.systems.access.users.permissions import Capability
 from app.systems.manage.audit.context import AuditContext
 from app.systems.manage.audit.listeners import (
     PENDING_CHANGES_KEY,
+    REALTIME_INVALIDATION_KEY,
+    broadcast_committed_changes,
     capture_changes,
     clear_pending_changes,
     create_audit_logs,
@@ -15,6 +18,7 @@ from app.systems.manage.audit.listeners import (
 )
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
+from app.systems.platform.events.models import InvalidationEvent
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.records.models import Record
 
@@ -68,6 +72,9 @@ def test_create_listener_stages_and_writes_create_log() -> None:
         "status": "active",
         "role_id": str(user.role_id),
     }
+    assert session.info[REALTIME_INVALIDATION_KEY] == [
+        InvalidationEvent(entity="users", entity_id=user.id, administrators_only=True)
+    ]
     assert "password_hash" not in audit_log.after
 
 
@@ -118,6 +125,60 @@ def test_rollback_clears_staged_changes() -> None:
     clear_pending_changes(session)
 
     assert PENDING_CHANGES_KEY not in session.info
+
+
+def test_only_a_successful_commit_publishes_the_staged_opaque_invalidations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = FakeSession()
+    session.info[REALTIME_INVALIDATION_KEY] = [
+        InvalidationEvent(entity="records", capability=Capability.RECORDS_READ),
+    ]
+    published: list[InvalidationEvent] = []
+    monkeypatch.setattr(
+        "app.systems.manage.audit.listeners.publish_invalidations",
+        lambda events: published.extend(events),
+    )
+
+    broadcast_committed_changes(session)
+    broadcast_committed_changes(session)
+
+    assert published == [InvalidationEvent(entity="records", capability=Capability.RECORDS_READ)]
+    assert REALTIME_INVALIDATION_KEY not in session.info
+
+
+def test_rollback_discards_staged_invalidations_without_publishing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = FakeSession()
+    session.info[REALTIME_INVALIDATION_KEY] = [InvalidationEvent(entity="records")]
+    published: list[InvalidationEvent] = []
+    monkeypatch.setattr(
+        "app.systems.manage.audit.listeners.publish_invalidations",
+        lambda events: published.extend(events),
+    )
+
+    clear_pending_changes(session)
+    broadcast_committed_changes(session)
+
+    assert published == []
+
+
+def test_commit_deduplicates_staged_invalidations_before_one_publish_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = InvalidationEvent(entity="records", capability=Capability.RECORDS_READ)
+    session = FakeSession()
+    session.info[REALTIME_INVALIDATION_KEY] = [event, event]
+    calls: list[tuple[InvalidationEvent, ...]] = []
+    monkeypatch.setattr(
+        "app.systems.manage.audit.listeners.publish_invalidations",
+        lambda events: calls.append(tuple(events)),
+    )
+
+    broadcast_committed_changes(session)
+
+    assert calls == [(event,)]
 
 
 def test_bulk_mutations_are_rejected() -> None:

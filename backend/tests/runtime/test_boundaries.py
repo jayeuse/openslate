@@ -270,7 +270,6 @@ def test_health_returns_service_status() -> None:
         ("READINESS_CONNECT_TIMEOUT_SECONDS", "0", "READINESS_CONNECT_TIMEOUT_SECONDS"),
         ("READINESS_STATEMENT_TIMEOUT_MS", "0", "READINESS_STATEMENT_TIMEOUT_MS"),
         ("READINESS_CALLER_TIMEOUT_SECONDS", "nan", "READINESS_CALLER_TIMEOUT_SECONDS"),
-        ("SUPABASE_TIMEOUT_SECONDS", "inf", "SUPABASE_TIMEOUT_SECONDS"),
     ],
 )
 def test_runtime_limit_environment_values_must_preserve_their_bounds(
@@ -288,16 +287,3 @@ def test_runtime_limit_environment_values_must_preserve_their_bounds(
         Settings.model_validate(dict(os.environ))
 
     assert expected_field in str(error.value)
-
-
-def test_settings_reject_legacy_publishable_key_alias(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY")
-    monkeypatch.setenv(
-        "DATABASE_URL", f"postgresql+psycopg://test:{MOCK_DATABASE_PASSWORD}@localhost/test"
-    )
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "legacy-key")
-
-    with pytest.raises(ValidationError) as error:
-        Settings.model_validate(dict(os.environ))
-
-    assert "SUPABASE_PUBLISHABLE_KEY" in str(error.value)

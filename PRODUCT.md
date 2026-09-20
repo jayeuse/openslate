@@ -43,7 +43,8 @@ product must let them model their own departments, structures, relationships,
 records, and data movement rather than imposing one industry template.
 
 The current repository is a self-hosted Next.js and FastAPI application backed
-by Supabase services. Its workspace is presently UI-first: much of the visible
+by local PostgreSQL, FastAPI Identity, private filesystem files, and authenticated
+SSE invalidation. Its workspace is presently UI-first: much of the visible
 business data and interaction state is local sample state, while the backend
 contains implemented domain capabilities. The Sandbox's save, publish, and
 simulation experiences must not be represented as persistent production

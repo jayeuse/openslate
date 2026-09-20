@@ -20,7 +20,7 @@ from tests.conftest import guarded_create_engine as create_engine
 
 
 def _guard_integration_database(database_url: str) -> None:
-    """Keep owner cleanup constrained to the disposable local Supabase database."""
+    """Keep owner cleanup constrained to the disposable local PostgreSQL database."""
 
     from tests.conftest import _guard_integration_database as guard
 
@@ -216,5 +216,4 @@ def _edge_audit_rows(db: Session, *entity_ids: UUID) -> list[AuditLog]:
             .order_by(AuditLog.created_at, AuditLog.id)
         ).all()
     )
-
 

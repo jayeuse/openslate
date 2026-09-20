@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, FilePath, SecretStr, ValidationError, field_validator
+from cryptography.fernet import Fernet, InvalidToken
+from pydantic import Field, FilePath, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -16,6 +18,7 @@ from app.core.config.environment import ConfigurationError, environment_inputs
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 DOTENV_PATH = REPOSITORY_ROOT / ".env"
+
 
 class EnvironmentSettings(BaseSettings):
     """Base settings with canonical names, hidden values, and no dotenv fallback."""
@@ -50,7 +53,14 @@ class EnvironmentSettings(BaseSettings):
     @field_validator("*", mode="before")
     @classmethod
     def validate_database_urls(cls, value: object, info: object) -> object:
-        if getattr(info, "field_name", "") not in {"database_url", "migration_database_url"}:
+        if value is None:
+            return value
+        if getattr(info, "field_name", "") not in {
+            "database_bootstrap_url",
+            "database_inspector_url",
+            "database_url",
+            "migration_database_url",
+        }:
             return value
         try:
             if make_url(str(value)).drivername != "postgresql+psycopg":
@@ -67,16 +77,44 @@ class Settings(EnvironmentSettings):
     environment: str = Field(validation_alias="ENVIRONMENT")
     log_dir: Path = Field(validation_alias="LOG_DIR")
     database_url: str = Field(validation_alias="DATABASE_URL")
-    supabase_url: str = Field(validation_alias="SUPABASE_URL")
-    supabase_publishable_key: SecretStr = Field(validation_alias="SUPABASE_PUBLISHABLE_KEY")
-    supabase_secret_key: SecretStr = Field(validation_alias="SUPABASE_SECRET_KEY")
-    supabase_auth_redirect_url: str = Field(validation_alias="SUPABASE_AUTH_REDIRECT_URL")
-    supabase_jwt_issuer: str = Field(validation_alias="SUPABASE_JWT_ISSUER")
-    supabase_jwks_url: str = Field(validation_alias="SUPABASE_JWKS_URL")
-    supabase_jwt_audience: str = Field(validation_alias="SUPABASE_JWT_AUDIENCE")
+    auth_jwt_secret: SecretStr = Field(validation_alias="AUTH_JWT_SECRET")
+    auth_jwt_issuer: str = Field(validation_alias="AUTH_JWT_ISSUER")
+    auth_jwt_audience: str = Field(validation_alias="AUTH_JWT_AUDIENCE")
+    auth_access_token_minutes: int = Field(
+        default=15, ge=1, le=60, validation_alias="AUTH_ACCESS_TOKEN_MINUTES"
+    )
+    auth_refresh_token_days: int = Field(
+        default=7, ge=1, le=31, validation_alias="AUTH_REFRESH_TOKEN_DAYS"
+    )
+    smtp_enabled: bool = Field(default=False, validation_alias="SMTP_ENABLED")
+    smtp_host: str | None = Field(default=None, validation_alias="SMTP_HOST")
+    smtp_port: int | None = Field(default=None, ge=1, le=65535, validation_alias="SMTP_PORT")
+    smtp_username: str | None = Field(default=None, validation_alias="SMTP_USERNAME")
+    smtp_password: SecretStr | None = Field(default=None, validation_alias="SMTP_PASSWORD")
+    smtp_from: str | None = Field(default=None, validation_alias="SMTP_FROM")
+    smtp_transport: Literal["starttls", "implicit_tls", "plain"] | None = Field(
+        default=None, validation_alias="SMTP_TRANSPORT"
+    )
+    smtp_delivery_encryption_key: SecretStr | None = Field(
+        default=None, validation_alias="SMTP_DELIVERY_ENCRYPTION_KEY"
+    )
+    smtp_timeout_seconds: float = Field(
+        default=10, gt=0, le=30, validation_alias="SMTP_TIMEOUT_SECONDS"
+    )
+    smtp_delivery_operation_timeout_seconds: float = Field(
+        default=30, gt=0, le=45, validation_alias="SMTP_DELIVERY_OPERATION_TIMEOUT_SECONDS"
+    )
+    smtp_delivery_batch_size: int = Field(
+        default=10, ge=1, le=100, validation_alias="SMTP_DELIVERY_BATCH_SIZE"
+    )
+    smtp_delivery_max_attempts: int = Field(
+        default=5, ge=1, le=10, validation_alias="SMTP_DELIVERY_MAX_ATTEMPTS"
+    )
     security_event_server_key: SecretStr = Field(validation_alias="SECURITY_EVENT_SERVER_KEY")
     lifecycle_purge_enabled: bool = Field(validation_alias="LIFECYCLE_PURGE_ENABLED")
+    files_storage_root: Path = Field(validation_alias="FILES_STORAGE_ROOT")
     cors_origins: list[str] = Field(min_length=1, validation_alias="CORS_ORIGINS")
+    public_origin: str = Field(validation_alias="PUBLIC_ORIGIN")
     request_body_max_bytes: int = Field(gt=0, validation_alias="REQUEST_BODY_MAX_BYTES")
     database_pool_size: int = Field(gt=0, validation_alias="DATABASE_POOL_SIZE")
     database_max_overflow: int = Field(ge=0, validation_alias="DATABASE_MAX_OVERFLOW")
@@ -101,12 +139,9 @@ class Settings(EnvironmentSettings):
     readiness_caller_timeout_seconds: float = Field(
         gt=0, allow_inf_nan=False, validation_alias="READINESS_CALLER_TIMEOUT_SECONDS"
     )
-    supabase_timeout_seconds: float = Field(
-        gt=0, allow_inf_nan=False, validation_alias="SUPABASE_TIMEOUT_SECONDS"
-    )
     backend_bind_host: str = Field(validation_alias="BACKEND_BIND_HOST")
     backend_port: int = Field(ge=1, le=65535, validation_alias="BACKEND_PORT")
-    server_max_concurrency: int = Field(gt=0, validation_alias="SERVER_MAX_CONCURRENCY")
+    server_max_concurrency: int = Field(ge=3, validation_alias="SERVER_MAX_CONCURRENCY")
     server_keep_alive_seconds: int = Field(gt=0, validation_alias="SERVER_KEEP_ALIVE_SECONDS")
 
     @field_validator("cors_origins", mode="before")
@@ -119,18 +154,23 @@ class Settings(EnvironmentSettings):
         except ValueError:
             raise ValueError("must be a JSON array") from None
 
-    @field_validator("log_dir")
+    @field_validator("auth_jwt_secret")
     @classmethod
-    def require_absolute_log_dir(cls, value: Path) -> Path:
+    def require_strong_jwt_secret(cls, value: SecretStr) -> SecretStr:
+        if len(value.get_secret_value().encode("utf-8")) < 32:
+            raise ValueError("must be at least 32 bytes")
+        return value
+
+    @field_validator("log_dir", "files_storage_root")
+    @classmethod
+    def require_absolute_path(cls, value: Path) -> Path:
         if not value.is_absolute():
             raise ValueError("must be an absolute path")
         return value
 
     @field_validator(
-        "supabase_url",
-        "supabase_auth_redirect_url",
-        "supabase_jwt_issuer",
-        "supabase_jwks_url",
+        "auth_jwt_issuer",
+        "public_origin",
     )
     @classmethod
     def require_http_url(cls, value: str) -> str:
@@ -147,6 +187,64 @@ class Settings(EnvironmentSettings):
         if isinstance(value, str) and value in {"true", "false"}:
             return value == "true"
         raise ValueError("must be true or false")
+
+    @field_validator("smtp_enabled", mode="before")
+    @classmethod
+    def parse_smtp_enabled(cls, value: object) -> object:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value in {"true", "false"}:
+            return value == "true"
+        raise ValueError("must be true or false")
+
+    @model_validator(mode="after")
+    def validate_smtp_configuration(self) -> Settings:
+        values = (
+            self.smtp_host,
+            self.smtp_port,
+            self.smtp_from,
+            self.smtp_transport,
+            self.smtp_delivery_encryption_key,
+        )
+        if not self.smtp_enabled:
+            if any(value is not None for value in values) or (
+                self.smtp_username is not None or self.smtp_password is not None
+            ):
+                raise ValueError("SMTP settings require SMTP_ENABLED=true")
+            return self
+        if any(value is None for value in values):
+            raise ValueError(
+                "Enabled SMTP requires host, port, sender, transport and encryption key"
+            )
+        assert self.smtp_host is not None
+        assert self.smtp_from is not None
+        assert self.smtp_transport is not None
+        assert self.smtp_delivery_encryption_key is not None
+        if self.smtp_delivery_operation_timeout_seconds < self.smtp_timeout_seconds:
+            raise ValueError("SMTP delivery operation timeout must cover the socket timeout")
+        if (self.smtp_username is None) != (self.smtp_password is None):
+            raise ValueError("SMTP username and password must be configured together")
+        if "\r" in self.smtp_from or "\n" in self.smtp_from:
+            raise ValueError("SMTP sender is invalid")
+        if self.smtp_transport == "plain" and (
+            self.environment not in {"development", "test"}
+            or not _is_loopback_smtp_host(self.smtp_host)
+        ):
+            raise ValueError("Plain SMTP is allowed only for loopback development")
+        try:
+            Fernet(self.smtp_delivery_encryption_key.get_secret_value().encode("ascii"))
+        except (UnicodeEncodeError, ValueError, InvalidToken):
+            raise ValueError("SMTP delivery encryption key is invalid") from None
+        return self
+
+
+def _is_loopback_smtp_host(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 class MigrationSettings(EnvironmentSettings):
@@ -167,11 +265,15 @@ class ScannerSettings(EnvironmentSettings):
 
 class SeedSettings(EnvironmentSettings):
     backend_url: str = Field(validation_alias="BACKEND_URL")
-    supabase_access_token: SecretStr = Field(validation_alias="SUPABASE_ACCESS_TOKEN")
+    seed_access_token: SecretStr = Field(validation_alias="SEED_ACCESS_TOKEN")
 
 
 class ProvisionSettings(EnvironmentSettings):
     environment: str = Field(validation_alias="ENVIRONMENT")
+    database_bootstrap_url: str = Field(validation_alias="DATABASE_BOOTSTRAP_URL")
+    database_inspector_url: str | None = Field(
+        default=None, validation_alias="DATABASE_INSPECTOR_URL"
+    )
     database_url: str = Field(validation_alias="DATABASE_URL")
     migration_database_url: str = Field(validation_alias="MIGRATION_DATABASE_URL")
 

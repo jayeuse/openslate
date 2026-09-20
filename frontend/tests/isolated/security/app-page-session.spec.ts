@@ -6,7 +6,7 @@ test("session gate only treats an exact authenticated 200 as valid", () => {
   expect(
     classifySessionResponse(
       { ok: true, status: 200 },
-      { authenticated: true, userId: "user-a" },
+      { authenticated: true, user_id: "user-a", setup_required: false },
     ),
   ).toBe("valid");
   expect(
@@ -36,7 +36,16 @@ test("session gate treats non-contract responses as unavailable", () => {
   expect(
     classifySessionResponse(
       { ok: true, status: 200 },
-      { authenticated: true, userId: "" },
+      { authenticated: true, user_id: "" },
     ),
   ).toBe("unavailable");
+});
+
+test("session gate routes setup-only identities before opening the workspace", () => {
+  expect(
+    classifySessionResponse(
+      { ok: true, status: 200 },
+      { authenticated: true, user_id: "user-a", setup_required: true },
+    ),
+  ).toBe("setup");
 });

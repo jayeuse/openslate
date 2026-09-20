@@ -429,7 +429,7 @@ Destination: `/access`. Source: [`src/components/systems/access/`](src/component
 - 235. Preview policy impact and resolve same-permission conflicts explicitly
 - 236. Simulate allow and deny decisions with an ordered explanation trace
 - 237. Block access-review completion while decisions remain unresolved
-- 238. Keep Access interactions local with no non-GET BFF or session requests
+- 238. Keep Access interactions local with no non-GET business API requests
 - 239. Exclude tokens, secrets, credentials, identity data, sessions, and history from policy exports
 
 **P1 — administration and governance**
@@ -453,7 +453,7 @@ Destination: `/access`. Source: [`src/components/systems/access/`](src/component
 
 ## Service boundary
 
-Only authentication remains connected: sign-in, session validation/refresh, logout, and the existing account-setup flow. Workspace branding, permissions, and all business interactions are local; workspace screens make no business API requests or realtime subscriptions. Existing service endpoints remain unused by the workspace UI. Legacy business screens and their exclusive helpers have been removed. New business workflows continue to use tab-local sample data; this cleanup does not connect them to live backend operations.
+Only authentication remains connected: sign-in, session validation/refresh, logout, and the existing account-setup flow. Workspace branding, permissions, and all business interactions are local; workspace screens make no business API requests or server-event subscriptions. Existing service endpoints remain unused by the workspace UI. Legacy business screens and their exclusive helpers have been removed. New business workflows continue to use tab-local sample data; this cleanup does not connect them to live backend operations.
 
 ## Acceptance evidence
 

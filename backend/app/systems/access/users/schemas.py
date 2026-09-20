@@ -95,7 +95,28 @@ class UserCreate(BaseModel):
 
 
 class InvitationCreate(UserCreate):
-    """Invitation input shares the user creation contract."""
+    """Local invitation delivery request."""
+
+    delivery: Literal["temporary_password", "email"] = "temporary_password"
+    temporary_password: str | None = Field(default=None, min_length=12, max_length=128)
+
+    @field_validator("temporary_password")
+    @classmethod
+    def require_temporary_password_for_temporary_delivery(cls, value: str | None) -> str | None:
+        return value
+
+
+class InvitationResponse(BaseModel):
+    user: UserResponse
+    delivery: Literal["temporary_password", "email"]
+    temporary_password: str | None = None
+
+
+class InvitationResendRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    delivery: Literal["temporary_password", "email"] = "temporary_password"
+    temporary_password: str | None = Field(default=None, min_length=12, max_length=128)
 
 
 class UserUpdate(BaseModel):

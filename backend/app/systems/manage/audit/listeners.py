@@ -8,11 +8,6 @@ from sqlalchemy import event, inspect, select
 from sqlalchemy.orm import Session
 
 from app.core.database.session import AuditSession
-from app.core.integrations.supabase import (
-    InvalidationEvent,
-    SupabaseAdminError,
-    broadcast_invalidation,
-)
 from app.core.observability import log_event
 from app.systems.manage.audit.context import get_audit_context
 from app.systems.manage.audit.models import AuditAction, AuditLog, SecurityEvent
@@ -21,6 +16,8 @@ from app.systems.manage.audit.snapshots import (
     build_update_snapshot,
     serialize_record,
 )
+from app.systems.platform.events.models import event_for_entity
+from app.systems.platform.events.publisher import publish_invalidations
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.records.models import Record
 
@@ -136,7 +133,7 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
 
     context = get_audit_context(session)
     record_redacted_fields = _record_redacted_fields(session, pending)
-    session.info[REALTIME_INVALIDATION_KEY] = True
+    invalidations = session.info.setdefault(REALTIME_INVALIDATION_KEY, [])
     for change in pending:
         dynamic_redacted_fields = (
             record_redacted_fields.get(change.instance.module_id, frozenset())
@@ -170,6 +167,9 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
             after = snapshot["after"]
 
         entity_type = inspect(change.instance).mapper.local_table.name
+        invalidations.append(
+            event_for_entity(entity_type, getattr(change.instance, "id", None))
+        )
         audit_log = AuditLog(
             action=change.action,
             entity_type=entity_type,
@@ -195,15 +195,16 @@ def clear_pending_changes(session: AuditSession) -> None:
 def broadcast_committed_changes(session: AuditSession) -> None:
     """Best-effort cache invalidation after the audited transaction commits."""
 
-    if not session.info.pop(REALTIME_INVALIDATION_KEY, False):
+    invalidations = session.info.pop(REALTIME_INVALIDATION_KEY, [])
+    if not invalidations:
         return
     try:
-        broadcast_invalidation(InvalidationEvent(entity="data"))
-    except SupabaseAdminError:
-        # Realtime is an optional invalidation path; FastAPI remains canonical.
+        publish_invalidations(tuple(dict.fromkeys(invalidations)))
+    except Exception:
+        # Realtime is best-effort: a committed mutation remains successful.
         log_event(
             "realtime_invalidation_failure", level=logging.WARNING,
-            reason_code="broadcast_failed", upstream="supabase",
+            reason_code="broadcast_failed", upstream="postgresql",
         )
 
 

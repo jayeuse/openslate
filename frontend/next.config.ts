@@ -1,22 +1,20 @@
 import type { NextConfig } from "next";
 
-import { validatePublicEnvironment } from "./src/lib/environment";
+import {
+  developmentApiRewrites,
+  validatePublicEnvironment,
+} from "./src/lib/environment";
 
 validatePublicEnvironment();
 
 const nextConfig: NextConfig = {
-  logging: {
-    incomingRequests: {
-      ignore: [
-        /^\/bff(?:\/|$)/,
-        /^\/session(?:\/|$)/,
-        /^\/auth\/callback(?:\?|$)/,
-      ],
-    },
-  },
   output: "standalone",
   reactStrictMode: true,
   typedRoutes: true,
+  experimental: {
+    proxyClientMaxBodySize: "25mb",
+  },
+  rewrites: () => developmentApiRewrites(),
   async headers() {
     return [
       {

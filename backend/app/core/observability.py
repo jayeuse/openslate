@@ -21,6 +21,7 @@ ALLOWED_EVENTS: Final = frozenset(
         "security_event_ingestion_failed",
         "operational_check_failed",
         "operational_attention",
+        "smtp_delivery_failure",
     }
 )
 

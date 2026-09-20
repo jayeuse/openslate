@@ -1,13 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { currentPublicEnvironment } from "@/lib/environment";
-
-function supabaseConnectSources() {
-  const url = new URL(currentPublicEnvironment().supabaseUrl);
-  const websocketProtocol = url.protocol === "https:" ? "wss:" : "ws:";
-  return `${url.origin} ${websocketProtocol}//${url.host}`;
-}
-
 function isLoopbackHost(host: string | null) {
   const match = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::(\d+))?$/.exec(
     host ?? "",
@@ -25,9 +17,6 @@ export function proxy(request: NextRequest) {
     request.nextUrl.protocol === "http:" &&
     ["localhost", "127.0.0.1", "[::1]"].includes(request.nextUrl.hostname) &&
     isLoopbackHost(request.headers.get("host"));
-  const connectSources = ["'self'", supabaseConnectSources()]
-    .filter(Boolean)
-    .join(" ");
   // Development allows 'unsafe-inline' for style-src *instead of* the nonce:
   // per the CSP spec a nonce disables 'unsafe-inline', and Turbopack HMR plus
   // the Next.js devtools inject styles without a nonce. Production stays
@@ -38,7 +27,7 @@ export function proxy(request: NextRequest) {
     ${isDevelopment ? "style-src 'self' 'unsafe-inline';" : `style-src 'self' 'nonce-${nonce}';`}
     img-src 'self' data: blob:;
     font-src 'self';
-    connect-src ${connectSources};
+    connect-src 'self';
     object-src 'none';
     base-uri 'self';
     form-action 'self';
@@ -61,8 +50,7 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     {
-      source:
-        "/((?!api|bff|session|auth/callback|_next/static|_next/image|favicon.ico).*)",
+      source: "/((?!api|_next/static|_next/image|favicon.ico).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },

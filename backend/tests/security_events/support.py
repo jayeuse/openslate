@@ -45,7 +45,7 @@ def _payload_values(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "event_type": "auth.login",
         "outcome": "attempt",
-        "source": "supabase.auth",
+        "source": "local.identity",
         "operation_id": str(uuid7()),
         "actor_id": str(uuid7()),
         "subject_id": str(uuid7()),
@@ -68,7 +68,7 @@ def _make_event(**overrides: object) -> Any:
         "occurred_at": datetime.now(UTC),
         "event_type": "auth.login",
         "outcome": "attempt",
-        "source": "supabase.auth",
+        "source": "local.identity",
         "operation_id": uuid7(),
         "actor_id": uuid7(),
         "subject_id": uuid7(),

@@ -21,12 +21,13 @@ from app.systems.platform.files.providers import (
     ScannerExecutionUncertain,
     ScannerPolicyRejected,
     ScanVerdict,
-    Storage,
+    StorageBackend,
     StorageCleanupUncertain,
 )
 from app.systems.platform.files.scan_queue import (
     LEASE_SECONDS,
     MAX_ATTEMPTS,
+    PROMOTION_UNRESOLVED,
     RETRY_DELAYS,
     UNRESOLVED,
 )
@@ -174,6 +175,20 @@ def mark_uncertain(db: Session, claim: ScanClaim) -> Never:
     raise WorkerHalted("Submitted scanner execution is unresolved")
 
 
+def mark_promotion_unresolved(db: Session, claim: ScanClaim) -> Never:
+    """Fence a known-clean promotion whose ready metadata transaction failed."""
+    db.rollback()
+    file = load(db, claim.file_id, lock=True)
+    if file.state == "pending_scan" and file.operation_id == claim.operation_id:
+        system_audit(db, claim.operation_id)
+        file.failure_code = PROMOTION_UNRESOLVED
+        file.scan_next_attempt_at = None
+        db.commit()
+    else:
+        db.rollback()
+    raise WorkerHalted("Ready metadata finalization requires reconciliation")
+
+
 def finish_attempt(
     db: Session,
     claim: ScanClaim,
@@ -212,7 +227,7 @@ def finish_attempt(
 
 def process_next(
     db: Session,
-    storage: Storage,
+    storage: StorageBackend,
     scanner: Scanner,
     *,
     clock: Callable[[], datetime] = utc_now,
@@ -239,7 +254,7 @@ def process_next(
     if claim is None:
         return False
     try:
-        content = storage.download(claim.key)
+        content = storage.read_quarantine(claim.key)
     except StorageCleanupUncertain as exc:
         try:
             finish_attempt(db, claim, clock(), failure="scan_unavailable")
@@ -279,5 +294,23 @@ def process_next(
         mark_uncertain(db, claim)
     if verify_leader:
         verify_leader()
+    if verdict.outcome == "clean":
+        try:
+            storage.promote(
+                claim.key, expected_digest=claim.digest, expected_size=claim.size
+            )
+        except ProviderUnavailable:
+            finish_attempt(db, claim, clock(), failure="scan_unavailable")
+            return True
+        try:
+            if verify_leader:
+                verify_leader()
+            finish_attempt(db, claim, clock(), verdict=verdict)
+        except Exception:
+            # Promotion completed, but leadership or durable ready metadata was lost.
+            mark_promotion_unresolved(db, claim)
+        return True
+    # Infected bytes remain quarantined. A failed terminal transition must retain its scan
+    # claim for normal operator recovery, never masquerade as a completed promotion.
     finish_attempt(db, claim, clock(), verdict=verdict)
     return True

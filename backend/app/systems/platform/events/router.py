@@ -1,0 +1,191 @@
+"""Authenticated server-sent events for cache invalidation only."""
+
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.responses import StreamingResponse
+from starlette.types import Send
+
+from app.core.database.session import AuditSession, get_engine
+from app.core.security.tokens import TokenType, decode_token
+from app.systems.access.identity.service import validate_access_session
+from app.systems.access.users.models import User
+from app.systems.platform.events.hub import EventHub, SubscriberLimitReached
+
+router = APIRouter(prefix="/events", tags=["events"])
+_HEARTBEAT_SECONDS = 15.0
+_SEND_TIMEOUT_SECONDS = 15.0
+_bearer = HTTPBearer(auto_error=False)
+
+
+class BoundedSSEStreamingResponse(StreamingResponse):
+    """Close a stalled stream so its generator can release its subscriber slot."""
+
+    def __init__(
+        self,
+        *args: Any,
+        send_timeout_seconds: float = _SEND_TIMEOUT_SECONDS,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._send_timeout_seconds = send_timeout_seconds
+
+    async def stream_response(self, send: Send) -> None:
+        try:
+            await self._send_with_timeout(
+                send,
+                {
+                    "type": "http.response.start",
+                    "status": self.status_code,
+                    "headers": self.raw_headers,
+                },
+            )
+            async for chunk in self.body_iterator:
+                if not isinstance(chunk, bytes | memoryview):
+                    chunk = chunk.encode(self.charset)
+                await self._send_with_timeout(
+                    send,
+                    {"type": "http.response.body", "body": chunk, "more_body": True},
+                )
+            await self._send_with_timeout(
+                send,
+                {"type": "http.response.body", "body": b"", "more_body": False},
+            )
+        except TimeoutError:
+            return
+        finally:
+            close = getattr(self.body_iterator, "aclose", None)
+            if callable(close):
+                await close()
+
+    async def _send_with_timeout(self, send: Send, message: dict[str, object]) -> None:
+        await asyncio.wait_for(send(message), timeout=self._send_timeout_seconds)
+
+
+@dataclass(frozen=True, slots=True)
+class EventPrincipal:
+    access_token: str
+
+
+def get_event_principal(
+    request: Request,
+    bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> EventPrincipal:
+    cookie_token = request.cookies.get("openslate_access")
+    bearer_token = bearer.credentials if bearer is not None else None
+    if bool(cookie_token) == bool(bearer_token):
+        raise _unauthorized()
+    raw_token = cookie_token or bearer_token
+    if raw_token is None:
+        raise _unauthorized()
+    claims = decode_token(raw_token, TokenType.ACCESS)
+    if claims is None or claims.get("setup") is True:
+        raise _unauthorized()
+    return EventPrincipal(raw_token)
+
+
+@router.get("")
+async def events(
+    request: Request,
+    principal: Annotated[EventPrincipal, Depends(get_event_principal)],
+) -> StreamingResponse:
+    hub = request.app.state.events_hub
+    if not isinstance(hub, EventHub):
+        raise RuntimeError("event hub is not configured")
+    user = await reauthorize_event_principal(principal)
+    if user is None:
+        raise _unauthorized()
+    if not hub.can_subscribe(user):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many event streams",
+        )
+    return BoundedSSEStreamingResponse(
+        event_stream(request, hub, principal, initial_user=user),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def event_stream(
+    request: Request,
+    hub: EventHub,
+    principal: EventPrincipal,
+    *,
+    heartbeat_seconds: float = _HEARTBEAT_SECONDS,
+    reauthorize: Callable[[EventPrincipal], Awaitable[object | None]] | None = None,
+    initial_user: object | None = None,
+) -> AsyncIterator[bytes]:
+    """Send resyncs while reauthorizing outside the request session lifetime."""
+
+    check_identity = reauthorize or reauthorize_event_principal
+    user = initial_user if initial_user is not None else await check_identity(principal)
+    if user is None:
+        return
+    try:
+        subscription = await hub.subscribe(user)
+    except SubscriberLimitReached:
+        return
+    try:
+        yield b"event: resync\ndata: {}\n\n"
+        while not await request.is_disconnected():
+            try:
+                event = await asyncio.wait_for(subscription.queue.get(), heartbeat_seconds)
+            except TimeoutError:
+                user = await check_identity(principal)
+                if user is None:
+                    return
+                if hub.refresh_subscription(subscription, user):
+                    yield b"event: resync\ndata: {}\n\n"
+                    continue
+                yield b": heartbeat\n\n"
+                continue
+            if subscription.closed:
+                return
+            if event is None:
+                user = await check_identity(principal)
+                if user is None:
+                    return
+                hub.refresh_subscription(subscription, user)
+                yield b"event: resync\ndata: {}\n\n"
+                continue
+            user = await check_identity(principal)
+            if user is None:
+                return
+            if hub.refresh_subscription(subscription, user):
+                yield b"event: resync\ndata: {}\n\n"
+                continue
+            if not hub.can_receive(subscription, event):
+                continue
+            yield f"event: invalidate\ndata: {event.to_json()}\n\n".encode()
+    finally:
+        await hub.unsubscribe(subscription)
+
+
+async def reauthorize_event_principal(principal: EventPrincipal) -> User | None:
+    """Validate token, user, role, and session using a short-lived DB session."""
+
+    return await asyncio.to_thread(_reauthorize_in_database, principal)
+
+
+def _reauthorize_in_database(principal: EventPrincipal) -> User | None:
+    claims = decode_token(principal.access_token, TokenType.ACCESS)
+    if claims is None or claims.get("setup") is True:
+        return None
+    with AuditSession(get_engine()) as db:
+        return validate_access_session(db, claims)
+
+
+def _unauthorized() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid authentication credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )

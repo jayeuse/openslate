@@ -127,7 +127,7 @@ def test_uncertain_execution_halts_and_api_cannot_clear_it(guarded_db, actor):
 def test_revoked_requester_suspends_without_engine_access_and_new_actor_can_adopt(
     guarded_db, actor
 ):
-    from sqlalchemy import select, text
+    from sqlalchemy import select
 
     from app.systems.access.users.models import Role, User
 
@@ -140,14 +140,16 @@ def test_revoked_requester_suspends_without_engine_access_and_new_actor_can_adop
     assert process_next(db, storage, scanner) is False
     assert scanner.calls == 0 and db.get(File, file_id).failure_code == "scan_suspended"
     new_id = uuid4()
-    db.connection().execute(
-        text("INSERT INTO auth.users (id,email) VALUES (:id,:email)"),
-        {"id": new_id, "email": f"queue-{new_id}@example.com"},
+    role_id = db.scalar(select(Role.id).where(Role.role == "admin"))
+    assert role_id is not None
+    replacement = User(
+        id=new_id,
+        email=f"queue-{new_id}@example.com",
+        username=f"queue_{new_id.hex[:12]}",
+        role_id=role_id,
+        status="active",
     )
-    replacement = db.get(User, new_id)
-    replacement.role_id = db.scalar(select(Role.id).where(Role.role == "admin"))
-    replacement.status = "active"
-    replacement.invitation_sent_at = None
+    db.add(replacement)
     db.commit()
     service.scan(db, new_id, file_id)
     assert db.get(File, file_id).creator_id == original_id
@@ -189,7 +191,7 @@ def test_integrity_and_policy_failures_are_terminal(guarded_db, actor, failure):
     file_id, storage = uploaded(db, actor)
     scanner = Scanner(db)
     if failure == "integrity":
-        storage.objects[db.get(File, file_id).object_key] = b"changed"
+        storage.quarantine[db.get(File, file_id).object_key] = b"changed"
     else:
         scanner.failure = ScannerPolicyRejected("encrypted or exceeds inspection limits")
     assert process_next(db, storage, scanner)
@@ -249,7 +251,7 @@ def test_known_storage_failure_schedules_retry_without_submitting_engine_work(gu
         assert not db.in_transaction()
         raise ProviderUnavailable("storage offline")
 
-    storage.download = unavailable
+    storage.read_quarantine = unavailable
     scanner = Scanner(db)
     assert process_next(db, storage, scanner) is True
     assert scanner.calls == 0

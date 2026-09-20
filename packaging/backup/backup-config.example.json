@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "installation_id": "00000000000000000000000000000000",
+  "database_url": "postgresql://openslate_owner@127.0.0.1:5432/openslate",
+  "pg_password_file": "/protected/openslate/pg-password",
+  "restic_repository": "/protected/openslate/restic-repository",
+  "restic_password_file": "/protected/openslate/restic-password",
+  "staging_directory": "/protected/openslate/backup-staging",
+  "completion_marker": "/protected/openslate/backup-state/first-backup.json",
+  "maintenance_state_file": "/protected/openslate/maintenance-state.json",
+  "maintenance_lock_file": "/protected/openslate/maintenance.lock",
+  "maintenance_max_age_seconds": 300,
+  "private_file_roots": ["/protected/openslate/private-files"],
+  "initialize_repository": true
+}

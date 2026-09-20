@@ -52,13 +52,16 @@ def test_registered_close_rejects_expired_challenge_before_password_provider(
     calls: list[str] = []
 
     class PasswordClient:
+        def __init__(self, _db) -> None:
+            pass
+
         def verify_password(self, _email: str, _password: str) -> UUID:
             calls.append("called")
             return client.actor.id
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.SupabasePasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.LocalPasswordGrantClient",
             PasswordClient,
         )
         response = client.request(

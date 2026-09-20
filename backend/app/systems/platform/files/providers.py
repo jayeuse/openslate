@@ -25,6 +25,10 @@ class ProviderRejected(ProviderUnavailable):
     """Provider definitively rejected this request before accepting bytes."""
 
 
+class ProviderWriteRejected(ProviderRejected):
+    """Local storage definitively failed before installing an immutable object."""
+
+
 class ScannerExecutionUncertain(ProviderUnavailable):
     """The engine may still be executing; fence scans until operator replacement."""
 
@@ -75,10 +79,45 @@ def get_scanner(*, require_configuration: bool = False) -> Scanner:
     )
 
 
-class Storage(Protocol):
-    def upload(self, key: str, content: bytes, media_type: str) -> None: ...
-    def download(self, key: str) -> bytes | None: ...
-    def delete(self, key: str) -> None: ...
+@dataclass(frozen=True, slots=True)
+class StorageStat:
+    """Integrity metadata for one immutable private object."""
+
+    size: int
+    digest: str
+
+
+class StorageBackend(Protocol):
+    """Private immutable bytes; quarantined objects are never downloadable."""
+
+    def upload(self, key: str, content: bytes, media_type: str) -> None:
+        """Create a new immutable quarantined object."""
+        ...
+
+    def read_quarantine(self, key: str) -> bytes | None:
+        """Read an object before a scan verdict; never expose it to callers."""
+        ...
+
+    def promote(self, key: str, *, expected_digest: str, expected_size: int) -> None:
+        """Make a clean quarantined object available in ready storage."""
+        ...
+
+    def download(self, key: str) -> bytes | None:
+        """Read only a ready object."""
+        ...
+
+    def stat(self, key: str, *, quarantine: bool) -> StorageStat | None:
+        """Return exact local object integrity metadata when it exists."""
+        ...
+
+    def delete(self, key: str) -> None:
+        """Idempotently remove an object from both private locations."""
+        ...
+
+
+# Compatibility for consumers outside this feature while the storage migration
+# is integrated. New storage code must use the explicit StorageBackend name.
+Storage = StorageBackend
 
 
 _slots = BoundedSemaphore(2)

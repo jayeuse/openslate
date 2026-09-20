@@ -12,10 +12,12 @@ import {
   FieldControl,
   FieldLabel,
 } from "@/components/ui/field";
+import { ApiError } from "@/lib/api";
+import { signIn } from "@/lib/auth-api";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -24,30 +26,16 @@ export default function LoginPage() {
     setError("");
     setPending(true);
     try {
-      let response: Response;
-      try {
-        response = await fetch("/session/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password }),
-        });
-      } catch {
-        setError("Unable to sign in. Check your connection and try again.");
-        return;
-      }
-      if (!response.ok) {
-        const body: unknown = await response.json().catch(() => null);
-        const detail =
-          typeof body === "object" &&
-          body !== null &&
-          "detail" in body &&
-          typeof body.detail === "string"
-            ? body.detail
-            : "Sign in failed";
-        setError(detail);
-        return;
-      }
-      router.push("/openview");
+      const session = await signIn(identifier, password);
+      router.push(
+        session.setup_required ? "/auth/setup?temporary=1" : "/openview",
+      );
+    } catch (error) {
+      setError(
+        error instanceof ApiError && error.status === 401
+          ? "Invalid identifier or password."
+          : "Unable to sign in. Check your connection and try again.",
+      );
     } finally {
       setPending(false);
     }
@@ -103,16 +91,15 @@ export default function LoginPage() {
           )}
           <form className="space-y-5" onSubmit={submit}>
             <FormField className="space-y-2">
-              <FieldLabel htmlFor="email">Email</FieldLabel>
+              <FieldLabel htmlFor="identifier">Email or username</FieldLabel>
               <FieldControl
                 render={
                   <Input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
+                    id="identifier"
+                    autoComplete="username"
                     required
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
+                    value={identifier}
+                    onChange={(event) => setIdentifier(event.target.value)}
                   />
                 }
               />
@@ -135,6 +122,12 @@ export default function LoginPage() {
               <p className="text-muted-foreground text-xs">
                 Use the credentials provisioned for your administrator account.
               </p>
+              <a
+                className="text-primary inline-block text-sm font-medium hover:underline"
+                href="/auth/recovery"
+              >
+                Forgot password?
+              </a>
             </FormField>
             <Button className="w-full" size="lg" disabled={pending}>
               {pending ? (

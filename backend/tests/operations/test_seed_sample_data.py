@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import SecretStr
 
-from scripts import seed_sample_data as sample_seeder
-from scripts.seed_sample_data_specs import FIELD_SPECS, RECORD_SPECS
+from operations import seed_sample_data as sample_seeder
+from operations.seed_sample_data_specs import FIELD_SPECS, RECORD_SPECS
 
 CANONICAL_DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?$")
 
@@ -55,6 +55,7 @@ class _FakeSeedApiClient:
             "/api/records": [],
         }
         self.next_id = 0
+        self.invitation_payloads: list[dict[str, str]] = []
 
     def request(self, method, path, payload=None, query=None):
         self.calls.append((method, path, dict(query) if query is not None else None))
@@ -69,20 +70,25 @@ class _FakeSeedApiClient:
             return {"items": self.domain_items[path], "pagination": {"has_more": False}}
         if path == "/api/roles":
             return {"id": f"role-{payload['role']}"}
+        if path == "/api/users":
+            self.invitation_payloads.append(dict(payload))
+            return {"id": f"user-{self.next_id}", "temporary_password": "sample-secret"}
         self.next_id += 1
         if path == "/api/records":
             return {"id": f"record-{self.next_id}", "data": payload["data"]}
         return {"id": f"item-{self.next_id}"}
 
 
-def _run_sample_seed(monkeypatch: pytest.MonkeyPatch, client: _FakeSeedApiClient) -> None:
+def _run_sample_seed(
+    monkeypatch: pytest.MonkeyPatch, client: _FakeSeedApiClient, *arguments: str
+) -> None:
     settings = SimpleNamespace(
         backend_url="https://api.example.test",
-        supabase_access_token=SecretStr("test-access-token"),
+        seed_access_token=SecretStr("test-access-token"),
     )
     monkeypatch.setattr(sample_seeder, "get_seed_settings", lambda: settings)
     monkeypatch.setattr(sample_seeder, "ApiClient", lambda *_args, **_kwargs: client)
-    sample_seeder.main([])
+    sample_seeder.main(list(arguments))
 
 
 @pytest.mark.parametrize(
@@ -146,3 +152,18 @@ def test_sample_seed_allows_an_empty_workspace_with_only_default_roles(
         ("GET", "/api/records", {"limit": 1, "offset": 0, "deleted": "include"}),
     ]
     assert any(method in {"PATCH", "POST"} for method, _path, _query in client.calls[5:])
+
+
+def test_sample_users_request_and_print_each_temporary_password_once(
+    monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    client = _FakeSeedApiClient("https://api.example.test")
+
+    _run_sample_seed(monkeypatch, client, "--with-sample-users")
+
+    output = capsys.readouterr().out
+    assert client.invitation_payloads
+    assert all(
+        payload["delivery"] == "temporary_password" for payload in client.invitation_payloads
+    )
+    assert output.count("temporary_password=sample-secret") == len(client.invitation_payloads)

@@ -1,124 +1,90 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
-from app.common.normalization import normalize_email
+from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.security.supabase import verify_supabase_jwt
+from app.core.security.tokens import TokenType, decode_token
+from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.service import validate_access_session, validate_csrf
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import Role, User, UserRole
 from app.systems.access.users.permissions import Capability, has_capability
 from app.systems.manage.audit.context import set_audit_actor
 
-oauth2_scheme = HTTPBearer(auto_error=True)
+_bearer = HTTPBearer(auto_error=False)
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 @dataclass(frozen=True, slots=True)
-class VerifiedPendingIdentity:
-    """Identity claims verified by Supabase for invitation acceptance."""
+class CurrentIdentity:
+    user: User
+    session_id: UUID
+    cookie_authenticated: bool
+    setup_only: bool
 
-    subject: UUID
-    email: str
 
-
-def get_current_user(
-    token: Annotated[str | HTTPAuthorizationCredentials, Depends(oauth2_scheme)],
-    db: Annotated[Session, Depends(get_db)],
-) -> User:
-    raw_token = token.credentials if isinstance(token, HTTPAuthorizationCredentials) else token
-    claims = verify_supabase_jwt(raw_token)
-    subject = claims.get("sub") if claims else None
-    try:
-        user_id = UUID(subject) if subject else None
-    except ValueError:
-        user_id = None
-    user = (
-        db.scalar(select(User).options(joinedload(User.role)).where(User.id == user_id))
-        if user_id
-        else None
+def _unauthorized() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid authentication credentials",
+        headers={"WWW-Authenticate": "Bearer"},
     )
-    if (
-        user is None
-        or user.id != user_id
-        or user.is_deleted
-        or getattr(user, "status", None) != "active"
-        or not is_established_user(user)
-        or user.role is None
-        or user.role.is_deleted
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    tokens_valid_after = getattr(user, "tokens_valid_after", None)
-    if tokens_valid_after is not None:
-        issued_at = claims.get("iat") if claims is not None else None
-        try:
-            if not isinstance(issued_at, (int, float)) or isinstance(issued_at, bool):
-                raise TypeError
-            issued_at_timestamp = float(issued_at)
-            cutoff = (
-                tokens_valid_after
-                if tokens_valid_after.tzinfo is not None
-                else tokens_valid_after.replace(tzinfo=UTC)
-            )
-            issued_at_datetime = datetime.fromtimestamp(issued_at_timestamp, tz=UTC)
-        except (AttributeError, OverflowError, OSError, TypeError, ValueError):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            ) from None
-        if issued_at_datetime < cutoff:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    # SQLAlchemy sessions expose a mutable ``info`` dict. The guard keeps the
-    # dependency usable with lightweight session doubles while preserving the
-    # actor assignment for every real request session.
+
+
+def get_current_identity(
+    request: Request,
+    bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CurrentIdentity:
+    cookie_token = request.cookies.get("openslate_access")
+    refresh_cookie = request.cookies.get("openslate_refresh")
+    bearer_token = bearer.credentials if bearer is not None else None
+    if request.headers.get("authorization") and (cookie_token or refresh_cookie):
+        raise _unauthorized()
+    if bool(cookie_token) == bool(bearer_token):
+        raise _unauthorized()
+    raw_token = cookie_token or bearer_token
+    if raw_token is None:
+        raise _unauthorized()
+    claims = decode_token(raw_token, TokenType.ACCESS)
+    if claims is None:
+        raise _unauthorized()
+    user = validate_access_session(db, claims, allow_setup=claims.get("setup") is True)
+    if user is None:
+        raise _unauthorized()
+    session_id = UUID(str(claims["sid"]))
+    cookie_authenticated = cookie_token is not None
+    if cookie_authenticated and request.method in _UNSAFE_METHODS:
+        _validate_cookie_mutation(request, db, session_id)
     if isinstance(db.info, dict):
         set_audit_actor(db, user.id)
-    return user
+    return CurrentIdentity(user, session_id, cookie_authenticated, claims.get("setup") is True)
 
 
-def get_verified_pending_identity(
-    token: Annotated[str | HTTPAuthorizationCredentials, Depends(oauth2_scheme)],
-) -> VerifiedPendingIdentity:
-    """Verify JWT claims without requiring the local profile to be active yet."""
+def _validate_cookie_mutation(request: Request, db: Session, session_id: UUID) -> None:
+    origin = request.headers.get("origin")
+    if origin is None or origin not in get_settings().cors_origins:
+        raise _unauthorized()
+    session = db.get(IdentitySession, session_id)
+    if session is None or not validate_csrf(session, request.headers.get("X-CSRF-Token", "")):
+        raise _unauthorized()
 
-    raw_token = token.credentials if isinstance(token, HTTPAuthorizationCredentials) else token
-    claims = verify_supabase_jwt(raw_token)
-    subject = claims.get("sub") if claims else None
-    email = claims.get("email") if claims else None
-    try:
-        user_id = UUID(subject) if isinstance(subject, str) else None
-        normalized_email = normalize_email(email) if isinstance(email, str) else None
-    except (TypeError, ValueError):
-        user_id = None
-        normalized_email = None
-    if user_id is None or normalized_email is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return VerifiedPendingIdentity(subject=user_id, email=normalized_email)
+
+def get_current_user(identity: Annotated[CurrentIdentity, Depends(get_current_identity)]) -> User:
+    if identity.setup_only:
+        raise _unauthorized()
+    return identity.user
 
 
 def require_fresh_exact_admin(db: Session, actor_id: UUID) -> User:
-    """Lock the literal admin role and reload the authorized actor from the database."""
-
     try:
         admin_role = db.scalar(
             select(Role)
@@ -126,20 +92,6 @@ def require_fresh_exact_admin(db: Session, actor_id: UUID) -> User:
             .execution_options(populate_existing=True)
             .with_for_update()
         )
-    except SQLAlchemyError as error:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Unable to lock administrator membership",
-        ) from error
-    if not isinstance(admin_role, Role):
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Unable to lock administrator membership",
-        )
-
-    try:
         actor = db.scalar(
             select(User)
             .options(joinedload(User.role))
@@ -149,26 +101,20 @@ def require_fresh_exact_admin(db: Session, actor_id: UUID) -> User:
         )
     except SQLAlchemyError as error:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Unable to reload administrator",
-        ) from error
-    if not isinstance(actor, User):
+        raise HTTPException(status_code=503, detail="Unable to reload administrator") from error
+    if not isinstance(admin_role, Role) or not isinstance(actor, User):
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        raise HTTPException(status_code=403, detail="Forbidden")
     if not (
-        actor.id == actor_id
-        and actor.status == "active"
+        actor.status == "active"
         and is_established_user(actor)
         and not actor.is_deleted
         and actor.role_id == admin_role.id
         and actor.role is not None
-        and actor.role.id == admin_role.id
         and not actor.role.is_deleted
-        and actor.role.role == UserRole.ADMIN
     ):
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        raise HTTPException(status_code=403, detail="Forbidden")
     return actor
 
 

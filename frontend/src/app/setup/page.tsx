@@ -48,30 +48,19 @@ export default function SetupPage() {
           </CardHeader>
           <CardContent>
             <p className="text-muted-foreground text-sm leading-6">
-              Follow the root README for environment setup, then run these
-              commands from the repository root and backend directory. Supabase
-              starts the local platform; Alembic applies the schema; the
-              provisioning script creates the runtime login; and the bootstrap
-              script reads the administrator settings and sends the invitation.
+              Follow the root README for the supported installer or local
+              development path. PostgreSQL starts before the API, Alembic
+              applies the schema, and the identity bootstrap creates the first
+              administrator.
             </p>
             <pre className="bg-muted text-foreground mt-4 overflow-x-auto rounded-md p-4 text-xs leading-6">
-              # Set ADMIN_EMAIL, ADMIN_USERNAME, and ADMIN_PASSWORD{"\n"}# in
-              the repository root .env file{"\n"}
-              supabase start{"\n"}
-              cd backend{"\n"}
-              uv sync --locked{"\n"}
-              uv run alembic upgrade head{"\n"}
-              uv run python scripts/provision_database_role.py{"\n"}
-              uv run python scripts/bootstrap_admin.py
+              # Follow the platform setup guide for your installation # or
+              development environment.
             </pre>
             <p className="text-muted-foreground mt-4 text-sm leading-6">
-              The bootstrap script reads <code>ADMIN_EMAIL</code> and{" "}
-              <code>ADMIN_USERNAME</code> from the root <code>.env</code> file.{" "}
-              <code>ADMIN_PASSWORD</code> must also be present for backend
-              configuration validation, but it is not used to create or set the
-              account password. Open the invitation in local Mailpit to choose
-              the password, then return to sign in. For non-local environments,
-              append <code>--confirm</code> to the bootstrap command.
+              The installer creates the first administrator during setup. For
+              local development, use the documented bootstrap workflow, then
+              return here to sign in.
             </p>
           </CardContent>
         </Card>

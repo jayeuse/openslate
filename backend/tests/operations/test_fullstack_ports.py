@@ -8,7 +8,7 @@ from tests import fullstack_runner as runner
 
 
 @pytest.mark.parametrize("mode", ["coverage", "batch", "acceptance", "full", "scanner"])
-@pytest.mark.parametrize("occupied_port", [55322, 8008, 3008])
+@pytest.mark.parametrize("occupied_port", [8008, 3008, 3448])
 def test_runner_requires_only_ports_used_by_selected_mode(
     tmp_path, monkeypatch, mode, occupied_port
 ):
@@ -34,7 +34,7 @@ def test_runner_requires_only_ports_used_by_selected_mode(
     # Stop at the first post-preflight boundary; no stack or private files are created.
     prepare = MagicMock(side_effect=RuntimeError("Reached disposable setup"))
     monkeypatch.setattr(runner.tempfile, "mkdtemp", prepare)
-    if mode in {"coverage", "batch"} and occupied_port in {8008, 3008}:
+    if mode in {"coverage", "batch"}:
         with pytest.raises(RuntimeError, match="Reached disposable setup"):
             runner.main(arguments)
         prepare.assert_called_once()

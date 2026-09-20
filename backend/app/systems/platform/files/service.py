@@ -15,7 +15,12 @@ from app.systems.manage.audit.service import (
 )
 from app.systems.platform.files.access import authorize, error, fresh_user, load, parent
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import ProviderRejected, ProviderUnavailable, Storage
+from app.systems.platform.files.providers import (
+    ProviderRejected,
+    ProviderUnavailable,
+    ProviderWriteRejected,
+    StorageBackend,
+)
 from app.systems.platform.files.quota import lock_quota, require_capacity, require_live_reservation
 from app.systems.platform.files.schemas import FileCreate, FileResponse
 from app.systems.platform.files.validation_worker import validate_bounded
@@ -51,7 +56,7 @@ def _current(db: Session, file_id: UUID, token: UUID, state: str) -> File:
 
 
 def upload(
-    db: Session, actor_id: UUID, file_id: UUID, content: bytes, storage: Storage
+    db: Session, actor_id: UUID, file_id: UUID, content: bytes, storage: StorageBackend
 ) -> FileResponse:
     file = load(db, file_id, active_parent=True, lock=True)
     authorize(fresh_user(db, actor_id), file.purpose, write=True)
@@ -77,6 +82,26 @@ def upload(
     db.commit()
     try:
         storage.upload(key, validated.content, validated.media_type)
+    except ProviderWriteRejected as exc:
+        # The local filesystem proved no immutable object was installed. Release capacity so
+        # callers can create a fresh reservation; only post-install uncertainty is reconciled.
+        file = _current(db, file_id, token, "uploading")
+        file.state = "purged"
+        file.is_deleted = True
+        file.deleted_at = datetime.now(UTC)
+        file.failure_code = "upload_storage_unavailable"
+        file.operation_id = None
+        file.operation_expires_at = None
+        file.actual_size = None
+        file.digest = None
+        file.media_type = None
+        file.scan_requested_by = None
+        db.commit()
+        raise error(
+            "upload_storage_unavailable",
+            "Storage could not accept this upload; create a new upload and retry",
+            503,
+        ) from exc
     except ProviderRejected as exc:
         file = _current(db, file_id, token, "uploading")
         file.state = "rejected"
@@ -113,7 +138,12 @@ def scan(db: Session, actor_id: UUID, file_id: UUID) -> FileResponse:
 
 
 def download(
-    db: Session, actor_id: UUID, file_id: UUID, storage: Storage, *, current_logo: bool = False
+    db: Session,
+    actor_id: UUID,
+    file_id: UUID,
+    storage: StorageBackend,
+    *,
+    current_logo: bool = False,
 ) -> tuple[bytes, str, str]:
     file = load(db, file_id, lock=True, shared_lock=True)
     user = fresh_user(db, actor_id)
@@ -171,13 +201,11 @@ def archive(db: Session, actor_id: UUID, file_id: UUID, *, reopen: bool = False)
     return FileResponse.model_validate(file)
 
 
-def reconcile(db: Session, actor_id: UUID, file_id: UUID, storage: Storage) -> FileResponse:
+def reconcile(db: Session, actor_id: UUID, file_id: UUID, storage: StorageBackend) -> FileResponse:
     lock_quota(db)
     user = fresh_user(db, actor_id)
     authorize(user, "library_document", write=True)
     file = load(db, file_id, lock=True)
-    if file.failure_code == "scan_execution_unresolved":
-        raise error("scan_execution_unresolved", "Scanner execution requires operator recovery")
     if file.state == "deleting":
         from app.systems.platform.files.purge import purge_confirmed
 
@@ -186,7 +214,7 @@ def reconcile(db: Session, actor_id: UUID, file_id: UUID, storage: Storage) -> F
         key, digest, size, token = file.object_key, file.digest, file.actual_size, file.operation_id
         db.commit()
         try:
-            content = storage.download(key)
+            content = storage.read_quarantine(key)
         except ProviderUnavailable as exc:
             raise error("upload_unresolved", "Upload outcome remains unresolved", 503) from exc
         if content is None or sha256(content).hexdigest() != digest or len(content) != size:
@@ -202,5 +230,39 @@ def reconcile(db: Session, actor_id: UUID, file_id: UUID, storage: Storage) -> F
         enqueue_uploaded(file)
         db.commit()
     elif file.state == "pending_scan" and file.operation_id is not None:
-        raise error("scan_execution_unresolved", "Scanner execution requires operator recovery")
+        key, digest, size, token = file.object_key, file.digest, file.actual_size, file.operation_id
+        if (
+            file.failure_code != "promotion_metadata_unresolved"
+            or file.operation_expires_at is None
+            or file.operation_expires_at > datetime.now(UTC)
+        ):
+            raise error("scan_execution_unresolved", "Scanner execution requires operator recovery")
+        db.commit()
+        try:
+            quarantine = storage.stat(key, quarantine=True)
+            ready = storage.stat(key, quarantine=False)
+        except ProviderUnavailable as exc:
+            raise error("scan_recovery_unavailable", "Scan recovery is unavailable", 503) from exc
+        if (
+            token is None
+            or digest is None
+            or size is None
+            or quarantine is None
+            or ready is None
+            or (quarantine.size, quarantine.digest) != (size, digest)
+            or (ready.size, ready.digest) != (size, digest)
+        ):
+            raise error("scan_execution_unresolved", "Scanner execution requires operator recovery")
+        # Both exact locations prove that promotion completed before metadata did.
+        # Re-run the scanner under a fresh claim instead of trusting an uncommitted verdict.
+        file = _current(db, file_id, token, "pending_scan")
+        if file.is_deleted:
+            db.rollback()
+            raise error("file_archived", "File was archived during scan recovery")
+        authorize(fresh_user(db, actor_id), "library_document", write=True)
+        file.operation_id = None
+        file.operation_expires_at = None
+        file.failure_code = None
+        file.scan_next_attempt_at = datetime.now(UTC)
+        db.commit()
     return FileResponse.model_validate(file)

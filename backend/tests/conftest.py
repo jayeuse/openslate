@@ -1,10 +1,7 @@
-import json
 import os
-import re
 from collections.abc import Generator
 from pathlib import Path
 from secrets import token_urlsafe
-from urllib.parse import urlsplit
 
 import pytest
 from alembic.config import Config
@@ -17,6 +14,7 @@ from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from tests.config_support import settings_environment
+from tests.postgres_runtime import assert_runner_database_url
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
 
@@ -26,34 +24,16 @@ if os.getenv("TEST_DATABASE_URL") is None and os.getenv("E2E_ALLOW_MUTATIONS") !
 
 
 def _guard_integration_database(database_url: str) -> None:
-    """Allow integration tests to touch only the disposable local Supabase DB."""
+    """Allow integration tests to touch only the runner-owned PostgreSQL database."""
 
-    run_id = os.getenv("OPENSLATE_FULLSTACK_RUN_ID", "")
-    try:
-        parsed = urlsplit(database_url)
-        manifest_path = Path(os.environ["OPENSLATE_TEST_DATABASE_MANIFEST"])
-        manifest = json.loads(manifest_path.read_text())
-        allowed = (
-            os.getenv("E2E_ALLOW_MUTATIONS") == "true"
-            and re.fullmatch(r"[a-f0-9]{32}", run_id) is not None
-            and parsed.scheme == "postgresql+psycopg"
-            and parsed.hostname == "127.0.0.1" and parsed.port == 55322
-            and parsed.path == "/postgres" and not parsed.query and not parsed.fragment
-            and parsed.username in {"postgres", "openslate_runtime"} and parsed.password
-            and all(
-                database_url != os.getenv(name) or parsed.username == role
-                for name, role in (
-                    ("TEST_DATABASE_URL", "openslate_runtime"),
-                    ("MIGRATION_DATABASE_URL", "postgres"),
-                )
-            )
-            and manifest_path.stat().st_mode & 0o077 == 0
-            and manifest["run_id"] == run_id and database_url in manifest["urls"]
-        )
-    except (KeyError, OSError, ValueError, TypeError):
-        allowed = False
-    if not allowed:
-        raise RuntimeError("Database tests require the runner-owned disposable database manifest")
+    if database_url == os.getenv("TEST_DATABASE_URL"):
+        assert_runner_database_url(database_url, allowed_roles=frozenset({"openslate_runtime"}))
+    elif database_url == os.getenv("MIGRATION_DATABASE_URL"):
+        assert_runner_database_url(database_url, allowed_roles=frozenset({"openslate_owner"}))
+    elif database_url == os.getenv("TEST_INSPECTOR_DATABASE_URL"):
+        assert_runner_database_url(database_url, allowed_roles=frozenset({"openslate_inspector"}))
+    else:
+        assert_runner_database_url(database_url)
 
 
 def guarded_create_engine(database_url, **options):
@@ -67,12 +47,14 @@ def _guard_direct_database_tests(request):
     if request.node.get_closest_marker("integration") and os.getenv("TEST_DATABASE_URL"):
         _guard_integration_database(os.environ["TEST_DATABASE_URL"])
         _guard_integration_database(os.getenv("MIGRATION_DATABASE_URL", ""))
+        _guard_integration_database(os.getenv("TEST_INSPECTOR_DATABASE_URL", ""))
 
 
 def pytest_collection_modifyitems(session, config, items):
     if os.getenv("OPENSLATE_REQUIRE_DATABASE_TESTS") == "true":
         _guard_integration_database(os.getenv("TEST_DATABASE_URL", ""))
         _guard_integration_database(os.getenv("MIGRATION_DATABASE_URL", ""))
+        _guard_integration_database(os.getenv("TEST_INSPECTOR_DATABASE_URL", ""))
 
 
 def pytest_sessionfinish(session, exitstatus):

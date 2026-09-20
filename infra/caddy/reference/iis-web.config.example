@@ -1,0 +1,55 @@
+<!-- Replace the angle-bracket placeholders before use.  This requires IIS URL
+     Rewrite and ARR.  FastAPI and Next must still bind to loopback addresses. -->
+<configuration>
+  <system.webServer>
+    <proxy enabled="true" preserveHostHeader="true" />
+    <rewrite>
+      <!-- URL Rewrite may deny these changes unless this collection is allowed
+           at server level. Move it to applicationHost.config if delegated
+           configuration is locked. -->
+      <allowedServerVariables>
+        <add name="HTTP_HOST" />
+        <add name="HTTP_ORIGIN" />
+        <add name="HTTP_X_REQUEST_ID" />
+        <add name="HTTP_X_FORWARDED_FOR" />
+        <add name="HTTP_X_FORWARDED_HOST" />
+        <add name="HTTP_X_FORWARDED_PROTO" />
+      </allowedServerVariables>
+      <rules>
+        <rule name="OpenSlate SSE" stopProcessing="true">
+          <match url="^api/events$" />
+          <action type="Rewrite" url="http://127.0.0.1:&lt;BACKEND_PORT&gt;/{R:0}" />
+          <serverVariables>
+            <set name="HTTP_ORIGIN" value="{HTTP_ORIGIN}" />
+            <set name="HTTP_X_REQUEST_ID" value="{HTTP_X_REQUEST_ID}" />
+            <set name="HTTP_X_FORWARDED_FOR" value="{REMOTE_ADDR}" />
+            <set name="HTTP_X_FORWARDED_HOST" value="{HTTP_HOST}" />
+            <set name="HTTP_X_FORWARDED_PROTO" value="https" />
+          </serverVariables>
+        </rule>
+        <rule name="OpenSlate API" stopProcessing="true">
+          <match url="^api(?:/.*)?$" />
+          <action type="Rewrite" url="http://127.0.0.1:&lt;BACKEND_PORT&gt;/{R:0}" />
+          <serverVariables>
+            <set name="HTTP_ORIGIN" value="{HTTP_ORIGIN}" />
+            <set name="HTTP_X_REQUEST_ID" value="{HTTP_X_REQUEST_ID}" />
+            <set name="HTTP_X_FORWARDED_FOR" value="{REMOTE_ADDR}" />
+            <set name="HTTP_X_FORWARDED_HOST" value="{HTTP_HOST}" />
+            <set name="HTTP_X_FORWARDED_PROTO" value="https" />
+          </serverVariables>
+        </rule>
+        <rule name="OpenSlate UI" stopProcessing="true">
+          <match url=".*" />
+          <action type="Rewrite" url="http://127.0.0.1:&lt;FRONTEND_PORT&gt;/{R:0}" />
+          <serverVariables>
+            <set name="HTTP_ORIGIN" value="{HTTP_ORIGIN}" />
+            <set name="HTTP_X_REQUEST_ID" value="{HTTP_X_REQUEST_ID}" />
+            <set name="HTTP_X_FORWARDED_FOR" value="{REMOTE_ADDR}" />
+            <set name="HTTP_X_FORWARDED_HOST" value="{HTTP_HOST}" />
+            <set name="HTTP_X_FORWARDED_PROTO" value="https" />
+          </serverVariables>
+        </rule>
+      </rules>
+    </rewrite>
+  </system.webServer>
+</configuration>

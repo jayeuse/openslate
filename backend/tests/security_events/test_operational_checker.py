@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import text
 from uuid6 import uuid7
 
-from scripts import check_operational_health as checker
+from operations import check_operational_health as checker
 
 METADATA_CANARY = token_urlsafe(32)
 

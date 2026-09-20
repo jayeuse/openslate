@@ -28,7 +28,7 @@ from app.systems.sandbox.lifecycle.models import (
     LifecycleRateLimitFailure,
 )
 from app.systems.sandbox.lifecycle.models import LifecycleOperation as ConfirmationOperation
-from app.systems.sandbox.lifecycle.password import PasswordGrantClient, SupabasePasswordGrantClient
+from app.systems.sandbox.lifecycle.password import LocalPasswordGrantClient, PasswordGrantClient
 
 
 def record_failure(
@@ -178,7 +178,7 @@ def verify_challenge(
         now=now,
     )
     try:
-        client = password_client or SupabasePasswordGrantClient()
+        client = password_client or LocalPasswordGrantClient(db)
         returned_actor_id = client.verify_password(actor_email, password)
     except LifecycleInvalidCredentials:
         record_failure(db, lease, now=_now(now))
@@ -194,10 +194,12 @@ def verify_challenge(
             verified_actor_id = UUID(str(getattr(returned_actor_id, "id", returned_actor_id)))
     except (TypeError, ValueError):
         _release_verification(db, lease, now=_now(now))
-        raise LifecycleActorMismatch("Supabase returned an invalid actor identity") from None
+        raise LifecycleActorMismatch(
+            "Password verification returned an invalid actor identity"
+        ) from None
     if verified_actor_id != actor_id:
         invalidate_challenge(db, lease.challenge_id, now=_now(now))
-        raise LifecycleActorMismatch("Supabase identity does not match the authenticated actor")
+        raise LifecycleActorMismatch("Verified identity does not match the authenticated actor")
 
     return record_success(db, lease, now=_now(now))
 

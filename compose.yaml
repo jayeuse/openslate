@@ -1,110 +1,115 @@
 name: openslate
 
-# Run through scripts/environment.py compose so root .env is projected once.
-# Supabase remains CLI-managed. No migrations, account changes or secret defaults.
-x-runtime: &runtime
-  init: true
-  read_only: true
-  user: "10001:10001"
-  cap_drop: [ALL]
-  security_opt: [no-new-privileges:true]
-  tmpfs:
-    - /tmp:rw,nosuid,size=256m,mode=1777
-  extra_hosts:
-    - host.docker.internal:host-gateway
-  networks: [app]
-
+# Development uses host-run FastAPI and Next.js. pgweb is an optional database UI.
 services:
-  backend:
-    <<: *runtime
-    build:
-      context: .
-      dockerfile: infra/docker/backend.Dockerfile
-    environment:
-      OPENSLATE_ENV_SOURCE: ${OPENSLATE_ENV_SOURCE:?OPENSLATE_ENV_SOURCE is required}
-      ENVIRONMENT: ${ENVIRONMENT:?ENVIRONMENT is required}
-      LOG_DIR: ${LOG_DIR:?LOG_DIR is required}
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-      SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
-      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?SUPABASE_PUBLISHABLE_KEY is required}
-      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:?SUPABASE_SECRET_KEY is required}
-      SUPABASE_AUTH_REDIRECT_URL: ${SUPABASE_AUTH_REDIRECT_URL:?SUPABASE_AUTH_REDIRECT_URL is required}
-      SUPABASE_JWT_ISSUER: ${SUPABASE_JWT_ISSUER:?SUPABASE_JWT_ISSUER is required}
-      SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:?SUPABASE_JWKS_URL is required}
-      SUPABASE_JWT_AUDIENCE: ${SUPABASE_JWT_AUDIENCE:?SUPABASE_JWT_AUDIENCE is required}
-      SECURITY_EVENT_SERVER_KEY: ${SECURITY_EVENT_SERVER_KEY:?SECURITY_EVENT_SERVER_KEY is required}
-      LIFECYCLE_PURGE_ENABLED: ${LIFECYCLE_PURGE_ENABLED:?LIFECYCLE_PURGE_ENABLED is required}
-      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
-      REQUEST_BODY_MAX_BYTES: ${REQUEST_BODY_MAX_BYTES:?REQUEST_BODY_MAX_BYTES is required}
-      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:?DATABASE_POOL_SIZE is required}
-      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:?DATABASE_MAX_OVERFLOW is required}
-      DATABASE_POOL_TIMEOUT_SECONDS: ${DATABASE_POOL_TIMEOUT_SECONDS:?DATABASE_POOL_TIMEOUT_SECONDS is required}
-      DATABASE_CONNECT_TIMEOUT_SECONDS: ${DATABASE_CONNECT_TIMEOUT_SECONDS:?DATABASE_CONNECT_TIMEOUT_SECONDS is required}
-      DATABASE_STATEMENT_TIMEOUT_MS: ${DATABASE_STATEMENT_TIMEOUT_MS:?DATABASE_STATEMENT_TIMEOUT_MS is required}
-      READINESS_POOL_TIMEOUT_SECONDS: ${READINESS_POOL_TIMEOUT_SECONDS:?READINESS_POOL_TIMEOUT_SECONDS is required}
-      READINESS_CONNECT_TIMEOUT_SECONDS: ${READINESS_CONNECT_TIMEOUT_SECONDS:?READINESS_CONNECT_TIMEOUT_SECONDS is required}
-      READINESS_STATEMENT_TIMEOUT_MS: ${READINESS_STATEMENT_TIMEOUT_MS:?READINESS_STATEMENT_TIMEOUT_MS is required}
-      READINESS_CALLER_TIMEOUT_SECONDS: ${READINESS_CALLER_TIMEOUT_SECONDS:?READINESS_CALLER_TIMEOUT_SECONDS is required}
-      SUPABASE_TIMEOUT_SECONDS: ${SUPABASE_TIMEOUT_SECONDS:?SUPABASE_TIMEOUT_SECONDS is required}
-      BACKEND_BIND_HOST: ${BACKEND_BIND_HOST:?BACKEND_BIND_HOST is required}
-      BACKEND_PORT: ${BACKEND_PORT:?BACKEND_PORT is required}
-      SERVER_MAX_CONCURRENCY: ${SERVER_MAX_CONCURRENCY:?SERVER_MAX_CONCURRENCY is required}
-      SERVER_KEEP_ALIVE_SECONDS: ${SERVER_KEEP_ALIVE_SECONDS:?SERVER_KEEP_ALIVE_SECONDS is required}
-    ports: ["${COMPOSE_BIND_HOST:?COMPOSE_BIND_HOST is required}:${BACKEND_PORT:?BACKEND_PORT is required}:${BACKEND_PORT:?BACKEND_PORT is required}"]
-
-  frontend:
-    <<: *runtime
-    build:
-      context: .
-      dockerfile: infra/docker/frontend.Dockerfile
-      args:
-        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?NEXT_PUBLIC_SUPABASE_URL is required}
-        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:?NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY is required}
-        NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: ${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED:?NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED is required}
-    environment:
-      BACKEND_URL: ${BACKEND_URL:?BACKEND_URL is required}
-      SUPABASE_SERVER_URL: ${SUPABASE_SERVER_URL:?SUPABASE_SERVER_URL is required}
-      LOG_DIR: ${LOG_DIR:?LOG_DIR is required}
-      PORT: ${PORT:?PORT is required}
-      HOSTNAME: ${HOSTNAME:?HOSTNAME is required}
-      BFF_REQUEST_BODY_LIMIT_BYTES: ${BFF_REQUEST_BODY_LIMIT_BYTES:?BFF_REQUEST_BODY_LIMIT_BYTES is required}
-      BFF_RESPONSE_BODY_LIMIT_BYTES: ${BFF_RESPONSE_BODY_LIMIT_BYTES:?BFF_RESPONSE_BODY_LIMIT_BYTES is required}
-      BFF_REQUEST_DEADLINE_MS: ${BFF_REQUEST_DEADLINE_MS:?BFF_REQUEST_DEADLINE_MS is required}
-      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?NEXT_PUBLIC_SUPABASE_URL is required}
-      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:?NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY is required}
-      NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED: ${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED:?NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED is required}
-    ports: ["${COMPOSE_BIND_HOST:?COMPOSE_BIND_HOST is required}:${FRONTEND_PORT:?FRONTEND_PORT is required}:${FRONTEND_PORT:?FRONTEND_PORT is required}"]
-
-  clamav:
-    build:
-      context: .
-      dockerfile: infra/docker/clamav.Dockerfile
-    platform: linux/amd64
+  postgres:
+    image: postgres:17@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232
     init: true
-    restart: "no"
-    read_only: true
-    user: "100:101"
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    mem_limit: ${CLAMAV_MEMORY_LIMIT:?CLAMAV_MEMORY_LIMIT is required}
-    cpus: ${CLAMAV_CPUS:?CLAMAV_CPUS is required}
-    pids_limit: ${CLAMAV_PIDS_LIMIT:?CLAMAV_PIDS_LIMIT is required}
+    restart: unless-stopped
     environment:
-      FILES_CLAMAV_PORT: ${FILES_CLAMAV_PORT:?FILES_CLAMAV_PORT is required}
+      POSTGRES_DB: ${POSTGRES_DATABASE:-openslate}
+      POSTGRES_PASSWORD: ${POSTGRES_BOOTSTRAP_PASSWORD:?POSTGRES_BOOTSTRAP_PASSWORD is required}
+    command: ["postgres", "-c", "password_encryption=scram-sha-256"]
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-54322}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks:
+      - default
+      - database-ui
+
+  pgweb:
+    image: sosedoff/pgweb:0.17.0@sha256:a5256d416e2e8b92d69a4459058e3eca33a9f075d8325491644411d0bc3bd70b
+    profiles: ["db-ui"]
+    init: true
+    restart: unless-stopped
+    user: "1000:1000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - --host=postgres
+      - --port=5432
+      - --user=openslate_inspector
+      - --db=${POSTGRES_DATABASE:-openslate}
+      - --passfile=/run/secrets/pgweb_pgpass
+      - --ssl=disable
+      - --readonly
+      - --lock-session
+      - --no-ssh
+      - --skip-open
+      - --query-timeout=30
+    ports:
+      - "${PGWEB_BIND_HOST:-127.0.0.1}:${PGWEB_PORT:-8081}:8081"
+    secrets:
+      - source: pgweb_pgpass
+        target: pgweb_pgpass
+        mode: 0444
+    read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=128m,uid=100,gid=101,mode=1770
-    logging:
-      driver: none
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+      - /home/pgweb/.pgweb:rw,noexec,nosuid,nodev,size=1m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - database-ui
+      - pgweb-host
+
+  caddy:
+    build:
+      context: .
+      dockerfile: infra/docker/caddy.Dockerfile
+    profiles: ["gateway"]
+    init: true
+    restart: unless-stopped
+    user: "1000:1000"
+    command: ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    ports:
+      - "${GATEWAY_BIND_HOST:-127.0.0.1}:${GATEWAY_PORT:-3448}:3448"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - type: bind
-        source: ${SCANNER_DEFINITIONS:?SCANNER_DEFINITIONS is required}
-        target: /var/lib/clamav
+        # scripts/environment.py renders this file before invoking Compose.
+        source: ${CADDY_CONFIG_PATH:-./.agent-runtime/caddy/Caddyfile}
+        target: /etc/caddy/Caddyfile
         read_only: true
-        bind:
-          create_host_path: false
-    networks: [scanner]
+      - caddy-data:/data
+    read_only: true
+    tmpfs:
+      - /config:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000,mode=700
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 1
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --spider http://127.0.0.1:3449/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks:
+      - gateway-host
+
+volumes:
+  postgres-data:
+  caddy-data:
+
+secrets:
+  pgweb_pgpass:
+    file: ${PGWEB_PASSFILE_PATH:-.env.example}
 
 networks:
-  app:
-  scanner:
+  database-ui:
     internal: true
+  pgweb-host:
+  gateway-host:

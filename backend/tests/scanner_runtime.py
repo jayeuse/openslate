@@ -1,31 +1,31 @@
-"""Real, isolated ClamAV generation and worker for disposable release tests.
-
-The engine has no published ports or egress. SDK probes join only its internal
-network; the worker also joins a task-owned network to reach disposable services.
-"""
+"""Real, isolated ClamAV generation and worker for disposable release tests."""
 
 import json
+import os
 import re
 import shutil
 import subprocess
-import sys
 import time
-import tomllib
 from datetime import UTC, datetime
 from hashlib import file_digest
 from io import BytesIO
 from pathlib import Path
 from typing import IO
-from urllib.parse import urlsplit
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from pypdf import PdfWriter
 
 from app.core.config import Settings
+from tests.postgres_runtime import (
+    assert_runner_database_url,
+    container_runtime_database_url,
+    postgres_network_name,
+)
 
 BASE_IMAGE_DIGEST = "sha256:488ff88a78d9769efa7e1bac7028419b696d54cecdae1b696c6c7cd670b3bb4b"
 MANIFEST = "/run/scanner-manifest.json"
+WORKER_STORAGE_ROOT = "/run/openslate-private-files"
 
 
 class DisposableScanner:
@@ -41,6 +41,7 @@ class DisposableScanner:
         self.worker = f"openslate-scan-worker-e2e-{run_id}"
         self.network = f"openslate-clamav-e2e-{run_id}"
         self.egress = f"openslate-worker-e2e-{run_id}"
+        self.database_network: str | None = None
         self.definitions = private / "scanner-definitions"
         self.manifest = private / "scanner-manifest.json"
         self.containers: set[str] = set()
@@ -64,11 +65,19 @@ class DisposableScanner:
         flags = ["--platform", "linux/amd64", "--pull", "never", "--read-only"]
         flags += ["--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--no-healthcheck"]
         flags += ["--pids-limit", "64", "--env", "TZ=UTC", "--env", "LC_ALL=C"]
-        flags += ["--user", "100:101" if engine else "10001:10001"]
+        flags += ["--user", "100:101" if engine else f"{os.getuid()}:{os.getgid()}"]
         flags += ["--memory", "4g" if engine else "512m", "--cpus", "2" if engine else "1"]
-        owner = "uid=100,gid=101" if engine else "uid=10001,gid=10001"
+        owner = "uid=100,gid=101" if engine else f"uid={os.getuid()},gid={os.getgid()}"
         flags += ["--tmpfs", f"/tmp:rw,noexec,nosuid,size=128m,{owner},mode=1770"]
         return flags + ["--label", f"openslate.test.run={self.run_id}"]
+
+    def _worker_storage_root(self, application_env: dict[str, str]) -> Path:
+        storage_root = self.private / "private-files"
+        if application_env.get("FILES_STORAGE_ROOT") != str(storage_root):
+            raise RuntimeError("Worker requires disposable private storage")
+        if self.private.is_symlink() or storage_root.is_symlink() or not storage_root.is_dir():
+            raise RuntimeError("Worker requires disposable private storage")
+        return storage_root
 
     def _remove_container(self, name: str) -> None:
         present = subprocess.run(
@@ -84,11 +93,8 @@ class DisposableScanner:
 
     def _sidecar(self, arguments: list[str], content: bytes = b"", *, manifest: bool = False):
         name = f"openslate-scanner-probe-{self.run_id}-{uuid4().hex[:8]}"
-        mounts = (
-            ["--mount", f"type=bind,src={self.manifest},dst={MANIFEST},readonly"]
-            if manifest
-            else []
-        )
+        mount = f"type=bind,src={self.manifest},dst={MANIFEST},readonly"
+        mounts = ["--mount", mount] if manifest else []
         self.containers.add(name)
         try:
             result = subprocess.run(
@@ -120,7 +126,6 @@ class DisposableScanner:
             self._remove_container(name)
 
     def _build(self) -> None:
-        # Keep the installed builder available without importing personal Docker credentials.
         plugin = Path.home() / ".docker/cli-plugins/docker-buildx"
         destination = Path(self.env["HOME"]) / ".docker/cli-plugins/docker-buildx"
         if plugin.is_file() and not destination.exists():
@@ -208,8 +213,7 @@ class DisposableScanner:
             or host.get("PortBindings")
             or host["LogConfig"]["Type"] != "none"
             or any(
-                name.startswith(("DATABASE_", "MIGRATION_", "SUPABASE_", "SECURITY_EVENT_"))
-                for name in names
+                name.startswith(("DATABASE_", "MIGRATION_", "SECURITY_EVENT_")) for name in names
             )
         ):
             raise RuntimeError("Scanner runtime does not match its isolation contract")
@@ -275,17 +279,8 @@ class DisposableScanner:
             raise RuntimeError("Real scanner component acceptance failed: " + ", ".join(failures))
 
     def start(self) -> None:
-        config = tomllib.loads((self.private / "supabase/config.toml").read_text())
-        if (
-            config["project_id"] != f"p5-{self.run_id}"
-            or config["api"]["port"] != 55321
-            or config["db"]["port"] != 55322
-        ):
-            raise RuntimeError("Scanner requires the exact disposable service tuple")
         self._build()
         self.definitions.mkdir(mode=0o777, exist_ok=True)
-        # Public signatures live inside the run's 0700 private directory. Only
-        # FreshClam's one explicit mount is writable, before serving starts.
         self.definitions.chmod(0o777)
         self.containers.add(self.updater)
         self._run(
@@ -305,17 +300,8 @@ class DisposableScanner:
         self._remove_container(self.updater)
         hashes = self._hashes()
         self.networks.append(self.network)
-        self._run(
-            [
-                "network",
-                "create",
-                "--internal",
-                "--label",
-                f"openslate.test.run={self.run_id}",
-                self.network,
-            ],
-            timeout=30,
-        )
+        label = f"openslate.test.run={self.run_id}"
+        self._run(["network", "create", "--internal", "--label", label, self.network], timeout=30)
         self.containers.add(self.container)
         self._run(
             [
@@ -330,7 +316,8 @@ class DisposableScanner:
                 self.network,
                 "--mount",
                 f"type=bind,src={self.definitions},dst=/var/lib/clamav,readonly",
-                "--env", "FILES_CLAMAV_PORT=3310",
+                "--env",
+                "FILES_CLAMAV_PORT=3310",
                 self.image,
             ],
             timeout=30,
@@ -403,30 +390,43 @@ class DisposableScanner:
         self.observations["signature_hashes_unchanged"] = True
 
     def start_worker(
-        self, application_env: dict[str, str], *, acknowledge_engine_replacement: bool = False
+        self,
+        application_env: dict[str, str],
+        database_network: str | None = None,
+        *,
+        acknowledge_engine_replacement: bool = False,
     ) -> None:
-        target = urlsplit(application_env["DATABASE_URL"])
-        if (
-            target.hostname != "127.0.0.1"
-            or target.port != 55322
-            or target.username != "openslate_runtime"
-            or application_env["SUPABASE_URL"] != "http://127.0.0.1:55321"
-        ):
+        try:
+            assert_runner_database_url(
+                application_env["DATABASE_URL"],
+                application_env,
+                allowed_roles=frozenset({"openslate_runtime"}),
+            )
+        except RuntimeError:
+            raise RuntimeError("Worker requires exact disposable runtime credentials") from None
+        storage_root = self._worker_storage_root(application_env)
+        expected_network = postgres_network_name(self.run_id)
+        if database_network is not None and database_network != expected_network:
+            raise RuntimeError("Worker requires the run-owned database network")
+        if database_network is not None:
+            self.database_network = database_network
+        if self.database_network is None:
+            raise RuntimeError("Worker requires the run-owned database network")
+        if self.database_network != expected_network:
             raise RuntimeError("Worker requires exact disposable runtime credentials")
         worker_env = {
             key: application_env[key]
             for key in (name.upper() for name in Settings.model_fields)
+            if key in application_env
         }
-        worker_env["DATABASE_URL"] = worker_env["DATABASE_URL"].replace(
-            "@127.0.0.1:55322/", "@host.docker.internal:55322/"
-        )
+        worker_env["DATABASE_URL"] = container_runtime_database_url(worker_env["DATABASE_URL"])
         worker_env.update(
             OPENSLATE_ENV_SOURCE="process",
-            SUPABASE_URL="http://host.docker.internal:55321",
             LOG_DIR="/tmp/logs",
             FILES_CLAMAV_HOST=self.container,
             FILES_CLAMAV_PORT="3310",
             FILES_CLAMAV_MANIFEST_PATH=MANIFEST,
+            FILES_STORAGE_ROOT=WORKER_STORAGE_ROOT,
         )
         credentials = self.private / "scanner-worker.env"
         credentials.write_text(
@@ -450,13 +450,10 @@ class DisposableScanner:
                 *self._security(engine=False),
                 "--network",
                 self.egress,
-                *(
-                    ["--add-host", "host.docker.internal:host-gateway"]
-                    if sys.platform == "linux"
-                    else []
-                ),
                 "--env-file",
                 str(credentials),
+                "--mount",
+                f"type=bind,src={storage_root},dst={WORKER_STORAGE_ROOT}",
                 "--mount",
                 f"type=bind,src={self.manifest},dst={MANIFEST},readonly",
                 "--entrypoint",
@@ -466,6 +463,7 @@ class DisposableScanner:
             ]
         )
         self._run(["network", "connect", self.network, self.worker])
+        self._run(["network", "connect", self.database_network, self.worker])
         self._run(["start", self.worker])
         self.observations["containerized_worker"] = True
 

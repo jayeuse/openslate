@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.common.dependencies import require_fresh_exact_admin
 from app.core.config import get_settings
 from app.systems.platform.files.access import error, load
-from app.systems.platform.files.providers import ProviderUnavailable, Storage
+from app.systems.platform.files.providers import ProviderUnavailable, StorageBackend
 from app.systems.platform.files.quota import lock_quota
 from app.systems.platform.files.scan_queue import UNRESOLVED
 from app.systems.platform.files.schemas import FileResponse
@@ -20,7 +20,7 @@ def purge_confirmed(
     db: Session,
     actor_id: UUID,
     file_id: UUID,
-    storage: Storage,
+    storage: StorageBackend,
     *,
     validate_locked: Callable[[], None] | None = None,
 ) -> FileResponse:

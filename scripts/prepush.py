@@ -18,7 +18,7 @@ if __package__ in {None, ""}:  # Supports the documented direct CLI invocation.
 from scripts.ci_scope import ChangeScope, classify_changes
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[object]]
-SERIAL_BACKEND_STACK: Final[str] = "backend-supabase"
+SERIAL_BACKEND_STACK: Final[str] = "backend-postgres"
 
 
 @dataclass(frozen=True)
@@ -67,22 +67,18 @@ class PrepushPlan:
 
 def _frontend_boundary_check() -> str:
     return (
-        "test -z \"${BACKEND_URL+x}\" && "
-        "test -z \"${SUPABASE_SERVER_URL+x}\" && "
-        "test -z \"${DATABASE_URL+x}\" && "
-        "test -z \"${MIGRATION_DATABASE_URL+x}\" && "
-        "test -z \"${SUPABASE_SECRET_KEY+x}\" && "
-        "test -z \"${SECURITY_EVENT_SERVER_KEY+x}\" && "
-        "test -z \"${LOG_DIR+x}\" && "
-        "test -z \"${NEXT_PUBLIC_SUPABASE_URL+x}\" && "
-        "test -z \"${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY+x}\" && "
-        "test -z \"${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED+x}\""
+        'test -z "${BACKEND_URL+x}" && '
+        'test -z "${DATABASE_URL+x}" && '
+        'test -z "${MIGRATION_DATABASE_URL+x}" && '
+        'test -z "${DATABASE_BOOTSTRAP_URL+x}" && '
+        'test -z "${AUTH_JWT_SECRET+x}" && '
+        'test -z "${SECURITY_EVENT_SERVER_KEY+x}" && '
+        'test -z "${LOG_DIR+x}" && '
+        'test -z "${NEXT_PUBLIC_LIFECYCLE_PURGE_ENABLED+x}"'
     )
 
 
-def _add_frontend_steps(
-    steps: list[Step], *, frontend_checks: bool, container_build: bool
-) -> None:
+def _add_frontend_steps(steps: list[Step], *, frontend_checks: bool, container_build: bool) -> None:
     if frontend_checks:
         steps.extend(
             (
@@ -161,7 +157,16 @@ def _add_backend_steps(steps: list[Step]) -> None:
                 gate="backend",
                 phase="fast",
                 cwd="backend",
-                command=("uv", "run", "ruff", "check", ".", "../scripts"),
+                command=(
+                    "uv",
+                    "run",
+                    "ruff",
+                    "check",
+                    ".",
+                    "../scripts",
+                    "../tests/tooling",
+                    "../packaging/backup",
+                ),
             ),
             Step(
                 name="backend-mypy",
@@ -173,10 +178,25 @@ def _add_backend_steps(steps: list[Step]) -> None:
                     "run",
                     "mypy",
                     "app",
-                    "scripts",
+                    "operations",
                     "../scripts/ci_scope.py",
                     "../scripts/prepush.py",
                     "../scripts/build_frontend_image.py",
+                    "../scripts/run_tests.py",
+                    "../packaging/backup/backup_installation.py",
+                ),
+            ),
+            Step(
+                name="packaging-backup-tests",
+                gate="backend",
+                phase="fast",
+                cwd="backend",
+                command=(
+                    "uv",
+                    "run",
+                    "pytest",
+                    "../packaging/backup/tests/test_backup_installation.py",
+                    "--no-cov",
                 ),
             ),
             Step(
@@ -192,7 +212,9 @@ def _add_backend_steps(steps: list[Step]) -> None:
                     "unittest",
                     "discover",
                     "-s",
-                    "../scripts",
+                    "../tests/tooling",
+                    "-t",
+                    "..",
                     "-p",
                     "test_*.py",
                 ),
@@ -266,9 +288,7 @@ def build_plan(scope: ChangeScope, root: Path) -> PrepushPlan:
             frontend_container=scope.decisions["frontend_container"].run,
             backend_container=scope.decisions["backend_container"].run,
         )
-    ordered = tuple(
-        step for phase in ("fast", "resource") for step in steps if step.phase == phase
-    )
+    ordered = tuple(step for phase in ("fast", "resource") for step in steps if step.phase == phase)
     return PrepushPlan(scope=scope, steps=ordered)
 
 
@@ -367,9 +387,7 @@ def execute_plan(
             _print_timing_summary(timings)
             return fallback_status
 
-    lane_order: tuple[str, ...] = tuple(
-        name for name in ("frontend", "backend") if name in lanes
-    )
+    lane_order: tuple[str, ...] = tuple(name for name in ("frontend", "backend") if name in lanes)
     extra_lanes = tuple(name for name in lanes if name not in lane_order)
     lane_order += extra_lanes
     if lane_order:

@@ -8,12 +8,13 @@ import {
   clearVerifiedWorkspaceSessionSnapshot,
   VerifiedWorkspaceIdentityProvider,
 } from "@/components/systems/shared/runtime/workspace-identity";
+import { getSessionStatus } from "@/lib/auth-api";
 
 type AppPageProps = {
   children: ReactNode;
 };
 
-type SessionCheck = "valid" | "invalid" | "unavailable";
+type SessionCheck = "valid" | "setup" | "invalid" | "unavailable";
 
 type CheckQueue = {
   active: boolean;
@@ -35,10 +36,11 @@ export function classifySessionResponse(
     return "unavailable";
   if (
     body.authenticated === true &&
-    typeof body.userId === "string" &&
-    body.userId.length > 0
+    typeof body.user_id === "string" &&
+    body.user_id.length > 0 &&
+    typeof body.setup_required === "boolean"
   )
-    return "valid";
+    return body.setup_required ? "setup" : "valid";
   if (body.authenticated === false) return "invalid";
   return "unavailable";
 }
@@ -46,9 +48,10 @@ export function classifySessionResponse(
 function sessionUserId(body: unknown): string | null {
   return isRecord(body) &&
     body.authenticated === true &&
-    typeof body.userId === "string" &&
-    body.userId.length > 0
-    ? body.userId
+    typeof body.user_id === "string" &&
+    body.user_id.length > 0 &&
+    body.setup_required === false
+    ? body.user_id
     : null;
 }
 
@@ -100,19 +103,14 @@ export function AppPage({ children }: AppPageProps) {
         let result: SessionCheck = "unavailable";
         let responseUserId: string | null = null;
         try {
-          const response = await fetch("/session/status", {
-            cache: "no-store",
-            credentials: "same-origin",
-            signal: controller.signal,
-          });
-          const body: unknown = await response.json().catch(() => null);
+          const body = await getSessionStatus(controller.signal);
           if (
             !mounted.current ||
             current.requestId !== requestId ||
             current.controller !== controller
           )
             return;
-          result = classifySessionResponse(response, body);
+          result = classifySessionResponse({ ok: true, status: 200 }, body);
           responseUserId = sessionUserId(body);
         } catch {
           if (
@@ -135,6 +133,11 @@ export function AppPage({ children }: AppPageProps) {
           void clearVerifiedWorkspaceSessionSnapshot(verifiedUserIdRef.current);
           verifiedUserIdRef.current = null;
           router.replace("/login");
+          return;
+        }
+        if (result === "setup") {
+          current.queued = null;
+          router.replace("/auth/setup?temporary=1");
           return;
         }
         if (result === "valid") {

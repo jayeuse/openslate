@@ -14,7 +14,7 @@ Every schema change starts in `backend/app/systems/<page>/<capability>/models.py
 ## Hard rules
 
 - Do not hand-write a migration as the starting point of a schema change.
-- Do not change schema with raw SQL or the Supabase Data API and call it complete; schema changes flow from models through Alembic.
-- Changes that also need RLS policies, grants, functions, or data backfills still start with the model change; add those operations deliberately to the generated revision.
+- Do not change schema with raw SQL and call it complete; schema changes flow from models through Alembic.
+- Changes that need PostgreSQL roles, grants, functions, or data backfills still start with the model change; add those operations deliberately to the generated revision. The runtime model has no managed-schema dependency.
 - Never edit an applied revision.
-- Historical revision `20260819_0009` has a no-op upgrade relative to `0008`, but its downgrade does not restore the `0008` field-type constraint. Treat that downgrade boundary as unsupported; use a reviewed forward fix or backup restoration rather than editing either applied revision.
+- The vanilla PostgreSQL baseline is an intentionally new root revision for disposable development data. Do not edit it after it has been applied; use a reviewed forward migration or backup restoration for repair.

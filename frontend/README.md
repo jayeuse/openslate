@@ -1,12 +1,12 @@
 # OpenSlate Frontend
 
-The workspace is currently UI-first: business data, roles, permissions, branding, and interaction state are local sample state. Workspace screens do not fetch business APIs or subscribe to realtime updates. Existing-account sign-in, session validation/refresh, and logout remain connected to Supabase Auth.
+The workspace is currently UI-first: business data, roles, permissions, branding, and interaction state are local sample state. Workspace screens do not fetch business APIs or subscribe to server events. Existing-account sign-in, session validation/refresh, and logout call FastAPI Identity through the same-origin API.
 
 Browser-held workspace snapshots and Comms drafts are scoped to the verified
 account in each tab. Older snapshots without an account owner remain stored but
 are not loaded automatically.
 
-FastAPI does not need to be running for existing-account login and workspace UI work. Existing configuration still supplies a backend URL, and invitation onboarding retains its protected backend acceptance flow. The backend and BFF implementations remain available for later integration; current workspace controls do not call them.
+FastAPI must be running for identity actions. Invitation onboarding uses the protected FastAPI setup flow. Current workspace controls do not call business APIs; later integrations use the shared same-origin `apiFetch()` contract. During `npm run dev`, a server-side Next.js rewrite sends `/api/*` to the generated `BACKEND_URL`; production uses Caddy instead.
 
 Frontend-specific commands and architecture are documented in the repository root [`README.md`](../README.md).
 
