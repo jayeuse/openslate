@@ -14,7 +14,7 @@ from app.core.database.session import AuditSession, get_engine
 from app.core.security.tokens import TokenType, decode_token
 from app.systems.access.identity.service import validate_access_session
 from app.systems.access.users.models import User
-from app.systems.platform.events.hub import EventHub, SubscriberLimitReached
+from app.systems.platform.events.hub import EventHub, EventSubscription, SubscriberLimitReached
 
 router = APIRouter(prefix="/events", tags=["events"])
 _HEARTBEAT_SECONDS = 15.0
@@ -29,10 +29,12 @@ class BoundedSSEStreamingResponse(StreamingResponse):
         self,
         *args: Any,
         send_timeout_seconds: float = _SEND_TIMEOUT_SECONDS,
+        on_close: Callable[[], Awaitable[None]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self._send_timeout_seconds = send_timeout_seconds
+        self._on_close = on_close
 
     async def stream_response(self, send: Send) -> None:
         try:
@@ -58,9 +60,13 @@ class BoundedSSEStreamingResponse(StreamingResponse):
         except TimeoutError:
             return
         finally:
-            close = getattr(self.body_iterator, "aclose", None)
-            if callable(close):
-                await close()
+            try:
+                close = getattr(self.body_iterator, "aclose", None)
+                if callable(close):
+                    await close()
+            finally:
+                if self._on_close is not None:
+                    await self._on_close()
 
     async def _send_with_timeout(self, send: Send, message: dict[str, object]) -> None:
         await asyncio.wait_for(send(message), timeout=self._send_timeout_seconds)
@@ -99,18 +105,22 @@ async def events(
     user = await reauthorize_event_principal(principal)
     if user is None:
         raise _unauthorized()
-    if not hub.can_subscribe(user):
+    try:
+        subscription = await hub.subscribe(user)
+    except SubscriberLimitReached:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many event streams",
-        )
+        ) from None
     return BoundedSSEStreamingResponse(
-        event_stream(request, hub, principal, initial_user=user),
+        event_stream(request, hub, principal, initial_user=user, subscription=subscription),
         media_type="text/event-stream",
+        send_timeout_seconds=_SEND_TIMEOUT_SECONDS,
         headers={
             "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",
         },
+        on_close=lambda: hub.unsubscribe(subscription),
     )
 
 
@@ -122,51 +132,55 @@ async def event_stream(
     heartbeat_seconds: float = _HEARTBEAT_SECONDS,
     reauthorize: Callable[[EventPrincipal], Awaitable[object | None]] | None = None,
     initial_user: object | None = None,
+    subscription: EventSubscription | None = None,
 ) -> AsyncIterator[bytes]:
     """Send resyncs while reauthorizing outside the request session lifetime."""
 
     check_identity = reauthorize or reauthorize_event_principal
-    user = initial_user if initial_user is not None else await check_identity(principal)
-    if user is None:
-        return
+    active_subscription = subscription
     try:
-        subscription = await hub.subscribe(user)
-    except SubscriberLimitReached:
-        return
-    try:
+        user = initial_user if initial_user is not None else await check_identity(principal)
+        if user is None:
+            return
+        if active_subscription is None:
+            try:
+                active_subscription = await hub.subscribe(user)
+            except SubscriberLimitReached:
+                return
         yield b"event: resync\ndata: {}\n\n"
         while not await request.is_disconnected():
             try:
-                event = await asyncio.wait_for(subscription.queue.get(), heartbeat_seconds)
+                event = await asyncio.wait_for(active_subscription.queue.get(), heartbeat_seconds)
             except TimeoutError:
                 user = await check_identity(principal)
                 if user is None:
                     return
-                if hub.refresh_subscription(subscription, user):
+                if hub.refresh_subscription(active_subscription, user):
                     yield b"event: resync\ndata: {}\n\n"
                     continue
                 yield b": heartbeat\n\n"
                 continue
-            if subscription.closed:
+            if active_subscription.closed:
                 return
             if event is None:
                 user = await check_identity(principal)
                 if user is None:
                     return
-                hub.refresh_subscription(subscription, user)
+                hub.refresh_subscription(active_subscription, user)
                 yield b"event: resync\ndata: {}\n\n"
                 continue
             user = await check_identity(principal)
             if user is None:
                 return
-            if hub.refresh_subscription(subscription, user):
+            if hub.refresh_subscription(active_subscription, user):
                 yield b"event: resync\ndata: {}\n\n"
                 continue
-            if not hub.can_receive(subscription, event):
+            if not hub.can_receive(active_subscription, event):
                 continue
             yield f"event: invalidate\ndata: {event.to_json()}\n\n".encode()
     finally:
-        await hub.unsubscribe(subscription)
+        if active_subscription is not None:
+            await hub.unsubscribe(active_subscription)
 
 
 async def reauthorize_event_principal(principal: EventPrincipal) -> User | None:

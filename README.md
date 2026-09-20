@@ -159,10 +159,12 @@ unless it is explicitly removed. Full rendered Compose configuration contains
 secrets; use `config --quiet` for routine validation.
 
 The gateway configuration is regenerated from `.env` at
-`.agent-runtime/caddy/Caddyfile`. Caddy reaches the host-run FastAPI and Next.js
-processes through Docker's host gateway, while only HTTPS port `3448` is
-published on loopback. Its local certificate authority is retained in the
-`caddy-data` volume across container restarts.
+`.agent-runtime/caddy/Caddyfile`. On Docker Desktop, Caddy reaches the host-run
+FastAPI and Next.js processes through Docker's host gateway and publishes only
+HTTPS port `3448` on loopback. On native Linux, the same command selects a
+host-network Caddy container so it can reach the documented loopback upstreams;
+the generated Caddyfile binds only `GATEWAY_BIND_HOST`. Its local certificate
+authority is retained in the `caddy-data` volume across container restarts.
 
 ### Optional pgweb database UI
 
@@ -191,11 +193,31 @@ loopback and stop it when it is no longer needed:
 pgweb is a developer inspection tool. It is not included in the Windows/macOS
 customer application or exposed through Caddy.
 
-Scanner work is host-run or exercised by the disposable test runner. Before
-starting the file worker, configure an existing absolute definitions path and
-the matching `FILES_CLAMAV_HOST`, `FILES_CLAMAV_PORT`, and
-`FILES_CLAMAV_MANIFEST_PATH`. The PostgreSQL-only Compose path does not start
-or provision ClamAV. It is not the Windows/macOS customer installation path.
+The PostgreSQL Compose path does not provision ClamAV. The repository has no
+cross-platform `dev.py` scanner service: its reproducible real-engine path is
+the Linux amd64 disposable full-stack runner, which builds the pinned image,
+uses the checked-in one-shot FreshClam configuration to fetch definitions,
+validates the resulting manifest, starts the isolated engine, and starts the
+file worker in its own container:
+
+```bash
+# backend/
+uv run python -m tests.fullstack_runner
+```
+
+Do not reuse that runner's temporary definitions or manifest for ordinary
+development. A separately operated scanner must provide an immutable verified
+definition generation and matching `FILES_CLAMAV_HOST`, `FILES_CLAMAV_PORT`,
+and `FILES_CLAMAV_MANIFEST_PATH` in root `.env`. Only after those prerequisites
+are healthy, start the durable worker from `backend/`:
+
+```bash
+uv run python -m app.systems.platform.files.worker
+```
+
+The worker exits safely when the scanner configuration or its leadership
+session is unavailable. Native Windows/macOS scanner packaging remains a
+customer-installation release gate.
 
 ## Stop and reset
 

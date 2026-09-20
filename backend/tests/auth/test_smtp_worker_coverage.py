@@ -232,6 +232,23 @@ def test_worker_start_is_idempotent_and_disabled_workers_do_not_start(
     assert disabled._thread is None
 
 
+def test_worker_start_clears_a_previous_stop_request_before_restarting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    threads = [Mock(), Mock()]
+    constructor = Mock(side_effect=threads)
+    monkeypatch.setattr("app.systems.platform.notifications.worker.threading.Thread", constructor)
+    worker = SmtpOutboxWorker(_settings())
+
+    worker.start()
+    worker.stop()
+    worker.start()
+
+    assert not worker._stop.is_set()
+    assert constructor.call_count == 2
+    threads[1].start.assert_called_once()
+
+
 def test_worker_loop_logs_isolated_iteration_failure_and_stops(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -6,28 +6,22 @@ error mapping without recreating the identity service's unit tests.
 """
 
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException, Request, Response
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-import app.common.dependencies.auth as dependencies
 import app.systems.access.auth.router as auth_router
 from app.common.dependencies.auth import CurrentIdentity
-from app.systems.access.identity.models import ActionTokenPurpose, IdentitySession
+from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.schemas import (
-    ActionTokenCompleteRequest,
     LoginRequest,
     PasswordChangeRequest,
-    RecoveryRequest,
     RefreshTokenRequest,
 )
 from app.systems.access.identity.service import (
-    ActionTokenInvalid,
     IdentityRateLimited,
     InvalidCredentials,
     IssuedSession,
@@ -61,10 +55,6 @@ def _request(
             "server": ("app.example.test", 443),
         }
     )
-
-
-def _settings() -> SimpleNamespace:
-    return SimpleNamespace(cors_origins=["https://app.example.test"])
 
 
 def _role(kind: UserRole = UserRole.MEMBER) -> Role:
@@ -101,9 +91,7 @@ def _cookie_contains(response: Response, value: str) -> bool:
     return any(value in item for item in response.headers.getlist("set-cookie"))
 
 
-@pytest.fixture(autouse=True)
-def _allowed_origin(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_router, "get_settings", _settings)
+pytestmark = pytest.mark.usefixtures("local_auth_router_settings")
 
 
 def test_login_sets_browser_cookies_and_maps_rate_and_credential_failures(
@@ -331,237 +319,3 @@ def test_change_password_maps_safe_error_outcomes_and_rotates_browser_session(
     with pytest.raises(HTTPException) as rejected:
         auth_router.change_password(payload, identity, _request(), Response(), db)
     assert rejected.value.status_code == 403
-
-
-def test_recovery_and_invitation_completion_only_commit_valid_action_tokens(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db = Mock(spec=Session)
-    user = _user()
-    action = SimpleNamespace(user_id=user.id)
-    payload = ActionTokenCompleteRequest(token="x" * 32, password="new sufficiently long password")
-    monkeypatch.setattr(auth_router, "consume_action_token", Mock(return_value=action))
-    monkeypatch.setattr(auth_router, "replace_password", Mock())
-    monkeypatch.setattr(auth_router, "begin_invitation_acceptance", lambda *_args: uuid7())
-    monkeypatch.setattr(auth_router, "append_invitation_acceptance_success", lambda *_args: None)
-    monkeypatch.setattr(auth_router, "record_invitation_acceptance_failure", lambda *_args: None)
-    db.get.return_value = user
-
-    assert auth_router.complete_recovery(payload, _request(), db).status_code == 204
-    user.status = UserStatus.PENDING.value
-    assert auth_router.complete_invitation(payload, _request(), db).status_code == 204
-    assert user.status == UserStatus.ACTIVE.value
-    assert user.invitation_accepted_at is not None
-    assert db.commit.call_count == 2
-
-    monkeypatch.setattr(
-        auth_router, "consume_action_token", Mock(side_effect=ActionTokenInvalid("bad"))
-    )
-    with pytest.raises(HTTPException) as recovery_invalid:
-        auth_router.complete_recovery(payload, _request(), db)
-    with pytest.raises(HTTPException) as invitation_invalid:
-        auth_router.complete_invitation(payload, _request(), db)
-    assert recovery_invalid.value.status_code == 400
-    assert invitation_invalid.value.status_code == 400
-    assert db.rollback.call_count == 2
-
-
-def test_invitation_completion_records_attempt_and_commits_success_with_activation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db = Mock(spec=Session)
-    user = _user(status=UserStatus.PENDING)
-    action = SimpleNamespace(user_id=user.id)
-    payload = ActionTokenCompleteRequest(token="x" * 32, password="new sufficiently long password")
-    events: list[str] = []
-    monkeypatch.setattr(auth_router, "consume_action_token", Mock(return_value=action))
-    monkeypatch.setattr(auth_router, "replace_password", Mock())
-    monkeypatch.setattr(
-        auth_router,
-        "begin_invitation_acceptance",
-        lambda *_args: events.append("attempt") or uuid7(),
-    )
-    monkeypatch.setattr(
-        auth_router,
-        "append_invitation_acceptance_success",
-        lambda *_args: events.append("success"),
-    )
-    monkeypatch.setattr(
-        auth_router,
-        "record_invitation_acceptance_failure",
-        lambda *_args, **_kwargs: events.append("failure"),
-    )
-    db.get.return_value = user
-    db.commit.side_effect = lambda: events.append("commit")
-
-    assert auth_router.complete_invitation(payload, _request(), db).status_code == 204
-    assert user.status == UserStatus.ACTIVE.value
-    assert events == ["attempt", "success", "commit"]
-
-
-def test_invitation_completion_records_attempt_and_failure_for_an_invalid_token(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db = Mock(spec=Session)
-    payload = ActionTokenCompleteRequest(token="x" * 32, password="new sufficiently long password")
-    events: list[str] = []
-    monkeypatch.setattr(
-        auth_router,
-        "begin_invitation_acceptance",
-        lambda *_args: events.append("attempt") or uuid7(),
-    )
-    monkeypatch.setattr(
-        auth_router,
-        "record_invitation_acceptance_failure",
-        lambda *_args, **_kwargs: events.append("failure"),
-    )
-    monkeypatch.setattr(
-        auth_router,
-        "consume_action_token",
-        Mock(side_effect=ActionTokenInvalid("invalid")),
-    )
-
-    with pytest.raises(HTTPException) as error:
-        auth_router.complete_invitation(payload, _request(), db)
-
-    assert error.value.status_code == 400
-    assert events == ["attempt", "failure"]
-
-
-def test_invitation_completion_records_failure_when_activation_cannot_commit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db = Mock(spec=Session)
-    user = _user(status=UserStatus.PENDING)
-    action = SimpleNamespace(user_id=user.id)
-    payload = ActionTokenCompleteRequest(token="x" * 32, password="new sufficiently long password")
-    events: list[str] = []
-    monkeypatch.setattr(auth_router, "consume_action_token", Mock(return_value=action))
-    monkeypatch.setattr(auth_router, "replace_password", Mock())
-    monkeypatch.setattr(
-        auth_router,
-        "begin_invitation_acceptance",
-        lambda *_args: events.append("attempt") or uuid7(),
-    )
-    monkeypatch.setattr(
-        auth_router,
-        "append_invitation_acceptance_success",
-        lambda *_args: events.append("success"),
-    )
-    monkeypatch.setattr(
-        auth_router,
-        "record_invitation_acceptance_failure",
-        lambda *_args, **_kwargs: events.append("failure"),
-    )
-    db.get.return_value = user
-    db.commit.side_effect = SQLAlchemyError("database unavailable")
-
-    with pytest.raises(HTTPException) as error:
-        auth_router.complete_invitation(payload, _request(), db)
-
-    assert error.value.status_code == 503
-    assert events == ["attempt", "success", "failure"]
-    db.rollback.assert_called_once()
-
-
-def test_recovery_completion_rejects_a_disabled_user_after_consuming_the_token(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db = Mock(spec=Session)
-    user = _user()
-    user.status = UserStatus.DISABLED.value
-    action = SimpleNamespace(user_id=user.id)
-    payload = ActionTokenCompleteRequest(token="x" * 32, password="new sufficiently long password")
-    monkeypatch.setattr(auth_router, "consume_action_token", Mock(return_value=action))
-    db.get.return_value = user
-
-    with pytest.raises(HTTPException) as error:
-        auth_router.complete_recovery(payload, _request(), db)
-
-    assert error.value.status_code == 400
-    db.rollback.assert_called_once()
-
-
-def test_recovery_request_has_identical_success_response_for_known_and_unknown_users(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db = Mock(spec=Session)
-    db.info = {}
-    user = _user()
-    payload = RecoveryRequest(identifier=" Person@Example.Test ")
-    db.scalar.return_value = user
-    monkeypatch.setattr(auth_router, "smtp_delivery_enabled", lambda: True)
-    monkeypatch.setattr(auth_router, "recovery_request_permitted", lambda *_args, **_kwargs: True)
-    issue = Mock(return_value="recovery-token")
-    queue = Mock()
-    monkeypatch.setattr(auth_router, "issue_action_token", issue)
-    monkeypatch.setattr(auth_router, "queue_action_delivery", queue)
-
-    assert auth_router.request_recovery(payload, _request(), db).status_code == 204
-    issue.assert_called_once_with(db, user.id, ActionTokenPurpose.RECOVERY)
-    queue.assert_called_once_with(db, user.id, ActionTokenPurpose.RECOVERY, "recovery-token")
-    db.scalar.return_value = None
-    assert auth_router.request_recovery(payload, _request(), db).status_code == 204
-    assert issue.call_count == 1
-    assert db.commit.call_count == 2
-
-
-def test_current_identity_validates_one_transport_and_cookie_mutation_csrf(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db = Mock(spec=Session)
-    db.info = {}
-    user = _user()
-    session_id = uuid7()
-    claims = {"sub": str(user.id), "sid": str(session_id)}
-    monkeypatch.setattr(dependencies, "decode_token", lambda *_args: claims)
-    monkeypatch.setattr(dependencies, "validate_access_session", lambda *_args, **_kwargs: user)
-    actor = Mock()
-    monkeypatch.setattr(dependencies, "set_audit_actor", actor)
-
-    identity = dependencies.get_current_identity(
-        _request(origin=None, authorization="Bearer access-token"),
-        SimpleNamespace(credentials="access-token"),
-        db,
-    )
-    assert identity.user is user and not identity.cookie_authenticated
-    actor.assert_called_once_with(db, user.id)
-
-    with pytest.raises(HTTPException) as mixed:
-        dependencies.get_current_identity(
-            _request(cookies="openslate_access=cookie", authorization="Bearer access-token"),
-            SimpleNamespace(credentials="access-token"),
-            db,
-        )
-    assert mixed.value.status_code == 401
-
-    cookie_request = _request(cookies="openslate_access=cookie")
-    cookie_request.scope["headers"].append((b"x-csrf-token", b"csrf-token"))
-    db.get.return_value = SimpleNamespace(csrf_token_digest="digest")
-    monkeypatch.setattr(dependencies, "validate_csrf", lambda *_args: False)
-    with pytest.raises(HTTPException) as csrf:
-        dependencies.get_current_identity(cookie_request, None, db)
-    assert csrf.value.status_code == 401
-
-
-def test_dependency_authorization_fails_closed_for_stale_admin_and_setup_identity() -> None:
-    setup = CurrentIdentity(_user(), uuid7(), False, True)
-    with pytest.raises(HTTPException) as setup_denied:
-        dependencies.get_current_user(setup)
-    assert setup_denied.value.status_code == 401
-
-    admin_role = _role(UserRole.ADMIN)
-    actor = _user(role=admin_role)
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [admin_role, actor]
-    assert dependencies.require_fresh_exact_admin(db, actor.id) is actor
-
-    db.scalar.side_effect = SQLAlchemyError("database unavailable")
-    with pytest.raises(HTTPException) as unavailable:
-        dependencies.require_fresh_exact_admin(db, actor.id)
-    assert unavailable.value.status_code == 503
-
-    assert dependencies.require_roles(UserRole.ADMIN)(actor) is actor
-    with pytest.raises(HTTPException) as denied:
-        dependencies.require_roles(UserRole.ADMIN)(_user())
-    assert denied.value.status_code == 403

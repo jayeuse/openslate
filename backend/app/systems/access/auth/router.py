@@ -4,8 +4,6 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -19,8 +17,28 @@ from app.common.dependencies import (
 from app.core.base_model import utc_now
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.systems.access.auth.cookies import (
+    clear_browser_session as _clear_browser_session,
+)
+from app.systems.access.auth.cookies import (
+    cleared_auth_error as _cleared_auth_error,
+)
+from app.systems.access.auth.cookies import (
+    set_browser_session as _set_browser_session,
+)
+from app.systems.access.auth.request_security import (
+    bearer_credentials as _bearer_credentials,
+)
+from app.systems.access.auth.request_security import (
+    reject_mixed_credentials as _reject_mixed_credentials,
+)
+from app.systems.access.auth.request_security import (
+    require_completed_identity as _require_completed_identity,
+)
+from app.systems.access.auth.request_security import source as _source
 from app.systems.access.identity.delivery import queue_action_delivery
 from app.systems.access.identity.models import ActionTokenPurpose, IdentitySession
+from app.systems.access.identity.rate_limits import invitation_completion_permitted
 from app.systems.access.identity.schemas import (
     ActionTokenCompleteRequest,
     LoginRequest,
@@ -72,64 +90,6 @@ from app.systems.platform.notifications.outbox import delivery_status, smtp_deli
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 router = APIRouter()
-
-
-def _set_browser_session(response: Response, access: str, refresh: str | None, csrf: str) -> None:
-    response.set_cookie(
-        "openslate_access", access, httponly=True, secure=True, samesite="lax", path="/"
-    )
-    if refresh is None:
-        response.delete_cookie("openslate_refresh", path="/api/auth")
-    else:
-        response.set_cookie(
-            "openslate_refresh",
-            refresh,
-            httponly=True,
-            secure=True,
-            samesite="strict",
-            path="/api/auth",
-        )
-    response.set_cookie(
-        "openslate_csrf", csrf, httponly=False, secure=True, samesite="lax", path="/"
-    )
-
-
-def _clear_browser_session(response: Response) -> None:
-    response.delete_cookie("openslate_access", path="/")
-    response.delete_cookie("openslate_refresh", path="/api/auth")
-    response.delete_cookie("openslate_csrf", path="/")
-
-
-def _cleared_auth_error() -> JSONResponse:
-    response = JSONResponse(
-        status_code=401, content={"detail": "Invalid authentication credentials"}
-    )
-    _clear_browser_session(response)
-    return response
-
-
-def _source(request: Request) -> str | None:
-    return request.client.host if request.client is not None else None
-
-
-def _reject_mixed_credentials(request: Request) -> None:
-    if request.headers.get("authorization") and (
-        request.cookies.get("openslate_access") or request.cookies.get("openslate_refresh")
-    ):
-        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
-
-
-def _bearer_credentials(request: Request) -> HTTPAuthorizationCredentials | None:
-    scheme, _, credentials = request.headers.get("authorization", "").partition(" ")
-    if scheme.lower() != "bearer" or not credentials:
-        return None
-    return HTTPAuthorizationCredentials(scheme="Bearer", credentials=credentials)
-
-
-def _require_completed_identity(identity: CurrentIdentity) -> CurrentIdentity:
-    if identity.setup_only:
-        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
-    return identity
 
 
 def _require_browser_origin(request: Request) -> None:
@@ -487,6 +447,20 @@ def complete_invitation(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     _require_browser_origin(request)
+    try:
+        permitted = invitation_completion_permitted(db, source=_source(request))
+        db.commit()
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=503, detail="Invitation completion is unavailable"
+        ) from error
+    if not permitted:
+        raise HTTPException(
+            status_code=429,
+            detail="Invitation completion is unavailable",
+            headers={"Retry-After": "900"},
+        )
     operation_id = begin_invitation_acceptance(None)
     user_id: UUID | None = None
     try:

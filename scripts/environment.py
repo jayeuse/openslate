@@ -10,10 +10,12 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 CADDY_GENERATOR_PATH = ROOT / "infra" / "caddy" / "generate_config.py"
+LINUX_CADDY_COMPOSE_PATH = ROOT / "infra" / "caddy" / "compose.linux.yaml"
 CADDY_CONTAINER_PORT = 3448
 CADDY_HEALTH_PORT = 3449
 COMPOSE_CONTROL_PASSWORD = "compose-control-only"
@@ -268,23 +270,24 @@ def pgpass_field(value: str, name: str) -> str:
 
 def write_caddy_config(values: dict[str, str]) -> Path:
     """Render the container gateway configuration without exposing application secrets."""
-    spec = importlib.util.spec_from_file_location(
-        "openslate_caddy_config", CADDY_GENERATOR_PATH
-    )
-    if spec is None or spec.loader is None:
-        raise ConfigurationError("Caddy configuration generator is unavailable")
-    generator = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(generator)
+    generator = caddy_generator()
+    validate_gateway_ports(values, generator)
+    linux_host_network = sys.platform.startswith("linux")
     try:
         rendered = generator.render_config(
             public_host=required(values, "GATEWAY_PUBLIC_HOST"),
-            listen_address="0.0.0.0",
-            https_port=CADDY_CONTAINER_PORT,
+            listen_address=(
+                required(values, "GATEWAY_BIND_HOST") if linux_host_network else "0.0.0.0"
+            ),
+            https_port=(
+                port(values, "GATEWAY_PORT") if linux_host_network else CADDY_CONTAINER_PORT
+            ),
             health_port=CADDY_HEALTH_PORT,
             backend_port=port(values, "BACKEND_PORT"),
             frontend_port=port(values, "FRONTEND_PORT"),
             tls_mode="internal",
-            upstream_host="host.docker.internal",
+            upstream_host="127.0.0.1" if linux_host_network else "host.docker.internal",
+            require_host_namespace_separation=linux_host_network,
         )
     except (argparse.ArgumentTypeError, generator.ConfigurationError):
         raise ConfigurationError("Invalid gateway configuration") from None
@@ -303,6 +306,53 @@ def write_caddy_config(values: dict[str, str]) -> Path:
         return path
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def caddy_generator() -> Any:
+    """Load the checked-in generator shared by validation and rendering."""
+    spec = importlib.util.spec_from_file_location(
+        "openslate_caddy_config", CADDY_GENERATOR_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise ConfigurationError("Caddy configuration generator is unavailable")
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    return generator
+
+
+def validate_gateway_ports(values: dict[str, str], generator: Any) -> None:
+    """Reject host-port collisions before a gateway config reaches Compose."""
+    try:
+        if sys.platform.startswith("linux"):
+            generator.validate_listener_ports(
+                https_port=port(values, "GATEWAY_PORT"),
+                health_port=CADDY_HEALTH_PORT,
+                backend_port=port(values, "BACKEND_PORT"),
+                frontend_port=port(values, "FRONTEND_PORT"),
+                labels=(
+                    "GATEWAY_PORT",
+                    "CADDY_HEALTH_PORT",
+                    "BACKEND_PORT",
+                    "FRONTEND_PORT",
+                ),
+            )
+        else:
+            generator.validate_listener_ports(
+                https_port=CADDY_CONTAINER_PORT,
+                health_port=CADDY_HEALTH_PORT,
+                backend_port=port(values, "BACKEND_PORT"),
+                frontend_port=port(values, "FRONTEND_PORT"),
+                labels=(
+                    "CADDY_HTTPS_PORT",
+                    "CADDY_HEALTH_PORT",
+                    "BACKEND_PORT",
+                    "FRONTEND_PORT",
+                ),
+                require_host_namespace_separation=False,
+                published_gateway_port=port(values, "GATEWAY_PORT"),
+            )
+    except generator.ConfigurationError as error:
+        raise ConfigurationError(str(error)) from None
 
 
 def validate(values: dict[str, str], *, operations: bool = True) -> None:
@@ -337,6 +387,7 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
         or public_origin.port != port(values, "GATEWAY_PORT")
     ):
         raise ConfigurationError("Configuration disagrees: PUBLIC_ORIGIN and gateway settings")
+    validate_gateway_ports(values, caddy_generator())
     database_url(values, "DATABASE_URL", "openslate_runtime")
     if operations:
         database_url(values, "MIGRATION_DATABASE_URL", "openslate_owner")
@@ -428,6 +479,19 @@ def compose_subcommand(arguments: list[str]) -> str | None:
     return None
 
 
+def compose_files(arguments: list[str]) -> list[Path]:
+    """Select the Linux host-network overlay whenever Compose manages Caddy."""
+    files = [ROOT / "compose.yaml"]
+    gateway_profile = any(
+        arguments[index : index + 2] == ["--profile", "gateway"]
+        or arguments[index] == "--profile=gateway"
+        for index in range(len(arguments))
+    )
+    if sys.platform.startswith("linux") and (gateway_profile or "caddy" in arguments):
+        files.append(LINUX_CADDY_COMPOSE_PATH)
+    return files
+
+
 def run_compose(
     arguments: list[str], projected: dict[str, str], root_values: dict[str, str]
 ) -> int:
@@ -438,8 +502,13 @@ def run_compose(
         if name not in root_values and name not in COMPOSE_EXCLUDED_KEYS
     }
     child_env.update(projected)
+    compose_file_arguments = [
+        option
+        for path in compose_files(arguments)
+        for option in ("-f", str(path))
+    ]
     return subprocess.run(
-        ["docker", "compose", "--env-file", os.devnull, *arguments],
+        ["docker", "compose", "--env-file", os.devnull, *compose_file_arguments, *arguments],
         cwd=ROOT,
         env=child_env,
         check=False,

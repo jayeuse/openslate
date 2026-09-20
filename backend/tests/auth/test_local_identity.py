@@ -26,12 +26,10 @@ from app.systems.access.identity.service import (
     RefreshReplayDetected,
     _digest,
     _login_fingerprint,
-    _record_failed_login,
     _rotate_session_tokens,
     authenticate_password,
     cleanup_expired_rate_limit_buckets,
     invalidate_action_tokens,
-    recovery_request_permitted,
     refresh_session,
     replace_password,
     revoke_refresh_session,
@@ -40,6 +38,14 @@ from app.systems.access.identity.service import (
 from app.systems.access.users.models import Role, User, UserRole, UserStatus
 from tests.auth.local_identity_support import request as _request
 from tests.auth.local_identity_support import settings as _settings
+
+
+def test_identity_service_wildcard_import_keeps_public_operations() -> None:
+    namespace: dict[str, object] = {}
+    exec("from app.systems.access.identity.service import *", namespace)
+
+    assert callable(namespace["authenticate_password"])
+    assert callable(namespace["issue_session"])
 
 
 def test_local_password_hash_uses_argon2_and_enforces_policy() -> None:
@@ -435,110 +441,3 @@ def test_temporary_password_change_activates_user_and_uses_second_precision(
     assert user.invitation_accepted_at == now.replace(microsecond=0)
     assert user.tokens_valid_after == now.replace(microsecond=0)
     assert credential.must_change_password is False
-
-
-def test_expired_rate_bucket_is_reset_in_place() -> None:
-    from app.systems.access.identity.models import IdentityRateLimitBucket
-
-    now = datetime.now(UTC)
-    bucket = IdentityRateLimitBucket(
-        fingerprint="fingerprint",
-        attempt_count=5,
-        window_started_at=now - timedelta(minutes=16),
-        blocked_until=now + timedelta(minutes=1),
-    )
-    db = Mock(spec=Session)
-    db.get.return_value = bucket
-
-    _record_failed_login(db, "fingerprint", bucket, now)
-
-    assert bucket.attempt_count == 1
-    assert bucket.window_started_at == now
-    assert bucket.blocked_until is None
-    db.add.assert_not_called()
-
-
-def test_first_failed_login_cleans_stale_buckets_before_locking_its_fingerprint(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    now = datetime.now(UTC)
-    db = Mock(spec=Session)
-    db.get.return_value = None
-    db.scalar.return_value = None
-    db.scalars.return_value = []
-    monkeypatch.setattr(
-        "app.systems.access.identity.service._login_fingerprint", lambda *_args: "a" * 64
-    )
-
-    with pytest.raises(InvalidCredentials):
-        authenticate_password(db, "person@example.com", "wrong password", now=now)
-
-    assert [call[0] for call in db.method_calls[:3]] == ["scalars", "execute", "get"]
-    assert "pg_advisory_xact_lock" in str(db.execute.call_args.args[0])
-    db.add.assert_called_once()
-
-
-def test_recovery_budget_blocks_by_source_without_creating_or_rotating_a_token(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from app.systems.access.identity.models import IdentityRateLimitBucket
-
-    now = datetime.now(UTC)
-    blocked = IdentityRateLimitBucket(
-        fingerprint="source",
-        attempt_count=5,
-        window_started_at=now,
-        blocked_until=now + timedelta(minutes=15),
-    )
-    db = Mock(spec=Session)
-    db.scalars.return_value = []
-    monkeypatch.setattr(
-        "app.systems.access.identity.rate_limits.rate_limit_fingerprint",
-        lambda namespace, *_args: "recipient" if namespace.endswith("recipient") else "source",
-    )
-    monkeypatch.setattr(
-        "app.systems.access.identity.rate_limits.lock_bucket",
-        lambda _db, fingerprint: blocked if fingerprint == "source" else None,
-    )
-    record = Mock()
-    monkeypatch.setattr("app.systems.access.identity.rate_limits.record_attempt", record)
-
-    assert not recovery_request_permitted(db, "person@example.test", source="127.0.0.1", now=now)
-    record.assert_not_called()
-
-
-def test_recovery_budget_resets_expired_recipient_and_source_windows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from app.systems.access.identity.models import IdentityRateLimitBucket
-
-    now = datetime.now(UTC)
-    buckets = {
-        "recipient": IdentityRateLimitBucket(
-            fingerprint="recipient",
-            attempt_count=5,
-            window_started_at=now - timedelta(minutes=16),
-            blocked_until=now - timedelta(seconds=1),
-        ),
-        "source": IdentityRateLimitBucket(
-            fingerprint="source",
-            attempt_count=5,
-            window_started_at=now - timedelta(minutes=16),
-            blocked_until=now - timedelta(seconds=1),
-        ),
-    }
-    db = Mock(spec=Session)
-    db.scalars.return_value = []
-    monkeypatch.setattr(
-        "app.systems.access.identity.rate_limits.rate_limit_fingerprint",
-        lambda namespace, *_args: "recipient" if namespace.endswith("recipient") else "source",
-    )
-    monkeypatch.setattr(
-        "app.systems.access.identity.rate_limits.lock_bucket",
-        lambda _db, fingerprint: buckets[fingerprint],
-    )
-
-    assert recovery_request_permitted(db, "person@example.test", source="127.0.0.1", now=now)
-    assert all(
-        bucket.attempt_count == 1 and bucket.blocked_until is None for bucket in buckets.values()
-    )

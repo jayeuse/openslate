@@ -14,16 +14,43 @@ ignored `.agent-runtime/` directory with owner-only host permissions and mounted
 as a Compose secret rather than placed in the pgweb environment.
 
 The Compose `gateway` profile builds an unprivileged Caddy image from the pinned
-upstream image and listens at the canonical public origin. It routes `/api` and
-`/api/events` to host-run FastAPI and interface paths to host-run Next.js through
-Docker's host gateway. SSE has no compression and uses the streaming-safe
-configuration. The container binds HTTPS only to the configured host address,
-runs with no Linux capabilities and a read-only root filesystem, and retains its
-local certificate authority in the `caddy-data` volume. Automatic HTTP redirect
-listeners are disabled, so the container does not require privileged port 80.
-Direct FastAPI and PostgreSQL listeners are not browser-facing.
+upstream image and listens at the canonical public origin. On Docker Desktop it
+routes `/api` and `/api/events` to host-run FastAPI and interface paths to
+host-run Next.js through Docker's host gateway. On native Linux the environment
+helper adds `infra/caddy/compose.linux.yaml`, where Caddy shares the host network
+and uses loopback upstreams; that is the only way to retain host-process
+loopback binds without exposing FastAPI or Next.js to the bridge network. SSE
+has no compression and uses the streaming-safe configuration. The generated
+listener binds only the configured host address, runs with no Linux capabilities
+and a read-only root filesystem, and retains its local certificate authority in
+the `caddy-data` volume. Automatic HTTP redirect listeners are disabled, so the
+container does not require privileged port 80. Direct FastAPI and PostgreSQL
+listeners are not browser-facing.
 
-Private file storage requires a server-only absolute root. POSIX storage uses directory-handle/no-follow operations; the Windows backend uses handle-based checks. Quarantine and ready object directories are created and accessed with private permissions. ClamAV definitions and worker configuration remain separate operational prerequisites.
+Host networking is an isolated native-Linux exception for Caddy only. It can
+reach host listeners, so the renderer fixes application upstreams at loopback,
+binds HTTPS only to `GATEWAY_BIND_HOST`, and the overlay removes bridge port
+publishing, network attachments, and the host gateway alias. Caddy retains the
+base image's non-root user, read-only root filesystem, dropped capabilities, and
+no-new-privileges setting.
+
+Private file storage requires a server-only absolute root. POSIX storage uses directory-handle/no-follow operations; the Windows backend uses handle-based checks. Quarantine and ready object directories are created and accessed with private permissions.
+
+### Scanner development boundary
+
+The checked-in ClamAV operating path is Linux amd64 only. The disposable
+full-stack runner builds `infra/docker/clamav.Dockerfile`, uses
+`infra/clamav/freshclam.conf` for one-shot official definition retrieval,
+records the immutable serving manifest, then starts the isolated engine and
+`python -m app.systems.platform.files.worker` in separate containers. It is the
+reproducible developer procedure for real scanner coverage. The ordinary Compose
+profiles intentionally do not expose, provision, or refresh ClamAV.
+
+A developer can run the worker directly only after an independently operated
+scanner provides the configured verified manifest and endpoint. The worker uses
+the root `.env`, takes a PostgreSQL leadership lock, and exits if the scanner or
+leadership cannot be established. There is no native Windows/macOS scanner
+startup contract in this repository yet.
 
 The repository includes a development-only native Manager shell and a guarded
 encrypted-backup foundation. It does not yet provide a signed native installer,

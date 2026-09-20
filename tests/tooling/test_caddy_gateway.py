@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import secrets
 import shutil
@@ -85,6 +86,46 @@ class CaddyGatewayTests(unittest.TestCase):
             "source: ${CADDY_CONFIG_PATH:-./infra/caddy/Caddyfile.template}",
             compose,
         )
+
+    @unittest.skipUnless(shutil.which("docker"), "Docker Compose is unavailable")
+    def test_linux_gateway_overlay_effectively_uses_host_network(self) -> None:
+        environment = {
+            **os.environ,
+            "POSTGRES_BOOTSTRAP_PASSWORD": "compose-control-only",
+            "POSTGRES_DATABASE": "openslate",
+            "POSTGRES_PORT": "54322",
+            "GATEWAY_BIND_HOST": "127.0.0.1",
+            "GATEWAY_PORT": "3448",
+        }
+        completed = subprocess.run(
+            [
+                "docker",
+                "compose",
+                "--env-file",
+                os.devnull,
+                "-f",
+                "compose.yaml",
+                "-f",
+                "infra/caddy/compose.linux.yaml",
+                "--profile",
+                "gateway",
+                "config",
+                "--format",
+                "json",
+            ],
+            cwd=ROOT,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        caddy = json.loads(completed.stdout)["services"]["caddy"]
+        self.assertEqual(caddy["network_mode"], "host")
+        self.assertNotIn("ports", caddy)
+        self.assertNotIn("networks", caddy)
+        self.assertNotIn("extra_hosts", caddy)
 
     def test_forwarding_contract_is_present_for_every_upstream(self) -> None:
         rendered = self.render()
@@ -187,6 +228,41 @@ class CaddyGatewayTests(unittest.TestCase):
                 key_file=Path("/srv/openslate/tls/private-key.pem"),
             )
 
+    def test_generator_rejects_each_colliding_listener_pair(self) -> None:
+        for overrides, labels in (
+            ({"https_port": 3449}, ("HTTPS_PORT", "HEALTH_PORT")),
+            ({"backend_port": 3449}, ("HEALTH_PORT", "BACKEND_PORT")),
+            ({"frontend_port": 3449}, ("HEALTH_PORT", "FRONTEND_PORT")),
+            ({"https_port": 8100}, ("HTTPS_PORT", "BACKEND_PORT")),
+            ({"https_port": 3100}, ("HTTPS_PORT", "FRONTEND_PORT")),
+            ({"frontend_port": 8100}, ("BACKEND_PORT", "FRONTEND_PORT")),
+        ):
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(generate_config.ConfigurationError) as raised:
+                    self.render(**overrides)
+
+                self.assertIn(labels[0], str(raised.exception))
+                self.assertIn(labels[1], str(raised.exception))
+
+    def test_bridged_generator_allows_container_ports_but_rejects_shared_upstreams(self) -> None:
+        rendered = self.render(
+            https_port=8100,
+            backend_port=8100,
+            require_host_namespace_separation=False,
+        )
+
+        self.assertIn("https://portal.example.invalid:8100", rendered)
+        self.assertIn("reverse_proxy 127.0.0.1:8100", rendered)
+        with self.assertRaises(generate_config.ConfigurationError) as raised:
+            self.render(
+                backend_port=8100,
+                frontend_port=8100,
+                require_host_namespace_separation=False,
+            )
+
+        self.assertIn("BACKEND_PORT", str(raised.exception))
+        self.assertIn("FRONTEND_PORT", str(raised.exception))
+
     def test_loopback_public_host_uses_a_distinct_private_health_listener(self) -> None:
         rendered = self.render(public_host="127.0.0.1")
 
@@ -245,6 +321,30 @@ class CaddyGatewayTests(unittest.TestCase):
 
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(output.read_text(encoding="utf-8"), self.render())
+
+    def test_cli_rejects_colliding_listener_ports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(CADDY_DIR / "generate_config.py"),
+                    "--public-host",
+                    "portal.example.invalid",
+                    "--output",
+                    str(Path(directory) / "Caddyfile"),
+                    "--https-port",
+                    "8100",
+                    "--backend-port",
+                    "8100",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("HTTPS_PORT", completed.stderr)
+        self.assertIn("BACKEND_PORT", completed.stderr)
 
     @unittest.skipUnless(
         os.getenv("OPENSLATE_RUN_CADDY_ACCEPTANCE") == "true",

@@ -46,6 +46,11 @@ jobs:
         working-directory: frontend
         run: npm ci --prefer-offline --no-audit --no-fund
 
+      - name: Install pinned Playwright Chromium
+        if: steps.scope.outputs.run_frontend == 'true'
+        working-directory: frontend
+        run: npm exec --no -- playwright install --with-deps chromium
+
       - name: Check formatting, lint, and types
         if: steps.scope.outputs.run_frontend == 'true'
         working-directory: frontend

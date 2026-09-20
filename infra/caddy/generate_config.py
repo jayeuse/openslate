@@ -14,6 +14,7 @@ _HOSTNAME = re.compile(
     r"(?=.{1,253}\Z)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*"
     r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\Z"
 )
+_LISTENER_PORT_LABELS = ("HTTPS_PORT", "HEALTH_PORT", "BACKEND_PORT", "FRONTEND_PORT")
 
 
 class ConfigurationError(ValueError):
@@ -86,6 +87,35 @@ def _site_host(host: str) -> str:
     return f"[{address}]" if address.version == 6 else str(address)
 
 
+def validate_listener_ports(
+    *,
+    https_port: int,
+    health_port: int,
+    backend_port: int,
+    frontend_port: int,
+    labels: tuple[str, str, str, str] = _LISTENER_PORT_LABELS,
+    require_host_namespace_separation: bool = True,
+    published_gateway_port: int | None = None,
+    published_gateway_label: str = "GATEWAY_PORT",
+) -> None:
+    """Reject collisions in Caddy and, when applicable, its host namespace."""
+    ports = (https_port, health_port, backend_port, frontend_port)
+    pairs = (
+        ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+        if require_host_namespace_separation
+        else ((0, 1), (2, 3))
+    )
+    for first, second in pairs:
+        if ports[first] == ports[second]:
+            raise ConfigurationError(f"{labels[second]} conflicts with {labels[first]}")
+    if published_gateway_port is not None:
+        for index in (2, 3):
+            if published_gateway_port == ports[index]:
+                raise ConfigurationError(
+                    f"{published_gateway_label} conflicts with {labels[index]}"
+                )
+
+
 def render_config(
     *,
     public_host: str,
@@ -98,6 +128,7 @@ def render_config(
     upstream_host: str = "127.0.0.1",
     cert_file: Path | None = None,
     key_file: Path | None = None,
+    require_host_namespace_separation: bool = True,
 ) -> str:
     """Render the checked-in template after validating all operator inputs."""
     if tls_mode == "internal":
@@ -118,16 +149,23 @@ def render_config(
 
     rendered_https_port = _port(str(https_port))
     rendered_health_port = _port(str(health_port))
-    if rendered_https_port == rendered_health_port:
-        raise ConfigurationError("health listener must use a distinct port")
+    rendered_backend_port = _port(str(backend_port))
+    rendered_frontend_port = _port(str(frontend_port))
+    validate_listener_ports(
+        https_port=rendered_https_port,
+        health_port=rendered_health_port,
+        backend_port=rendered_backend_port,
+        frontend_port=rendered_frontend_port,
+        require_host_namespace_separation=require_host_namespace_separation,
+    )
 
     replacements = {
         "PUBLIC_HOST": _site_host(_public_host(public_host)),
         "LISTEN_ADDRESS": _listen_address(listen_address),
         "HTTPS_PORT": str(rendered_https_port),
         "HEALTH_PORT": str(rendered_health_port),
-        "BACKEND_PORT": str(_port(str(backend_port))),
-        "FRONTEND_PORT": str(_port(str(frontend_port))),
+        "BACKEND_PORT": str(rendered_backend_port),
+        "FRONTEND_PORT": str(rendered_frontend_port),
         "UPSTREAM_HOST": _site_host(_public_host(upstream_host)),
         "TLS_DIRECTIVE": tls_directive,
     }

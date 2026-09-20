@@ -237,12 +237,139 @@ class EnvironmentProjectionTests(unittest.TestCase):
 
         self.assertEqual(result["GATEWAY_PORT"], "4443")
         with tempfile.TemporaryDirectory() as directory:
-            with patch.object(environment, "ROOT", Path(directory)):
+            with (
+                patch.object(environment, "ROOT", Path(directory)),
+                patch.object(environment.sys, "platform", "darwin"),
+            ):
                 caddy = environment.write_caddy_config(values).read_text(encoding="utf-8")
         self.assertIn("https://localhost:3448", caddy)
         compose = (environment.ROOT / "compose.yaml").read_text(encoding="utf-8")
         self.assertIn('"${GATEWAY_BIND_HOST:-127.0.0.1}:${GATEWAY_PORT:-3448}:3448"', compose)
         self.assertIn("http://127.0.0.1:3449/api/health", compose)
+
+    def test_docker_desktop_gateway_can_target_a_host_backend_on_its_container_port(self) -> None:
+        values = {
+            **fixture(),
+            "GATEWAY_PORT": "4443",
+            "PUBLIC_ORIGIN": "https://localhost:4443",
+            "AUTH_JWT_ISSUER": "https://localhost:4443",
+            "BACKEND_PORT": "3448",
+            "BACKEND_URL": "http://localhost:3448",
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.object(environment, "ROOT", Path(directory)),
+                patch.object(environment.sys, "platform", "darwin"),
+            ):
+                caddy = environment.write_caddy_config(values).read_text(encoding="utf-8")
+
+        self.assertIn("https://localhost:3448", caddy)
+        self.assertIn("reverse_proxy host.docker.internal:3448", caddy)
+
+    def test_docker_desktop_rejects_shared_host_listener_ports(self) -> None:
+        for updates, labels in (
+            ({"GATEWAY_PORT": "8000"}, ("GATEWAY_PORT", "BACKEND_PORT")),
+            ({"GATEWAY_PORT": "3000"}, ("GATEWAY_PORT", "FRONTEND_PORT")),
+            ({"FRONTEND_PORT": "8000"}, ("BACKEND_PORT", "FRONTEND_PORT")),
+        ):
+            with self.subTest(updates=updates):
+                values = {**fixture(), **updates}
+                if "GATEWAY_PORT" in updates:
+                    origin = f"https://localhost:{updates['GATEWAY_PORT']}"
+                    values["PUBLIC_ORIGIN"] = origin
+                    values["AUTH_JWT_ISSUER"] = origin
+                if "FRONTEND_PORT" in updates:
+                    values["FRONTEND_URL"] = f"http://localhost:{updates['FRONTEND_PORT']}"
+
+                with patch.object(environment.sys, "platform", "darwin"):
+                    with self.assertRaises(environment.ConfigurationError) as raised:
+                        environment.validate(values)
+
+                self.assertIn(labels[0], str(raised.exception))
+                self.assertIn(labels[1], str(raised.exception))
+
+    def test_docker_desktop_caddy_render_rejects_a_shared_published_gateway_port(self) -> None:
+        values = {
+            **fixture(),
+            "GATEWAY_PORT": "8000",
+            "PUBLIC_ORIGIN": "https://localhost:8000",
+            "AUTH_JWT_ISSUER": "https://localhost:8000",
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.object(environment, "ROOT", Path(directory)),
+                patch.object(environment.sys, "platform", "darwin"),
+                self.assertRaises(environment.ConfigurationError) as raised,
+            ):
+                environment.write_caddy_config(values)
+
+        self.assertIn("GATEWAY_PORT", str(raised.exception))
+        self.assertIn("BACKEND_PORT", str(raised.exception))
+
+    def test_linux_gateway_uses_host_network_and_loopback_upstreams(self) -> None:
+        values = {
+            **fixture(),
+            "GATEWAY_PORT": "4443",
+            "PUBLIC_ORIGIN": "https://localhost:4443",
+            "AUTH_JWT_ISSUER": "https://localhost:4443",
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.object(environment, "ROOT", Path(directory)),
+                patch.object(environment.sys, "platform", "linux"),
+            ):
+                caddy = environment.write_caddy_config(values).read_text(encoding="utf-8")
+                compose_files = environment.compose_files(
+                    ["--profile", "gateway", "up", "-d", "caddy"]
+                )
+
+        self.assertIn("https://localhost:4443", caddy)
+        self.assertIn("bind 127.0.0.1", caddy)
+        self.assertEqual(caddy.count("reverse_proxy 127.0.0.1:8000"), 3)
+        self.assertIn("reverse_proxy 127.0.0.1:3000", caddy)
+        self.assertNotIn("host.docker.internal", caddy)
+        self.assertEqual(
+            compose_files,
+            [Path(directory) / "compose.yaml", environment.LINUX_CADDY_COMPOSE_PATH],
+        )
+
+    def test_linux_gateway_overlay_removes_bridge_port_and_network_settings(self) -> None:
+        overlay = environment.LINUX_CADDY_COMPOSE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("network_mode: host", overlay)
+        self.assertIn("ports: !reset []", overlay)
+        self.assertIn("networks: !reset []", overlay)
+        self.assertIn("extra_hosts: !reset []", overlay)
+
+    def test_linux_gateway_rejects_each_colliding_listener_pair(self) -> None:
+        for updates, labels in (
+            ({"GATEWAY_PORT": "3449"}, ("GATEWAY_PORT", "CADDY_HEALTH_PORT")),
+            ({"BACKEND_PORT": "3449"}, ("CADDY_HEALTH_PORT", "BACKEND_PORT")),
+            ({"FRONTEND_PORT": "3449"}, ("CADDY_HEALTH_PORT", "FRONTEND_PORT")),
+            ({"GATEWAY_PORT": "8000"}, ("GATEWAY_PORT", "BACKEND_PORT")),
+            ({"GATEWAY_PORT": "3000"}, ("GATEWAY_PORT", "FRONTEND_PORT")),
+            ({"FRONTEND_PORT": "8000"}, ("BACKEND_PORT", "FRONTEND_PORT")),
+        ):
+            with self.subTest(updates=updates):
+                values = {**fixture(), **updates}
+                if "GATEWAY_PORT" in updates:
+                    origin = f"https://localhost:{updates['GATEWAY_PORT']}"
+                    values["PUBLIC_ORIGIN"] = origin
+                    values["AUTH_JWT_ISSUER"] = origin
+                if "BACKEND_PORT" in updates:
+                    values["BACKEND_URL"] = f"http://localhost:{updates['BACKEND_PORT']}"
+                if "FRONTEND_PORT" in updates:
+                    values["FRONTEND_URL"] = f"http://localhost:{updates['FRONTEND_PORT']}"
+
+                with patch.object(environment.sys, "platform", "linux"):
+                    with self.assertRaises(environment.ConfigurationError) as raised:
+                        environment.validate(values)
+
+                self.assertIn(labels[0], str(raised.exception))
+                self.assertIn(labels[1], str(raised.exception))
 
     def test_caddy_healthcheck_uses_an_unpublished_private_listener(self) -> None:
         values = {**fixture(), "GATEWAY_PUBLIC_HOST": "portal.example.test"}
@@ -295,6 +422,7 @@ class EnvironmentProjectionTests(unittest.TestCase):
             with (
                 patch.object(environment, "ROOT", root),
                 patch.dict(os.environ, {"DATABASE_URL": "stale", "SMTP_PASSWORD": "stale"}),
+                patch.object(environment.sys, "platform", "darwin"),
                 patch.object(environment.subprocess, "run") as run,
                 redirect_stdout(io.StringIO()),
             ):

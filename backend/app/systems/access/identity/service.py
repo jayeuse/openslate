@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from secrets import token_urlsafe
@@ -16,29 +15,30 @@ from app.core.base_model import utc_now
 from app.core.config import get_settings
 from app.core.security.passwords import hash_password, verify_password
 from app.core.security.tokens import TokenType, create_token, decode_token
+from app.systems.access.identity import rate_limits
+from app.systems.access.identity.contracts import (
+    ActionTokenInvalid as ActionTokenInvalid,
+)
+from app.systems.access.identity.contracts import (
+    IdentityError as IdentityError,
+)
+from app.systems.access.identity.contracts import (
+    IdentityRateLimited as IdentityRateLimited,
+)
+from app.systems.access.identity.contracts import (
+    InvalidCredentials as InvalidCredentials,
+)
+from app.systems.access.identity.contracts import (
+    IssuedSession as IssuedSession,
+)
+from app.systems.access.identity.contracts import (
+    RefreshReplayDetected as RefreshReplayDetected,
+)
 from app.systems.access.identity.models import (
     ActionTokenPurpose,
     IdentityActionToken,
     IdentityCredential,
     IdentitySession,
-)
-from app.systems.access.identity.rate_limits import (
-    cleanup_expired_buckets as _cleanup_expired_rate_limit_buckets,
-)
-from app.systems.access.identity.rate_limits import (
-    lock_bucket as _lock_rate_limit_bucket,
-)
-from app.systems.access.identity.rate_limits import (
-    login_fingerprint as _login_fingerprint,
-)
-from app.systems.access.identity.rate_limits import (
-    normalize_identifier as _normalize_identifier,
-)
-from app.systems.access.identity.rate_limits import (
-    record_attempt as _record_failed_login,
-)
-from app.systems.access.identity.rate_limits import (
-    recovery_request_permitted as _recovery_request_permitted,
 )
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import User, UserStatus
@@ -50,34 +50,12 @@ _SETUP_SESSION_LIFETIME: Final = timedelta(minutes=10)
 _DUMMY_PASSWORD = "unknown identity password verification filler"
 _DUMMY_PASSWORD_DIGEST: str | None = None
 
-
-class IdentityError(RuntimeError):
-    """A safe local identity failure."""
-
-
-class InvalidCredentials(IdentityError):
-    pass
-
-
-class RefreshReplayDetected(InvalidCredentials):
-    """A superseded refresh credential was reused and revoked its session."""
-
-
-class IdentityRateLimited(IdentityError):
-    pass
-
-
-class ActionTokenInvalid(IdentityError):
-    pass
-
-
-@dataclass(frozen=True, slots=True)
-class IssuedSession:
-    access_token: str
-    refresh_token: str | None
-    csrf_token: str
-    session_id: UUID
-    setup_only: bool
+_cleanup_expired_rate_limit_buckets = rate_limits.cleanup_expired_buckets
+_lock_rate_limit_bucket = rate_limits.lock_bucket
+_login_fingerprint = rate_limits.login_fingerprint
+_normalize_identifier = rate_limits.normalize_identifier
+_record_failed_login = rate_limits.record_attempt
+_recovery_request_permitted = rate_limits.recovery_request_permitted
 
 
 def _now(now: datetime | None = None) -> datetime:
@@ -429,9 +407,7 @@ def revoke_user_sessions(
             session.revoked_at = timestamp
 
 
-def invalidate_action_tokens(
-    db: Session, user_id: UUID, *, now: datetime | None = None
-) -> None:
+def invalidate_action_tokens(db: Session, user_id: UUID, *, now: datetime | None = None) -> None:
     """Consume outstanding setup and recovery secrets after identity changes."""
 
     timestamp = _now(now)
@@ -511,9 +487,7 @@ def consume_action_token(
         or action.expires_at <= timestamp
     ):
         raise ActionTokenInvalid("Token is invalid")
-    if (
-        purpose is ActionTokenPurpose.RECOVERY and user.status != UserStatus.ACTIVE.value
-    ) or (
+    if (purpose is ActionTokenPurpose.RECOVERY and user.status != UserStatus.ACTIVE.value) or (
         purpose is ActionTokenPurpose.INVITATION and user.status != UserStatus.PENDING.value
     ):
         raise ActionTokenInvalid("Token is invalid")

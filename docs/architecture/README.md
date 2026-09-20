@@ -62,7 +62,7 @@ The browser does not write application data directly. FastAPI issues HttpOnly se
 | [08 — Authentication and authorization](08-authentication-authorization.md) | Local identity, JWT/session checks, roles, invitations, and failures.                     |
 | [09 — Lifecycle and state management](09-lifecycle-and-state-management.md) | Open/closed/purged state, previews, challenges, locks, cascades, and visibility.         |
 | [10 — Audit and history](10-audit-and-history.md)                           | ORM capture, minimal redacted diffs, transaction behavior, and audit limits.             |
-| [11 — Infrastructure](11-infrastructure.md)                                 | Local PostgreSQL and host-process topology, ports, services, and startup order.           |
+| [11 — Infrastructure](11-infrastructure.md)                                 | Local PostgreSQL and host-process topology, platform gateway routing, scanner boundary, and startup order. |
 | [12 — Deployment architecture](12-deployment-architecture.md)               | Current release state and proposed Windows/macOS server-app installation and operations. |
 | [13 — Runtime flows](13-runtime-flows.md)                                   | Startup, login, invitation, schema/record, lifecycle, and invalidation traces.           |
 | [14 — Security architecture](14-security-architecture.md)                   | Implemented controls, partial/absent controls, trust boundaries, and deployment gates.   |
@@ -105,10 +105,11 @@ The browser does not write application data directly. FastAPI issues HttpOnly se
 - Backup/PITR, disaster recovery, monitoring, and alerting services
 - Shared-tenant isolation model
 
-Files use the private Storage bucket through FastAPI. Upload, quarantine, durable
-automatic scanning, download and cleanup are implemented; the private ClamAV
-engine and worker require the operator setup described in
-[infrastructure](11-infrastructure.md#automatic-file-scanning--container-operating-procedure).
+Files use private local storage through FastAPI. Upload, quarantine, durable
+automatic scanning, download and cleanup are implemented; the checked-in real
+ClamAV procedure is Linux amd64 disposable test infrastructure, while native
+Windows/macOS scanner operation remains a release gate. See the
+[scanner development boundary](11-infrastructure.md#scanner-development-boundary).
 
 ## Structure choice
 

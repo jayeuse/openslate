@@ -66,6 +66,7 @@ class SmtpOutboxWorker:
     def start(self) -> None:
         if not self._settings.smtp_enabled or self._thread is not None:
             return
+        self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="openslate-smtp", daemon=True)
         self._thread.start()
 

@@ -54,7 +54,9 @@ jobs:
       - name: Run mypy
         run: uv run mypy app operations ../scripts/ci_scope.py ../scripts/prepush.py ../scripts/run_tests.py ../packaging/backup/backup_installation.py
       - name: Run packaging backup contracts
-        run: uv run pytest ../packaging/backup/tests/test_backup_installation.py --no-cov
+        run: >-
+          uv run pytest ../packaging/backup/tests/test_backup_installation.py
+          --no-cov --basetemp test-results/backup-contracts
       - name: Verify test selection and tooling
         run: uv run python -m unittest discover -s ../tests/tooling -t .. -p 'test_*.py'
 

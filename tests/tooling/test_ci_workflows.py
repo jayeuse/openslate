@@ -24,14 +24,13 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("npm run build -- --from-process", source)
         self.assertIn("timeout-minutes: 12", source)
 
-    def test_frontend_has_no_browser_coverage_or_artifact_machinery(self):
+    def test_frontend_installs_the_locked_playwright_chromium_browser(self):
         source = self.source("frontend.yml")
 
+        self.assertIn("npm exec --no -- playwright install --with-deps chromium", source)
         for forbidden in (
-            "playwright install",
             "test:e2e",
             "coverage",
-            "chromium",
             "firefox",
             "webkit",
             "mobile",
@@ -71,7 +70,8 @@ class CiWorkflowContractTests(unittest.TestCase):
 
         self.assertIn("../packaging/backup", source)
         self.assertIn("../packaging/backup/backup_installation.py", source)
-        self.assertIn("../packaging/backup/tests/test_backup_installation.py --no-cov", source)
+        self.assertIn("../packaging/backup/tests/test_backup_installation.py", source)
+        self.assertIn("--no-cov --basetemp test-results/backup-contracts", source)
         self.assertIn("../tests/tooling", source)
         self.assertIn("../scripts/run_tests.py", source)
 

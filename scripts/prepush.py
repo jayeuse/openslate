@@ -90,6 +90,13 @@ def _add_frontend_steps(steps: list[Step], *, frontend_checks: bool, container_b
                     command=("npm", "run", "check"),
                 ),
                 Step(
+                    name="frontend-browser-install",
+                    gate="frontend",
+                    phase="fast",
+                    cwd="frontend",
+                    command=("npm", "exec", "--no", "--", "playwright", "install", "chromium"),
+                ),
+                Step(
                     name="frontend-tests",
                     gate="frontend",
                     phase="resource",
@@ -197,6 +204,8 @@ def _add_backend_steps(steps: list[Step]) -> None:
                     "pytest",
                     "../packaging/backup/tests/test_backup_installation.py",
                     "--no-cov",
+                    "--basetemp",
+                    "test-results/backup-contracts",
                 ),
             ),
             Step(

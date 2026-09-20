@@ -24,6 +24,8 @@ class PrepushTests(unittest.TestCase):
 
         self.assertEqual(phases, sorted(phases, key=("fast", "resource").index))
         self.assertLess(names.index("frontend-check"), names.index("frontend-tests"))
+        self.assertLess(names.index("frontend-check"), names.index("frontend-browser-install"))
+        self.assertLess(names.index("frontend-browser-install"), names.index("frontend-tests"))
         self.assertLess(names.index("frontend-tests"), names.index("frontend-container-build"))
         self.assertNotIn("frontend-build", names)
         self.assertLess(names.index("backend-ruff"), names.index("backend-coverage"))
@@ -36,6 +38,10 @@ class PrepushTests(unittest.TestCase):
         self.assertEqual(
             plan.steps[names.index("frontend-tests")].command,
             ("npm", "test"),
+        )
+        self.assertEqual(
+            plan.steps[names.index("frontend-browser-install")].command,
+            ("npm", "exec", "--no", "--", "playwright", "install", "chromium"),
         )
         self.assertEqual(
             plan.steps[names.index("frontend-container-build")].command[:2],
@@ -68,6 +74,8 @@ class PrepushTests(unittest.TestCase):
                 "pytest",
                 "../packaging/backup/tests/test_backup_installation.py",
                 "--no-cov",
+                "--basetemp",
+                "test-results/backup-contracts",
             ),
         )
 

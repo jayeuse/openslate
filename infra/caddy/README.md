@@ -22,17 +22,37 @@ container-aware configuration and starts the hardened image:
 ./scripts/dev.py caddy
 ```
 
-The generated configuration uses `host.docker.internal` for the host-run
-FastAPI and Next.js upstreams. Its local certificate authority persists in the
-`caddy-data` volume. `scripts/dev.py` delegates to the environment helper that
-generates the container configuration before invoking Compose.
+On Docker Desktop, the generated configuration uses `host.docker.internal` for
+the host-run FastAPI and Next.js upstreams. On native Linux,
+`scripts/dev.py caddy` adds `compose.linux.yaml`: Caddy shares the host network,
+uses `127.0.0.1` upstreams, and binds the exact `GATEWAY_BIND_HOST` selected in
+root `.env`. This is necessary because Linux bridge networking cannot reach
+host processes that correctly bind only to loopback. Its local certificate
+authority persists in the `caddy-data` volume. `scripts/dev.py` delegates to
+the environment helper that generates the platform-specific configuration
+before invoking Compose.
 
-Compose maps the configurable host `GATEWAY_PORT` to Caddy's fixed internal
-public listener at `3448`. This keeps the public port independent from the
-container contract. The generated configuration also creates an unexposed HTTP
-listener at `127.0.0.1:3449` for the container health check. It proxies only
-`/api/health` to FastAPI and cannot alter the public gateway's TLS or virtual
-host behavior, including an administrator's custom public certificate.
+Host networking is a native-Linux exception limited to Caddy. It gives that
+container access to host listeners, so the generated configuration fixes its
+application upstreams at `127.0.0.1`, binds the public listener only to
+`GATEWAY_BIND_HOST`, and keeps the inherited read-only filesystem, dropped
+capabilities, and no-new-privileges settings. The Linux overlay removes bridge
+port publishing, network attachments, and the host gateway alias.
+
+On Docker Desktop, Compose maps the configurable host `GATEWAY_PORT` to
+Caddy's fixed internal public listener at `3448`. Native Linux host networking
+has no port mapping, so the generated public listener uses `GATEWAY_PORT`
+directly. Both variants create an unexposed HTTP listener at `127.0.0.1:3449`
+for the container health check. It proxies only `/api/health` to FastAPI and
+cannot alter the public gateway's TLS or virtual host behavior, including an
+administrator's custom public certificate.
+
+On native Linux, `GATEWAY_PORT`, `BACKEND_PORT`, `FRONTEND_PORT`, and the fixed
+health listener port `3449` must all differ because they share the host network
+namespace. On Docker Desktop, the host-published `GATEWAY_PORT`,
+`BACKEND_PORT`, and `FRONTEND_PORT` must still differ because those host
+processes share ports, while Caddy's internal HTTPS and health ports may reuse
+host upstream port numbers across the container boundary.
 
 Generate a Caddyfile after selecting the local service ports:
 

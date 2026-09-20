@@ -141,12 +141,17 @@ class ManagerBuildTests(unittest.TestCase):
                 captured.append(command)
                 return subprocess.CompletedProcess(command, 27)
 
-            status = build_native_manager.build_manager(
-                origin="https://openslate.example",
-                version="0.1.0",
-                output_directory=output_directory,
-                run=run,
-            )
+            with patch.object(
+                build_native_manager,
+                "validate_host_platform",
+                return_value=("win32", "amd64"),
+            ):
+                status = build_native_manager.build_manager(
+                    origin="https://openslate.example",
+                    version="0.1.0",
+                    output_directory=output_directory,
+                    run=run,
+                )
 
             self.assertEqual(status, 27)
             self.assertEqual(len(captured), 1)
@@ -162,12 +167,17 @@ class ManagerBuildTests(unittest.TestCase):
                 (created_output / "partial-artifact").write_text("partial", encoding="utf-8")
                 return subprocess.CompletedProcess(command, 27)
 
-            status = build_native_manager.build_manager(
-                origin="https://openslate.example",
-                version="0.1.0",
-                output_directory=output_directory,
-                run=run,
-            )
+            with patch.object(
+                build_native_manager,
+                "validate_host_platform",
+                return_value=("win32", "amd64"),
+            ):
+                status = build_native_manager.build_manager(
+                    origin="https://openslate.example",
+                    version="0.1.0",
+                    output_directory=output_directory,
+                    run=run,
+                )
 
             self.assertEqual(status, 27)
             self.assertFalse(output_directory.exists())
@@ -266,12 +276,17 @@ class ManagerBuildTests(unittest.TestCase):
             previous_directory = Path.cwd()
             try:
                 os.chdir(backend_directory)
-                status = build_native_manager.build_manager(
-                    origin="https://openslate.example",
-                    version="0.1.0",
-                    output_directory=Path("../dist/native-manager"),
-                    run=run,
-                )
+                with patch.object(
+                    build_native_manager,
+                    "validate_host_platform",
+                    return_value=("win32", "amd64"),
+                ):
+                    status = build_native_manager.build_manager(
+                        origin="https://openslate.example",
+                        version="0.1.0",
+                        output_directory=Path("../dist/native-manager"),
+                        run=run,
+                    )
             finally:
                 os.chdir(previous_directory)
 

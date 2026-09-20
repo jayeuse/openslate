@@ -65,8 +65,8 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
     }
 }
 
-# This listener is private to the Caddy container. Compose runs its health
-# probe inside that namespace, so public TLS and virtual hosts are untouched.
+# This loopback listener is used only by Compose health checks. It leaves public
+# TLS and virtual hosts untouched in both bridged and native-Linux host modes.
 http://127.0.0.1:{{HEALTH_PORT}} {
     bind 127.0.0.1
 
