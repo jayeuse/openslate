@@ -75,7 +75,7 @@ class PrepushTests(unittest.TestCase):
                 "../packaging/backup/tests/test_backup_installation.py",
                 "--no-cov",
                 "--basetemp",
-                "test-results/backup-contracts",
+                ".backup-contracts",
             ),
         )
 

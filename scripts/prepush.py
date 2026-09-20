@@ -205,7 +205,7 @@ def _add_backend_steps(steps: list[Step]) -> None:
                     "../packaging/backup/tests/test_backup_installation.py",
                     "--no-cov",
                     "--basetemp",
-                    "test-results/backup-contracts",
+                    ".backup-contracts",
                 ),
             ),
             Step(
