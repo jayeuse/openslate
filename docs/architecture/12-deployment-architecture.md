@@ -1,6 +1,6 @@
 # Deployment Architecture
 
-> **Scope:** Local update operations, standalone images, CI, schema/identity operations, the unspecified hosted-deployment boundary, and a proposed future Windows and macOS customer deployment.
+> **Scope:** FastAPI-only server artifacts, CI, schema/identity operations, the unspecified hosted-deployment boundary, and a proposed future Windows and macOS customer deployment.
 > **Audience:** Release operators, developers, and maintainers evaluating builds, updates, recovery, and deployment.
 > **Related documents:** [Infrastructure](11-infrastructure.md), [Configuration](17-configuration.md), [Observability](18-observability.md), [Architecture index](README.md)
 
@@ -15,10 +15,9 @@
 
 | Area                                      | Classification       | Verified repository state                                                                                                                           |
 | ----------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Local development platform                | Implemented          | Disposable vanilla PostgreSQL plus host-run FastAPI and Next.js; see `README.md`.                                                                    |
-| Backend image                             | Implemented artifact | `infra/docker/backend.Dockerfile` builds a standalone non-root image.                                                                               |
-| Frontend image                            | Implemented artifact | `infra/docker/frontend.Dockerfile` builds a standalone Next.js image.                                                                               |
-| Pull-request and main-branch verification | Implemented          | `.github/workflows/backend.yml` and `frontend.yml` verify their owned code and conditional images.                                                  |
+| Local development platform                | Implemented          | Disposable vanilla PostgreSQL plus host-run FastAPI and direct `next dev` with a development-only `/api` proxy. The installed Caddy gateway profile is disabled. See `README.md`. |
+| Unified server artifact                   | Implemented artifact | The FastAPI artifact includes the static Next.js export; it has no Node.js production runtime or separate frontend image.                            |
+| Pull-request and main-branch verification | Implemented          | `.github/workflows/backend.yml` and `frontend.yml` verify their owned code; frontend, backend, shared configuration, and infrastructure changes conditionally build the unified server image. |
 | Branch-protection enforcement             | Maintainer action    | Stable backend and `Frontend / verify` checks exist, but repository branch protection is not represented in source; a maintainer must configure it. |
 | Image registry and image publishing       | Absent               | No registry, `docker push`, release tag, or image-publishing step is checked in.                                                                    |
 | Hosted application target                 | Unknown              | No provider, cluster, VM, service definition, DNS, or environment manifest is present.                                                              |
@@ -39,7 +38,7 @@ flowchart TD
     role --> schema["Alembic upgrade head as owner"]
     role --> admin["Bootstrap administrator"]
     admin --> api["Start FastAPI/Uvicorn"]
-    api --> web["Start Next.js"]
+    api --> assets["Serve matching static frontend export"]
 ```
 
 The corresponding commands are documented in `README.md`:
@@ -57,9 +56,11 @@ The corresponding commands are documented in `README.md`:
   identity/action-token state. Optional SMTP delivery is disabled by default;
   the local temporary-password flow remains available without it.
   Outside local environments it also requires the explicit `--confirm` flag.
-- `uv run python -m app --reload` and `npm run dev` start the application
-  processes using the configured stack ports. Local npm commands regenerate
-  the frontend allowlist from root `.env`; do not source root secrets into Node.
+- `uv run python -m app --reload` starts FastAPI, while `cd frontend && npm run
+  dev` starts the local Next development process at the direct daily browser
+  origin. Its development-only `/api` proxy reaches loopback FastAPI. `next dev`
+  is a hot-reload tool; it does not run in production or receive application
+  secrets.
 
 `backend/migrations/env.py` requires `MIGRATION_DATABASE_URL` without a runtime
 URL fallback, imports the complete model registry, and runs the vanilla
@@ -68,57 +69,55 @@ resolved dynamically by Alembic (`upgrade head`, `check`, or `heads`); release
 procedures must not hard-code a revision ID. PostgreSQL schema changes are
 applied only by Alembic.
 
-## Standalone image artifacts — Implemented
+## Unified server artifact — Implemented
 
-| Image    | Build and runtime behavior                                                                                                                                                                                            | Operational boundary                                                                                                                        |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Backend  | `python:3.14-slim`, pinned `backend/uv.lock`, `uv sync --frozen --no-dev`, UID 10001. Runs `python -m app` with explicit bind, port, concurrency, and keep-alive settings. Healthcheck reads the same `BACKEND_PORT`. | Requires runtime API configuration with `OPENSLATE_ENV_SOURCE=process`; receives no owner connection or administrator credentials.          |
-| Frontend | Multi-stage `node:24-alpine`, `npm ci`, standalone output, UID 10001. Build uses same-origin API paths and no identity provider build values. | Server endpoint, logging, and limits are supplied only at runtime. Bind/port are required inputs; no endpoint or port fallback is baked in. |
+The production build has three stages: Node builds the locked static frontend
+export; Python builds the locked FastAPI runtime; the final non-root server
+artifact contains FastAPI and the export only. It runs `python -m app` with the
+configured bind, port, concurrency, and keep-alive settings, and FastAPI reads
+`WEB_ASSETS_ROOT` to serve the matching browser application.
 
-`frontend/tooling/start-standalone.mjs` validates public/runtime settings before
-importing `server.js` and copies static/public assets for local `npm start`.
-The image uses `--from-process`; local startup regenerates `frontend/.env.local`
-from the root configuration. Public values must match those used during build.
+The final artifact contains no Node executable, `node_modules`, Next.js
+standalone server, frontend listener, frontend image, or frontend runtime
+configuration. Build-time Node inputs never become server secrets or browser
+configuration.
 
 Root Compose uses `scripts/environment.py compose ...` to derive service
 transports and apply explicit per-service environment allowlists. The effective
 environment exists in the Docker child process only; full rendered Compose
 output is secret. See [Configuration](17-configuration.md) for source modes.
 
-Both images are standalone artifacts only. Neither image migrates the application
-schema, provisions the runtime role, or bootstraps an administrator.
+The unified artifact does not migrate the application schema, provision the
+runtime role, or bootstrap an administrator.
 
 ## CI verification — Implemented; deployment absent
 
 ### Backend workflow
 
-`.github/workflows/backend.yml` runs on pull requests and pushes to `main` when
-backend, PostgreSQL, environment-example, or workflow files change. It:
+`.github/workflows/backend.yml` always classifies pull requests and pushes to
+`main`. Backend paths select the backend quality and coverage jobs. Frontend,
+backend, shared configuration, and infrastructure paths select the unified
+server-image build. The workflow:
 
-1. Uses Ubuntu, Python 3.14, and locked project tooling.
-2. Runs `uv sync --locked`.
-3. Starts disposable PostgreSQL with generated local test configuration.
-4. Runs local Identity integration checks.
-5. Runs `uv run alembic upgrade head` and `uv run alembic check`.
-6. Generates a temporary runtime password, provisions the runtime role, and
-   exports disposable `DATABASE_URL` and `TEST_DATABASE_URL` into the job.
-7. Runs Ruff, mypy, and pytest, then stops the disposable database in an
-   always-run cleanup step.
-8. Builds the standalone backend image.
+1. Uses Ubuntu, Python 3.14, and locked project tooling for backend quality.
+2. Runs Ruff and mypy plus the packaging-backup and repository-tooling tests.
+3. Runs the disposable-PostgreSQL full-stack runner for migrations, backend
+   integration tests, and the configured coverage thresholds.
+4. Builds the unified FastAPI server image, including the static frontend
+   export, when the change classifier selects that artifact.
 
 It has no registry, image publishing, release, deployment, migration-to-hosted,
 or rollback step.
 
 ### Frontend workflow
 
-`.github/workflows/frontend.yml` always reports its stable required-check
-job. For relevant changes it installs dependencies once, runs formatting,
-ESLint, TypeScript, 280 retained isolated product/security tests, and one
-production build. Frontend container inputs substitute one
-conditional image build and environment-boundary check for the native build.
-The workflow installs no browser, runs no browser or full-stack journeys,
-collects no frontend line coverage, and uploads no artifacts. It does not publish
-an image or deploy the application.
+`.github/workflows/frontend.yml` always reports its stable required-check job.
+For relevant changes it installs locked dependencies and pinned Chromium, runs
+formatting, ESLint, TypeScript, the retained isolated and targeted HTTP
+route-contract tests, and one static production export. The backend workflow
+separately verifies that export inside the unified server image. The frontend
+workflow runs no full-stack journey, collects no frontend line coverage, and
+does not publish an image or deploy the application.
 
 ## Approved hosted deployment contract — implementation still blocked
 
@@ -128,9 +127,9 @@ evidence that hosted infrastructure exists or is production-ready.
 - Use one trust domain per deployment. Isolate local Identity, PostgreSQL,
   private files, secrets, backups, and administrator population; shared tenancy is
   deferred.
-- Keep FastAPI private behind Caddy. The browser-facing canonical origin
-  routes `/api` and `/api/events` to FastAPI and UI paths to Next.js. No
-  separate identity, database, or event endpoint is teammate-facing.
+- Caddy is the browser-facing canonical origin with one FastAPI upstream.
+  FastAPI serves static UI routes, `/api`, and `/api/events`; no separate
+  identity, database, event, or frontend endpoint is teammate-facing.
 - Release in this order: **pre-migration backup; Alembic upgrade and drift
   check; runtime-role provision and verification; backend/private smoke;
   frontend/FastAPI identity smoke; traffic**. Resolve the current Alembic head during
@@ -162,7 +161,7 @@ No provider-neutral hosted infrastructure is specified here.
 
 | Concern                           | Classification                           | Repository-defined behavior                                                                                                                                                                                                                                                                             |
 | --------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Local update                      | Implemented                              | Synchronize backend/frontend dependencies, apply Alembic head, provision the runtime role if needed, and restart host processes or run the standalone image paths. No automatic updater exists. |
+| Local update                      | Implemented                              | Synchronize backend/frontend dependencies, build the static export into the FastAPI artifact, apply Alembic head, provision the runtime role if needed, and restart the service. No automatic updater exists. |
 | Hosted update                     | Contract defined; implementation unknown | The approved release order is defined above, but no hosted service, provider, deployment command, or migration gate is checked in.                                                                                                                                                                      |
 | Local rollback                    | Partially implemented                    | Recreating a disposable PostgreSQL database followed by Alembic upgrade is not an application release rollback. Several migrations are intentionally forward-only. |
 | Migration downgrade               | Partially implemented                    | The current forward chain supports its declared Alembic downgrade boundary, but downgrade is not the release-recovery contract. There is no checked-in release downgrade runbook. |
@@ -197,11 +196,10 @@ The host app also offers **Open workspace** using the same locally served
 product UI. Its desktop view must obey the same session, authorization, and
 HTTPS rules as browser and PWA clients; it does not become a second frontend.
 
-FastAPI remains the application API and data-access layer, PostgreSQL remains
-the application database, and Alembic remains the application-schema owner. The
-initial target also keeps the existing Next.js standalone server. The current
-frontend has server-side session behavior, so static export is not an
-equivalent deployment until those contracts are deliberately replaced. See
+FastAPI remains the application API, static-content, and data-access layer,
+PostgreSQL remains the application database, and Alembic remains the
+application-schema owner. Next.js produces the static UI at build time only;
+the customer server has no Next.js or Node.js service. See
 [Infrastructure](11-infrastructure.md), [Configuration](17-configuration.md),
 and [Authentication and authorization](08-authentication-authorization.md).
 
@@ -212,9 +210,9 @@ and [Authentication and authorization](08-authentication-authorization.md).
 | Deployment unit      | One customer organization receives one isolated installation, trust domain, database, file store, administrator population, backup set, and support record.                                                                                       | Proposed. It follows the approved single-trust-domain deployment contract; it does not create multi-tenant hosting. |
 | Customer experience  | A signed OS-specific installer installs the server and a management/status application. The status application is a control surface, not the process supervisor.                                                                                  | Proposed. Packaging and UI implementation are not selected.                                                         |
 | Long-running runtime | Windows Service Control Manager or macOS `launchd`, not an open desktop window, owns server processes, restart policy, and startup after reboot.                                                                                                  | Proposed. Service definitions, accounts, and packaging are unresolved.                                              |
-| Serving path         | The LAN browser reaches one browser-facing HTTPS endpoint. Caddy forwards `/api` and `/api/events` to FastAPI and UI paths to Next.js. PostgreSQL, scanner, and worker endpoints are never teammate-facing. | Proposed. The canonical local name, certificate source, ingress, and network discovery method are unresolved. |
+| Serving path         | The LAN browser reaches one browser-facing HTTPS endpoint. Caddy forwards every browser request to FastAPI; FastAPI serves exact static UI exports, `/api`, and `/api/events`. PostgreSQL, scanner, and worker endpoints are never teammate-facing. | Proposed. The canonical local name, certificate source, ingress, and network discovery method are unresolved. |
 | Database and API     | PostgreSQL, FastAPI, SQLAlchemy, the constrained runtime role, and Alembic are retained. FastAPI already owns application data access, so this is a deployment change rather than a database rewrite.                                             | Proposed packaging of implemented application contracts. No Windows or macOS runtime bundle exists.                 |
-| Frontend             | Start with the existing Next.js standalone output. The first customer release supports both browser access and installation of the same UI as a PWA, after installability and cache behavior are implemented and tested.                          | Proposed. There is no PWA or offline capability in the repository.                                                  |
+| Frontend             | Build a static Next.js export into the FastAPI service payload. The first customer release supports both browser access and installation of the same UI as a PWA, after installability and cache behavior are implemented and tested.                          | Proposed. There is no PWA or offline capability in the repository.                                                  |
 | Authentication       | Package FastAPI Identity with Argon2 credentials, PostgreSQL sessions/action tokens, HttpOnly cookies/CSRF, and bearer CLI tokens. | Implemented application contract; native packaging remains blocked. |
 | File storage         | Package private local filesystem objects with PostgreSQL metadata, immutable keys, quarantine, authorization, and scan state. | Implemented application contract; native ACL/backup validation remains blocked. |
 | Invalidation         | Package authenticated SSE with PostgreSQL notification as optional cache refresh signaling. | Implemented application contract; native network validation remains blocked. |
@@ -230,9 +228,9 @@ shape, not a developer setup path and not a customer-installable release.
 One release has a shared application version, database schema, setup state
 machine, and acceptance contract. Windows and macOS have separate signed build
 artifacts and OS integration. A single installer is a customer-facing package,
-not a requirement that PostgreSQL, Next.js, FastAPI, and ClamAV run in one
-process. The installer includes their compatible runtimes; the customer does
-not install Python, Node.js, PostgreSQL, ClamAV, or Docker.
+not a requirement that PostgreSQL, FastAPI, and ClamAV run in one process. The
+installer includes their compatible runtimes; the customer does not install
+Python, Node.js, PostgreSQL, ClamAV, or Docker.
 
 | Concern            | Windows target                                                                                                             | macOS target                                                                                                                                                                                                       |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -318,9 +316,9 @@ administrator claim as a successful installation.
 ### Target component and process topology
 
 Teammate browser or installed PWA traffic reaches a selected TLS ingress over
-LAN HTTPS. The ingress forwards traffic to the Next.js standalone,
-browser-facing service, which routes same-origin API traffic to FastAPI.
-FastAPI uses PostgreSQL through the restricted runtime role and
+LAN HTTPS. The ingress forwards every browser request to the FastAPI
+browser-facing service. FastAPI serves the static UI, API, and SSE, uses
+PostgreSQL through the restricted runtime role, and
 accesses the private local file provider. The dedicated file-scan worker reads
 the stored bytes, records scan results in PostgreSQL, and reaches ClamAV over a
 private scan connection. ClamAV starts only with a verified definition
@@ -332,16 +330,14 @@ through that channel. The UI alone is never a privileged service endpoint.
 
 Only the browser-facing web endpoint is reachable from teammate devices. The
 selected ingress terminates TLS and receives browser requests before forwarding
-to Next.js. FastAPI stays private so users cannot
-bypass session acceptance and browser request controls. PostgreSQL, ClamAV,
+to FastAPI. PostgreSQL, ClamAV,
 worker control, storage paths, and any future identity administration endpoint
 bind only to private local interfaces or protected service channels.
 
 | Service                       | Target responsibility                                                                                                          | Restart/availability expectation                                                                                                                             |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | PostgreSQL                    | Durable application data; accepts the restricted runtime connection and separate migration/provisioning capability.            | Starts before API services. A database failure makes readiness fail without being mistaken for a web-process crash.                                          |
-| FastAPI                       | Canonical API, authorization, audited ORM mutations, file metadata, and upload/download authorization.                         | Waits for the database and becomes ready only after the existing database readiness probe succeeds.                                                          |
-| Next.js standalone            | Browser pages and security headers behind the sole teammate-facing TLS ingress. | Starts after server-only configuration and a private API connection are available. |
+| FastAPI                       | Static UI delivery, canonical API, authorization, audited ORM mutations, file metadata, upload/download authorization, and SSE. | Waits for the database and matching static asset payload, then becomes ready after its required admission checks succeed. |
 | File scan worker              | Claims durable queued file work, reads exact stored bytes, and records a clean/rejected/failed verdict.                        | Starts after database, file store, scanner, and definition validation are ready; it may remain stopped during scanner maintenance.                           |
 | ClamAV                        | Scans bytes presented by the worker and exposes no application data path.                                                      | Starts from a verified immutable definition generation. Its failure blocks files from becoming clean; it must never mark files clean by timeout or fallback. |
 | Management/status application | Local setup, status, diagnostics, backup/update initiation, service visibility, and access to the same OpenSlate workspace UI. | It may be stopped without changing serving state. Its workspace view does not bypass application authorization or hold process ownership.                    |
@@ -445,7 +441,7 @@ diagnostics consent.
 | Boundary              | Target rule                                                                                                                                                                                                                                                                                                                                                                      |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Secrets               | Generate per installation; store them using a selected protected local mechanism; inject only into the service that needs them. Do not write them to program files, browser bundles, logs, support packages, or exported configuration.                                                                                                                                          |
-| Public configuration  | The signed frontend build must not require a per-customer rebuild. Use same-origin relative requests or a narrowly scoped runtime-served public configuration for customer-specific non-secret values; never expose server credentials. No provider public values are part of the current build. |
+| Public configuration  | The static frontend uses same-origin relative requests and requires no per-customer runtime configuration. Never expose server credentials or place deployment settings in browser files. |
 | Private configuration | Database ownership/runtime credentials, identity administration credentials, server-to-server keys, file-store location, scanner controls, and log settings stay server-only. The management application displays status rather than values.                                                                                                                                     |
 | Ports/listeners       | The release selects non-conflicting bindings and validates them during install. Development defaults are not a product promise. Publish only the browser-facing TLS listener; keep all others private.                                                                                                                                                                           |
 | Firewall              | On Windows, create/remove only the minimum installer-owned inbound rule for the intended LAN profile. On macOS, guide and verify the required incoming-connection approval using supported OS mechanisms. Never open database, scanner, worker, or management control ports.                                                                                                     |
@@ -487,7 +483,7 @@ contains known development/Linux assumptions:
 | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `backend/app/systems/platform/files/validation_worker.py` and `clamav_client.py` import Python `resource` and use Unix resource limits.            | Replace or guard this path with equivalent tested Windows process bounds while retaining macOS limits. Python documents `resource` as Unix-only. See [Python resource](https://docs.python.org/3/library/resource.html). |
 | File validation and scanner helpers launch `sys.executable -m ...` from the source layout; backend configuration reads the checkout's root `.env`. | Packaged child entrypoints and customer configuration resolve from installed, protected locations without a developer checkout or editable source tree.                                                                  |
-| `frontend/next.config.ts` produces a standalone Node server. | Bundle the compatible Node runtime; preserve same-origin sessions/CSP behavior and avoid customer-specific compile-time settings. |
+| `frontend/next.config.ts` produces the static browser export. | Build the export into the FastAPI payload; prove that the final Windows/macOS service bundle contains no Node executable, Next.js server, or frontend listener. |
 | `infra/docker/clamav.Dockerfile` and `infra/clamav/serve.sh` implement a Linux container path.                                                     | Prove native engine and worker startup, signature generation/refresh, limits, crash recovery, and redistribution on every supported Windows/macOS architecture.                                                          |
 | There is no checked-in PWA manifest, service worker, or installability check.                                                                      | Prove browser and installed-app access, secure-origin installation, session isolation, cache behavior, and honest disconnected state on supported client devices.                                                        |
 
@@ -538,7 +534,7 @@ records, queued writes, or offline file access.
 
 | Location class              | Windows target                                        | macOS target                                                                           | Rule                                                                                                                                                                                                         |
 | --------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Product binaries            | `C:\Program Files\OpenSlate\`                         | `/Applications/OpenSlate.app` plus protected service payloads installed by the package | Signed binaries, Next standalone assets, and versioned scanner/runtime files may be replaced only by a verified update.                                                                                      |
+| Product binaries            | `C:\Program Files\OpenSlate\`                         | `/Applications/OpenSlate.app` plus protected service payloads installed by the package | Signed binaries, FastAPI static-export assets, and versioned scanner/runtime files may be replaced only by a verified update.                                                                                 |
 | Durable application data    | `C:\ProgramData\OpenSlate\`                           | `/Library/Application Support/OpenSlate/`                                              | PostgreSQL cluster, private files, scanner generations, protected configuration, install state, logs, and backup history survive update and uninstall. Service identities receive only the access they need. |
 | External backup destination | Customer-approved location outside the live data root | Customer-approved location outside the live data root                                  | Encrypted, versioned backup sets and integrity/restore records have their own retention and access policy; uninstall never deletes them.                                                                     |
 
@@ -630,7 +626,7 @@ developer service dependencies prove:
 
 1. Signed installation completes without manual database, Node, Python, Docker,
    commands, and has a recoverable interruption path.
-2. Database, FastAPI, Next.js, scanner, and worker start after the OS is
+2. Database, FastAPI with its matching static assets, scanner, and worker start after the OS is
    available following reboot; closing the management window and logging out
    do not stop them. On macOS, test sleep/wake, FileVault unlock requirements,
    and explicit background-service approval; report any manual prerequisite.
@@ -676,8 +672,8 @@ same authentication and authorization cases.
 1. Prove the shared application contracts on a native PostgreSQL installation:
    select identity ownership and migration, implement private local storage,
    and verify local SSE refresh behavior on native platforms.
-2. Make backend child processes, paths, resource limits, frontend public
-   configuration, and scanner provisioning portable. Exercise the same
+2. Make backend child processes, paths, resource limits, static-export build,
+   and scanner provisioning portable. Exercise the same
    application and file-security tests on native Windows and macOS runners.
 3. Prototype service registration, app-close/logout/reboot recovery, TLS from
    another device, and signed package installation independently on each OS.

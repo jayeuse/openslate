@@ -1,28 +1,40 @@
 # System Overview
 
-> **Scope:** Current OpenSlate runtime, ownership boundaries, and implementation status.
+> **Scope:** OpenSlate's production-server contract, ownership boundaries, and implementation status.
 
-OpenSlate is a self-hosted web application for configurable business operations. A Next.js interface and a FastAPI application run behind one same-origin Caddy gateway. FastAPI owns identity, authorization, application data, files, audit capture, and server-sent invalidation events.
+OpenSlate is a self-hosted web application for configurable business operations. Its production server is FastAPI behind one same-origin Caddy gateway. The browser UI is a statically exported Next.js application served by FastAPI; Node.js and Next.js are build and local-development tools, not production services. FastAPI owns identity, authorization, application data, files, audit capture, static UI delivery, and server-sent invalidation events.
 
-## Current runtime
+## Production runtime contract
 
-| Concern | Current owner |
+| Concern | Owner |
 | --- | --- |
-| Browser UI | Next.js and React |
-| Gateway | Caddy: `/api` to FastAPI and remaining paths to Next.js |
-| Business API and authorization | FastAPI with synchronous SQLAlchemy |
-| Schema and durable state | PostgreSQL and Alembic |
+| Browser UI | Static Next.js export and React, delivered by FastAPI |
+| HTTPS gateway | Caddy, with one production FastAPI upstream |
+| Browser routes, assets, and 404s | FastAPI static-site delivery |
+| Business API, authorization, and SSE | FastAPI with synchronous SQLAlchemy |
+| Schema and durable state | Vanilla PostgreSQL and Alembic |
 | Identity | FastAPI Identity tables: credentials, sessions, action tokens, and rate-limit buckets |
 | Files | PostgreSQL metadata plus private local filesystem bytes |
 | Invalidation | Authenticated SSE backed by PostgreSQL `LISTEN`/`NOTIFY` |
 
 The browser never writes application rows directly. FastAPI uses the runtime PostgreSQL role; Alembic uses the owner connection. Application mutations use `AuditSession` and produce transactional, redacted audit rows.
 
+## Development boundary
+
+Daily development retains `next dev` for hot reload and uses it as the direct
+browser origin. Its development-only `/api` proxy forwards API and SSE traffic
+to loopback FastAPI. Caddy, TLS, and the disabled `gateway` profile are excluded
+from that path. Caddy remains installed and configured for an operator-started
+production preview and production-level acceptance; this does not introduce a
+Next.js production runtime or a browser-facing second service in a packaged
+deployment.
+
 ## Status boundaries
 
-- Local PostgreSQL, FastAPI Identity, private filesystem storage, Caddy configuration, and authenticated SSE are implemented in the repository.
+- Vanilla PostgreSQL, FastAPI Identity, private filesystem storage, Caddy configuration, and authenticated SSE are implemented application contracts.
+- The FastAPI-only production-server cutover is the selected deployment contract: one FastAPI payload includes the static frontend assets and contains no Node.js frontend process, image, listener, or runtime configuration.
 - The workspace remains UI-first for much visible sample business state. Do not present sample interactions as persisted business automation.
 - SMTP delivery is optional and disabled by default. When enabled, FastAPI queues encrypted invitation and recovery payloads in PostgreSQL, then a bounded worker delivers them through the configured SMTP transport.
-- Signed Windows/macOS server-app installers, automated setup, bundled database lifecycle, and tested backup/restore are planned rather than implemented.
+- Signed Windows/macOS server-app installers, automated setup, bundled database lifecycle, and tested backup/restore remain unverified until clean-host acceptance proves them.
 
 See [system context](02-system-context.md), [data architecture](06-data-architecture.md), and [deployment architecture](12-deployment-architecture.md).

@@ -4,7 +4,7 @@
 
 FastAPI Identity owns passwords, invitations, refresh sessions, recovery links, and session revocation. Passwords are Argon2 hashes and the password policy rejects known common passwords. Identity data is stored in PostgreSQL alongside the user and role model.
 
-Browser login accepts email or username. It issues short-lived access and rotated refresh tokens in Secure, HttpOnly cookies, plus a CSRF cookie. Refresh requires exact Origin and matching CSRF input. Setup-only sessions have limited lifetime and cannot open workspace routes until password activation completes. Logout and administrator session revocation invalidate server-side session state.
+Browser login accepts email or username. It issues short-lived access and rotated refresh tokens in HttpOnly cookies, plus a CSRF cookie. Cookies are Secure outside relaxed local HTTP development. Refresh always requires matching CSRF input. Test, production, and non-loopback development also require the exact configured Origin; relaxed loopback development accepts a missing Origin or a valid localhost, loopback, private, or link-local browser Origin. Setup-only sessions have limited lifetime and cannot open workspace routes until password activation completes. Logout and administrator session revocation invalidate server-side session state.
 
 CLI users exchange local credentials for bearer tokens. The signed JWT contains the identity required for API verification; protected dependencies reload the local user, role, and session state before authorizing the request. Token replay, disabled users, expired tokens, incomplete setup, and invalid credentials fail closed.
 

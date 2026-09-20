@@ -6,16 +6,24 @@
 
 1. Start the documented disposable PostgreSQL service and validate root configuration.
 2. Use the owner connection to apply the Alembic baseline and provision the constrained runtime login.
-3. Start FastAPI and Next.js on loopback. Use Caddy when the same-origin gateway is required.
-4. Create the first local administrator through the documented bootstrap or host-recovery path.
+3. Start FastAPI on loopback. For daily hot reload, start `next dev` and open
+   its direct browser origin; its development-only `/api` proxy reaches FastAPI.
+4. For production-like operation, build the static frontend and start FastAPI
+   with `WEB_ASSETS_ROOT`, then explicitly start the disabled gateway profile
+   with `./scripts/dev.py caddy`; Caddy has one FastAPI upstream.
+5. Create the first local administrator through the documented bootstrap or host-recovery path.
 
 ## Browser sign-in and request
 
-1. The browser posts email/username and password to FastAPI through `/api/auth/login`.
-2. FastAPI verifies Argon2 credentials, applies local throttling, creates an Identity session, and sets access, refresh, and CSRF cookies.
-3. `apiFetch()` sends same-origin API requests. Mutation requests carry the CSRF value.
-4. FastAPI verifies JWT claims, local session state, active user state, and capability before executing the domain route.
-5. A single coordinated refresh rotates the server-side session when the access token expires. Failed refresh clears the browser cookies and returns to sign-in.
+1. In daily development, Next forwards `/api` to FastAPI. In production or
+   production-level acceptance, Caddy forwards the browser request to FastAPI,
+   which serves the static page or asset, `/api`, or `/api/events` according to
+   the path.
+2. The browser posts email/username and password to FastAPI through `/api/auth/login`.
+3. FastAPI verifies Argon2 credentials, applies local throttling, creates an Identity session, and sets access, refresh, and CSRF cookies.
+4. `apiFetch()` sends same-origin API requests. Mutation requests carry the CSRF value.
+5. FastAPI verifies JWT claims, local session state, active user state, and capability before executing the domain route.
+6. A single coordinated refresh rotates the server-side session when the access token expires. Failed refresh clears the browser cookies and returns to sign-in.
 
 ## File upload and download
 

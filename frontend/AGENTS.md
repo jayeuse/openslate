@@ -29,15 +29,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## Data access and auth
 
 - Workspace screens currently use local sample business data and interaction state, as described in `frontend/README.md`. Preserve that data flow for UI work; do not reconnect business APIs or server events merely because backend helpers exist. Existing-account sign-in, session validation/refresh, logout, and protected invitation acceptance remain connected.
-- Authenticated pages live under `src/app/(app)/`, whose layout mounts `AppPage` (auth gate + shell) once for the group; do not wrap pages individually or implement a second cookie/auth gate. `proxy.ts` sets CSP and security headers only — it is not auth.
+- Authenticated pages live under `src/app/(app)/`, whose layout mounts `AppPage` (auth gate + shell) once for the group; do not wrap pages individually or implement a second cookie/auth gate.
 - When a feature uses authorized backend integration, domain requests go through `apiFetch()` to the same-origin `/api` gateway. It sends the CSRF header for cookie-authenticated mutations and performs the documented FastAPI refresh flow. Never bypass the same-origin API boundary from pages.
-- Sessions use HttpOnly `openslate_access`/`openslate_refresh` cookies issued by FastAPI; the browser never sees tokens. There are no Next proxy or session route handlers.
+- Sessions use HttpOnly `openslate_access`/`openslate_refresh` cookies issued by FastAPI; the browser never sees tokens. Next has no proxy file, route handler, server action, request-header, or request-cookie boundary. Its development-only rewrite forwards same-origin `/api/*` to loopback FastAPI.
 - Feature adapters own typed reads and confirmed commands. Local sample screens use the shared runtime, `useSampleResource`, and `useSampleCommands`; keep ephemeral drafts local and await acceptance before clearing or navigating. Preserve loading/retry, last-good refresh data, cancellation, and pending guards. Future authorized backend adapters use schema-required `apiFetch`; do not add a second state or form library without demonstrated need.
 
 ## Features
 
 - Current workspace routes are `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`; their screens live under `src/components/systems/`. Inspect the target screen and state provider before choosing a pattern.
-- Legacy module, department, administration, and workspace routes redirect to the current workspace. Do not restore retired pages or components to satisfy an older example.
+- Retired module, department, administration, workspace, onboarding, and workspace-settings routes are absent and return the exported 404 page. Do not restore them as redirects or aliases.
 - Use explicit `CompleteCollection` and `PageResult` boundaries. Filter/sort before paging; complete exports and aggregates cannot use a visible page. Render a prepared page without a second table slice. Future backend pagination must preserve the frontend feature contract; retired list helpers are not an integration template.
 - Workspace screens currently do not subscribe to server events. Any explicitly requested integration must preserve authenticated SSE invalidation without row snapshots and avoid discarding in-progress form state.
 
@@ -49,12 +49,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## Tests and verification
 
 - Follow the root test workflow: focused case, passing feature batch, then the lean frontend gate. Run all retained frontend tests only when the work unit stabilizes or before push.
-- Playwright Test is the lightweight runner for `tests/isolated/`; no browser binaries or browser projects are used. Add isolated tests for rules and state. Add an HTTP project test only when a real Next.js request boundary exists.
-- When preparing to push, use the root `python3 scripts/prepush.py --base <base-ref>` command. Its frontend lane runs formatting, lint, type checking, the retained isolated tests, and one native-or-container production build. Use `npm run verify` to repair a failed frontend gate. Local npm commands generate `frontend/.env.local` from canonical root `.env`; never source the root `.env` into npm or Next.
+- Playwright Test is the lightweight runner for `tests/isolated/`; add isolated tests for rules and state. Targeted `tests/http/` contracts may use the pinned Chromium project against the loopback `next dev` HMR server without generated frontend runtime configuration.
+- When preparing to push, use the root `python3 scripts/prepush.py --base <base-ref>` command. Its frontend lane runs formatting, lint, type checking, the retained isolated tests, and one native-or-container production build. Use `npm run verify` to repair a failed frontend gate. Production contains only FastAPI and static frontend assets; Node is a development and build-time dependency.
 - `tooling/` contains frontend-owned Node launchers. Developers invoke them through `npm` scripts; repository-wide automation remains in the root `scripts/` directory.
 
 ## TDD and acceptance
 
 - Before creating/extending tests, changing behavior, fixing bugs, or refactoring, read and follow [tdd-workflow](../.agents/skills/tdd-workflow/SKILL.md). It owns test admission, sequencing, and exceptions; this guide owns project runners.
 - Workers must report the skill path actually read and the focused failing/passing test evidence, or the applicable exception. A reference or announcement alone does not prove TDD execution.
-- Frontend acceptance is formatting, ESLint, TypeScript, the retained isolated tests, and one production build. There is no frontend browser suite or numerical line-coverage requirement. Backend coverage policy is unchanged.
+- Frontend acceptance is formatting, ESLint, TypeScript, the retained isolated and targeted HTTP route-contract tests, and one production build. There is no broad browser suite or numerical line-coverage requirement. Backend coverage policy is unchanged.
+- `next.config.ts` must keep `output: "export"` and `images.unoptimized`. A development-only `/api/:path*` rewrite may proxy to loopback FastAPI; production must have no rewrites, headers, redirects, proxy, route handlers, server actions, request-time `cookies`/`headers`, or `next start` command.
