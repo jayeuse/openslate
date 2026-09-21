@@ -132,6 +132,8 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
             if (
                 bound is None
                 and field.required
+                and not field.closed
+                and not module.closed
                 and module_binding is not None
                 and module_binding.module_id is not None
                 and db.scalar(

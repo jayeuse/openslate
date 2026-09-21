@@ -11,6 +11,7 @@ from app.systems.sandbox.automations.execution import (
     ClaimedAutomationEvent,
     claim_due_events,
     mark_claim_failed,
+    release_claim,
 )
 from app.systems.sandbox.automations.outbox import enqueue_due_schedules
 from app.systems.sandbox.automations.runner import execute_claim
@@ -59,8 +60,9 @@ class AutomationWorker:
 
     def run_once(self) -> int:
         claims = self._enqueue_and_claim()
-        for claim in claims:
+        for index, claim in enumerate(claims):
             if self._stop.is_set():
+                self._release(claims[index:])
                 break
             self._execute(claim)
         return len(claims)
@@ -91,6 +93,19 @@ class AutomationWorker:
                 upstream="sandbox-automations",
             )
             return []
+
+    def _release(self, claims: list[ClaimedAutomationEvent]) -> None:
+        try:
+            with AuditSession(bind=get_engine()) as db:
+                for claim in claims:
+                    release_claim(db, claim)
+                db.commit()
+        except Exception as error:
+            log_event(
+                "operational_attention",
+                reason_code=f"sandbox_automation_release_failed_{type(error).__name__.lower()}",
+                upstream="sandbox-automations",
+            )
 
     def _execute(self, claim: ClaimedAutomationEvent) -> None:
         try:

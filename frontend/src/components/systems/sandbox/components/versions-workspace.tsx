@@ -363,6 +363,7 @@ export function VersionsWorkspace({
                             autoFocus
                             required
                             maxLength={80}
+                            disabled={pending}
                             value={checkpointLabelEdit.value}
                             onChange={(event) =>
                               setCheckpointLabelEdit({

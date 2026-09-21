@@ -13,6 +13,7 @@ from app.core.base_model import utc_now
 from app.systems.access.users.models import Role, UserStatus
 from app.systems.access.users.permissions import ALL_CAPABILITIES, Capability
 from app.systems.manage.audit.models import AuditLog
+from app.systems.sandbox.automations import execution as automation_execution
 from app.systems.sandbox.automations.execution import (
     claim_due_events,
     mark_claim_failed,
@@ -308,6 +309,48 @@ def test_failed_claim_retries_exactly_five_times(integration_owner_db: Session) 
     integration_owner_db.refresh(crashed_fifth_attempt)
     assert crashed_fifth_attempt.state == AutomationEventState.FAILED
     assert crashed_fifth_attempt.attempt_count == 5
+
+
+def test_releasing_an_unprocessed_claim_does_not_spend_an_attempt(
+    integration_owner_db: Session,
+) -> None:
+    _actor, module, fields, _definition = publish_automation(integration_owner_db)
+    record = Record(
+        module_id=module.id,
+        data={str(fields["request-number"].id): "REQ-SHUTDOWN"},
+    )
+    integration_owner_db.add(record)
+    integration_owner_db.flush()
+    event = PublishedAutomationEvent(
+        record_id=record.id,
+        module_id=module.id,
+        event_kind="record-created",
+        changed_field_ids=[],
+        values=dict(record.data),
+        previous_values={},
+        depth=0,
+        action_budget=100,
+        state=AutomationEventState.PENDING,
+        next_attempt_at=utc_now(),
+    )
+    integration_owner_db.add(event)
+    integration_owner_db.commit()
+
+    claim = claim_due_events(integration_owner_db)[0]
+    integration_owner_db.commit()
+    assert automation_execution.release_claim(integration_owner_db, claim)
+    integration_owner_db.commit()
+    integration_owner_db.refresh(event)
+
+    assert event.state == AutomationEventState.PENDING
+    assert event.attempt_count == 0
+    assert event.lease_token is None
+    assert event.lease_expires_at is None
+    replacement = claim_due_events(integration_owner_db)
+    integration_owner_db.commit()
+    assert [item.id for item in replacement] == [event.id]
+    integration_owner_db.refresh(event)
+    assert event.attempt_count == 1
 
 
 def test_runtime_role_can_write_and_read_execution_rows(integration_db: Session) -> None:

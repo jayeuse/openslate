@@ -14,6 +14,9 @@ type SandboxOptions = {
   hasUnpublishedChanges?: boolean;
   publishedHash?: string | null;
   testRuns?: unknown[];
+  saveDelay?: Promise<void>;
+  versionMutationDelay?: Promise<void>;
+  versions?: Array<Record<string, unknown>>;
 };
 
 function configuredDesignWithLegacyMapping(): Design {
@@ -36,6 +39,7 @@ async function openAuthenticatedSandbox(
 ) {
   let revision = 1;
   let documentReads = 0;
+  let versions = options.versions ?? [];
   let document = migrateSandboxFileV1({
     kind: "openslate-sandbox",
     schemaVersion: 1,
@@ -64,6 +68,7 @@ async function openAuthenticatedSandbox(
       }
     }
     if (route.request().method() === "PUT") {
+      await options.saveDelay;
       if (options.saveFailure) {
         await route.fulfill({
           status: 500,
@@ -124,13 +129,30 @@ async function openAuthenticatedSandbox(
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
-        items: [],
+        items: versions,
         limit: 50,
         offset: 0,
-        count: 0,
-        total: 0,
+        count: versions.length,
+        total: versions.length,
         hasMore: false,
       }),
+    });
+  });
+  await page.route("**/api/sandbox/versions/*", async (route) => {
+    if (route.request().method() !== "PATCH") return route.fallback();
+    await options.versionMutationDelay;
+    const body = route.request().postDataJSON() as { label?: string };
+    const current = versions[0];
+    if (!current) throw new Error("A checkpoint fixture is required");
+    const updated = {
+      ...current,
+      label: body.label ?? current.label,
+      metadataRevision: Number(current.metadataRevision) + 1,
+    };
+    versions = [updated, ...versions.slice(1)];
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ ...updated, document }),
     });
   });
   await page.route("**/api/sandbox/tests*", async (route) => {
@@ -325,6 +347,96 @@ test("an empty Sandbox authors and persists a complete connected organization", 
   expect(document.design.relationships).toHaveLength(1);
   expect(document.automations).toHaveLength(1);
   expect(document.scenarios).toEqual([]);
+});
+
+test("a dirty automation draft protects browser exits", async ({ page }) => {
+  await openAuthenticatedSandbox(page);
+  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  await page.getByLabel("Automation name").fill("Unsaved automation name");
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      }),
+    )
+    .toBe(true);
+});
+
+test("automation editing is locked while its save is pending", async ({
+  page,
+}) => {
+  let releaseSave = () => {};
+  const saveDelay = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { saveDelay });
+  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  const name = page.getByLabel("Automation name");
+  await name.fill("Pending automation save");
+  await page.getByRole("button", { name: "Save automations" }).click();
+
+  try {
+    await expect(name).toBeDisabled();
+    await expect(page.getByLabel("Trigger", { exact: true })).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Delete automation" }),
+    ).toBeDisabled();
+  } finally {
+    releaseSave();
+  }
+  await expect(name).toBeEnabled();
+});
+
+test("history controls are locked while a version mutation is pending", async ({
+  page,
+}) => {
+  let releaseMutation = () => {};
+  const versionMutationDelay = new Promise<void>((resolve) => {
+    releaseMutation = resolve;
+  });
+  const checkpoint = {
+    id: "00000000-0000-4000-8000-000000000009",
+    sequence: 1,
+    kind: "checkpoint",
+    label: "Before changes",
+    note: null,
+    sourceDocumentRevision: 1,
+    sourceVersionId: null,
+    contentHash: "c".repeat(64),
+    byteCount: 321,
+    metadataRevision: 1,
+    createdAt: "2026-09-21T00:00:00Z",
+    performedBy: null,
+    isDeleted: false,
+    deletedAt: null,
+  };
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    versionMutationDelay,
+    versions: [checkpoint],
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  await page.getByRole("button", { name: "Edit checkpoint label" }).click();
+  const label = page.getByRole("textbox", { name: "Checkpoint label" });
+  await label.fill("Updated checkpoint");
+  await page.getByRole("button", { name: "Save label" }).click();
+
+  try {
+    await expect(label).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Save label" }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Cancel label edit" }),
+    ).toBeDisabled();
+  } finally {
+    releaseMutation();
+  }
+  await expect(
+    page.getByText("Checkpoint label updated in shared history."),
+  ).toBeVisible();
 });
 
 test("legacy relationship mappings can be removed before publishing", async ({

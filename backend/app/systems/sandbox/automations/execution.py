@@ -103,6 +103,20 @@ def mark_claim_failed(db: Session, claim: ClaimedAutomationEvent) -> bool:
     return False
 
 
+def release_claim(db: Session, claim: ClaimedAutomationEvent) -> bool:
+    """Return an unprocessed lease to the queue without spending an attempt."""
+
+    event = locked_claim(db, claim, require_unexpired=False)
+    if event is None:
+        return False
+    event.attempt_count = max(0, event.attempt_count - 1)
+    event.state = AutomationEventState.PENDING
+    event.next_attempt_at = utc_now()
+    event.lease_token = None
+    event.lease_expires_at = None
+    return True
+
+
 def release_schedule_continuation(event: PublishedAutomationEvent) -> None:
     """Requeue a successful schedule chunk without spending a retry allowance."""
 

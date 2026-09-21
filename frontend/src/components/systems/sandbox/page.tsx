@@ -271,6 +271,21 @@ export default function SandboxPage() {
       [automationDraft.dirty, automationDraft.pending, conflict, pending],
     ),
   );
+  useEffect(() => {
+    if (
+      !pending &&
+      !conflict &&
+      !automationDraft.dirty &&
+      !automationDraft.pending
+    )
+      return;
+    const guardBrowserExit = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", guardBrowserExit);
+    return () => window.removeEventListener("beforeunload", guardBrowserExit);
+  }, [automationDraft.dirty, automationDraft.pending, conflict, pending]);
 
   const persist = useCallback(
     async (
@@ -770,6 +785,7 @@ export default function SandboxPage() {
           }}
           updateVersion={async (id, label) => {
             if (!session) return sandboxStillLoading();
+            setPending(true);
             try {
               const version = await updateSandboxVersion({
                 versionId: id,
@@ -780,10 +796,13 @@ export default function SandboxPage() {
               return { ok: true as const, value: version };
             } catch (error) {
               return commandFailure(error);
+            } finally {
+              setPending(false);
             }
           }}
           restoreVersion={async (id) => {
             if (!session) return sandboxStillLoading();
+            setPending(true);
             try {
               const response = await restoreSandboxVersion({
                 versionId: id,
@@ -794,10 +813,13 @@ export default function SandboxPage() {
               return { ok: true as const, value: response };
             } catch (error) {
               return commandFailure(error);
+            } finally {
+              setPending(false);
             }
           }}
           deleteVersion={async (id) => {
             if (!session) return sandboxStillLoading();
+            setPending(true);
             try {
               await deleteSandboxVersion({
                 versionId: id,
@@ -807,6 +829,8 @@ export default function SandboxPage() {
               return { ok: true as const, value: null };
             } catch (error) {
               return commandFailure(error);
+            } finally {
+              setPending(false);
             }
           }}
           notify={setMessage}

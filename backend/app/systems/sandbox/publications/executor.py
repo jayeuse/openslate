@@ -359,8 +359,11 @@ def _apply_relationships(
         binding = bindings["relationship"].get(desired.id)
         row = db.get(Field, binding.field_id) if binding is not None else None
         multiple_targets, multiple_sources = relationship_metadata(desired)
+        closed = (
+            modules[desired.source_module_id].is_deleted
+            or modules[desired.target_module_id].is_deleted
+        )
         if row is None:
-            closed = modules[desired.source_module_id].is_deleted
             row = Field(
                 module_id=modules[desired.source_module_id].id,
                 name=desired.name,
@@ -384,12 +387,12 @@ def _apply_relationships(
             row.module_id = modules[desired.source_module_id].id
             row.name = desired.name
             row.position = positions[desired.source_module_id]
-            if not modules[desired.source_module_id].is_deleted:
+            if not closed:
                 positions[desired.source_module_id] += 1
             row.relationship_target_module_id = modules[desired.target_module_id].id
             row.relationship_multiple_targets = multiple_targets
             row.relationship_multiple_sources = multiple_sources
-            row.is_deleted = modules[desired.source_module_id].is_deleted
+            row.is_deleted = closed
             row.deleted_at = datetime.now(UTC) if row.is_deleted else None
             row.performed_by = actor_id
 

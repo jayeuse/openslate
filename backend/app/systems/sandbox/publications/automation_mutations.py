@@ -59,6 +59,7 @@ def apply_published_automations(
             bindings["automation"],
         ):
             old.execution_position = execution_position
+            old.workspace_timezone = workspace_timezone
             old.performed_by = actor_id
             continue
         if old is not None:

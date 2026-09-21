@@ -929,7 +929,11 @@ function AutomationEditor({
     onChange({ ...automation, trigger });
   };
   return (
-    <div className="grid gap-5">
+    <fieldset
+      className="grid min-w-0 gap-5 border-0 p-0"
+      disabled={pending}
+      aria-busy={pending}
+    >
       <div className="grid gap-3 sm:grid-cols-2">
         <Field className="sm:col-span-2">
           <FieldLabel htmlFor={nameId}>Automation name</FieldLabel>
@@ -1107,7 +1111,7 @@ function AutomationEditor({
       <Button variant="destructive" onClick={onDelete} disabled={pending}>
         Delete automation
       </Button>
-    </div>
+    </fieldset>
   );
 }
 

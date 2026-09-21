@@ -154,6 +154,54 @@ def test_preview_blocks_a_required_field_added_to_a_module_with_live_records(
     assert publisher.id is not None
 
 
+def test_inactive_new_required_fields_do_not_block_existing_records(
+    integration_owner_db: Session,
+) -> None:
+    _publisher, document = publish_structure(integration_owner_db)
+    module = bound_module(integration_owner_db, "sample-requests")
+    request_number = bound_field(
+        integration_owner_db,
+        "field",
+        "sample-requests:sample-field-requests-request-number",
+    )
+    integration_owner_db.add(
+        Record(module_id=module.id, data={str(request_number.id): "REQ-1"})
+    )
+    integration_owner_db.flush()
+    added = DesignField.model_validate(
+        {
+            "id": "inactive-required-field",
+            "name": "Inactive required field",
+            "type": "Text",
+            "required": True,
+            "config": {"kind": "text", "defaultValue": ""},
+        }
+    )
+
+    closed_field = document.model_copy(deep=True)
+    added_closed = added.model_copy(deep=True)
+    added_closed.closed = True
+    next(
+        item for item in closed_field.design.modules if item.id == "sample-requests"
+    ).fields.append(added_closed)
+
+    closed_module = document.model_copy(deep=True)
+    module_document = next(
+        item for item in closed_module.design.modules if item.id == "sample-requests"
+    )
+    module_document.closed = True
+    for field in module_document.fields:
+        field.closed = True
+    module_document.fields.append(added)
+
+    target = _field_key("sample-requests", added.id)
+    for candidate in (closed_field, closed_module):
+        assert ("field_change_invalidates_records", target) not in {
+            (item.code, item.target_id)
+            for item in publication_plan(integration_owner_db, candidate).blockers
+        }
+
+
 def test_legacy_field_binding_rekeys_without_creating_or_closing_a_live_field(
     integration_owner_db: Session,
 ) -> None:

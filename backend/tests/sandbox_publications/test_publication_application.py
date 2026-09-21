@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.automations.models import (
     PublishedAutomationAction,
     PublishedAutomationCondition,
@@ -91,6 +92,24 @@ def test_preview_is_read_only_and_publish_creates_only_bound_structure(
     )
     assert integration_owner_db.scalar(select(func.count()).select_from(Record)) == 0
     assert integration_owner_db.scalar(select(func.count()).select_from(RelationshipEdge)) == 0
+
+
+def test_initial_relationship_is_closed_when_its_target_module_is_closed(
+    integration_owner_db: Session,
+) -> None:
+    document = publishable_document()
+    target = next(
+        module for module in document.design.modules if module.id == "sample-equipment"
+    )
+    target.closed = True
+    for field in target.fields:
+        field.closed = True
+
+    _publisher, _published = publish_structure(integration_owner_db, document)
+
+    relationship = bound_field(integration_owner_db, "relationship", "sample-uses")
+    assert relationship.is_deleted
+    assert relationship.deleted_at is not None
 
 
 def test_published_integer_default_creates_a_valid_operational_record(
@@ -397,6 +416,36 @@ def test_republishing_an_unchanged_automation_preserves_its_definition(
     )
 
 
+def test_reused_schedule_adopts_the_current_workspace_timezone(
+    integration_owner_db: Session,
+) -> None:
+    document = publishable_document()
+    document.automations = [_scheduled_automation()]
+    publisher, published = publish_structure(integration_owner_db, document)
+    automation_id = binding(
+        integration_owner_db, "automation", "sample-scheduled-triage"
+    ).automation_id
+    assert automation_id is not None
+    definition = integration_owner_db.get(PublishedAutomationDefinition, automation_id)
+    profile = integration_owner_db.scalar(
+        select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
+    )
+    assert definition is not None
+    assert profile is not None
+    original_timezone = definition.workspace_timezone
+    profile.timezone = "Asia/Manila" if original_timezone != "Asia/Manila" else "UTC"
+    integration_owner_db.flush()
+
+    publish_revision(integration_owner_db, publisher, published, "schedule-timezone")
+
+    assert (
+        binding(integration_owner_db, "automation", "sample-scheduled-triage").automation_id
+        == automation_id
+    )
+    integration_owner_db.refresh(definition)
+    assert definition.workspace_timezone == profile.timezone
+
+
 def test_retained_automation_blocks_closing_its_trigger_module(
     integration_owner_db: Session,
 ) -> None:
@@ -439,3 +488,16 @@ def _triage_automation() -> AutomationDocument:
             ],
         }
     )
+
+
+def _scheduled_automation() -> AutomationDocument:
+    value = _triage_automation().model_dump(by_alias=True)
+    value["id"] = "sample-scheduled-triage"
+    value["name"] = "Scheduled triage"
+    value["trigger"] = {
+        "kind": "schedule",
+        "moduleId": "sample-requests",
+        "frequency": "daily",
+        "time": "09:00",
+    }
+    return AutomationDocument.model_validate(value)

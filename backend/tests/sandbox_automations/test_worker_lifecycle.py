@@ -2,11 +2,13 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 from fastapi import FastAPI
+from uuid6 import uuid7
 
 import app.main as main
+from app.systems.sandbox.automations.execution import ClaimedAutomationEvent
 from app.systems.sandbox.automations.runner import _compare
 from app.systems.sandbox.automations.worker import AutomationWorker
 
@@ -77,6 +79,37 @@ def test_claim_retry_delay_caps_and_resets_after_a_successful_claim_pass(monkeyp
 
     assert worker.run_once() == 0
     assert worker._claim_retry_seconds == 1
+
+
+def test_shutdown_releases_every_claim_that_was_not_executed(monkeypatch) -> None:
+    worker = AutomationWorker(SimpleNamespace(environment="development"))
+    claims = [
+        ClaimedAutomationEvent(id=uuid7(), lease_token=uuid7()),
+        ClaimedAutomationEvent(id=uuid7(), lease_token=uuid7()),
+    ]
+    worker._enqueue_and_claim = Mock(return_value=claims)  # type: ignore[method-assign]
+    worker._execute = Mock()  # type: ignore[method-assign]
+    worker._stop.set()
+    database = Mock()
+    session = Mock()
+    session.__enter__ = Mock(return_value=database)  # type: ignore[attr-defined]
+    session.__exit__ = Mock(return_value=False)  # type: ignore[attr-defined]
+    release_claim = Mock(return_value=True)
+    monkeypatch.setattr(
+        "app.systems.sandbox.automations.worker.AuditSession", Mock(return_value=session)
+    )
+    monkeypatch.setattr(
+        "app.systems.sandbox.automations.worker.release_claim", release_claim, raising=False
+    )
+
+    assert worker.run_once() == len(claims)
+
+    worker._execute.assert_not_called()
+    assert release_claim.call_args_list == [
+        call(database, claims[0]),
+        call(database, claims[1]),
+    ]
+    database.commit.assert_called_once_with()
 
 
 def test_lifespan_keeps_database_pool_when_automation_worker_is_alive(monkeypatch) -> None:
