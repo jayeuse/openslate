@@ -97,7 +97,6 @@ export default function SamplePlatform() {
   const workspace = platformResource.data ?? fallback;
   const {
     people,
-    design,
     records,
     messages,
     notifications,
@@ -141,22 +140,6 @@ export default function SamplePlatform() {
         id: person.id,
         title: person.name,
         href: `/access?user=${encodeURIComponent(person.id)}`,
-      })),
-    },
-    {
-      type: "Departments",
-      items: design.departments.map((item) => ({
-        id: item.id,
-        title: item.name,
-        href: `/sandbox?department=${encodeURIComponent(item.id)}`,
-      })),
-    },
-    {
-      type: "Modules",
-      items: design.modules.map((item) => ({
-        id: item.id,
-        title: item.name,
-        href: `/sandbox?module=${encodeURIComponent(item.id)}`,
       })),
     },
     {

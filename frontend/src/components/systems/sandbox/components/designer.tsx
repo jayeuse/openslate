@@ -87,8 +87,8 @@ import type { SandboxFieldType } from "@/lib/sandbox/model";
 import {
   canvasFieldId,
   projectDesign,
-  sampleField,
-  sampleTypes,
+  projectedField,
+  fieldTypeNames,
   updateProjectedField,
 } from "../helpers/bridge";
 
@@ -100,14 +100,21 @@ import {
   normalizeField,
   normalizeRule,
   reorder,
+  relationshipFieldTypesAreCompatible,
   uid,
   type Design,
   type DesignUpdate,
   type Field,
   type FieldConfig,
   type FieldTypeName,
+  type Module,
+  type RelationshipFieldMapping,
 } from "../domain/model";
-import { SandboxCommandError, type SandboxCommandResult } from "../state/async";
+import { SANDBOX_LIMITS } from "../domain/validation";
+import {
+  SandboxCommandError,
+  type SandboxCommandResult,
+} from "../state/commands";
 import type { SandboxCreateRequest } from "./sandbox-controls";
 import {
   SANDBOX_INSPECTOR_PANEL_MAX_WIDTH,
@@ -889,7 +896,7 @@ function duplicateDesignTarget(
     };
   }
   if (target.kind === "field") {
-    const source = sampleField(design, target.id);
+    const source = projectedField(design, target.id);
     if (!source) return null;
     const sourceModule = design.modules.find(
       (item) => item.id === source.moduleId,
@@ -953,6 +960,54 @@ function joinedImpact(parts: string[]): string {
   return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
 
+function mappingFieldReference(moduleId: string, fieldId: string): string {
+  return `${moduleId}\u0000${fieldId}`;
+}
+
+function mappingReferencesFields(
+  relationship: Design["relationships"][number],
+  mapping: RelationshipFieldMapping,
+  fieldReferences: ReadonlySet<string>,
+): boolean {
+  return (
+    fieldReferences.has(
+      mappingFieldReference(relationship.source, mapping.sourceFieldId),
+    ) ||
+    fieldReferences.has(
+      mappingFieldReference(relationship.target, mapping.targetFieldId),
+    )
+  );
+}
+
+function relationshipMappingCountForFields(
+  relationships: Design["relationships"],
+  fieldReferences: ReadonlySet<string>,
+): number {
+  return relationships.reduce(
+    (count, relationship) =>
+      count +
+      relationship.fieldMappings.filter((mapping) =>
+        mappingReferencesFields(relationship, mapping, fieldReferences),
+      ).length,
+    0,
+  );
+}
+
+function pruneRelationshipMappingsForFields(
+  relationships: Design["relationships"],
+  fieldReferences: ReadonlySet<string>,
+): Design["relationships"] {
+  return relationships.map((relationship) => {
+    const fieldMappings = relationship.fieldMappings.filter(
+      (mapping) =>
+        !mappingReferencesFields(relationship, mapping, fieldReferences),
+    );
+    return fieldMappings.length === relationship.fieldMappings.length
+      ? relationship
+      : { ...relationship, fieldMappings };
+  });
+}
+
 function affectedRuleReferences(
   design: Design,
   moduleIds: ReadonlySet<string>,
@@ -1007,8 +1062,15 @@ function deletionImpact(
     };
   }
   if (target.kind === "field") {
-    const match = sampleField(design, target.id);
+    const match = projectedField(design, target.id);
     const name = match?.field.name ?? "Unknown field";
+    const fieldReferences = new Set(
+      match ? [mappingFieldReference(match.moduleId, match.field.id)] : [],
+    );
+    const mappings = relationshipMappingCountForFields(
+      design.relationships,
+      fieldReferences,
+    );
     const ruleReferences = affectedRuleReferences(
       design,
       new Set(),
@@ -1016,7 +1078,7 @@ function deletionImpact(
     );
     return {
       title: `Delete field ${name}?`,
-      detail: `Deleting field “${name}” removes it from its module and invalidates ${plural(ruleReferences, "automation rule reference")}. Automation rules are retained and may become invalid. Undo restores the complete change.`,
+      detail: `Deleting field “${name}” removes it from its module, removes ${plural(mappings, "relationship field mapping")}, and invalidates ${plural(ruleReferences, "automation rule reference")}. Automation rules are retained and may become invalid. Undo restores the complete change.`,
     };
   }
   const moduleIds = new Set(
@@ -1074,7 +1136,7 @@ function deletionTargetName(
   if (target.kind === "module")
     return design.modules.find((item) => item.id === target.id)?.name ?? null;
   if (target.kind === "field")
-    return sampleField(design, target.id)?.field.name ?? null;
+    return projectedField(design, target.id)?.field.name ?? null;
   return (
     design.relationships.find((item) => item.id === target.id)?.name ?? null
   );
@@ -1085,11 +1147,48 @@ function updateProjectedFieldOrThrow(
   id: string,
   patch: Parameters<typeof updateProjectedField>[2],
 ): Design {
-  if (!sampleField(design, id))
+  if (!projectedField(design, id))
     throw new SandboxCommandError(
       "This field was deleted. Keep the field edit open and try again.",
     );
   return updateProjectedField(design, id, patch);
+}
+
+function openFieldsForRelationship(sandboxModule: Module | undefined): Field[] {
+  return sandboxModule?.fields.filter((field) => !field.closed) ?? [];
+}
+
+function compatibleRelationshipMappings(
+  design: Design,
+  sourceId: string,
+  targetId: string,
+  mappings: RelationshipFieldMapping[],
+): RelationshipFieldMapping[] {
+  const sourceFields = openFieldsForRelationship(
+    design.modules.find((item) => item.id === sourceId),
+  );
+  const targetFields = openFieldsForRelationship(
+    design.modules.find((item) => item.id === targetId),
+  );
+  const keys = new Set<string>();
+  return mappings.filter((mapping) => {
+    const source = sourceFields.find(
+      (item) => item.id === mapping.sourceFieldId,
+    );
+    const target = targetFields.find(
+      (item) => item.id === mapping.targetFieldId,
+    );
+    const key = `${mapping.sourceFieldId}\u0000${mapping.targetFieldId}`;
+    if (
+      !source ||
+      !target ||
+      !relationshipFieldTypesAreCompatible(source, target) ||
+      keys.has(key)
+    )
+      return false;
+    keys.add(key);
+    return true;
+  });
 }
 
 export function Designer({
@@ -1190,12 +1289,23 @@ export function Designer({
       item.fields.map((field) => field.id),
     ]),
   ]);
+  const initializeLayoutRef = useRef(initializeLayout);
+  const initializedStructureRef = useRef<string | null>(null);
+  useEffect(() => {
+    initializeLayoutRef.current = initializeLayout;
+  }, [initializeLayout]);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      if (graphRef.current) initializeLayout(graphRef.current.getLayout());
+      if (
+        graphRef.current &&
+        initializedStructureRef.current !== structureSignature
+      ) {
+        initializedStructureRef.current = structureSignature;
+        initializeLayoutRef.current(graphRef.current.getLayout());
+      }
     });
     return () => cancelAnimationFrame(frame);
-  }, [structureSignature, initializeLayout]);
+  }, [structureSignature]);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       if (canvasFrameRef.current?.clientWidth) graphRef.current?.fit();
@@ -1215,14 +1325,17 @@ export function Designer({
   const [required, setRequired] = useState(false);
   const [value, setValue] = useState("");
   const [options, setOptions] = useState("");
-  const [target, setTarget] = useState("sample-equipment");
-  const [source, setSource] = useState("sample-requests");
+  const [target, setTarget] = useState(() => design.modules[1]?.id ?? "");
+  const [source, setSource] = useState(() => design.modules[0]?.id ?? "");
   const [cardinality, setCardinality] = useState("One-to-many");
+  const [fieldMappings, setFieldMappings] = useState<
+    RelationshipFieldMapping[]
+  >([]);
   const [relationshipError, setRelationshipError] = useState("");
   const [editorError, setEditorError] = useState("");
   const handledCreateRequest = useRef<number | null>(null);
   const handledFocusTarget = useRef<string | null>(null);
-  const selectedField = sampleField(design, selected);
+  const selectedField = projectedField(design, selected);
   const selectedRelationship = design.relationships.find(
     (item) => item.id === selected,
   );
@@ -1246,6 +1359,7 @@ export function Designer({
       setSource(relationship.source);
       setTarget(relationship.target);
       setCardinality(relationship.cardinality);
+      setFieldMappings(relationship.fieldMappings);
       setRelationshipError("");
       setEditorError("");
       return;
@@ -1258,7 +1372,7 @@ export function Designer({
   }, [design, focusTargetId]);
   useEffect(() => {
     if (!focusTargetId || pane !== "Inspector") return;
-    const focusedField = sampleField(design, focusTargetId);
+    const focusedField = projectedField(design, focusTargetId);
     const frame = requestAnimationFrame(() => {
       if (focusedField) {
         const fieldName = Array.from(
@@ -1294,7 +1408,7 @@ export function Designer({
       return;
     handledCreateRequest.current = createRequest.id;
 
-    const requestedField = sampleField(design, selected);
+    const requestedField = projectedField(design, selected);
     const requestedRelationship = design.relationships.find(
       (item) => item.id === selected,
     );
@@ -1317,6 +1431,7 @@ export function Designer({
     setOptions("");
     setRelationshipError("");
     setEditorError("");
+    setFieldMappings([]);
     setPane("Inspector");
 
     if (createRequest.kind === "department") {
@@ -1442,7 +1557,7 @@ export function Designer({
           ),
         };
       if (target.kind === "field") {
-        const field = sampleField(previous, target.id);
+        const field = projectedField(previous, target.id);
         return field
           ? {
               ...previous,
@@ -1570,8 +1685,8 @@ export function Designer({
                     ...item.fields,
                     {
                       id,
-                      name: `${sampleTypes[fieldType]} field`,
-                      type: sampleTypes[fieldType],
+                      name: `${fieldTypeNames[fieldType]} field`,
+                      type: fieldTypeNames[fieldType],
                       required: false,
                       value: "",
                       options: "",
@@ -1611,6 +1726,7 @@ export function Designer({
     setSource(relationship.source);
     setTarget(relationship.target);
     setCardinality(relationship.cardinality);
+    setFieldMappings(relationship.fieldMappings);
   }
   async function removeSelected(): Promise<void> {
     if (!deleteTarget) return;
@@ -1619,7 +1735,7 @@ export function Designer({
       deleteTarget.kind === "module"
         ? design.modules.find((item) => item.id === deleteTarget.id)?.department
         : deleteTarget.kind === "field"
-          ? sampleField(design, deleteTarget.id)?.moduleId
+          ? projectedField(design, deleteTarget.id)?.moduleId
           : deleteTarget.kind === "link"
             ? design.relationships.find((item) => item.id === deleteTarget.id)
                 ?.source
@@ -1628,10 +1744,20 @@ export function Designer({
     deleteFallbackId.current = fallbackId ?? null;
     deleteOpener.current = null;
     const nextFallbackId = { current: "" };
+    const removedMappings = { current: 0 };
+    const removedFieldName = { current: "" };
     const result = await change((previous) => {
-      const field = sampleField(previous, deleteTarget.id);
+      const field = projectedField(previous, deleteTarget.id);
       if (deleteTarget.kind === "field" && field) {
         nextFallbackId.current = field.moduleId;
+        removedFieldName.current = field.field.name;
+        const fieldReferences = new Set([
+          mappingFieldReference(field.moduleId, field.field.id),
+        ]);
+        removedMappings.current = relationshipMappingCountForFields(
+          previous.relationships,
+          fieldReferences,
+        );
         return {
           ...previous,
           modules: previous.modules.map((item) =>
@@ -1643,6 +1769,10 @@ export function Designer({
                   ),
                 }
               : item,
+          ),
+          relationships: pruneRelationshipMappingsForFields(
+            previous.relationships,
+            fieldReferences,
           ),
         };
       }
@@ -1691,7 +1821,11 @@ export function Designer({
     }
     setDeleteTarget(null);
     setSelected(nextFallbackId.current || fallbackId || "");
-    notify("Item deleted from the design. Undo restores it.");
+    notify(
+      removedMappings.current > 0
+        ? `${removedFieldName.current} deleted. ${plural(removedMappings.current, "relationship field mapping")} removed. Undo restores the complete change.`
+        : "Item deleted from the design. Undo restores it.",
+    );
   }
   function deleteFinalFocus(): HTMLElement | null {
     if (deleteOpener.current?.isConnected) return deleteOpener.current;
@@ -1728,6 +1862,7 @@ export function Designer({
     setOptions("");
     setRelationshipError("");
     setEditorError("");
+    setFieldMappings([]);
     setSource(selectedModule?.id ?? design.modules[0]?.id ?? "");
   }
   async function submit(e: React.FormEvent): Promise<void> {
@@ -1905,6 +2040,21 @@ export function Designer({
           throw new SandboxCommandError(
             "This relationship was deleted. Keep the editor open and try again.",
           );
+        if (fieldMappings.length > SANDBOX_LIMITS.relationshipMappings)
+          throw new SandboxCommandError(
+            `A relationship can map up to ${SANDBOX_LIMITS.relationshipMappings} fields.`,
+          );
+        if (
+          compatibleRelationshipMappings(
+            previous,
+            source,
+            target,
+            fieldMappings,
+          ).length !== fieldMappings.length
+        )
+          throw new SandboxCommandError(
+            "Each field mapping must use open, compatible source and target fields without duplicates.",
+          );
         return {
           ...previous,
           relationships: relationshipId
@@ -1916,6 +2066,7 @@ export function Designer({
                       source,
                       target,
                       cardinality,
+                      fieldMappings,
                     }
                   : item,
               )
@@ -1927,6 +2078,7 @@ export function Designer({
                   source,
                   target,
                   cardinality,
+                  fieldMappings,
                 },
               ],
         };
@@ -1939,6 +2091,20 @@ export function Designer({
       notify(`${submittedName} saved in the design.`);
       return;
     }
+  }
+  function changeRelationshipSource(nextSource: string): void {
+    setSource(nextSource);
+    setFieldMappings((current) =>
+      compatibleRelationshipMappings(design, nextSource, target, current),
+    );
+    setRelationshipError("");
+  }
+  function changeRelationshipTarget(nextTarget: string): void {
+    setTarget(nextTarget);
+    setFieldMappings((current) =>
+      compatibleRelationshipMappings(design, source, nextTarget, current),
+    );
+    setRelationshipError("");
   }
   const editorNameLabel = `${editor === "rename" ? "Item" : editor.charAt(0).toUpperCase() + editor.slice(1)} name`;
   const editorForm = (
@@ -2042,10 +2208,7 @@ export function Designer({
                 className="w-full [&_select]:min-h-10"
                 disabled={pending}
                 value={source}
-                onChange={(e) => {
-                  setSource(e.target.value);
-                  setRelationshipError("");
-                }}
+                onChange={(e) => changeRelationshipSource(e.target.value)}
               >
                 {design.modules.map((m) => (
                   <NativeSelectOption key={m.id} value={m.id}>
@@ -2063,10 +2226,7 @@ export function Designer({
                 className="w-full [&_select]:min-h-10"
                 disabled={pending}
                 value={target}
-                onChange={(e) => {
-                  setTarget(e.target.value);
-                  setRelationshipError("");
-                }}
+                onChange={(e) => changeRelationshipTarget(e.target.value)}
               >
                 {design.modules.map((m) => (
                   <NativeSelectOption key={m.id} value={m.id}>
@@ -2077,7 +2237,7 @@ export function Designer({
             </FormField>
             <FormField>
               <FieldLabel htmlFor="sandbox-editor-cardinality">
-                Cardinality
+                Relationship type
               </FieldLabel>
               <NativeSelect
                 id="sandbox-editor-cardinality"
@@ -2086,13 +2246,67 @@ export function Designer({
                 value={cardinality}
                 onChange={(e) => setCardinality(e.target.value)}
               >
-                {["One-to-one", "One-to-many", "Many-to-many"].map((c) => (
-                  <NativeSelectOption key={c} value={c}>
-                    {c}
+                {[
+                  ["One-to-one", "Each item has one match"],
+                  ["One-to-many", "One item can have many matches"],
+                  ["Many-to-many", "Items can have many matches"],
+                ].map(([value, label]) => (
+                  <NativeSelectOption key={value} value={value}>
+                    {label}
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
             </FormField>
+            {fieldMappings.length ? (
+              <fieldset className="border-border flex flex-col gap-3 rounded-md border p-3">
+                <legend className="px-1 text-sm font-medium">
+                  Legacy field mappings
+                </legend>
+                <Alert variant="warning">
+                  These imported mappings are not supported for publishing.
+                  Remove each mapping before publishing.
+                </Alert>
+                {fieldMappings.map((mapping, index) => {
+                  const sourceName =
+                    design.modules
+                      .find((item) => item.id === source)
+                      ?.fields.find(
+                        (field) => field.id === mapping.sourceFieldId,
+                      )?.name ?? "Unavailable field";
+                  const targetName =
+                    design.modules
+                      .find((item) => item.id === target)
+                      ?.fields.find(
+                        (field) => field.id === mapping.targetFieldId,
+                      )?.name ?? "Unavailable field";
+                  return (
+                    <div
+                      key={`${mapping.sourceFieldId}-${mapping.targetFieldId}-${index}`}
+                      className="flex min-h-11 items-center justify-between gap-3 text-sm"
+                    >
+                      <span>
+                        {sourceName} to {targetName}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="min-h-11"
+                        disabled={pending}
+                        onClick={() =>
+                          setFieldMappings((current) =>
+                            current.filter(
+                              (_, candidateIndex) => candidateIndex !== index,
+                            ),
+                          )
+                        }
+                      >
+                        Remove mapping
+                      </Button>
+                    </div>
+                  );
+                })}
+              </fieldset>
+            ) : null}
             {design.modules.find((m) => m.id === target)?.department !==
               design.modules.find((m) => m.id === source)?.department && (
               <Alert role="alert" variant="warning">
@@ -2292,7 +2506,7 @@ export function Designer({
                   onAddField={(id, fieldType) => {
                     setSelected(id);
                     open("field");
-                    setType(sampleTypes[fieldType]);
+                    setType(fieldTypeNames[fieldType]);
                   }}
                   onMoveModule={moveModule}
                   pending={pending}
@@ -2769,153 +2983,9 @@ export function Designer({
                         Add module
                       </Button>
                     </ButtonGroup>
-                    {!selectedModule && department ? (
-                      <div className="border-border flex flex-col gap-2 border-t pt-4">
-                        <h3 className="text-xs font-semibold uppercase">
-                          Department order
-                        </h3>
-                        <ButtonGroup aria-label="Department order">
-                          {(() => {
-                            const index = design.departments.findIndex(
-                              (item) => item.id === department.id,
-                            );
-                            return (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  aria-label="Move department earlier"
-                                  disabled={pending || index === 0}
-                                  onClick={async () => {
-                                    const result = await change((previous) => {
-                                      const currentIndex =
-                                        previous.departments.findIndex(
-                                          (item) => item.id === department.id,
-                                        );
-                                      return {
-                                        ...previous,
-                                        departments: reorder(
-                                          previous.departments,
-                                          currentIndex,
-                                          -1,
-                                        ),
-                                      };
-                                    });
-                                    if (!result.ok) notify(result.error);
-                                  }}
-                                >
-                                  Earlier
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  aria-label="Move department later"
-                                  disabled={
-                                    pending ||
-                                    index === design.departments.length - 1
-                                  }
-                                  onClick={async () => {
-                                    const result = await change((previous) => {
-                                      const currentIndex =
-                                        previous.departments.findIndex(
-                                          (item) => item.id === department.id,
-                                        );
-                                      return {
-                                        ...previous,
-                                        departments: reorder(
-                                          previous.departments,
-                                          currentIndex,
-                                          1,
-                                        ),
-                                      };
-                                    });
-                                    if (!result.ok) notify(result.error);
-                                  }}
-                                >
-                                  Later
-                                </Button>
-                              </>
-                            );
-                          })()}
-                        </ButtonGroup>
-                      </div>
-                    ) : null}
                     {selectedModule && (
                       <>
                         <div className="border-border flex flex-col gap-2 border-t pt-4">
-                          <h3 className="text-xs font-semibold uppercase">
-                            Module order
-                          </h3>
-                          <ButtonGroup aria-label="Module order">
-                            {(() => {
-                              const siblings = design.modules.filter(
-                                (item) =>
-                                  item.department === selectedModule.department,
-                              );
-                              const scopedIndex = siblings.findIndex(
-                                (item) => item.id === selectedModule.id,
-                              );
-                              const move = async (delta: number) => {
-                                const result = await change((previous) => {
-                                  const currentModule = previous.modules.find(
-                                    (item) => item.id === selectedModule.id,
-                                  );
-                                  if (!currentModule) return previous;
-                                  const currentSiblings =
-                                    previous.modules.filter(
-                                      (item) =>
-                                        item.department ===
-                                        currentModule.department,
-                                    );
-                                  const currentIndex =
-                                    currentSiblings.findIndex(
-                                      (item) => item.id === selectedModule.id,
-                                    );
-                                  const reordered = reorder(
-                                    currentSiblings,
-                                    currentIndex,
-                                    delta,
-                                  );
-                                  let cursor = 0;
-                                  return {
-                                    ...previous,
-                                    modules: previous.modules.map((item) =>
-                                      item.department ===
-                                      currentModule.department
-                                        ? reordered[cursor++]
-                                        : item,
-                                    ),
-                                  };
-                                });
-                                if (!result.ok) notify(result.error);
-                              };
-                              return (
-                                <>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    aria-label="Move module earlier"
-                                    disabled={pending || scopedIndex === 0}
-                                    onClick={() => void move(-1)}
-                                  >
-                                    Earlier
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    aria-label="Move module later"
-                                    disabled={
-                                      pending ||
-                                      scopedIndex === siblings.length - 1
-                                    }
-                                    onClick={() => void move(1)}
-                                  >
-                                    Later
-                                  </Button>
-                                </>
-                              );
-                            })()}
-                          </ButtonGroup>
                           <FormField>
                             <FieldLabel htmlFor="sandbox-move-module-department">
                               Move module to department
@@ -3027,12 +3097,35 @@ export function Designer({
                                     };
                                   })
                                 }
-                                onLifecycle={() =>
-                                  change((previous) => {
+                                onLifecycle={async () => {
+                                  const removedMappings = { current: 0 };
+                                  const closedFieldName = { current: "" };
+                                  const result = await change((previous) => {
                                     const currentModule = previous.modules.find(
                                       (item) => item.id === selectedModule.id,
                                     );
                                     if (!currentModule) return previous;
+                                    const currentField =
+                                      currentModule.fields.find(
+                                        (item) => item.id === f.id,
+                                      );
+                                    if (!currentField) return previous;
+                                    const closing = !currentField.closed;
+                                    const fieldReferences = new Set([
+                                      mappingFieldReference(
+                                        currentModule.id,
+                                        currentField.id,
+                                      ),
+                                    ]);
+                                    if (closing) {
+                                      closedFieldName.current =
+                                        currentField.name;
+                                      removedMappings.current =
+                                        relationshipMappingCountForFields(
+                                          previous.relationships,
+                                          fieldReferences,
+                                        );
+                                    }
                                     return {
                                       ...previous,
                                       modules: previous.modules.map((item) =>
@@ -3051,9 +3144,22 @@ export function Designer({
                                             }
                                           : item,
                                       ),
+                                      relationships: closing
+                                        ? pruneRelationshipMappingsForFields(
+                                            previous.relationships,
+                                            fieldReferences,
+                                          )
+                                        : previous.relationships,
                                     };
-                                  })
-                                }
+                                  });
+                                  if (result.ok && closedFieldName.current)
+                                    notify(
+                                      removedMappings.current > 0
+                                        ? `${closedFieldName.current} closed. ${plural(removedMappings.current, "relationship field mapping")} removed.`
+                                        : `${closedFieldName.current} closed.`,
+                                    );
+                                  return result;
+                                }}
                                 pending={pending}
                                 autoFocus={
                                   focusTargetId ===

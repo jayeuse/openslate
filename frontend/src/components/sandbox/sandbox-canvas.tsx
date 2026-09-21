@@ -39,7 +39,7 @@ import {
   snapSandboxPosition,
   toCells,
 } from "@/lib/sandbox/x6-adapter";
-import type { SandboxCommandResult } from "@/components/systems/sandbox/state/async";
+import type { SandboxCommandResult } from "@/components/systems/sandbox/state/commands";
 
 type SandboxCommand =
   | void

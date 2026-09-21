@@ -4,201 +4,374 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Redo2, Undo2 } from "lucide-react";
+import { ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
-import { useSampleStorage } from "@/components/systems/shared/runtime/sample-state";
-import { useSampleResource } from "@/components/systems/shared/runtime/sample-async";
 import type { SandboxCanvasLayout } from "@/components/sandbox/sandbox-canvas";
 import {
   counts,
   initialDesign,
-  initialSandboxHistory,
   type Design,
   type DesignUpdate,
-  type Version,
 } from "./domain/model";
-import { normalizeSandboxHistory } from "./state/controller";
+import { redoSandboxCommand, undoSandboxCommand } from "./state/controller";
 import {
   validateSandboxDesign,
   type SandboxValidationIssue,
 } from "./domain/validation";
-import type { SandboxFileV1 } from "./helpers/file-format";
+import {
+  migrateSandboxFileV1,
+  type SandboxDocumentV2,
+} from "./domain/document";
+import type { SandboxOrganizationTemplate } from "./domain/templates";
 import { canvasFieldId } from "./helpers/bridge";
+import { clearSandboxViewPreferences } from "./helpers/view-preferences";
 import { Designer } from "./components/designer";
+import type {
+  SandboxCommandFailure,
+  SandboxCommandResult,
+} from "./state/commands";
 import {
-  emptySandboxSimulation,
-  initialSandboxVersions,
-  initialRuntimeSandboxHistory,
-  readSandboxState,
-  SANDBOX_RUNTIME_KEYS,
-  useSandboxCommands,
-  type SandboxCommandResult,
-  type SandboxSnapshot,
-} from "./state/async";
+  createSandboxVersion,
+  deleteSandboxVersion,
+  getSandboxVersion,
+  importSandboxBundle,
+  listSandboxAutomationRuns,
+  listSandboxVersions,
+  loadSandboxDocument,
+  replaceSandboxDocument,
+  restoreSandboxVersion,
+  updateSandboxVersion,
+  clearSandboxTests,
+  createSandboxPublicationPreview,
+  createSandboxTest,
+  listSandboxTests,
+  publishSandbox,
+  type SandboxVersion,
+  type SandboxAutomationRun,
+  type SandboxTestRun,
+} from "./state/api";
 import {
-  SandboxControls,
-  type SandboxCreateKind,
-  type SandboxCreateRequest,
-} from "./components/sandbox-controls";
+  openSandboxDocumentSession,
+  proposedSandboxDocument,
+  reapplySandboxDocument,
+  syncSandboxDocumentMetadata,
+  updateSandboxDocumentSession,
+  type SandboxDocumentSession,
+} from "./state/document-session";
+import { VersionsWorkspace } from "./components/versions-workspace";
 import {
-  clearSandboxViewPreferences,
-  loadSandboxViewPreferences,
-  saveSandboxViewPreferences,
-  type SandboxViewPreferences,
-} from "./helpers/view-preferences";
-import { Workflows } from "./components/workflows";
-
-type ClearBackup = {
-  history: SandboxSnapshot["history"];
-  versions: Version[];
-  simulation: unknown;
-  viewPreferences: SandboxViewPreferences;
-};
+  AutomationStudio,
+  automationPublicationBlockers,
+} from "./components/automation-studio";
+import { TestWorkspace } from "./components/test-workspace";
+import { ReviewPublishDialog } from "./components/review-publish-dialog";
+import { SandboxHeaderActions } from "./components/sandbox-header-actions";
 
 const SANDBOX_SECTIONS = {
-  designer: "Designer",
-  automation: "Automation",
-  simulation: "Simulation",
-  preview: "Preview",
-  versions: "Versions",
+  build: "Build",
+  automations: "Automations",
+  test: "Test",
+  history: "History",
 } as const;
-
+const LEGACY_SECTION_ALIASES: Readonly<Record<string, SandboxSection>> = {
+  designer: "Build",
+  automation: "Automations",
+  simulation: "Test",
+  preview: "Test",
+  versions: "History",
+};
 type SandboxSection = (typeof SANDBOX_SECTIONS)[keyof typeof SANDBOX_SECTIONS];
+type Conflict = {
+  proposedDocument: SandboxDocumentV2;
+  reason: "conflict" | "save-failed";
+};
 
-function sandboxSectionFromSearch(
+export function sectionFromSearch(
   requestedSection: string | null,
   requestedRule: string | null,
 ): SandboxSection {
-  if (requestedSection !== null)
-    return Object.hasOwn(SANDBOX_SECTIONS, requestedSection)
-      ? SANDBOX_SECTIONS[requestedSection as keyof typeof SANDBOX_SECTIONS]
-      : "Designer";
-  return requestedRule ? "Automation" : "Designer";
+  if (requestedSection !== null) {
+    const normalized = requestedSection.toLowerCase();
+    return Object.hasOwn(SANDBOX_SECTIONS, normalized)
+      ? SANDBOX_SECTIONS[normalized as keyof typeof SANDBOX_SECTIONS]
+      : (LEGACY_SECTION_ALIASES[normalized] ?? "Build");
+  }
+  return requestedRule ? "Automations" : "Build";
 }
 
-function sandboxSectionHref(
+function sectionHref(
   section: SandboxSection,
   current: URLSearchParams,
 ): string {
-  const params = new URLSearchParams(current);
   const slug = Object.entries(SANDBOX_SECTIONS).find(
     ([, label]) => label === section,
   )?.[0];
-  if (!slug) return "/sandbox";
-  params.set("section", slug);
+  const params = new URLSearchParams(current);
+  params.set("section", slug ?? "build");
   return `/sandbox?${params.toString()}`;
 }
 
-export default function SampleSandbox() {
+function commandFailure(error: unknown): SandboxCommandFailure {
+  return {
+    ok: false,
+    error:
+      error instanceof Error
+        ? error.message
+        : "This Sandbox change could not be saved. Try again.",
+  };
+}
+
+function sandboxStillLoading(): SandboxCommandFailure {
+  return { ok: false, error: "Sandbox is still loading." };
+}
+
+function emptyDocument(): SandboxDocumentV2 {
+  return migrateSandboxFileV1({
+    kind: "openslate-sandbox",
+    schemaVersion: 1,
+    design: initialDesign,
+  });
+}
+
+export default function SandboxPage() {
   const search = useSearchParams();
   const router = useRouter();
-  const sandbox = useSandboxCommands();
-  const resource = useSampleResource<SandboxSnapshot>({
-    keys: SANDBOX_RUNTIME_KEYS,
-    queryKey: "sandbox",
-    load: (signal) =>
-      sandbox.runtime.load(readSandboxState, {
-        keys: SANDBOX_RUNTIME_KEYS,
-        signal,
-      }),
-  });
-  const { storageUnavailable } = useSampleStorage();
-  const snapshot = resource.data ?? {
-    history: normalizeSandboxHistory(initialSandboxHistory, initialDesign),
-    versions: initialSandboxVersions,
-    simulation: emptySandboxSimulation,
-  };
-  const initialLoading = !resource.data && resource.status === "loading";
-  const initialError = !resource.data && resource.status === "error";
-  const history = snapshot.history;
-  const versions = snapshot.versions;
-  const simulation = snapshot.simulation;
-  const section = sandboxSectionFromSearch(
-    search.get("section"),
-    search.get("rule"),
+  const [session, setSession] = useState<SandboxDocumentSession | null>(null);
+  const [versions, setVersions] = useState<SandboxVersion[]>([]);
+  const [testRuns, setTestRuns] = useState<SandboxTestRun[]>([]);
+  const [automationRuns, setAutomationRuns] = useState<SandboxAutomationRun[]>(
+    [],
   );
+  const [automationActivity, setAutomationActivity] = useState({
+    loading: false,
+    error: "",
+  });
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
-  const [clearBackup, setClearBackup] = useState<ClearBackup | null>(null);
-  const [createRequest, setCreateRequest] =
-    useState<SandboxCreateRequest | null>(null);
+  const [conflict, setConflict] = useState<Conflict | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [automationDraft, setAutomationDraft] = useState({
+    dirty: false,
+    pending: false,
+  });
   const [sandboxGeneration, setSandboxGeneration] = useState(0);
-  const nextCreateRequestId = useRef(0);
   const skipNextLayoutInitialization = useRef(false);
-  const design = history.present;
-  const issues = validateSandboxDesign(design);
+  const section = sectionFromSearch(search.get("section"), search.get("rule"));
+  const design = session?.history.present ?? initialDesign;
+  const issues = Array.from(
+    new Map(
+      [...validateSandboxDesign(design), ...(session?.issues ?? [])].map(
+        (issue) => [
+          `${issue.code}:${issue.targetId ?? ""}:${issue.message}`,
+          issue,
+        ],
+      ),
+    ).values(),
+  );
   const requestedFocusTarget = search.get("inspect");
   const requestedSelection =
     requestedFocusTarget ??
     search.get("module") ??
     search.get("department") ??
-    "sample-requests";
+    design.modules[0]?.id ??
+    "";
+
+  const refreshVersions = useCallback(async () => {
+    const page = await listSandboxVersions({ limit: 50 });
+    setVersions(page.items);
+  }, []);
+  const refreshAutomationActivity = useCallback(async () => {
+    setAutomationActivity({ loading: true, error: "" });
+    try {
+      const runPage = await listSandboxAutomationRuns({ limit: 20 });
+      setAutomationRuns(runPage.items);
+    } catch {
+      setAutomationActivity((current) => ({
+        ...current,
+        error: "Recent activity could not be loaded.",
+      }));
+    } finally {
+      setAutomationActivity((current) => ({ ...current, loading: false }));
+    }
+  }, []);
+  const syncVersionMetadata = useCallback(async () => {
+    const response = await loadSandboxDocument();
+    setSession((current) =>
+      current
+        ? syncSandboxDocumentMetadata(current, response)
+        : openSandboxDocumentSession(response),
+    );
+    await refreshVersions();
+  }, [refreshVersions]);
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const [document, versionPage, testPage] = await Promise.all([
+        loadSandboxDocument(),
+        listSandboxVersions({ limit: 50 }),
+        listSandboxTests({ limit: 50 }),
+      ]);
+      setSession(openSandboxDocumentSession(document));
+      setVersions(versionPage.items);
+      setTestRuns(testPage.items);
+    } catch (error) {
+      setLoadError(commandFailure(error).error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  useEffect(() => {
+    if (section === "Automations") void refreshAutomationActivity();
+  }, [refreshAutomationActivity, section]);
 
   const navigate = useCallback(
-    (nextSection: string, replace = false, bypassPending = false) => {
+    (target: string, replace = false, bypassPending = false) => {
       const next = Object.values(SANDBOX_SECTIONS).includes(
-        nextSection as SandboxSection,
+        target as SandboxSection,
       )
-        ? (nextSection as SandboxSection)
-        : "Designer";
-      if (!bypassPending && sandbox.isPending()) return;
-      const href = sandboxSectionHref(
-        next,
-        new URLSearchParams(search.toString()),
-      );
+        ? (target as SandboxSection)
+        : "Build";
+      if (
+        !bypassPending &&
+        (pending ||
+          conflict !== null ||
+          automationDraft.dirty ||
+          automationDraft.pending)
+      )
+        return;
+      const href = sectionHref(next, new URLSearchParams(search.toString()));
       if (replace) router.replace(href as Route, { scroll: false });
       else router.push(href as Route, { scroll: false });
     },
-    [router, sandbox.isPending, search],
+    [
+      automationDraft.dirty,
+      automationDraft.pending,
+      conflict,
+      pending,
+      router,
+      search,
+    ],
   );
-
   useWorkspaceNavigationGuard(
     useCallback(
-      (href, resume) => {
-        void href;
-        void resume;
-        return !sandbox.isPending();
-      },
-      [sandbox.isPending],
+      () =>
+        !pending &&
+        !conflict &&
+        !automationDraft.dirty &&
+        !automationDraft.pending,
+      [automationDraft.dirty, automationDraft.pending, conflict, pending],
     ),
   );
 
-  useEffect(() => {
-    function handleHistoryShortcut(event: KeyboardEvent) {
-      if (!event.metaKey && !event.ctrlKey) return;
-      const key = event.key.toLowerCase();
-      const redo = key === "y" || (key === "z" && event.shiftKey);
-      if (key !== "z" && key !== "y") return;
-      const target = event.target;
+  const persist = useCallback(
+    async (
+      next: SandboxDocumentSession,
+      document = proposedSandboxDocument(next),
+    ): Promise<SandboxCommandResult<Design>> => {
+      setSession(next);
+      setPending(true);
+      try {
+        const response = await replaceSandboxDocument({
+          expectedRevision: next.revision,
+          document,
+        });
+        const confirmed = openSandboxDocumentSession(response);
+        setSession({
+          ...confirmed,
+          history: { ...next.history, present: confirmed.projected },
+        });
+        setConflict(null);
+        return { ok: true, value: confirmed.projected };
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          setConflict({ proposedDocument: document, reason: "conflict" });
+          setMessage(
+            "The shared Sandbox changed elsewhere. Reload it, then reapply your proposed document before saving.",
+          );
+        } else {
+          setConflict({ proposedDocument: document, reason: "save-failed" });
+          setMessage(
+            "Your change was not saved. It remains local until you reapply it successfully.",
+          );
+        }
+        return commandFailure(error);
+      } finally {
+        setPending(false);
+      }
+    },
+    [],
+  );
+  const saveDocument = useCallback(
+    async (document: SandboxDocumentV2) => {
+      if (!session) throw new Error("Sandbox is still loading.");
+      const result = await persist({ ...session, document }, document);
+      if (!result.ok) throw new Error(result.error);
+    },
+    [persist, session],
+  );
+
+  const change = useCallback(
+    async (update: DesignUpdate): Promise<SandboxCommandResult<Design>> => {
+      if (!session) return sandboxStillLoading();
+      const nextDesign =
+        typeof update === "function" ? update(session.history.present) : update;
       if (
-        target instanceof Element &&
-        target.closest("input, textarea, select, [contenteditable='true']")
+        nextDesign === session.history.present ||
+        JSON.stringify(nextDesign) === JSON.stringify(session.history.present)
+      )
+        return { ok: true, value: session.history.present };
+      return persist(updateSandboxDocumentSession(session, nextDesign));
+    },
+    [persist, session],
+  );
+  const undo = useCallback(async () => {
+    if (!session) return;
+    return persist({
+      ...session,
+      history: undoSandboxCommand(session.history),
+    });
+  }, [persist, session]);
+  const redo = useCallback(async () => {
+    if (!session) return;
+    return persist({
+      ...session,
+      history: redoSandboxCommand(session.history),
+    });
+  }, [persist, session]);
+  useEffect(() => {
+    function shortcut(event: KeyboardEvent) {
+      if (section !== "Build") return;
+      if (
+        (!event.metaKey && !event.ctrlKey) ||
+        !["z", "y"].includes(event.key.toLowerCase())
+      )
+        return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest(
+          "input, textarea, select, [contenteditable='true']",
+        )
       )
         return;
       if (document.querySelector("[role='dialog'], [role='alertdialog']"))
         return;
       event.preventDefault();
-      void (redo ? sandbox.redo() : sandbox.undo()).then((result) => {
-        if (!result.ok) setMessage(result.error);
-      });
+      void (event.key.toLowerCase() === "y" || event.shiftKey
+        ? redo()
+        : undo());
     }
-    window.addEventListener("keydown", handleHistoryShortcut);
-    return () => window.removeEventListener("keydown", handleHistoryShortcut);
-  }, [sandbox.redo, sandbox.undo]);
-
-  const change = useCallback(
-    async (
-      update: DesignUpdate,
-      commandKey?: string,
-    ): Promise<SandboxCommandResult<Design>> => {
-      const result = await sandbox.change(update, commandKey);
-      if (result.ok) setClearBackup(null);
-      if (!result.ok) setMessage(result.error);
-      return result;
-    },
-    [sandbox.change],
-  );
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, [redo, section, undo]);
 
   const initializeLayout = useCallback(
     (layout: SandboxCanvasLayout) => {
@@ -206,200 +379,215 @@ export default function SampleSandbox() {
         skipNextLayoutInitialization.current = false;
         return;
       }
-      sandbox.runtime.commit((draft) => {
-        const current = normalizeSandboxHistory(
-          draft.read<unknown>("sandbox.design", initialSandboxHistory),
-          initialDesign,
-        );
-        if (JSON.stringify(current.present.layout) === JSON.stringify(layout))
-          return;
-        draft.update("sandbox.design", initialRuntimeSandboxHistory, {
-          ...current,
-          present: { ...current.present, layout },
-        });
+      void change((current) => {
+        const persisted = current.layout ?? {};
+        const requiredIds = [
+          ...current.departments.map((item) => item.id),
+          ...current.modules.map((item) => item.id),
+        ];
+        return Object.keys(persisted).length === requiredIds.length &&
+          requiredIds.every((id) => persisted[id] !== undefined)
+          ? current
+          : { ...current, layout };
       });
     },
-    [sandbox.runtime],
+    [change],
   );
-
   const checkpoint = useCallback(
     async (
       label: string,
       note: string,
-    ): Promise<SandboxCommandResult<Version>> => {
-      const result = await sandbox.checkpoint(label, note);
-      if (result.ok) setClearBackup(null);
-      setMessage(result.ok ? "Checkpoint created." : result.error);
-      return result;
-    },
-    [sandbox.checkpoint],
-  );
-
-  const createLocalRelease = useCallback(
-    async (note: string): Promise<SandboxCommandResult<Version>> => {
-      const result = await sandbox.release(note);
-      if (!result.ok) {
-        setMessage(result.error);
-        return result;
+    ): Promise<SandboxCommandResult<SandboxVersion>> => {
+      if (!session) return sandboxStillLoading();
+      setPending(true);
+      try {
+        const version = await createSandboxVersion({
+          expectedRevision: session.revision,
+          kind: "checkpoint",
+          label,
+          ...(note ? { note } : {}),
+        });
+        await syncVersionMetadata();
+        setMessage("Checkpoint created.");
+        return { ok: true, value: version };
+      } catch (error) {
+        return commandFailure(error);
+      } finally {
+        setPending(false);
       }
-      setClearBackup(null);
-      navigate("Versions", false, true);
-      setMessage("Release created. No live workspace was changed.");
-      return result;
     },
-    [navigate, sandbox.release],
+    [session, syncVersionMetadata],
   );
-
   const importFile = useCallback(
-    async (file: SandboxFileV1): Promise<SandboxCommandResult<unknown>> => {
-      const result = await sandbox.importFile(file);
-      if (!result.ok) return result;
-      setClearBackup(null);
-      navigate("Designer", false, true);
-      setMessage(
-        "Sandbox replaced from JSON. A recovery checkpoint was created.",
-      );
-      return result;
-    },
-    [navigate, sandbox.importFile],
-  );
-
-  const updateVersions = useCallback(
     async (
-      update: (current: Version[]) => Version[],
-    ): Promise<SandboxCommandResult<Version[]>> => {
-      const result = await sandbox.updateVersions(update);
-      if (result.ok) setClearBackup(null);
-      return result;
-    },
-    [sandbox.updateVersions],
-  );
-
-  const updateSimulation = useCallback(
-    async (
-      update: Parameters<typeof sandbox.updateSimulation>[0],
-      commandKey?: string,
+      bundle: SandboxDocumentV2,
     ): Promise<SandboxCommandResult<unknown>> => {
-      const result = await sandbox.updateSimulation(update, commandKey);
-      if (result.ok) setClearBackup(null);
-      return result;
+      if (!session) return sandboxStillLoading();
+      setPending(true);
+      try {
+        const response = await importSandboxBundle({
+          expectedRevision: session.revision,
+          bundle,
+        });
+        setSession(openSandboxDocumentSession(response));
+        await refreshVersions();
+        navigate("Build", false, true);
+        setMessage("Shared Sandbox replaced from the v2 JSON bundle.");
+        return { ok: true, value: response.document };
+      } catch (error) {
+        return commandFailure(error);
+      } finally {
+        setPending(false);
+      }
     },
-    [sandbox.updateSimulation],
+    [navigate, refreshVersions, session],
   );
+  const applyTemplate = useCallback(
+    async (
+      template: SandboxOrganizationTemplate,
+    ): Promise<SandboxCommandResult<unknown>> => {
+      if (!session) return sandboxStillLoading();
+      setPending(true);
+      try {
+        const response = await importSandboxBundle({
+          expectedRevision: session.revision,
+          bundle: template.createDocument(),
+        });
+        setSession(openSandboxDocumentSession(response));
+        await refreshVersions();
+        navigate("Build", false, true);
+        setMessage(`${template.name} template applied to the shared Sandbox.`);
+        return { ok: true, value: response.document };
+      } catch (error) {
+        return commandFailure(error);
+      } finally {
+        setPending(false);
+      }
+    },
+    [navigate, refreshVersions, session],
+  );
+  const discardDraftChanges = useCallback(async () => {
+    if (!session) return sandboxStillLoading();
+    try {
+      const checkpointResult = await checkpoint(
+        "Before discard",
+        "Saved automatically before discarding draft changes.",
+      );
+      if (!checkpointResult.ok) return checkpointResult;
+      const refreshed = await loadSandboxDocument();
+      const published = refreshed.latestPublishedVersion;
+      if (published) {
+        await getSandboxVersion(published.id);
+        const restored = await restoreSandboxVersion({
+          versionId: published.id,
+          expectedRevision: refreshed.revision,
+        });
+        setSession(openSandboxDocumentSession(restored));
+        await refreshVersions();
+        setMessage(
+          "Draft restored to the latest published version. Live workspace data was not changed.",
+        );
+        return { ok: true as const, value: restored.document };
+      }
+      const cleared = openSandboxDocumentSession({
+        document: emptyDocument(),
+        revision: refreshed.revision,
+        contentHash: "0".repeat(64),
+        byteCount: 0,
+        issues: [],
+        latestPublishedVersion: null,
+        publishedHash: null,
+      });
+      const result = await persist(cleared);
+      if (result.ok) {
+        clearSandboxViewPreferences();
+        setSandboxGeneration((value) => value + 1);
+        setMessage(
+          "Draft changes discarded. Live workspace data was not changed.",
+        );
+      }
+      return result;
+    } catch (error) {
+      return commandFailure(error);
+    }
+  }, [checkpoint, persist, refreshVersions, session]);
 
   function selectIssue(issue: SandboxValidationIssue) {
-    if (sandbox.isPending()) return;
-    if (!issue.targetId) {
-      navigate("Designer");
+    if (
+      pending ||
+      conflict !== null ||
+      automationDraft.dirty ||
+      automationDraft.pending
+    ) {
+      setMessage(
+        "Save or discard your automation changes before leaving this section.",
+      );
       return;
     }
-    if (design.rules.some((rule) => rule.id === issue.targetId)) {
-      const params = new URLSearchParams(search.toString());
-      params.set("rule", issue.targetId);
-      params.set("section", "automation");
-      router.replace(`/sandbox?${params.toString()}`, { scroll: false });
-      return;
-    }
-    const selection = issue.moduleId
-      ? canvasFieldId(issue.moduleId, issue.targetId)
-      : issue.targetId;
+    if (issue.code.startsWith("scenario.")) return navigate("Test");
+    if (issue.code.startsWith("automation.")) return navigate("Automations");
+    if (!issue.targetId) return navigate("Build");
     const params = new URLSearchParams(search.toString());
-    params.set("inspect", selection);
-    params.set("section", "designer");
+    if (design.rules.some((rule) => rule.id === issue.targetId)) {
+      params.set("rule", issue.targetId);
+      params.set("section", "automations");
+    } else {
+      params.set(
+        "inspect",
+        issue.moduleId
+          ? canvasFieldId(issue.moduleId, issue.targetId)
+          : issue.targetId,
+      );
+      params.set("section", "build");
+    }
     router.replace(`/sandbox?${params.toString()}`, { scroll: false });
   }
-
-  function requestCreate(kind: SandboxCreateKind) {
-    if (sandbox.isPending()) return;
-    nextCreateRequestId.current += 1;
-    setCreateRequest({ id: nextCreateRequestId.current, kind });
-    navigate(kind === "automation-rule" ? "Automation" : "Designer");
-  }
-
-  const finishCreateRequest = useCallback(
-    (id: number) => {
-      setCreateRequest((current) => (current?.id === id ? null : current));
-    },
-    [setCreateRequest],
-  );
-
-  const resetDesign = useCallback(async (): Promise<
-    SandboxCommandResult<Design>
-  > => {
-    const result = await sandbox.resetDesign();
-    if (!result.ok) {
-      setMessage(result.error);
-      return result;
+  const reloadConflict = useCallback(async () => {
+    setPending(true);
+    try {
+      const response = await loadSandboxDocument();
+      setSession(openSandboxDocumentSession(response));
+      setConflict(null);
+      setMessage(
+        "Shared Sandbox reloaded. Your local unsaved changes were discarded.",
+      );
+    } catch (error) {
+      setMessage(commandFailure(error).error);
+    } finally {
+      setPending(false);
     }
-    setClearBackup(null);
-    setCreateRequest(null);
-    setMessage(
-      "Current Design reset to the initial design. Undo restores it; Versions, Simulation data, and view preferences were preserved.",
-    );
-    router.replace("/sandbox");
-    return result;
-  }, [router, sandbox.resetDesign]);
-
-  const clearSandboxData = useCallback(async (): Promise<
-    SandboxCommandResult<null>
-  > => {
-    setClearBackup({
-      history: structuredClone(history),
-      versions: structuredClone(versions),
-      simulation: structuredClone(simulation),
-      viewPreferences: loadSandboxViewPreferences(),
-    });
-    const result = await sandbox.clear();
-    if (!result.ok) {
-      setClearBackup(null);
-      setMessage(result.error);
-      return result;
+  }, []);
+  const reapplyConflict = useCallback(async () => {
+    if (!conflict) return;
+    setPending(true);
+    try {
+      const response = await loadSandboxDocument();
+      const reapplied = reapplySandboxDocument(
+        response,
+        conflict.proposedDocument,
+      );
+      const result = await persist(reapplied);
+      if (result.ok)
+        setMessage("Your local draft was reapplied to the shared Sandbox.");
+    } catch (error) {
+      setMessage(commandFailure(error).error);
+    } finally {
+      setPending(false);
     }
-    clearSandboxViewPreferences();
-    skipNextLayoutInitialization.current = true;
-    setCreateRequest(null);
-    setSandboxGeneration((current) => current + 1);
-    setMessage(
-      "Sandbox data cleared. Defaults are loaded; recovery remains available until reload.",
-    );
-    router.replace("/sandbox");
-    return result;
-  }, [history, router, sandbox.clear, simulation, versions]);
+  }, [conflict, persist]);
 
-  async function undoClear(): Promise<void> {
-    if (!clearBackup) return;
-    const result = await sandbox.restoreSnapshot({
-      history: structuredClone(
-        normalizeSandboxHistory(clearBackup.history, initialDesign),
-      ),
-      versions: structuredClone(clearBackup.versions),
-      simulation: structuredClone(clearBackup.simulation),
-    });
-    if (!result.ok) {
-      setMessage(result.error);
-      return;
-    }
-    saveSandboxViewPreferences(clearBackup.viewPreferences);
-    skipNextLayoutInitialization.current = true;
-    setSandboxGeneration((current) => current + 1);
-    setCreateRequest(null);
-    setClearBackup(null);
-    setMessage("");
-    router.replace("/sandbox");
-  }
-
-  if (initialLoading)
+  if (loading)
     return (
-      <section data-sandbox-page aria-busy="true" className="space-y-5">
+      <section data-sandbox-page aria-busy="true">
         <p role="status">Opening Sandbox…</p>
       </section>
     );
-  if (initialError)
+  if (loadError && !session)
     return (
-      <section data-sandbox-page className="space-y-5">
+      <section data-sandbox-page>
         <Alert role="alert" variant="destructive">
-          <p>{resource.error ?? "Sandbox data could not be loaded."}</p>
-          <Button className="mt-3" onClick={resource.reload}>
+          <p>{loadError}</p>
+          <Button className="mt-3" onClick={() => void refresh()}>
             Retry
           </Button>
         </Alert>
@@ -408,23 +596,30 @@ export default function SampleSandbox() {
   return (
     <section
       data-sandbox-page
-      aria-busy={resource.refreshing || undefined}
-      className={`space-y-5 ${section === "Designer" ? "xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[640px] xl:flex-col xl:gap-5 xl:space-y-0" : ""}`}
+      aria-busy={pending || undefined}
+      className={`space-y-5 ${section === "Build" ? "xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[640px] xl:flex-col xl:gap-5 xl:space-y-0" : ""}`}
     >
-      {resource.error ? (
-        <Alert
-          role="status"
-          variant="warning"
-          className="flex flex-wrap items-center gap-2"
-        >
-          <span>{resource.error}</span>
+      {conflict ? (
+        <Alert role="alert" variant="warning" className="flex flex-wrap gap-2">
+          <span>
+            {conflict.reason === "conflict"
+              ? "Save conflict: your proposed document is still local."
+              : "Save did not complete: your proposed document is still local."}
+          </span>
           <Button
-            variant="outline"
             size="sm"
-            onClick={resource.reload}
-            disabled={resource.refreshing}
+            variant="outline"
+            disabled={pending}
+            onClick={() => void reloadConflict()}
           >
-            Retry
+            Reload shared draft
+          </Button>
+          <Button
+            size="sm"
+            disabled={pending}
+            onClick={() => void reapplyConflict()}
+          >
+            Reapply my draft
           </Button>
         </Alert>
       ) : null}
@@ -432,74 +627,89 @@ export default function SampleSandbox() {
         <div className="flex items-center justify-between gap-2 xl:contents">
           <div className="flex min-w-0 items-center gap-2 xl:flex-wrap xl:gap-3">
             <h1 className="truncate text-xl font-semibold tracking-tight sm:text-2xl">
-              Organization designer
+              Organization builder
             </h1>
-            <Badge
-              variant={storageUnavailable ? "warning" : "outline"}
-              className={storageUnavailable ? undefined : "max-xl:hidden"}
-            >
-              {storageUnavailable ? "Storage unavailable" : "Saved"}
+            <Badge variant="outline" className="max-xl:hidden">
+              {conflict
+                ? "Unsaved changes"
+                : session?.hasUnpublishedChanges === true ||
+                    (session?.publishedHash !== undefined &&
+                      session.contentHash !== session.publishedHash)
+                  ? "Unpublished changes"
+                  : session?.publishedHash
+                    ? "Published"
+                    : "Draft saved"}
             </Badge>
           </div>
           <div className="flex shrink-0 gap-2">
+            {section === "Build" ? (
+              <>
+                <Button
+                  variant="outline"
+                  aria-label="Undo"
+                  className="max-xl:size-11 max-xl:p-0"
+                  disabled={!session?.history.past.length || pending}
+                  onClick={() => void undo()}
+                >
+                  <Undo2 data-icon="inline-start" />
+                  <span className="max-xl:sr-only">Undo</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  aria-label="Redo"
+                  className="max-xl:size-11 max-xl:p-0"
+                  disabled={!session?.history.future.length || pending}
+                  onClick={() => void redo()}
+                >
+                  <Redo2 data-icon="inline-start" />
+                  <span className="max-xl:sr-only">Redo</span>
+                </Button>
+              </>
+            ) : null}
             <Button
-              variant="outline"
-              aria-label="Undo"
-              className="max-xl:size-11 max-xl:p-0"
-              disabled={!history.past.length || sandbox.isPending()}
-              onClick={async () => {
-                const result = await sandbox.undo();
-                if (!result.ok) setMessage(result.error);
-              }}
+              disabled={
+                pending ||
+                Boolean(conflict) ||
+                automationDraft.dirty ||
+                automationDraft.pending
+              }
+              onClick={() => setReviewOpen(true)}
             >
-              <Undo2 data-icon="inline-start" />
-              <span className="max-xl:sr-only">Undo</span>
+              Review &amp; Publish
             </Button>
-            <Button
-              variant="outline"
-              aria-label="Redo"
-              className="max-xl:size-11 max-xl:p-0"
-              disabled={!history.future.length || sandbox.isPending()}
-              onClick={async () => {
-                const result = await sandbox.redo();
-                if (!result.ok) setMessage(result.error);
-              }}
-            >
-              <Redo2 data-icon="inline-start" />
-              <span className="max-xl:sr-only">Redo</span>
-            </Button>
+            <SandboxHeaderActions
+              pending={
+                pending || automationDraft.dirty || automationDraft.pending
+              }
+              onCreateCheckpoint={checkpoint}
+              onImport={importFile}
+              onApplyTemplate={applyTemplate}
+              onDiscard={discardDraftChanges}
+            />
           </div>
         </div>
-        <SandboxControls
-          design={design}
-          versions={versions}
-          issues={issues}
-          onCreateCheckpoint={checkpoint}
-          onCreateRelease={createLocalRelease}
-          onImport={importFile}
-          onCreate={requestCreate}
-          onResetDesign={resetDesign}
-          onClearData={clearSandboxData}
-          onSelectIssue={selectIssue}
-          pending={sandbox.isPending()}
-        />
       </header>
-      {message && (
-        <Alert role="status" className="flex flex-wrap items-center gap-2">
-          <span>{message}</span>
-          {clearBackup ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={undoClear}
-              disabled={sandbox.isPending()}
-            >
-              Undo clear
-            </Button>
-          ) : null}
+      {message ? <Alert role="status">{message}</Alert> : null}
+      {issues.length ? (
+        <Alert variant="warning" role="status">
+          <p>
+            {issues.length} item{issues.length === 1 ? "" : "s"} need attention.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {issues.slice(0, 3).map((issue) => (
+              <Button
+                key={`${issue.code}-${issue.targetId ?? ""}`}
+                variant="outline"
+                size="sm"
+                onClick={() => selectIssue(issue)}
+              >
+                Review: {issue.message}
+              </Button>
+            ))}
+          </div>
         </Alert>
-      )}
-      {section === "Designer" ? (
+      ) : null}
+      {section === "Build" ? (
         <Designer
           key={`${requestedSelection}-${sandboxGeneration}`}
           initialSelected={requestedSelection}
@@ -508,37 +718,144 @@ export default function SampleSandbox() {
           change={change}
           initializeLayout={initializeLayout}
           notify={setMessage}
-          onViewPreferenceChange={() => setClearBackup(null)}
-          createRequest={createRequest}
-          onCreateRequestHandled={finishCreateRequest}
-          pending={sandbox.isPending()}
+          onViewPreferenceChange={() => undefined}
+          createRequest={null}
+          onCreateRequestHandled={() => undefined}
+          pending={pending}
         />
       ) : null}
-      {section !== "Designer" ? (
-        <Workflows
-          section={section}
-          design={design}
-          change={change}
+      {section === "Automations" && session ? (
+        <AutomationStudio
+          design={session.document.design}
+          automations={session.document.automations}
+          runs={automationRuns}
+          activity={automationActivity}
+          onRefreshActivity={refreshAutomationActivity}
+          onChange={(automations) =>
+            saveDocument({ ...session.document, automations })
+          }
+          onStateChange={setAutomationDraft}
+        />
+      ) : null}
+      {section === "Test" && session ? (
+        <TestWorkspace
+          design={session.document.design}
+          automations={session.document.automations}
+          runs={testRuns}
+          onRun={async (input) => {
+            const run = await createSandboxTest({
+              expectedRevision: session.revision,
+              ...input,
+            });
+            setTestRuns((current) => [
+              run,
+              ...current.filter((item) => item.id !== run.id),
+            ]);
+          }}
+          onClear={async () => {
+            await clearSandboxTests();
+            setTestRuns([]);
+          }}
+        />
+      ) : null}
+      {section === "History" ? (
+        <VersionsWorkspace
           versions={versions}
-          simulation={simulation}
-          updateVersions={updateVersions}
-          updateSimulation={updateSimulation}
-          restoreVersion={sandbox.restoreVersion}
-          rollbackVersion={sandbox.rollbackVersion}
-          deleteVersion={sandbox.deleteVersion}
-          restoreDeletedVersion={sandbox.restoreDeletedVersion}
-          navigate={navigate}
+          getVersion={async (id) => {
+            try {
+              return { ok: true as const, value: await getSandboxVersion(id) };
+            } catch (error) {
+              return commandFailure(error);
+            }
+          }}
+          updateVersion={async (id, label) => {
+            if (!session) return sandboxStillLoading();
+            try {
+              const version = await updateSandboxVersion({
+                versionId: id,
+                expectedRevision: session.revision,
+                label,
+              });
+              await syncVersionMetadata();
+              return { ok: true as const, value: version };
+            } catch (error) {
+              return commandFailure(error);
+            }
+          }}
+          restoreVersion={async (id) => {
+            if (!session) return sandboxStillLoading();
+            try {
+              const response = await restoreSandboxVersion({
+                versionId: id,
+                expectedRevision: session.revision,
+              });
+              setSession(openSandboxDocumentSession(response));
+              await refreshVersions();
+              return { ok: true as const, value: response };
+            } catch (error) {
+              return commandFailure(error);
+            }
+          }}
+          deleteVersion={async (id) => {
+            if (!session) return sandboxStillLoading();
+            try {
+              await deleteSandboxVersion({
+                versionId: id,
+                expectedRevision: session.revision,
+              });
+              await syncVersionMetadata();
+              return { ok: true as const, value: null };
+            } catch (error) {
+              return commandFailure(error);
+            }
+          }}
           notify={setMessage}
-          createRequest={createRequest}
-          onCreateRequestHandled={finishCreateRequest}
-          requestedRuleId={search.get("rule")}
-          pending={sandbox.isPending()}
+          pending={pending}
         />
       ) : null}
       <footer className="border-border text-muted-foreground flex flex-wrap justify-between gap-2 border-t pt-3 text-xs">
         <span>{counts(design)}</span>
-        <span>Draft · {history.past.length} undo steps available</span>
+        <span>
+          Draft · {session?.history.past.length ?? 0} undo steps available
+        </span>
       </footer>
+      {session ? (
+        <ReviewPublishDialog
+          open={reviewOpen}
+          expectedRevision={session.revision}
+          disabled={
+            pending ||
+            Boolean(conflict) ||
+            automationDraft.dirty ||
+            automationDraft.pending
+          }
+          localBlockers={automationPublicationBlockers(
+            session.document.automations,
+            session.document.design,
+          )}
+          onOpenChange={setReviewOpen}
+          onPreview={() =>
+            createSandboxPublicationPreview({
+              expectedRevision: session.revision,
+            })
+          }
+          onPublish={({ preview, password, note, idempotencyKey }) =>
+            publishSandbox({
+              expectedRevision: session.revision,
+              previewToken: preview.previewToken,
+              impactDigest: preview.impactDigest,
+              password,
+              ...(note ? { note } : {}),
+              idempotencyKey,
+            })
+          }
+          onPublished={async () => {
+            await refresh();
+            if (section === "Automations") await refreshAutomationActivity();
+            setMessage("Your changes are now published to the live workspace.");
+          }}
+        />
+      ) : null}
     </section>
   );
 }

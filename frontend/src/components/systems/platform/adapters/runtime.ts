@@ -23,9 +23,6 @@ import {
 } from "../../comms/domain/configuration";
 import { stageRecordDiscussion } from "../../comms/state/runtime";
 import { previewCommsNotification } from "../../comms/domain/notification-policy";
-import { normalizeSandboxHistory } from "../../sandbox/state/controller";
-import { initialRuntimeSandboxHistory } from "../../sandbox/state/async";
-import { initialDesign, type Design } from "../../sandbox/domain/model";
 import {
   completeCollection,
   pageCollection,
@@ -100,7 +97,6 @@ export type PlatformFile = (typeof PLATFORM_FILES)[number];
 
 export const PLATFORM_OWNER_KEYS = [
   "access-people",
-  "sandbox.design",
   "records",
   "commsMessages",
   "comms-configuration",
@@ -116,7 +112,6 @@ export type PlatformReader = <T>(key: string, initial: T) => T;
 
 export type PlatformSnapshot = {
   people: Person[];
-  design: Design;
   records: SampleRecord[];
   messages: Message[];
   commsConfiguration: CommsConfiguration;
@@ -130,13 +125,8 @@ export type PlatformSnapshot = {
 };
 
 export function readPlatformSnapshot(read: PlatformReader): PlatformSnapshot {
-  const design = normalizeSandboxHistory(
-    read<unknown>("sandbox.design", initialRuntimeSandboxHistory),
-    initialDesign,
-  ).present;
   return {
     people: structuredClone(read("access-people", initialPeople)),
-    design: structuredClone(design),
     records: structuredClone(read("records", INITIAL_RECORDS)),
     messages: structuredClone(read("commsMessages", MESSAGES)),
     commsConfiguration: normalizeCommsConfiguration(

@@ -6,8 +6,8 @@ import type {
 import { normalizeField, type Design, type Field } from "../domain/model";
 
 export const canvasFieldId = (moduleId: string, fieldId: string) =>
-  `sample-field:${encodeURIComponent(moduleId)}:${encodeURIComponent(fieldId)}`;
-export function sampleField(design: Design, projectedId: string) {
+  `sandbox-field:${encodeURIComponent(moduleId)}:${encodeURIComponent(fieldId)}`;
+export function projectedField(design: Design, projectedId: string) {
   for (const item of design.modules) {
     const field = item.fields.find(
       (entry) => canvasFieldId(item.id, entry.id) === projectedId,
@@ -16,7 +16,7 @@ export function sampleField(design: Design, projectedId: string) {
   }
   return undefined;
 }
-export const sampleTypes: Record<SandboxFieldType, string> = {
+export const fieldTypeNames: Record<SandboxFieldType, string> = {
   text: "Text",
   "long-text": "Long text",
   int: "Integer",
@@ -87,13 +87,13 @@ export function updateProjectedField(
   id: string,
   patch: UpdateSandboxFieldPatch,
 ): Design {
-  const target = sampleField(design, id);
+  const target = projectedField(design, id);
   if (!target) return design;
   const metadata: Partial<Field> = {};
   if (patch.name !== undefined) metadata.name = patch.name;
   if (patch.required !== undefined) metadata.required = patch.required;
   if (patch.description !== undefined) metadata.description = patch.description;
-  const nextType = patch.type === undefined ? null : sampleTypes[patch.type];
+  const nextType = patch.type === undefined ? null : fieldTypeNames[patch.type];
   const typeChanged =
     nextType !== null && patch.type !== canvasType(target.field.type);
   if (typeChanged) metadata.type = nextType;

@@ -26,13 +26,12 @@ const workspaceNavigationDefinitions = [
     label: "Sandbox",
     pathname: "/sandbox",
     queryKey: "section",
-    defaultItem: "designer",
+    defaultItem: "build",
     items: [
-      { id: "designer", label: "Designer" },
-      { id: "automation", label: "Automation" },
-      { id: "simulation", label: "Simulation" },
-      { id: "preview", label: "Preview" },
-      { id: "versions", label: "Versions" },
+      { id: "build", label: "Build" },
+      { id: "automations", label: "Automations" },
+      { id: "test", label: "Test" },
+      { id: "history", label: "History" },
     ],
   },
   {
@@ -111,6 +110,13 @@ const workspaceNavigationDefinitions = [
 // Match the identifier boundary used by OpenView before its record link
 // overrides the requested section.
 const openViewRecordIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const sandboxLegacySections: Readonly<Record<string, string>> = {
+  designer: "build",
+  automation: "automations",
+  simulation: "test",
+  preview: "test",
+  versions: "history",
+};
 
 function href(pathname: string, params: URLSearchParams): string {
   const query = params.toString();
@@ -123,16 +129,23 @@ function sectionFor(
   hash = "",
 ): string {
   const requested = params.get(definition.queryKey);
+  const normalizedRequested =
+    definition.id === "sandbox" && requested
+      ? (sandboxLegacySections[requested.toLowerCase()] ??
+        requested.toLowerCase())
+      : requested;
   if (
     definition.id === "openview" &&
     openViewRecordIdPattern.test(params.get("record") ?? "")
   )
     return "views";
-  const matched = definition.items.find((item) => item.id === requested);
+  const matched = definition.items.find(
+    (item) => item.id === normalizedRequested,
+  );
   if (matched) return matched.id;
   if (definition.id === "access" && params.has("user")) return "identities";
   if (requested !== null) return definition.defaultItem;
-  if (definition.id === "sandbox" && params.has("rule")) return "automation";
+  if (definition.id === "sandbox" && params.has("rule")) return "automations";
   if (definition.id === "platform") {
     if (hash === "#account") return "account";
     if (hash === "#notifications") return "notifications";

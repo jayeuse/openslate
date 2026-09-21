@@ -2,11 +2,11 @@ import { expect, test } from "@playwright/test";
 import {
   appendVersion,
   changesFrom,
-  initialDesign,
   normalizeField,
   type Design,
   type Version,
 } from "../../../src/components/systems/sandbox/domain/model";
+import { configuredSandboxDesign as initialDesign } from "../../helpers/sandbox-fixtures";
 
 function fixture(): Design {
   return structuredClone(initialDesign);

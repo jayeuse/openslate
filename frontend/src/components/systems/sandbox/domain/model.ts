@@ -1,4 +1,3 @@
-import { MODULE_TABLE, moduleTableHeight } from "@/lib/sandbox/x6-adapter";
 import type { SandboxCanvasLayout } from "@/components/sandbox/sandbox-canvas";
 
 export const FIELD_TYPES = [
@@ -58,12 +57,17 @@ export type Module = {
   x: number;
   y: number;
 };
+export type RelationshipFieldMapping = {
+  sourceFieldId: string;
+  targetFieldId: string;
+};
 export type Relationship = {
   id: string;
   name: string;
   source: string;
   target: string;
   cardinality: string;
+  fieldMappings: RelationshipFieldMapping[];
 };
 export type RuleOperator = ">" | ">=" | "<" | "<=" | "=" | "!=";
 export type RuleTrigger =
@@ -143,6 +147,113 @@ const canonicalFieldNames = new Map<string, FieldTypeName>([
 
 export function canonicalFieldType(type: string): FieldTypeName | null {
   return canonicalFieldNames.get(type) ?? null;
+}
+
+export function relationshipFieldTypesAreCompatible(
+  source: Field,
+  target: Field,
+): boolean {
+  const sourceType = canonicalFieldType(source.type);
+  const targetType = canonicalFieldType(target.type);
+  if (!sourceType || !targetType) return false;
+  if (!source.required && target.required) return false;
+  if (sourceType === "Select" && targetType === "Select") {
+    const sourceConfig = normalizeField(source).config;
+    const targetConfig = normalizeField(target).config;
+    return (
+      sourceConfig.kind === "select" &&
+      targetConfig.kind === "select" &&
+      sourceConfig.options.every((option) =>
+        targetConfig.options.includes(option),
+      )
+    );
+  }
+  if (
+    (sourceType === "Integer" || sourceType === "Number") &&
+    (targetType === "Integer" || targetType === "Number")
+  ) {
+    if (!(
+      sourceType === targetType ||
+      (sourceType === "Integer" && targetType === "Number")
+    ))
+      return false;
+    const sourceConfig = normalizeField(source).config;
+    const targetConfig = normalizeField(target).config;
+    if (
+      (sourceConfig.kind !== "integer" && sourceConfig.kind !== "number") ||
+      (targetConfig.kind !== "integer" && targetConfig.kind !== "number")
+    )
+      return false;
+    if (
+      (targetConfig.min !== undefined &&
+        (sourceConfig.min === undefined ||
+          sourceConfig.min < targetConfig.min)) ||
+      (targetConfig.max !== undefined &&
+        (sourceConfig.max === undefined || sourceConfig.max > targetConfig.max))
+    )
+      return false;
+    if (targetConfig.step === undefined) return true;
+    const sourceStep = sourceConfig.step;
+    if (sourceStep === undefined) return false;
+    return (
+      isStepAligned(sourceStep, targetConfig.step) &&
+      isStepAligned(
+        (sourceConfig.min ?? 0) - (targetConfig.min ?? 0),
+        targetConfig.step,
+      )
+    );
+  }
+  if (sourceType === "Date" || sourceType === "Date/Time") {
+    if (sourceType !== targetType) return false;
+    const sourceConfig = normalizeField(source).config;
+    const targetConfig = normalizeField(target).config;
+    if (
+      (sourceConfig.kind !== "date" && sourceConfig.kind !== "datetime") ||
+      (targetConfig.kind !== "date" && targetConfig.kind !== "datetime")
+    )
+      return false;
+    return (
+      (targetConfig.earliest === undefined ||
+        (sourceConfig.earliest !== undefined &&
+          sourceConfig.earliest >= targetConfig.earliest)) &&
+      (targetConfig.latest === undefined ||
+        (sourceConfig.latest !== undefined &&
+          sourceConfig.latest <= targetConfig.latest))
+    );
+  }
+  const textLikeTypes = new Set<FieldTypeName>([
+    "Text",
+    "Long text",
+    "Email",
+    "URL",
+  ]);
+  const plainTextTypes = new Set<FieldTypeName>(["Text", "Long text"]);
+  if (textLikeTypes.has(sourceType) && plainTextTypes.has(targetType)) {
+    const sourceConfig = normalizeField(source).config;
+    const targetConfig = normalizeField(target).config;
+    const sourceMaxLength =
+      "maxLength" in sourceConfig ? sourceConfig.maxLength : undefined;
+    const targetMaxLength =
+      "maxLength" in targetConfig ? targetConfig.maxLength : undefined;
+    return (
+      targetMaxLength === undefined ||
+      (sourceMaxLength !== undefined && sourceMaxLength <= targetMaxLength)
+    );
+  }
+  if (sourceType === "Email" && targetType === "Email") return true;
+  if (sourceType === "URL" && targetType === "URL") return true;
+  return sourceType === targetType;
+}
+
+function isStepAligned(value: number, step: number): boolean {
+  if (!Number.isFinite(value) || !Number.isFinite(step) || step <= 0)
+    return false;
+  const quotient = value / step;
+  const tolerance = Math.min(
+    1e-7,
+    Number.EPSILON * 32 * Math.max(1, Math.abs(quotient)),
+  );
+  return Math.abs(quotient - Math.round(quotient)) <= tolerance;
 }
 
 function numericDefault(value: string): number | null {
@@ -275,26 +386,26 @@ export function normalizeRule(
         };
   const action: RuleAction =
     rule.action === "Send a channel message"
-      ? { kind: "channel-message", channel: "Operations" }
+      ? { kind: "channel-message", channel: rule.name }
       : rule.action === "Create a record"
         ? {
             kind: "create-record",
             moduleId: sandboxModule?.id ?? "",
             fieldId: status?.id ?? "",
-            value: "Open",
+            value: status?.value ?? "",
           }
         : rule.action === "Update a field"
           ? {
               kind: "update-field",
               moduleId: sandboxModule?.id ?? "",
               fieldId: status?.id ?? "",
-              value: "In progress",
+              value: status?.value ?? "",
             }
           : rule.action === "Assign a task"
-            ? { kind: "assign-task", assignee: "Operator" }
+            ? { kind: "assign-task", assignee: rule.name }
             : {
                 kind: "notification",
-                message: "Urgent request needs attention.",
+                message: rule.action,
               };
   return { ...rule, config: { trigger, condition, action } };
 }
@@ -338,70 +449,13 @@ export function ruleConfigLabels(config: RuleConfig, design: Design) {
   })();
   return { trigger, condition, action };
 }
-export const uid = () => `sample-${crypto.randomUUID()}`;
-const fields = (names: string[]): Field[] =>
-  names.map((name, i) => ({
-    id: `sample-field-${name}`,
-    name,
-    type: i === 2 ? "Select" : "Text",
-    required: i === 0,
-    value: "",
-    options: i === 2 ? "Open, In progress, Complete" : "",
-    closed: false,
-  }));
+export const uid = () => `sandbox-${crypto.randomUUID()}`;
 export const initialDesign: Design = {
-  departments: [
-    { id: "sample-operations", name: "Operations", closed: false },
-    { id: "sample-commercial", name: "Commercial", closed: false },
-  ],
-  modules: [
-    {
-      id: "sample-requests",
-      department: "sample-operations",
-      name: "Service requests",
-      closed: false,
-      fields: fields(["Request number", "Title", "Status", "Priority"]),
-      x: 0,
-      y: 0,
-    },
-    {
-      id: "sample-equipment",
-      department: "sample-operations",
-      name: "Equipment",
-      closed: false,
-      fields: fields(["Asset tag", "Name", "Status", "Location"]),
-      x: 340,
-      y: 0,
-    },
-    {
-      id: "sample-customers",
-      department: "sample-commercial",
-      name: "Customers",
-      closed: false,
-      fields: fields(["Customer ID", "Name", "Status", "Email"]),
-      x: 170,
-      y: 360,
-    },
-  ],
-  relationships: [
-    {
-      id: "sample-uses",
-      name: "Uses equipment",
-      source: "sample-requests",
-      target: "sample-equipment",
-      cardinality: "One-to-many",
-    },
-  ],
-  rules: [
-    {
-      id: "sample-urgent",
-      name: "Urgent request alert",
-      trigger: "New record",
-      condition: "Priority is urgent",
-      action: "Send a notification",
-      enabled: true,
-    },
-  ],
+  departments: [],
+  modules: [],
+  relationships: [],
+  rules: [],
+  layout: {},
 };
 export const counts = (d: Design) =>
   `${d.departments.length} departments · ${d.modules.length} modules · ${d.modules.reduce((n, m) => n + m.fields.length, 0)} fields · ${d.relationships.length} relationships · ${d.rules.length} rules`;
@@ -413,29 +467,7 @@ export function reorder<T>(items: T[], index: number, delta: number): T[] {
   return next;
 }
 
-// The sample starts compact; the standalone editor keeps its own defaults.
-export const compactDefaultLayout: SandboxCanvasLayout = {
-  "sample-operations": { x: 24, y: 24, width: 656, height: 240 },
-  "sample-commercial": { x: 184, y: 296, width: 336, height: 240 },
-  "sample-requests": {
-    x: 48,
-    y: 72,
-    width: MODULE_TABLE.width,
-    height: moduleTableHeight(initialDesign.modules[0].fields.length),
-  },
-  "sample-equipment": {
-    x: 376,
-    y: 72,
-    width: MODULE_TABLE.width,
-    height: moduleTableHeight(initialDesign.modules[1].fields.length),
-  },
-  "sample-customers": {
-    x: 208,
-    y: 344,
-    width: MODULE_TABLE.width,
-    height: moduleTableHeight(initialDesign.modules[2].fields.length),
-  },
-};
+export const compactDefaultLayout: SandboxCanvasLayout = {};
 
 export function changesFrom(
   previous: Design | undefined,
@@ -578,9 +610,3 @@ export function changesFrom(
     ? changes
     : ["No structural changes since the last publication."];
 }
-
-export const initialSandboxHistory: {
-  past: Design[];
-  present: Design;
-  future: Design[];
-} = { past: [], present: initialDesign, future: [] };

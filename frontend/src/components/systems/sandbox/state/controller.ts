@@ -7,7 +7,6 @@ import type {
   Rule,
 } from "../domain/model";
 import { normalizeField } from "../domain/model";
-import { decodeStoredSandboxHistory } from "../helpers/stored-history";
 
 export type SandboxCommand =
   | {
@@ -162,30 +161,5 @@ export function redoSandboxCommand(history: SandboxHistory): SandboxHistory {
     past: [...history.past, entry].slice(-50),
     present: entry.after,
     future: history.future.slice(1),
-  };
-}
-
-function replacementEntry(before: Design, after: Design): SandboxHistoryEntry {
-  return {
-    command: { type: "replace-design", design: after },
-    before,
-    after,
-  };
-}
-
-export function normalizeSandboxHistory(
-  value: unknown,
-  fallback: Design,
-): SandboxHistory {
-  const stored = decodeStoredSandboxHistory(value);
-  if (!stored) return createSandboxHistory(fallback);
-  return {
-    past: stored.past.map((entry) =>
-      replacementEntry(entry.before, entry.after),
-    ),
-    present: stored.present,
-    future: stored.future.map((entry) =>
-      replacementEntry(entry.before, entry.after),
-    ),
   };
 }

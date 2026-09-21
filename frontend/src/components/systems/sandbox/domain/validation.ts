@@ -2,6 +2,7 @@ import {
   canonicalFieldType,
   normalizeField,
   normalizeRule,
+  relationshipFieldTypesAreCompatible,
   type Design,
   type Field,
   type Rule,
@@ -22,6 +23,7 @@ export const SANDBOX_LIMITS = {
   modules: 500,
   fields: 5_000,
   relationships: 1_000,
+  relationshipMappings: 1_000,
   rules: 500,
   versions: 50,
   nameCharacters: 80,
@@ -686,6 +688,83 @@ export function validateSandboxDesign(
           relationship.id,
         ),
       );
+    if (relationship.fieldMappings.length > SANDBOX_LIMITS.relationshipMappings)
+      issues.push(
+        issue(
+          "relationship.mapping_limit",
+          "Relationship field mapping limit exceeded",
+          relationship.id,
+        ),
+      );
+    const sourceModule = design.modules.find(
+      (item) => item.id === relationship.source,
+    );
+    const targetModule = design.modules.find(
+      (item) => item.id === relationship.target,
+    );
+    const mappingKeys = new Set<string>();
+    for (const mapping of relationship.fieldMappings) {
+      const sourceField = sourceModule?.fields.find(
+        (item) => item.id === mapping.sourceFieldId,
+      );
+      const targetField = targetModule?.fields.find(
+        (item) => item.id === mapping.targetFieldId,
+      );
+      if (!sourceField)
+        issues.push(
+          issue(
+            "relationship.mapping_source_missing",
+            "Relationship mapping source field does not exist",
+            relationship.id,
+          ),
+        );
+      else if (sourceField.closed)
+        issues.push(
+          issue(
+            "relationship.mapping_source_closed",
+            "Relationship mapping source field is closed",
+            relationship.id,
+          ),
+        );
+      if (!targetField)
+        issues.push(
+          issue(
+            "relationship.mapping_target_missing",
+            "Relationship mapping target field does not exist",
+            relationship.id,
+          ),
+        );
+      else if (targetField.closed)
+        issues.push(
+          issue(
+            "relationship.mapping_target_closed",
+            "Relationship mapping target field is closed",
+            relationship.id,
+          ),
+        );
+      if (
+        sourceField &&
+        targetField &&
+        !relationshipFieldTypesAreCompatible(sourceField, targetField)
+      )
+        issues.push(
+          issue(
+            "relationship.mapping_type_incompatible",
+            "Relationship mapping fields must have compatible types",
+            relationship.id,
+          ),
+        );
+      const mappingKey = `${mapping.sourceFieldId}\u0000${mapping.targetFieldId}`;
+      if (mappingKeys.has(mappingKey))
+        issues.push(
+          issue(
+            "relationship.mapping_duplicate",
+            "Relationship mapping duplicates an existing field mapping",
+            relationship.id,
+          ),
+        );
+      mappingKeys.add(mappingKey);
+    }
   }
   for (const rule of design.rules) {
     issues.push(...validateId(rule.id, "rule"));
