@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +30,7 @@ export type AutomationStudioProps = {
   automations: SandboxAutomation[];
   runs: readonly SandboxAutomationRun[];
   activity: { loading: boolean; error: string };
+  initialSelectedId?: string;
   onRefreshActivity: () => Promise<void>;
   onChange: (automations: SandboxAutomation[]) => Promise<void> | void;
   onStateChange?: (state: { dirty: boolean; pending: boolean }) => void;
@@ -680,12 +681,19 @@ export function AutomationStudio({
   automations,
   runs,
   activity,
+  initialSelectedId,
   onRefreshActivity,
   onChange,
   onStateChange,
 }: AutomationStudioProps) {
   const [draft, setDraft] = useState(automations);
-  const [selectedId, setSelectedId] = useState(automations[0]?.id ?? "");
+  const [selectedId, setSelectedId] = useState(
+    initialSelectedId &&
+      automations.some((item) => item.id === initialSelectedId)
+      ? initialSelectedId
+      : (automations[0]?.id ?? ""),
+  );
+  const requestedSelection = useRef(initialSelectedId);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   useEffect(() => setDraft(automations), [automations]);
@@ -693,6 +701,15 @@ export function AutomationStudio({
     if (selectedId && draft.some((item) => item.id === selectedId)) return;
     setSelectedId(draft[0]?.id ?? "");
   }, [draft, selectedId]);
+  useEffect(() => {
+    if (requestedSelection.current === initialSelectedId) return;
+    requestedSelection.current = initialSelectedId;
+    if (
+      initialSelectedId &&
+      draft.some((item) => item.id === initialSelectedId)
+    )
+      setSelectedId(initialSelectedId);
+  }, [draft, initialSelectedId]);
   const selected = draft.find((item) => item.id === selectedId);
   const dirty = JSON.stringify(draft) !== JSON.stringify(automations);
   useEffect(

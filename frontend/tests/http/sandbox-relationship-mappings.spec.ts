@@ -15,6 +15,8 @@ type SandboxOptions = {
   publishedHash?: string | null;
   testRuns?: unknown[];
   saveDelay?: Promise<void>;
+  publicationDelay?: Promise<void>;
+  issues?: Array<{ code: string; message: string; targetId: string | null }>;
   versionMutationDelay?: Promise<void>;
   versions?: Array<Record<string, unknown>>;
 };
@@ -39,6 +41,7 @@ async function openAuthenticatedSandbox(
 ) {
   let revision = 1;
   let documentReads = 0;
+  let documentWrites = 0;
   let versions = options.versions ?? [];
   let document = migrateSandboxFileV1({
     kind: "openslate-sandbox",
@@ -68,6 +71,7 @@ async function openAuthenticatedSandbox(
       }
     }
     if (route.request().method() === "PUT") {
+      documentWrites += 1;
       await options.saveDelay;
       if (options.saveFailure) {
         await route.fulfill({
@@ -90,7 +94,7 @@ async function openAuthenticatedSandbox(
         revision,
         contentHash: "a".repeat(64),
         byteCount: JSON.stringify(document).length,
-        issues: [],
+        issues: options.issues ?? [],
         latestPublishedVersion: null,
         publishedHash: options.publishedHash ?? null,
         hasUnpublishedChanges: options.hasUnpublishedChanges ?? true,
@@ -182,11 +186,37 @@ async function openAuthenticatedSandbox(
       body: JSON.stringify({ items: [] }),
     });
   });
+  await page.route("**/api/sandbox/publication-previews", async (route) => {
+    await options.publicationDelay;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        previewToken: "sandbox-preview",
+        impactDigest: "b".repeat(64),
+        documentRevision: revision,
+        documentHash: "a".repeat(64),
+        expiresAt: "2026-09-22T12:00:00Z",
+        changes: [],
+        counts: {
+          departments: 0,
+          modules: 0,
+          fields: 0,
+          relationships: 0,
+          automations: 0,
+        },
+        warnings: [],
+        blockers: [],
+      }),
+    });
+  });
   await page.goto("/sandbox");
   await expect(
     page.getByRole("heading", { name: "Organization builder" }),
   ).toBeVisible();
-  return { document: () => structuredClone(document) };
+  return {
+    document: () => structuredClone(document),
+    documentWrites: () => documentWrites,
+  };
 }
 
 test("an organization template replaces the empty draft only after confirmation", async ({
@@ -388,6 +418,102 @@ test("automation editing is locked while its save is pending", async ({
     releaseSave();
   }
   await expect(name).toBeEnabled();
+});
+
+test("an automation issue opens the automation it identifies", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const first = design.rules[0];
+  if (!first) throw new Error("configured automation is unavailable");
+  design.rules.push({
+    ...structuredClone(first),
+    id: "sample-follow-up",
+    name: "Follow-up request alert",
+  });
+  await openAuthenticatedSandbox(page, design, {
+    issues: [
+      {
+        code: "automation.invalid",
+        message: "Review the follow-up automation",
+        targetId: "sample-follow-up",
+      },
+    ],
+  });
+
+  await page
+    .getByRole("button", {
+      name: "Review: Review the follow-up automation",
+    })
+    .click();
+
+  await expect(page.getByLabel("Automation name")).toHaveValue(
+    "Follow-up request alert",
+  );
+});
+
+test("designer commands are ignored while a design save is pending", async ({
+  page,
+}) => {
+  let releaseSave = () => {};
+  const saveDelay = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { saveDelay },
+  );
+
+  await page.getByRole("button", { name: "View canvas" }).click();
+  await page.getByRole("menuitem", { name: "Auto-arrange" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(1);
+
+  try {
+    await page.keyboard.press("Control+z");
+    await expect.poll(sandbox.documentWrites).toBe(1);
+  } finally {
+    releaseSave();
+  }
+});
+
+test("a pending publication review protects browser exits", async ({
+  page,
+}) => {
+  let releasePreview = () => {};
+  const publicationDelay = new Promise<void>((resolve) => {
+    releasePreview = resolve;
+  });
+  await openAuthenticatedSandbox(page, initialDesign, {
+    publicationDelay,
+  });
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      }),
+    )
+    .toBe(false);
+
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  await page.getByRole("button", { name: "Review changes" }).click();
+
+  try {
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const event = new Event("beforeunload", { cancelable: true });
+          window.dispatchEvent(event);
+          return event.defaultPrevented;
+        }),
+      )
+      .toBe(true);
+  } finally {
+    releasePreview();
+  }
 });
 
 test("history controls are locked while a version mutation is pending", async ({

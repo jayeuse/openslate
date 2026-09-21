@@ -159,6 +159,7 @@ export default function SandboxPage() {
     dirty: false,
     pending: false,
   });
+  const [publicationPending, setPublicationPending] = useState(false);
   const [sandboxGeneration, setSandboxGeneration] = useState(0);
   const skipNextLayoutInitialization = useRef(false);
   const section = sectionFromSearch(search.get("section"), search.get("rule"));
@@ -243,6 +244,7 @@ export default function SandboxPage() {
       if (
         !bypassPending &&
         (pending ||
+          publicationPending ||
           conflict !== null ||
           automationDraft.dirty ||
           automationDraft.pending)
@@ -257,6 +259,7 @@ export default function SandboxPage() {
       automationDraft.pending,
       conflict,
       pending,
+      publicationPending,
       router,
       search,
     ],
@@ -265,15 +268,23 @@ export default function SandboxPage() {
     useCallback(
       () =>
         !pending &&
+        !publicationPending &&
         !conflict &&
         !automationDraft.dirty &&
         !automationDraft.pending,
-      [automationDraft.dirty, automationDraft.pending, conflict, pending],
+      [
+        automationDraft.dirty,
+        automationDraft.pending,
+        conflict,
+        pending,
+        publicationPending,
+      ],
     ),
   );
   useEffect(() => {
     if (
       !pending &&
+      !publicationPending &&
       !conflict &&
       !automationDraft.dirty &&
       !automationDraft.pending
@@ -285,7 +296,13 @@ export default function SandboxPage() {
     };
     window.addEventListener("beforeunload", guardBrowserExit);
     return () => window.removeEventListener("beforeunload", guardBrowserExit);
-  }, [automationDraft.dirty, automationDraft.pending, conflict, pending]);
+  }, [
+    automationDraft.dirty,
+    automationDraft.pending,
+    conflict,
+    pending,
+    publicationPending,
+  ]);
 
   const persist = useCallback(
     async (
@@ -337,6 +354,11 @@ export default function SandboxPage() {
   const change = useCallback(
     async (update: DesignUpdate): Promise<SandboxCommandResult<Design>> => {
       if (!session) return sandboxStillLoading();
+      if (pending)
+        return {
+          ok: false,
+          error: "A Sandbox change is already being saved.",
+        };
       const nextDesign =
         typeof update === "function" ? update(session.history.present) : update;
       if (
@@ -346,25 +368,25 @@ export default function SandboxPage() {
         return { ok: true, value: session.history.present };
       return persist(updateSandboxDocumentSession(session, nextDesign));
     },
-    [persist, session],
+    [pending, persist, session],
   );
   const undo = useCallback(async () => {
-    if (!session) return;
+    if (!session || pending) return;
     return persist({
       ...session,
       history: undoSandboxCommand(session.history),
     });
-  }, [persist, session]);
+  }, [pending, persist, session]);
   const redo = useCallback(async () => {
-    if (!session) return;
+    if (!session || pending) return;
     return persist({
       ...session,
       history: redoSandboxCommand(session.history),
     });
-  }, [persist, session]);
+  }, [pending, persist, session]);
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
-      if (section !== "Build") return;
+      if (section !== "Build" || pending) return;
       if (
         (!event.metaKey && !event.ctrlKey) ||
         !["z", "y"].includes(event.key.toLowerCase())
@@ -386,7 +408,7 @@ export default function SandboxPage() {
     }
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, [redo, section, undo]);
+  }, [pending, redo, section, undo]);
 
   const initializeLayout = useCallback(
     (layout: SandboxCanvasLayout) => {
@@ -530,6 +552,7 @@ export default function SandboxPage() {
   function selectIssue(issue: SandboxValidationIssue) {
     if (
       pending ||
+      publicationPending ||
       conflict !== null ||
       automationDraft.dirty ||
       automationDraft.pending
@@ -540,7 +563,13 @@ export default function SandboxPage() {
       return;
     }
     if (issue.code.startsWith("scenario.")) return navigate("Test");
-    if (issue.code.startsWith("automation.")) return navigate("Automations");
+    if (issue.code.startsWith("automation.")) {
+      const params = new URLSearchParams(search.toString());
+      if (issue.targetId) params.set("rule", issue.targetId);
+      params.set("section", "automations");
+      router.replace(`/sandbox?${params.toString()}`, { scroll: false });
+      return;
+    }
     if (!issue.targetId) return navigate("Build");
     const params = new URLSearchParams(search.toString());
     if (design.rules.some((rule) => rule.id === issue.targetId)) {
@@ -611,7 +640,7 @@ export default function SandboxPage() {
   return (
     <section
       data-sandbox-page
-      aria-busy={pending || undefined}
+      aria-busy={pending || publicationPending || undefined}
       className={`space-y-5 ${section === "Build" ? "xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[640px] xl:flex-col xl:gap-5 xl:space-y-0" : ""}`}
     >
       {conflict ? (
@@ -745,6 +774,7 @@ export default function SandboxPage() {
           automations={session.document.automations}
           runs={automationRuns}
           activity={automationActivity}
+          initialSelectedId={search.get("rule") ?? undefined}
           onRefreshActivity={refreshAutomationActivity}
           onChange={(automations) =>
             saveDocument({ ...session.document, automations })
@@ -858,6 +888,7 @@ export default function SandboxPage() {
             session.document.design,
           )}
           onOpenChange={setReviewOpen}
+          onPendingChange={setPublicationPending}
           onPreview={() =>
             createSandboxPublicationPreview({
               expectedRevision: session.revision,

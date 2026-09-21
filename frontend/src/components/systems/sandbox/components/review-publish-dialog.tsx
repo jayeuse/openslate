@@ -24,6 +24,7 @@ type Props = {
   disabled: boolean;
   localBlockers: readonly string[];
   onOpenChange: (open: boolean) => void;
+  onPendingChange?: (pending: boolean) => void;
   onPreview: () => Promise<SandboxPublicationPreview>;
   onPublish: (input: {
     preview: SandboxPublicationPreview;
@@ -63,6 +64,7 @@ export function ReviewPublishDialog({
   disabled,
   localBlockers,
   onOpenChange,
+  onPendingChange,
   onPreview,
   onPublish,
   onPublished,
@@ -84,6 +86,8 @@ export function ReviewPublishDialog({
     setError("");
     setIdempotencyKey("");
   }, [open, expectedRevision]);
+  useEffect(() => onPendingChange?.(pending), [onPendingChange, pending]);
+  useEffect(() => () => onPendingChange?.(false), [onPendingChange]);
 
   async function review() {
     setPending(true);
