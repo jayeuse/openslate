@@ -7,7 +7,7 @@ OpenSlate groups domain behavior under FastAPI `systems` packages:
 | Area | Responsibilities |
 | --- | --- |
 | `access` | Local identity, users, roles, permissions, invitations, recovery |
-| `sandbox` | Departments, modules, fields, records, relationships, lifecycle |
+| `sandbox` | Shared design draft/history, safe publication, departments, modules, fields, records, relationships, lifecycle, temporary tests, and published automation execution |
 | `openview` | Saved views |
 | `manage` | Workspace profile and audit history |
 | `platform` | Private files, scan queue, worker, and SSE events |
