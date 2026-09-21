@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from datetime import datetime
 from math import isfinite
 from typing import cast
 from urllib.parse import urlparse
 
+from app.systems.sandbox.designs.date_values import date_in_range
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.numeric import numeric_matches_step
 from app.systems.sandbox.test_runs.automation_values import (
@@ -94,13 +94,16 @@ def evaluate_test(
         issues=tuple(issues),
     )
 
+
 def _mapping(value: object, label: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"Sandbox {label} is invalid")
     return cast(Mapping[str, object], value)
 
+
 def _string(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
 
 def _boolean(value: object) -> bool:
     return value is True
@@ -255,17 +258,13 @@ def _number_is_valid(value: int | float, config: Mapping[str, object]) -> bool:
 
 
 def _date_is_valid(value: str, config: Mapping[str, object], *, is_datetime: bool) -> bool:
-    try:
-        if is_datetime:
-            datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
-        else:
-            datetime.strptime(value, "%Y-%m-%d")
-    except ValueError:
-        return False
     earliest = config.get("earliest")
     latest = config.get("latest")
-    return (not isinstance(earliest, str) or value >= earliest) and (
-        not isinstance(latest, str) or value <= latest
+    return date_in_range(
+        value,
+        earliest if isinstance(earliest, str) else None,
+        latest if isinstance(latest, str) else None,
+        datetime_values=is_datetime,
     )
 
 

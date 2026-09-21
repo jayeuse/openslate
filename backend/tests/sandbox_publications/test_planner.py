@@ -243,6 +243,21 @@ def test_invalid_select_configuration_returns_a_schema_blocker() -> None:
     }
 
 
+def test_relationship_to_a_closed_module_does_not_make_an_empty_schema_valid() -> None:
+    document = sample_document().model_copy(deep=True)
+    source = document.design.modules[0]
+    target = document.design.modules[1]
+    for field in source.fields:
+        field.closed = True
+    target.closed = True
+
+    blockers = module_schema_blockers(document)
+
+    assert ("module_schema_invalid", "sample-requests") in {
+        (blocker.code, blocker.target_id) for blocker in blockers
+    }
+
+
 def test_closed_structure_names_do_not_block_later_active_names() -> None:
     document = sample_document().model_copy(deep=True)
     document.design.departments[0].closed = True

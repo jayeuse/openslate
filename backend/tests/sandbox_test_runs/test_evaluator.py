@@ -216,6 +216,19 @@ def test_defensive_value_helpers_cover_every_supported_temporary_input_type() ->
     assert not _value_is_valid(10**500 + 1, field("number", min=0, step=2))
     assert not _date_is_valid("bad", {}, is_datetime=False)
     assert _date_is_valid("2026-09-21T09:00:00Z", {}, is_datetime=True)
+    assert not _date_is_valid(
+        "2025-01-01T01:00:00+02:00",
+        {"earliest": "2025-01-01T00:00:00Z"},
+        is_datetime=True,
+    )
+    assert _date_is_valid(
+        "2025-01-01T00:00:00+00:00",
+        {
+            "earliest": "2025-01-01T00:00:00Z",
+            "latest": "2025-01-01T00:00:00Z",
+        },
+        is_datetime=True,
+    )
 
 
 def test_defensive_document_helpers_reject_non_collection_shapes() -> None:

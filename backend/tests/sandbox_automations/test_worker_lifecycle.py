@@ -9,8 +9,13 @@ from uuid6 import uuid7
 
 import app.main as main
 from app.systems.sandbox.automations.execution import ClaimedAutomationEvent
-from app.systems.sandbox.automations.runner import _compare
+from app.systems.sandbox.automations.runner import (
+    _compare,
+    _conditions_match,
+    _trigger_matches,
+)
 from app.systems.sandbox.automations.worker import AutomationWorker
+from app.systems.sandbox.fields.models import FieldType
 
 
 def test_test_environment_never_starts_a_background_worker() -> None:
@@ -33,6 +38,48 @@ def test_runtime_comparisons_allow_null_equality_without_evaluating_ordering() -
     assert _compare(None, "=", None)
     assert _compare(None, "!=", "value")
     assert not _compare(None, ">", 1)
+
+
+def test_datetime_thresholds_compare_instants_instead_of_iso_text() -> None:
+    field_id = uuid7()
+    definition = SimpleNamespace(
+        id=uuid7(),
+        trigger_kind="threshold-crossed",
+        trigger_field_id=field_id,
+        trigger_value_kind="literal",
+        trigger_literal_value={"value": "2025-01-01T00:00:00Z"},
+        trigger_value_field_id=None,
+        trigger_operator=">=",
+    )
+    event = SimpleNamespace(
+        event_kind="field-changed",
+        scheduled_automation_id=None,
+        changed_field_ids=[str(field_id)],
+        values={str(field_id): "2025-01-01T01:00:00+02:00"},
+        previous_values={str(field_id): "2024-12-31T22:00:00Z"},
+    )
+    fields = {field_id: SimpleNamespace(id=field_id, type=FieldType.DATETIME)}
+
+    assert not _trigger_matches(event, definition, fields)
+    assert _compare(
+        "2025-01-01T00:00:00Z",
+        "=",
+        "2025-01-01T00:00:00+00:00",
+        FieldType.DATETIME,
+    )
+    condition = SimpleNamespace(
+        field_id=field_id,
+        operator="<",
+        value_kind="literal",
+        literal_value={"value": "2025-01-01T00:00:00Z"},
+        value_field_id=None,
+    )
+    assert _conditions_match(
+        SimpleNamespace(data={str(field_id): "2025-01-01T01:00:00+02:00"}),
+        SimpleNamespace(condition_operator="all"),
+        [condition],
+        fields,
+    )
 
 
 def test_claim_failure_logs_context_and_increases_the_next_idle_wait(monkeypatch) -> None:

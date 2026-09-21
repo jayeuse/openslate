@@ -28,6 +28,7 @@ from app.systems.sandbox.automations.models import (
     PublishedAutomationRun,
 )
 from app.systems.sandbox.automations.outbox import enqueue_child_field_event
+from app.systems.sandbox.designs.date_values import parse_datetime
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import validate_field_value
 from app.systems.sandbox.records.models import Record
@@ -45,7 +46,7 @@ def execute_claim(db: Session, claim: ClaimedAutomationEvent) -> bool:
     root = _locked_root(db, event)
     definition_ids, publisher_ids = _candidate_definition_ids(db, event)
     _lock_publishers(db, publisher_ids)
-    _lock_module_fields(db, event.module_id)
+    fields = _lock_module_fields(db, event.module_id)
     records, has_more = _records(db, event)
     definitions = _definitions(db, event, definition_ids)
     changed: dict[UUID, tuple[Record, dict[str, object]]] = {}
@@ -56,11 +57,11 @@ def execute_claim(db: Session, claim: ClaimedAutomationEvent) -> bool:
             _finish_run(db, event, definition, "suspended", {})
             db.flush()
             continue
-        if not _trigger_matches(event, definition):
+        if not _trigger_matches(event, definition, fields):
             _finish_run(db, event, definition, "skipped", {})
             db.flush()
             continue
-        matched, applied = _apply_definition(db, event, root, definition, records, changed)
+        matched, applied = _apply_definition(db, event, root, definition, records, changed, fields)
         event.schedule_matched_count += matched if event.event_kind == "schedule" else 0
         event.schedule_action_count += applied if event.event_kind == "schedule" else 0
         if event.event_kind != "schedule" or not has_more or root.action_budget <= 0:
@@ -175,12 +176,13 @@ def _lock_publishers(db: Session, publisher_ids: set[UUID]) -> None:
         )
 
 
-def _lock_module_fields(db: Session, module_id: UUID) -> None:
-    list(
+def _lock_module_fields(db: Session, module_id: UUID) -> dict[UUID, Field]:
+    fields = list(
         db.scalars(
             select(Field).where(Field.module_id == module_id).order_by(Field.id).with_for_update()
         )
     )
+    return {field.id: field for field in fields}
 
 
 def _records(db: Session, event: PublishedAutomationEvent) -> tuple[list[Record], bool]:
@@ -220,6 +222,7 @@ def _apply_definition(
     definition: PublishedAutomationDefinition,
     records: list[Record],
     changed: dict[UUID, tuple[Record, dict[str, object]]],
+    fields: dict[UUID, Field],
 ) -> tuple[int, int]:
     conditions = _conditions(db, definition.id)
     actions = _actions(db, definition.id)
@@ -227,7 +230,7 @@ def _apply_definition(
     for record in records:
         if root.action_budget <= 0:
             break
-        if not _conditions_match(record, definition, conditions):
+        if not _conditions_match(record, definition, conditions, fields):
             continue
         matched += 1
         changed.setdefault(record.id, (record, dict(record.data)))
@@ -289,7 +292,9 @@ def _publisher_can_write(db: Session, publisher_id: UUID) -> bool:
 
 
 def _trigger_matches(
-    event: PublishedAutomationEvent, definition: PublishedAutomationDefinition
+    event: PublishedAutomationEvent,
+    definition: PublishedAutomationDefinition,
+    fields: dict[UUID, Field],
 ) -> bool:
     if definition.trigger_kind == "schedule":
         return event.event_kind == "schedule" and event.scheduled_automation_id == definition.id
@@ -311,9 +316,15 @@ def _trigger_matches(
         event.values,
     )
     return _compare(
-        event.values.get(str(field_id), _MISSING), definition.trigger_operator, target
+        event.values.get(str(field_id), _MISSING),
+        definition.trigger_operator,
+        target,
+        _field_type(fields, field_id),
     ) and not _compare(
-        event.previous_values.get(str(field_id), _MISSING), definition.trigger_operator, target
+        event.previous_values.get(str(field_id), _MISSING),
+        definition.trigger_operator,
+        target,
+        _field_type(fields, field_id),
     )
 
 
@@ -321,6 +332,7 @@ def _conditions_match(
     record: Record,
     definition: PublishedAutomationDefinition,
     conditions: list[PublishedAutomationCondition],
+    fields: dict[UUID, Field],
 ) -> bool:
     outcomes = [
         _compare(
@@ -329,6 +341,7 @@ def _conditions_match(
             _value(
                 condition.value_kind, condition.literal_value, condition.value_field_id, record.data
             ),
+            _field_type(fields, condition.field_id),
         )
         for condition in conditions
     ]
@@ -376,9 +389,27 @@ def _value(
     return _MISSING
 
 
-def _compare(left: Any, operator: str | None, right: Any) -> bool:
+def _field_type(fields: dict[UUID, Field], field_id: UUID) -> FieldType | None:
+    field = fields.get(field_id)
+    return FieldType(field.type) if field is not None else None
+
+
+def _compare(
+    left: Any,
+    operator: str | None,
+    right: Any,
+    field_type: FieldType | None = None,
+) -> bool:
     if left is _MISSING or right is _MISSING or operator is None:
         return False
+    if field_type is FieldType.DATETIME:
+        if not isinstance(left, str) or not isinstance(right, str):
+            return False
+        parsed_left = parse_datetime(left)
+        parsed_right = parse_datetime(right)
+        if parsed_left is None or parsed_right is None:
+            return False
+        left, right = parsed_left, parsed_right
     if operator == "=":
         return bool(left == right)
     if operator == "!=":

@@ -114,8 +114,13 @@ def live_name_blockers(
 
 
 def module_schema_blockers(document: SandboxDocument) -> list[PublicationBlocker]:
+    modules = {module.id: module for module in document.design.modules}
     relationships_by_source: dict[str, list[Any]] = {}
     for relationship in document.design.relationships:
+        source = modules.get(relationship.source_module_id)
+        target = modules.get(relationship.target_module_id)
+        if source is None or target is None or source.closed or target.closed:
+            continue
         relationships_by_source.setdefault(relationship.source_module_id, []).append(relationship)
     blockers: list[PublicationBlocker] = []
     for module in document.design.modules:
