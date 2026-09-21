@@ -11,6 +11,13 @@ from app.core.base_model import utc_now
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.openview.views.models import SavedView
 from app.systems.platform.files.models import File
+from app.systems.sandbox.automations.models import (
+    PublishedAutomationAction,
+    PublishedAutomationCondition,
+    PublishedAutomationDefinition,
+    PublishedAutomationEvent,
+    PublishedAutomationRun,
+)
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.lifecycle.exceptions import (
@@ -27,6 +34,7 @@ from app.systems.sandbox.lifecycle.schemas import (
     LifecycleTargetType,
 )
 from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.publications.models import SandboxBinding
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 
@@ -38,6 +46,12 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("relationship_edges", RelationshipEdge),
     ("files", File),
     ("saved_views", SavedView),
+    ("published_automation_definitions", PublishedAutomationDefinition),
+    ("published_automation_conditions", PublishedAutomationCondition),
+    ("published_automation_actions", PublishedAutomationAction),
+    ("published_automation_events", PublishedAutomationEvent),
+    ("published_automation_runs", PublishedAutomationRun),
+    ("sandbox_bindings", SandboxBinding),
 )
 
 

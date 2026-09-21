@@ -6,9 +6,17 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 import app.systems.sandbox.lifecycle.execution as lifecycle_execution
 from app.systems.manage.audit.models import AuditLog
+from app.systems.sandbox.automations.models import (
+    AutomationEventState,
+    PublishedAutomationAction,
+    PublishedAutomationCondition,
+    PublishedAutomationEvent,
+    PublishedAutomationRun,
+)
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.exceptions import (
@@ -19,11 +27,13 @@ from app.systems.sandbox.lifecycle.planner import plan_lifecycle
 from app.systems.sandbox.lifecycle.schemas import LifecycleBlockerCode, LifecycleTargetType
 from app.systems.sandbox.lifecycle.service import purge_lifecycle
 from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.publications.models import SandboxBinding
 from app.systems.sandbox.records.models import Record
 from tests.lifecycle_integration.lifecycle_integration_support import (
     _close_rows,
     _item,
 )
+from tests.sandbox_automations.support import publish_automation
 
 pytestmark = [
     pytest.mark.integration,
@@ -240,6 +250,189 @@ def test_record_purge_removes_only_incident_edges_and_preserves_other_rows(
     assert integration_db.get(type(external_edge), external_edge.id) is None  # type: ignore[attr-defined]
     assert integration_db.get(type(unrelated_edge), unrelated_edge.id) is not None  # type: ignore[attr-defined]
     assert integration_db.get(type(external_unrelated_edge), external_unrelated_edge.id) is not None  # type: ignore[attr-defined]
+
+
+def test_record_purge_preflights_published_automation_history(
+    integration_db: Session, lifecycle_graph: dict[str, object]
+) -> None:
+    source = _item(lifecycle_graph, "source")
+    event = PublishedAutomationEvent(
+        record_id=source.id,  # type: ignore[attr-defined]
+        module_id=source.module_id,  # type: ignore[attr-defined]
+        event_kind="record-created",
+        changed_field_ids=[],
+        values={},
+        previous_values={},
+        depth=0,
+        action_budget=100,
+        state=AutomationEventState.PENDING,
+        next_attempt_at=datetime.now(UTC),
+    )
+    integration_db.add(event)
+    _close_rows(source)
+    integration_db.commit()
+
+    plan = plan_lifecycle(integration_db, LifecycleTargetType.RECORD, source.id, "purge", None)  # type: ignore[attr-defined]
+
+    assert any(
+        blocker.code is LifecycleBlockerCode.PURGE_AUTOMATION_DEPENDENCY
+        and blocker.entity_type == "published_automation_events"
+        and blocker.entity_id == event.id
+        for blocker in plan.blockers
+    )
+    with pytest.raises(LifecyclePreflightError):
+        purge_lifecycle(integration_db, LifecycleTargetType.RECORD, source.id, None, plan=plan)  # type: ignore[attr-defined]
+    assert integration_db.get(Record, source.id) is not None  # type: ignore[attr-defined]
+
+
+def test_module_purge_preflights_all_published_automation_dependencies(
+    integration_db: Session,
+) -> None:
+    _actor, module, fields, definition = publish_automation(integration_db)
+    event = PublishedAutomationEvent(
+        module_id=module.id,
+        scheduled_automation_id=definition.id,
+        event_kind="schedule",
+        changed_field_ids=[],
+        values={},
+        previous_values={},
+        depth=0,
+        action_budget=100,
+        state=AutomationEventState.PENDING,
+        next_attempt_at=datetime.now(UTC),
+    )
+    integration_db.add(event)
+    integration_db.flush()
+    integration_db.add(
+        PublishedAutomationRun(
+            event_id=event.id,
+            automation_id=definition.id,
+            state="succeeded",
+            details={},
+        )
+    )
+    _close_rows(module, *fields.values())
+    integration_db.commit()
+
+    plan = plan_lifecycle(integration_db, LifecycleTargetType.MODULE, module.id, "purge", None)
+
+    assert {
+        blocker.entity_type
+        for blocker in plan.blockers
+        if blocker.code is LifecycleBlockerCode.PURGE_AUTOMATION_DEPENDENCY
+    } == {
+        "published_automation_actions",
+        "published_automation_conditions",
+        "published_automation_definitions",
+        "published_automation_events",
+        "published_automation_runs",
+        "sandbox_bindings",
+    }
+    with pytest.raises(LifecyclePreflightError):
+        purge_lifecycle(integration_db, LifecycleTargetType.MODULE, module.id, None, plan=plan)
+    assert integration_db.get(Module, module.id) is not None
+
+
+def test_field_purge_preflights_cross_module_automation_references_including_closed_condition(
+    integration_db: Session,
+) -> None:
+    _actor, module, _fields, definition = publish_automation(integration_db)
+    referenced_module = Module(
+        department_id=module.department_id,
+        module_name=f"Automation references {uuid7()}",
+        is_schema_accepted=True,
+    )
+    integration_db.add(referenced_module)
+    integration_db.flush()
+    referenced_field = Field(
+        module_id=referenced_module.id,
+        name="Cross-module reference",
+        type=FieldType.TEXT,
+        position=0,
+    )
+    integration_db.add(referenced_field)
+    integration_db.flush()
+    condition = integration_db.scalar(
+        select(PublishedAutomationCondition).where(
+            PublishedAutomationCondition.automation_id == definition.id
+        )
+    )
+    action = integration_db.scalar(
+        select(PublishedAutomationAction).where(
+            PublishedAutomationAction.automation_id == definition.id
+        )
+    )
+    automation_binding = integration_db.scalar(
+        select(SandboxBinding).where(SandboxBinding.automation_id == definition.id)
+    )
+    assert condition is not None and action is not None and automation_binding is not None
+    definition.trigger_field_id = referenced_field.id
+    definition.trigger_value_field_id = referenced_field.id
+    condition.field_id = referenced_field.id
+    condition.value_field_id = referenced_field.id
+    condition.is_deleted = True
+    condition.deleted_at = datetime.now(UTC)
+    action.target_field_id = referenced_field.id
+    action.value_field_id = referenced_field.id
+    _close_rows(referenced_field)
+    integration_db.commit()
+
+    plan = plan_lifecycle(
+        integration_db, LifecycleTargetType.FIELD, referenced_field.id, "purge", None
+    )
+
+    automation_blockers = {
+        (blocker.entity_type, blocker.entity_id)
+        for blocker in plan.blockers
+        if blocker.code is LifecycleBlockerCode.PURGE_AUTOMATION_DEPENDENCY
+    }
+    assert {
+        ("published_automation_definitions", definition.id),
+        ("published_automation_conditions", condition.id),
+        ("published_automation_actions", action.id),
+        ("sandbox_bindings", automation_binding.id),
+    } <= automation_blockers
+    assert any(
+        row.entity_type == "published_automation_conditions"
+        and row.entity_id == condition.id
+        and row.is_deleted
+        for row in plan.rows
+    )
+    with pytest.raises(LifecyclePreflightError):
+        purge_lifecycle(
+            integration_db, LifecycleTargetType.FIELD, referenced_field.id, None, plan=plan
+        )
+    assert integration_db.get(Field, referenced_field.id) is not None
+
+
+def test_department_purge_preflights_its_direct_sandbox_binding(
+    integration_db: Session,
+) -> None:
+    department = Department(department_name=f"Bound department {uuid7()}")
+    integration_db.add(department)
+    integration_db.flush()
+    binding = SandboxBinding(
+        kind="department",
+        sandbox_id=f"department-{uuid7()}",
+        department_id=department.id,
+    )
+    integration_db.add(binding)
+    _close_rows(department)
+    integration_db.commit()
+
+    plan = plan_lifecycle(
+        integration_db, LifecycleTargetType.DEPARTMENT, department.id, "purge", None
+    )
+
+    assert [
+        (blocker.entity_type, blocker.entity_id)
+        for blocker in plan.blockers
+    ] == [("sandbox_bindings", binding.id)]
+    with pytest.raises(LifecyclePreflightError):
+        purge_lifecycle(
+            integration_db, LifecycleTargetType.DEPARTMENT, department.id, None, plan=plan
+        )
+    assert integration_db.get(Department, department.id) is not None
 
 
 def test_purge_plan_drift_aborts_without_deleting_rows(

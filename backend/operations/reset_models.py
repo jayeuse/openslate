@@ -12,25 +12,76 @@ EXPECTED_DATABASE_NAME = "openslate"
 EXPECTED_DATABASE_USER = "openslate_owner"
 
 APPLICATION_TABLES = (
-    "audit_logs", "departments", "fields", "files", "identity_action_tokens",
-    "identity_credentials", "identity_delivery_outbox", "identity_rate_limit_buckets",
+    "audit_logs",
+    "departments",
+    "fields",
+    "files",
+    "identity_action_tokens",
+    "identity_credentials",
+    "identity_delivery_outbox",
+    "identity_rate_limit_buckets",
     "identity_sessions",
-    "lifecycle_confirmation_challenges", "lifecycle_rate_limit_buckets",
-    "lifecycle_rate_limit_failures", "modules", "records", "relationship_edges",
-    "roles", "saved_views", "security_events", "users", "workspace_profiles",
+    "lifecycle_confirmation_challenges",
+    "lifecycle_rate_limit_buckets",
+    "lifecycle_rate_limit_failures",
+    "modules",
+    "published_automation_actions",
+    "published_automation_conditions",
+    "published_automation_definitions",
+    "published_automation_events",
+    "published_automation_runs",
+    "records",
+    "relationship_edges",
+    "roles",
+    "sandbox_bindings",
+    "sandbox_documents",
+    "sandbox_publications",
+    "sandbox_test_runs",
+    "sandbox_versions",
+    "saved_views",
+    "security_events",
+    "users",
+    "workspace_profiles",
 )
 NON_PRESERVED_TABLES = tuple(
     table
     for table in APPLICATION_TABLES
-    if table not in {"identity_credentials", "roles", "users", "workspace_profiles"}
+    if table
+    not in {
+        "identity_credentials",
+        "roles",
+        "sandbox_documents",
+        "sandbox_versions",
+        "users",
+        "workspace_profiles",
+    }
 )
 DELETE_ORDER = (
-    "identity_sessions", "identity_delivery_outbox", "identity_action_tokens",
+    "identity_sessions",
+    "identity_delivery_outbox",
+    "identity_action_tokens",
     "identity_rate_limit_buckets",
-    "lifecycle_confirmation_challenges", "lifecycle_rate_limit_failures",
-    "lifecycle_rate_limit_buckets", "saved_views",
-    "relationship_edges", "audit_logs", "security_events", "files", "records", "fields",
-    "modules", "departments",
+    "lifecycle_confirmation_challenges",
+    "lifecycle_rate_limit_failures",
+    "lifecycle_rate_limit_buckets",
+    "sandbox_test_runs",
+    "published_automation_runs",
+    "published_automation_events",
+    "sandbox_bindings",
+    "published_automation_actions",
+    "published_automation_conditions",
+    "published_automation_definitions",
+    "sandbox_publications",
+    "sandbox_versions",
+    "saved_views",
+    "relationship_edges",
+    "audit_logs",
+    "security_events",
+    "files",
+    "records",
+    "fields",
+    "modules",
+    "departments",
 )
 
 _RESET_ADVISORY_LOCK_KEY = 8_341_721
@@ -82,8 +133,13 @@ LOCK TABLE public.alembic_version, public.audit_logs, public.departments, public
  public.identity_credentials, public.identity_rate_limit_buckets, public.identity_sessions,
  public.lifecycle_confirmation_challenges, public.lifecycle_rate_limit_buckets,
  public.lifecycle_rate_limit_failures, public.modules, public.records,
- public.relationship_edges, public.roles, public.saved_views, public.security_events,
- public.users, public.workspace_profiles IN ACCESS EXCLUSIVE MODE NOWAIT
+ public.published_automation_actions, public.published_automation_conditions,
+ public.published_automation_definitions, public.published_automation_events,
+ public.published_automation_runs, public.relationship_edges, public.roles,
+ public.sandbox_bindings, public.sandbox_documents, public.sandbox_publications,
+ public.sandbox_test_runs, public.sandbox_versions, public.saved_views,
+ public.security_events, public.users, public.workspace_profiles
+ IN ACCESS EXCLUSIVE MODE NOWAIT
 """
 
 
@@ -156,9 +212,13 @@ def stable_snapshot_payload(snapshot: object) -> dict[str, object]:
         if isinstance(value, (list, tuple)):
             return [stable(item) for item in value]
         isoformat = getattr(value, "isoformat", None)
-        return isoformat() if callable(isoformat) else value if value is None or isinstance(
-            value, (str, int, float, bool)
-        ) else str(value)
+        return (
+            isoformat()
+            if callable(isoformat)
+            else value
+            if value is None or isinstance(value, (str, int, float, bool))
+            else str(value)
+        )
 
     fields = getattr(snapshot, "__dataclass_fields__", None)
     names = fields.keys() if fields is not None else vars(snapshot).keys()

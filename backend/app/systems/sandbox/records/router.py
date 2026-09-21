@@ -20,6 +20,7 @@ from app.common.listing import (
 from app.core.database import get_db
 from app.systems.access.users.models import User
 from app.systems.access.users.permissions import Capability
+from app.systems.sandbox.automations.outbox import enqueue_record_event
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import (
     parse_field_key,
@@ -321,6 +322,23 @@ def _active_fields(db: Session, module_id: UUID) -> list[Field]:
     return [field for field in _module_fields(db, module_id) if not field.is_deleted]
 
 
+def _apply_creation_defaults(data: dict[str, Any], fields: list[Field]) -> dict[str, Any]:
+    """Apply published field defaults only at real record creation time."""
+
+    with_defaults = dict(data)
+    for field in fields:
+        key = str(field.id)
+        if (
+            key in with_defaults
+            or field.is_deleted
+            or FieldType(field.type) is FieldType.RELATIONSHIP
+        ):
+            continue
+        if "defaultValue" in field.config:
+            with_defaults[key] = field.config["defaultValue"]
+    return with_defaults
+
+
 def _validate_data(
     db: Session,
     module_id: UUID,
@@ -394,7 +412,7 @@ def create_record(
         raise _conflict("Module schema is not accepted")
     try:
         normalized_data = validate_record_mutation(
-            payload.data,
+            _apply_creation_defaults(payload.data, fields),
             {},
             fields,
         )
@@ -402,6 +420,8 @@ def create_record(
         raise _record_validation_http_error(error) from error
     record = Record(module_id=payload.module_id, data=normalized_data)
     db.add(record)
+    db.flush()
+    enqueue_record_event(db, record, previous=None)
     _commit(db, "Unable to create record")
     db.refresh(record)
     return record
@@ -426,10 +446,12 @@ def update_record(
     if record.is_deleted:
         raise _conflict("Record is deleted")
     if payload.data is not None:
+        previous = dict(record.data)
         try:
             record.data = _merge_patch_data(db, record.module_id, record.data, payload.data)
         except RecordValidationError as error:
             raise _record_validation_http_error(error) from error
+        enqueue_record_event(db, record, previous=previous)
     _commit(db, "Unable to update record")
     return record
 

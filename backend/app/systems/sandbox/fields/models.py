@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 
 class FieldType(StrEnum):
     TEXT = "text"
+    LONG_TEXT = "long_text"
+    EMAIL = "email"
+    URL = "url"
     NUMBER = "number"
     DECIMAL = "decimal"
     INTEGER = "int"
@@ -31,8 +34,8 @@ class Field(BaseModel):
     __table_args__ = (
         CheckConstraint("position >= 0", name="ck_fields_position_nonnegative"),
         CheckConstraint(
-            "type IN ('text', 'number', 'decimal', 'int', 'boolean', 'date', 'datetime', "
-            "'select', 'relationship')",
+            "type IN ('text', 'long_text', 'email', 'url', 'number', 'decimal', 'int', "
+            "'boolean', 'date', 'datetime', 'select', 'relationship')",
             name="ck_fields_type",
         ),
         CheckConstraint(

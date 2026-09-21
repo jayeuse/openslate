@@ -44,14 +44,19 @@ from app.systems.platform.files.lifecycle_router import router as file_lifecycle
 from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router as files_router
 from app.systems.platform.notifications.worker import SmtpOutboxWorker
+from app.systems.sandbox.automations.router import router as sandbox_automations_router
+from app.systems.sandbox.automations.worker import AutomationWorker
 from app.systems.sandbox.departments.router import router as departments_router
+from app.systems.sandbox.designs.router import router as sandbox_designs_router
 from app.systems.sandbox.fields.router import module_fields_router
 from app.systems.sandbox.fields.router import router as fields_router
 from app.systems.sandbox.lifecycle.router import router as lifecycle_router
 from app.systems.sandbox.modules.router import router as modules_router
+from app.systems.sandbox.publications.router import router as sandbox_publications_router
 from app.systems.sandbox.records.query_router import router as record_queries_router
 from app.systems.sandbox.records.router import router as records_router
 from app.systems.sandbox.relationships.router import router as relationships_router
+from app.systems.sandbox.test_runs.router import router as sandbox_test_runs_router
 
 
 def _request_route(request: Request) -> str:
@@ -107,13 +112,22 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_observability_logging()
     app.state.events_listener.start()
     app.state.smtp_outbox_worker.start()
+    app.state.automation_worker.start()
     try:
         yield
     finally:
-        app.state.events_listener.stop()
+        automation_stopped = app.state.automation_worker.stop()
         app.state.smtp_outbox_worker.stop()
-        dispose_readiness_resources()
-        dispose_database_resources()
+        app.state.events_listener.stop()
+        if automation_stopped:
+            dispose_readiness_resources()
+            dispose_database_resources()
+        else:
+            log_event(
+                "operational_attention",
+                reason_code="sandbox_automation_shutdown_incomplete",
+                upstream="sandbox-automations",
+            )
 
 
 def create_app() -> FastAPI:
@@ -136,6 +150,7 @@ def create_app() -> FastAPI:
     app.state.events_hub = events_hub
     app.state.events_listener = PostgresInvalidationListener(events_hub)
     app.state.smtp_outbox_worker = SmtpOutboxWorker(settings)
+    app.state.automation_worker = AutomationWorker(settings)
 
     relaxed_development = is_relaxed_development(settings)
     if not relaxed_development:
@@ -156,9 +171,12 @@ def create_app() -> FastAPI:
         started = time.perf_counter()
         transfer = file_transfer_policy(request.url.path, request.method)
         capacity = ExitStack()
+        sandbox_document_limit = _sandbox_document_body_limit(request.url.path, request.method)
         body_limit = (
             transfer.request_bytes
             if transfer is not None
+            else sandbox_document_limit
+            if sandbox_document_limit is not None
             else None
             if relaxed_development
             else settings.request_body_max_bytes
@@ -169,9 +187,13 @@ def create_app() -> FastAPI:
                 request.state.file_transfer_lease = capacity.enter_context(transfer_slot())
             declared_size = request.headers.get("content-length")
             response: Response
-            if body_limit is not None and declared_size is not None and _is_body_too_large(
-                declared_size,
-                body_limit,
+            if (
+                body_limit is not None
+                and declared_size is not None
+                and _is_body_too_large(
+                    declared_size,
+                    body_limit,
+                )
             ):
                 response = JSONResponse(
                     status_code=413,
@@ -240,6 +262,10 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router, prefix="/api")
     app.include_router(departments_router, prefix="/api")
+    app.include_router(sandbox_designs_router, prefix="/api")
+    app.include_router(sandbox_publications_router, prefix="/api")
+    app.include_router(sandbox_automations_router, prefix="/api")
+    app.include_router(sandbox_test_runs_router, prefix="/api")
     app.include_router(modules_router, prefix="/api")
     app.include_router(fields_router, prefix="/api")
     app.include_router(module_fields_router, prefix="/api")
@@ -275,9 +301,7 @@ def create_app() -> FastAPI:
         )
 
     @app.exception_handler(StarletteHTTPException)
-    async def route_not_found(
-        request: Request, error: StarletteHTTPException
-    ) -> Response:
+    async def route_not_found(request: Request, error: StarletteHTTPException) -> Response:
         if error.status_code != 404:
             return await http_exception_handler(request, error)
         path = request.url.path
@@ -323,6 +347,15 @@ def _is_body_too_large(content_length: str, limit: int) -> bool:
         return int(content_length) > limit
     except ValueError:
         return False
+
+
+def _sandbox_document_body_limit(path: str, method: str) -> int | None:
+    if (path, method) in {
+        ("/api/sandbox/document", "PUT"),
+        ("/api/sandbox/imports", "POST"),
+    }:
+        return 5 * 1024 * 1024
+    return None
 
 
 async def _read_bounded_body(request: Request, limit: int) -> bool:

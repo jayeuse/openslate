@@ -1,21 +1,17 @@
 import re
 from collections.abc import Callable, Sequence
-from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from math import isfinite
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
+from app.systems.sandbox.designs.date_values import date_in_range, valid_date, valid_datetime
 from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.numeric import numeric_matches_step
 
 FieldValidator = Callable[[Any, Field], Any]
 
 _DECIMAL_PATTERN = re.compile(r"-?(0|[1-9][0-9]*)(?:\.([0-9]+))?\Z")
-_DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
-_DATETIME_PATTERN = re.compile(
-    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
-    r"(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})\Z"
-)
 _DECIMAL_MAX_LENGTH = 58
 _DECIMAL_MAX_INTEGER_DIGITS = 38
 _DECIMAL_MAX_FRACTIONAL_DIGITS = 18
@@ -36,9 +32,7 @@ def _canonical_decimal(raw_value: Any, label: str) -> str:
         raise ValueError(f"Decimal {label} has too many fractional digits")
 
     fractional_part = fractional_part.rstrip("0")
-    negative = raw_value.startswith("-") and not (
-        integer_part == "0" and not fractional_part
-    )
+    negative = raw_value.startswith("-") and not (integer_part == "0" and not fractional_part)
     canonical = ("-" if negative else "") + integer_part
     if fractional_part:
         canonical += f".{fractional_part}"
@@ -51,16 +45,58 @@ def _finite_numeric(value: Any) -> bool:
     return not isinstance(value, float) or isfinite(value)
 
 
-def _numeric_config(config: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"minimum", "maximum"}
+def _numeric_config(field_type: FieldType, config: dict[str, Any]) -> dict[str, Any]:
+    allowed = {"minimum", "maximum", "step", "defaultValue"}
     if set(config).difference(allowed):
-        raise ValueError("Numeric fields only support minimum and maximum configuration")
+        raise ValueError(
+            "Numeric fields only support minimum, maximum, step, and defaultValue configuration"
+        )
     for key in set(config).intersection(allowed):
+        if key == "defaultValue" and config[key] is None:
+            continue
         if not _finite_numeric(config[key]):
             raise ValueError(f"Numeric field {key} must be a finite number")
-    if "minimum" in config and "maximum" in config and config["minimum"] > config["maximum"]:
+    normalized = dict(config)
+    if field_type is FieldType.INTEGER:
+        for key in allowed.intersection(normalized):
+            value = normalized[key]
+            if isinstance(value, float) and value.is_integer():
+                normalized[key] = int(value)
+    if (
+        "minimum" in normalized
+        and "maximum" in normalized
+        and normalized["minimum"] > normalized["maximum"]
+    ):
         raise ValueError("Numeric field minimum cannot exceed maximum")
-    return config
+    if "step" in normalized and (
+        not _finite_numeric(normalized["step"]) or normalized["step"] <= 0
+    ):
+        raise ValueError("Numeric field step must be a positive finite number")
+    if "defaultValue" in normalized and normalized["defaultValue"] is not None:
+        default = normalized["defaultValue"]
+        if not _finite_numeric(default):
+            raise ValueError("Numeric field defaultValue must be a finite number")
+        if normalized.get("minimum") is not None and default < normalized["minimum"]:
+            raise ValueError("Numeric field defaultValue is below its minimum")
+        if normalized.get("maximum") is not None and default > normalized["maximum"]:
+            raise ValueError("Numeric field defaultValue exceeds its maximum")
+        if normalized.get("step") is not None and not numeric_matches_step(
+            default,
+            normalized.get("minimum") or 0,
+            normalized["step"],
+        ):
+            raise ValueError("Numeric field defaultValue does not match field step")
+    if field_type is FieldType.INTEGER and any(
+        isinstance(value, float) and not value.is_integer()
+        for value in (
+            normalized.get("minimum"),
+            normalized.get("maximum"),
+            normalized.get("step"),
+            normalized.get("defaultValue"),
+        )
+    ):
+        raise ValueError("Integer field configuration must use whole numbers")
+    return normalized
 
 
 def _decimal_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -85,27 +121,65 @@ def _decimal_config(config: dict[str, Any]) -> dict[str, Any]:
 def field_config(field_type: FieldType, config: dict[str, Any]) -> dict[str, Any]:
     if field_type is FieldType.SELECT:
         options = config.get("options")
-        if set(config) != {"options"} or not isinstance(options, list) or not options:
+        if (
+            set(config).difference({"options", "defaultValue"})
+            or not isinstance(options, list)
+            or not options
+        ):
             raise ValueError("Select fields require a non-empty options list")
         if any(not isinstance(option, str) or not option.strip() for option in options):
             raise ValueError("Select options must be non-empty strings")
         if len(options) != len(set(options)):
             raise ValueError("Select options must be unique")
+        default = config.get("defaultValue")
+        if default is not None and default not in options:
+            raise ValueError("Select defaultValue must be one of the configured options")
     elif field_type in {FieldType.NUMBER, FieldType.INTEGER}:
-        return _numeric_config(config)
+        return _numeric_config(field_type, config)
     elif field_type is FieldType.DECIMAL:
         return _decimal_config(config)
-    elif field_type is FieldType.TEXT:
-        allowed = {"minLength", "maxLength"}
+    elif field_type in {FieldType.TEXT, FieldType.LONG_TEXT, FieldType.EMAIL, FieldType.URL}:
+        allowed = {"minLength", "maxLength", "defaultValue"}
         if set(config).difference(allowed):
             raise ValueError("Text fields only support minLength and maxLength configuration")
-        for key in set(config).intersection(allowed):
+        for key in {"minLength", "maxLength"}.intersection(config):
             value = config[key]
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"Text field {key} must be a nonnegative integer")
         if "minLength" in config and "maxLength" in config:
             if config["minLength"] > config["maxLength"]:
                 raise ValueError("Text field minLength cannot exceed maxLength")
+        default = config.get("defaultValue")
+        if default is not None and not isinstance(default, str):
+            raise ValueError("Text field defaultValue must be text")
+    elif field_type in {FieldType.DATE, FieldType.DATETIME}:
+        allowed = {"earliest", "latest", "defaultValue"}
+        if set(config).difference(allowed):
+            raise ValueError(
+                "Date fields only support earliest, latest, and defaultValue configuration"
+            )
+        is_datetime = field_type is FieldType.DATETIME
+        valid = valid_datetime if is_datetime else valid_date
+        for key in allowed.intersection(config):
+            value = config[key]
+            if value is not None and (not isinstance(value, str) or not valid(value)):
+                raise ValueError(f"Date field {key} must be valid ISO syntax")
+        earliest = config.get("earliest")
+        latest = config.get("latest")
+        if earliest is not None and latest is not None and not date_in_range(
+            earliest, None, latest, datetime_values=is_datetime
+        ):
+            raise ValueError("Date field earliest cannot exceed latest")
+        default = config.get("defaultValue")
+        if default is not None and not date_in_range(
+            default, earliest, latest, datetime_values=is_datetime
+        ):
+            raise ValueError("Date field defaultValue must be within earliest and latest")
+    elif field_type is FieldType.BOOLEAN:
+        if set(config).difference({"defaultValue"}):
+            raise ValueError("Boolean fields only support defaultValue configuration")
+        if "defaultValue" in config and not isinstance(config["defaultValue"], bool):
+            raise ValueError("Boolean field defaultValue must be boolean")
     elif config:
         raise ValueError("This field type does not support configuration")
     return config
@@ -186,6 +260,20 @@ def _validate_text(value: Any, field: Field) -> str:
     return value
 
 
+def _validate_email(value: Any, field: Field) -> str:
+    value = _validate_text(value, field)
+    if value and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value) is None:
+        raise ValueError(f"Field {field.id} must be an email address")
+    return cast(str, value)
+
+
+def _validate_url(value: Any, field: Field) -> str:
+    value = _validate_text(value, field)
+    if value and re.fullmatch(r"https?://[^\s/$.?#][^\s]*", value) is None:
+        raise ValueError(f"Field {field.id} must be an http or https URL")
+    return cast(str, value)
+
+
 def _validate_number(value: Any, field: Field) -> int | float:
     if (
         isinstance(value, bool)
@@ -236,23 +324,40 @@ def _validate_boolean(value: Any, field: Field) -> bool:
 
 
 def _validate_date(value: Any, field: Field) -> str:
-    if not isinstance(value, str) or _DATE_PATTERN.fullmatch(value) is None:
+    if not isinstance(value, str) or not valid_date(value):
         raise ValueError(f"Field {field.id} must be an ISO date")
-    try:
-        date.fromisoformat(value)
-    except ValueError as error:
-        raise ValueError(f"Field {field.id} must be an ISO date") from error
+    _validate_date_bounds(value, field, datetime_values=False)
     return value
 
 
 def _validate_datetime(value: Any, field: Field) -> str:
-    if not isinstance(value, str) or _DATETIME_PATTERN.fullmatch(value) is None:
+    if not isinstance(value, str) or not valid_datetime(value):
         raise ValueError(f"Field {field.id} must be an ISO datetime")
-    try:
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise ValueError(f"Field {field.id} must be an ISO datetime") from error
+    _validate_date_bounds(value, field, datetime_values=True)
     return value
+
+
+def _validate_date_bounds(value: str, field: Field, *, datetime_values: bool) -> None:
+    earliest = field.config.get("earliest")
+    latest = field.config.get("latest")
+    valid = valid_datetime if datetime_values else valid_date
+    if any(
+        bound is not None and (not isinstance(bound, str) or not valid(bound))
+        for bound in (earliest, latest)
+    ) or (
+        earliest is not None
+        and latest is not None
+        and not date_in_range(earliest, None, latest, datetime_values=datetime_values)
+    ):
+        raise ValueError(f"Field {field.id} has invalid date configuration")
+    if earliest is not None and not date_in_range(
+        value, earliest, None, datetime_values=datetime_values
+    ):
+        raise ValueError(f"Field {field.id} is below its earliest value")
+    if latest is not None and not date_in_range(
+        value, None, latest, datetime_values=datetime_values
+    ):
+        raise ValueError(f"Field {field.id} exceeds its latest value")
 
 
 def _validate_select(value: Any, field: Field) -> str:
@@ -269,17 +374,26 @@ def _validate_relationship(value: Any, field: Field) -> Any:
 def _validate_numeric_bounds(value: int | float, field: Field) -> None:
     minimum = field.config.get("minimum")
     maximum = field.config.get("maximum")
+    step = field.config.get("step")
     try:
         if minimum is not None and value < minimum:
             raise ValueError(f"Field {field.id} is below its minimum")
         if maximum is not None and value > maximum:
             raise ValueError(f"Field {field.id} exceeds its maximum")
+        if step is not None:
+            if not _finite_numeric(step) or step <= 0:
+                raise TypeError
+            if not numeric_matches_step(value, minimum or 0, step):
+                raise ValueError(f"Field {field.id} does not match its step")
     except TypeError as error:
         raise ValueError(f"Field {field.id} has invalid numeric configuration") from error
 
 
 FIELD_VALIDATORS: dict[FieldType, FieldValidator] = {
     FieldType.TEXT: _validate_text,
+    FieldType.LONG_TEXT: _validate_text,
+    FieldType.EMAIL: _validate_email,
+    FieldType.URL: _validate_url,
     FieldType.NUMBER: _validate_number,
     FieldType.DECIMAL: _validate_decimal,
     FieldType.INTEGER: _validate_integer,

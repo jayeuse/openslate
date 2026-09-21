@@ -3,7 +3,7 @@
 import csv
 import io
 from collections.abc import Iterable
-from datetime import date, datetime
+from datetime import date
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -19,6 +19,7 @@ from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.sandbox.designs.date_values import parse_datetime
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query import compile_query, validate_definition
@@ -50,9 +51,10 @@ def format_cell(value: Any, field: Field, timezone: str, locale: str) -> str:
     if field.type == FieldType.DATE:
         return format_date(date.fromisoformat(value), locale=locale.replace("-", "_"))
     if field.type == FieldType.DATETIME:
-        instant = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
-            ZoneInfo(timezone)
-        )
+        parsed = parse_datetime(value)
+        if parsed is None:
+            raise ValueError("Date/Time record value is invalid")
+        instant = parsed.astimezone(ZoneInfo(timezone))
         displayed = format_datetime(
             instant, locale=locale.replace("-", "_"), tzinfo=ZoneInfo(timezone)
         )

@@ -30,8 +30,8 @@ REJECTED_VALUE_CANARY = token_urlsafe(32)
 
 
 def _load_record_field_validation_cases() -> list[dict[str, Any]]:
-    fixture_path = Path(__file__).resolve().parents[3] / "contracts" / (
-        "record-field-validation-cases.json"
+    fixture_path = (
+        Path(__file__).resolve().parents[3] / "contracts" / ("record-field-validation-cases.json")
     )
     with fixture_path.open(encoding="utf-8") as fixture:
         return json.load(fixture)["cases"]
@@ -58,9 +58,7 @@ def test_optional_primitive_record_values_accept_null(
 ) -> None:
     field = make_field(uuid7(), field_type, config=config)
 
-    assert validate_record_mutation({str(field.id): None}, {}, [field]) == {
-        str(field.id): None
-    }
+    assert validate_record_mutation({str(field.id): None}, {}, [field]) == {str(field.id): None}
 
 
 @pytest.mark.parametrize("value", [None, ""])
@@ -99,14 +97,17 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         "minimum": None,
         "maximum": None,
     }
-    assert validate_field_value(
-        make_field(
-            uuid7(),
-            FieldType.DECIMAL,
-            config={"minimum": None, "maximum": None},
-        ),
-        "999.9900",
-    ) == "999.99"
+    assert (
+        validate_field_value(
+            make_field(
+                uuid7(),
+                FieldType.DECIMAL,
+                config={"minimum": None, "maximum": None},
+            ),
+            "999.9900",
+        )
+        == "999.99"
+    )
     with pytest.raises(ValueError):
         field_config(FieldType.DECIMAL, {"maximum": "1" * 39})
     with pytest.raises(ValueError):
@@ -121,13 +122,14 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
     with pytest.raises(ValueError):
         field_config(FieldType.DECIMAL, {"minimum": 1.0})
     numeric_bound = 10**500
-    assert field_config(FieldType.INTEGER, {"minimum": numeric_bound}) == {
-        "minimum": numeric_bound
-    }
-    assert validate_field_value(
-        make_field(uuid7(), FieldType.INTEGER, config={"minimum": numeric_bound}),
-        numeric_bound,
-    ) == numeric_bound
+    assert field_config(FieldType.INTEGER, {"minimum": numeric_bound}) == {"minimum": numeric_bound}
+    assert (
+        validate_field_value(
+            make_field(uuid7(), FieldType.INTEGER, config={"minimum": numeric_bound}),
+            numeric_bound,
+        )
+        == numeric_bound
+    )
 
     text_field = make_field(
         uuid7(),
@@ -138,6 +140,65 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         validate_field_value(text_field, "x")
     with pytest.raises(ValueError):
         validate_field_value(text_field, "12345")
+
+
+def test_numeric_defaults_are_normalized_and_enforce_bounds_and_steps() -> None:
+    assert field_config(
+        FieldType.INTEGER,
+        {"minimum": 0.0, "maximum": 10.0, "step": 2.0, "defaultValue": 4.0},
+    ) == {"minimum": 0, "maximum": 10, "step": 2, "defaultValue": 4}
+    with pytest.raises(ValueError, match="below its minimum"):
+        field_config(FieldType.NUMBER, {"minimum": 2, "defaultValue": 1})
+    with pytest.raises(ValueError, match="exceeds its maximum"):
+        field_config(FieldType.NUMBER, {"maximum": 2, "defaultValue": 3})
+    with pytest.raises(ValueError, match="does not match field step"):
+        field_config(FieldType.NUMBER, {"minimum": 0, "step": 2, "defaultValue": 3})
+
+    stepped = make_field(
+        uuid7(),
+        FieldType.INTEGER,
+        config={"minimum": 0, "maximum": 10**501, "step": 2},
+    )
+    assert validate_field_value(stepped, 10**500) == 10**500
+    with pytest.raises(ValueError, match="does not match its step"):
+        validate_field_value(stepped, 10**500 + 1)
+
+
+def test_operational_date_and_datetime_constraints_match_designer_values() -> None:
+    date_config = {
+        "earliest": "2026-01-01",
+        "latest": "2026-12-31",
+        "defaultValue": "2026-06-01",
+    }
+    assert field_config(FieldType.DATE, date_config) == date_config
+    date_field = make_field(uuid7(), FieldType.DATE, config=date_config)
+    assert validate_field_value(date_field, "2026-12-31") == "2026-12-31"
+    with pytest.raises(ValueError, match="below its earliest"):
+        validate_field_value(date_field, "2025-12-31")
+    with pytest.raises(ValueError, match="exceeds its latest"):
+        validate_field_value(date_field, "2027-01-01")
+
+    datetime_config = {
+        "earliest": "2026-01-01T00:00Z",
+        "latest": "2026-01-01T01:00Z",
+        "defaultValue": "2026-01-01T00:30",
+    }
+    assert field_config(FieldType.DATETIME, datetime_config) == datetime_config
+    datetime_field = make_field(uuid7(), FieldType.DATETIME, config=datetime_config)
+    assert validate_field_value(datetime_field, "2025-12-31T19:30:00-05:00") == (
+        "2025-12-31T19:30:00-05:00"
+    )
+    with pytest.raises(ValueError, match="below its earliest"):
+        validate_field_value(datetime_field, "2025-12-31T18:59:00-05:00")
+    with pytest.raises(ValueError, match="defaultValue"):
+        field_config(
+            FieldType.DATETIME,
+            {
+                "earliest": "2026-01-01T00:00Z",
+                "latest": "2026-01-01T01:00Z",
+                "defaultValue": "2025-12-31T18:59:00-05:00",
+            },
+        )
 
 
 def test_decimal_validation_enforces_lexical_limits_and_exact_bounds() -> None:
@@ -154,9 +215,7 @@ def test_decimal_validation_enforces_lexical_limits_and_exact_bounds() -> None:
 
     maximum_precision_value = "9" * 38 + "." + "123456789012345678"
     assert (
-        validate_field_value(
-            make_field(module_id, FieldType.DECIMAL), maximum_precision_value
-        )
+        validate_field_value(make_field(module_id, FieldType.DECIMAL), maximum_precision_value)
         == maximum_precision_value
     )
     with pytest.raises(ValueError):
@@ -298,9 +357,7 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
     record = Record(module_id=module.id, data={str(closed.id): 1})
     record.id = uuid7()
     db = Mock(spec=Session)
-    db.get.side_effect = lambda model, *_args, **_kwargs: (
-        module if model is Module else record
-    )
+    db.get.side_effect = lambda model, *_args, **_kwargs: module if model is Module else record
     db.scalar.return_value = module
     db.scalars.return_value.all.return_value = [closed]
 

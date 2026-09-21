@@ -91,6 +91,37 @@ def test_typed_filter_and_sort(query_db, kind, values, threshold, expected):
     assert [item.id for item in result.items] == [rows[index].id for index in expected]
 
 
+def test_local_datetime_filter_and_sort_are_independent_of_session_timezone(query_db) -> None:
+    module, field, rows = setup_rows(
+        query_db,
+        "datetime",
+        [
+            "2026-09-09T12:00",
+            "2026-09-09T13:00:00+01:00",
+            "2026-09-09T13:00:00Z",
+        ],
+    )
+    query_db.connection().exec_driver_sql("SET LOCAL TIME ZONE 'Asia/Manila'")
+    reference = {"field_id": field.id, "expected_type": "datetime"}
+
+    equal = request_for(
+        module,
+        field,
+        filters=[{**reference, "operator": "eq", "value": "2026-09-09T12:00"}],
+    )
+    assert {item.id for item in query_records(query_db, equal).items} == {
+        rows[0].id,
+        rows[1].id,
+    }
+
+    ordered = request_for(module, field, sort=[{**reference, "direction": "asc"}])
+    result = query_records(query_db, ordered)
+    assert [item.id for item in result.items] == [
+        *sorted((rows[0].id, rows[1].id)),
+        rows[2].id,
+    ]
+
+
 def test_empty_missing_null_and_string_are_distinct(query_db):
     module, field, rows = setup_rows(query_db, "text", [..., None, "", "x"])
     reference = {"field_id": field.id, "expected_type": "text"}

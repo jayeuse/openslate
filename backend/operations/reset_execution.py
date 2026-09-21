@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any
+
+from app.systems.sandbox.designs.defaults import empty_document
+from app.systems.sandbox.designs.service import canonical_document
 
 if __package__:
     from .reset_models import (  # type: ignore[import-not-found]
@@ -71,6 +75,23 @@ def _rollback_safely(connection: Any) -> None:
         pass
 
 
+def _reset_sandbox_workspace(connection: Any) -> None:
+    """Restore the required Sandbox singleton without configured entities or versions."""
+    document = empty_document()
+    payload, content_hash, byte_count = canonical_document(document)
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    _execute(
+        connection,
+        """UPDATE public.sandbox_documents
+              SET singleton_key = true, schema_version = 2, revision = 1,
+                  document = %s::jsonb, content_hash = %s, byte_count = %s,
+                  deleted_at = NULL, is_deleted = false, updated_at = now(),
+                  performed_by = NULL
+            WHERE singleton_key = true""",
+        (encoded, content_hash, byte_count),
+    )
+
+
 def _validate_postconditions(
     connection: Any,
     plan: ResetPlan,
@@ -89,6 +110,11 @@ def _validate_postconditions(
         raise ResetError("The reset postcondition was not met")
     if _single_value(connection, count_statements["roles"]) != 2:
         raise ResetError("The reset postcondition was not met")
+    if (
+        _single_value(connection, count_statements["sandbox_documents"]) != 1
+        or _single_value(connection, count_statements["sandbox_versions"]) != 0
+    ):
+        raise ResetError("The Sandbox reset postcondition was not met")
 
     profile = read_profile(connection, plan.preserved_admin_id)
     if (
@@ -192,6 +218,7 @@ def apply_reset(
         )
         for table_name in DELETE_ORDER:
             _execute(connection, f"DELETE FROM public.{table_name}")
+        _reset_sandbox_workspace(connection)
         _execute(
             connection,
             "DELETE FROM public.identity_credentials WHERE user_id <> %s",

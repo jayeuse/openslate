@@ -8,6 +8,7 @@ from subprocess import CompletedProcess
 import pytest
 
 from app.core.config import Settings
+from tests import scanner_runtime
 from tests.postgres_runtime import POSTGRES_NETWORK_ALIAS, postgres_network_name
 from tests.scanner_runtime import DisposableScanner
 
@@ -38,6 +39,51 @@ def _scanner(tmp_path: Path) -> DisposableScanner:
         {"PATH": "test"},
         (tmp_path / "process.log").open("w"),
     )
+
+
+def test_build_context_supplies_unified_server_image_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for relative in (
+        "infra/clamav/clamd.conf",
+        "infra/clamav/freshclam.conf",
+        "infra/clamav/serve.sh",
+        "infra/docker/clamav.Dockerfile",
+        "infra/docker/backend.Dockerfile",
+        "backend/pyproject.toml",
+        "backend/uv.lock",
+        "backend/app/main.py",
+        "frontend/package.json",
+        "frontend/package-lock.json",
+        "frontend/src/page.tsx",
+        "frontend/node_modules/ignored.txt",
+        "contracts/openapi.json",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = ""
+        if relative.endswith("clamav.Dockerfile"):
+            content = f"FROM clamav/clamav@{scanner_runtime.BASE_IMAGE_DIGEST}\n"
+        path.write_text(content)
+    scanner = _scanner(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    scanner.env["HOME"] = str(home)
+    commands: list[list[str]] = []
+    monkeypatch.setattr(scanner, "_run", lambda arguments, **_: commands.append(arguments))
+
+    try:
+        scanner._build()
+    finally:
+        scanner.log.close()
+
+    context = scanner.private / "scanner-build"
+    assert (context / "frontend/package.json").is_file()
+    assert (context / "frontend/src/page.tsx").is_file()
+    assert not (context / "frontend/node_modules").exists()
+    assert (context / "contracts/openapi.json").is_file()
+    assert [command[0] for command in commands] == ["build", "build"]
+    assert scanner.images == [scanner.image, scanner.backend_image]
 
 
 def test_worker_mounts_only_the_disposable_private_store_and_rewrites_its_path(

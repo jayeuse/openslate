@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -118,6 +119,56 @@ def require_fresh_exact_admin(db: Session, actor_id: UUID) -> User:
     return actor
 
 
+def require_fresh_capabilities(
+    db: Session,
+    *,
+    actor_id: UUID,
+    session_id: UUID,
+    capabilities: tuple[Capability, ...],
+) -> User:
+    """Lock and recheck a current actor/session after a step-up boundary."""
+
+    try:
+        session = db.get(IdentitySession, session_id, with_for_update=True, populate_existing=True)
+        actor = db.scalar(
+            select(User)
+            .options(joinedload(User.role))
+            .where(User.id == actor_id)
+            .execution_options(populate_existing=True)
+            .with_for_update(of=User)
+        )
+        role = (
+            db.scalar(
+                select(Role)
+                .where(Role.id == actor.role_id)
+                .execution_options(populate_existing=True)
+                .with_for_update()
+            )
+            if actor is not None
+            else None
+        )
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Unable to reload authorization") from error
+    if (
+        session is None
+        or session.user_id != actor_id
+        or session.revoked_at is not None
+        or session.expires_at <= datetime.now(UTC)
+        or actor is None
+        or role is None
+        or actor.is_deleted
+        or actor.status != "active"
+        or not is_established_user(actor)
+        or role.is_deleted
+        or not all(has_capability(role, capability) for capability in capabilities)
+    ):
+        db.rollback()
+        raise HTTPException(status_code=403, detail="Forbidden")
+    actor.role = role
+    return actor
+
+
 def require_roles(*roles: UserRole | str) -> Callable[[User], User]:
     def check_role(user: Annotated[User, Depends(get_current_user)]) -> User:
         allowed_roles = {role.value if isinstance(role, UserRole) else role for role in roles}
@@ -137,3 +188,18 @@ def require_capability(capability: Capability | str) -> Callable[[User], User]:
         return user
 
     return check_capability
+
+
+def require_all_capabilities(*capabilities: Capability | str) -> Callable[[User], User]:
+    """Require every listed flat capability without creating a composite role capability."""
+
+    required_capabilities = tuple(Capability(capability) for capability in capabilities)
+    if not required_capabilities:
+        raise ValueError("At least one capability is required")
+
+    def check_capabilities(user: Annotated[User, Depends(get_current_user)]) -> User:
+        if not all(has_capability(user.role, capability) for capability in required_capabilities):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        return user
+
+    return check_capabilities
