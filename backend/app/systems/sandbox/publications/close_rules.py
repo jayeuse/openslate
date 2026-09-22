@@ -48,15 +48,28 @@ def close_blockers(
             )
         )
     )
-    retiring_relationship_field_ids = frozenset(
-        binding.field_id
-        for sandbox_id, binding in bindings["relationship"].items()
-        if sandbox_id not in desired_ids["relationship"] and binding.field_id is not None
-    )
     department_closed = {
         department.id for department in document.design.departments if department.closed
     }
     module_closed = {module.id for module in document.design.modules if module.closed}
+    desired_relationships = {
+        relationship.id: relationship for relationship in document.design.relationships
+    }
+    retiring_relationship_field_ids = frozenset(
+        binding.field_id
+        for sandbox_id, binding in bindings["relationship"].items()
+        if binding.field_id is not None
+        and (
+            sandbox_id not in desired_ids["relationship"]
+            or (
+                sandbox_id in desired_relationships
+                and (
+                    desired_relationships[sandbox_id].source_module_id in module_closed
+                    or desired_relationships[sandbox_id].target_module_id in module_closed
+                )
+            )
+        )
+    )
     field_closed = {
         _field_key(module.id, field.id)
         for module in document.design.modules

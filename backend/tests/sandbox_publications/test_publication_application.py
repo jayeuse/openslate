@@ -112,6 +112,35 @@ def test_initial_relationship_is_closed_when_its_target_module_is_closed(
     assert relationship.deleted_at is not None
 
 
+def test_closing_a_published_relationship_endpoint_is_stable_on_repreview(
+    integration_owner_db: Session,
+) -> None:
+    publisher, published = publish_structure(integration_owner_db)
+    closing = published.model_copy(deep=True)
+    target = next(
+        module for module in closing.design.modules if module.id == "sample-equipment"
+    )
+    target.closed = True
+
+    first_plan = publication_plan(integration_owner_db, closing)
+
+    assert not first_plan.blockers
+    publish_revision(integration_owner_db, publisher, closing, "close-relationship-endpoint")
+    relationship = bound_field(integration_owner_db, "relationship", "sample-uses")
+    target_module = bound_module(integration_owner_db, "sample-equipment")
+    assert relationship.is_deleted
+    assert all(
+        field.is_deleted
+        for field in integration_owner_db.scalars(
+            select(Field).where(Field.module_id == target_module.id)
+        )
+    )
+
+    unchanged_plan = publication_plan(integration_owner_db, closing)
+    assert not unchanged_plan.blockers
+    assert unchanged_plan.changes == ()
+
+
 def test_published_integer_default_creates_a_valid_operational_record(
     integration_owner_db: Session,
 ) -> None:

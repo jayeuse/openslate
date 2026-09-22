@@ -76,6 +76,10 @@ def test_schedule_freezes_upper_bound_and_completes_more_than_one_chunk(
     assert event.schedule_cursor_record_id is not None
     assert event.schedule_matched_count == 100
 
+    definition.is_deleted = True
+    definition.deleted_at = instant
+    integration_owner_db.commit()
+
     late_record = Record(
         module_id=module.id,
         data={

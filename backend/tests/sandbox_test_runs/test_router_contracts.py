@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.systems.access.users.permissions import Capability
 from app.systems.sandbox.test_runs.router import router
 from app.systems.sandbox.test_runs.schemas import (
+    SandboxTestResultResponse,
     SandboxTestRunListResponse,
     SandboxTestRunResponse,
 )
@@ -104,6 +105,19 @@ def test_create_detail_delete_and_validation_follow_the_frontend_contract(monkey
     )
     assert null_threshold.status_code == 422
     assert create.call_count == 1
+
+
+def test_test_result_response_allows_the_bounded_cascade_trace_count() -> None:
+    traces = [
+        {"automationId": f"automation-{index}", "label": "Automation", "outcome": "Applied"}
+        for index in range(501)
+    ]
+
+    response = SandboxTestResultResponse.model_validate(
+        {"values": {}, "routes": [], "automationTraces": traces, "issues": []}
+    )
+
+    assert len(response.automation_traces) == 501
 
 
 def _application(database: Mock) -> FastAPI:

@@ -1,6 +1,9 @@
+import json
+
 import pytest
 
 from app.systems.sandbox.designs.schemas import DesignField, SandboxDocument
+from tests.sandbox_designs.fixtures import sample_document
 
 
 def test_extreme_finite_number_default_is_checked_without_float_overflow() -> None:
@@ -51,6 +54,28 @@ def test_datetime_configuration_uses_instant_comparisons_for_designer_values() -
                 },
             }
         )
+
+
+def test_document_typed_values_reject_non_finite_json_numbers() -> None:
+    payload = sample_document().model_dump(by_alias=True, mode="json")
+    payload["scenarios"] = [
+        {
+            "id": "non-finite-scenario",
+            "name": "Non-finite scenario",
+            "records": [
+                {
+                    "id": "record-1",
+                    "moduleId": "sample-requests",
+                    "values": {"sample-field-requests-priority": "NON_FINITE"},
+                }
+            ],
+            "links": [],
+        }
+    ]
+    raw = json.dumps(payload).replace('"NON_FINITE"', "1e400")
+
+    with pytest.raises(ValueError):
+        SandboxDocument.model_validate_json(raw)
 
 
 def test_v2_frontend_fixture_preserves_exact_automation_and_scenario_shapes() -> None:

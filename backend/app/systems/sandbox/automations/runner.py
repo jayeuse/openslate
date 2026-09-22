@@ -115,7 +115,6 @@ def _definitions(
         select(PublishedAutomationDefinition)
         .where(
             PublishedAutomationDefinition.enabled.is_(True),
-            PublishedAutomationDefinition.is_deleted.is_(False),
             PublishedAutomationDefinition.suspended_at.is_(None),
             PublishedAutomationDefinition.module_id == event.module_id,
         )
@@ -133,7 +132,10 @@ def _definitions(
             PublishedAutomationDefinition.trigger_kind == "schedule",
         )
     else:
-        statement = statement.where(PublishedAutomationDefinition.trigger_kind != "schedule")
+        statement = statement.where(
+            PublishedAutomationDefinition.is_deleted.is_(False),
+            PublishedAutomationDefinition.trigger_kind != "schedule",
+        )
     return list(db.scalars(statement.where(PublishedAutomationDefinition.id.in_(allowed_ids))))
 
 
@@ -144,7 +146,6 @@ def _candidate_definition_ids(
         PublishedAutomationDefinition.id, PublishedAutomationDefinition.publisher_id
     ).where(
         PublishedAutomationDefinition.enabled.is_(True),
-        PublishedAutomationDefinition.is_deleted.is_(False),
         PublishedAutomationDefinition.suspended_at.is_(None),
         PublishedAutomationDefinition.module_id == event.module_id,
     )
@@ -154,7 +155,10 @@ def _candidate_definition_ids(
             PublishedAutomationDefinition.trigger_kind == "schedule",
         )
     else:
-        statement = statement.where(PublishedAutomationDefinition.trigger_kind != "schedule")
+        statement = statement.where(
+            PublishedAutomationDefinition.is_deleted.is_(False),
+            PublishedAutomationDefinition.trigger_kind != "schedule",
+        )
     rows = db.execute(statement).all()
     return {row.id for row in rows}, {row.publisher_id for row in rows}
 

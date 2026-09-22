@@ -94,6 +94,13 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
     blockers.extend(structure_name_blockers(document))
     blockers.extend(live_name_blockers(db, document, by_kind))
     desired_ids: dict[BindingKind, set[str]] = {kind: set() for kind in _kinds()}
+    closed_departments = {
+        department.id for department in document.design.departments if department.closed
+    }
+    effective_module_closed = {
+        module.id: module.closed or module.department_id in closed_departments
+        for module in document.design.modules
+    }
 
     for item in document.design.departments:
         desired_ids["department"].add(item.id)
@@ -102,7 +109,8 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
         )
     for module in document.design.modules:
         desired_ids["module"].add(module.id)
-        _plan_item(db, changes, "module", module.id, module.name, module.closed, by_kind["module"])
+        module_closed = effective_module_closed[module.id]
+        _plan_item(db, changes, "module", module.id, module.name, module_closed, by_kind["module"])
         module_binding = by_kind["module"].get(module.id)
         expected_department = by_kind["department"].get(module.department_id)
         if (
@@ -121,19 +129,19 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
         for field in module.fields:
             field_key = _field_key(module.id, field.id)
             desired_ids["field"].add(field_key)
-            _plan_item(db, changes, "field", field_key, field.name, field.closed, by_kind["field"])
+            field_closed = field.closed or module_closed
+            _plan_item(db, changes, "field", field_key, field.name, field_closed, by_kind["field"])
             try:
                 desired_config = operational_config(field)
             except ValueError:
-                if not field.closed and not module.closed:
+                if not field_closed:
                     active_position += 1
                 continue
             bound = by_kind["field"].get(field_key)
             if (
                 bound is None
                 and field.required
-                and not field.closed
-                and not module.closed
+                and not field_closed
                 and module_binding is not None
                 and module_binding.module_id is not None
                 and db.scalar(
@@ -168,18 +176,22 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
                     blockers.extend(
                         _field_impact_blockers(db, live_field, field, field_key, desired_config)
                     )
-            if not field.closed and not module.closed:
+            if not field_closed:
                 active_position += 1
     module_departments = {module.id: module.department_id for module in document.design.modules}
     for relationship in document.design.relationships:
         desired_ids["relationship"].add(relationship.id)
+        relationship_closed = (
+            effective_module_closed.get(relationship.source_module_id, False)
+            or effective_module_closed.get(relationship.target_module_id, False)
+        )
         _plan_item(
             db,
             changes,
             "relationship",
             relationship.id,
             relationship.name,
-            False,
+            relationship_closed,
             by_kind["relationship"],
         )
         if module_departments.get(relationship.source_module_id) != module_departments.get(

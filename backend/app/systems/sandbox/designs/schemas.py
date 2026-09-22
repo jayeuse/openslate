@@ -18,7 +18,7 @@ Name = Annotated[str, Field(min_length=1, max_length=80)]
 VersionLabel = Annotated[str, Field(min_length=1, max_length=80)]
 Text = Annotated[str, Field(max_length=1_000)]
 FiniteNumber = Annotated[float, Field(ge=-100_000, le=100_000, allow_inf_nan=False)]
-TypedValue = str | int | float | bool | None
+TypedValue = str | int | Annotated[float, Field(allow_inf_nan=False)] | bool | None
 
 
 class StrictModel(BaseModel):

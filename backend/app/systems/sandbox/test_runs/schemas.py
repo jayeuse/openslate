@@ -12,6 +12,7 @@ from app.systems.sandbox.designs.schemas import ID, StrictModel
 
 TestValue = str | int | Annotated[float, Field(allow_inf_nan=False)] | bool | None
 NonNullTestValue = str | int | Annotated[float, Field(allow_inf_nan=False)] | bool
+MAX_AUTOMATION_TRACES = 5_500
 
 
 class AddedEvent(StrictModel):
@@ -91,7 +92,7 @@ class SandboxTestResultResponse(StrictModel):
     values: dict[ID, TestValue] = Field(max_length=5_000)
     routes: list[SandboxTestRouteResponse] = Field(max_length=1_000)
     automation_traces: list[SandboxTestAutomationTraceResponse] = Field(
-        max_length=500, alias="automationTraces"
+        max_length=MAX_AUTOMATION_TRACES, alias="automationTraces"
     )
     issues: list[SandboxTestIssueResponse] = Field(max_length=5_000)
 

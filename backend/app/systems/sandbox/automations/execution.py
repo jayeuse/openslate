@@ -128,11 +128,10 @@ def release_schedule_continuation(event: PublishedAutomationEvent) -> None:
 
 
 def _terminalize(db: Session, event: PublishedAutomationEvent) -> None:
-    definitions = db.scalars(
+    statement = (
         select(PublishedAutomationDefinition)
         .where(
             PublishedAutomationDefinition.enabled.is_(True),
-            PublishedAutomationDefinition.is_deleted.is_(False),
             PublishedAutomationDefinition.suspended_at.is_(None),
             PublishedAutomationDefinition.module_id == event.module_id,
         )
@@ -142,12 +141,19 @@ def _terminalize(db: Session, event: PublishedAutomationEvent) -> None:
             PublishedAutomationDefinition.created_at,
             PublishedAutomationDefinition.id,
         )
-    ).all()
+    )
+    if event.event_kind == "schedule":
+        statement = statement.where(
+            PublishedAutomationDefinition.id == event.scheduled_automation_id,
+            PublishedAutomationDefinition.trigger_kind == "schedule",
+        )
+    else:
+        statement = statement.where(
+            PublishedAutomationDefinition.is_deleted.is_(False),
+            PublishedAutomationDefinition.trigger_kind != "schedule",
+        )
+    definitions = db.scalars(statement).all()
     for definition in definitions:
-        if event.event_kind == "schedule" and definition.id != event.scheduled_automation_id:
-            continue
-        if event.event_kind != "schedule" and definition.trigger_kind == "schedule":
-            continue
         existing = db.scalar(
             select(PublishedAutomationRun.id).where(
                 PublishedAutomationRun.event_id == event.id,
