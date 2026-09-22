@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from app.systems.sandbox.designs.date_values import parse_datetime
 from app.systems.sandbox.test_runs.results import SandboxTestIssue
 from app.systems.sandbox.test_runs.schemas import TestValue
 
@@ -34,9 +35,17 @@ def automation_value(
     return UNRESOLVED
 
 
-def compare(left: object, operator: str, right: object) -> bool:
+def compare(left: object, operator: str, right: object, field_kind: str | None = None) -> bool:
     if left is MISSING or right is MISSING:
         return False
+    if field_kind == "datetime":
+        if not isinstance(left, str) or not isinstance(right, str):
+            return False
+        parsed_left = parse_datetime(left)
+        parsed_right = parse_datetime(right)
+        if parsed_left is None or parsed_right is None:
+            return False
+        left, right = parsed_left, parsed_right
     if operator == "=":
         return left == right
     if operator == "!=":

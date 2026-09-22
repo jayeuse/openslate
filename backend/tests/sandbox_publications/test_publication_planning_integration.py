@@ -82,6 +82,34 @@ def test_close_plan_blocks_unbound_children_records_and_live_relationships(
     assert publisher.id is not None
 
 
+def test_module_closure_inherits_to_its_bound_fields(
+    integration_owner_db: Session,
+) -> None:
+    publisher, document = publish_structure(integration_owner_db)
+    closing = document.model_copy(deep=True)
+    module_document = next(
+        module for module in closing.design.modules if module.id == "sample-requests"
+    )
+    module_document.closed = True
+
+    assert ("close_has_live_dependencies", "sample-requests") not in {
+        (item.code, item.target_id)
+        for item in publication_plan(integration_owner_db, closing).blockers
+    }
+
+    publish_revision(integration_owner_db, publisher, closing, "inherited-module-close")
+    module = bound_module(integration_owner_db, "sample-requests")
+    assert module.is_deleted
+    assert not list(
+        integration_owner_db.scalars(
+            select(Field).where(
+                Field.module_id == module.id,
+                Field.is_deleted.is_(False),
+            )
+        )
+    )
+
+
 def test_preview_reports_non_label_structure_and_automation_changes(
     integration_owner_db: Session,
 ) -> None:

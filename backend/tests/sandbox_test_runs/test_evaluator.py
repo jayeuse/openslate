@@ -69,6 +69,58 @@ def test_threshold_requires_a_crossing_from_previous_to_current_value() -> None:
     assert already_met.automation_traces[0].outcome == "Not triggered"
 
 
+def test_datetime_thresholds_compare_temporary_values_as_instants() -> None:
+    payload = document_payload()
+    design = payload["design"]
+    assert isinstance(design, dict)
+    modules = design["modules"]
+    assert isinstance(modules, list)
+    requests = modules[0]
+    assert isinstance(requests, dict)
+    fields = requests["fields"]
+    assert isinstance(fields, list)
+    fields.append(
+        {
+            "id": "due-at",
+            "name": "Due at",
+            "type": "Date/Time",
+            "required": False,
+            "closed": False,
+            "config": {"kind": "datetime", "defaultValue": None},
+        }
+    )
+    automation = payload["automations"][0]
+    assert isinstance(automation, dict)
+    automation["trigger"] = {
+        "kind": "threshold-crossed",
+        "moduleId": "requests",
+        "fieldId": "due-at",
+        "operator": ">=",
+        "value": {"kind": "literal", "value": "2025-01-01T00:00:00Z"},
+    }
+    automation["conditionGroup"] = {"operator": "all", "conditions": []}
+    payload["automations"] = [automation]
+    document = type(sandbox_document()).model_validate(payload)
+
+    result = evaluate_test(
+        document=document,
+        module_id="requests",
+        values={
+            "priority": "Low",
+            "status": "",
+            "due-at": "2025-01-01T01:00:00+02:00",
+        },
+        event={
+            "kind": "threshold-crossed",
+            "fieldId": "due-at",
+            "previousValue": "2024-12-31T22:00:00Z",
+        },
+        automation_ids=None,
+    )
+
+    assert result.automation_traces[0].outcome == "Not triggered"
+
+
 def test_invalid_values_stop_automation_but_keep_a_safe_relationship_route() -> None:
     result = evaluate_test(
         document=sandbox_document(),

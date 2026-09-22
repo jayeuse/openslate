@@ -59,6 +59,18 @@ def test_automation_values_fail_closed_and_compare_supported_scalars() -> None:
     assert compare(2, ">=", 1)
     assert compare("b", ">", "a")
     assert compare("1", ">", 1) is False
+    assert not compare(
+        "2025-01-01T01:00:00+02:00",
+        ">=",
+        "2025-01-01T00:00:00Z",
+        "datetime",
+    )
+    assert compare(
+        "2025-01-01T00:00:00Z",
+        "=",
+        "2025-01-01T00:00:00+00:00",
+        "datetime",
+    )
 
     issues = []
     automation_issue(issues, "automation", "Needs attention")

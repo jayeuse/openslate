@@ -93,9 +93,6 @@ def close_blockers(
                     live_id,
                     bindings["field"],
                     bindings["relationship"],
-                    desired_ids["field"],
-                    desired_ids["relationship"],
-                    field_closed,
                 )
             )
             if (
@@ -338,9 +335,6 @@ def _module_has_unmanaged_fields(
     module_id: UUID,
     field_bindings: dict[str, SandboxBinding],
     relationship_bindings: dict[str, SandboxBinding],
-    desired_field_ids: set[str],
-    desired_relationship_ids: set[str],
-    closed_field_ids: set[str],
 ) -> bool:
     primitive_by_live = {
         binding.field_id: sandbox_id
@@ -357,13 +351,11 @@ def _module_has_unmanaged_fields(
     ):
         if field.type == "relationship":
             sandbox_id = relationship_by_live.get(field.id)
-            if sandbox_id is None or sandbox_id in desired_relationship_ids:
+            if sandbox_id is None:
                 return True
         else:
             sandbox_id = primitive_by_live.get(field.id)
             if sandbox_id is None:
-                return True
-            if sandbox_id in desired_field_ids and sandbox_id not in closed_field_ids:
                 return True
     return False
 

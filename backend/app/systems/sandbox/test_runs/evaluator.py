@@ -8,9 +8,7 @@ from math import isfinite
 from typing import cast
 from urllib.parse import urlparse
 
-from app.systems.sandbox.designs.date_values import date_in_range
 from app.systems.sandbox.designs.schemas import SandboxDocument
-from app.systems.sandbox.numeric import numeric_matches_step
 from app.systems.sandbox.test_runs.automation_values import (
     MISSING,
     UNRESOLVED,
@@ -26,6 +24,9 @@ from app.systems.sandbox.test_runs.results import (
     SandboxTestResult,
 )
 from app.systems.sandbox.test_runs.schemas import TestValue
+from app.systems.sandbox.test_runs.value_validation import date_is_valid as _date_is_valid
+from app.systems.sandbox.test_runs.value_validation import number_is_valid as _number_is_valid
+from app.systems.sandbox.test_runs.value_validation import within_length as _within_length
 
 
 def evaluate_test(
@@ -234,40 +235,6 @@ def _value_is_valid(value: TestValue, field: Mapping[str, object]) -> bool:
     return False
 
 
-def _within_length(value: str, config: Mapping[str, object]) -> bool:
-    maximum = config.get("maxLength")
-    return not isinstance(maximum, int) or len(value) <= maximum
-
-
-def _number_is_valid(value: int | float, config: Mapping[str, object]) -> bool:
-    minimum = config.get("min")
-    maximum = config.get("max")
-    step = config.get("step")
-    if isinstance(minimum, (int, float)) and not isinstance(minimum, bool) and value < minimum:
-        return False
-    if isinstance(maximum, (int, float)) and not isinstance(maximum, bool) and value > maximum:
-        return False
-    if isinstance(step, (int, float)) and not isinstance(step, bool):
-        if step <= 0:
-            return False
-        origin = (
-            minimum if isinstance(minimum, (int, float)) and not isinstance(minimum, bool) else 0
-        )
-        return numeric_matches_step(value, origin, step)
-    return True
-
-
-def _date_is_valid(value: str, config: Mapping[str, object], *, is_datetime: bool) -> bool:
-    earliest = config.get("earliest")
-    latest = config.get("latest")
-    return date_in_range(
-        value,
-        earliest if isinstance(earliest, str) else None,
-        latest if isinstance(latest, str) else None,
-        datetime_values=is_datetime,
-    )
-
-
 def _apply_automations(
     *,
     document: SandboxDocument,
@@ -305,7 +272,9 @@ def _apply_automations(
                         SandboxTestAutomationTrace(automation_id, label, "Skipped — disabled")
                     )
                 continue
-            if not _trigger_matches(automation.get("trigger"), module_id, event_values, event):
+            if not _trigger_matches(
+                automation.get("trigger"), module_id, fields, event_values, event
+            ):
                 if depth == 0:
                     traces.append(SandboxTestAutomationTrace(automation_id, label, "Not triggered"))
                 continue
@@ -355,6 +324,7 @@ def _apply_automations(
 def _trigger_matches(
     raw_trigger: object,
     module_id: str,
+    fields: Mapping[str, Mapping[str, object]],
     event_values: Mapping[str, TestValue],
     event: Mapping[str, object],
 ) -> bool:
@@ -393,7 +363,12 @@ def _trigger_matches(
             return False
         operator = _string(trigger.get("operator"))
         threshold = automation_value(trigger.get("value"), module_id, event_values)
-        if field_id is None or operator is None or threshold is UNRESOLVED:
+        if (
+            field_id is None
+            or field_id not in fields
+            or operator is None
+            or threshold is UNRESOLVED
+        ):
             return False
         current = event_values.get(field_id, MISSING)
         previous_values = event.get("previousValues")
@@ -402,7 +377,10 @@ def _trigger_matches(
             if isinstance(previous_values, Mapping) and field_id is not None
             else event.get("previousValue")
         )
-        return compare(current, operator, threshold) and not compare(previous, operator, threshold)
+        field_kind = _string(_mapping(fields[field_id].get("config"), "field config").get("kind"))
+        return compare(current, operator, threshold, field_kind) and not compare(
+            previous, operator, threshold, field_kind
+        )
     return False
 
 
@@ -437,7 +415,8 @@ def _conditions_match(
                 issues, automation_id, "Automation conditions refer to an unavailable field."
             )
             return None
-        matched.append(compare(values.get(field_id, MISSING), operator, right))
+        field_kind = _string(_mapping(fields[field_id].get("config"), "field config").get("kind"))
+        matched.append(compare(values.get(field_id, MISSING), operator, right, field_kind))
     return all(matched) if mode == "all" else any(matched)
 
 

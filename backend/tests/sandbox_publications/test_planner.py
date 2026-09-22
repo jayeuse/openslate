@@ -1,4 +1,6 @@
 from hashlib import sha256
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from uuid6 import uuid7
@@ -15,6 +17,7 @@ from app.systems.sandbox.publications.automation_comparison import (
     desired_automation_signature,
     published_automation_signature,
 )
+from app.systems.sandbox.publications.close_rules import _module_has_unmanaged_fields
 from app.systems.sandbox.publications.models import SandboxBinding
 from app.systems.sandbox.publications.preflight import (
     module_schema_blockers,
@@ -256,6 +259,26 @@ def test_relationship_to_a_closed_module_does_not_make_an_empty_schema_valid() -
     assert ("module_schema_invalid", "sample-requests") in {
         (blocker.code, blocker.target_id) for blocker in blockers
     }
+
+
+def test_bound_fields_do_not_block_their_parent_module_from_closing() -> None:
+    module_id = uuid7()
+    field_id = uuid7()
+    field = SimpleNamespace(id=field_id, type=FieldType.TEXT)
+    database = Mock()
+    database.scalars.return_value = [field]
+    binding = SandboxBinding(
+        kind="field",
+        sandbox_id="sample-requests:sample-title",
+        field_id=field_id,
+    )
+
+    assert not _module_has_unmanaged_fields(
+        database,
+        module_id,
+        {binding.sandbox_id: binding},
+        {},
+    )
 
 
 def test_closed_structure_names_do_not_block_later_active_names() -> None:
