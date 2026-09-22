@@ -35,6 +35,21 @@ function configuredDesignWithLegacyMapping(): Design {
   return design;
 }
 
+function configuredDesignWithOffsetDateTimeBounds(): Design {
+  const design = structuredClone(configuredSandboxDesign);
+  const field = design.modules[0]?.fields[0];
+  if (!field) throw new Error("A configured field is required");
+  field.type = "Date/Time";
+  field.value = "2025-01-01T01:00:00+02:00";
+  field.config = {
+    kind: "datetime",
+    defaultValue: "2025-01-01T01:00:00+02:00",
+    earliest: "2025-01-01T01:00:00+02:00",
+    latest: "2025-01-01T00:00:00Z",
+  };
+  return design;
+}
+
 async function openAuthenticatedSandbox(
   page: Page,
   designFixture: Design = configuredSandboxDesign,
@@ -644,6 +659,28 @@ test("closing a mapped field removes its relationship mappings", async ({
     .click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Legacy field mappings")).toHaveCount(0);
+});
+
+test("the Designer saves offset Date/Time bounds in chronological order", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredDesignWithOffsetDateTimeBounds(),
+  );
+
+  await page
+    .getByRole("button", { name: "Show Request number settings" })
+    .click();
+  await page
+    .getByLabel("Request number field settings")
+    .getByRole("button", { name: "Save field changes" })
+    .click();
+
+  await expect.poll(sandbox.documentWrites).toBe(1);
+  await expect(
+    page.getByText("Earliest value cannot be after latest value."),
+  ).toHaveCount(0);
 });
 
 test("a failed structural save remains visibly unsaved until the shared draft is reloaded", async ({

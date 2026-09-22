@@ -208,6 +208,16 @@ function validDateInput(value: string, type: "Date" | "Date/Time"): boolean {
   );
 }
 
+function compareDateInputs(
+  left: string,
+  right: string,
+  type: "Date" | "Date/Time",
+): number {
+  return type === "Date"
+    ? left.localeCompare(right)
+    : Date.parse(left) - Date.parse(right);
+}
+
 function alignsWithStep(value: number, step: number, base: number): boolean {
   const steps = (value - base) / step;
   const distance = Math.abs(steps - Math.round(steps));
@@ -304,12 +314,18 @@ function buildField(field: Field, draft: FieldDraft): Field | string {
       !validDateInput(draft.latest, type)
     )
       return `${type} settings must contain valid values.`;
-    if (draft.earliest && draft.latest && draft.earliest > draft.latest)
+    if (
+      draft.earliest &&
+      draft.latest &&
+      compareDateInputs(draft.earliest, draft.latest, type) > 0
+    )
       return "Earliest value cannot be after latest value.";
     if (
       draft.defaultValue &&
-      ((draft.earliest && draft.defaultValue < draft.earliest) ||
-        (draft.latest && draft.defaultValue > draft.latest))
+      ((draft.earliest &&
+        compareDateInputs(draft.defaultValue, draft.earliest, type) < 0) ||
+        (draft.latest &&
+          compareDateInputs(draft.defaultValue, draft.latest, type) > 0))
     )
       return "Default value must be within the earliest and latest limits.";
     config = {
