@@ -8,6 +8,7 @@ import {
   type Rule,
   type RuleConfig,
 } from "./model";
+import { dateValueInRange } from "./date-values";
 
 export type SandboxValidationIssue = {
   code: string;
@@ -114,9 +115,15 @@ export function validateFieldValue(
     const valid =
       config.kind === "date" ? validDate(value) : validDateTime(value);
     if (!valid) return `${field.name} must be a valid date`;
-    if (config.earliest !== undefined && value < config.earliest)
+    if (
+      config.earliest !== undefined &&
+      !dateValueInRange(config.kind, value, config.earliest, undefined)
+    )
       return `${field.name} is earlier than allowed`;
-    if (config.latest !== undefined && value > config.latest)
+    if (
+      config.latest !== undefined &&
+      !dateValueInRange(config.kind, value, undefined, config.latest)
+    )
       return `${field.name} is later than allowed`;
   }
   if (config.kind === "select" && !config.options.includes(value))
@@ -247,7 +254,12 @@ function validateFieldConfig(field: Field): SandboxValidationIssue[] {
       (config.latest !== undefined && !valid(config.latest)) ||
       (config.earliest !== undefined &&
         config.latest !== undefined &&
-        config.earliest > config.latest)
+        !dateValueInRange(
+          config.kind,
+          config.earliest,
+          undefined,
+          config.latest,
+        ))
     )
       issues.push(
         issue("field.date_range_invalid", "Date limits are invalid", field.id),

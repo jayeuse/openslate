@@ -318,6 +318,28 @@ test("relationship mappings respect requiredness and constrained numeric and dat
       },
     ),
   ).toContain("relationship.mapping_type_incompatible");
+  expect(
+    mappingCodes(
+      {
+        type: "Date/Time",
+        config: {
+          kind: "datetime",
+          defaultValue: null,
+          earliest: "2025-01-01T01:00:00+02:00",
+          latest: "2025-01-01T00:00:00Z",
+        },
+      },
+      {
+        type: "Date/Time",
+        config: {
+          kind: "datetime",
+          defaultValue: null,
+          earliest: "2024-12-31T22:00:00Z",
+          latest: "2025-01-01T00:00:00+00:00",
+        },
+      },
+    ),
+  ).not.toContain("relationship.mapping_type_incompatible");
 });
 
 test("relationship mappings are capped at one thousand per relationship", () => {

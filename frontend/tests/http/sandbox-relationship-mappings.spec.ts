@@ -507,6 +507,17 @@ test("running and clearing tests protect browser exits until each request settle
       }),
     )
     .toBe(true);
+  await expect(
+    page.getByRole("button", { name: "Review & Publish" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "More Sandbox actions" }).click();
+  await page.getByRole("menuitem", { name: "Save checkpoint" }).click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "Save checkpoint" })
+      .getByRole("button", { name: "Save checkpoint" }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
   releaseRun();
   await expect(page.getByText("Test result")).toBeVisible();
 

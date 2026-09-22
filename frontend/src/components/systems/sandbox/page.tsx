@@ -729,6 +729,7 @@ export default function SandboxPage() {
             <Button
               disabled={
                 pending ||
+                testPending ||
                 Boolean(conflict) ||
                 automationDraft.dirty ||
                 automationDraft.pending
@@ -739,7 +740,10 @@ export default function SandboxPage() {
             </Button>
             <SandboxHeaderActions
               pending={
-                pending || automationDraft.dirty || automationDraft.pending
+                pending ||
+                testPending ||
+                automationDraft.dirty ||
+                automationDraft.pending
               }
               onCreateCheckpoint={checkpoint}
               onImport={importFile}

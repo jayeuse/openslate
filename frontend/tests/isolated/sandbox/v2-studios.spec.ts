@@ -7,6 +7,8 @@ import {
   fieldReferenceOptionValue,
   scheduleFrequencyChange,
   defaultAutomation,
+  sandboxFieldsAreDirectionallyCompatible,
+  validateFieldLiteral,
 } from "../../../src/components/systems/sandbox/components/automation-studio";
 import type {
   SandboxAutomationTrigger,
@@ -178,4 +180,33 @@ test("field-reference controls encode stored values exactly like their options",
       relationshipId: "request-customer",
     }),
   ).toBe("request-customer|requests|status");
+});
+
+test("automation Date/Time constraints compare offset values as instants", () => {
+  const source = {
+    id: "source-time",
+    name: "Source time",
+    type: "Date/Time" as const,
+    required: false,
+    closed: false,
+    config: {
+      kind: "datetime" as const,
+      defaultValue: null,
+      earliest: "2025-01-01T01:00:00+02:00",
+      latest: "2025-01-01T00:00:00Z",
+    },
+  };
+  const target = {
+    ...source,
+    id: "target-time",
+    name: "Target time",
+    config: {
+      ...source.config,
+      earliest: "2024-12-31T22:00:00Z",
+      latest: "2025-01-01T00:00:00+00:00",
+    },
+  };
+
+  expect(sandboxFieldsAreDirectionallyCompatible(source, target)).toBe(true);
+  expect(validateFieldLiteral("2024-12-31T23:30:00Z", source)).toBeNull();
 });

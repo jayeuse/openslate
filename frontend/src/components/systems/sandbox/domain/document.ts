@@ -1,5 +1,10 @@
 import { parseSandboxFile, type SandboxFileV1 } from "../helpers/file-format";
 import {
+  dateRangeFits,
+  dateTimeInstant,
+  dateValueInRange,
+} from "./date-values";
+import {
   canonicalFieldType,
   normalizeField,
   normalizeRule,
@@ -442,39 +447,8 @@ function validDate(value: string): boolean {
   );
 }
 
-function dateTimeInstant(value: string): number | undefined {
-  if (
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(
-      value,
-    )
-  )
-    return undefined;
-  const [date] = value.split("T");
-  if (!validDate(date)) return undefined;
-  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`;
-  const parsed = Date.parse(normalized);
-  return Number.isNaN(parsed) ? undefined : parsed;
-}
-
 function validDateTime(value: string): boolean {
   return dateTimeInstant(value) !== undefined;
-}
-
-function dateTimeInRange(
-  value: string,
-  earliest: string | undefined,
-  latest: string | undefined,
-): boolean {
-  const instant = dateTimeInstant(value);
-  if (instant === undefined) return false;
-  const earliestInstant =
-    earliest === undefined ? undefined : dateTimeInstant(earliest);
-  const latestInstant =
-    latest === undefined ? undefined : dateTimeInstant(latest);
-  return (
-    (earliestInstant === undefined || instant >= earliestInstant) &&
-    (latestInstant === undefined || instant <= latestInstant)
-  );
 }
 
 function validHttpUrl(value: string): boolean {
@@ -537,7 +511,12 @@ function valueMatchesField(
     case "datetime":
       return (
         typeof value === "string" &&
-        dateTimeInRange(value, field.config.earliest, field.config.latest)
+        dateValueInRange(
+          "datetime",
+          value,
+          field.config.earliest,
+          field.config.latest,
+        )
       );
     case "email":
       return (
@@ -822,31 +801,8 @@ function compatibleFields(
   }
   if (sourceKind === "date" || sourceKind === "datetime") {
     if (targetKind !== sourceKind) return false;
-    if (sourceKind === "datetime") {
-      const sourceMinimum =
-        source.config.earliest === undefined
-          ? undefined
-          : dateTimeInstant(source.config.earliest);
-      const sourceMaximum =
-        source.config.latest === undefined
-          ? undefined
-          : dateTimeInstant(source.config.latest);
-      const targetMinimum =
-        target.config.earliest === undefined
-          ? undefined
-          : dateTimeInstant(target.config.earliest);
-      const targetMaximum =
-        target.config.latest === undefined
-          ? undefined
-          : dateTimeInstant(target.config.latest);
-      return (
-        (targetMinimum === undefined ||
-          (sourceMinimum !== undefined && sourceMinimum >= targetMinimum)) &&
-        (targetMaximum === undefined ||
-          (sourceMaximum !== undefined && sourceMaximum <= targetMaximum))
-      );
-    }
-    return rangeFits(
+    return dateRangeFits(
+      sourceKind,
       source.config.earliest,
       source.config.latest,
       target.config.earliest,

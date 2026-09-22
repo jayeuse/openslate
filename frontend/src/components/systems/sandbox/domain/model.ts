@@ -1,4 +1,5 @@
 import type { SandboxCanvasLayout } from "@/components/sandbox/sandbox-canvas";
+import { dateRangeFits } from "./date-values";
 
 export const FIELD_TYPES = [
   { name: "Text", kind: "text" },
@@ -212,13 +213,12 @@ export function relationshipFieldTypesAreCompatible(
       (targetConfig.kind !== "date" && targetConfig.kind !== "datetime")
     )
       return false;
-    return (
-      (targetConfig.earliest === undefined ||
-        (sourceConfig.earliest !== undefined &&
-          sourceConfig.earliest >= targetConfig.earliest)) &&
-      (targetConfig.latest === undefined ||
-        (sourceConfig.latest !== undefined &&
-          sourceConfig.latest <= targetConfig.latest))
+    return dateRangeFits(
+      sourceConfig.kind,
+      sourceConfig.earliest,
+      sourceConfig.latest,
+      targetConfig.earliest,
+      targetConfig.latest,
     );
   }
   const textLikeTypes = new Set<FieldTypeName>([

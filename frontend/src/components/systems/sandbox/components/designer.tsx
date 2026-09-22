@@ -126,6 +126,7 @@ import {
   type DesignerPane,
   type SandboxViewPreferences,
 } from "../helpers/view-preferences";
+import { dateValueInRange } from "../domain/date-values";
 
 type FieldDraft = {
   name: string;
@@ -206,16 +207,6 @@ function validDateInput(value: string, type: "Date" | "Date/Time"): boolean {
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) &&
     !Number.isNaN(Date.parse(value))
   );
-}
-
-function compareDateInputs(
-  left: string,
-  right: string,
-  type: "Date" | "Date/Time",
-): number {
-  return type === "Date"
-    ? left.localeCompare(right)
-    : Date.parse(left) - Date.parse(right);
 }
 
 function alignsWithStep(value: number, step: number, base: number): boolean {
@@ -317,15 +308,17 @@ function buildField(field: Field, draft: FieldDraft): Field | string {
     if (
       draft.earliest &&
       draft.latest &&
-      compareDateInputs(draft.earliest, draft.latest, type) > 0
+      !dateValueInRange(kind, draft.earliest, undefined, draft.latest)
     )
       return "Earliest value cannot be after latest value.";
     if (
       draft.defaultValue &&
-      ((draft.earliest &&
-        compareDateInputs(draft.defaultValue, draft.earliest, type) < 0) ||
-        (draft.latest &&
-          compareDateInputs(draft.defaultValue, draft.latest, type) > 0))
+      !dateValueInRange(
+        kind,
+        draft.defaultValue,
+        draft.earliest || undefined,
+        draft.latest || undefined,
+      )
     )
       return "Default value must be within the earliest and latest limits.";
     config = {

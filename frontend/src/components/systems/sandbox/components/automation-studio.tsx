@@ -24,6 +24,7 @@ import type {
   SandboxValueSource,
 } from "../domain/document";
 import type { SandboxAutomationRun } from "../state/api";
+import { dateRangeFits, dateValueInRange } from "../domain/date-values";
 
 export type AutomationStudioProps = {
   design: SandboxDocumentDesign;
@@ -180,7 +181,8 @@ export function sandboxFieldsAreDirectionallyCompatible(
   if (sourceKind === "date" || sourceKind === "datetime")
     return (
       targetKind === sourceKind &&
-      rangeFits(
+      dateRangeFits(
+        sourceKind,
         source.config.earliest,
         source.config.latest,
         target.config.earliest,
@@ -379,8 +381,7 @@ export function validateFieldLiteral(
         : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value);
     if (
       !valid ||
-      (config.earliest !== undefined && value < config.earliest) ||
-      (config.latest !== undefined && value > config.latest)
+      !dateValueInRange(config.kind, value, config.earliest, config.latest)
     )
       return `${field.name} is outside its allowed date range.`;
   }
