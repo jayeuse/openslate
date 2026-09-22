@@ -133,6 +133,15 @@ function VersionChoice({
   );
 }
 
+export function validVersionSelection(
+  versions: SandboxVersion[],
+  selected: string,
+  fallback: "first" | "last",
+): string {
+  if (versions.some((version) => version.id === selected)) return selected;
+  return (fallback === "first" ? versions[0] : versions.at(-1))?.id ?? "";
+}
+
 export function VersionsWorkspace({
   versions,
   getVersion,
@@ -144,6 +153,8 @@ export function VersionsWorkspace({
 }: Props) {
   const [compareA, setCompareA] = useState(versions[0]?.id ?? "");
   const [compareB, setCompareB] = useState(versions.at(-1)?.id ?? "");
+  const selectedCompareA = validVersionSelection(versions, compareA, "first");
+  const selectedCompareB = validVersionSelection(versions, compareB, "last");
   const [comparing, setComparing] = useState(false);
   const [checkpointLabelEdit, setCheckpointLabelEdit] = useState<{
     id: string;
@@ -230,23 +241,23 @@ export function VersionsWorkspace({
           <CardContent className="flex flex-wrap items-end gap-3">
             <VersionChoice
               label="Compare first version"
-              value={compareA}
+              value={selectedCompareA}
               versions={versions}
               onChange={setCompareA}
             />
             <VersionChoice
               label="Compare second version"
-              value={compareB}
+              value={selectedCompareB}
               versions={versions}
               onChange={setCompareB}
             />
             <Button
               variant="outline"
-              disabled={pending || !compareA || !compareB}
+              disabled={pending || !selectedCompareA || !selectedCompareB}
               onClick={async () => {
                 const [first, second] = await Promise.all([
-                  getVersion(compareA),
-                  getVersion(compareB),
+                  getVersion(selectedCompareA),
+                  getVersion(selectedCompareB),
                 ]);
                 if (!first.ok) {
                   notify(first.error);

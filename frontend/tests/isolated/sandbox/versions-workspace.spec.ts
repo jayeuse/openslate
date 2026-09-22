@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { canonicalVersionChanges } from "../../../src/components/systems/sandbox/components/versions-workspace";
+import {
+  canonicalVersionChanges,
+  validVersionSelection,
+} from "../../../src/components/systems/sandbox/components/versions-workspace";
+import type { SandboxVersion } from "../../../src/components/systems/sandbox/state/api";
 import type { SandboxDocumentV2 } from "../../../src/components/systems/sandbox/domain/document";
 
 function document(): SandboxDocumentV2 {
@@ -63,4 +67,13 @@ test("version comparison includes canonical scenario changes", () => {
   expect(canonicalVersionChanges(before, after)).toContain(
     "Scenario changed: Updated baseline",
   );
+});
+
+test("version selections recover when history is added or a selection disappears", () => {
+  const versions = [{ id: "first" }, { id: "second" }] as SandboxVersion[];
+
+  expect(validVersionSelection([], "", "first")).toBe("");
+  expect(validVersionSelection(versions, "", "first")).toBe("first");
+  expect(validVersionSelection(versions, "deleted", "last")).toBe("second");
+  expect(validVersionSelection(versions, "first", "last")).toBe("first");
 });

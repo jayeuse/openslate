@@ -29,6 +29,7 @@ type Props = {
     automationIds?: string[];
   }) => Promise<void>;
   onClear: () => Promise<void>;
+  onPendingChange?: (pending: boolean) => void;
 };
 
 function moduleFields(design: SandboxDocumentDesign, moduleId: string) {
@@ -57,6 +58,7 @@ export function TestWorkspace({
   runs,
   onRun,
   onClear,
+  onPendingChange,
 }: Props) {
   const initialModule = design.modules.find((item) => !item.closed)?.id ?? "";
   const [moduleId, setModuleId] = useState(initialModule);
@@ -85,6 +87,12 @@ export function TestWorkspace({
   const timeLabelId = useId();
   const weekdayLabelId = useId();
   const automationModeLabelId = useId();
+
+  useEffect(
+    () => onPendingChange?.(pending || clearing),
+    [clearing, onPendingChange, pending],
+  );
+  useEffect(() => () => onPendingChange?.(false), [onPendingChange]);
 
   useEffect(() => {
     if (

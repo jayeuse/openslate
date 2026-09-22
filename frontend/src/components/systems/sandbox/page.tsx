@@ -161,6 +161,7 @@ export default function SandboxPage() {
     pending: false,
   });
   const [publicationPending, setPublicationPending] = useState(false);
+  const [testPending, setTestPending] = useState(false);
   const [sandboxGeneration, setSandboxGeneration] = useState(0);
   const skipNextLayoutInitialization = useRef(false);
   const section = sectionFromSearch(search.get("section"), search.get("rule"));
@@ -245,6 +246,7 @@ export default function SandboxPage() {
         !bypassPending &&
         (pending ||
           publicationPending ||
+          testPending ||
           conflict !== null ||
           automationDraft.dirty ||
           automationDraft.pending)
@@ -262,6 +264,7 @@ export default function SandboxPage() {
       publicationPending,
       router,
       search,
+      testPending,
     ],
   );
   useWorkspaceNavigationGuard(
@@ -269,6 +272,7 @@ export default function SandboxPage() {
       () =>
         !pending &&
         !publicationPending &&
+        !testPending &&
         !conflict &&
         !automationDraft.dirty &&
         !automationDraft.pending,
@@ -278,6 +282,7 @@ export default function SandboxPage() {
         conflict,
         pending,
         publicationPending,
+        testPending,
       ],
     ),
   );
@@ -285,6 +290,7 @@ export default function SandboxPage() {
     if (
       !pending &&
       !publicationPending &&
+      !testPending &&
       !conflict &&
       !automationDraft.dirty &&
       !automationDraft.pending
@@ -302,6 +308,7 @@ export default function SandboxPage() {
     conflict,
     pending,
     publicationPending,
+    testPending,
   ]);
 
   const persist = useCallback(
@@ -561,12 +568,13 @@ export default function SandboxPage() {
     if (
       pending ||
       publicationPending ||
+      testPending ||
       conflict !== null ||
       automationDraft.dirty ||
       automationDraft.pending
     ) {
       setMessage(
-        "Save or discard your automation changes before leaving this section.",
+        "Wait for the current action to finish, or save or discard your automation changes.",
       );
       return;
     }
@@ -648,7 +656,7 @@ export default function SandboxPage() {
   return (
     <section
       data-sandbox-page
-      aria-busy={pending || publicationPending || undefined}
+      aria-busy={pending || publicationPending || testPending || undefined}
       className={`space-y-5 ${section === "Build" ? "xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[640px] xl:flex-col xl:gap-5 xl:space-y-0" : ""}`}
     >
       {conflict ? (
@@ -809,6 +817,7 @@ export default function SandboxPage() {
             await clearSandboxTests();
             setTestRuns([]);
           }}
+          onPendingChange={setTestPending}
         />
       ) : null}
       {section === "History" ? (

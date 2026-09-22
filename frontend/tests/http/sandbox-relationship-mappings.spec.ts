@@ -439,6 +439,94 @@ test("automation editing is locked while its save is pending", async ({
   await expect(name).toBeEnabled();
 });
 
+test("running and clearing tests protect browser exits until each request settles", async ({
+  page,
+}) => {
+  let releaseRun = () => {};
+  let releaseClear = () => {};
+  let runStarted = false;
+  let clearStarted = false;
+  const runDelay = new Promise<void>((resolve) => {
+    releaseRun = resolve;
+  });
+  const clearDelay = new Promise<void>((resolve) => {
+    releaseClear = resolve;
+  });
+  await openAuthenticatedSandbox(page);
+  await page.route("**/api/sandbox/tests", async (route) => {
+    const method = route.request().method();
+    if (method === "POST") {
+      runStarted = true;
+      const request = route.request().postDataJSON() as {
+        moduleId: string;
+        values: Record<string, unknown>;
+        event: { kind: "record-created" };
+        automationIds?: string[];
+      };
+      await runDelay;
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "00000000-0000-4000-8000-000000000008",
+          createdAt: "2026-09-22T00:00:00Z",
+          documentRevision: 1,
+          input: { moduleId: request.moduleId, values: request.values },
+          event: request.event,
+          automationIds: request.automationIds ?? null,
+          result: {
+            values: request.values,
+            routes: [],
+            automationTraces: [],
+            issues: [],
+          },
+        }),
+      });
+      return;
+    }
+    if (method === "DELETE") {
+      clearStarted = true;
+      await clearDelay;
+      await route.fulfill({
+        contentType: "application/json",
+        body: "null",
+      });
+      return;
+    }
+    await route.fallback();
+  });
+  await page.getByRole("link", { name: "Test", exact: true }).click();
+
+  await page.getByRole("button", { name: "Run test" }).click();
+  await expect.poll(() => runStarted).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      }),
+    )
+    .toBe(true);
+  releaseRun();
+  await expect(page.getByText("Test result")).toBeVisible();
+
+  await page.getByRole("button", { name: "Clear results" }).click();
+  await expect.poll(() => clearStarted).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      }),
+    )
+    .toBe(true);
+  releaseClear();
+  await expect(
+    page.getByText("Run a test to see the expected outcome here."),
+  ).toBeVisible();
+});
+
 test("an automation issue opens the automation it identifies", async ({
   page,
 }) => {
