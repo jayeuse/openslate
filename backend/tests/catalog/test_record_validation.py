@@ -142,6 +142,22 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         validate_field_value(text_field, "12345")
 
 
+@pytest.mark.parametrize(
+    ("field_type", "config"),
+    [
+        (FieldType.TEXT, {"minLength": 2, "defaultValue": "x"}),
+        (FieldType.LONG_TEXT, {"maxLength": 3, "defaultValue": "long"}),
+        (FieldType.EMAIL, {"defaultValue": "not-an-email"}),
+        (FieldType.URL, {"defaultValue": "ftp://example.test"}),
+    ],
+)
+def test_text_like_defaults_must_satisfy_their_field_constraints(
+    field_type: FieldType, config: dict[str, object]
+) -> None:
+    with pytest.raises(ValueError, match="defaultValue"):
+        field_config(field_type, config)
+
+
 def test_numeric_defaults_are_normalized_and_enforce_bounds_and_steps() -> None:
     assert field_config(
         FieldType.INTEGER,

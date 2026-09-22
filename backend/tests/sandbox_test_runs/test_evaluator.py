@@ -223,6 +223,8 @@ def test_huge_integer_survives_validation_and_relationship_projection() -> None:
     payload["automations"] = []
     relationship = payload["design"]["relationships"][0]
     relationship["fieldMappings"] = [{"sourceFieldId": "score", "targetFieldId": "priority-copy"}]
+    source_field = payload["design"]["modules"][0]["fields"][2]
+    source_field["config"]["step"] = 2
     target_field = payload["design"]["modules"][1]["fields"][0]
     target_field.update(
         {

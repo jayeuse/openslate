@@ -45,6 +45,14 @@ def _finite_numeric(value: Any) -> bool:
     return not isinstance(value, float) or isfinite(value)
 
 
+def _valid_email(value: str) -> bool:
+    return re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value) is not None
+
+
+def _valid_url(value: str) -> bool:
+    return re.fullmatch(r"https?://[^\s/$.?#][^\s]*", value) is not None
+
+
 def _numeric_config(field_type: FieldType, config: dict[str, Any]) -> dict[str, Any]:
     allowed = {"minimum", "maximum", "step", "defaultValue"}
     if set(config).difference(allowed):
@@ -141,7 +149,9 @@ def field_config(field_type: FieldType, config: dict[str, Any]) -> dict[str, Any
     elif field_type in {FieldType.TEXT, FieldType.LONG_TEXT, FieldType.EMAIL, FieldType.URL}:
         allowed = {"minLength", "maxLength", "defaultValue"}
         if set(config).difference(allowed):
-            raise ValueError("Text fields only support minLength and maxLength configuration")
+            raise ValueError(
+                "Text fields only support minLength, maxLength, and defaultValue configuration"
+            )
         for key in {"minLength", "maxLength"}.intersection(config):
             value = config[key]
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -152,6 +162,15 @@ def field_config(field_type: FieldType, config: dict[str, Any]) -> dict[str, Any
         default = config.get("defaultValue")
         if default is not None and not isinstance(default, str):
             raise ValueError("Text field defaultValue must be text")
+        if isinstance(default, str):
+            if config.get("minLength") is not None and len(default) < config["minLength"]:
+                raise ValueError("Text field defaultValue is shorter than minLength")
+            if config.get("maxLength") is not None and len(default) > config["maxLength"]:
+                raise ValueError("Text field defaultValue exceeds maxLength")
+            if field_type is FieldType.EMAIL and default and not _valid_email(default):
+                raise ValueError("Email field defaultValue must be an email address")
+            if field_type is FieldType.URL and default and not _valid_url(default):
+                raise ValueError("URL field defaultValue must be an http or https URL")
     elif field_type in {FieldType.DATE, FieldType.DATETIME}:
         allowed = {"earliest", "latest", "defaultValue"}
         if set(config).difference(allowed):
@@ -262,14 +281,14 @@ def _validate_text(value: Any, field: Field) -> str:
 
 def _validate_email(value: Any, field: Field) -> str:
     value = _validate_text(value, field)
-    if value and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value) is None:
+    if value and not _valid_email(value):
         raise ValueError(f"Field {field.id} must be an email address")
     return cast(str, value)
 
 
 def _validate_url(value: Any, field: Field) -> str:
     value = _validate_text(value, field)
-    if value and re.fullmatch(r"https?://[^\s/$.?#][^\s]*", value) is None:
+    if value and not _valid_url(value):
         raise ValueError(f"Field {field.id} must be an http or https URL")
     return cast(str, value)
 

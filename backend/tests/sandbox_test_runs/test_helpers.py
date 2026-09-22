@@ -19,10 +19,24 @@ from app.systems.sandbox.test_runs.relationships import (
 
 
 def _field(field_id: str, kind: str, **config: object) -> dict[str, object]:
+    field_type = {
+        "text": "Text",
+        "long-text": "Long text",
+        "email": "Email",
+        "url": "URL",
+        "number": "Number",
+        "integer": "Integer",
+        "date": "Date",
+        "datetime": "Date/Time",
+        "checkbox": "Checkbox",
+        "select": "Select",
+    }[kind]
     return {
         "id": field_id,
         "name": field_id.title(),
+        "type": field_type,
         "required": False,
+        "closed": False,
         "config": {"kind": kind, **config},
     }
 
@@ -222,6 +236,10 @@ def test_relationship_helper_compatibility_and_value_types_are_bounded() -> None
     assert _mapping_is_compatible(_field("a", "integer"), _field("b", "number"))
     assert _mapping_is_compatible(_field("a", "email"), _field("b", "text"))
     assert not _mapping_is_compatible(_field("a", "number"), _field("b", "text"))
+    assert not _mapping_is_compatible(
+        _field("a", "number", min=0, max=100),
+        _field("b", "number", min=0, max=10),
+    )
 
     assert _value_is_valid(None, _field("a", "text"))
     assert not _value_is_valid(None, {**_field("a", "text"), "required": True})
@@ -230,6 +248,7 @@ def test_relationship_helper_compatibility_and_value_types_are_bounded() -> None
     assert not _value_is_valid(True, _field("a", "number"))
     assert _value_is_valid("Open", _field("a", "select", options=["Open"]))
     assert _value_is_valid("2026-09-21", _field("a", "date"))
+    assert not _value_is_valid(50, _field("a", "number", min=0, max=10))
 
     assert _fields({}) == {}
     with pytest.raises(ValueError, match="Sandbox field is invalid"):

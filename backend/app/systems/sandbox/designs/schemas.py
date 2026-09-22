@@ -405,7 +405,7 @@ class PortableVersion(StrictModel):
 
 
 class PortableBundle(SandboxDocument):
-    versions: list[PortableVersion] | None = Field(default=None, max_length=50)
+    versions: list[PortableVersion] | None = None
 
 
 class DocumentReplaceRequest(StrictModel):

@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from math import isfinite
 from typing import cast
 
+from app.systems.sandbox.designs.field_validation import (
+    DocumentValueError,
+    validate_mapping,
+    validate_value,
+)
+from app.systems.sandbox.designs.mapping_validation import field_metadata
+from app.systems.sandbox.designs.schemas import DesignField
 from app.systems.sandbox.test_runs.results import SandboxTestIssue, SandboxTestRoute
 from app.systems.sandbox.test_runs.schemas import TestValue
 
@@ -114,52 +120,25 @@ def _relationship_projections(
 
 
 def _mapping_is_compatible(source: Mapping[str, object], target: Mapping[str, object]) -> bool:
-    source_config = _mapping(source.get("config"), "source field settings")
-    target_config = _mapping(target.get("config"), "target field settings")
-    source_kind = _string(source_config.get("kind"))
-    target_kind = _string(target_config.get("kind"))
-    if source_kind == "select" and target_kind == "select":
-        source_options = source_config.get("options")
-        target_options = target_config.get("options")
-        return (
-            isinstance(source_options, list)
-            and isinstance(target_options, list)
-            and set(source_options) <= set(target_options)
+    try:
+        validate_mapping(
+            field_metadata(DesignField.model_validate(source)),
+            field_metadata(DesignField.model_validate(target)),
+            "relationship",
         )
-    if source_kind == target_kind:
+    except (DocumentValueError, ValueError):
+        return False
+    else:
         return True
-    if source_kind == "integer" and target_kind == "number":
-        return True
-    return source_kind in {"text", "long-text", "email", "url"} and target_kind in {
-        "text",
-        "long-text",
-    }
 
 
 def _value_is_valid(value: TestValue, field: Mapping[str, object]) -> bool:
-    if value is None:
-        return field.get("required") is not True
-    config = _mapping(field.get("config"), "field settings")
-    kind = _string(config.get("kind"))
-    if kind in {"text", "long-text", "email", "url"}:
-        max_length = config.get("maxLength")
-        return isinstance(value, str) and (
-            not isinstance(max_length, int) or len(value) <= max_length
-        )
-    if kind == "checkbox":
-        return isinstance(value, bool)
-    if kind == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if kind == "number":
-        return (
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and (not isinstance(value, float) or isfinite(value))
-        )
-    if kind == "select":
-        options = config.get("options")
-        return isinstance(value, str) and isinstance(options, list) and value in options
-    return isinstance(value, str)
+    try:
+        validate_value(value, field_metadata(DesignField.model_validate(field)))
+    except (DocumentValueError, ValueError):
+        return False
+    else:
+        return True
 
 
 def _fields(module: Mapping[str, object]) -> dict[str, Mapping[str, object]]:

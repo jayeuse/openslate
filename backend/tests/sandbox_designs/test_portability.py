@@ -83,6 +83,38 @@ def test_export_bundles_preserve_required_null_values_and_round_trip() -> None:
     assert PortableBundle.model_validate(with_history_payload) == with_history
 
 
+def test_export_history_includes_published_versions_beyond_the_mutable_limit() -> None:
+    row = _document_row()
+    db = Mock(spec=Session)
+    db.scalar.return_value = row
+    now = datetime.now(UTC)
+    versions = [
+        SandboxVersion(
+            id=uuid7(),
+            document_id=row.id,
+            sequence=sequence,
+            kind="checkpoint" if sequence <= 50 else "published",
+            label=f"Version {sequence}",
+            note=None,
+            source_document_revision=1,
+            snapshot=row.document,
+            content_hash=row.content_hash,
+            byte_count=row.byte_count,
+            metadata_revision=1,
+            created_at=now,
+            updated_at=now,
+        )
+        for sequence in range(1, 52)
+    ]
+    db.scalars.return_value.all.return_value = versions
+
+    bundle = export_bundle(db, include_versions=True)
+
+    assert bundle.versions is not None
+    assert len(bundle.versions) == 51
+    assert bundle.versions[-1].kind == "published"
+
+
 def test_portable_bundle_reserves_import_envelope_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     bundle = PortableBundle.model_validate(sample_document().model_dump(by_alias=True))
     size = len(portable_bundle_bytes(bundle))
