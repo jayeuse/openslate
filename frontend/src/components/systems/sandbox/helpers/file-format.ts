@@ -343,15 +343,39 @@ function parseRelationship(value: unknown): Relationship {
   const source = record(value, "relationship");
   exactKeys(
     source,
-    ["id", "name", "source", "target", "cardinality"],
+    ["id", "name", "source", "target", "cardinality", "fieldMappings"],
     "relationship",
   );
+  const fieldMappings =
+    source.fieldMappings === undefined
+      ? []
+      : array(source.fieldMappings, "relationship fieldMappings").map(
+          (mapping) => {
+            const source = record(mapping, "relationship field mapping");
+            exactKeys(
+              source,
+              ["sourceFieldId", "targetFieldId"],
+              "relationship field mapping",
+            );
+            return {
+              sourceFieldId: string(
+                source.sourceFieldId,
+                "relationship mapping sourceFieldId",
+              ),
+              targetFieldId: string(
+                source.targetFieldId,
+                "relationship mapping targetFieldId",
+              ),
+            };
+          },
+        );
   return {
     id: string(source.id, "relationship id"),
     name: string(source.name, "relationship name"),
     source: string(source.source, "relationship source"),
     target: string(source.target, "relationship target"),
     cardinality: string(source.cardinality, "relationship cardinality"),
+    fieldMappings,
   };
 }
 
@@ -505,10 +529,13 @@ export function exportSandboxFile(input: {
   return text;
 }
 
-export function parseSandboxFile(text: string): SandboxFileParseResult {
+export function parseSandboxFile(
+  text: string,
+  maximumFileBytes = SANDBOX_LIMITS.fileBytes,
+): SandboxFileParseResult {
   try {
-    if (new TextEncoder().encode(text).byteLength > SANDBOX_LIMITS.fileBytes)
-      throw new Error("Sandbox file exceeds the 2 MiB limit");
+    if (new TextEncoder().encode(text).byteLength > maximumFileBytes)
+      throw new Error("Sandbox file exceeds the allowed size limit");
     const source = record(JSON.parse(text) as unknown, "sandbox file");
     exactKeys(
       source,

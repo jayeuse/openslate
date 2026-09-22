@@ -33,7 +33,10 @@ deployment.
 
 - Vanilla PostgreSQL, FastAPI Identity, private filesystem storage, Caddy configuration, and authenticated SSE are implemented application contracts.
 - The FastAPI-only production-server cutover is the selected deployment contract: one FastAPI payload includes the static frontend assets and contains no Node.js frontend process, image, listener, or runtime configuration.
-- The workspace remains UI-first for much visible sample business state. Do not present sample interactions as persisted business automation.
+- Sandbox design documents, history, temporary test evidence, publication, and
+  supported published automations are durable FastAPI/PostgreSQL contracts.
+  Other UI-first workspace surfaces may still use browser-local sample state;
+  do not present those interactions as persisted behavior.
 - SMTP delivery is optional and disabled by default. When enabled, FastAPI queues encrypted invitation and recovery payloads in PostgreSQL, then a bounded worker delivers them through the configured SMTP transport.
 - Signed Windows/macOS server-app installers, automated setup, bundled database lifecycle, and tested backup/restore remain unverified until clean-host acceptance proves them.
 

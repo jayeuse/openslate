@@ -215,7 +215,7 @@ export function OrganizationPanel({
                 variant="outline"
                 className="min-h-11 justify-between"
               >
-                <Link href="/sandbox?view=Designer">
+                <Link href="/sandbox?section=build">
                   App design and workflows{" "}
                   <ArrowUpRight data-icon="inline-end" />
                 </Link>

@@ -106,6 +106,13 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
     assert statements.index("DELETE FROM public.files") < statements.index(
         "DELETE FROM public.records"
     )
+    assert statements.index("DELETE FROM public.sandbox_test_runs") < statements.index(
+        "DELETE FROM public.sandbox_versions"
+    )
+    assert any(statement.startswith("UPDATE public.sandbox_documents") for statement in statements)
+    assert not any(
+        statement.startswith("INSERT INTO public.sandbox_versions") for statement in statements
+    )
 
 
 def test_reset_rejects_remote_runtime_or_missing_owner_environment() -> None:
@@ -288,6 +295,17 @@ def test_reset_removes_local_identity_rows_and_preserves_the_administrator(
             assert cursor.fetchone() == (0,)
             cursor.execute("SELECT logo_file_id FROM public.workspace_profiles")
             assert cursor.fetchone() == (None,)
+            cursor.execute(
+                "SELECT revision, document->>'schemaVersion', performed_by "
+                "FROM public.sandbox_documents"
+            )
+            assert cursor.fetchone() == (1, "2", None)
+            cursor.execute(
+                "SELECT sequence, kind, label, performed_by FROM public.sandbox_versions"
+            )
+            assert cursor.fetchall() == []
+            cursor.execute("SELECT count(*) FROM public.sandbox_test_runs")
+            assert cursor.fetchone() == (0,)
     assert storage.list_object_keys() == ()
     engine = guarded_create_engine(runtime_url)
     try:

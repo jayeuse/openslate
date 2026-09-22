@@ -2,8 +2,6 @@
 
 import os
 import select
-import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Barrier
@@ -22,18 +20,12 @@ from app.systems.access.identity.service import InvalidCredentials, authenticate
 from app.systems.access.users.models import Role, User, UserStatus
 from app.systems.platform.files.models import File
 from tests.conftest import _guard_integration_database, guarded_create_engine
+from tests.operations import migration_support
+from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
 
 def _catalog(db, statement: str):
     return db.connection().execute(text(statement))
-
-
-def _guarded_migration_environment() -> dict[str, str]:
-    runtime_url = os.getenv("TEST_DATABASE_URL", "")
-    owner_url = os.getenv("MIGRATION_DATABASE_URL", "")
-    _guard_integration_database(runtime_url)
-    _guard_integration_database(owner_url)
-    return {**os.environ, "OPENSLATE_ENV_SOURCE": "process"}
 
 
 @pytest.mark.integration
@@ -324,19 +316,9 @@ def test_runtime_role_can_create_guarded_private_file_metadata() -> None:
 
 @pytest.mark.integration
 def test_downgrade_then_reupgrade_keeps_audit_and_security_events_non_destructive() -> None:
-    environment = _guarded_migration_environment()
+    environment = guarded_migration_environment()
     for operation in ("downgrade", "upgrade"):
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "alembic",
-                operation,
-                "base" if operation == "downgrade" else "head",
-            ],
-            check=True,
-            env=environment,
-        )
+        run_alembic(environment, operation, "base" if operation == "downgrade" else "head")
     database_url = environment["TEST_DATABASE_URL"].replace("postgresql+psycopg", "postgresql")
     with psycopg.connect(database_url, autocommit=True) as runtime:
         privileges = runtime.execute(
@@ -373,7 +355,7 @@ def test_downgrade_reupgrade_requires_manifest_owned_database_urls(
         monkeypatch.setenv(name, value)
 
     with pytest.raises(RuntimeError, match="runner-owned"):
-        _guarded_migration_environment()
+        guarded_migration_environment()
 
 
 def test_downgrade_reupgrade_forces_validated_process_environment(
@@ -385,13 +367,9 @@ def test_downgrade_reupgrade_forces_validated_process_environment(
     monkeypatch.delenv("OPENSLATE_ENV_SOURCE", raising=False)
     monkeypatch.setenv("TEST_DATABASE_URL", runtime_url)
     monkeypatch.setenv("MIGRATION_DATABASE_URL", owner_url)
-    monkeypatch.setattr(
-        sys.modules[__name__],
-        "_guard_integration_database",
-        lambda url: guarded.append(url),
-    )
+    monkeypatch.setattr(migration_support, "_guard_integration_database", guarded.append)
 
-    environment = _guarded_migration_environment()
+    environment = guarded_migration_environment()
 
     assert guarded == [runtime_url, owner_url]
     assert environment["OPENSLATE_ENV_SOURCE"] == "process"

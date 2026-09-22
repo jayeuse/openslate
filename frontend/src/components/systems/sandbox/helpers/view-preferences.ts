@@ -10,7 +10,7 @@ export interface SandboxViewPreferences {
   mobilePane: DesignerPane;
 }
 
-export const SANDBOX_VIEW_PREFERENCES_KEY = "openslate.sample.sandbox.view.v1";
+export const SANDBOX_VIEW_PREFERENCES_KEY = "openslate.sandbox.view.v2";
 export const SANDBOX_STRUCTURE_PANEL_MIN_WIDTH = 320;
 export const SANDBOX_STRUCTURE_PANEL_MAX_WIDTH = 420;
 export const SANDBOX_INSPECTOR_PANEL_MIN_WIDTH = 450;

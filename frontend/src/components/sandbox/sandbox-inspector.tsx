@@ -42,7 +42,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import type { SandboxCommandResult } from "@/components/systems/sandbox/state/async";
+import type { SandboxCommandResult } from "@/components/systems/sandbox/state/commands";
 
 type SandboxCommand =
   | void
@@ -714,8 +714,8 @@ export function SandboxInspector({
               <div>
                 <SectionTitle>Structure</SectionTitle>
                 <p className="text-muted-foreground mt-1 text-[11px]">
-                  Select an item for settings. Right-click or press Shift+F10
-                  for actions. Double-click a name to rename it.
+                  Select an item for settings. Use the visible actions to add,
+                  rename, or manage items.
                 </p>
               </div>
               <div className="flex min-w-0 gap-2">

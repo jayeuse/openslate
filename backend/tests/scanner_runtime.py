@@ -149,11 +149,24 @@ class DisposableScanner:
             dirs_exist_ok=True,
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
+        shutil.copytree(
+            self.root / "frontend",
+            context / "frontend",
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(
+                "node_modules",
+                ".next",
+                "out",
+                "test-results",
+                "playwright-report",
+                "__pycache__",
+            ),
+        )
+        shutil.copytree(self.root / "contracts", context / "contracts", dirs_exist_ok=True)
         for image, dockerfile in (
             (self.image, "clamav.Dockerfile"),
             (self.backend_image, "backend.Dockerfile"),
         ):
-            self.images.append(image)
             self._run(
                 [
                     "build",
@@ -166,6 +179,7 @@ class DisposableScanner:
                     str(context),
                 ]
             )
+            self.images.append(image)
 
     def _hashes(self) -> dict[str, str]:
         hashes = {}

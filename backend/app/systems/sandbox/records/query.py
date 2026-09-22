@@ -1,18 +1,19 @@
 """One typed SQL compiler for interactive records and CSV snapshots."""
 
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from typing import Any
 from typing import cast as type_cast
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import Boolean, Date, DateTime, Numeric, String, cast, func, select
+from sqlalchemy import Boolean, Date, DateTime, Numeric, String, case, cast, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.listing.schemas import PaginationMetadata, StandardListResponse
+from app.systems.sandbox.designs.date_values import parse_datetime
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import validate_field_value
 from app.systems.sandbox.modules.models import Module
@@ -64,7 +65,7 @@ def comparison_value(field: Field, predicate: QueryFilter) -> Any:
     elif field.type == FieldType.DATE:
         normalized = [date.fromisoformat(value) for value in normalized]
     elif field.type == FieldType.DATETIME:
-        normalized = [datetime.fromisoformat(value.replace("Z", "+00:00")) for value in normalized]
+        normalized = [parse_datetime(value) for value in normalized]
     return normalized if isinstance(predicate.value, list) else normalized[0]
 
 
@@ -75,7 +76,14 @@ def field_expression(field: Field) -> ColumnElement[Any]:
     if field.type == FieldType.DATE:
         return cast(value, Date())
     if field.type == FieldType.DATETIME:
-        return cast(value, DateTime(timezone=True))
+        has_explicit_timezone = value.op("~")(r"(Z|[+-][0-9]{2}:[0-9]{2})$")
+        return type_cast(
+            ColumnElement[Any],
+            case(
+                (has_explicit_timezone, cast(value, DateTime(timezone=True))),
+                else_=func.timezone("UTC", cast(value, DateTime(timezone=False))),
+            ),
+        )
     if field.type == FieldType.BOOLEAN:
         return cast(value, Boolean())
     return type_cast(ColumnElement[Any], value)

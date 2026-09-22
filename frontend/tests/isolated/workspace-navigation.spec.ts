@@ -41,6 +41,28 @@ test("active section selection uses stable IDs when rendered copy changes", () =
   ).toBe(true);
 });
 
+test("Sandbox uses the simplified sections while legacy links still open the matching area", () => {
+  const navigation = getWorkspaceNavigation(
+    "/sandbox",
+    new URLSearchParams("section=simulation"),
+  ).find((entry) => entry.id === "sandbox");
+
+  expect(navigation?.items.map((entry) => [entry.id, entry.label])).toEqual([
+    ["build", "Build"],
+    ["automations", "Automations"],
+    ["test", "Test"],
+    ["history", "History"],
+  ]);
+  expect(
+    isWorkspaceNavigationItemActive(
+      "sandbox",
+      "test",
+      "/sandbox",
+      new URLSearchParams("section=Preview"),
+    ),
+  ).toBe(true);
+});
+
 test("sidebar section links preserve the active board while changing its section", () => {
   const calendar = item(
     "/boards",
@@ -84,9 +106,9 @@ test("sidebar section links retain only each screen's relevant deep-link context
     )?.href,
   ).toBe("/openview?section=views&module=incidents");
   expect(
-    item("/sandbox", "rule=approval&inspect=orders", "sandbox", "automation")
+    item("/sandbox", "rule=approval&inspect=orders", "sandbox", "automations")
       ?.href,
-  ).toBe("/sandbox?section=automation&rule=approval&inspect=orders");
+  ).toBe("/sandbox?section=automations&rule=approval&inspect=orders");
   expect(
     item("/platform", "file=contract.pdf", "platform", "files")?.href,
   ).toBe("/platform?section=files&file=contract.pdf");
@@ -99,7 +121,7 @@ test("active parsing recognizes defaults and invalid section values without mark
   expect(
     isWorkspaceNavigationItemActive(
       "sandbox",
-      "designer",
+      "build",
       "/sandbox",
       new URLSearchParams(),
     ),
@@ -131,7 +153,7 @@ test("active parsing recognizes defaults and invalid section values without mark
   expect(
     isWorkspaceNavigationItemActive(
       "sandbox",
-      "designer",
+      "build",
       "/sandbox",
       new URLSearchParams("section=invalid&rule=approval"),
     ),
@@ -204,7 +226,7 @@ test("sidebar highlights the same section as Access, OpenView, and Sandbox deep 
   expect(
     isWorkspaceNavigationItemActive(
       "sandbox",
-      "designer",
+      "automations",
       "/sandbox",
       new URLSearchParams("section=AUTOMATION"),
     ),

@@ -5,7 +5,6 @@ import {
   pagePlatformSearch,
   readPlatformSnapshot,
 } from "../../../src/components/systems/platform/adapters/runtime";
-import { initialDesign } from "../../../src/components/systems/sandbox/domain/model";
 
 test("Platform search filters and sorts the complete match set before applying its visible limit", () => {
   const items = [
@@ -90,7 +89,6 @@ test("Platform resource snapshot reads cross-feature owners through one loader",
   expect(calls).toEqual(
     expect.arrayContaining([
       "access-people",
-      "sandbox.design",
       "records",
       "commsMessages",
       "comms-configuration",
@@ -102,22 +100,4 @@ test("Platform resource snapshot reads cross-feature owners through one loader",
       "platformSessions",
     ]),
   );
-});
-
-test("Platform projects the current normalized Sandbox design for search", () => {
-  const present = {
-    ...initialDesign,
-    departments: initialDesign.departments.map((department, index) =>
-      index === 0 ? { ...department, name: "Field operations" } : department,
-    ),
-  };
-  const snapshot = readPlatformSnapshot(
-    <T>(key: string, initial: T) =>
-      (key === "sandbox.design"
-        ? { past: [], present, future: [] }
-        : initial) as T,
-  );
-
-  expect(snapshot.design).toEqual(present);
-  expect(snapshot.design.departments[0]?.name).toBe("Field operations");
 });

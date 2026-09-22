@@ -40,6 +40,11 @@ def field(kind: FieldType, **kwargs: object) -> Field:
             "2026-09-09T12:00:00+08:00",
             datetime.fromisoformat("2026-09-09T12:00:00+08:00"),
         ),
+        (
+            FieldType.DATETIME,
+            "2026-09-09T12:00",
+            datetime.fromisoformat("2026-09-09T12:00:00+00:00"),
+        ),
     ],
 )
 def test_comparison_preserves_types_and_precision(kind, value, expected):
@@ -52,7 +57,6 @@ def test_comparison_preserves_types_and_precision(kind, value, expected):
     ("kind", "value"),
     [
         (FieldType.INTEGER, True),
-        (FieldType.DATETIME, "2026-09-09T12:00:00"),
         (FieldType.DECIMAL, 1.5),
         (FieldType.DATE, "2026-02-30"),
     ],
@@ -143,6 +147,16 @@ def test_export_regional_date_preserves_calendar_day_and_instant_offset():
     rendered = format_cell("2026-09-09T00:00:00Z", instant_field, "America/Los_Angeles", "en-US")
     assert "Sep 8" in rendered
     assert rendered.endswith("UTC-07:00")
+
+
+def test_export_treats_designer_local_datetime_as_the_same_utc_instant() -> None:
+    instant_field = field(FieldType.DATETIME)
+
+    assert format_cell(
+        "2026-09-09T00:00", instant_field, "America/Los_Angeles", "en-US"
+    ) == format_cell(
+        "2026-09-09T00:00:00Z", instant_field, "America/Los_Angeles", "en-US"
+    )
 
 
 def test_csv_exact_byte_limit_includes_header_and_utf8():

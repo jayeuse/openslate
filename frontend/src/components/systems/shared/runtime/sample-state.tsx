@@ -23,10 +23,6 @@ import { releaseAllLocalAttachments } from "./local-attachments";
 import { clearCommsDraftTextStore } from "../../comms/state/draft-text";
 import { useVerifiedWorkspaceUserId } from "./workspace-identity";
 import {
-  decodeStoredSandboxHistory,
-  decodeStoredSandboxVersions,
-} from "@/components/systems/sandbox/helpers/stored-history";
-import {
   Dialog,
   DialogContent,
   DialogTitle,
@@ -151,12 +147,6 @@ export function decodeSampleStoredValue<T>(
   value: unknown,
   initial: T,
 ): T {
-  if (key === "sandbox.design")
-    return decodeStoredSandboxHistory(value) === null ? initial : (value as T);
-  if (key === "sandbox.versions") {
-    const decoded = decodeStoredSandboxVersions(value);
-    return decoded === null ? initial : (decoded as T);
-  }
   return compatible(value, initial) ? value : initial;
 }
 

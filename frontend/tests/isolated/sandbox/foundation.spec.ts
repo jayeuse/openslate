@@ -5,12 +5,7 @@ import {
   normalizeField,
   type Design,
 } from "../../../src/components/systems/sandbox/domain/model";
-import {
-  applySandboxCommand,
-  createSandboxHistory,
-  normalizeSandboxHistory,
-  undoSandboxCommand,
-} from "../../../src/components/systems/sandbox/state/controller";
+import { configuredSandboxDesign } from "../../helpers/sandbox-fixtures";
 import { validateSandboxDesign } from "../../../src/components/systems/sandbox/domain/validation";
 import {
   exportSandboxFile,
@@ -22,8 +17,18 @@ import {
 } from "../../../src/components/systems/sandbox/helpers/bridge";
 
 function fixture(): Design {
-  return structuredClone(initialDesign);
+  return structuredClone(configuredSandboxDesign);
 }
+
+test("new Sandbox workspaces start without placeholder entities", () => {
+  expect(initialDesign).toEqual({
+    departments: [],
+    modules: [],
+    relationships: [],
+    rules: [],
+    layout: {},
+  });
+});
 
 test("sandbox field configuration has ten canonical types and normalizes legacy select values", () => {
   expect(FIELD_TYPES.map((type) => type.name)).toEqual([
@@ -76,97 +81,6 @@ test("canvas field type changes replace incompatible saved configuration", () =>
   ).toBe(false);
 });
 
-test("one valid semantic command creates one history entry while invalid commands create none", () => {
-  const history = createSandboxHistory(fixture());
-  const renamed = applySandboxCommand(history, {
-    type: "rename-department",
-    departmentId: "sample-operations",
-    name: "Field operations",
-  });
-
-  expect(renamed.present.departments[0].name).toBe("Field operations");
-  expect(renamed.past).toHaveLength(1);
-  expect(renamed.past[0].command.type).toBe("rename-department");
-
-  const rejected = applySandboxCommand(renamed, {
-    type: "rename-department",
-    departmentId: "missing-department",
-    name: "Missing",
-  });
-  expect(rejected).toBe(renamed);
-  expect(rejected.past).toHaveLength(1);
-});
-
-test("legacy design snapshot arrays migrate into semantic undo history", () => {
-  const before = fixture();
-  const after = fixture();
-  after.departments[0].name = "Migrated operations";
-  const migrated = normalizeSandboxHistory(
-    { past: [before], present: after, future: [] },
-    fixture(),
-  );
-
-  expect(migrated.past).toHaveLength(1);
-  expect(undoSandboxCommand(migrated).present).toEqual(before);
-});
-
-test("stored sandbox history rejects unsafe layout and unknown nested properties", () => {
-  const fallback = fixture();
-  const badLayout = { ...fixture(), layout: "not-a-layout" };
-  const source = fixture();
-  const unknownNested = {
-    ...source,
-    modules: source.modules.map((sandboxModule, index) =>
-      index === 0 ? { ...sandboxModule, unexpected: true } : sandboxModule,
-    ),
-  };
-
-  for (const present of [badLayout, unknownNested]) {
-    expect(
-      normalizeSandboxHistory({ past: [], present, future: [] }, fallback),
-    ).toEqual(createSandboxHistory(fallback));
-  }
-});
-
-test("stored sandbox history rejects excessive history and entity counts", () => {
-  const fallback = fixture();
-  const tooManyDepartments = fixture();
-  tooManyDepartments.departments = Array.from({ length: 101 }, (_, index) => ({
-    id: `department-${index}`,
-    name: `Department ${index}`,
-    closed: false,
-  }));
-  const snapshot = fixture();
-
-  for (const stored of [
-    { past: Array(51).fill(snapshot), present: snapshot, future: [] },
-    { past: [], present: tooManyDepartments, future: [] },
-  ]) {
-    expect(normalizeSandboxHistory(stored, fallback)).toEqual(
-      createSandboxHistory(fallback),
-    );
-  }
-});
-
-test("stored sandbox history preserves structurally safe semantic issues and current entries", () => {
-  const invalid = fixture();
-  invalid.modules[0].department = "missing-department";
-  invalid.relationships.push({
-    ...invalid.relationships[0],
-    id: "duplicate-relationship",
-  });
-  const current = applySandboxCommand(createSandboxHistory(invalid), {
-    type: "rename-department",
-    departmentId: "sample-operations",
-    name: "Still editable",
-  });
-  const restored = normalizeSandboxHistory(current, fixture());
-
-  expect(restored.present).toEqual(current.present);
-  expect(restored.past).toHaveLength(1);
-  expect(undoSandboxCommand(restored).present).toEqual(invalid);
-});
-
 test("derived validation reports broken references, duplicate relationships, and mismatched defaults", () => {
   const invalid = fixture();
   invalid.modules.push({
@@ -198,6 +112,7 @@ test("derived validation reports broken references, duplicate relationships, and
     source: "missing-module",
     target: "sample-requests",
     cardinality: "One-to-one",
+    fieldMappings: [],
   });
   invalid.relationships.push({
     id: "cross-department-link",
@@ -205,6 +120,7 @@ test("derived validation reports broken references, duplicate relationships, and
     source: "sample-requests",
     target: "sample-customers",
     cardinality: "One-to-many",
+    fieldMappings: [],
   });
 
   const validation = validateSandboxDesign(invalid);

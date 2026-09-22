@@ -1,6 +1,6 @@
 # Frontend Architecture
 
-> **Scope:** Static Next.js interface, browser session behavior, and current sample-data boundary.
+> **Scope:** Static Next.js interface, browser session behavior, and current persistence boundaries.
 
 Next.js 16 and React 19 build the OpenSlate interface as a static export. In
 daily development, `next dev` is the direct browser origin and its
@@ -22,4 +22,9 @@ client coordinates refresh attempts across tabs.
 
 Login accepts email or username. Invitation tokens are consumed by the FastAPI setup flow; temporary-password users are kept in setup-only state until activation succeeds. Logout reports server failure rather than silently discarding browser state.
 
-Most workspace business data and interactions remain browser-local sample state. Authorized API adapters must preserve the existing feature contract, loading/retry behavior, and unsaved-draft protection. An eventual SSE consumer must treat events as cache invalidations and never as row data.
+Some workspace surfaces remain browser-local sample state. Sandbox is an
+exception: its Build, Automations, Test, History, and Review & Publish workflow
+uses authenticated FastAPI contracts and PostgreSQL. Its temporary Test inputs
+never create operational records. Authorized API adapters preserve loading,
+retry, revision-conflict, and unsaved-draft protection. SSE consumers treat
+events as cache invalidations and never as row data.

@@ -29,6 +29,7 @@ class LifecycleBlockerCode(StrEnum):
     RECORD_CLOSE_UNSUPPORTED = "record_close_unsupported"
     PURGE_EXTERNAL_SCHEMA_DEPENDENCY = "purge_external_schema_dependency"
     PURGE_FILE_DEPENDENCY = "purge_file_dependency"
+    PURGE_AUTOMATION_DEPENDENCY = "purge_automation_dependency"
 
 
 class LifecycleRowState(BaseModel):

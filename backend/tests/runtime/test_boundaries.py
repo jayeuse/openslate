@@ -130,6 +130,76 @@ def test_actual_request_body_over_limit_is_rejected_despite_false_content_length
     assert response.json() == {"detail": "Request body is too large"}
 
 
+def _json_body_of_size(size: int) -> bytes:
+    prefix = b'{"padding":"'
+    suffix = b'"}'
+    return prefix + (b"x" * (size - len(prefix) - len(suffix))) + suffix
+
+
+@pytest.mark.parametrize(
+    "path,method",
+    [("/api/sandbox/document", "put"), ("/api/sandbox/imports", "post")],
+)
+def test_sandbox_document_routes_admit_five_mib_declared_and_actual_bodies_before_auth(
+    path: str, method: str
+) -> None:
+    limit = 5 * 1024 * 1024
+    client = TestClient(create_app())
+
+    declared = client.request(
+        method,
+        path,
+        content=b"{}",
+        headers={"Content-Length": str(limit), "Content-Type": "application/json"},
+    )
+    actual = client.request(
+        method,
+        path,
+        content=_json_body_of_size(limit),
+        headers={"Content-Length": "1", "Content-Type": "application/json"},
+    )
+
+    assert declared.status_code == 401
+    assert actual.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "path,method",
+    [("/api/sandbox/document", "put"), ("/api/sandbox/imports", "post")],
+)
+def test_sandbox_document_routes_reject_declared_and_actual_bodies_over_five_mib(
+    path: str, method: str
+) -> None:
+    limit = 5 * 1024 * 1024
+    client = TestClient(create_app())
+
+    declared = client.request(
+        method,
+        path,
+        content=b"{}",
+        headers={"Content-Length": str(limit + 1), "Content-Type": "application/json"},
+    )
+    actual = client.request(
+        method,
+        path,
+        content=_json_body_of_size(limit + 1),
+        headers={"Content-Length": "1", "Content-Type": "application/json"},
+    )
+
+    assert declared.status_code == 413
+    assert actual.status_code == 413
+
+
+def test_ordinary_routes_retain_the_one_mib_request_limit() -> None:
+    response = TestClient(create_app()).post(
+        "/api/records/query",
+        content=_json_body_of_size(1024 * 1024 + 1),
+        headers={"Content-Length": "1", "Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+
+
 def test_incremental_body_limit_stops_reading_after_the_first_overflow() -> None:
     seen: list[bytes] = []
 

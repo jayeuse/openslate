@@ -24,6 +24,9 @@ export type Module = BaseEntity & {
 };
 export type FieldType =
   | "text"
+  | "long_text"
+  | "email"
+  | "url"
   | "number"
   | "decimal"
   | "int"
@@ -74,6 +77,7 @@ export type LifecycleBlockerCode =
   | "schema_invalid"
   | "record_data_invalid"
   | "record_close_unsupported"
+  | "purge_automation_dependency"
   | "purge_external_schema_dependency"
   | "purge_file_dependency";
 export type LifecycleErrorCode =

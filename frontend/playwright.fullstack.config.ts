@@ -26,6 +26,7 @@ export default defineConfig({
   testDir: "./tests/fullstack",
   outputDir: "test-results/fullstack",
   fullyParallel: false,
+  workers: 1,
   timeout: 45_000,
   expect: { timeout: 10_000 },
   forbidOnly: true,

@@ -1,12 +1,10 @@
 import { expect, test } from "@playwright/test";
-import {
-  initialDesign,
-  type Version,
-} from "../../../src/components/systems/sandbox/domain/model";
+import type { Version } from "../../../src/components/systems/sandbox/domain/model";
 import {
   exportSandboxFile,
   parseSandboxFile,
 } from "../../../src/components/systems/sandbox/helpers/file-format";
+import { configuredSandboxDesign as initialDesign } from "../../helpers/sandbox-fixtures";
 
 function duplicateVersions(): Version[] {
   return ["First", "Second"].map((label) => ({
