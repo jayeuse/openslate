@@ -327,8 +327,17 @@ function parseFieldConfig(value: unknown): FieldConfig {
       (latest !== undefined && !valid(latest))
     )
       throw new Error("field config date bounds are invalid");
-    if (earliest !== undefined && latest !== undefined && earliest > latest)
-      throw new Error("field config date bounds are invalid");
+    if (earliest !== undefined && latest !== undefined) {
+      const earliestInstant = dateTimeInstant(earliest);
+      const latestInstant = dateTimeInstant(latest);
+      const ordered =
+        kind === "date"
+          ? earliest <= latest
+          : earliestInstant !== undefined &&
+            latestInstant !== undefined &&
+            earliestInstant <= latestInstant;
+      if (!ordered) throw new Error("field config date bounds are invalid");
+    }
     return {
       kind,
       defaultValue,
@@ -433,15 +442,39 @@ function validDate(value: string): boolean {
   );
 }
 
-function validDateTime(value: string): boolean {
+function dateTimeInstant(value: string): number | undefined {
   if (
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(
       value,
     )
   )
-    return false;
+    return undefined;
   const [date] = value.split("T");
-  return validDate(date) && !Number.isNaN(Date.parse(value));
+  if (!validDate(date)) return undefined;
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`;
+  const parsed = Date.parse(normalized);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function validDateTime(value: string): boolean {
+  return dateTimeInstant(value) !== undefined;
+}
+
+function dateTimeInRange(
+  value: string,
+  earliest: string | undefined,
+  latest: string | undefined,
+): boolean {
+  const instant = dateTimeInstant(value);
+  if (instant === undefined) return false;
+  const earliestInstant =
+    earliest === undefined ? undefined : dateTimeInstant(earliest);
+  const latestInstant =
+    latest === undefined ? undefined : dateTimeInstant(latest);
+  return (
+    (earliestInstant === undefined || instant >= earliestInstant) &&
+    (latestInstant === undefined || instant <= latestInstant)
+  );
 }
 
 function validHttpUrl(value: string): boolean {
@@ -504,10 +537,7 @@ function valueMatchesField(
     case "datetime":
       return (
         typeof value === "string" &&
-        validDateTime(value) &&
-        (field.config.earliest === undefined ||
-          value >= field.config.earliest) &&
-        (field.config.latest === undefined || value <= field.config.latest)
+        dateTimeInRange(value, field.config.earliest, field.config.latest)
       );
     case "email":
       return (
@@ -792,6 +822,30 @@ function compatibleFields(
   }
   if (sourceKind === "date" || sourceKind === "datetime") {
     if (targetKind !== sourceKind) return false;
+    if (sourceKind === "datetime") {
+      const sourceMinimum =
+        source.config.earliest === undefined
+          ? undefined
+          : dateTimeInstant(source.config.earliest);
+      const sourceMaximum =
+        source.config.latest === undefined
+          ? undefined
+          : dateTimeInstant(source.config.latest);
+      const targetMinimum =
+        target.config.earliest === undefined
+          ? undefined
+          : dateTimeInstant(target.config.earliest);
+      const targetMaximum =
+        target.config.latest === undefined
+          ? undefined
+          : dateTimeInstant(target.config.latest);
+      return (
+        (targetMinimum === undefined ||
+          (sourceMinimum !== undefined && sourceMinimum >= targetMinimum)) &&
+        (targetMaximum === undefined ||
+          (sourceMaximum !== undefined && sourceMaximum <= targetMaximum))
+      );
+    }
     return rangeFits(
       source.config.earliest,
       source.config.latest,

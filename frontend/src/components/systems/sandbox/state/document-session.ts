@@ -71,6 +71,26 @@ export function proposedSandboxDocument(
   return mergeProjectedDesign(session.document, session.projected, design);
 }
 
+export function synchronizeSandboxHistoryRules(
+  history: SandboxHistory,
+  confirmed: Design,
+): SandboxHistory {
+  const withConfirmedRules = (design: Design): Design => ({
+    ...design,
+    rules: confirmed.rules,
+  });
+  const synchronizeEntry = (entry: SandboxHistory["past"][number]) => ({
+    ...entry,
+    before: withConfirmedRules(entry.before),
+    after: withConfirmedRules(entry.after),
+  });
+  return {
+    past: history.past.map(synchronizeEntry),
+    present: confirmed,
+    future: history.future.map(synchronizeEntry),
+  };
+}
+
 /** Reapplies a preserved local graph draft after the user reloads a 409 response. */
 export function reapplySandboxDocumentDraft(
   response: SandboxDocumentResponse,

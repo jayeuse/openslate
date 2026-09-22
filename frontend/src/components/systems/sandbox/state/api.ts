@@ -599,6 +599,26 @@ export function listSandboxVersions(
   });
 }
 
+export async function listAllSandboxVersions(
+  options: RequestOptions = {},
+): Promise<SandboxVersion[]> {
+  const items: SandboxVersion[] = [];
+  let offset = 0;
+  while (true) {
+    const page = await listSandboxVersions({
+      limit: 100,
+      offset,
+      signal: options.signal,
+    });
+    if (page.offset !== offset || page.count !== page.items.length)
+      throw new ApiContractError();
+    items.push(...page.items);
+    if (!page.hasMore) return items;
+    if (page.count === 0) throw new ApiContractError();
+    offset += page.count;
+  }
+}
+
 export function getSandboxVersion(
   versionId: string,
   options: RequestOptions = {},

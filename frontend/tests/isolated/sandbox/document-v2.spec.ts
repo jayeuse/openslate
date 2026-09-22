@@ -148,6 +148,23 @@ test("v2 sandbox documents serialize canonically without editor or run state", (
   });
 });
 
+test("v2 compares Date/Time bounds and values as instants", () => {
+  const document = v2Fixture();
+  document.design.modules[0].fields[0] = {
+    ...document.design.modules[0].fields[0],
+    type: "Date/Time",
+    config: {
+      kind: "datetime",
+      defaultValue: "2024-12-31T23:30:00Z",
+      earliest: "2025-01-01T01:00:00+02:00",
+      latest: "2025-01-01T00:00:00Z",
+    },
+  };
+  document.scenarios[0].records[0].values.title = "2025-01-01T00:00:00+00:00";
+
+  expect(parseSandboxDocument(JSON.stringify(document)).ok).toBe(true);
+});
+
 test("v2 accepts compatible text mappings", () => {
   const document = v2Fixture();
   document.design.modules.push({

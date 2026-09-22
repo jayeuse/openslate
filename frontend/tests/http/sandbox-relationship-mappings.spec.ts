@@ -11,6 +11,7 @@ type SandboxOptions = {
   saveFailure?: string;
   clearTestsFailure?: string;
   discardRefreshFailure?: string;
+  discardRefreshDelay?: Promise<void>;
   hasUnpublishedChanges?: boolean;
   publishedHash?: string | null;
   testRuns?: unknown[];
@@ -61,6 +62,8 @@ async function openAuthenticatedSandbox(
   await page.route("**/api/sandbox/document", async (route) => {
     if (route.request().method() === "GET") {
       documentReads += 1;
+      if (options.discardRefreshDelay && documentReads === 3)
+        await options.discardRefreshDelay;
       if (options.discardRefreshFailure && documentReads === 3) {
         await route.fulfill({
           status: 500,
@@ -215,6 +218,7 @@ async function openAuthenticatedSandbox(
   ).toBeVisible();
   return {
     document: () => structuredClone(document),
+    documentReads: () => documentReads,
     documentWrites: () => documentWrites,
   };
 }
@@ -477,6 +481,28 @@ test("designer commands are ignored while a design save is pending", async ({
   }
 });
 
+test("Build undo preserves an automation that was saved afterward", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(page);
+
+  await page.getByRole("button", { name: "View canvas" }).click();
+  await page.getByRole("menuitem", { name: "Auto-arrange" }).click();
+  await expect(page.getByText("Canvas automatically arranged.")).toBeVisible();
+
+  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  await page.getByLabel("Automation name").fill("Saved urgent request alert");
+  await page.getByRole("button", { name: "Save automations" }).click();
+  await expect(page.getByLabel("Automation name")).toBeEnabled();
+
+  await page.getByRole("link", { name: "Build", exact: true }).click();
+  await page.getByRole("button", { name: "Undo" }).click();
+
+  await expect
+    .poll(() => sandbox.document().automations[0]?.name)
+    .toBe("Saved urgent request alert");
+});
+
 test("a pending publication review protects browser exits", async ({
   page,
 }) => {
@@ -709,6 +735,65 @@ test("discard refresh failure leaves the dialog open and allows a retry", async 
 
   await discard.click();
   await expect(dialog).toBeHidden();
+});
+
+test("discard keeps browser exits guarded throughout its composite request", async ({
+  page,
+}) => {
+  let releaseRefresh = () => {};
+  const discardRefreshDelay = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  const sandbox = await openAuthenticatedSandbox(page, initialDesign, {
+    discardRefreshDelay,
+  });
+  await page.route("**/api/sandbox/versions", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "00000000-0000-4000-8000-000000000008",
+        sequence: 1,
+        kind: "checkpoint",
+        label: "Before discard",
+        note: null,
+        sourceDocumentRevision: 1,
+        sourceVersionId: null,
+        contentHash: "a".repeat(64),
+        byteCount: JSON.stringify(sandbox.document()).length,
+        metadataRevision: 1,
+        createdAt: "2026-09-21T00:01:00Z",
+        performedBy: null,
+        isDeleted: false,
+        deletedAt: null,
+        document: sandbox.document(),
+      }),
+    });
+  });
+
+  await page.getByRole("button", { name: "More Sandbox actions" }).click();
+  await page.getByRole("menuitem", { name: "Discard draft changes" }).click();
+  await page
+    .getByRole("dialog", { name: "Discard draft changes?" })
+    .getByRole("button", { name: "Discard draft" })
+    .click();
+  await expect.poll(sandbox.documentReads).toBe(3);
+  await page.waitForTimeout(100);
+
+  try {
+    expect(
+      await page.evaluate(() => {
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      }),
+    ).toBe(true);
+  } finally {
+    releaseRefresh();
+  }
+  await expect(
+    page.getByRole("dialog", { name: "Discard draft changes?" }),
+  ).toBeHidden();
 });
 
 test("daily Test history with a nullable weekday loads and a failed clear remains retryable", async ({

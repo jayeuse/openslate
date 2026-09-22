@@ -11,6 +11,7 @@ import {
   exportSandboxBundle,
   getSandboxVersion,
   importSandboxBundle,
+  listAllSandboxVersions,
   listSandboxAutomationRuns,
   listSandboxTests,
   listSandboxVersions,
@@ -395,6 +396,35 @@ test("uses documented version and import endpoints with revision payloads", asyn
     expect(mock.requests[7].init?.body).toBe(
       JSON.stringify({ expectedRevision: 7, bundle: document }),
     );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("loads every durable Sandbox version page as one complete collection", async () => {
+  const older = {
+    ...version,
+    id: "00000000-0000-4000-8000-000000000002",
+    sequence: 1,
+  };
+  const mock = installFetch((input) => {
+    const url = new URL(String(input), "http://openslate.test");
+    const offset = Number(url.searchParams.get("offset"));
+    return Response.json({
+      items: [offset === 0 ? version : older],
+      limit: 100,
+      offset,
+      count: 1,
+      total: 2,
+      hasMore: offset === 0,
+    });
+  });
+  try {
+    await expect(listAllSandboxVersions()).resolves.toEqual([version, older]);
+    expect(mock.requests.map(({ input }) => String(input))).toEqual([
+      "/api/sandbox/versions?limit=100&offset=0",
+      "/api/sandbox/versions?limit=100&offset=1",
+    ]);
   } finally {
     mock.restore();
   }

@@ -38,8 +38,8 @@ import {
   deleteSandboxVersion,
   getSandboxVersion,
   importSandboxBundle,
+  listAllSandboxVersions,
   listSandboxAutomationRuns,
-  listSandboxVersions,
   loadSandboxDocument,
   replaceSandboxDocument,
   restoreSandboxVersion,
@@ -57,6 +57,7 @@ import {
   openSandboxDocumentSession,
   proposedSandboxDocument,
   reapplySandboxDocument,
+  synchronizeSandboxHistoryRules,
   syncSandboxDocumentMetadata,
   updateSandboxDocumentSession,
   type SandboxDocumentSession,
@@ -183,8 +184,7 @@ export default function SandboxPage() {
     "";
 
   const refreshVersions = useCallback(async () => {
-    const page = await listSandboxVersions({ limit: 50 });
-    setVersions(page.items);
+    setVersions(await listAllSandboxVersions());
   }, []);
   const refreshAutomationActivity = useCallback(async () => {
     setAutomationActivity({ loading: true, error: "" });
@@ -213,13 +213,13 @@ export default function SandboxPage() {
     setLoading(true);
     setLoadError("");
     try {
-      const [document, versionPage, testPage] = await Promise.all([
+      const [document, versionItems, testPage] = await Promise.all([
         loadSandboxDocument(),
-        listSandboxVersions({ limit: 50 }),
+        listAllSandboxVersions(),
         listSandboxTests({ limit: 50 }),
       ]);
       setSession(openSandboxDocumentSession(document));
-      setVersions(versionPage.items);
+      setVersions(versionItems);
       setTestRuns(testPage.items);
     } catch (error) {
       setLoadError(commandFailure(error).error);
@@ -319,7 +319,10 @@ export default function SandboxPage() {
         const confirmed = openSandboxDocumentSession(response);
         setSession({
           ...confirmed,
-          history: { ...next.history, present: confirmed.projected },
+          history: synchronizeSandboxHistoryRules(
+            next.history,
+            confirmed.projected,
+          ),
         });
         setConflict(null);
         return { ok: true, value: confirmed.projected };
@@ -505,12 +508,15 @@ export default function SandboxPage() {
   );
   const discardDraftChanges = useCallback(async () => {
     if (!session) return sandboxStillLoading();
+    setPending(true);
     try {
-      const checkpointResult = await checkpoint(
-        "Before discard",
-        "Saved automatically before discarding draft changes.",
-      );
-      if (!checkpointResult.ok) return checkpointResult;
+      await createSandboxVersion({
+        expectedRevision: session.revision,
+        kind: "checkpoint",
+        label: "Before discard",
+        note: "Saved automatically before discarding draft changes.",
+      });
+      await syncVersionMetadata();
       const refreshed = await loadSandboxDocument();
       const published = refreshed.latestPublishedVersion;
       if (published) {
@@ -546,8 +552,10 @@ export default function SandboxPage() {
       return result;
     } catch (error) {
       return commandFailure(error);
+    } finally {
+      setPending(false);
     }
-  }, [checkpoint, persist, refreshVersions, session]);
+  }, [persist, refreshVersions, session, syncVersionMetadata]);
 
   function selectIssue(issue: SandboxValidationIssue) {
     if (
