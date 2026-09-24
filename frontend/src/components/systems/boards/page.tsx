@@ -63,7 +63,11 @@ import {
   type AnnouncementAction,
   type AnnouncementPersonalAction,
 } from "./components/announcement-feed";
-import { canViewBoardAudience, type BoardViewer } from "./domain/content";
+import {
+  canViewBoardAudience,
+  getAnnouncementLifecycle,
+  type BoardViewer,
+} from "./domain/content";
 import { BoardEmpty, EditSheet, ConfirmAction } from "./components/ui";
 import {
   BoardSettingsSheet,
@@ -78,6 +82,7 @@ import { WidgetSurface, newWidget } from "../openview/components/widgets";
 import {
   OPENVIEW_MODULES,
   getModuleDefinition,
+  serializeOpenViewUrl,
   type OpenViewModuleId,
 } from "../openview/domain/model";
 import {
@@ -85,6 +90,7 @@ import {
   useWorkspaceNavigationRequest,
   type WorkspaceNavigationGuard,
 } from "@/components/workspace-navigation-guard";
+import ServerBackedBoards from "./components/server-backed-boards";
 
 const BoardCalendar = dynamic(
   () => import("./components/calendar").then((module) => module.BoardCalendar),
@@ -113,7 +119,11 @@ const AnnouncementFeed = dynamic(
 type WorkingCopy = { original: Board; draft: Board };
 type BoardDialog = "settings" | "tools" | "widget" | "record" | null;
 
-export default function SampleBoards() {
+export default function BoardsRoute() {
+  return <ServerBackedBoards />;
+}
+
+export function SampleBoards() {
   return (
     <Suspense
       fallback={
@@ -275,6 +285,7 @@ function BoardsContent({
   const viewer: BoardViewer = {
     id: controller.actorId,
     active: controller.viewer?.active ?? false,
+    accessStatus: controller.viewer?.accessStatus,
     roleIds:
       controller.lookup.roles
         ?.filter(
@@ -490,6 +501,26 @@ function BoardsContent({
   async function personalAction(
     action: AnnouncementPersonalAction,
   ): Promise<BoardMutationResult> {
+    const announcement = state.announcements.find(
+      (item) => item.id === action.announcementId && item.boardId === board?.id,
+    );
+    const lifecycle = announcement
+      ? getAnnouncementLifecycle(announcement)
+      : null;
+    if (
+      !announcement ||
+      !board ||
+      !controller.can(board.id, "view") ||
+      lifecycle?.status !== "published" ||
+      !lifecycle.visible ||
+      !lifecycle.revision ||
+      !canViewBoardAudience(
+        lifecycle.revision.audience,
+        viewer,
+        announcement.authorId,
+      )
+    )
+      return { ok: false, error: "This announcement is no longer available." };
     const key =
       action.type === "read"
         ? "readAnnouncementIds"
@@ -753,7 +784,6 @@ function BoardsContent({
               onClick={() =>
                 guarded(() => {
                   setPreview(null);
-                  router.replace("/boards", { scroll: false });
                 })
               }
             >
@@ -1024,7 +1054,12 @@ function BoardsContent({
                             <div className="min-w-0">
                               {record ? (
                                 <Link
-                                  href={`/openview?section=records&module=service-requests&record=${encodeURIComponent(record.id)}`}
+                                  href={
+                                    serializeOpenViewUrl({
+                                      module: "service-requests",
+                                      record: record.id,
+                                    }) as Route
+                                  }
                                   className="block truncate text-sm font-medium underline-offset-4 hover:underline"
                                 >
                                   {record.title}
@@ -1077,12 +1112,11 @@ function BoardsContent({
                   events={state.events.filter(
                     (event) =>
                       event.boardId === board.id &&
-                      (manageable ||
-                        canViewBoardAudience(
-                          event.audience,
-                          viewer,
-                          event.authorId,
-                        )),
+                      canViewBoardAudience(
+                        event.audience,
+                        viewer,
+                        event.authorId,
+                      ),
                   )}
                   records={controller.records}
                   viewer={{
@@ -1165,7 +1199,6 @@ function BoardsContent({
               onPreviewChange={(id) =>
                 guarded(() => {
                   setPreview(id);
-                  router.replace("/boards", { scroll: false });
                 })
               }
               onClose={() => setDialog(null)}

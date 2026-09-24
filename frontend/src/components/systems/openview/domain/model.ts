@@ -1603,7 +1603,7 @@ function safeIdentifier(value: string | null): string | undefined {
 }
 export type OpenViewUrlState = {
   section?: OpenViewSection;
-  module?: OpenViewModuleId;
+  module?: string;
   view?: string;
   dashboard?: string;
   record?: string;
@@ -1620,31 +1620,35 @@ export function parseOpenViewUrl(
   const recordValue = url.searchParams.get("record");
   const viewValue = url.searchParams.get("view");
   const dashboardValue = url.searchParams.get("dashboard");
+  const legacyRecordsSection = sectionValue === "records";
+  const section = legacyRecordsSection
+    ? "views"
+    : OPENVIEW_SECTIONS.includes(sectionValue as OpenViewSection)
+      ? (sectionValue as OpenViewSection)
+      : "views";
   let invalid = false;
   if (
     sectionValue &&
+    !legacyRecordsSection &&
     !OPENVIEW_SECTIONS.includes(sectionValue as OpenViewSection)
   )
     invalid = true;
-  if (
-    moduleValue &&
-    !OPENVIEW_MODULE_IDS.includes(moduleValue as OpenViewModuleId)
-  )
+  const legacyModule = OPENVIEW_MODULE_IDS.includes(
+    moduleValue as OpenViewModuleId,
+  );
+  const uuidModule = z.string().uuid().safeParse(moduleValue).success;
+  if (moduleValue && !legacyModule && !(section === "views" && uuidModule))
     invalid = true;
   for (const value of [recordValue, viewValue, dashboardValue])
     if (value && !safeIdentifier(value)) invalid = true;
   const record = safeIdentifier(recordValue);
   const result: ReturnType<typeof parseOpenViewUrl> = {
-    section: record
-      ? "views"
-      : OPENVIEW_SECTIONS.includes(sectionValue as OpenViewSection)
-        ? (sectionValue as OpenViewSection)
-        : "views",
+    section: record ? "views" : section,
     module:
       record && !moduleValue
         ? "service-requests"
-        : OPENVIEW_MODULE_IDS.includes(moduleValue as OpenViewModuleId)
-          ? (moduleValue as OpenViewModuleId)
+        : legacyModule || (section === "views" && uuidModule)
+          ? (moduleValue ?? "service-requests")
           : "service-requests",
     invalid,
   };
@@ -1663,8 +1667,15 @@ export function serializeOpenViewUrl(state: OpenViewUrlState): string {
   if (state.dashboard && !safeIdentifier(state.dashboard)) return "/openview";
   if (state.section && OPENVIEW_SECTIONS.includes(state.section))
     parameters.set("section", state.section);
-  if (state.module && OPENVIEW_MODULE_IDS.includes(state.module))
-    parameters.set("module", state.module);
+  if (state.module) {
+    const isLegacyModule = OPENVIEW_MODULE_IDS.includes(
+      state.module as OpenViewModuleId,
+    );
+    const isViewsUuid =
+      state.section === "views" &&
+      z.string().uuid().safeParse(state.module).success;
+    if (isLegacyModule || isViewsUuid) parameters.set("module", state.module);
+  }
   if (state.view) parameters.set("view", state.view);
   if (state.dashboard) parameters.set("dashboard", state.dashboard);
   if (state.record) parameters.set("record", state.record);

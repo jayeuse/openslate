@@ -5,10 +5,11 @@ import threading
 from types import SimpleNamespace
 
 import psycopg
+from uuid6 import uuid7
 
 from app.systems.access.users.permissions import Capability
 from app.systems.platform.events.hub import PostgresInvalidationListener
-from app.systems.platform.events.models import InvalidationEvent
+from app.systems.platform.events.models import InvalidationEvent, event_for_entity
 from app.systems.platform.events.publisher import publish_invalidation, publish_invalidations
 
 
@@ -44,15 +45,27 @@ def test_publisher_sends_only_the_opaque_payload_with_pg_notify(monkeypatch) -> 
         connect,
     )
 
+    recipient_id = uuid7()
+    private_event = event_for_entity("in_app_notifications", uuid7(), recipient_id=recipient_id)
+    assert private_event is not None
     assert publish_invalidation(InvalidationEvent("records", capability=Capability.RECORDS_READ))
+    assert publish_invalidation(private_event)
     assert commands == [
         (
             "SELECT pg_notify(%s, %s)",
             ("openslate_invalidation", '{"capability":"records.read","entity":"records"}'),
-        )
+        ),
+        (
+            "SELECT pg_notify(%s, %s)",
+            (
+                "openslate_invalidation",
+                f'{{"entity":"in_app_notifications","recipient_id":"{recipient_id}"}}',
+            ),
+        ),
     ]
     assert connect_calls == [
-        {"autocommit": True, "connect_timeout": 3, "options": "-c statement_timeout=15000"}
+        {"autocommit": True, "connect_timeout": 3, "options": "-c statement_timeout=15000"},
+        {"autocommit": True, "connect_timeout": 3, "options": "-c statement_timeout=15000"},
     ]
 
 
@@ -109,6 +122,50 @@ def test_large_commit_collapses_to_one_resync_notification(monkeypatch) -> None:
     )
     assert commands == [
         ("SELECT pg_notify(%s, %s)", ("openslate_invalidation", '{"entity":"resync"}'))
+    ]
+
+
+def test_private_notification_overflow_never_emits_a_global_resync(monkeypatch) -> None:
+    commands: list[tuple[str, tuple[str, str]]] = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, statement: str, parameters: tuple[str, str]) -> None:
+            commands.append((statement, parameters))
+
+    monkeypatch.setattr(
+        "app.systems.platform.events.publisher.get_settings",
+        lambda: SimpleNamespace(
+            database_url="postgresql+psycopg://user:secret@db/openslate",
+            database_connect_timeout_seconds=3,
+            database_statement_timeout_ms=15_000,
+        ),
+    )
+    monkeypatch.setattr("app.systems.platform.events.publisher.MAX_INVALIDATIONS_PER_COMMIT", 2)
+    monkeypatch.setattr(
+        "app.systems.platform.events.publisher.psycopg.connect",
+        lambda *_args, **_kwargs: Connection(),
+    )
+    private_events = tuple(
+        event_for_entity("in_app_notifications", uuid7(), recipient_id=uuid7()) for _ in range(3)
+    )
+    assert all(event is not None for event in private_events)
+    assert publish_invalidations(private_events)
+    assert commands == []
+
+    assert publish_invalidations(
+        (*private_events, InvalidationEvent("records", capability=Capability.RECORDS_READ))
+    )
+    assert commands == [
+        (
+            "SELECT pg_notify(%s, %s)",
+            ("openslate_invalidation", '{"capability":"records.read","entity":"records"}'),
+        )
     ]
 
 

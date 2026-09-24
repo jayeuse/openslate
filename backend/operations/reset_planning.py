@@ -15,6 +15,13 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy.engine import make_url
 
+from app.core.config.instance import (
+    InstanceTarget,
+    InstanceTargetError,
+    assert_database_url,
+    test_manifest_authorizes_process,
+)
+
 if __package__:
     from .reset_models import (  # type: ignore[import-not-found]
         _ALEMBIC_HEAD_STATEMENT,
@@ -27,9 +34,6 @@ if __package__:
         _ROLES_STATEMENT,
         _WORKSPACE_STATEMENT,
         APPLICATION_TABLES,
-        EXPECTED_DATABASE_HOST,
-        EXPECTED_DATABASE_NAME,
-        EXPECTED_DATABASE_PORT,
         EXPECTED_DATABASE_USER,
         CredentialSnapshot,
         ProfileSnapshot,
@@ -51,9 +55,6 @@ else:
         _ROLES_STATEMENT,
         _WORKSPACE_STATEMENT,
         APPLICATION_TABLES,
-        EXPECTED_DATABASE_HOST,
-        EXPECTED_DATABASE_NAME,
-        EXPECTED_DATABASE_PORT,
         EXPECTED_DATABASE_USER,
         CredentialSnapshot,
         ProfileSnapshot,
@@ -76,14 +77,22 @@ def required_environment(mapping: Mapping[str, str]) -> tuple[str, str]:
     return values[0], values[1].casefold()
 
 
-def _validated_database_url(value: str) -> str:
+def _validated_database_url(
+    value: str,
+    target: InstanceTarget | None = None,
+    *,
+    runner_manifest_authorized: bool = False,
+) -> str:
     try:
         url = make_url(value)
+        if target is not None:
+            assert_database_url(value, target, expected_user=EXPECTED_DATABASE_USER)
+        elif not runner_manifest_authorized or not test_manifest_authorizes_process(
+            value, EXPECTED_DATABASE_USER
+        ):
+            raise ValueError
         if (
             url.drivername not in {"postgresql", "postgresql+psycopg"}
-            or url.host != EXPECTED_DATABASE_HOST
-            or url.port != EXPECTED_DATABASE_PORT
-            or url.database != EXPECTED_DATABASE_NAME
             or url.username != EXPECTED_DATABASE_USER
             or not url.password
             or url.query
@@ -96,9 +105,19 @@ def _validated_database_url(value: str) -> str:
         ) from None
 
 
-def validate_local_database_url(url: str) -> None:
+def validate_local_database_url(
+    url: str,
+    target: InstanceTarget | None = None,
+    *,
+    runner_manifest_authorized: bool = False,
+) -> None:
     """Require the one local owner connection admitted for destructive reset."""
-    _validated_database_url(url)
+    try:
+        _validated_database_url(url, target, runner_manifest_authorized=runner_manifest_authorized)
+    except InstanceTargetError:
+        raise ResetError(
+            "MIGRATION_DATABASE_URL does not target the owned OpenSlate instance"
+        ) from None
 
 
 def _normalize_email(value: object) -> str:

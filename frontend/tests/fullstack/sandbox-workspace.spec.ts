@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import type { Page } from "@playwright/test";
+import type { Page, Request, Response } from "@playwright/test";
 
 type Fixture = Readonly<{
   runId: string;
@@ -42,10 +43,1089 @@ async function publishDraft(page: Page, password: string) {
   ).toBeVisible();
 }
 
+type SeededSupplier = Readonly<{
+  recordId: string;
+  moduleId: string;
+  legalNameFieldId: string;
+  paymentTermsFieldId: string;
+  legalName: string;
+}>;
+
+async function seedPublishedSupplier(
+  page: Page,
+  runId: string,
+): Promise<SeededSupplier> {
+  const seeded = await page.evaluate(async (currentRunId) => {
+    type CatalogPage = Readonly<{
+      items: ReadonlyArray<
+        Readonly<{ id: string; name: string; type?: string }>
+      >;
+      pagination: Readonly<{ has_more: boolean }>;
+    }>;
+    async function readCatalog(path: string): Promise<CatalogPage> {
+      const response = await fetch(path, { credentials: "same-origin" });
+      if (response.status !== 200)
+        throw new Error(
+          `Published data-source catalog returned ${response.status}`,
+        );
+      return (await response.json()) as CatalogPage;
+    }
+
+    const modules = await readCatalog(
+      "/api/views/data-sources?limit=100&offset=0",
+    );
+    if (modules.pagination.has_more)
+      throw new Error("Published data-source catalog is incomplete");
+    const suppliers = modules.items.filter((item) => item.name === "Suppliers");
+    if (suppliers.length !== 1)
+      throw new Error(
+        "Published Suppliers data source is unavailable or ambiguous",
+      );
+    const moduleId = suppliers[0].id;
+
+    const fields = await readCatalog(
+      `/api/views/data-sources/${encodeURIComponent(moduleId)}/fields?limit=100&offset=0`,
+    );
+    if (fields.pagination.has_more)
+      throw new Error("Published Suppliers field catalog is incomplete");
+    function fieldId(name: string, type: string): string {
+      const matches = fields.items.filter(
+        (item) => item.name === name && item.type === type,
+      );
+      if (matches.length !== 1)
+        throw new Error(
+          `Published Suppliers field ${name} is unavailable or ambiguous`,
+        );
+      return matches[0].id;
+    }
+    const legalNameFieldId = fieldId("Legal name", "text");
+    const paymentTermsFieldId = fieldId("Payment terms", "select");
+    const supplierIdFieldId = fieldId("Supplier ID", "text");
+    const statusFieldId = fieldId("Status", "select");
+    const legalName = `Full-stack Supplier ${currentRunId}`;
+
+    // Keep the cookie value inside the browser context; only synthetic record
+    // identifiers and the creation status return to the test process.
+    const csrfCookie = document.cookie
+      .split(";")
+      .map((segment) => segment.trim())
+      .find((segment) => segment.startsWith("openslate_csrf="));
+    if (!csrfCookie) throw new Error("CSRF cookie is unavailable");
+    const csrfToken = decodeURIComponent(
+      csrfCookie.slice("openslate_csrf=".length),
+    );
+    const response = await fetch("/api/records", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken,
+      },
+      body: JSON.stringify({
+        module_id: moduleId,
+        data: {
+          [supplierIdFieldId]: `SUP-${currentRunId}`,
+          [statusFieldId]: "Active",
+          [legalNameFieldId]: legalName,
+          [paymentTermsFieldId]: "Net 30",
+        },
+      }),
+    });
+    const created = response.status === 201 ? await response.json() : null;
+    return {
+      status: response.status,
+      recordId: (created as { id?: string } | null)?.id ?? "",
+      moduleId,
+      legalNameFieldId,
+      paymentTermsFieldId,
+      legalName,
+    };
+  }, runId);
+
+  expect(seeded.status).toBe(201);
+  for (const id of [
+    seeded.recordId,
+    seeded.moduleId,
+    seeded.legalNameFieldId,
+    seeded.paymentTermsFieldId,
+  ]) {
+    expect(id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+  }
+  return seeded;
+}
+
+async function retireSeededSupplier(page: Page, recordId: string) {
+  const status = await page.evaluate(async (id) => {
+    const csrfCookie = document.cookie
+      .split(";")
+      .map((segment) => segment.trim())
+      .find((segment) => segment.startsWith("openslate_csrf="));
+    if (!csrfCookie) throw new Error("CSRF cookie is unavailable");
+    const csrfToken = decodeURIComponent(
+      csrfCookie.slice("openslate_csrf=".length),
+    );
+    const response = await fetch(`/api/records/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+      headers: { "X-CSRF-Token": csrfToken },
+    });
+    return response.status;
+  }, recordId);
+  expect(status).toBe(204);
+}
+
+async function exerciseOpenView(
+  page: Page,
+  runId: string,
+  supplier: SeededSupplier,
+) {
+  const viewName = `Full-stack OpenView ${runId.slice(0, 8)}`;
+  await page.goto("/openview?section=views");
+  const dataSource = page.getByLabel("Data source");
+  await expect(dataSource).toBeVisible();
+  await dataSource.selectOption({ label: "Suppliers" });
+  await expect(page.getByLabel("Search Suppliers")).toBeVisible();
+  const moduleId = await dataSource.inputValue();
+  expect(moduleId).toBe(supplier.moduleId);
+  expect(moduleId).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+  );
+  const recordResults = page.getByRole("region", { name: "Record results" });
+  await expect(
+    recordResults.getByText(supplier.legalName, { exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Save view as" }).click();
+  const saveDialog = page.getByRole("dialog", { name: "Save view" });
+  await saveDialog.getByLabel("View name").fill(viewName);
+  await saveDialog.getByRole("button", { name: "Save view" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: `“${viewName}” was saved.` }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(
+    new RegExp(`/openview\\?section=views&module=${moduleId}&view=`),
+  );
+  const viewId = new URL(page.url()).searchParams.get("view");
+  expect(viewId).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+  );
+  if (!viewId) throw new Error("saved view URL did not include its ID");
+
+  await page.reload();
+  await expect(page.getByLabel("Saved view")).toHaveValue(viewId);
+  await expect(
+    recordResults.getByText(supplier.legalName, { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Set as my default" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "personal default view" }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Clear my default" }),
+  ).toBeVisible();
+
+  const concurrentPage = await page.context().newPage();
+  let overloadedScripts = 0;
+  concurrentPage.on("response", (response) => {
+    if (
+      response.request().resourceType() === "script" &&
+      response.status() === 503
+    )
+      overloadedScripts += 1;
+  });
+  await concurrentPage.goto(
+    `/openview?section=views&module=${moduleId}&view=${viewId}`,
+  );
+  await expect(concurrentPage.getByLabel("Saved view")).toHaveValue(viewId, {
+    timeout: 20_000,
+  });
+  expect(overloadedScripts).toBe(0);
+
+  const currentSearch = `first revision ${runId.slice(0, 6)}`;
+  await page.getByLabel("Search Suppliers").fill(currentSearch);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: `“${viewName}” was saved.` }),
+  ).toBeVisible();
+
+  await concurrentPage
+    .getByLabel("Search Suppliers")
+    .fill(`stale revision ${runId.slice(0, 6)}`);
+  await concurrentPage.getByRole("button", { name: "Save changes" }).click();
+  const conflictDialog = concurrentPage.getByRole("dialog", {
+    name: "Update saved view",
+  });
+  await expect(
+    conflictDialog.getByText(/Query, filters, or sort/),
+  ).toBeVisible();
+  await conflictDialog.getByRole("button", { name: "Reload latest" }).click();
+  await expect(concurrentPage.getByLabel("Search Suppliers")).toHaveValue(
+    currentSearch,
+  );
+  await concurrentPage.close();
+
+  await page.getByRole("button", { name: "Archive view" }).click();
+  const archiveDialog = page.getByRole("alertdialog", {
+    name: "Archive saved view?",
+  });
+  await archiveDialog.getByRole("button", { name: "Archive view" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "archived" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: /Archived views/ }).click();
+  const archivedDialog = page.getByRole("dialog", { name: "Archived views" });
+  await expect(
+    archivedDialog.getByText(viewName, { exact: true }),
+  ).toBeVisible();
+  await archivedDialog
+    .getByRole("button", { name: `Restore ${viewName}` })
+    .click();
+  await expect(
+    archivedDialog.getByRole("status").filter({ hasText: "restored" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`[?&]view=${viewId}(?:&|$)`));
+  await expect(page.getByLabel("Saved view")).toHaveValue(viewId, {
+    timeout: 20_000,
+  });
+}
+
+async function exerciseLiveCharts(page: Page, supplier: SeededSupplier) {
+  await page.goto("/openview?section=charts");
+  await expect(
+    page.getByRole("heading", { name: "Live charts" }),
+  ).toBeVisible();
+
+  const dataSource = page.getByLabel("Data source");
+  await expect(dataSource).toBeVisible();
+  await dataSource.selectOption({ label: "Suppliers" });
+  await expect(dataSource).toHaveValue(supplier.moduleId);
+  await page.getByLabel("Dimension").selectOption({ label: "Payment terms" });
+  await expect(page.getByLabel("Dimension")).toHaveValue(
+    supplier.paymentTermsFieldId,
+  );
+  await page.getByRole("button", { name: "Apply chart" }).click();
+
+  const table = page.getByRole("table", { name: "Complete aggregate data" });
+  await expect(table).toBeVisible();
+  await expect(
+    table.getByRole("columnheader", { name: "Group" }),
+  ).toBeVisible();
+  await expect(
+    table.getByRole("columnheader", { name: "Records" }),
+  ).toBeVisible();
+  await expect(
+    table.getByRole("columnheader", { name: "Record count" }),
+  ).toBeVisible();
+
+  const net30Row = table.getByRole("row").filter({ hasText: "Net 30" });
+  await expect(net30Row.getByRole("cell")).toHaveText(["Net 30", "1", "1"]);
+  await expect(table.getByRole("caption")).toContainText(
+    "The complete authorized snapshot contains 1 aggregate groups.",
+  );
+  await expect(
+    page.getByRole("button", { name: "Download complete CSV" }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Print complete table" }),
+  ).toBeEnabled();
+}
+
+async function permanentlyDeleteReport(page: Page, reportId: string) {
+  const status = await page.evaluate(async (id) => {
+    const csrfCookie = document.cookie
+      .split(";")
+      .map((segment) => segment.trim())
+      .find((segment) => segment.startsWith("openslate_csrf="));
+    if (!csrfCookie) throw new Error("CSRF cookie is unavailable");
+    const csrfToken = decodeURIComponent(
+      csrfCookie.slice("openslate_csrf=".length),
+    );
+    const path = `/api/reports/${encodeURIComponent(id)}`;
+    const current = await fetch(path, { credentials: "same-origin" });
+    if (current.status === 404) return 204;
+    if (current.status !== 200)
+      throw new Error(`Report cleanup read returned ${current.status}`);
+    const report = (await current.json()) as {
+      revision: number;
+      is_deleted: boolean;
+    };
+    if (!report.is_deleted) {
+      const archived = await fetch(`${path}?revision=${report.revision}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: { "X-CSRF-Token": csrfToken },
+      });
+      if (archived.status !== 204)
+        throw new Error(`Report cleanup archive returned ${archived.status}`);
+      report.revision += 1;
+    }
+    const deleted = await fetch(
+      `${path}/permanent?revision=${report.revision}`,
+      {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: { "X-CSRF-Token": csrfToken },
+      },
+    );
+    return deleted.status;
+  }, reportId);
+  expect(status).toBe(204);
+}
+
+async function exerciseConnectedReports(
+  page: Page,
+  runId: string,
+  supplier: SeededSupplier,
+) {
+  const reportName = `Full-stack Supplier Report ${runId.slice(0, 8)}`;
+  let reportId: string | null = null;
+  await page.goto("/openview?section=reports");
+  await expect(
+    page.getByRole("heading", { name: "Reports", exact: true }),
+  ).toBeVisible();
+  try {
+    await page.getByRole("button", { name: "New Report" }).click();
+    await page.getByLabel("Data source").selectOption({ label: "Suppliers" });
+    await page.getByLabel("Report name").fill(reportName);
+    await page.getByRole("checkbox", { name: "Legal name" }).check();
+    await page.getByRole("checkbox", { name: "Payment terms" }).check();
+    const [created] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/api/reports" &&
+          response.request().method() === "POST",
+      ),
+      page.getByRole("button", { name: "Create Report" }).click(),
+    ]);
+    expect(created.status()).toBe(201);
+    const createdReport = (await created.json()) as {
+      id: string;
+      module_id: string;
+      revision: number;
+      audience: { kind: string };
+      recipe: { fields: { field_id: string }[] };
+    };
+    reportId = createdReport.id;
+    expect(reportId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(createdReport.module_id).toBe(supplier.moduleId);
+    expect(createdReport.revision).toBe(1);
+    expect(createdReport.audience.kind).toBe("private");
+    expect(createdReport.recipe.fields.map((field) => field.field_id)).toEqual([
+      supplier.legalNameFieldId,
+      supplier.paymentTermsFieldId,
+    ]);
+    await expect(page.getByText("Report created.")).toBeVisible();
+
+    await page.reload();
+    await page.getByRole("button", { name: reportName, exact: true }).click();
+    await expect(page.getByLabel("Data source")).toHaveValue(supplier.moduleId);
+    await expect(page.getByLabel("Report name")).toHaveValue(reportName);
+    await expect(
+      page.getByRole("checkbox", { name: "Legal name" }),
+    ).toBeChecked();
+    await expect(
+      page.getByRole("checkbox", { name: "Payment terms" }),
+    ).toBeChecked();
+
+    const [runResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname ===
+            `/api/reports/${reportId}/runs` &&
+          response.request().method() === "POST",
+      ),
+      page.getByRole("button", { name: "Run now" }).click(),
+    ]);
+    expect(runResponse.status()).toBe(201);
+    const run = (await runResponse.json()) as {
+      id: string;
+      row_count: number;
+      headings: string[];
+    };
+    expect(run.row_count).toBe(1);
+    expect(run.headings).toEqual(["Legal name", "Payment terms"]);
+    await expect(page.getByText("Report run saved with 1 row.")).toBeVisible();
+    const availableRuns = page
+      .getByRole("heading", { name: "Available runs" })
+      .locator("xpath=../..");
+    const savedRuns = page
+      .getByRole("heading", { name: "Saved runs" })
+      .locator("xpath=../..");
+    await expect(
+      availableRuns.getByText(reportName, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      savedRuns.getByText("1 row · Recipe revision 1"),
+    ).toBeVisible();
+
+    const [csvResponse, download] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname ===
+            `/api/reports/${reportId}/runs/${run.id}/csv` &&
+          response.request().method() === "GET",
+      ),
+      page.waitForEvent("download"),
+      savedRuns.getByRole("button", { name: "CSV", exact: true }).click(),
+    ]);
+    expect(csvResponse.status()).toBe(200);
+    expect(csvResponse.headers()["cache-control"]).toBe("private, no-store");
+    expect(download.suggestedFilename()).toBe(`report-${run.id}.csv`);
+    expect(readFileSync(await download.path(), "utf8")).toBe(
+      `Legal name,Payment terms\r\n${supplier.legalName},Net 30\r\n`,
+    );
+
+    await page.getByRole("checkbox", { name: "Enable scheduled runs" }).check();
+    await page.getByRole("textbox", { name: "Timezone" }).fill("UTC");
+    const [scheduleResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname ===
+            `/api/reports/${reportId}/schedule` &&
+          response.request().method() === "POST",
+      ),
+      page.getByRole("button", { name: "Create schedule" }).click(),
+    ]);
+    expect(scheduleResponse.status()).toBe(201);
+    await expect(page.getByText("Schedule saved and enabled.")).toBeVisible();
+    await expect(page.getByText(/^Next run:/)).toBeVisible();
+
+    page.once("dialog", (dialog) => void dialog.accept());
+    const [archived] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === `/api/reports/${reportId}` &&
+          response.request().method() === "DELETE",
+      ),
+      page.getByRole("button", { name: "Archive Report" }).click(),
+    ]);
+    expect(archived.status()).toBe(204);
+    await expect(page.getByText("Report archived.")).toBeVisible();
+  } finally {
+    if (reportId) await permanentlyDeleteReport(page, reportId);
+  }
+}
+
+async function exerciseConnectedBoard(
+  page: Page,
+  runId: string,
+  supplier: SeededSupplier,
+) {
+  const boardName = `Full-stack Board ${runId.slice(0, 8)}`;
+  const eventTitle = `Supplier review ${runId.slice(0, 8)}`;
+  const announcementTitle = `Supplier update ${runId.slice(0, 8)}`;
+  const imagePath = join(process.cwd(), "../references/image.png");
+  const imageBytes = readFileSync(imagePath);
+
+  await page.goto("/boards");
+  await page.getByRole("button", { name: "New Board" }).click();
+  await page.getByLabel("Board name").fill(boardName);
+  const [createdBoard] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/boards" &&
+        response.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Create Board" }).click(),
+  ]);
+  expect(createdBoard.status()).toBe(201);
+  const boardId = ((await createdBoard.json()) as { id: string }).id;
+  await expect(page.getByRole("heading", { name: boardName })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`board=${boardId}`));
+
+  await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  await page.getByRole("button", { name: "New event" }).click();
+  await page.getByLabel("Event title").fill(eventTitle);
+  const [createdEvent] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === `/api/boards/${boardId}/events` &&
+        response.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Create event" }).click(),
+  ]);
+  expect(createdEvent.status()).toBe(201);
+  const eventId = ((await createdEvent.json()) as { id: string }).id;
+  await expect(page.getByText("Event created.")).toBeVisible();
+  await page.getByRole("button", { name: `Edit ${eventTitle}` }).click();
+  const eventEditor = page.getByRole("form", { name: "Edit Board event" });
+  await eventEditor.getByLabel("Add an attachment").setInputFiles(imagePath);
+  await expect(eventEditor.getByText("image.png attached.")).toBeVisible({
+    timeout: 70_000,
+  });
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    eventEditor.getByRole("button", { name: "Download image.png" }).click(),
+  ]);
+  expect(readFileSync(await download.path())).toEqual(imageBytes);
+  await eventEditor
+    .getByLabel("Record data source")
+    .selectOption({ label: "Suppliers" });
+  await eventEditor
+    .getByLabel("Record to link")
+    .selectOption(supplier.recordId);
+  await eventEditor.getByLabel("Link label").fill("Supplier record");
+  const [eventLink] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/boards/${boardId}/events/${eventId}/record-links` &&
+        response.request().method() === "POST",
+    ),
+    eventEditor.getByRole("button", { name: "Link Record" }).click(),
+  ]);
+  expect(eventLink.status()).toBe(201);
+  await expect(
+    eventEditor.getByRole("link", { name: "Supplier record" }),
+  ).toBeVisible();
+  await eventEditor
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+
+  await page.getByLabel("Reminder timing").selectOption("now");
+  const [createdReminder] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/boards/${boardId}/events/${eventId}/reminders` &&
+        response.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Save reminder" }).click(),
+  ]);
+  expect(createdReminder.status()).toBe(201);
+  await expect(
+    page.getByText("Reminder saved for this occurrence."),
+  ).toBeVisible();
+
+  await page
+    .getByRole("button", { name: "Announcements", exact: true })
+    .click();
+  await page.getByRole("button", { name: "New announcement" }).click();
+  await page.getByLabel("Title", { exact: true }).fill(announcementTitle);
+  await page.getByLabel("Message").fill("Supplier review is complete.");
+  const [createdAnnouncement] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/boards/${boardId}/announcements` &&
+        response.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Save draft" }).click(),
+  ]);
+  expect(createdAnnouncement.status()).toBe(201);
+  const announcementId = ((await createdAnnouncement.json()) as { id: string })
+    .id;
+  await expect(page.getByText("Draft saved.")).toBeVisible();
+  await page.getByLabel("Add an attachment").setInputFiles({
+    name: "announcement.png",
+    mimeType: "image/png",
+    buffer: imageBytes,
+  });
+  await expect(page.getByText("announcement.png attached.")).toBeVisible({
+    timeout: 70_000,
+  });
+  await page
+    .getByLabel("Record data source")
+    .selectOption({ label: "Suppliers" });
+  await page.getByLabel("Record to link").selectOption(supplier.recordId);
+  await page.getByLabel("Link label").fill("Supplier source");
+  const [announcementLink] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/boards/${boardId}/announcements/${announcementId}/record-links` &&
+        response.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Link Record" }).click(),
+  ]);
+  expect(announcementLink.status()).toBe(201);
+  const [published] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/boards/${boardId}/announcements/${announcementId}/publish` &&
+        response.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Publish now" }).click(),
+  ]);
+  expect(published.status()).toBe(200);
+  await expect(page.getByText("Published successfully.")).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Published announcements" })
+      .getByRole("link", { name: "Supplier source" }),
+  ).toBeVisible();
+
+  await page.goto("/platform#notifications");
+  await expect(
+    page.getByRole("heading", { name: "Connected notifications" }),
+  ).toBeVisible();
+  const notices = page.getByRole("list", {
+    name: "Connected delivery notices",
+  });
+  await expect(
+    notices.getByText("Board announcement", { exact: true }),
+  ).toBeVisible();
+}
+
+type DashboardSnapshotBody = Readonly<{
+  module_id?: string;
+  mode?: string;
+  dimension?: Readonly<{ field_id?: string; expected_type?: string }>;
+}>;
+
+function waitForDashboardSnapshot(page: Page) {
+  const seenRequests: string[] = [];
+  const seenResponses: number[] = [];
+  const isSnapshotRequest = (request: Request) =>
+    new URL(request.url()).pathname === "/api/records/aggregate-snapshot" &&
+    request.method() === "POST";
+  const onRequest = (request: Request) => {
+    if (!isSnapshotRequest(request)) return;
+    try {
+      const body = request.postDataJSON() as DashboardSnapshotBody;
+      seenRequests.push(
+        `${body.mode ?? "unknown"}:${body.module_id ?? "missing"}`,
+      );
+    } catch {
+      seenRequests.push("invalid-json");
+    }
+  };
+  let onResponse: ((response: Response) => void) | undefined;
+  let diagnosticTimer: ReturnType<typeof setTimeout> | undefined;
+  const observedResponse = new Promise<Response>((resolve, reject) => {
+    onResponse = (response) => {
+      if (!isSnapshotRequest(response.request())) return;
+      seenResponses.push(response.status());
+      resolve(response);
+    };
+    page.on("request", onRequest);
+    page.on("response", onResponse);
+    diagnosticTimer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Dashboard snapshot not observed: requests=${JSON.stringify(seenRequests)}, responses=${JSON.stringify(seenResponses)}`,
+          ),
+        ),
+      15_000,
+    );
+  });
+  return observedResponse.finally(() => {
+    if (diagnosticTimer) clearTimeout(diagnosticTimer);
+    page.off("request", onRequest);
+    if (onResponse) page.off("response", onResponse);
+  });
+}
+
+async function expectPopulatedDashboardSnapshot(
+  response: Response,
+  moduleId: string,
+  dimensionId: string,
+) {
+  expect(response.status()).toBe(200);
+  const body = response.request().postDataJSON() as DashboardSnapshotBody;
+  expect(body).toMatchObject({
+    module_id: moduleId,
+    mode: "groups",
+    dimension: { field_id: dimensionId, expected_type: "select" },
+  });
+  const result = (await response.json()) as {
+    items: ReadonlyArray<
+      Readonly<{
+        key: string | null;
+        label: string;
+        value: number | string;
+        record_count: number;
+      }>
+    >;
+    pagination: Readonly<{
+      count: number;
+      total: number;
+      offset: number;
+      has_more: boolean;
+    }>;
+  };
+  expect(result.items).toEqual([
+    { key: "Net 30", label: "Net 30", value: 1, record_count: 1 },
+  ]);
+  expect(result.pagination).toMatchObject({
+    count: 1,
+    total: 1,
+    offset: 0,
+    has_more: false,
+  });
+}
+
+async function exercisePrivateDashboard(
+  page: Page,
+  runId: string,
+  supplier: SeededSupplier,
+) {
+  const dashboardName = `Full-stack Dashboard ${runId.slice(0, 8)}`;
+  await page.goto("/openview?section=dashboards");
+  await expect(
+    page.getByRole("heading", { name: "Private dashboards" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Only you can view these Dashboards.", { exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "New Dashboard" }).click();
+  await page.getByLabel("Dashboard name").fill(dashboardName);
+  const moduleSelect = page.getByLabel("Module");
+  await moduleSelect.selectOption({ label: "Suppliers" });
+  const moduleId = await moduleSelect.inputValue();
+  expect(moduleId).toBe(supplier.moduleId);
+  const dimension = page.getByLabel("Group records by");
+  await dimension.selectOption({ label: "Payment terms" });
+  const dimensionId = await dimension.inputValue();
+  expect(dimensionId).toBe(supplier.paymentTermsFieldId);
+  await page.getByRole("button", { name: "Add chart widget" }).click();
+  await expect(page.getByRole("button", { name: /^Chart 1:/ })).toBeVisible();
+
+  const snapshotPromise = waitForDashboardSnapshot(page);
+  await page.getByRole("button", { name: "Save Dashboard" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Dashboard saved." }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /^View chart 1:/ }),
+  ).toBeVisible();
+  await expectPopulatedDashboardSnapshot(
+    await snapshotPromise,
+    moduleId,
+    dimensionId,
+  );
+
+  await expect(page).toHaveURL(
+    new RegExp(
+      `/openview\\?section=dashboards&dashboard=[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`,
+      "i",
+    ),
+  );
+  const dashboardUrl = new URL(page.url());
+  expect(dashboardUrl.pathname).toBe("/openview");
+  expect(dashboardUrl.searchParams.get("section")).toBe("dashboards");
+  const dashboardId = dashboardUrl.searchParams.get("dashboard");
+  expect(dashboardId).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+  );
+  if (!dashboardId)
+    throw new Error("saved Dashboard URL did not include its ID");
+  await expect(
+    page.getByRole("button", { name: dashboardName, exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(page.getByLabel("Dashboard name")).toHaveValue(dashboardName);
+  await expect(
+    page.getByRole("button", { name: /^View chart 1:/ }),
+  ).toBeVisible();
+  const table = page.getByRole("table", { name: /^Complete data for / });
+  await expect(table).toBeVisible();
+  await expect(
+    table.getByRole("columnheader", { name: "Group" }),
+  ).toBeVisible();
+  const net30Row = table.getByRole("row").filter({ hasText: "Net 30" });
+  await expect(net30Row.getByRole("cell")).toHaveText(["Net 30", "1", "1"]);
+  await expect(table.getByRole("caption")).toContainText(
+    "The table pages the complete authorized snapshot.",
+  );
+
+  const reloadSnapshotPromise = waitForDashboardSnapshot(page);
+  await page.reload();
+  await expect(page).toHaveURL(
+    new RegExp(`[?&]dashboard=${dashboardId}(?:&|$)`),
+  );
+  await expect(page.getByLabel("Dashboard name")).toHaveValue(dashboardName);
+  await expect(
+    page.getByRole("button", { name: dashboardName, exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expectPopulatedDashboardSnapshot(
+    await reloadSnapshotPromise,
+    moduleId,
+    dimensionId,
+  );
+  await expect(net30Row.getByRole("cell")).toHaveText(["Net 30", "1", "1"]);
+
+  await page.getByRole("button", { name: "Archive Dashboard" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Dashboard archived." }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Show archived" }).click();
+  await page.getByRole("button", { name: `Restore ${dashboardName}` }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Dashboard restored." }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(
+    new RegExp(`[?&]dashboard=${dashboardId}(?:&|$)`),
+  );
+  await expect(
+    page.getByRole("button", { name: dashboardName, exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+}
+
+type WindowQueryBody = Readonly<{
+  module_id: string;
+  mode: "calendar" | "timeline";
+  scope: string;
+  from_date: string;
+  to_date: string;
+  date_field?: Readonly<{ field_id: string; expected_type: string }>;
+  start_field?: Readonly<{ field_id: string; expected_type: string }>;
+  end_field?: Readonly<{ field_id: string; expected_type: string }>;
+}>;
+
+function waitForWindowQuery(
+  page: Page,
+  mode: WindowQueryBody["mode"],
+  window: Readonly<{ fromDate: string; toDate: string }>,
+) {
+  const seenRequests: string[] = [];
+  const isWindowRequest = (request: Request) =>
+    new URL(request.url()).pathname === "/api/records/window-query" &&
+    request.method() === "POST";
+  const onRequest = (request: Request) => {
+    if (!isWindowRequest(request) || seenRequests.length >= 10) return;
+    try {
+      const body = request.postDataJSON() as Partial<WindowQueryBody>;
+      seenRequests.push(
+        `${body.mode ?? "unknown"}:${body.scope ?? "missing"}:${body.module_id ?? "missing"}:${body.from_date ?? "missing"}:${body.to_date ?? "missing"}`,
+      );
+    } catch {
+      seenRequests.push("invalid-json");
+    }
+  };
+  let onResponse: ((response: Response) => void) | undefined;
+  let diagnosticTimer: ReturnType<typeof setTimeout> | undefined;
+  const observedResponse = new Promise<Response>((resolve, reject) => {
+    onResponse = (response) => {
+      if (!isWindowRequest(response.request())) return;
+      let body: Partial<WindowQueryBody>;
+      try {
+        body = response.request().postDataJSON() as Partial<WindowQueryBody>;
+      } catch {
+        return;
+      }
+      if (
+        body.mode === mode &&
+        body.scope === "window" &&
+        body.from_date === window.fromDate &&
+        body.to_date === window.toDate
+      )
+        resolve(response);
+    };
+    page.on("request", onRequest);
+    page.on("response", onResponse);
+    diagnosticTimer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Window response not observed: requests=${JSON.stringify(seenRequests)}`,
+          ),
+        ),
+      15_000,
+    );
+  });
+  return observedResponse.finally(() => {
+    if (diagnosticTimer) clearTimeout(diagnosticTimer);
+    page.off("request", onRequest);
+    if (onResponse) page.off("response", onResponse);
+  });
+}
+
+function nextWindowDates(start: string, end: string) {
+  const dayMilliseconds = 24 * 60 * 60 * 1000;
+  const startTime = Date.parse(`${start}T00:00:00.000Z`);
+  const endTime = Date.parse(`${end}T00:00:00.000Z`);
+  const days = (endTime - startTime) / dayMilliseconds + 1;
+  return {
+    fromDate: new Date(startTime + days * dayMilliseconds)
+      .toISOString()
+      .slice(0, 10),
+    toDate: new Date(endTime + days * dayMilliseconds)
+      .toISOString()
+      .slice(0, 10),
+  };
+}
+
+function expectBoundedWindow(body: WindowQueryBody) {
+  expect(body.from_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  expect(body.to_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  const dayMilliseconds = 24 * 60 * 60 * 1000;
+  const days =
+    (Date.parse(`${body.to_date}T00:00:00.000Z`) -
+      Date.parse(`${body.from_date}T00:00:00.000Z`)) /
+      dayMilliseconds +
+    1;
+  expect(days).toBeGreaterThanOrEqual(1);
+  expect(days).toBeLessThanOrEqual(366);
+}
+
+async function expectEmptyWindowResponse(response: Response) {
+  expect(response.status()).toBe(200);
+  const result = await response.json();
+  expect(result.items).toEqual([]);
+  expect(result.pagination).toMatchObject({
+    count: 0,
+    total: 0,
+    offset: 0,
+    has_more: false,
+  });
+}
+
+async function exerciseLiveCalendarAndTimeline(page: Page) {
+  await page.goto("/openview?section=views");
+  const dataSource = page.getByLabel("Data source");
+  await expect(dataSource).toBeVisible();
+  await expect(page).toHaveURL(/[?&]module=[0-9a-f-]{36}(?:&|$)/i);
+  const [moduleId] = await dataSource.selectOption({
+    label: "Purchase orders",
+  });
+  if (!moduleId) throw new Error("Purchase orders has no module ID");
+  await expect(page.getByLabel("Search Purchase orders")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`[?&]module=${moduleId}(?:&|$)`));
+  await expect(dataSource).toHaveValue(moduleId);
+
+  await page.getByLabel("Presentation layout").selectOption("calendar");
+  const calendarField = page.getByLabel("Calendar date field");
+  await expect(calendarField).toBeVisible();
+  const calendarFieldId = await calendarField
+    .locator("option", { hasText: "Order date · date" })
+    .getAttribute("value");
+  if (!calendarFieldId) throw new Error("Calendar date option has no field ID");
+  await calendarField.selectOption(calendarFieldId);
+  const calendar = page.getByRole("region", { name: "Calendar records" });
+  await expect(
+    calendar.getByRole("heading", { name: "Calendar · Order date" }),
+  ).toBeVisible();
+  await expect(
+    calendar.getByText("No scheduled records in this window"),
+  ).toBeVisible();
+  const calendarWindow = nextWindowDates(
+    await calendar.getByLabel("Window starts").inputValue(),
+    await calendar.getByLabel("Window ends").inputValue(),
+  );
+  await expect(dataSource).toHaveValue(moduleId);
+  const calendarResponsePromise = waitForWindowQuery(
+    page,
+    "calendar",
+    calendarWindow,
+  );
+  await calendar
+    .getByRole("button", { name: "Next window", exact: true })
+    .click();
+  const calendarResponse = await calendarResponsePromise;
+  const calendarBody = calendarResponse
+    .request()
+    .postDataJSON() as WindowQueryBody;
+  expect(calendarBody).toMatchObject({
+    module_id: moduleId,
+    mode: "calendar",
+    scope: "window",
+    from_date: calendarWindow.fromDate,
+    to_date: calendarWindow.toDate,
+    date_field: {
+      field_id: calendarFieldId,
+      expected_type: "date",
+    },
+  });
+  expectBoundedWindow(calendarBody);
+  await expectEmptyWindowResponse(calendarResponse);
+
+  await expect(calendar.getByLabel("Window starts")).toHaveValue(
+    calendarBody.from_date,
+  );
+  await expect(calendar.getByLabel("Window ends")).toHaveValue(
+    calendarBody.to_date,
+  );
+  await expect(
+    calendar.getByText("No scheduled records in this window"),
+  ).toBeVisible();
+
+  await page.getByLabel("Presentation layout").selectOption("timeline");
+  const timelineStart = page.getByLabel("Timeline start field");
+  const timelineEnd = page.getByLabel("Timeline end field");
+  await expect(timelineStart).toBeVisible();
+  const timelineStartFieldId = await timelineStart
+    .locator("option", { hasText: "Order date · date" })
+    .getAttribute("value");
+  if (!timelineStartFieldId)
+    throw new Error("Timeline start option has no field ID");
+  await timelineStart.selectOption(timelineStartFieldId);
+  await expect(timelineEnd).toBeVisible();
+  const timelineEndFieldId = await timelineEnd
+    .locator("option", { hasText: "Expected delivery · date" })
+    .getAttribute("value");
+  if (!timelineEndFieldId)
+    throw new Error("Timeline end option has no field ID");
+  await timelineEnd.selectOption(timelineEndFieldId);
+  const timeline = page.getByRole("region", { name: "Timeline records" });
+  await expect(
+    timeline.getByRole("heading", {
+      name: "Timeline · Order date through Expected delivery",
+    }),
+  ).toBeVisible();
+  await expect(
+    timeline.getByText("No scheduled intervals in this window"),
+  ).toBeVisible();
+  const timelineWindow = nextWindowDates(
+    await timeline.getByLabel("Window starts").inputValue(),
+    await timeline.getByLabel("Window ends").inputValue(),
+  );
+  await expect(dataSource).toHaveValue(moduleId);
+  const timelineResponsePromise = waitForWindowQuery(
+    page,
+    "timeline",
+    timelineWindow,
+  );
+  await timeline
+    .getByRole("button", { name: "Next window", exact: true })
+    .click();
+  const timelineResponse = await timelineResponsePromise;
+  const timelineBody = timelineResponse
+    .request()
+    .postDataJSON() as WindowQueryBody;
+  expect(timelineBody).toMatchObject({
+    module_id: moduleId,
+    mode: "timeline",
+    scope: "window",
+    from_date: timelineWindow.fromDate,
+    to_date: timelineWindow.toDate,
+    start_field: {
+      field_id: timelineStartFieldId,
+      expected_type: "date",
+    },
+    end_field: {
+      field_id: timelineEndFieldId,
+      expected_type: "date",
+    },
+  });
+  expectBoundedWindow(timelineBody);
+  await expectEmptyWindowResponse(timelineResponse);
+
+  await expect(timeline.getByLabel("Window starts")).toHaveValue(
+    timelineBody.from_date,
+  );
+  await expect(timeline.getByLabel("Window ends")).toHaveValue(
+    timelineBody.to_date,
+  );
+  await expect(
+    timeline.getByText("No scheduled intervals in this window"),
+  ).toBeVisible();
+}
+
 test("Sandbox exposes the simplified Build, Automations, Test, and History journey", async ({
   page,
 }) => {
-  const credentials = fixture().admin;
+  test.setTimeout(360_000);
+  const runFixture = fixture();
+  const credentials = runFixture.admin;
   await page.goto("/login");
   await page.getByLabel("Email or username").fill(credentials.email);
   await page.getByLabel("Password").fill(credentials.password);
@@ -77,6 +1157,15 @@ test("Sandbox exposes the simplified Build, Automations, Test, and History journ
   await applyTemplate(page, "Inventory & procurement");
   await publishDraft(page, credentials.password);
   await expect(page.getByText("Published", { exact: true })).toBeVisible();
+  const supplier = await seedPublishedSupplier(page, runFixture.runId);
+  await exercisePrivateDashboard(page, runFixture.runId, supplier);
+  await exerciseOpenView(page, runFixture.runId, supplier);
+  await exerciseLiveCalendarAndTimeline(page);
+  await exerciseLiveCharts(page, supplier);
+  await exerciseConnectedReports(page, runFixture.runId, supplier);
+  await exerciseConnectedBoard(page, runFixture.runId, supplier);
+  await retireSeededSupplier(page, supplier.recordId);
+  await page.goto("/sandbox?section=designer");
 
   await page.getByRole("link", { name: "Automations", exact: true }).click();
   await expect(

@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import {
@@ -23,6 +24,46 @@ type CheckQueue = {
   requestId: number;
   controller: AbortController | null;
 };
+
+function supersedeSessionCheck(current: CheckQueue) {
+  current.nextVersion += 1;
+  current.requestId += 1;
+  const controller = current.controller;
+  current.controller = null;
+  current.queued = null;
+  current.active = false;
+  controller?.abort();
+}
+
+function SessionVerificationMessage({
+  unavailable,
+  onRetry,
+}: {
+  unavailable: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="max-w-sm px-6 text-center">
+      {unavailable ? (
+        <p className="text-foreground text-sm" role="alert">
+          We can’t verify your session right now. Your sign-in details are still
+          available.
+        </p>
+      ) : (
+        <p className="text-muted-foreground text-sm" role="status">
+          Checking your session…
+        </p>
+      )}
+      <button
+        className="bg-primary text-primary-foreground mt-5 inline-flex min-h-11 items-center justify-center rounded-md px-4 text-sm font-medium"
+        onClick={onRetry}
+        type="button"
+      >
+        {unavailable ? "Retry" : "Retry session check"}
+      </button>
+    </div>
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -59,12 +100,13 @@ export function AppPage({ children }: AppPageProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [checking, setChecking] = useState(true);
+  const [forceFallback, setForceFallback] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const [verifiedUserId, setVerifiedUserId] = useState<string | null>(null);
   const verifiedUserIdRef = useRef<string | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
   const mounted = useRef(false);
-  const initialCheck = useRef(true);
+  const curtain = useRef<HTMLDialogElement | null>(null);
   const queue = useRef<CheckQueue>({
     active: false,
     queued: null,
@@ -77,12 +119,65 @@ export function AppPage({ children }: AppPageProps) {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      queue.current.controller?.abort();
-      queue.current.controller = null;
-      queue.current.queued = null;
-      queue.current.active = false;
+      supersedeSessionCheck(queue.current);
     };
   }, []);
+
+  useEffect(() => {
+    function concealWorkspace() {
+      if (!mounted.current) return;
+      // A tab's cookie identity can change elsewhere. Invalidate an in-flight
+      // result and cover even body-level portals before the next browser paint.
+      supersedeSessionCheck(queue.current);
+      try {
+        if (curtain.current && !curtain.current.open)
+          curtain.current.showModal();
+        else if (!curtain.current && verifiedUserIdRef.current !== null)
+          throw new Error("Session curtain is unavailable");
+      } catch {
+        // If the browser cannot open the top layer, unmount instead of
+        // risking a visible prior identity.
+        flushSync(() => setForceFallback(true));
+      }
+      flushSync(() => {
+        setChecking(true);
+        setUnavailable(false);
+      });
+    }
+
+    function recheckOnReturn() {
+      if (document.visibilityState !== "visible") return;
+      concealWorkspace();
+      setRetryVersion((version) => version + 1);
+    }
+
+    function concealMountedWorkspace() {
+      // The first session request has no protected tree to conceal. Let it
+      // finish while backgrounded; a later focus will supersede and recheck.
+      if (!curtain.current) return;
+      concealWorkspace();
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden") concealMountedWorkspace();
+      else recheckOnReturn();
+    }
+
+    window.addEventListener("blur", concealMountedWorkspace);
+    window.addEventListener("focus", recheckOnReturn);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("blur", concealMountedWorkspace);
+      window.removeEventListener("focus", recheckOnReturn);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    // Commit a newly verified identity (and its keyed workspace) before the
+    // old account's privacy curtain is dismissed.
+    if (!checking && curtain.current?.open) curtain.current.close();
+  }, [checking, verifiedUserId]);
 
   useEffect(() => {
     const current = queue.current;
@@ -147,11 +242,9 @@ export function AppPage({ children }: AppPageProps) {
           }
           verifiedUserIdRef.current = responseUserId;
           setVerifiedUserId(responseUserId);
+          setForceFallback(false);
           setUnavailable(false);
-          if (initialCheck.current) {
-            initialCheck.current = false;
-            setChecking(false);
-          }
+          setChecking(false);
         } else {
           setUnavailable(true);
         }
@@ -161,56 +254,60 @@ export function AppPage({ children }: AppPageProps) {
   }, [pathname, retryVersion, router]);
 
   function retrySessionCheck() {
-    if (initialCheck.current) setUnavailable(false);
+    supersedeSessionCheck(queue.current);
+    setUnavailable(false);
     setRetryVersion((version) => version + 1);
   }
 
-  if (checking) {
+  if (verifiedUserId === null || forceFallback) {
     return (
       <main className="bg-background text-foreground grid min-h-screen place-items-center">
-        <div className="max-w-sm px-6 text-center">
-          {unavailable ? (
-            <>
-              <p className="text-foreground text-sm" role="alert">
-                We can’t verify your session right now. Your sign-in details are
-                still available.
-              </p>
-              <button
-                className="bg-primary text-primary-foreground mt-5 inline-flex min-h-11 items-center justify-center rounded-md px-4 text-sm font-medium"
-                onClick={retrySessionCheck}
-                type="button"
-              >
-                Retry
-              </button>
-            </>
-          ) : (
-            <p className="text-muted-foreground text-sm" role="status">
-              Checking your session…
-            </p>
-          )}
-        </div>
+        <SessionVerificationMessage
+          unavailable={unavailable}
+          onRetry={retrySessionCheck}
+        />
       </main>
     );
   }
 
   return (
-    <VerifiedWorkspaceIdentityProvider userId={verifiedUserId}>
-      <AppShell verifiedUserId={verifiedUserId}>{children}</AppShell>
-      {unavailable && (
-        <div
-          className="bg-destructive text-destructive-foreground fixed right-4 bottom-4 z-[80] flex max-w-sm items-center gap-3 rounded-md px-4 py-3 text-sm shadow-lg"
-          role="alert"
+    <>
+      <div aria-hidden={checking} className="contents" inert={checking}>
+        <VerifiedWorkspaceIdentityProvider
+          key={verifiedUserId}
+          userId={verifiedUserId}
         >
-          <span>Session verification is temporarily unavailable.</span>
-          <button
-            className="min-h-11 shrink-0 rounded-md border border-current px-3 font-medium"
-            onClick={retrySessionCheck}
-            type="button"
-          >
-            Retry
-          </button>
+          <AppShell verifiedUserId={verifiedUserId}>{children}</AppShell>
+          {unavailable && !checking && (
+            <div
+              className="bg-destructive text-destructive-foreground fixed right-4 bottom-4 z-[80] flex max-w-sm items-center gap-3 rounded-md px-4 py-3 text-sm shadow-lg"
+              role="alert"
+            >
+              <span>Session verification is temporarily unavailable.</span>
+              <button
+                className="min-h-11 shrink-0 rounded-md border border-current px-3 font-medium"
+                onClick={retrySessionCheck}
+                type="button"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+        </VerifiedWorkspaceIdentityProvider>
+      </div>
+      <dialog
+        aria-label="Session verification"
+        className="bg-background text-foreground backdrop:bg-background fixed inset-0 m-0 h-screen max-h-none w-screen max-w-none border-0 p-0"
+        onCancel={(event) => event.preventDefault()}
+        ref={curtain}
+      >
+        <div className="grid h-full place-items-center">
+          <SessionVerificationMessage
+            unavailable={unavailable}
+            onRetry={retrySessionCheck}
+          />
         </div>
-      )}
-    </VerifiedWorkspaceIdentityProvider>
+      </dialog>
+    </>
   );
 }

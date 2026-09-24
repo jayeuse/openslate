@@ -174,6 +174,10 @@ import {
   useOpenViewCommands,
 } from "./adapters/controller";
 import SampleAnalytics from "./components/analytics";
+import ServerBackedCharts from "./components/server-backed-charts";
+import ServerBackedDashboards from "./components/server-backed-dashboards";
+import ServerBackedReports from "./components/server-backed-reports";
+import ServerBackedViewsWorkspace from "./components/server-backed-views-workspace";
 
 const legacyLookup: AudienceLookup = projectAudienceLookup(
   initialRoles,
@@ -493,9 +497,29 @@ function OpenViewReadError({
 export default function SampleOpenView() {
   return (
     <Suspense fallback={<OpenViewLoading />}>
-      <OpenViewContent />
+      <OpenViewRoute />
     </Suspense>
   );
+}
+
+function OpenViewRoute() {
+  const pathname = usePathname();
+  const query = useSearchParams();
+  const urlState = parseOpenViewUrl(`${pathname}?${query.toString()}`);
+  const isLegacySampleRecordLink = Boolean(
+    urlState.section === "views" &&
+    urlState.record?.startsWith("sample-") &&
+    OPENVIEW_MODULES.some((module) => module.id === urlState.module),
+  );
+  if (isLegacySampleRecordLink) return <OpenViewContent />;
+  if (urlState.section === "views")
+    return (
+      <ServerBackedViewsWorkspace invalidUrl={Boolean(urlState.invalid)} />
+    );
+  if (urlState.section === "charts") return <ServerBackedCharts />;
+  if (urlState.section === "dashboards") return <ServerBackedDashboards />;
+  if (urlState.section === "reports") return <ServerBackedReports />;
+  return <OpenViewContent />;
 }
 
 function OpenViewContent() {
@@ -541,7 +565,7 @@ function OpenViewContent() {
     urlState.record && !hasModule
       ? "service-requests"
       : hasModule
-        ? urlState.module
+        ? moduleIdFromUnknown(urlState.module)
         : storedModuleValue;
   const selectedModule = getModuleDefinition(moduleId);
   const savedViews = decodeSavedViews(rawSavedViews, audienceLookup);
@@ -897,6 +921,11 @@ function OpenViewContent() {
         </div>
       </header>
 
+      {selectedRecordId?.startsWith("sample-") ? (
+        <Alert role="note">
+          Legacy Board links open local sample data, not live records.
+        </Alert>
+      ) : null}
       {storageUnavailable ? (
         <Alert role="note" variant="warning">
           Browser storage is unavailable. Your latest changes exist in memory

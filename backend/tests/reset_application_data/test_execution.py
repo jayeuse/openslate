@@ -8,16 +8,15 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 from psycopg import connect
 from sqlalchemy.orm import Session
 
+from app.core.config.instance import InstanceTarget
 from app.core.security.passwords import hash_password
 from app.systems.access.identity.service import authenticate_password
+from app.systems.boards.announcement_models import publication_content_fingerprint
 from operations import reset_application_data as reset
 from operations import reset_execution as execution
-from operations import reset_planning
 from tests.conftest import _guard_integration_database, guarded_create_engine
 
 
@@ -83,7 +82,6 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
     )
     monkeypatch.setattr(execution, "_single_value", lambda *_: True)
     monkeypatch.setattr(execution, "_validate_postconditions", lambda *_args, **_kwargs: None)
-
     with pytest.raises(execution.ResetError, match="reset committed but private storage"):
         execution.apply_reset(
             database,
@@ -115,34 +113,74 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
     )
 
 
-def test_reset_rejects_remote_runtime_or_missing_owner_environment() -> None:
-    local = "postgresql://openslate_owner:secret@127.0.0.1:54322/openslate"
-    assert reset.validate_local_database_url(local) is None
-    for url in (
-        local.replace("127.0.0.1", "remote.example"),
-        local.replace("openslate_owner", "openslate_runtime"),
-        local.replace("54322", "55322"),
-    ):
-        with pytest.raises(reset.ResetError):
-            reset.validate_local_database_url(url)
-    with pytest.raises(reset.ResetError):
-        reset.required_environment({"DATABASE_URL": local, "ADMIN_EMAIL": "admin@example.test"})
-    with pytest.raises(reset.ResetError):
-        reset.required_storage_environment(
-            {"BACKEND_BIND_HOST": "127.0.0.1", "BACKEND_PORT": "8000"}
-        )
+def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
+    monkeypatch, tmp_path
+) -> None:
+    url = "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55322/openslate_boards"
+    target = InstanceTarget(
+        instance_id="openslate-boards-a1b2c3d4",
+        host="127.0.0.1",
+        port=55322,
+        database="openslate_boards",
+        attestation_path=tmp_path / "instance.json",
+    )
+    values = {
+        "ENVIRONMENT": "development",
+        "MIGRATION_DATABASE_URL": url,
+        "ADMIN_EMAIL": "admin@example.test",
+        "FILES_STORAGE_ROOT": str(tmp_path),
+        "BACKEND_BIND_HOST": "127.0.0.1",
+        "BACKEND_PORT": "8000",
+    }
+    connection = Mock()
+    storage = Mock(list_object_keys=Mock(return_value=()))
+    seen_paths = []
+    monkeypatch.setattr(reset, "environment_inputs", lambda path: seen_paths.append(path) or values)
+    monkeypatch.setattr(reset, "instance_target_for_process", lambda *_args: target)
+    monkeypatch.setattr(reset, "connect", lambda _url: connection)
+    monkeypatch.setattr(reset, "ResetStorage", lambda _root: storage)
+    monkeypatch.setattr(reset, "build_reset_plan", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(reset, "_print_plan", lambda _plan: None)
+    monkeypatch.setattr(reset, "assert_psycopg_target", Mock())
+
+    reset.main([])
+
+    assert seen_paths == [reset.DOTENV_PATH]
+    reset.assert_psycopg_target.assert_called_once_with(
+        connection, target, expected_user="openslate_owner"
+    )
+    connection.close.assert_called_once()
 
 
-def test_reset_derives_the_single_current_alembic_head() -> None:
-    config = Config()
-    config.set_main_option("script_location", "migrations")
-    heads = ScriptDirectory.from_config(config).get_heads()
-    assert len(heads) == 1
-    assert reset_planning._expected_alembic_head() == heads[0]
+@pytest.mark.parametrize("environment", ["production", "prod"])
+def test_reset_rejects_production_before_target_resolution_or_connection(
+    monkeypatch, tmp_path, environment
+) -> None:
+    values = {
+        "ENVIRONMENT": environment,
+        "MIGRATION_DATABASE_URL": (
+            "postgresql+psycopg://openslate_owner:secret@db.example.test:5432/openslate"
+        ),
+        "ADMIN_EMAIL": "admin@example.test",
+        "FILES_STORAGE_ROOT": str(tmp_path),
+        "BACKEND_BIND_HOST": "127.0.0.1",
+        "BACKEND_PORT": "8000",
+    }
+    target = Mock()
+    connection = Mock()
+    monkeypatch.setattr(reset, "environment_inputs", lambda _path: values)
+    monkeypatch.setattr(reset, "instance_target_for_process", target)
+    monkeypatch.setattr(reset, "connect", connection)
+
+    with pytest.raises(SystemExit, match="local development or disposable tests"):
+        reset.main([])
+
+    target.assert_not_called()
+    connection.assert_not_called()
 
 
 @pytest.mark.integration
-def test_reset_removes_local_identity_rows_and_preserves_the_administrator(
+def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administrator(
     tmp_path, request, monkeypatch
 ) -> None:
     monkeypatch.setenv("OPENSLATE_ENV_SOURCE", "process")
@@ -252,9 +290,19 @@ def test_reset_removes_local_identity_rows_and_preserves_the_administrator(
                 "(%s, %s, 1, now(), now() + interval '1 minute')",
                 (uuid4(), admin_id, uuid4(), member_id),
             )
+            department_id, module_id = uuid4(), uuid4()
             cursor.execute(
                 "INSERT INTO public.departments (id, department_name) VALUES (%s, %s)",
-                (uuid4(), f"reset-{admin_id}"),
+                (department_id, f"reset-{admin_id}"),
+            )
+            cursor.execute(
+                "INSERT INTO public.user_department_memberships (id, user_id, department_id) "
+                "VALUES (%s, %s, %s)",
+                (uuid4(), member_id, department_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.modules (id, department_id, module_name) VALUES (%s, %s, %s)",
+                (module_id, department_id, f"reset-module-{module_id.hex[:12]}"),
             )
             file_id = uuid4()
             cursor.execute(
@@ -264,10 +312,158 @@ def test_reset_removes_local_identity_rows_and_preserves_the_administrator(
                 (file_id, admin_id, uuid4().hex),
             )
             cursor.execute("UPDATE public.workspace_profiles SET logo_file_id = %s", (file_id,))
+            plan_before_dashboard = reset.build_reset_plan(
+                database, admin_email, storage_object_keys=storage.list_object_keys()
+            )
+            dashboard_id, widget_id = uuid4(), uuid4()
+            cursor.execute(
+                "INSERT INTO public.dashboards (id, owner_id, name) VALUES (%s, %s, %s)",
+                (dashboard_id, member_id, f"reset-dashboard-{dashboard_id.hex[:12]}"),
+            )
+            cursor.execute(
+                "INSERT INTO public.dashboard_widgets "
+                "(id, dashboard_id, position, widget_type, config) "
+                "VALUES (%s, %s, 0, 'chart', '{}'::jsonb)",
+                (widget_id, dashboard_id),
+            )
+            board_id, record_id = uuid4(), uuid4()
+            cursor.execute(
+                "INSERT INTO public.boards (id, owner_id, department_id, name) "
+                "VALUES (%s, %s, %s, %s)",
+                (board_id, member_id, department_id, "Reset board"),
+            )
+            cursor.execute(
+                "INSERT INTO public.board_events(id,board_id,author_id,title,all_day,"
+                "start_date,end_date,timezone_name,audience_kind) VALUES "
+                "(%s,%s,%s,'R',true,current_date,current_date,'UTC','author')",
+                (uuid4(), board_id, member_id),
+            )
+            announcement_id = uuid4()
+            cursor.execute(
+                "INSERT INTO public.board_announcements "
+                "(id, board_id, author_id, title, body, status, audience_kind) "
+                "VALUES (%s, %s, %s, 'Reset notice', 'Private notice', 'published', 'author')",
+                (announcement_id, board_id, member_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.board_announcement_revisions "
+                "(id, announcement_id, publication_number, publication_key, "
+                "content_fingerprint, author_id, title, body, "
+                "audience_kind, published_at) VALUES "
+                "(%s, %s, 1, %s, %s, %s, 'Reset notice', 'Private notice', 'author', now())",
+                (
+                    uuid4(),
+                    announcement_id,
+                    uuid4(),
+                    publication_content_fingerprint(
+                        author_id=member_id,
+                        title="Reset notice",
+                        body="Private notice",
+                        audience_kind="author",
+                    ),
+                    member_id,
+                ),
+            )
+            cursor.execute(
+                "INSERT INTO public.board_announcement_personal_states "
+                "(id, user_id, announcement_id, read, bookmarked) "
+                "VALUES (%s, %s, %s, true, true)",
+                (uuid4(), member_id, announcement_id),
+            )
+            for table in ("board_favorites", "board_homes"):
+                cursor.execute(
+                    f"INSERT INTO public.{table} (id, user_id, board_id) VALUES (%s, %s, %s)",
+                    (uuid4(), member_id, board_id),
+                )
+            cursor.execute(
+                "INSERT INTO public.board_templates (id, name, bundle) VALUES (%s, %s, %s::jsonb)",
+                (
+                    uuid4(),
+                    "Reset template",
+                    '{"kind":"openslate-board","version":2,"configuration":'
+                    '{"name":"Reset","description":null,"department_name":null,'
+                    '"default_section":"overview","widgets":[]}}',
+                ),
+            )
+            cursor.execute(
+                "INSERT INTO public.records (id, module_id) VALUES (%s, %s)",
+                (record_id, module_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.board_record_placements (id, board_id, record_id) "
+                "VALUES (%s, %s, %s)",
+                (uuid4(), board_id, record_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.dashboard_defaults (id, user_id, dashboard_id) "
+                "VALUES (%s, %s, %s)",
+                (uuid4(), member_id, dashboard_id),
+            )
+            report_id, run_id = uuid4(), uuid4()
+            cursor.execute(
+                "INSERT INTO public.reports (id, owner_id, module_id, name, recipe) "
+                "VALUES (%s, %s, %s, %s, '{}'::jsonb)",
+                (report_id, member_id, module_id, "Reset report"),
+            )
+            cursor.execute(
+                "INSERT INTO public.report_schedules "
+                "(id, report_id, enabled, cadence, timezone_name, local_time, next_due_at) "
+                "VALUES (%s, %s, true, 'daily', 'UTC', '09:00', now())",
+                (uuid4(), report_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.report_runs "
+                "(id, report_id, module_id, idempotency_key, recipe_revision, "
+                "recipe, headings, row_count, csv_bytes) "
+                "VALUES (%s, %s, %s, %s, 1, '{}'::jsonb, '[\"Name\"]'::jsonb, 1, %s)",
+                (run_id, report_id, module_id, uuid4(), b"Name\r\nReady\r\n"),
+            )
+            cursor.execute(
+                "INSERT INTO public.report_run_rows "
+                "(id, run_id, position, record_id, cells) "
+                "VALUES (%s, %s, 0, %s, '[\"Ready\"]'::jsonb)",
+                (uuid4(), run_id, record_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.report_run_eligible_users (run_id, user_id) VALUES (%s, %s)",
+                (run_id, member_id),
+            )
+            work_id = uuid4()
+            cursor.execute(
+                "INSERT INTO public.scheduled_work "
+                "(id, kind, report_id, scheduled_for, next_attempt_at, state, "
+                "attempt_count, run_id, created_at, updated_at) "
+                "VALUES (%s, 'report-run', %s, now(), now(), 'succeeded', 1, %s, now(), now())",
+                (work_id, report_id, run_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.in_app_notifications (id, work_id, recipient_id) "
+                "VALUES (%s, %s, %s)",
+                (uuid4(), work_id, member_id),
+            )
         database.commit()
+        with pytest.raises(reset.ResetError, match="reset plan changed"):
+            execution.apply_reset(
+                database,
+                plan_before_dashboard,
+                execute=True,
+                stdin_is_tty=True,
+                confirmation=plan_before_dashboard.impact_digest,
+                storage=storage,
+            )
         plan = reset.build_reset_plan(
             database, admin_email, storage_object_keys=storage.list_object_keys()
         )
+        for table in (
+            "board_announcement_personal_states board_announcement_revisions "
+            "board_announcements board_events "
+            "board_favorites board_homes boards board_record_placements board_templates "
+            "dashboard_defaults dashboard_widgets dashboards reports report_schedules "
+            "report_runs report_run_rows report_run_eligible_users "
+            "scheduled_work in_app_notifications"
+        ).split():
+            assert plan.counts[table] == 1
+        assert plan.impact_digest != plan_before_dashboard.impact_digest
         execution.apply_reset(
             database,
             plan,
@@ -293,6 +489,15 @@ def test_reset_removes_local_identity_rows_and_preserves_the_administrator(
             assert cursor.fetchone() == (0,)
             cursor.execute("SELECT count(*) FROM public.departments")
             assert cursor.fetchone() == (0,)
+            for table in (
+                "board_announcement_personal_states board_announcement_revisions "
+                "board_announcements board_events "
+                "board_record_placements boards board_templates dashboard_widgets "
+                "dashboard_defaults dashboards reports report_schedules report_runs "
+                "report_run_rows report_run_eligible_users scheduled_work in_app_notifications"
+            ).split():
+                cursor.execute(f"SELECT count(*) FROM public.{table}")
+                assert cursor.fetchone() == (0,), table
             cursor.execute("SELECT logo_file_id FROM public.workspace_profiles")
             assert cursor.fetchone() == (None,)
             cursor.execute(

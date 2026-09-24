@@ -10,7 +10,12 @@ from sqlalchemy import Connection, Engine, or_, select, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.config import ConfigurationError
+from app.core.config import ConfigurationError, get_settings
+from app.core.config.instance import (
+    assert_database_url,
+    assert_instance_target,
+    instance_target_for_process,
+)
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
 from app.systems.platform.files.access import load
@@ -164,8 +169,15 @@ def main() -> int:
     )
     options = parser.parse_args()
     try:
+        settings = get_settings()
+        target = instance_target_for_process(settings.database_url, "openslate_runtime")
+        if target is not None:
+            assert_database_url(settings.database_url, target, expected_user="openslate_runtime")
         scanner = get_scanner(require_configuration=True)
         engine = get_engine()
+        if target is not None:
+            with engine.connect() as connection:
+                assert_instance_target(connection, target, expected_user="openslate_runtime")
         with ScannerLeader(engine) as leader:
             with AuditSession(engine) as db:
                 if options.acknowledge_engine_replacement:

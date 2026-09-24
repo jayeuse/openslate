@@ -9,17 +9,38 @@ from app.systems.access.users.permissions import Capability
 
 _ENTITY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 RESYNC_ENTITY = "resync"
-_ADMINISTRATOR_ENTITIES = frozenset(
-    {"audit_logs", "files", "roles", "security_events", "users"}
+PRIVATE_NOTIFICATION_ENTITY = "in_app_notifications"
+_PRIVATE_INVALIDATION_ENTITIES = frozenset(
+    {
+        "reports",
+        "report_runs",
+        "report_run_rows",
+        "report_schedules",
+        "boards",
+        "board_grants",
+        "board_record_placements",
+        "board_widgets",
+        "board_favorites",
+        "board_homes",
+        "board_templates",
+        "board_events",
+        "board_announcements",
+        "board_announcement_revisions",
+        "board_announcement_personal_states",
+    }
 )
+_ADMINISTRATOR_ENTITIES = frozenset({"audit_logs", "files", "roles", "security_events", "users"})
 _ALL_AUTHENTICATED_ENTITIES = frozenset({"workspace_profiles"})
-_ENTITY_ONLY_ENTITIES = frozenset({"files", "saved_views", "workspace_profiles"})
+_ENTITY_ONLY_ENTITIES = frozenset(
+    {"files", "saved_view_defaults", "saved_views", "workspace_profiles"}
+)
 _ENTITY_CAPABILITIES = {
     "departments": Capability.DEPARTMENTS_READ,
     "fields": Capability.FIELDS_READ,
     "modules": Capability.MODULES_READ,
     "records": Capability.RECORDS_READ,
     "relationships": Capability.RELATIONSHIPS_READ,
+    "saved_view_defaults": Capability.RECORDS_READ,
     "saved_views": Capability.RECORDS_READ,
 }
 
@@ -33,9 +54,24 @@ class InvalidationEvent:
     capability: Capability | None = None
     administrators_only: bool = False
     all_authenticated: bool = False
+    recipient_id: UUID | None = None
 
     def __post_init__(self) -> None:
-        if not _ENTITY_PATTERN.fullmatch(self.entity):
+        if (
+            not _ENTITY_PATTERN.fullmatch(self.entity)
+            or self.entity in _PRIVATE_INVALIDATION_ENTITIES
+        ):
+            raise ValueError("invalid invalidation payload")
+        if self.entity == PRIVATE_NOTIFICATION_ENTITY:
+            if (
+                not isinstance(self.recipient_id, UUID)
+                or self.entity_id is not None
+                or self.capability is not None
+                or self.administrators_only
+                or self.all_authenticated
+            ):
+                raise ValueError("invalid invalidation payload")
+        elif self.recipient_id is not None:
             raise ValueError("invalid invalidation payload")
 
     def to_payload(self) -> dict[str, str]:
@@ -49,10 +85,29 @@ class InvalidationEvent:
     def to_json(self) -> str:
         return json.dumps(self.to_payload(), separators=(",", ":"), sort_keys=True)
 
+    def to_transport_payload(self) -> dict[str, str]:
+        """Include the private routing subject only inside PostgreSQL NOTIFY."""
 
-def event_for_entity(entity: str, entity_id: UUID | None = None) -> InvalidationEvent:
+        payload = self.to_payload()
+        if self.recipient_id is not None:
+            payload["recipient_id"] = str(self.recipient_id)
+        return payload
+
+    def to_transport_json(self) -> str:
+        return json.dumps(self.to_transport_payload(), separators=(",", ":"), sort_keys=True)
+
+
+def event_for_entity(
+    entity: str, entity_id: UUID | None = None, *, recipient_id: UUID | None = None
+) -> InvalidationEvent | None:
     """Classify an audited table without exposing rows or audit snapshots."""
 
+    if entity in _PRIVATE_INVALIDATION_ENTITIES:
+        return None
+    if entity == PRIVATE_NOTIFICATION_ENTITY:
+        if recipient_id is None:
+            return None
+        return InvalidationEvent(entity=entity, recipient_id=recipient_id)
     return InvalidationEvent(
         entity=entity,
         entity_id=None if entity in _ENTITY_ONLY_ENTITIES else entity_id,
@@ -74,21 +129,30 @@ def parse_invalidation_payload(payload: object) -> InvalidationEvent:
             payload = json.loads(payload)
         except json.JSONDecodeError as error:
             raise ValueError("invalid invalidation payload") from error
-    if not isinstance(payload, dict) or set(payload) - {"entity", "entity_id", "capability"}:
+    if not isinstance(payload, dict) or set(payload) - {
+        "entity",
+        "entity_id",
+        "capability",
+        "recipient_id",
+    }:
         raise ValueError("invalid invalidation payload")
     entity = payload.get("entity")
     entity_id = payload.get("entity_id")
     capability = payload.get("capability")
+    recipient_id = payload.get("recipient_id")
     if not isinstance(entity, str) or not _ENTITY_PATTERN.fullmatch(entity):
         raise ValueError("invalid invalidation payload")
     try:
         parsed_id = UUID(entity_id) if isinstance(entity_id, str) else None
         parsed_capability = Capability(capability) if isinstance(capability, str) else None
+        parsed_recipient_id = UUID(recipient_id) if isinstance(recipient_id, str) else None
     except ValueError as error:
         raise ValueError("invalid invalidation payload") from error
     if entity_id is not None and parsed_id is None:
         raise ValueError("invalid invalidation payload")
     if capability is not None and parsed_capability is None:
+        raise ValueError("invalid invalidation payload")
+    if recipient_id is not None and parsed_recipient_id is None:
         raise ValueError("invalid invalidation payload")
     if entity in _ENTITY_ONLY_ENTITIES and parsed_id is not None:
         raise ValueError("invalid invalidation payload")
@@ -101,4 +165,5 @@ def parse_invalidation_payload(payload: object) -> InvalidationEvent:
         capability=parsed_capability,
         administrators_only=entity in _ADMINISTRATOR_ENTITIES,
         all_authenticated=entity in _ALL_AUTHENTICATED_ENTITIES,
+        recipient_id=parsed_recipient_id,
     )

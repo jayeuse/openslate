@@ -295,6 +295,14 @@ class MigrationSettings(EnvironmentSettings):
     migration_database_url: str = Field(validation_alias="MIGRATION_DATABASE_URL")
 
 
+class InstanceSettings(EnvironmentSettings):
+    environment: str = Field(validation_alias="ENVIRONMENT")
+    open_slate_instance_id: str = Field(validation_alias="OPENSLATE_INSTANCE_ID")
+    postgres_host: str = Field(validation_alias="POSTGRES_HOST")
+    postgres_port: int = Field(ge=1, le=65535, validation_alias="POSTGRES_PORT")
+    postgres_database: str = Field(validation_alias="POSTGRES_DATABASE")
+
+
 class AdminSettings(EnvironmentSettings):
     admin_email: str = Field(validation_alias="ADMIN_EMAIL")
     admin_username: str = Field(validation_alias="ADMIN_USERNAME")
@@ -338,6 +346,10 @@ def get_settings() -> Settings:
 
 def get_migration_settings() -> MigrationSettings:
     return _load(MigrationSettings)
+
+
+def get_instance_settings() -> InstanceSettings:
+    return _load(InstanceSettings)
 
 
 def get_admin_settings() -> AdminSettings:

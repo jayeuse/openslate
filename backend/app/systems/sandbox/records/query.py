@@ -1,5 +1,6 @@
 """One typed SQL compiler for interactive records and CSV snapshots."""
 
+from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -7,7 +8,7 @@ from typing import cast as type_cast
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import Boolean, Date, DateTime, Numeric, String, case, cast, func, select
+from sqlalchemy import Boolean, Date, DateTime, Numeric, String, and_, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
@@ -18,7 +19,14 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import validate_field_value
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
-from app.systems.sandbox.records.query_schemas import QueryDefinition, QueryFilter, RecordQuery
+from app.systems.sandbox.records.query_schemas import (
+    SEARCHABLE_FIELD_TYPES,
+    TEXT_LIKE_FIELD_TYPES,
+    FieldReference,
+    QueryDefinition,
+    QueryFilter,
+    RecordQuery,
+)
 from app.systems.sandbox.records.schemas import RecordResponse
 
 
@@ -27,25 +35,48 @@ def invalid_view(message: str = "A referenced field has changed; repair the view
 
 
 def validate_definition(
-    db: Session, module_id: UUID, definition: QueryDefinition
+    db: Session,
+    module_id: UUID,
+    definition: QueryDefinition,
+    extra_references: Sequence[FieldReference] = (),
 ) -> dict[UUID, Field]:
     if db.get(Module, module_id) is None:
         raise invalid_view("The module no longer exists")
     fields = {
         field.id: field for field in db.scalars(select(Field).where(Field.module_id == module_id))
     }
-    for reference in [*definition.columns, *definition.filters, *definition.sort]:
+    for reference in [
+        *definition.columns,
+        *definition.filters,
+        *definition.sort,
+        *definition.search_fields,
+    ]:
         field = fields.get(reference.field_id)
         if field is None or field.type != reference.expected_type:
             raise invalid_view()
+    for reference in extra_references:
+        field = fields.get(reference.field_id)
+        if field is None or field.is_deleted or field.type != reference.expected_type:
+            raise invalid_view()
+    for reference in definition.search_fields:
+        field = fields[reference.field_id]
+        if field.is_deleted or field.type not in SEARCHABLE_FIELD_TYPES:
+            raise invalid_view("Search fields must be active text or select fields")
     for predicate in definition.filters:
         comparison_value(fields[predicate.field_id], predicate)
     return fields
 
 
 def comparison_value(field: Field, predicate: QueryFilter) -> Any:
-    if predicate.operator in {"empty", "not_empty"}:
+    if predicate.operator in {"empty", "not_empty", "blank", "not_blank"}:
         return None
+    if predicate.operator in {"contains", "prefix", "suffix"} and field.type in (
+        *TEXT_LIKE_FIELD_TYPES,
+        FieldType.SELECT,
+    ):
+        if not isinstance(predicate.value, str):
+            raise HTTPException(422, detail="Filter value does not match the field type")
+        return predicate.value
     # Filtering historical values must not enforce current input length/range/required rules.
     validator = Field(
         id=field.id,
@@ -100,26 +131,51 @@ def compile_query(
     if definition.deleted != "include":
         statement = statement.where(Record.is_deleted.is_(definition.deleted == "only"))
     if definition.search:
-        statement = statement.where(
-            cast(Record.id, String).ilike(f"%{literal_pattern(definition.search)}%", escape="\\")
+        pattern = f"%{literal_pattern(definition.search)}%"
+        search_conditions = [cast(Record.id, String).ilike(pattern, escape="\\")]
+        search_conditions.extend(
+            field_expression(fields[reference.field_id]).ilike(pattern, escape="\\")
+            for reference in definition.search_fields
         )
+        statement = statement.where(or_(*search_conditions))
+    filter_conditions = []
     for predicate in definition.filters:
         field = fields[predicate.field_id]
         expression = field_expression(field)
         value = comparison_value(field, predicate)
+        condition: ColumnElement[bool]
         match predicate.operator:
             case "empty":
                 condition = expression.is_(None)
             case "not_empty":
                 condition = expression.is_not(None)
-            case "contains" | "prefix":
+            case "blank":
+                condition = (
+                    or_(expression.is_(None), func.btrim(expression) == "")
+                    if field.type in SEARCHABLE_FIELD_TYPES
+                    else expression.is_(None)
+                )
+            case "not_blank":
+                condition = (
+                    and_(expression.is_not(None), func.btrim(expression) != "")
+                    if field.type in SEARCHABLE_FIELD_TYPES
+                    else expression.is_not(None)
+                )
+            case "contains" | "prefix" | "suffix":
                 pattern = literal_pattern(value)
-                pattern = f"%{pattern}%" if predicate.operator == "contains" else f"{pattern}%"
+                if predicate.operator == "contains":
+                    pattern = f"%{pattern}%"
+                elif predicate.operator == "prefix":
+                    pattern = f"{pattern}%"
+                else:
+                    pattern = f"%{pattern}"
                 condition = expression.ilike(pattern, escape="\\")
             case "in":
                 condition = expression.in_(value)
             case "eq":
                 condition = expression == value
+            case "neq":
+                condition = expression != value
             case "lt":
                 condition = expression < value
             case "lte":
@@ -128,7 +184,11 @@ def compile_query(
                 condition = expression > value
             case "gte":
                 condition = expression >= value
-        statement = statement.where(condition)
+        filter_conditions.append(condition)
+    if filter_conditions:
+        statement = statement.where(
+            and_(*filter_conditions) if definition.logic == "and" else or_(*filter_conditions)
+        )
     ordering = []
     for sort in definition.sort:
         expression = field_expression(fields[sort.field_id])

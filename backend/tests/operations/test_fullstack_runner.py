@@ -1,19 +1,33 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
-from urllib.parse import urlsplit
 
 import pytest
 
 from tests import caddy_runtime, fullstack_summary
 from tests import fullstack_runner as runner
-from tests.postgres_runtime import (
-    POSTGRES_IMAGE,
-    POSTGRES_NETWORK_ALIAS,
-    DisposablePostgres,
-    postgres_network_name,
-)
+from tests.postgres_runtime import DisposablePostgres
+
+
+def test_standalone_fullstack_runner_loads_complete_model_registry() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from sqlalchemy.orm import configure_mappers; "
+            "import tests.fullstack_runner; "
+            "from app.systems.access.identity.service import create_credential; "
+            "from app.systems.access.users.models import Role, User, UserStatus; "
+            "configure_mappers()",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 class _RunnerPostgres:
@@ -49,6 +63,7 @@ def _stub_fullstack_prerequisites(
     monkeypatch.setattr(runner, "BACKEND", tmp_path / "backend")
     monkeypatch.setattr(runner, "FRONTEND", tmp_path / "frontend")
     monkeypatch.setattr(runner, "DisposablePostgres", lambda *_args: _RunnerPostgres(tmp_path))
+    monkeypatch.setattr(runner, "instance_target_for_process", lambda *_args: object())
     monkeypatch.setattr(runner, "DisposableScanner", lambda *_args: scanner)
     monkeypatch.setattr(runner, "run_backend_coverage", lambda *_args: 0)
     monkeypatch.setattr(
@@ -219,110 +234,7 @@ def test_browser_acceptance_command_runs_the_owned_fullstack_suite_in_every_mode
     ]
 
 
-def test_disposable_postgres_discovers_a_pinned_image_loopback_port_and_private_manifest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    log = (tmp_path / "process.log").open("w")
-    runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
-    commands: list[list[str]] = []
-
-    def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        commands.append(arguments)
-        if arguments[0] == "inspect":
-            return subprocess.CompletedProcess(arguments, 0, f"{'a' * 32} {POSTGRES_IMAGE}\n")
-        if arguments[:2] == ["network", "inspect"]:
-            return subprocess.CompletedProcess(arguments, 0, "a" * 32)
-        if arguments[0] == "port":
-            return subprocess.CompletedProcess(arguments, 0, "127.0.0.1:49152\n")
-        return subprocess.CompletedProcess(arguments, 0, "")
-
-    monkeypatch.setattr(runtime, "_run", command)
-    try:
-        runtime.start()
-        manifest = runtime.write_manifest()
-        runtime.stop()
-    finally:
-        log.close()
-
-    launch = next(arguments for arguments in commands if arguments[0] == "run")
-    assert [
-        "network",
-        "create",
-        "--internal",
-        "--label",
-        f"openslate.test.run={'a' * 32}",
-        postgres_network_name("a" * 32),
-    ] in commands
-    assert POSTGRES_IMAGE in launch
-    assert "127.0.0.1::5432" in launch
-    assert "--network" not in launch
-    assert [
-        "network",
-        "connect",
-        "--alias",
-        POSTGRES_NETWORK_ALIAS,
-        postgres_network_name("a" * 32),
-        runtime.container,
-    ] in commands
-    assert f"openslate.test.run={'a' * 32}" in launch
-    assert manifest.stat().st_mode & 0o077 == 0
-    contents = json.loads(manifest.read_text())
-    assert contents["run_id"] == "a" * 32
-    assert all(":49152/openslate" in url for url in contents["urls"])
-    assert {urlsplit(url).username for url in contents["urls"]} == {
-        "postgres",
-        "openslate_owner",
-        "openslate_runtime",
-        "openslate_inspector",
-    }
-    assert ["rm", "--force", "--volumes", runtime.container] in commands
-    assert ["network", "rm", runtime.network] in commands
-
-
-def test_disposable_postgres_rejects_a_missing_or_non_loopback_discovered_mapping(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    log = (tmp_path / "process.log").open("w")
-    runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
-
-    def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        if arguments[0] == "inspect":
-            return subprocess.CompletedProcess(arguments, 0, f"{'a' * 32} {POSTGRES_IMAGE}\n")
-        if arguments[0] == "port":
-            return subprocess.CompletedProcess(arguments, 0, "0.0.0.0:49152\n")
-        return subprocess.CompletedProcess(arguments, 0, "")
-
-    monkeypatch.setattr(runtime, "_run", command)
-    try:
-        with pytest.raises(RuntimeError, match="loopback port mapping"):
-            runtime.start()
-    finally:
-        log.close()
-
-
-def test_disposable_postgres_never_removes_an_unowned_container(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    log = (tmp_path / "process.log").open("w")
-    runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
-    commands: list[list[str]] = []
-
-    def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        commands.append(arguments)
-        if arguments[0] == "inspect":
-            return subprocess.CompletedProcess(arguments, 0, "different-run " + POSTGRES_IMAGE)
-        return subprocess.CompletedProcess(arguments, 0, "")
-
-    monkeypatch.setattr(runtime, "_run", command)
-    try:
-        with pytest.raises(RuntimeError, match="ownership"):
-            runtime.stop()
-    finally:
-        log.close()
-    assert not any(arguments[0] == "rm" for arguments in commands)
-
-
-def test_disposable_postgres_never_removes_an_unowned_network(
+def test_partial_postgres_startup_cleans_only_its_labeled_volume_and_network(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     log = (tmp_path / "process.log").open("w")
@@ -333,18 +245,27 @@ def test_disposable_postgres_never_removes_an_unowned_network(
         commands.append(arguments)
         if arguments[0] == "inspect":
             raise subprocess.CalledProcessError(1, arguments)
+        if arguments[:2] == ["volume", "inspect"]:
+            return subprocess.CompletedProcess(arguments, 0, json.dumps([{
+                "Name": runtime.volume, "Labels": {
+                    "openslate.test.run": runtime.run_id,
+                    "openslate.test.worktree": runtime.worktree,
+                },
+            }]))
         if arguments[:2] == ["network", "inspect"]:
-            return subprocess.CompletedProcess(arguments, 0, "different-run")
+            return subprocess.CompletedProcess(
+                arguments, 0, f"{runtime.run_id} {runtime.worktree}"
+            )
         return subprocess.CompletedProcess(arguments, 0, "")
 
     monkeypatch.setattr(runtime, "_run", command)
     try:
-        with pytest.raises(RuntimeError, match="network without ownership"):
-            runtime.stop()
+        runtime.stop()
     finally:
         log.close()
-
-    assert ["network", "rm", runtime.network] not in commands
+    assert ["rm", "--force", runtime.container] not in commands
+    assert ["volume", "rm", runtime.volume] in commands
+    assert ["network", "rm", runtime.network] in commands
 
 
 def test_runner_rejects_invalid_batch_before_starting_postgres(

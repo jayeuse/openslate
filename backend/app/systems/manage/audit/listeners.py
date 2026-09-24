@@ -62,9 +62,7 @@ def _record_redacted_fields(
     pending: list[PendingChange],
 ) -> dict[UUID, frozenset[str]]:
     module_ids = {
-        change.instance.module_id
-        for change in pending
-        if isinstance(change.instance, Record)
+        change.instance.module_id for change in pending if isinstance(change.instance, Record)
     }
     if not module_ids:
         return {}
@@ -167,9 +165,13 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
             after = snapshot["after"]
 
         entity_type = inspect(change.instance).mapper.local_table.name
-        invalidations.append(
-            event_for_entity(entity_type, getattr(change.instance, "id", None))
+        invalidation = event_for_entity(
+            entity_type,
+            getattr(change.instance, "id", None),
+            recipient_id=getattr(change.instance, "recipient_id", None),
         )
+        if invalidation is not None:
+            invalidations.append(invalidation)
         audit_log = AuditLog(
             action=change.action,
             entity_type=entity_type,
@@ -203,8 +205,10 @@ def broadcast_committed_changes(session: AuditSession) -> None:
     except Exception:
         # Realtime is best-effort: a committed mutation remains successful.
         log_event(
-            "realtime_invalidation_failure", level=logging.WARNING,
-            reason_code="broadcast_failed", upstream="postgresql",
+            "realtime_invalidation_failure",
+            level=logging.WARNING,
+            reason_code="broadcast_failed",
+            upstream="postgresql",
         )
 
 

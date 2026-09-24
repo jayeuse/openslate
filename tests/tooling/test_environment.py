@@ -2,6 +2,7 @@
 
 import importlib.util
 import io
+import json
 import os
 import sys
 import tempfile
@@ -229,6 +230,7 @@ class EnvironmentProjectionTests(unittest.TestCase):
         self.assertEqual(
             result,
             {
+                "OPENSLATE_INSTANCE_ID": "openslate",
                 "POSTGRES_DATABASE": "openslate",
                 "POSTGRES_BOOTSTRAP_PASSWORD": "bootstrap-canary",
                 "POSTGRES_PORT": "54322",
@@ -243,6 +245,7 @@ class EnvironmentProjectionTests(unittest.TestCase):
         self.assertEqual(
             result,
             {
+                "OPENSLATE_INSTANCE_ID": "openslate",
                 "POSTGRES_DATABASE": "openslate",
                 "POSTGRES_BOOTSTRAP_PASSWORD": "openslate-local-development",
                 "POSTGRES_PORT": "54322",
@@ -257,9 +260,22 @@ class EnvironmentProjectionTests(unittest.TestCase):
             with (
                 patch.object(environment, "ROOT", root),
                 patch.object(environment, "write_pgweb_passfile") as write_pgweb_passfile,
+                patch.object(environment, "inspect_instance_ownership") as inspect,
                 patch.object(environment.subprocess, "run") as run,
             ):
                 run.return_value.returncode = 0
+                run.return_value.stdout = ""
+                inspect.return_value = {
+                    "compose_project": "openslate",
+                    "container_id": "a" * 64,
+                    "container_port": 5432,
+                    "host_port": 54322,
+                    "image": "postgres:17",
+                    "working_dir": str(root),
+                    "network": "openslate_default",
+                    "network_id": "b" * 64,
+                    "volume": "openslate_postgres-data",
+                }
 
                 self.assertEqual(environment.main(["compose", "up", "-d", "postgres"]), 0)
 
@@ -268,6 +284,490 @@ class EnvironmentProjectionTests(unittest.TestCase):
             self.assertEqual(child["POSTGRES_DATABASE"], "openslate")
             self.assertNotIn("DATABASE_URL", child)
             self.assertNotIn("PGWEB_PASSFILE_PATH", child)
+
+    def test_database_start_writes_a_private_instance_attestation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            values = fixture()
+            values["OPENSLATE_INSTANCE_ROOT"] = str(root / "instance")
+            values["FILES_STORAGE_ROOT"] = str(root / "instance" / "private-files")
+            values["LOG_DIR"] = str(root / "instance" / "backend" / "logs")
+            environment.write_environment(root / ".env", values)
+            with (
+                patch.object(environment, "ROOT", root),
+                patch.object(environment, "inspect_instance_ownership") as inspect,
+                patch.object(environment.subprocess, "run") as run,
+            ):
+                run.return_value.returncode = 0
+                run.return_value.stdout = ""
+                inspect.return_value = {
+                    "compose_project": "openslate",
+                    "container_id": "a" * 64,
+                    "container_port": 5432,
+                    "host_port": 54322,
+                    "image": "postgres:17",
+                    "working_dir": str(root),
+                    "network": "openslate_default",
+                    "network_id": "b" * 64,
+                    "volume": "openslate_postgres-data",
+                }
+                self.assertEqual(environment.main(["compose", "up", "-d", "postgres"]), 0)
+
+            attestation = root / ".agent-runtime" / "instances" / "openslate.json"
+            self.assertEqual(attestation.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(
+                json.loads(attestation.read_text(encoding="utf-8"))["compose"],
+                {"volume": "openslate_postgres-data", "network": "openslate_default"},
+            )
+            command = run.call_args.args[0]
+            self.assertIn("--project-name", command)
+            self.assertIn("openslate", command)
+
+    def test_live_docker_ownership_requires_this_worktree_and_compose_resources(self) -> None:
+        values = fixture()
+        container = {
+            "Id": "a" * 64,
+            "Config": {
+                "Image": "postgres:17@sha256:example",
+                "Labels": {
+                    "com.docker.compose.project": "openslate",
+                    "com.docker.compose.project.working_dir": str(environment.ROOT),
+                    "com.docker.compose.service": "postgres",
+                },
+            },
+            "State": {"Running": True},
+            "Mounts": [
+                {
+                    "Type": "volume",
+                    "Name": "openslate_postgres-data",
+                    "Destination": "/var/lib/postgresql/data",
+                }
+            ],
+            "NetworkSettings": {
+                "Networks": {"openslate_default": {"NetworkID": "b" * 64}},
+            },
+            "HostConfig": {
+                "PortBindings": {
+                    "5432/tcp": [{"HostIp": "127.0.0.1", "HostPort": "54322"}]
+                }
+            },
+        }
+        with patch.object(environment.subprocess, "run") as run:
+            run.side_effect = [
+                type("Result", (), {"returncode": 0, "stdout": "a" * 64 + "\n"})(),
+                type("Result", (), {"returncode": 0, "stdout": json.dumps([container])})(),
+                type(
+                    "Result",
+                    (),
+                    {
+                        "returncode": 0,
+                        "stdout": json.dumps(
+                            [{
+                                "Id": "b" * 64,
+                                "Labels": {
+                                    "com.docker.compose.project": "openslate",
+                                    "com.docker.compose.network": "default",
+                                },
+                            }]
+                        ),
+                    },
+                )(),
+                type(
+                    "Result",
+                    (),
+                    {
+                        "returncode": 0,
+                        "stdout": json.dumps(
+                            [{
+                                "Name": "openslate_postgres-data",
+                                "Labels": {
+                                    "com.docker.compose.project": "openslate",
+                                    "com.docker.compose.volume": "postgres-data",
+                                },
+                            }]
+                        ),
+                    },
+                )(),
+            ]
+            evidence = environment.inspect_instance_ownership(values)
+
+        self.assertEqual(evidence["container_id"], "a" * 64)
+        self.assertEqual(evidence["network"], "openslate_default")
+        self.assertEqual(evidence["network_id"], "b" * 64)
+        self.assertEqual(evidence["host_port"], 54322)
+
+    def test_stopped_container_is_accepted_only_for_scoped_control_inspection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            values = fixture()
+            values["OPENSLATE_INSTANCE_ROOT"] = str(root / "instance")
+            values["FILES_STORAGE_ROOT"] = str(root / "instance" / "private-files")
+            values["LOG_DIR"] = str(root / "instance" / "backend" / "logs")
+            environment.write_environment(root / ".env", values)
+            container = {
+                "Id": "a" * 64,
+                "Config": {
+                    "Image": "postgres:17@sha256:example",
+                    "Labels": {
+                        "com.docker.compose.project": "openslate",
+                        "com.docker.compose.project.working_dir": str(root),
+                        "com.docker.compose.service": "postgres",
+                    },
+                },
+                "State": {"Running": False},
+                "Mounts": [
+                    {
+                        "Type": "volume",
+                        "Name": "openslate_postgres-data",
+                        "Destination": "/var/lib/postgresql/data",
+                    }
+                ],
+                "NetworkSettings": {
+                    "Networks": {"openslate_default": {"NetworkID": "b" * 64}},
+                },
+                "HostConfig": {
+                    "PortBindings": {
+                        "5432/tcp": [{"HostIp": "127.0.0.1", "HostPort": "54322"}]
+                    }
+                },
+            }
+            def docker_inspection_results():
+                return [
+                        type("Result", (), {"returncode": 0, "stdout": "a" * 64 + "\n"})(),
+                        type("Result", (), {"returncode": 0, "stdout": json.dumps([container])})(),
+                        type(
+                            "Result",
+                            (),
+                            {
+                                "returncode": 0,
+                                "stdout": json.dumps(
+                                    [{
+                                        "Id": "b" * 64,
+                                        "Labels": {
+                                            "com.docker.compose.project": "openslate",
+                                            "com.docker.compose.network": "default",
+                                        },
+                                    }]
+                                ),
+                            },
+                        )(),
+                        type(
+                            "Result",
+                            (),
+                            {
+                                "returncode": 0,
+                                "stdout": json.dumps(
+                                    [{
+                                        "Name": "openslate_postgres-data",
+                                        "Labels": {
+                                            "com.docker.compose.project": "openslate",
+                                            "com.docker.compose.volume": "postgres-data",
+                                        },
+                                    }]
+                                ),
+                            },
+                        )(),
+                    ]
+
+            with patch.object(environment, "ROOT", root):
+                with patch.object(environment.subprocess, "run") as inspect_run:
+                    inspect_run.side_effect = docker_inspection_results()
+                    with self.assertRaises(environment.ConfigurationError):
+                        environment.inspect_instance_ownership(values)
+                    inspect_run.side_effect = docker_inspection_results()
+                    ownership = environment.inspect_instance_ownership(
+                        values, allow_stopped=True
+                    )
+                    self.assertEqual(ownership["container_id"], "a" * 64)
+
+                with (
+                    patch.object(
+                        environment, "_compose_project_containers", return_value=["a" * 64]
+                    ),
+                    patch.object(
+                        environment,
+                        "inspect_instance_ownership",
+                        return_value={"container_id": "a" * 64},
+                    ) as inspect,
+                    patch.object(environment.subprocess, "run") as compose_run,
+                ):
+                    compose_run.return_value.returncode = 0
+                    self.assertEqual(environment.main(["compose", "ps"]), 0)
+            inspect.assert_called_once_with(values, allow_stopped=True)
+            compose_run.assert_called_once()
+            self.assertEqual(compose_run.call_args.args[0][-1], "ps")
+
+    def test_down_verifies_attested_stopped_instance_without_removing_named_volumes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            values = fixture()
+            values["OPENSLATE_INSTANCE_ROOT"] = str(root / "instance")
+            values["FILES_STORAGE_ROOT"] = str(root / "instance" / "private-files")
+            values["LOG_DIR"] = str(root / "instance" / "backend" / "logs")
+            environment.write_environment(root / ".env", values)
+            attestation = root / ".agent-runtime" / "instances" / "openslate.json"
+            attestation.parent.mkdir(parents=True)
+            attestation.write_text("attested")
+            with (
+                patch.object(environment, "ROOT", root),
+                patch.object(environment, "_compose_project_containers", return_value=["a" * 64]),
+                patch.object(
+                    environment,
+                    "inspect_instance_ownership",
+                    return_value={"container_id": "a" * 64},
+                ) as inspect,
+                patch.object(
+                    environment,
+                    "_read_instance_attestation",
+                    return_value=(
+                        attestation,
+                        {"ownership": {"container_id": "a" * 64}},
+                    ),
+                ),
+                patch.object(environment.subprocess, "run") as run,
+            ):
+                run.return_value.returncode = 0
+                self.assertEqual(environment.main(["compose", "down"]), 0)
+
+            inspect.assert_called_once_with(values, allow_stopped=True)
+            self.assertTrue(attestation.exists())
+            command = run.call_args.args[0]
+            self.assertIn("--project-name", command)
+            self.assertIn("openslate", command)
+            self.assertEqual(command[-1], "down")
+
+    def test_retained_attested_volume_can_restart_after_compose_removed_network(self) -> None:
+        values = fixture()
+        identity = "openslate"
+        volume = {
+            "Name": f"{identity}_postgres-data",
+            "Labels": {
+                "com.docker.compose.project": identity,
+                "com.docker.compose.volume": "postgres-data",
+            },
+        }
+        ownership = {"network_id": "b" * 64}
+        with (
+            patch.object(
+                environment,
+                "_read_instance_attestation",
+                return_value=(Path("/tmp/attestation.json"), {"ownership": ownership}),
+            ),
+            patch.object(environment, "_docker_output", return_value=""),
+            patch.object(environment, "_docker_json", return_value=[volume]) as inspect,
+        ):
+            environment._verify_attested_resources(values)
+
+        inspect.assert_called_once_with(["volume", "inspect", "openslate_postgres-data"])
+
+    def test_reset_database_removes_only_the_attested_postgres_volume(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            values = fixture()
+            values["OPENSLATE_INSTANCE_ROOT"] = str(root / "instance")
+            values["FILES_STORAGE_ROOT"] = str(root / "instance" / "private-files")
+            values["LOG_DIR"] = str(root / "instance" / "backend" / "logs")
+            identity = "openslate"
+            container_id = "a" * 64
+            attestation = root / ".agent-runtime" / "instances" / f"{identity}.json"
+            attestation.parent.mkdir(parents=True)
+            attestation.write_text("attested")
+            ownership = {
+                "container_id": container_id,
+                "image": "postgres:17@sha256:example",
+                "working_dir": str(root),
+                "compose_project": identity,
+                "network": f"{identity}_default",
+                "network_id": "b" * 64,
+                "volume": f"{identity}_postgres-data",
+                "host_port": 54322,
+                "container_port": 5432,
+            }
+            volume = {
+                "Name": f"{identity}_postgres-data",
+                "Labels": {
+                    "com.docker.compose.project": identity,
+                    "com.docker.compose.volume": "postgres-data",
+                },
+            }
+            with (
+                patch.object(environment, "ROOT", root),
+                patch.object(
+                    environment,
+                    "_read_instance_attestation",
+                    return_value=(attestation, {"ownership": ownership}),
+                ),
+                patch.object(
+                    environment, "_compose_project_containers", return_value=[container_id]
+                ),
+                patch.object(environment, "_verify_live_instance", return_value=ownership),
+                patch.object(environment, "_docker_json", return_value=[volume]),
+                patch.object(environment.subprocess, "run") as run,
+            ):
+                run.return_value.returncode = 0
+                environment.reset_database(values)
+
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertEqual(
+                commands,
+                [
+                    ["docker", "rm", "--force", container_id],
+                    ["docker", "volume", "rm", "openslate_postgres-data"],
+                ],
+            )
+            self.assertNotIn("openslate_caddy-data", str(commands))
+            self.assertFalse(attestation.exists())
+
+    def test_reset_database_refuses_missing_or_mismatched_postgres_ownership(self) -> None:
+        values = fixture()
+        identity = "openslate"
+        volume_name = f"{identity}_postgres-data"
+        valid_ownership = {
+            "container_id": "a" * 64,
+            "image": "postgres:17@sha256:example",
+            "working_dir": str(environment.ROOT),
+            "compose_project": identity,
+            "network": f"{identity}_default",
+            "network_id": "b" * 64,
+            "volume": volume_name,
+            "host_port": 54322,
+            "container_port": 5432,
+        }
+        cases = (
+            ("missing attestation", True, None),
+            ("missing postgres volume", False, None),
+            (
+                "mismatched volume labels",
+                False,
+                {
+                    "Name": volume_name,
+                    "Labels": {
+                        "com.docker.compose.project": "another-project",
+                        "com.docker.compose.volume": "postgres-data",
+                    },
+                },
+            ),
+        )
+        for case, missing_attestation, volume in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                attestation = root / ".agent-runtime" / "instances" / f"{identity}.json"
+                if missing_attestation:
+                    read_attestation = patch.object(
+                        environment,
+                        "_read_instance_attestation",
+                        side_effect=environment.ConfigurationError("missing attestation"),
+                    )
+                else:
+                    attestation.parent.mkdir(parents=True)
+                    attestation.write_text("attested")
+                    read_attestation = patch.object(
+                        environment,
+                        "_read_instance_attestation",
+                        return_value=(attestation, {"ownership": valid_ownership}),
+                    )
+                with (
+                    patch.object(environment, "ROOT", root),
+                    read_attestation,
+                    patch.object(environment, "_compose_project_containers", return_value=[]),
+                    patch.object(
+                        environment,
+                        "_docker_json",
+                        return_value=[] if volume is None else [volume],
+                    ),
+                    patch.object(environment.subprocess, "run") as run,
+                ):
+                    with self.assertRaises(environment.ConfigurationError):
+                        environment.reset_database(values)
+                    run.assert_not_called()
+
+    def test_reset_database_refuses_a_container_that_differs_from_its_attestation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            values = fixture()
+            values["OPENSLATE_INSTANCE_ROOT"] = str(root / "instance")
+            values["FILES_STORAGE_ROOT"] = str(root / "instance" / "private-files")
+            values["LOG_DIR"] = str(root / "instance" / "backend" / "logs")
+            attestation = root / ".agent-runtime" / "instances" / "openslate.json"
+            attested = {"container_id": "a" * 64, "volume": "openslate_postgres-data"}
+            with (
+                patch.object(environment, "ROOT", root),
+                patch.object(
+                    environment,
+                    "_read_instance_attestation",
+                    return_value=(attestation, {"ownership": attested}),
+                ),
+                patch.object(
+                    environment,
+                    "_compose_project_containers",
+                    return_value=["a" * 64],
+                ),
+                patch.object(
+                    environment,
+                    "_verify_live_instance",
+                    return_value={"container_id": "c" * 64, "volume": "openslate_postgres-data"},
+                ),
+                patch.object(environment.subprocess, "run") as run,
+            ):
+                with self.assertRaises(environment.ConfigurationError):
+                    environment.reset_database(values)
+
+            run.assert_not_called()
+
+    def test_public_compose_wrapper_rejects_down_volume_removal(self) -> None:
+        for arguments in (
+            ["compose", "down", "--volumes"],
+            ["compose", "down", "-v"],
+            ["compose", "down", "--volumes=true"],
+            ["compose", "--profile", "db-ui", "down", "--volumes"],
+        ):
+            with self.subTest(arguments=arguments):
+                output = io.StringIO()
+                with (
+                    patch.object(environment.subprocess, "run") as run,
+                    redirect_stderr(output),
+                ):
+                    self.assertEqual(environment.main(arguments), 2)
+                run.assert_not_called()
+                self.assertIn("reset-database", output.getvalue())
+
+    def test_public_compose_wrapper_rejects_unattested_mutation_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            environment.write_environment(root / ".env", fixture())
+            for arguments in (
+                ["compose", "exec", "postgres", "psql"],
+                ["compose", "run", "postgres", "psql"],
+                ["compose", "create", "postgres"],
+                ["compose", "--ansi", "never", "exec", "postgres", "psql"],
+            ):
+                with self.subTest(arguments=arguments):
+                    output = io.StringIO()
+                    with (
+                        patch.object(environment, "ROOT", root),
+                        patch.object(environment, "run_compose") as run_compose,
+                        redirect_stderr(output),
+                    ):
+                        self.assertEqual(environment.main(arguments), 2)
+                    run_compose.assert_not_called()
+                    self.assertIn("not supported", output.getvalue())
+
+    def test_public_reset_database_command_uses_the_root_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            values = fixture()
+            values["OPENSLATE_INSTANCE_ROOT"] = str(root / "instance")
+            values["FILES_STORAGE_ROOT"] = str(root / "instance" / "private-files")
+            values["LOG_DIR"] = str(root / "instance" / "backend" / "logs")
+            environment.write_environment(root / ".env", values)
+            with (
+                patch.object(environment, "ROOT", root),
+                patch.object(environment, "reset_database") as reset,
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(environment.main(["reset-database"]), 0)
+
+            reset.assert_called_once_with(values)
 
     def test_pgweb_listener_must_remain_on_ipv4_loopback(self) -> None:
         values = {**fixture(), "PGWEB_BIND_HOST": "0.0.0.0"}
@@ -301,7 +801,7 @@ class EnvironmentProjectionTests(unittest.TestCase):
     def test_postgres_is_hard_bound_to_loopback_in_compose(self) -> None:
         compose = (environment.ROOT / "compose.yaml").read_text(encoding="utf-8")
 
-        self.assertIn('"127.0.0.1:${POSTGRES_PORT:-54322}:5432"', compose)
+        self.assertIn('"127.0.0.1:${POSTGRES_PORT:?POSTGRES_PORT is required}:5432"', compose)
         self.assertNotIn("COMPOSE_BIND_HOST", compose)
 
     def test_database_urls_must_use_the_configured_postgres_endpoint(self) -> None:
@@ -368,11 +868,37 @@ class EnvironmentProjectionTests(unittest.TestCase):
             pgweb_directory.chmod(0o755)
             with (
                 patch.object(environment, "ROOT", root),
-                patch.dict(os.environ, {"DATABASE_URL": "stale", "SMTP_PASSWORD": "stale"}),
+                patch.dict(
+                    os.environ,
+                    {
+                        "DATABASE_URL": "stale",
+                        "SMTP_PASSWORD": "stale",
+                        "COMPOSE_PROJECT_NAME": "wrong-project",
+                        "COMPOSE_FILE": "/tmp/wrong-compose.yaml",
+                    },
+                ),
                 patch.object(environment.subprocess, "run") as run,
+                patch.object(environment, "_compose_project_containers", return_value=[]),
+                patch.object(environment, "_docker_output", return_value=""),
+                patch.object(
+                    environment,
+                    "inspect_instance_ownership",
+                    return_value={
+                        "compose_project": "openslate",
+                        "container_id": "a" * 64,
+                        "container_port": 5432,
+                        "host_port": 54322,
+                        "image": "postgres:17",
+                        "working_dir": str(root),
+                        "network": "openslate_default",
+                        "network_id": "b" * 64,
+                        "volume": "openslate_postgres-data",
+                    },
+                ),
                 redirect_stdout(io.StringIO()),
             ):
                 run.return_value.returncode = 0
+                run.return_value.stdout = ""
                 self.assertEqual(
                     environment.main(
                         [
@@ -392,6 +918,8 @@ class EnvironmentProjectionTests(unittest.TestCase):
                 self.assertNotIn("DATABASE_INSPECTOR_URL", child)
                 self.assertNotIn("DATABASE_URL", child)
                 self.assertNotIn("SMTP_PASSWORD", child)
+                self.assertNotIn("COMPOSE_PROJECT_NAME", child)
+                self.assertNotIn("COMPOSE_FILE", child)
                 passfile = Path(child["PGWEB_PASSFILE_PATH"])
                 self.assertEqual(passfile.parent.stat().st_mode & 0o777, 0o700)
                 self.assertEqual(passfile.stat().st_mode & 0o777, 0o644)
@@ -400,7 +928,7 @@ class EnvironmentProjectionTests(unittest.TestCase):
                     "postgres:5432:openslate:openslate_inspector:inspector-canary\n",
                 )
 
-    def test_control_commands_use_safe_compose_defaults_without_optional_runtime_files(
+    def test_control_commands_refuse_unowned_or_unconfigured_instances(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -424,14 +952,12 @@ class EnvironmentProjectionTests(unittest.TestCase):
                     ):
                         run.return_value.returncode = 0
 
-                        self.assertEqual(environment.main(arguments), 0)
+                        self.assertEqual(environment.main(arguments), 2)
 
                     write_pgweb_passfile.assert_not_called()
-                    child = run.call_args.kwargs["env"]
-                    self.assertEqual(child["POSTGRES_BOOTSTRAP_PASSWORD"], "compose-control-only")
-                    self.assertNotIn("PGWEB_PASSFILE_PATH", child)
+                    run.assert_not_called()
 
-    def test_control_commands_reach_docker_without_a_readable_environment_file(self) -> None:
+    def test_control_commands_require_an_instance_environment_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for arguments in (
@@ -455,19 +981,11 @@ class EnvironmentProjectionTests(unittest.TestCase):
                     ):
                         run.return_value.returncode = 0
 
-                        self.assertEqual(environment.main(arguments), 0)
+                        self.assertEqual(environment.main(arguments), 2)
 
-                    child = run.call_args.kwargs["env"]
-                    self.assertEqual(child["POSTGRES_BOOTSTRAP_PASSWORD"], "compose-control-only")
-                    forbidden = {
-                        "PGWEB_PASSFILE_PATH",
-                        "MIGRATION_DATABASE_URL",
-                        "ADMIN_PASSWORD",
-                        "SEED_ACCESS_TOKEN",
-                    }
-                    self.assertFalse(forbidden.intersection(child))
+                    run.assert_not_called()
 
-    def test_control_commands_reach_docker_with_a_malformed_environment_file(self) -> None:
+    def test_control_commands_reject_a_malformed_environment_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / ".env").write_text("POSTGRES_DATABASE=one\nPOSTGRES_DATABASE=two\n")
@@ -477,12 +995,9 @@ class EnvironmentProjectionTests(unittest.TestCase):
             ):
                 run.return_value.returncode = 0
 
-                self.assertEqual(environment.main(["compose", "ps"]), 0)
+                self.assertEqual(environment.main(["compose", "ps"]), 2)
 
-            self.assertEqual(
-                run.call_args.args[0][-1],
-                "ps",
-            )
+            run.assert_not_called()
 
     def test_control_parser_only_bypasses_environment_for_the_actual_subcommand(self) -> None:
         cases = {
@@ -497,6 +1012,18 @@ class EnvironmentProjectionTests(unittest.TestCase):
         for arguments, expected in cases.items():
             with self.subTest(arguments=arguments):
                 self.assertEqual(environment.compose_subcommand(list(arguments)), expected)
+
+    def test_compose_cannot_override_the_attested_project_file_or_environment(self) -> None:
+        for arguments in (
+            ["down", "--project-name=another-project"],
+            ["stop", "-panother-project"],
+            ["ps", "--project-directory", "/tmp/other-tree"],
+            ["up", "-f", "/tmp/other-compose.yaml", "postgres"],
+            ["config", "--env-file=/tmp/other.env"],
+        ):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(environment.ConfigurationError):
+                    environment.reject_compose_scope_overrides(arguments)
 
     def test_profile_value_cannot_make_an_up_command_bypass_environment_validation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -534,11 +1061,12 @@ class EnvironmentProjectionTests(unittest.TestCase):
                     run.assert_not_called()
                     self.assertIn("Environment file is unavailable", output.getvalue())
 
-    def test_reset_instructions_remove_only_the_postgres_container_and_volume(self) -> None:
+    def test_reset_instructions_are_instance_scoped(self) -> None:
         readme = (environment.ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("docker compose rm --stop --force postgres", readme)
-        self.assertIn("docker volume rm openslate_postgres-data", readme)
+        self.assertIn("scripts/environment.py reset-database", readme)
+        self.assertNotIn("compose down --volumes", readme)
+        self.assertNotIn("docker volume rm openslate_postgres-data", readme)
 
 
 if __name__ == "__main__":

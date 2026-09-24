@@ -13,7 +13,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.platform.files.access import authorize, fresh_user, load, parent
+from app.systems.platform.files.access import authorize_contextual_file, fresh_user, load, parent
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import (
     ProviderUnavailable,
@@ -113,8 +113,11 @@ def claim_next(db: Session, now: datetime) -> ScanClaim | None:
         db.commit()
         return None
     try:
-        authorize(fresh_user(db, file.scan_requested_by), file.purpose, write=True)
-        parent(db, file.record_id, active=True)
+        authorize_contextual_file(
+            db, fresh_user(db, file.scan_requested_by), file,
+            board_id=file.board_id, write=True,
+        )
+        parent(db, file.record_id, active=True, board_id=file.board_id)
         if file.is_deleted:
             raise HTTPException(409, "File is archived")
     except HTTPException:
@@ -199,8 +202,11 @@ def finish_attempt(
 ) -> None:
     file = _locked_claim(db, claim, now)
     try:
-        authorize(fresh_user(db, claim.requester_id), file.purpose, write=True)
-        parent(db, file.record_id, active=True)
+        authorize_contextual_file(
+            db, fresh_user(db, claim.requester_id), file,
+            board_id=file.board_id, write=True,
+        )
+        parent(db, file.record_id, active=True, board_id=file.board_id)
         if file.is_deleted:
             raise HTTPException(409, "File is archived")
     except HTTPException:

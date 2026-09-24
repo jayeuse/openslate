@@ -92,3 +92,23 @@ class User(BaseModel):
         if key == "email":
             return normalize_email(value)
         return normalize_username(value)
+
+
+class UserDepartmentMembership(BaseModel):
+    """One auditable association between a User and a Department."""
+
+    __tablename__ = "user_department_memberships"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "department_id",
+            name="uq_user_department_memberships_user_department",
+        ),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    department_id: Mapped[UUID] = mapped_column(
+        ForeignKey("departments.id", ondelete="RESTRICT"), nullable=False, index=True
+    )

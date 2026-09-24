@@ -16,6 +16,11 @@ if __package__ in {None, ""}:
 
 from app.common.normalization import normalize_email, normalize_username
 from app.core.config import Settings, get_admin_settings, get_settings
+from app.core.config.instance import (
+    assert_database_url,
+    assert_instance_target,
+    instance_target_for_process,
+)
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
 from app.systems.access.identity.service import replace_password
@@ -158,6 +163,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         settings = get_settings()
         admin = get_admin_settings()
+        target = instance_target_for_process(settings.database_url, "openslate_runtime")
+        if target is not None:
+            assert_database_url(settings.database_url, target, expected_user="openslate_runtime")
+            with get_engine().connect() as connection:
+                assert_instance_target(connection, target, expected_user="openslate_runtime")
         password = admin.admin_password.get_secret_value()
         invitation = _invitation(admin.admin_email, admin.admin_username)
         _validate_confirmation(settings, args.confirm)

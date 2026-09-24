@@ -45,7 +45,9 @@ def setup_rows(db: Session, kind: str, values: list[object]):
         type=kind,
         position=0,
         required=False,
-        config={"options": ["a", "b"]} if kind == "select" else {},
+        config={"options": list(dict.fromkeys(value for value in values if isinstance(value, str)))}
+        if kind == "select"
+        else {},
     )
     db.add(field)
     db.flush()
@@ -91,6 +93,23 @@ def test_typed_filter_and_sort(query_db, kind, values, threshold, expected):
     assert [item.id for item in result.items] == [rows[index].id for index in expected]
 
 
+def test_decimal_equality_preserves_exact_filter_text(query_db) -> None:
+    module, field, rows = setup_rows(
+        query_db,
+        "decimal",
+        ["1.25", "9007199254740992", "9007199254740993", None],
+    )
+    reference = {"field_id": field.id, "expected_type": "decimal"}
+    for value, expected in (("1.25", rows[0]), ("9007199254740993", rows[2])):
+        request = request_for(
+            module,
+            field,
+            filters=[{**reference, "operator": "eq", "value": value}],
+        )
+        result = query_records(query_db, request)
+        assert [item.id for item in result.items] == [expected.id]
+
+
 def test_local_datetime_filter_and_sort_are_independent_of_session_timezone(query_db) -> None:
     module, field, rows = setup_rows(
         query_db,
@@ -129,6 +148,115 @@ def test_empty_missing_null_and_string_are_distinct(query_db):
     assert {item.id for item in query_records(query_db, empty).items} == {rows[0].id, rows[1].id}
     nonempty = request_for(module, field, filters=[{**reference, "operator": "not_empty"}])
     assert {item.id for item in query_records(query_db, nonempty).items} == {rows[2].id, rows[3].id}
+
+
+def test_blank_not_blank_suffix_and_neq_preserve_legacy_empty_semantics(query_db):
+    module, field, rows = setup_rows(
+        query_db, "text", [..., None, "", "  ", "AlphaSuffix", "match"]
+    )
+    reference = {"field_id": field.id, "expected_type": "text"}
+
+    empty = request_for(module, field, filters=[{**reference, "operator": "empty"}])
+    assert {item.id for item in query_records(query_db, empty).items} == {rows[0].id, rows[1].id}
+
+    blank = request_for(module, field, filters=[{**reference, "operator": "blank"}])
+    assert {item.id for item in query_records(query_db, blank).items} == {
+        rows[0].id,
+        rows[1].id,
+        rows[2].id,
+        rows[3].id,
+    }
+
+    not_blank = request_for(module, field, filters=[{**reference, "operator": "not_blank"}])
+    assert {item.id for item in query_records(query_db, not_blank).items} == {
+        rows[4].id,
+        rows[5].id,
+    }
+
+    suffix = request_for(
+        module, field, filters=[{**reference, "operator": "suffix", "value": "suffix"}]
+    )
+    assert [item.id for item in query_records(query_db, suffix).items] == [rows[4].id]
+
+    neq = request_for(module, field, filters=[{**reference, "operator": "neq", "value": "match"}])
+    assert {item.id for item in query_records(query_db, neq).items} == {
+        rows[2].id,
+        rows[3].id,
+        rows[4].id,
+    }
+
+
+def test_select_contains_and_or_logic_and_allowlisted_search(query_db):
+    module, select_field, rows = setup_rows(query_db, "select", ["Pending", "Completed", "Blocked"])
+    text_field = Field(
+        module_id=module.id,
+        name="Summary",
+        type="text",
+        position=1,
+        required=False,
+        config={},
+    )
+    query_db.add(text_field)
+    query_db.flush()
+    rows[0].data[str(text_field.id)] = "Build dashboard"
+    rows[1].data[str(text_field.id)] = "Review report"
+    rows[2].data[str(text_field.id)] = "Build report"
+    query_db.flush()
+    select_reference = {"field_id": select_field.id, "expected_type": "select"}
+    text_reference = {"field_id": text_field.id, "expected_type": "text"}
+
+    contains = request_for(
+        module,
+        select_field,
+        filters=[{**select_reference, "operator": "contains", "value": "end"}],
+    )
+    assert [item.id for item in query_records(query_db, contains).items] == [rows[0].id]
+
+    either = request_for(
+        module,
+        select_field,
+        logic="or",
+        filters=[
+            {**select_reference, "operator": "eq", "value": "Pending"},
+            {**text_reference, "operator": "contains", "value": "report"},
+        ],
+    )
+    assert {item.id for item in query_records(query_db, either).items} == {
+        rows[0].id,
+        rows[1].id,
+        rows[2].id,
+    }
+
+    search = request_for(
+        module,
+        select_field,
+        search="dashboard",
+        search_fields=[text_reference],
+    )
+    assert [item.id for item in query_records(query_db, search).items] == [rows[0].id]
+    assert not query_records(query_db, request_for(module, select_field, search="dashboard")).items
+    assert [
+        item.id
+        for item in query_records(
+            query_db, request_for(module, select_field, search=str(rows[2].id))
+        ).items
+    ] == [rows[2].id]
+
+
+def test_search_fields_must_be_active_and_searchable(query_db):
+    module, field, _ = setup_rows(query_db, "text", ["searchable"])
+    reference = {"field_id": field.id, "expected_type": "text"}
+    field.is_deleted = True
+    query_db.flush()
+
+    with pytest.raises(HTTPException) as error:
+        query_records(
+            query_db,
+            request_for(module, field, search="searchable", search_fields=[reference]),
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "view_invalid"
 
 
 def test_contains_is_literal_case_insensitive_and_uuid_search_is_server_side(query_db):

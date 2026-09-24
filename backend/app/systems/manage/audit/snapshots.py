@@ -1,5 +1,5 @@
 from collections.abc import Collection, Mapping
-from datetime import date, datetime
+from datetime import date, datetime, time
 from enum import Enum
 from typing import Any
 from uuid import UUID
@@ -47,7 +47,7 @@ def serialize_value(
         return value
     if isinstance(value, UUID):
         return str(value)
-    if isinstance(value, (datetime, date)):
+    if isinstance(value, (datetime, date, time)):
         return value.isoformat()
     if isinstance(value, Enum):
         return value.value

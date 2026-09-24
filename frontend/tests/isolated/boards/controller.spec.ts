@@ -80,7 +80,6 @@ function options(
     viewer: boardViewer,
     now,
     canViewBoard: () => true,
-    canManageBoard: () => false,
     ...overrides,
   };
 }
@@ -149,13 +148,12 @@ test("findEligibleBoardReminders spans accessible active boards and filters stal
   const managerEligible = findEligibleBoardReminders(
     options(state, {
       canViewBoard: (boardId) => boardId !== denied.id,
-      canManageBoard: () => true,
+      viewer: { ...boardViewer, roleIds: ["sample-admin"] },
     }),
   );
   expect(managerEligible.map(({ event: item }) => item.id)).toEqual([
     organizationEvent.id,
     operationsEvent.id,
-    revokedEvent.id,
   ]);
 });
 
@@ -192,22 +190,14 @@ test("canSetBoardReminder rechecks the current event audience before personal wr
     audience: { kind: "identity", id: "sample-mara" },
   });
 
+  expect(canSetBoardReminder(item, boardViewer, () => true)).toBe(false);
   expect(
     canSetBoardReminder(
       item,
-      boardViewer,
+      { ...boardViewer, roleIds: ["sample-admin"] },
       () => true,
-      () => false,
     ),
   ).toBe(false);
-  expect(
-    canSetBoardReminder(
-      item,
-      boardViewer,
-      () => true,
-      () => true,
-    ),
-  ).toBe(true);
 });
 
 test("readBoardsRuntimeSnapshot derives Boards and policy owners from the same reader", () => {

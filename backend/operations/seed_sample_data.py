@@ -14,13 +14,20 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.core.config import get_seed_settings
+from app.core.config import get_seed_settings, get_settings
+from app.core.config.instance import (
+    assert_instance_target,
+    assert_local_backend_url,
+    instance_identity_for_process,
+    instance_target_for_process,
+)
+from app.core.database.session import get_engine
 
 if __package__:
     from .seed_sample_data_specs import (  # type: ignore[import-not-found]
@@ -64,6 +71,29 @@ class ApiClient:
     def __init__(self, base_url: str, token: str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
+
+    def verify_instance(self, expected_identity: str) -> None:
+        """Verify the API process before sending its first authenticated seed request."""
+        request = Request(
+            f"{self.base_url}/api/health",
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            with urlopen(request) as response:
+                response.read()
+                observed_identity = response.headers.get("X-OpenSlate-Instance")
+                response_url = response.geturl()
+        except (HTTPError, URLError, OSError):
+            raise RuntimeError("Unable to verify the configured OpenSlate API instance") from None
+        expected_origin = urlsplit(self.base_url)
+        observed_origin = urlsplit(response_url)
+        if (
+            observed_identity != expected_identity
+            or (observed_origin.scheme, observed_origin.netloc)
+            != (expected_origin.scheme, expected_origin.netloc)
+        ):
+            raise RuntimeError("BACKEND_URL does not identify this OpenSlate instance")
 
     def request(
         self,
@@ -157,10 +187,20 @@ def _preflight_seed(client: ApiClient) -> dict[str, str]:
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
     settings = get_seed_settings()
+    application = get_settings()
+    target = instance_target_for_process(application.database_url, "openslate_runtime")
+    assert_local_backend_url(settings.backend_url, expected_port=application.backend_port)
+    if target is not None:
+        with get_engine().connect() as connection:
+            assert_instance_target(connection, target, expected_user="openslate_runtime")
     client = ApiClient(
         settings.backend_url,
         token=settings.seed_access_token.get_secret_value(),
     )
+    expected_identity = instance_identity_for_process()
+    if expected_identity is None:
+        raise RuntimeError("Unable to identify the current OpenSlate instance")
+    client.verify_instance(expected_identity)
 
     role_ids = _preflight_seed(client)
     if "admin" not in role_ids:

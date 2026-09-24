@@ -9,6 +9,14 @@ def test_query_requires_authentication() -> None:
     assert response.status_code == 401
 
 
+def test_grouped_and_aggregate_queries_require_authentication() -> None:
+    with TestClient(app) as client:
+        grouped = client.post("/api/records/grouped-query", json={})
+        aggregate = client.post("/api/records/aggregate-query", json={})
+    assert grouped.status_code == 401
+    assert aggregate.status_code == 401
+
+
 def test_custom_role_cannot_export_and_writer_cannot_query() -> None:
     from uuid6 import uuid7
 

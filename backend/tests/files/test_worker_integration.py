@@ -34,6 +34,8 @@ def test_cli_uncertain_execution_exits_without_restart_and_releases_leadership(
     guarded_db, monkeypatch, capsys
 ):
     engine = guarded_db.get_bind().engine
+    # The injected owner connection tests worker leadership, not process attestation.
+    monkeypatch.setattr(worker, "instance_target_for_process", lambda *args: None)
     monkeypatch.setattr(worker, "get_engine", lambda: engine)
     monkeypatch.setattr(worker, "get_scanner", lambda *, require_configuration=False: object())
     monkeypatch.setattr(worker, "get_storage", lambda: object())
@@ -55,6 +57,7 @@ def test_cli_uncertain_execution_exits_without_restart_and_releases_leadership(
 
 def test_worker_waits_thirty_seconds_on_unavailable_or_empty_queue(guarded_db, monkeypatch):
     engine = guarded_db.get_bind().engine
+    monkeypatch.setattr(worker, "instance_target_for_process", lambda *args: None)
     monkeypatch.setattr(worker, "get_engine", lambda: engine)
     monkeypatch.setattr(worker, "get_scanner", lambda *, require_configuration=False: object())
     monkeypatch.setattr(worker, "get_storage", lambda: object())

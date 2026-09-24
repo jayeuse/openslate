@@ -13,7 +13,16 @@ from app.systems.manage.audit.service import (
     SecurityEventPersistenceError,
     append_committed_security_event,
 )
-from app.systems.platform.files.access import authorize, error, fresh_user, load, parent
+from app.systems.platform.files.access import (
+    authorize,
+    authorize_board_file,
+    authorize_contextual_file,
+    error,
+    fresh_user,
+    load,
+    parent,
+    require_unlinked,
+)
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import (
     ProviderRejected,
@@ -22,7 +31,7 @@ from app.systems.platform.files.providers import (
     StorageBackend,
 )
 from app.systems.platform.files.quota import lock_quota, require_capacity, require_live_reservation
-from app.systems.platform.files.schemas import FileCreate, FileResponse
+from app.systems.platform.files.schemas import BoardFileCreate, FileCreate, FileResponse
 from app.systems.platform.files.validation_worker import validate_bounded
 
 
@@ -33,6 +42,23 @@ def reserve(db: Session, user: User, payload: FileCreate) -> FileResponse:
     parent(db, payload.record_id, active=True, lock=True)
     file = File(
         **payload.model_dump(), creator_id=user.id, object_key=uuid4().hex, state="awaiting_upload"
+    )
+    db.add(file)
+    db.commit()
+    return FileResponse.model_validate(file)
+
+
+def reserve_board(
+    db: Session, user: User, board_id: UUID, payload: BoardFileCreate
+) -> FileResponse:
+    """Reserve quarantine capacity only after the owning Board permits editing."""
+    lock_quota(db)
+    authorize_board_file(db, fresh_user(db, user.id), board_id, write=True, lock=True)
+    require_capacity(db, "board_attachment", payload.expected_size)
+    file = File(
+        purpose="board_attachment", board_id=board_id, record_id=None,
+        creator_id=user.id, filename=payload.filename, expected_size=payload.expected_size,
+        object_key=uuid4().hex, state="awaiting_upload",
     )
     db.add(file)
     db.commit()
@@ -56,10 +82,11 @@ def _current(db: Session, file_id: UUID, token: UUID, state: str) -> File:
 
 
 def upload(
-    db: Session, actor_id: UUID, file_id: UUID, content: bytes, storage: StorageBackend
+    db: Session, actor_id: UUID, file_id: UUID, content: bytes, storage: StorageBackend,
+    *, board_id: UUID | None = None,
 ) -> FileResponse:
     file = load(db, file_id, active_parent=True, lock=True)
-    authorize(fresh_user(db, actor_id), file.purpose, write=True)
+    authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True)
     if file.is_deleted or file.state != "awaiting_upload":
         raise error("file_upload_conflict", "File cannot accept an upload")
     require_live_reservation(file)
@@ -69,7 +96,7 @@ def upload(
     db.rollback()
     validated = validate_bounded(filename, content, logo=logo)
     file = load(db, file_id, active_parent=True, lock=True)
-    authorize(fresh_user(db, actor_id), file.purpose, write=True)
+    authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True)
     if file.is_deleted or file.state != "awaiting_upload":
         raise error("file_upload_conflict", "File cannot accept an upload")
     require_live_reservation(file)
@@ -119,8 +146,8 @@ def upload(
             "upload_unresolved", "Upload outcome needs administrator reconciliation", 503
         ) from exc
     file = _current(db, file_id, token, "uploading")
-    authorize(fresh_user(db, actor_id), file.purpose, write=True)
-    parent(db, file.record_id, active=True)
+    authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True)
+    parent(db, file.record_id, active=True, board_id=file.board_id)
     if file.is_deleted:
         raise error("file_archived", "File was archived during upload")
     from app.systems.platform.files.scan_queue import enqueue_uploaded
@@ -130,11 +157,13 @@ def upload(
     return FileResponse.model_validate(file)
 
 
-def scan(db: Session, actor_id: UUID, file_id: UUID) -> FileResponse:
+def scan(
+    db: Session, actor_id: UUID, file_id: UUID, *, board_id: UUID | None = None
+) -> FileResponse:
     """Enqueue or adopt a retry; processing happens only in the deployment worker."""
     from app.systems.platform.files.scan_queue import request_scan
 
-    return request_scan(db, actor_id, file_id)
+    return request_scan(db, actor_id, file_id, board_id=board_id)
 
 
 def download(
@@ -190,9 +219,14 @@ def download(
     return content, media_type, filename
 
 
-def archive(db: Session, actor_id: UUID, file_id: UUID, *, reopen: bool = False) -> FileResponse:
+def archive(
+    db: Session, actor_id: UUID, file_id: UUID, *, reopen: bool = False,
+    board_id: UUID | None = None,
+) -> FileResponse:
     file = load(db, file_id, active_parent=reopen, lock=True)
-    authorize(fresh_user(db, actor_id), file.purpose, write=True)
+    authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True)
+    if file.purpose == "board_attachment":
+        require_unlinked(db, file.id)
     if file.state in {"deleting", "purged"}:
         raise error("file_archive_conflict", "File is being permanently removed")
     file.is_deleted = not reopen
@@ -201,15 +235,24 @@ def archive(db: Session, actor_id: UUID, file_id: UUID, *, reopen: bool = False)
     return FileResponse.model_validate(file)
 
 
-def reconcile(db: Session, actor_id: UUID, file_id: UUID, storage: StorageBackend) -> FileResponse:
+def reconcile(
+    db: Session, actor_id: UUID, file_id: UUID, storage: StorageBackend,
+    *, board_id: UUID | None = None,
+) -> FileResponse:
     lock_quota(db)
     user = fresh_user(db, actor_id)
     authorize(user, "library_document", write=True)
     file = load(db, file_id, lock=True)
+    if file.purpose == "board_attachment":
+        if board_id is None or file.board_id != board_id:
+            raise error("file_not_found", "File not found", 404)
+        require_unlinked(db, file.id)
+    elif board_id is not None:
+        raise error("file_not_found", "File not found", 404)
     if file.state == "deleting":
         from app.systems.platform.files.purge import purge_confirmed
 
-        return purge_confirmed(db, actor_id, file_id, storage)
+        return purge_confirmed(db, actor_id, file_id, storage, board_id=board_id)
     if file.state == "uploading":
         key, digest, size, token = file.object_key, file.digest, file.actual_size, file.operation_id
         db.commit()

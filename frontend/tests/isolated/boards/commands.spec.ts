@@ -26,17 +26,150 @@ const context: BoardCommandContext = {
   preview: false,
   now: "2026-09-15T01:00:00.000Z",
   id: "activity-test",
+  viewer: {
+    id: "sample-mara",
+    active: true,
+    roleIds: ["sample-admin"],
+    departmentIds: ["Operations"],
+  },
   can: () => true,
   audienceLookup: {
     roles: [
       { id: "sample-admin", name: "Administrator" },
       { id: "sample-member", name: "Member" },
     ],
-    identities: [{ id: "sample-mara", name: "Mara" }],
+    identities: [
+      { id: "sample-mara", name: "Mara" },
+      { id: "sample-eli", name: "Eli" },
+    ],
     departments: [{ id: "Operations", name: "Operations" }],
   },
   recordIds: [],
 };
+
+test("board managers cannot edit or moderate events outside their audience", () => {
+  const current = state();
+  const restricted = {
+    ...current.events[0],
+    authorId: "sample-eli",
+    audience: { kind: "identity" as const, id: "sample-eli" },
+  };
+  current.events = [restricted];
+
+  const created = executeBoardCommand(
+    current,
+    {
+      type: "save-event",
+      event: { ...restricted, id: "new-restricted-event" },
+    },
+    context,
+  );
+  expect(created.result.ok).toBe(true);
+
+  const edited = executeBoardCommand(
+    current,
+    {
+      type: "save-event",
+      original: restricted,
+      event: { ...restricted, title: "Changed without audience access" },
+    },
+    context,
+  );
+  expect(edited.result.ok).toBe(false);
+  expect(edited.state).toBe(current);
+
+  const archived = executeBoardCommand(
+    current,
+    {
+      type: "event-action",
+      boardId: restricted.boardId,
+      eventId: restricted.id,
+      action: "archive",
+    },
+    context,
+  );
+  expect(archived.result.ok).toBe(false);
+  expect(archived.state).toBe(current);
+});
+
+test("board managers cannot edit, moderate, read, or bookmark announcements outside their audience", () => {
+  const current = state();
+  const restricted = {
+    ...structuredClone(INITIAL_ANNOUNCEMENTS[0]),
+    authorId: "sample-eli",
+    audience: { kind: "identity" as const, id: "sample-eli" },
+    publishedRevision: {
+      ...structuredClone(INITIAL_ANNOUNCEMENTS[0].publishedRevision!),
+      audience: { kind: "identity" as const, id: "sample-eli" },
+    },
+  };
+  current.announcements = [restricted];
+
+  const created = executeBoardCommand(
+    current,
+    {
+      type: "save-announcement",
+      intent: "publish",
+      announcement: { ...restricted, id: "new-restricted-announcement" },
+    },
+    context,
+  );
+  expect(created.result.ok).toBe(true);
+
+  for (const command of [
+    {
+      type: "save-announcement" as const,
+      original: restricted,
+      announcement: { ...restricted, title: "Changed without audience access" },
+      intent: "draft" as const,
+    },
+    {
+      type: "announcement-action" as const,
+      boardId: restricted.boardId,
+      announcementId: restricted.id,
+      action: "archive" as const,
+    },
+    {
+      type: "personal" as const,
+      value: {
+        identityId: context.actorId,
+        favoriteBoardIds: [],
+        homeBoardId: null,
+        calendarView: "month" as const,
+        readAnnouncementIds: [restricted.id],
+        bookmarkedAnnouncementIds: [restricted.id],
+        reminders: [],
+      },
+    },
+  ]) {
+    const denied = executeBoardCommand(current, command, context);
+    expect(denied.result.ok).toBe(false);
+    expect(denied.state).toBe(current);
+  }
+
+  current.personal[context.actorId] = {
+    identityId: context.actorId,
+    favoriteBoardIds: [],
+    homeBoardId: null,
+    calendarView: "month",
+    readAnnouncementIds: [restricted.id],
+    bookmarkedAnnouncementIds: [],
+    reminders: [],
+  };
+  const staleBookmark = executeBoardCommand(
+    current,
+    {
+      type: "personal",
+      value: {
+        ...current.personal[context.actorId],
+        bookmarkedAnnouncementIds: [restricted.id],
+      },
+    },
+    context,
+  );
+  expect(staleBookmark.result.ok).toBe(false);
+  expect(staleBookmark.state).toBe(current);
+});
 
 test("saving an edited board preserves a newer Access visibility change and rejects conflicting edits", () => {
   const current = state();

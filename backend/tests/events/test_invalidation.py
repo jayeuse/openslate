@@ -248,3 +248,80 @@ def test_file_invalidations_are_entity_only_and_administrator_only() -> None:
     assert file_event.to_payload() == {"entity": "files"}
     assert file_event.administrators_only
     asyncio.run(exercise())
+
+
+def test_notification_transport_keeps_recipient_internal_and_rejects_unsafe_envelopes() -> None:
+    recipient_id = uuid7()
+    event = event_for_entity("in_app_notifications", uuid7(), recipient_id=recipient_id)
+
+    assert event is not None
+    assert event.to_payload() == {"entity": "in_app_notifications"}
+    assert event.to_json() == '{"entity":"in_app_notifications"}'
+    assert event.to_transport_payload() == {
+        "entity": "in_app_notifications",
+        "recipient_id": str(recipient_id),
+    }
+    assert parse_invalidation_payload(event.to_transport_json()) == event
+
+    for payload in (
+        {"entity": "in_app_notifications"},
+        {"entity": "in_app_notifications", "recipient_id": "not-a-uuid"},
+        {
+            "entity": "in_app_notifications",
+            "recipient_id": str(recipient_id),
+            "entity_id": str(uuid7()),
+        },
+        {"entity": "records", "capability": "records.read", "recipient_id": str(recipient_id)},
+    ):
+        with pytest.raises(ValueError, match="invalid invalidation payload"):
+            parse_invalidation_payload(payload)
+
+
+def test_audience_scoped_entities_are_not_generic_invalidation_subjects() -> None:
+    for entity in ("reports", "report_runs", "report_run_rows", "report_schedules", "board_events"):
+        assert event_for_entity(entity, uuid7()) is None
+        with pytest.raises(ValueError, match="invalid invalidation payload"):
+            parse_invalidation_payload({"entity": entity, "entity_id": str(uuid7())})
+
+
+def test_board_scoped_entities_are_not_generic_invalidation_subjects() -> None:
+    for entity in (
+        "boards",
+        "board_grants",
+        "board_record_placements",
+        "board_widgets",
+        "board_favorites",
+        "board_homes",
+        "board_templates",
+        "board_announcements",
+        "board_announcement_revisions",
+        "board_announcement_personal_states",
+    ):
+        assert event_for_entity(entity, uuid7()) is None
+        with pytest.raises(ValueError, match="invalid invalidation payload"):
+            parse_invalidation_payload({"entity": entity, "entity_id": str(uuid7())})
+
+
+def test_notification_fanout_targets_only_the_persisted_recipient_even_for_admins() -> None:
+    async def exercise() -> None:
+        hub = EventHub()
+        recipient_id = uuid7()
+        recipient = await hub.subscribe(
+            SimpleNamespace(id=recipient_id, role=SimpleNamespace(role="member", permissions={}))
+        )
+        other = await hub.subscribe(
+            SimpleNamespace(id=uuid7(), role=SimpleNamespace(role="member", permissions={}))
+        )
+        admin = await hub.subscribe(SimpleNamespace(id=uuid7(), role=SimpleNamespace(role="admin")))
+        event = event_for_entity("in_app_notifications", uuid7(), recipient_id=recipient_id)
+        assert event is not None
+
+        await hub.publish_notification(event.to_transport_json())
+
+        assert await recipient.queue.get() == event
+        assert other.queue.empty()
+        assert admin.queue.empty()
+        for subscription in (recipient, other, admin):
+            await hub.unsubscribe(subscription)
+
+    asyncio.run(exercise())

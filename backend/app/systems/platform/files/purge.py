@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.common.dependencies import require_fresh_exact_admin
 from app.core.config import get_settings
-from app.systems.platform.files.access import error, load
+from app.systems.platform.files.access import error, load, require_unlinked
 from app.systems.platform.files.providers import ProviderUnavailable, StorageBackend
 from app.systems.platform.files.quota import lock_quota
 from app.systems.platform.files.scan_queue import UNRESOLVED
@@ -23,6 +23,7 @@ def purge_confirmed(
     storage: StorageBackend,
     *,
     validate_locked: Callable[[], None] | None = None,
+    board_id: UUID | None = None,
 ) -> FileResponse:
     """Parent must validate its signed/digest confirmation and current-logo exclusion."""
     if not get_settings().lifecycle_purge_enabled:
@@ -32,6 +33,12 @@ def purge_confirmed(
     if validate_locked is not None:
         validate_locked()
     file = load(db, file_id, lock=True)
+    if file.purpose == "board_attachment":
+        if board_id is None or file.board_id != board_id:
+            raise error("file_not_found", "File not found", 404)
+        require_unlinked(db, file.id)
+    elif board_id is not None:
+        raise error("file_not_found", "File not found", 404)
     if file.failure_code == UNRESOLVED:
         raise error(UNRESOLVED, "Scanner execution requires operator recovery")
     if file.state == "purged":

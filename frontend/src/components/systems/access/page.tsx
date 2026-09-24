@@ -231,6 +231,10 @@ function AccessControlCenter() {
           {navigationNotice}
         </Alert>
       ) : null}
+      <Alert variant="warning">
+        This Access workspace is a local preview. Its Board rules and simulator
+        do not control access to connected Boards.
+      </Alert>
       {resource.refreshing || resource.error ? (
         <Alert role="status" variant="warning">
           <span>

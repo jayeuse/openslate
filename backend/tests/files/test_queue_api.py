@@ -22,6 +22,7 @@ def test_scan_endpoint_returns_202_location_without_provider_access(monkeypatch)
         id=file_id,
         purpose="library_document",
         record_id=None,
+        board_id=None,
         creator_id=actor_id,
         filename="document.pdf",
         media_type="application/pdf",

@@ -1,0 +1,31 @@
+"""Board file bytes use the same bounded transfer admission as generic files."""
+
+from uuid import uuid4
+
+from app.core.middleware.file_transfers import file_transfer_policy
+from app.main import create_app
+
+
+def test_board_file_upload_and_contextual_download_receive_transfer_leases() -> None:
+    board, file, event, notice = (uuid4() for _ in range(4))
+    upload = file_transfer_policy(f"/api/boards/{board}/files/{file}/content", "PUT")
+    event_download = file_transfer_policy(
+        f"/api/boards/{board}/events/{event}/attachments/{file}/content", "GET"
+    )
+    notice_download = file_transfer_policy(
+        f"/api/boards/{board}/announcements/{notice}/attachments/{file}/content", "GET"
+    )
+    reconcile = file_transfer_policy(f"/api/boards/{board}/files/{file}/reconcile", "POST")
+    purge = file_transfer_policy(f"/api/boards/{board}/files/{file}/purge", "POST")
+    assert upload is not None and upload.request_bytes == 25 * 1024 * 1024
+    assert event_download is not None and event_download.deadline_seconds == 120
+    assert notice_download is not None and notice_download.deadline_seconds == 120
+    assert reconcile is not None and purge is not None
+    assert file_transfer_policy(f"/api/boards/{board}/files/{file}/content", "GET") is None
+
+
+def test_board_file_and_announcement_routes_are_mounted() -> None:
+    routes = create_app().openapi()["paths"]
+    assert "post" in routes["/api/boards/{board_id}/files"]
+    assert "get" in routes["/api/boards/{board_id}/announcements/{announcement_id}/attachments"]
+    assert "post" in routes["/api/boards/{board_id}/announcements/{announcement_id}/publish"]
