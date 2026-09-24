@@ -41,6 +41,34 @@ test("active section selection uses stable IDs when rendered copy changes", () =
   ).toBe(true);
 });
 
+test("Access keeps stable view URLs while using plain-language navigation labels", () => {
+  const access = getWorkspaceNavigation(
+    "/access",
+    new URLSearchParams("view=rules"),
+  ).find((entry) => entry.id === "access");
+
+  expect(
+    access?.items.map((entry) => [entry.id, entry.label, entry.href]),
+  ).toEqual([
+    ["overview", "Overview", "/access?view=overview"],
+    ["identities", "People & services", "/access?view=identities"],
+    ["roles", "Roles", "/access?view=roles"],
+    ["groups", "Groups", "/access?view=groups"],
+    ["rules", "Detailed rules", "/access?view=rules"],
+    ["simulator", "Check access", "/access?view=simulator"],
+    ["reviews", "Access reviews", "/access?view=reviews"],
+  ]);
+
+  expect(
+    isWorkspaceNavigationItemActive(
+      "access",
+      "rules",
+      "/access",
+      new URLSearchParams("view=rules"),
+    ),
+  ).toBe(true);
+});
+
 test("Sandbox uses the simplified sections while legacy links still open the matching area", () => {
   const navigation = getWorkspaceNavigation(
     "/sandbox",

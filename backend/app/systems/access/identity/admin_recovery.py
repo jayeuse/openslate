@@ -8,6 +8,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
+from app.systems.access.identity.eligibility import is_identity_eligible, is_internal_identity
 from app.systems.access.identity.service import generated_temporary_password, replace_password
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
@@ -34,6 +36,7 @@ def recover_local_admin(
 ) -> RecoveredAdmin:
     if not local_invocation or not elevated:
         raise LocalRecoveryError("Local elevated administrator recovery is required")
+    timestamp = utc_now()
     user = db.scalar(
         select(User)
         .options(joinedload(User.role))
@@ -42,7 +45,8 @@ def recover_local_admin(
     )
     if (
         user is None
-        or user.is_deleted
+        or not is_identity_eligible(user, now=timestamp)
+        or not is_internal_identity(user)
         or user.status != UserStatus.ACTIVE.value
         or user.role is None
         or user.role.is_deleted
@@ -52,7 +56,7 @@ def recover_local_admin(
         raise LocalRecoveryError("Target is not an active administrator")
     secret = generated_temporary_password()
     try:
-        replace_password(db, user, secret, temporary=True)
+        replace_password(db, user, secret, temporary=True, now=timestamp)
         append_security_event(
             db,
             SecurityEventIngestRequest(

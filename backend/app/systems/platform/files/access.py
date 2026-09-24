@@ -6,9 +6,10 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from app.systems.access.policy.authorization import authorize_workspace_capabilities
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability, has_capability
+from app.systems.access.users.permissions import Capability
 from app.systems.platform.files.models import File
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
@@ -19,9 +20,19 @@ def error(code: str, message: str, status: int = 409) -> HTTPException:
     return HTTPException(status, detail={"code": code, "message": message})
 
 
-def authorize(user: User, purpose: str, *, write: bool = False) -> None:
+def authorize(db: Session, user: User, purpose: str, *, write: bool = False) -> User:
+    """Authorize a file action before acquiring parent or inventory locks."""
+
     if purpose not in {"record_attachment", "library_document", "workspace_logo"}:
         raise error("forbidden", "Forbidden", 403)
+    if purpose == "record_attachment":
+        capability = Capability.RECORDS_WRITE if write else Capability.RECORDS_READ
+        return authorize_workspace_capabilities(
+            db,
+            actor_id=user.id,
+            expected_role_id=user.role_id,
+            capabilities=(capability,),
+        )
     if (
         user.is_deleted
         or user.status != "active"
@@ -30,13 +41,9 @@ def authorize(user: User, purpose: str, *, write: bool = False) -> None:
         or user.role.is_deleted
     ):
         raise error("forbidden", "Forbidden", 403)
-    if purpose == "record_attachment":
-        capability = Capability.RECORDS_WRITE if write else Capability.RECORDS_READ
-        allowed = has_capability(user.role, capability)
-    else:
-        allowed = user.role.role == "admin"
-    if not allowed:
+    if user.role.role != "admin":
         raise error("forbidden", "Forbidden", 403)
+    return user
 
 
 def fresh_user(db: Session, actor_id: UUID) -> User:

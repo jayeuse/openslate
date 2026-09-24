@@ -464,11 +464,16 @@ function findIdentity(
   return getControllerIdentities(state).find((identity) => identity.id === id);
 }
 
-function activeAdminCount(state: AccessControllerSnapshot): number {
+function activeAdminCount(
+  state: AccessControllerSnapshot,
+  roleId: string,
+  timestamp: number,
+): number {
   return state.people.filter(
     (person) =>
       internalFromPerson(person).status === "active" &&
-      person.role === "sample-admin",
+      person.role === roleId &&
+      (!person.expiresAt || Date.parse(person.expiresAt) > timestamp),
   ).length;
 }
 
@@ -605,21 +610,24 @@ function wouldRemoveLastAdmin(
   state: AccessControllerSnapshot,
   before: AccessIdentity,
   after: AccessIdentity,
+  timestamp: number,
 ): boolean {
   return (
     before.kind === "internal" &&
     before.status === "active" &&
     before.roleId === "sample-admin" &&
+    (!before.expiresAt || Date.parse(before.expiresAt) > timestamp) &&
     (after.kind !== "internal" ||
       after.status !== "active" ||
       after.roleId !== "sample-admin") &&
-    activeAdminCount(state) === 1
+    activeAdminCount(state, "sample-admin", timestamp) === 1
   );
 }
 
 export function previewBulkIdentityUpdate(
   state: AccessControllerSnapshot,
   input: BulkIdentityUpdateInput,
+  timestamp = Date.now(),
 ): BulkIdentityImpact {
   const ids = [...new Set(input.identityIds)];
   const identities = ids
@@ -670,7 +678,8 @@ export function previewBulkIdentityUpdate(
     if (issue) blocked += 1;
     else applyIdentity(projected, next);
   }
-  if (activeAdminCount(projected) === 0) blocked = Math.max(1, blocked);
+  if (activeAdminCount(projected, "sample-admin", timestamp) === 0)
+    blocked = Math.max(1, blocked);
   const ok = blocked === 0;
   return {
     ok,
@@ -680,7 +689,7 @@ export function previewBulkIdentityUpdate(
     ...(!ok
       ? {
           error:
-            activeAdminCount(projected) === 0
+            activeAdminCount(projected, "sample-admin", timestamp) === 0
               ? "Keep at least one active internal Administrator."
               : "One or more identity updates are invalid.",
         }
@@ -975,7 +984,7 @@ export function executeAccessCommand(
       const after = patchIdentity(before, patch);
       const issue = validateIdentityReferences(state, after);
       if (issue) return fail(issue);
-      if (wouldRemoveLastAdmin(state, before, after))
+      if (wouldRemoveLastAdmin(state, before, after, Date.parse(context.now)))
         return fail("Keep at least one active internal Administrator.");
       applyIdentity(state, after);
       return success(state, context, "Identity updated.", identityId, after);
@@ -1022,7 +1031,9 @@ export function executeAccessCommand(
         identity.kind === "internal" &&
         identity.status === "active" &&
         identity.roleId === "sample-admin" &&
-        activeAdminCount(state) === 1
+        (!identity.expiresAt ||
+          Date.parse(identity.expiresAt) > Date.parse(context.now)) &&
+        activeAdminCount(state, "sample-admin", Date.parse(context.now)) === 1
       )
         return fail("Keep at least one active internal Administrator.");
       if (
@@ -1143,7 +1154,11 @@ export function executeAccessCommand(
       );
     }
     case "bulk-update-identities": {
-      const impact = previewBulkIdentityUpdate(state, command.input);
+      const impact = previewBulkIdentityUpdate(
+        state,
+        command.input,
+        Date.parse(context.now),
+      );
       if (!impact.ok) return fail(impact.error ?? "Bulk update is not safe.");
       for (const id of [...new Set(command.input.identityIds)]) {
         const identity = findIdentity(state, id);
@@ -1679,9 +1694,18 @@ export function previewHistoryRestore(
 export function getAccessHealth(
   state: AccessControllerSnapshot,
   now: string,
+  context?: {
+    adminRoleId?: string | null;
+    knownPermissionIds?: readonly string[];
+  },
 ): AccessHealthFinding[] {
   const findings: AccessHealthFinding[] = [];
-  const adminCount = activeAdminCount(state);
+  const timestamp = Date.parse(now);
+  const adminCount = activeAdminCount(
+    state,
+    context?.adminRoleId ?? "sample-admin",
+    timestamp,
+  );
   if (adminCount === 0)
     findings.push({
       id: "health:last-admin",
@@ -1699,7 +1723,6 @@ export function getAccessHealth(
       detail:
         "Assign a second active internal Administrator to reduce lockout risk.",
     });
-  const timestamp = Date.parse(now);
   for (const identity of getControllerIdentities(state)) {
     if (
       identity.expiresAt &&
@@ -1765,7 +1788,13 @@ export function getAccessHealth(
         detail: `${role.name} has no legacy grants.`,
         targetId: role.id,
       });
-    if (role.grants.some((grant) => normalizeLegacyGrant(grant) === null))
+    if (
+      role.grants.some((grant) =>
+        context?.knownPermissionIds
+          ? !context.knownPermissionIds.includes(grant)
+          : normalizeLegacyGrant(grant) === null,
+      )
+    )
       findings.push({
         id: `health:legacy:${role.id}`,
         kind: "invalid-reference",

@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownAZ,
   Bot,
-  MoreHorizontal,
+  ChevronDown,
   Search,
   UserRound,
   UserRoundPlus,
@@ -50,23 +50,27 @@ import {
   completeCollection,
   pageCollection,
 } from "../../shared/helpers/sample-collections";
-import { departments } from "../domain/model";
 import type {
   AccessController,
   BulkIdentityUpdateInput,
 } from "../state/controller";
 import { IdentityEditor } from "./identity-editor";
-import type { AccessIdentity, AccessIdentityStatus } from "../domain/policy";
+import { readAccessIdentityDraft } from "../state/draft-journal";
+import { useVerifiedWorkspaceUserId } from "../../shared/runtime/workspace-identity";
+import {
+  displayIdentityStatus,
+  type AccessDisplayStatus,
+  type AccessIdentity,
+} from "../domain/policy";
 
 type IdentitiesViewProps = {
   controller: AccessController;
 };
 
 type KindFilter = AccessIdentity["kind"] | "all";
-type StatusFilter = AccessIdentityStatus | "all";
+type StatusFilter = AccessDisplayStatus | "all";
 type ExpiryFilter = "all" | "expired" | "next-30-days" | "no-expiry";
-type ActivityFilter = "all" | "active-session" | "recent-change" | "no-session";
-type SortOption = "name" | "kind" | "status" | "role" | "expiry" | "activity";
+type SortOption = "name" | "kind" | "status" | "role" | "expiry";
 type BulkAction = "disable" | "restore" | "role" | "add-group" | "remove-group";
 
 const PAGE_SIZE_OPTIONS = [3, 5, 8] as const;
@@ -77,16 +81,24 @@ const kindLabels: Record<AccessIdentity["kind"], string> = {
   service: "Service",
 };
 
-const statusLabels: Record<AccessIdentityStatus, string> = {
+const statusLabels: Record<AccessDisplayStatus, string> = {
   active: "Active",
+  expired: "Expired",
   pending: "Pending",
   disabled: "Disabled",
   deleted: "Deleted",
   revoked: "Revoked",
   suspended: "Suspended",
 };
+const directoryStatusOptions = [
+  "active",
+  "expired",
+  "pending",
+  "disabled",
+  "revoked",
+] as const satisfies readonly AccessDisplayStatus[];
 
-function statusVariant(status: AccessIdentityStatus) {
+function statusVariant(status: AccessDisplayStatus) {
   if (status === "active") return "success" as const;
   if (status === "pending") return "warning" as const;
   if (status === "disabled" || status === "revoked")
@@ -98,10 +110,6 @@ function identityDetail(identity: AccessIdentity): string {
   if (identity.kind === "internal") return identity.email;
   if (identity.kind === "guest") return identity.email;
   return identity.purpose || "Service metadata";
-}
-
-function departmentId(name: string): string {
-  return `department:${name.toLowerCase().replaceAll(" ", "-")}`;
 }
 
 function replaceUserQuery(identityId: string | null) {
@@ -116,6 +124,9 @@ function replaceUserQuery(identityId: string | null) {
 }
 
 export function IdentitiesView({ controller }: IdentitiesViewProps) {
+  const userId = useVerifiedWorkspaceUserId();
+  const restoredUserId = useRef<string | null>(null);
+  const [journalIssue, setJournalIssue] = useState("");
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<KindFilter>("all");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -123,7 +134,6 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
   const [groupId, setGroupId] = useState("all");
   const [department, setDepartment] = useState("all");
   const [expiry, setExpiry] = useState<ExpiryFilter>("all");
-  const [activity, setActivity] = useState<ActivityFilter>("all");
   const [sort, setSort] = useState<SortOption>("name");
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState<number>(3);
@@ -164,27 +174,37 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
     setEditorOpen(true);
   }, [controller.state.deletedIdentities, controller.state.identities]);
 
+  useEffect(() => {
+    if (restoredUserId.current === userId) return;
+    restoredUserId.current = userId;
+    const stored = readAccessIdentityDraft(userId);
+    if (stored.value) {
+      if (stored.value.mode === "create") {
+        setEditorIdentityId(null);
+        setCreateKind(stored.value.draft.kind);
+      } else {
+        setEditorIdentityId(stored.value.draft.id);
+        setCreateKind(null);
+      }
+      setEditorOpen(true);
+    }
+    if (stored.status === "unavailable")
+      setJournalIssue(
+        "Browser draft storage is unavailable. Identity changes may not survive reload.",
+      );
+    else if (stored.status === "invalid")
+      setJournalIssue(
+        "A saved identity draft could not be safely restored. It was not applied.",
+      );
+  }, [userId]);
+
   const normalizedQuery = query.trim().toLowerCase();
-  const hasActiveSession = (identityId: string) =>
-    controller.state.sessions.some(
-      (session) =>
-        session.identityId === identityId && session.status === "active",
-    );
-  const hasRecentChange = (identityId: string) =>
-    controller.state.history.some((entry) => entry.target === identityId);
-  const activityTime = (identityId: string) =>
-    Math.max(
-      0,
-      ...controller.state.sessions
-        .filter((session) => session.identityId === identityId)
-        .map((session) => Date.parse(session.lastActiveAt ?? "") || 0),
-      ...controller.state.history
-        .filter((entry) => entry.target === identityId)
-        .map((entry) => Date.parse(entry.occurredAt) || 0),
-    );
   const filtered = directoryIdentities
     .filter((identity) => kind === "all" || identity.kind === kind)
-    .filter((identity) => status === "all" || identity.status === status)
+    .filter(
+      (identity) =>
+        status === "all" || displayIdentityStatus(identity) === status,
+    )
     .filter((identity) => roleId === "all" || identity.roleId === roleId)
     .filter((identity) =>
       groupId === "all"
@@ -210,12 +230,6 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
         expiresAt <= filterNow + 30 * 24 * 60 * 60 * 1000
       );
     })
-    .filter((identity) => {
-      if (activity === "all") return true;
-      if (activity === "active-session") return hasActiveSession(identity.id);
-      if (activity === "recent-change") return hasRecentChange(identity.id);
-      return !hasActiveSession(identity.id);
-    })
     .filter((identity) =>
       `${identity.name} ${identityDetail(identity)}`
         .toLowerCase()
@@ -229,25 +243,24 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
           Date.parse(right.expiresAt ?? "") || Number.MAX_SAFE_INTEGER;
         return leftValue - rightValue || left.name.localeCompare(right.name);
       }
-      if (sort === "activity")
-        return (
-          activityTime(right.id) - activityTime(left.id) ||
-          left.name.localeCompare(right.name)
-        );
       const leftValue =
         sort === "role"
           ? (controller.state.roles.find((item) => item.id === left.roleId)
               ?.name ?? "")
           : sort === "name"
             ? left.name
-            : left[sort];
+            : sort === "status"
+              ? displayIdentityStatus(left)
+              : left[sort];
       const rightValue =
         sort === "role"
           ? (controller.state.roles.find((item) => item.id === right.roleId)
               ?.name ?? "")
           : sort === "name"
             ? right.name
-            : right[sort];
+            : sort === "status"
+              ? displayIdentityStatus(right)
+              : right[sort];
       return (
         leftValue.localeCompare(rightValue) ||
         left.name.localeCompare(right.name)
@@ -265,7 +278,6 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
         groupId,
         department,
         expiry,
-        activity,
         sort,
       ]),
     ),
@@ -294,8 +306,8 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
   };
   const bulkPreview = controller.actions.previewBulkIdentityUpdate(bulkInput);
 
-  const identityColumns = useMemo<DataTableColumn<AccessIdentity>[]>(
-    () => [
+  const identityColumns = useMemo<DataTableColumn<AccessIdentity>[]>(() => {
+    const columns: DataTableColumn<AccessIdentity>[] = [
       {
         id: "select",
         header: () => (
@@ -368,8 +380,8 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
         id: "status",
         header: "Status",
         cell: ({ row }) => (
-          <Badge variant={statusVariant(row.original.status)}>
-            {statusLabels[row.original.status]}
+          <Badge variant={statusVariant(displayIdentityStatus(row.original))}>
+            {statusLabels[displayIdentityStatus(row.original)]}
           </Badge>
         ),
       },
@@ -379,26 +391,28 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
         cell: ({ row }) => (
           <div className="flex justify-end">
             <Button
-              variant="ghost"
-              size="icon"
-              className="size-11"
+              variant="outline"
+              className="min-h-11 shrink-0"
               aria-label={`Manage ${row.original.name}`}
               onClick={() => openIdentity(row.original.id)}
             >
-              <MoreHorizontal />
+              Manage
             </Button>
           </div>
         ),
       },
-    ],
-    [
-      allVisibleSelected,
-      controller.state.roles,
-      openIdentity,
-      selected,
-      visibleIds,
-    ],
-  );
+    ];
+    return controller.availability.bulkIdentityUpdates
+      ? columns
+      : columns.filter((column) => column.id !== "select");
+  }, [
+    allVisibleSelected,
+    controller.availability.bulkIdentityUpdates,
+    controller.state.roles,
+    openIdentity,
+    selected,
+    visibleIds,
+  ]);
 
   function resetFilters() {
     setQuery("");
@@ -408,8 +422,8 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
     setGroupId("all");
     setDepartment("all");
     setExpiry("all");
-    setActivity("all");
     setSort("name");
+    setPageSize(PAGE_SIZE_OPTIONS[0]);
     setPageIndex(0);
   }
 
@@ -459,18 +473,26 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
     setBulkOpen(false);
   }
 
-  const hasFilters =
-    normalizedQuery !== "" ||
-    kind !== "all" ||
-    status !== "all" ||
-    roleId !== "all" ||
-    groupId !== "all" ||
-    department !== "all" ||
-    expiry !== "all" ||
-    activity !== "all";
+  const activeDirectorySettingsCount = [
+    query !== "",
+    kind !== "all",
+    status !== "all",
+    roleId !== "all",
+    groupId !== "all",
+    department !== "all",
+    expiry !== "all",
+    sort !== "name",
+    pageSize !== PAGE_SIZE_OPTIONS[0],
+  ].filter((isActive) => isActive).length;
+  const hasNonDefaultDirectorySettings = activeDirectorySettingsCount > 0;
 
   return (
     <div className="space-y-2">
+      {journalIssue ? (
+        <Alert role="alert" variant="warning">
+          {journalIssue}
+        </Alert>
+      ) : null}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h2 id="identity-directory" className="text-lg font-semibold">
@@ -512,8 +534,8 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
 
       <Card className="w-full" role="search" aria-label="Identity filters">
         <CardContent className="p-0">
-          <div className="grid grid-cols-2 gap-3 p-3 lg:grid-cols-3 xl:grid-cols-5">
-            <Field className="col-span-2 xl:col-span-1">
+          <div className="grid gap-3 p-3 sm:grid-cols-2">
+            <Field>
               <FieldLabel htmlFor="identity-search">
                 Search identities
               </FieldLabel>
@@ -533,25 +555,6 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
               </div>
             </Field>
             <Field>
-              <FieldLabel htmlFor="identity-kind">Kind</FieldLabel>
-              <NativeSelect
-                id="identity-kind"
-                className="w-full [&_select]:min-h-11"
-                value={kind}
-                onChange={(event) => {
-                  setKind(event.target.value as KindFilter);
-                  setPageIndex(0);
-                }}
-              >
-                <NativeSelectOption value="all">All kinds</NativeSelectOption>
-                <NativeSelectOption value="internal">
-                  Internal
-                </NativeSelectOption>
-                <NativeSelectOption value="guest">Guest</NativeSelectOption>
-                <NativeSelectOption value="service">Service</NativeSelectOption>
-              </NativeSelect>
-            </Field>
-            <Field>
               <FieldLabel htmlFor="identity-status">Status</FieldLabel>
               <NativeSelect
                 id="identity-status"
@@ -565,76 +568,110 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                 <NativeSelectOption value="all">
                   All statuses
                 </NativeSelectOption>
-                {Object.entries(statusLabels).map(([value, label]) => (
+                {directoryStatusOptions.map((value) => (
                   <NativeSelectOption key={value} value={value}>
-                    {label}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="identity-sort">Sort</FieldLabel>
-              <NativeSelect
-                id="identity-sort"
-                className="w-full [&_select]:min-h-11"
-                value={sort}
-                onChange={(event) => {
-                  setSort(event.target.value as SortOption);
-                  setPageIndex(0);
-                }}
-              >
-                <NativeSelectOption value="name">Name</NativeSelectOption>
-                <NativeSelectOption value="kind">Kind</NativeSelectOption>
-                <NativeSelectOption value="status">Status</NativeSelectOption>
-                <NativeSelectOption value="role">Role</NativeSelectOption>
-                <NativeSelectOption value="expiry">
-                  Expiry soonest
-                </NativeSelectOption>
-                <NativeSelectOption value="activity">
-                  Recent activity
-                </NativeSelectOption>
-              </NativeSelect>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="identity-page-size">
-                Rows per page
-              </FieldLabel>
-              <NativeSelect
-                id="identity-page-size"
-                className="w-full [&_select]:min-h-11"
-                value={String(pageSize)}
-                onChange={(event) => {
-                  const nextPageSize = Number(event.target.value);
-                  if (
-                    !PAGE_SIZE_OPTIONS.some((option) => option === nextPageSize)
-                  )
-                    return;
-                  setPageSize(nextPageSize);
-                  setPageIndex(0);
-                }}
-              >
-                {PAGE_SIZE_OPTIONS.map((option) => (
-                  <NativeSelectOption key={option} value={String(option)}>
-                    {option}
+                    {statusLabels[value]}
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
             </Field>
           </div>
 
+          {hasNonDefaultDirectorySettings && (
+            <div className="border-t px-3 py-2">
+              <Button
+                variant="ghost"
+                className="min-h-11"
+                onClick={resetFilters}
+              >
+                Reset directory
+              </Button>
+            </div>
+          )}
+
           <details className="group border-t">
             <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2">
-              <span>Advanced filters</span>
-              <Badge variant="outline">
-                {
-                  [roleId, groupId, department, expiry, activity].filter(
-                    (value) => value !== "all",
-                  ).length
-                }{" "}
-                active
-              </Badge>
+              <span>More filters</span>
+              <span className="flex items-center gap-2">
+                <Badge variant="outline">
+                  {activeDirectorySettingsCount} active
+                </Badge>
+                <ChevronDown
+                  className="size-4 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+                  aria-hidden="true"
+                />
+              </span>
             </summary>
-            <div className="grid gap-3 border-t p-3 sm:grid-cols-2 xl:grid-cols-5">
+            <div className="grid gap-3 border-t p-3 sm:grid-cols-2 xl:grid-cols-4">
+              <Field>
+                <FieldLabel htmlFor="identity-kind">Kind</FieldLabel>
+                <NativeSelect
+                  id="identity-kind"
+                  className="w-full [&_select]:min-h-11"
+                  value={kind}
+                  onChange={(event) => {
+                    setKind(event.target.value as KindFilter);
+                    setPageIndex(0);
+                  }}
+                >
+                  <NativeSelectOption value="all">All kinds</NativeSelectOption>
+                  <NativeSelectOption value="internal">
+                    Internal
+                  </NativeSelectOption>
+                  <NativeSelectOption value="guest">Guest</NativeSelectOption>
+                  <NativeSelectOption value="service">
+                    Service
+                  </NativeSelectOption>
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="identity-sort">Sort</FieldLabel>
+                <NativeSelect
+                  id="identity-sort"
+                  className="w-full [&_select]:min-h-11"
+                  value={sort}
+                  onChange={(event) => {
+                    setSort(event.target.value as SortOption);
+                    setPageIndex(0);
+                  }}
+                >
+                  <NativeSelectOption value="name">Name</NativeSelectOption>
+                  <NativeSelectOption value="kind">Kind</NativeSelectOption>
+                  <NativeSelectOption value="status">Status</NativeSelectOption>
+                  <NativeSelectOption value="role">Role</NativeSelectOption>
+                  <NativeSelectOption value="expiry">
+                    Expiry soonest
+                  </NativeSelectOption>
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="identity-page-size">
+                  Rows per page
+                </FieldLabel>
+                <NativeSelect
+                  id="identity-page-size"
+                  className="w-full [&_select]:min-h-11"
+                  value={String(pageSize)}
+                  onChange={(event) => {
+                    const nextPageSize = Number(event.target.value);
+                    if (
+                      !PAGE_SIZE_OPTIONS.some(
+                        (option) => option === nextPageSize,
+                      )
+                    )
+                      return;
+                    setPageSize(nextPageSize);
+                    setPageIndex(0);
+                  }}
+                >
+                  {PAGE_SIZE_OPTIONS.map((option) => (
+                    <NativeSelectOption key={option} value={String(option)}>
+                      {option}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+
               <Field>
                 <FieldLabel htmlFor="identity-role-filter">Role</FieldLabel>
                 <NativeSelect
@@ -694,9 +731,12 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                   <NativeSelectOption value="all">
                     All departments
                   </NativeSelectOption>
-                  {departments.map((name) => (
-                    <NativeSelectOption key={name} value={departmentId(name)}>
-                      {name}
+                  {controller.departmentCatalog.map((department) => (
+                    <NativeSelectOption
+                      key={department.id}
+                      value={department.id}
+                    >
+                      {department.name}
                     </NativeSelectOption>
                   ))}
                 </NativeSelect>
@@ -726,39 +766,12 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                   </NativeSelectOption>
                 </NativeSelect>
               </Field>
-              <Field>
-                <FieldLabel htmlFor="identity-activity-filter">
-                  Activity
-                </FieldLabel>
-                <NativeSelect
-                  id="identity-activity-filter"
-                  className="w-full [&_select]:min-h-11"
-                  value={activity}
-                  onChange={(event) => {
-                    setActivity(event.target.value as ActivityFilter);
-                    setPageIndex(0);
-                  }}
-                >
-                  <NativeSelectOption value="all">
-                    Any activity
-                  </NativeSelectOption>
-                  <NativeSelectOption value="active-session">
-                    Active session
-                  </NativeSelectOption>
-                  <NativeSelectOption value="recent-change">
-                    Recent access change
-                  </NativeSelectOption>
-                  <NativeSelectOption value="no-session">
-                    No active session
-                  </NativeSelectOption>
-                </NativeSelect>
-              </Field>
             </div>
           </details>
         </CardContent>
       </Card>
 
-      {selected.length > 0 && (
+      {controller.availability.bulkIdentityUpdates && selected.length > 0 && (
         <div className="bg-muted flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm font-medium" role="status">
             {selected.length}{" "}
@@ -774,7 +787,11 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
             </Button>
             <Button
               className="min-h-11"
-              disabled={controller.isPending()}
+              disabled={
+                controller.isPending() ||
+                !controller.availability.bulkIdentityUpdates
+              }
+              title="Bulk identity updates are not available yet."
               onClick={() => setBulkOpen(true)}
             >
               Review bulk action
@@ -801,7 +818,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            {hasFilters ? (
+            {hasNonDefaultDirectorySettings ? (
               <Button
                 variant="outline"
                 className="min-h-11"
@@ -833,7 +850,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
             />
           </div>
 
-          <div className="grid gap-3 md:hidden">
+          <div className="grid min-w-0 gap-3 md:hidden">
             {visible.map((identity) => (
               <IdentityCard
                 key={identity.id}
@@ -1003,28 +1020,30 @@ function IdentityCard({
     (item) => item.id === identity.roleId,
   );
   return (
-    <Card className="w-full">
-      <CardContent className="space-y-4 p-4">
+    <Card className="w-full min-w-0">
+      <CardContent className="min-w-0 space-y-4 p-4">
         <div className="flex items-start gap-3">
-          <label className="flex size-11 shrink-0 items-center justify-center">
-            <Checkbox
-              checked={selected}
-              disabled={identity.status === "deleted"}
-              onCheckedChange={onSelect}
-            />
-            <span className="sr-only">
-              {identity.status === "deleted" ? "Deleted identity" : "Select"}{" "}
-              {identity.name}
-            </span>
-          </label>
+          {controller.availability.bulkIdentityUpdates ? (
+            <label className="flex size-11 shrink-0 items-center justify-center">
+              <Checkbox
+                checked={selected}
+                disabled={identity.status === "deleted"}
+                onCheckedChange={onSelect}
+              />
+              <span className="sr-only">
+                {identity.status === "deleted" ? "Deleted identity" : "Select"}{" "}
+                {identity.name}
+              </span>
+            </label>
+          ) : null}
           <div className="min-w-0 flex-1">
             <p className="font-medium">{identity.name}</p>
             <p className="text-muted-foreground mt-0.5 truncate text-sm">
               {identityDetail(identity)}
             </p>
           </div>
-          <Badge variant={statusVariant(identity.status)}>
-            {statusLabels[identity.status]}
+          <Badge variant={statusVariant(displayIdentityStatus(identity))}>
+            {statusLabels[displayIdentityStatus(identity)]}
           </Badge>
         </div>
         <dl className="grid grid-cols-2 gap-2 text-sm">

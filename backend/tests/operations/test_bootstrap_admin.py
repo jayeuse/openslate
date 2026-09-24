@@ -77,14 +77,22 @@ def test_bootstrap_invites_once_and_recovers_the_exact_pending_reservation(
         invite.assert_not_called()
         replace.assert_not_called()
     elif existing_profile:
-        assert (
-            bootstrap._provision(Mock(spec=Settings), invitation, "temporary-password") is profile
+        result = bootstrap._provision(Mock(spec=Settings), invitation, "temporary-password")
+        assert result == bootstrap.BootstrapResult(
+            user_id=profile.id,
+            email=profile.email,
+            username=profile.username,
+            status=profile.status,
         )
         replace.assert_called_once_with(database, profile, "temporary-password", temporary=True)
         database.commit.assert_called_once()
     else:
-        assert (
-            bootstrap._provision(Mock(spec=Settings), invitation, "temporary-password") is profile
+        result = bootstrap._provision(Mock(spec=Settings), invitation, "temporary-password")
+        assert result == bootstrap.BootstrapResult(
+            user_id=profile.id,
+            email=profile.email,
+            username=profile.username,
+            status=profile.status,
         )
         assert invite.call_args.kwargs["bootstrap"] is True
         assert invite.call_args.args[1].role_id == admin.id

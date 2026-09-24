@@ -722,6 +722,90 @@ test("health reports final-admin risk and detectable equal-priority group confli
   );
 });
 
+test("health does not count an expired Administrator as a usable second admin", () => {
+  const state = snapshot();
+  const durableAdmin = state.people.find(
+    (person) => person.role === "sample-admin" && person.active,
+  );
+  if (!durableAdmin) throw new Error("Expected a seeded Administrator.");
+  state.people.push({
+    ...structuredClone(durableAdmin),
+    id: "expired-second-admin",
+    expiresAt: "2000-01-01T00:00:00Z",
+  });
+
+  expect(
+    getAccessHealth(state, context.now, { adminRoleId: "sample-admin" }),
+  ).toContainEqual(
+    expect.objectContaining({
+      kind: "last-admin",
+      title: "Only one active Administrator",
+    }),
+  );
+});
+
+test("sample administrator changes use the operation clock across single and bulk actions", () => {
+  const state = snapshot();
+  const durableAdmin = state.people.find(
+    (person) => person.role === "sample-admin" && person.active,
+  );
+  if (!durableAdmin) throw new Error("Expected a seeded Administrator.");
+  const expiringAdmin = {
+    ...structuredClone(durableAdmin),
+    id: "expiring-second-admin",
+    email: "expiring-second-admin@example.invalid",
+    expiresAt: "2026-09-20T00:00:00Z",
+  };
+  state.people.push(expiringAdmin);
+
+  const demote = executeAccessCommand(
+    state,
+    {
+      type: "update-identity",
+      identityId: expiringAdmin.id,
+      patch: { roleId: "sample-member" },
+    },
+    context,
+  );
+  expect(demote.ok, demote.ok ? "" : demote.error).toBe(true);
+  const remove = executeAccessCommand(
+    state,
+    { type: "delete-identity", identityId: expiringAdmin.id },
+    context,
+  );
+  expect(remove.ok).toBe(true);
+
+  const futureState = snapshot();
+  futureState.people.push({
+    ...structuredClone(durableAdmin),
+    id: "future-expired-admin",
+    email: "future-expired-admin@example.invalid",
+    expiresAt: "2027-01-01T00:00:00Z",
+  });
+  const futureContext = { ...context, now: "2030-01-01T00:00:00Z" };
+  expect(
+    executeAccessCommand(
+      futureState,
+      {
+        type: "update-identity",
+        identityId: durableAdmin.id,
+        patch: { roleId: "sample-member" },
+      },
+      futureContext,
+    ).ok,
+  ).toBe(false);
+  expect(
+    previewBulkIdentityUpdate(
+      futureState,
+      {
+        identityIds: [durableAdmin.id],
+        patch: { roleId: "sample-member" },
+      },
+      Date.parse(futureContext.now),
+    ).ok,
+  ).toBe(false);
+});
+
 test("reviews require an active Administrator reviewer and block completion while decisions are pending", () => {
   const state = snapshot();
   const input = {

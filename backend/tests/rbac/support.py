@@ -1,8 +1,10 @@
 """Shared fixtures and model builders for RBAC route tests."""
+
 from __future__ import annotations
 
 from collections.abc import Generator
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 
@@ -18,7 +20,8 @@ from app.common.dependencies.auth import (
 from app.common.listing import ListQueryResult, PaginationMetadata
 from app.core.database import get_db
 from app.main import create_app
-from app.systems.access.users.models import Role, User, UserRole
+from app.systems.access.policy.models import AccessGroupMember, AccessPolicyVersion, AccessRule
+from app.systems.access.users.models import IdentityKind, Role, User, UserRole
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 
@@ -61,6 +64,7 @@ def make_user(
         id=uuid7(),
         email=f"{name}@example.com",
         username=name,
+        identity_kind=IdentityKind.INTERNAL.value,
         status=status,
         role_id=assigned_role.id,
         role=assigned_role,
@@ -104,6 +108,50 @@ def _empty_list_result() -> ListQueryResult[Any]:
     )
 
 
+class _PolicySnapshotDatabase:
+    """Supply route tests with the persisted policy baseline they do not exercise."""
+
+    def __init__(self, delegate: Session, user: User) -> None:
+        self._delegate = delegate
+        self._user = user
+        self._version = AccessPolicyVersion(singleton_key="workspace", revision=1)
+        self._version.is_deleted = False
+
+    def scalar(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        entity = _statement_entity(statement)
+        if entity is AccessPolicyVersion:
+            return self._version
+        if entity is User:
+            return self._user
+        if entity is Role:
+            return self._user.role
+        return self._delegate.scalar(statement, *args, **kwargs)
+
+    def execute(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        entities = _statement_entities(statement)
+        if AccessGroupMember in entities:
+            return SimpleNamespace(all=lambda: [])
+        return self._delegate.execute(statement, *args, **kwargs)
+
+    def scalars(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        if _statement_entity(statement) is AccessRule:
+            return SimpleNamespace(all=lambda: [])
+        return self._delegate.scalars(statement, *args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+
+def _statement_entities(statement: Any) -> set[object]:
+    descriptions = getattr(statement, "column_descriptions", ())
+    return {description.get("entity") for description in descriptions if description.get("entity")}
+
+
+def _statement_entity(statement: Any) -> object | None:
+    entities = _statement_entities(statement)
+    return next(iter(entities)) if len(entities) == 1 else None
+
+
 @pytest.fixture
 def api() -> Generator[FastAPI, None, None]:
     application = create_app()
@@ -114,5 +162,5 @@ def api() -> Generator[FastAPI, None, None]:
 def _client(application: FastAPI, user: User, db: Session | None = None) -> TestClient:
     database = db or Mock(spec=Session)
     application.dependency_overrides[get_current_user] = lambda: user
-    application.dependency_overrides[get_db] = lambda: database
+    application.dependency_overrides[get_db] = lambda: _PolicySnapshotDatabase(database, user)
     return TestClient(application)

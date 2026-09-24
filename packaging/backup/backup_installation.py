@@ -43,6 +43,7 @@ _CONFIG_FIELDS = frozenset(
 _SNAPSHOT_ID = re.compile(r"^[0-9a-f]{8,64}$")
 _SCHEMA_REVISION = re.compile(r"^[0-9A-Za-z_.-]{1,128}$")
 _INSTALLATION_ID = re.compile(r"^[0-9a-f]{8,64}$")
+_ROOT_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
@@ -61,6 +62,7 @@ class DatabaseTarget:
 
 @dataclass(frozen=True)
 class BackupConfig:
+    version: int
     installation_id: str
     database: DatabaseTarget
     pg_password_file: Path
@@ -72,6 +74,7 @@ class BackupConfig:
     maintenance_lock_file: Path
     maintenance_max_age_seconds: int
     private_file_roots: tuple[Path, ...]
+    private_file_root_ids: tuple[str, ...]
     initialize_repository: bool
 
     @staticmethod
@@ -155,11 +158,29 @@ def parse_config(path: Path, *, platform_name: str | None = None) -> BackupConfi
         raise BackupError("cannot read backup configuration") from error
     if not isinstance(raw, dict) or frozenset(raw) != _CONFIG_FIELDS:
         raise BackupError("backup configuration must contain exactly the documented fields")
-    if raw["version"] != 1:
-        raise BackupError("backup configuration version must be 1")
+    version = raw["version"]
+    if version not in (1, 2) or isinstance(version, bool):
+        raise BackupError("backup configuration version must be 1 or 2")
     roots = raw["private_file_roots"]
     if not isinstance(roots, list) or not roots:
         raise BackupError("private_file_roots must contain at least one path")
+    root_ids: list[str] = []
+    root_paths: list[Path] = []
+    for item in roots:
+        if version == 1:
+            root_paths.append(
+                _native_path(item, "private_file_roots entry", platform_name=platform_name)
+            )
+            continue
+        if not isinstance(item, dict) or frozenset(item) != {"id", "path"}:
+            raise BackupError("private_file_roots entries must contain id and path")
+        root_id = _expect_string(item["id"], "private_file_roots id")
+        if not _ROOT_ID.fullmatch(root_id) or root_id in root_ids:
+            raise BackupError("private_file_roots ids must be unique safe logical names")
+        root_ids.append(root_id)
+        root_paths.append(
+            _native_path(item["path"], "private_file_roots path", platform_name=platform_name)
+        )
     if not isinstance(raw["initialize_repository"], bool):
         raise BackupError("initialize_repository must be a boolean")
     installation_id = _expect_string(raw["installation_id"], "installation_id")
@@ -169,6 +190,7 @@ def parse_config(path: Path, *, platform_name: str | None = None) -> BackupConfi
     if not isinstance(max_age, int) or isinstance(max_age, bool) or not 1 <= max_age <= 3600:
         raise BackupError("maintenance_max_age_seconds must be between 1 and 3600")
     return BackupConfig(
+        version=version,
         installation_id=installation_id,
         database=_parse_database_url(raw["database_url"]),
         pg_password_file=_native_path(
@@ -191,10 +213,8 @@ def parse_config(path: Path, *, platform_name: str | None = None) -> BackupConfi
             raw["maintenance_lock_file"], "maintenance_lock_file", platform_name=platform_name
         ),
         maintenance_max_age_seconds=max_age,
-        private_file_roots=tuple(
-            _native_path(item, "private_file_roots entry", platform_name=platform_name)
-            for item in roots
-        ),
+        private_file_roots=tuple(root_paths),
+        private_file_root_ids=tuple(root_ids),
         initialize_repository=raw["initialize_repository"],
     )
 
@@ -531,6 +551,7 @@ def _tree_hash(root: Path) -> tuple[str, int, int]:
     digest = hashlib.sha256()
     file_count = 0
     total_bytes = 0
+
     def relative_name(candidate: Path) -> str:
         return candidate.relative_to(root).as_posix()
 
@@ -628,10 +649,11 @@ def _pg_environment(pgpass: Path) -> dict[str, str]:
     return environment
 
 
-def _restic_environment(config: BackupConfig) -> dict[str, str]:
+def _restic_environment(config: BackupConfig, cache_dir: Path) -> dict[str, str]:
     environment = _minimal_environment()
     environment["RESTIC_REPOSITORY"] = str(config.restic_repository)
     environment["RESTIC_PASSWORD_FILE"] = str(config.restic_password_file)
+    environment["RESTIC_CACHE_DIR"] = str(cache_dir)
     return environment
 
 
@@ -658,9 +680,10 @@ def _repository_initialized(
     lease: MaintenanceLease,
     command_runner: _CommandRunner,
     config: BackupConfig,
+    cache_dir: Path,
     guards: Sequence[DirectoryGuard],
 ) -> bool:
-    environment = _restic_environment(config)
+    environment = _restic_environment(config, cache_dir)
     lease.revalidate()
     for guard in guards:
         guard.revalidate()
@@ -736,18 +759,24 @@ def _write_manifest(
     schema_revision: str,
 ) -> str:
     inventories = []
-    for root in roots:
+    for index, root in enumerate(roots):
         root_hash, file_count, total_bytes = _tree_hash(root)
-        inventories.append(
-            {
-                "root_id": hashlib.sha256(str(root).encode("utf-8")).hexdigest(),
-                "tree_sha256": root_hash,
-                "file_count": file_count,
-                "total_bytes": total_bytes,
-            }
-        )
+        inventory = {
+            "root_id": (
+                config.private_file_root_ids[index]
+                if config.version == 2
+                else hashlib.sha256(str(root).encode("utf-8")).hexdigest()
+            ),
+            "tree_sha256": root_hash,
+            "file_count": file_count,
+            "total_bytes": total_bytes,
+        }
+        if config.version == 2:
+            inventory["source_path"] = str(root)
+            inventory["path_flavor"] = "windows" if os.name == "nt" else "posix"
+        inventories.append(inventory)
     payload = {
-        "format_version": 1,
+        "format_version": config.version,
         "created_at": created_at,
         "schema_revision": schema_revision,
         "database": {
@@ -759,26 +788,31 @@ def _write_manifest(
         "dump": {"format": "pg_dump_custom", "sha256": _sha256(dump), "bytes": dump.stat().st_size},
         "private_file_roots": inventories,
     }
+    if config.version == 2:
+        payload["installation_id"] = config.installation_id
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
     path.write_bytes(encoded)
     return hashlib.sha256(encoded).hexdigest()
 
 
 def _atomic_marker(path: Path, result: BackupResult) -> None:
-    payload = json.dumps(
-        {
-            "format_version": 1,
-            "snapshot_id": result.snapshot_id,
-            "manifest_sha256": result.manifest_sha256,
-            "completed_at": result.completed_at,
-            "backup_verified": True,
-            "verification_scope": (
-                "repository-check, manifest-and-dump-restore-hashes, pg-restore-list"
-            ),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8") + b"\n"
+    payload = (
+        json.dumps(
+            {
+                "format_version": 1,
+                "snapshot_id": result.snapshot_id,
+                "manifest_sha256": result.manifest_sha256,
+                "completed_at": result.completed_at,
+                "backup_verified": True,
+                "verification_scope": (
+                    "repository-check, manifest-and-dump-restore-hashes, pg-restore-list"
+                ),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        + b"\n"
+    )
     descriptor, temp_name = tempfile.mkstemp(prefix=".backup-marker-", dir=path.parent)
     temporary = Path(temp_name)
     try:
@@ -890,8 +924,10 @@ def run_backup(
             created_at=completed_at,
             schema_revision=schema_revision,
         )
-        restic_environment = _restic_environment(config)
-        if not _repository_initialized(lease, command_runner, config, guards):
+        cache_dir = run_directory / "restic-cache"
+        cache_dir.mkdir(mode=0o700)
+        restic_environment = _restic_environment(config, cache_dir)
+        if not _repository_initialized(lease, command_runner, config, cache_dir, guards):
             if not config.initialize_repository:
                 raise BackupError("restic repository is not initialized")
             _run_with_lease(
@@ -902,7 +938,7 @@ def run_backup(
                 label="restic init",
                 guards=guards,
             )
-            if not _repository_initialized(lease, command_runner, config, guards):
+            if not _repository_initialized(lease, command_runner, config, cache_dir, guards):
                 raise BackupError("restic repository initialization could not be verified")
         backup = _run_with_lease(
             lease,

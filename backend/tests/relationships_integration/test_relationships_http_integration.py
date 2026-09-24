@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from app.main import create_app
-from tests.relationships_integration.relationship_http_support import detached_member
 
 pytestmark = [
     pytest.mark.integration,
@@ -176,7 +175,8 @@ def test_relationship_capabilities_deny_read_and_write_without_mutation(
 ) -> None:
     graph = relationship_http_fixture.graph
     assert graph is not None
-    member = detached_member()
+    member = relationship_http_fixture.member
+    assert member is not None
     with relationship_http_fixture.client(member) as client:
         payload = _payload(graph.field_id, graph.source_id, graph.target_id)
         assert client.get(f"/api/relationships?field_id={graph.field_id}").status_code == 403

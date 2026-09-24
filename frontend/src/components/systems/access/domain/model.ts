@@ -8,6 +8,8 @@ export type Person = {
   active: boolean;
   departments: string[];
   primary: string;
+  departmentIds?: string[];
+  primaryDepartmentId?: string;
   title: string;
   activity: string[];
   accessStatus?: "active" | "pending" | "disabled" | "revoked" | "suspended";

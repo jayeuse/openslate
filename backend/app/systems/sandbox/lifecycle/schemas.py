@@ -21,6 +21,7 @@ class LifecycleOperation(StrEnum):
 
 class LifecycleBlockerCode(StrEnum):
     CLOSED_ANCESTOR = "closed_ancestor"
+    DEFAULT_DEPARTMENT_REFERENCE = "default_department_reference"
     MODULE_NAME_CONFLICT = "module_name_conflict"
     FIELD_NAME_CONFLICT = "field_name_conflict"
     FIELD_POSITION_CONFLICT = "field_position_conflict"

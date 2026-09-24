@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, type ReactNode } from "react";
+import { clearAccessDraftStorageExcept } from "../../access/state/draft-journal";
 
 const VerifiedWorkspaceIdentityContext = createContext<string | null>(null);
 const WORKSPACE_SNAPSHOT_KEY = "openslate.sample.v1";
@@ -47,6 +48,9 @@ export function registerWorkspaceSessionClear(
 export function clearVerifiedWorkspaceSessionSnapshot(
   userId: string | null,
 ): Promise<void> {
+  // An account change or lost session must not leave another account's Access
+  // form values in this tab, even when a reload lost the in-memory user ID.
+  clearAccessDraftStorageExcept(null);
   if (userId === null) return Promise.resolve();
   try {
     sessionStorage.removeItem(workspaceSessionSnapshotStorageKey(userId));
@@ -57,4 +61,14 @@ export function clearVerifiedWorkspaceSessionSnapshot(
   return import("../../comms/state/draft-text")
     .then(({ clearCommsDraftTextStore }) => clearCommsDraftTextStore(userId))
     .catch(() => undefined);
+}
+
+export function clearAccessDraftsForAccountChange(): boolean {
+  return clearAccessDraftStorageExcept(null);
+}
+
+export function keepAccessDraftsForVerifiedWorkspaceUser(
+  userId: string,
+): boolean {
+  return clearAccessDraftStorageExcept(userId);
 }

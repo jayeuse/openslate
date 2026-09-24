@@ -138,6 +138,7 @@ def _add_backend_steps(steps: list[Step]) -> None:
                     "../scripts/dev.py",
                     "../scripts/run_tests.py",
                     "../packaging/backup/backup_installation.py",
+                    "../packaging/backup/restore_installation.py",
                 ),
             ),
             Step(
@@ -150,6 +151,7 @@ def _add_backend_steps(steps: list[Step]) -> None:
                     "run",
                     "pytest",
                     "../packaging/backup/tests/test_backup_installation.py",
+                    "../packaging/backup/tests/test_restore_installation.py",
                     "--no-cov",
                     "--basetemp",
                     ".backup-contracts",

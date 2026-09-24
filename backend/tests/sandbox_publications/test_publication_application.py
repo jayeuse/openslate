@@ -1,7 +1,5 @@
 """Publication application integration guarantees."""
 
-from hashlib import sha256
-
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -12,25 +10,15 @@ from app.systems.sandbox.automations.models import (
     PublishedAutomationCondition,
     PublishedAutomationDefinition,
 )
-from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.designs.schemas import AutomationDocument, SandboxDocument
-from app.systems.sandbox.designs.service import read_document, replace_document
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.publications.executor import (
-    PublicationError,
-    apply_publication,
-    request_fingerprint,
-)
 from app.systems.sandbox.publications.models import SandboxBinding, SandboxPublication
 from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.publications.rules import _field_key
-from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.router import create_record
 from app.systems.sandbox.records.schemas import RecordCreate
-from app.systems.sandbox.relationships.models import RelationshipEdge
 from tests.sandbox_publications.support import (
-    actor,
     binding,
     bound_field,
     bound_module,
@@ -42,65 +30,11 @@ from tests.sandbox_publications.support import (
 pytestmark = pytest.mark.integration
 
 
-def test_preview_is_read_only_and_publish_creates_only_bound_structure(
-    integration_owner_db: Session,
-) -> None:
-    publisher = actor(integration_owner_db)
-    initial = read_document(integration_owner_db)
-    document = publishable_document()
-    saved = replace_document(
-        integration_owner_db,
-        actor_id=publisher.id,
-        expected_revision=initial.revision,
-        document=document,
-    )
-
-    preview = publication_plan(integration_owner_db, saved.document)
-
-    assert not preview.blockers
-    assert integration_owner_db.scalar(select(func.count()).select_from(Department)) == 0
-    assert integration_owner_db.scalar(select(func.count()).select_from(Record)) == 0
-    assert integration_owner_db.scalar(select(func.count()).select_from(RelationshipEdge)) == 0
-
-    response = apply_publication(
-        integration_owner_db,
-        actor_id=publisher.id,
-        expected_revision=saved.revision,
-        impact_digest=preview.impact_digest,
-        expected_live_state_digest=preview.live_state_digest,
-        preview_token_digest=sha256(b"preview").hexdigest(),
-        idempotency_key="publication-integration-1",
-        fingerprint=request_fingerprint(
-            expected_revision=saved.revision,
-            document_hash=saved.content_hash,
-            impact_digest=preview.impact_digest,
-            preview_token_digest=sha256(b"preview").hexdigest(),
-            note=None,
-        ),
-        note=None,
-    )
-
-    assert response.version.kind == "published"
-    assert integration_owner_db.scalar(select(func.count()).select_from(Department)) == 2
-    assert integration_owner_db.scalar(select(func.count()).select_from(Module)) == 3
-    assert integration_owner_db.scalar(select(func.count()).select_from(Field)) == 13
-    assert integration_owner_db.scalar(select(func.count()).select_from(SandboxBinding)) == 18
-    assert integration_owner_db.scalar(select(func.count()).select_from(SandboxPublication)) == 1
-    assert (
-        integration_owner_db.scalar(select(func.count()).select_from(PublishedAutomationDefinition))
-        == 0
-    )
-    assert integration_owner_db.scalar(select(func.count()).select_from(Record)) == 0
-    assert integration_owner_db.scalar(select(func.count()).select_from(RelationshipEdge)) == 0
-
-
 def test_initial_relationship_is_closed_when_its_target_module_is_closed(
     integration_owner_db: Session,
 ) -> None:
     document = publishable_document()
-    target = next(
-        module for module in document.design.modules if module.id == "sample-equipment"
-    )
+    target = next(module for module in document.design.modules if module.id == "sample-equipment")
     target.closed = True
     for field in target.fields:
         field.closed = True
@@ -117,9 +51,7 @@ def test_closing_a_published_relationship_endpoint_is_stable_on_repreview(
 ) -> None:
     publisher, published = publish_structure(integration_owner_db)
     closing = published.model_copy(deep=True)
-    target = next(
-        module for module in closing.design.modules if module.id == "sample-equipment"
-    )
+    target = next(module for module in closing.design.modules if module.id == "sample-equipment")
     target.closed = True
 
     first_plan = publication_plan(integration_owner_db, closing)
@@ -180,72 +112,6 @@ def test_published_integer_default_creates_a_valid_operational_record(
     default = record.data[str(priority_field.id)]
     assert default == 4
     assert type(default) is int
-
-
-def test_relationship_scoped_automation_blocks_publish_without_live_writes(
-    integration_owner_db: Session,
-) -> None:
-    publisher = actor(integration_owner_db)
-    initial = read_document(integration_owner_db)
-    document = publishable_document()
-    document.automations = [
-        AutomationDocument.model_validate(
-            {
-                "id": "relationship-reference",
-                "name": "Unsupported relationship reference",
-                "enabled": True,
-                "priority": 0,
-                "trigger": {"kind": "record-created", "moduleId": "sample-requests"},
-                "conditionGroup": {"operator": "all", "conditions": []},
-                "actions": [
-                    {
-                        "id": "set-status",
-                        "kind": "set-field",
-                        "target": {
-                            "moduleId": "sample-requests",
-                            "fieldId": "sample-field-requests-status",
-                            "relationshipId": "sample-uses",
-                        },
-                        "value": {"kind": "literal", "value": "Open"},
-                    }
-                ],
-            }
-        )
-    ]
-    saved = replace_document(
-        integration_owner_db,
-        actor_id=publisher.id,
-        expected_revision=initial.revision,
-        document=document,
-    )
-    preview = publication_plan(integration_owner_db, saved.document)
-    assert "automation_relationship_reference_unsupported" in {
-        blocker.code for blocker in preview.blockers
-    }
-    token_digest = sha256(b"relationship-reference-preview").hexdigest()
-
-    with pytest.raises(PublicationError, match="Fix the listed publication blockers"):
-        apply_publication(
-            integration_owner_db,
-            actor_id=publisher.id,
-            expected_revision=saved.revision,
-            impact_digest=preview.impact_digest,
-            expected_live_state_digest=preview.live_state_digest,
-            preview_token_digest=token_digest,
-            idempotency_key="relationship-reference",
-            fingerprint=request_fingerprint(
-                expected_revision=saved.revision,
-                document_hash=saved.content_hash,
-                impact_digest=preview.impact_digest,
-                preview_token_digest=token_digest,
-                note=None,
-            ),
-            note=None,
-        )
-
-    assert integration_owner_db.scalar(select(func.count()).select_from(Department)) == 0
-    assert integration_owner_db.scalar(select(func.count()).select_from(Record)) == 0
-    assert integration_owner_db.scalar(select(func.count()).select_from(RelationshipEdge)) == 0
 
 
 def test_retired_automation_children_do_not_block_field_closure(

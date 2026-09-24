@@ -5,7 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import {
+  clearAccessDraftsForAccountChange,
   clearVerifiedWorkspaceSessionSnapshot,
+  keepAccessDraftsForVerifiedWorkspaceUser,
   VerifiedWorkspaceIdentityProvider,
 } from "@/components/systems/shared/runtime/workspace-identity";
 import { getSessionStatus } from "@/lib/auth-api";
@@ -60,6 +62,7 @@ export function AppPage({ children }: AppPageProps) {
   const pathname = usePathname();
   const [checking, setChecking] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
+  const [draftCleanupFailed, setDraftCleanupFailed] = useState(false);
   const [verifiedUserId, setVerifiedUserId] = useState<string | null>(null);
   const verifiedUserIdRef = useRef<string | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
@@ -129,14 +132,34 @@ export function AppPage({ children }: AppPageProps) {
         // the loop will immediately process the newest queued request.
         if (current.nextVersion > requested.version) continue;
         if (result === "invalid") {
+          if (!clearAccessDraftsForAccountChange()) {
+            current.queued = null;
+            setVerifiedUserId(null);
+            setChecking(true);
+            setDraftCleanupFailed(true);
+            break;
+          }
           current.queued = null;
           void clearVerifiedWorkspaceSessionSnapshot(verifiedUserIdRef.current);
           verifiedUserIdRef.current = null;
+          setVerifiedUserId(null);
+          setChecking(true);
           router.replace("/login");
           return;
         }
         if (result === "setup") {
+          if (!clearAccessDraftsForAccountChange()) {
+            current.queued = null;
+            setVerifiedUserId(null);
+            setChecking(true);
+            setDraftCleanupFailed(true);
+            break;
+          }
           current.queued = null;
+          void clearVerifiedWorkspaceSessionSnapshot(verifiedUserIdRef.current);
+          verifiedUserIdRef.current = null;
+          setVerifiedUserId(null);
+          setChecking(true);
           router.replace("/auth/setup?temporary=1");
           return;
         }
@@ -145,13 +168,28 @@ export function AppPage({ children }: AppPageProps) {
             setUnavailable(true);
             continue;
           }
+          const previousUserId = verifiedUserIdRef.current;
+          const draftsCleared =
+            previousUserId !== null && previousUserId !== responseUserId
+              ? clearAccessDraftsForAccountChange()
+              : keepAccessDraftsForVerifiedWorkspaceUser(responseUserId);
+          if (!draftsCleared) {
+            current.queued = null;
+            setVerifiedUserId(null);
+            setChecking(true);
+            setDraftCleanupFailed(true);
+            break;
+          }
+          if (previousUserId !== null && previousUserId !== responseUserId)
+            void clearVerifiedWorkspaceSessionSnapshot(previousUserId);
           verifiedUserIdRef.current = responseUserId;
           setVerifiedUserId(responseUserId);
+          setDraftCleanupFailed(false);
           setUnavailable(false);
           if (initialCheck.current) {
             initialCheck.current = false;
-            setChecking(false);
           }
+          setChecking(false);
         } else {
           setUnavailable(true);
         }
@@ -162,6 +200,7 @@ export function AppPage({ children }: AppPageProps) {
 
   function retrySessionCheck() {
     if (initialCheck.current) setUnavailable(false);
+    setDraftCleanupFailed(false);
     setRetryVersion((version) => version + 1);
   }
 
@@ -169,7 +208,22 @@ export function AppPage({ children }: AppPageProps) {
     return (
       <main className="bg-background text-foreground grid min-h-screen place-items-center">
         <div className="max-w-sm px-6 text-center">
-          {unavailable ? (
+          {draftCleanupFailed ? (
+            <>
+              <p className="text-foreground text-sm" role="alert">
+                We could not clear saved Access drafts in this tab. Close this
+                tab before another person signs in, or clear this site&apos;s
+                session data and retry.
+              </p>
+              <button
+                className="bg-primary text-primary-foreground mt-5 inline-flex min-h-11 items-center justify-center rounded-md px-4 text-sm font-medium"
+                onClick={retrySessionCheck}
+                type="button"
+              >
+                Retry
+              </button>
+            </>
+          ) : unavailable ? (
             <>
               <p className="text-foreground text-sm" role="alert">
                 We can’t verify your session right now. Your sign-in details are

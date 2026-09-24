@@ -61,6 +61,7 @@ class PrepushTests(unittest.TestCase):
 
         self.assertIn("../packaging/backup", commands["backend-ruff"])
         self.assertIn("../packaging/backup/backup_installation.py", commands["backend-mypy"])
+        self.assertIn("../packaging/backup/restore_installation.py", commands["backend-mypy"])
         self.assertEqual(
             commands["packaging-backup-tests"],
             (
@@ -68,6 +69,7 @@ class PrepushTests(unittest.TestCase):
                 "run",
                 "pytest",
                 "../packaging/backup/tests/test_backup_installation.py",
+                "../packaging/backup/tests/test_restore_installation.py",
                 "--no-cov",
                 "--basetemp",
                 ".backup-contracts",

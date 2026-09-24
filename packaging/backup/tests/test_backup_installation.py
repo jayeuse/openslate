@@ -137,6 +137,22 @@ def test_backup_uses_password_files_and_writes_marker_only_after_restore_verific
     assert not list(Path(config["staging_directory"]).glob("openslate-backup-*"))
 
 
+def test_backup_gives_restic_a_private_cache_without_inheriting_home(tmp_path: Path) -> None:
+    config_path, config = _config(tmp_path)
+    commands = FakeCommands()
+
+    run_backup(config_path, command_runner=commands)
+
+    restic_environments = [env for args, env in commands.calls if Path(args[0]).name == "restic"]
+    assert restic_environments
+    assert all("HOME" not in env for env in restic_environments)
+    assert all("RESTIC_CACHE_DIR" in env for env in restic_environments)
+    assert all(
+        Path(env["RESTIC_CACHE_DIR"]).is_relative_to(Path(config["staging_directory"]))
+        for env in restic_environments
+    )
+
+
 def test_backup_records_the_alembic_revision_read_from_postgresql(tmp_path: Path) -> None:
     config_path, config = _config(tmp_path)
     manifest_payloads: list[dict[str, object]] = []
@@ -158,6 +174,91 @@ def test_backup_records_the_alembic_revision_read_from_postgresql(tmp_path: Path
     assert manifest_payloads[0]["schema_revision"] == "1ae6c84fce12"
     marker = json.loads(Path(config["completion_marker"]).read_text(encoding="utf-8"))
     assert marker["backup_verified"] is True
+
+
+def test_version_two_backup_records_portable_logical_file_roots(tmp_path: Path) -> None:
+    config_path, config = _config(tmp_path)
+    source_root = config["private_file_roots"][0]
+    config["version"] = 2
+    config["private_file_roots"] = [{"id": "workspace_files", "path": source_root}]
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    manifest_payloads: list[dict[str, Any]] = []
+    fake = FakeCommands()
+
+    def commands(args: list[str], *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        if Path(args[0]).name == "restic" and "backup" in args:
+            manifest = Path(next(value for value in args if value.endswith("manifest.json")))
+            manifest_payloads.append(json.loads(manifest.read_text(encoding="utf-8")))
+        return fake(args, env=env)
+
+    run_backup(config_path, command_runner=commands)
+
+    assert manifest_payloads[0]["format_version"] == 2
+    assert manifest_payloads[0]["installation_id"] == config["installation_id"]
+    assert manifest_payloads[0]["private_file_roots"] == [
+        {
+            "root_id": "workspace_files",
+            "source_path": source_root,
+            "path_flavor": "posix",
+            "tree_sha256": manifest_payloads[0]["private_file_roots"][0]["tree_sha256"],
+            "file_count": 1,
+            "total_bytes": len(b"private bytes"),
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "base_path"),
+    [
+        ("darwin", "/Library/Application Support/OpenSlate"),
+        ("win32", r"C:\ProgramData\OpenSlate"),
+    ],
+)
+def test_version_two_config_keeps_logical_roots_with_native_path_forms(
+    tmp_path: Path, platform_name: str, base_path: str
+) -> None:
+    config_path, config = _config(tmp_path)
+    fields = (
+        "pg_password_file",
+        "restic_repository",
+        "restic_password_file",
+        "staging_directory",
+        "completion_marker",
+        "maintenance_state_file",
+        "maintenance_lock_file",
+    )
+    config.update({field: f"{base_path}/{field}" for field in fields})
+    config["version"] = 2
+    config["private_file_roots"] = [{"id": "workspace_files", "path": f"{base_path}/private/files"}]
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    parsed = parse_config(config_path, platform_name=platform_name)
+
+    assert parsed.version == 2
+    assert parsed.private_file_root_ids == ("workspace_files",)
+    assert tuple(map(str, parsed.private_file_roots)) == (f"{base_path}/private/files",)
+    assert parsed.installation_id == config["installation_id"]
+
+
+@pytest.mark.parametrize(
+    "root_ids",
+    [
+        ["../workspace_files"],
+        ["Workspace Files"],
+        ["workspace_files", "workspace_files"],
+    ],
+)
+def test_version_two_backup_rejects_unsafe_or_duplicate_root_ids(
+    tmp_path: Path, root_ids: list[str]
+) -> None:
+    config_path, config = _config(tmp_path)
+    source_root = config["private_file_roots"][0]
+    config["version"] = 2
+    config["private_file_roots"] = [{"id": root_id, "path": source_root} for root_id in root_ids]
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(BackupError, match="private_file_roots"):
+        parse_config(config_path)
 
 
 @pytest.mark.parametrize("revision", ["", "replace-with-current-alembic-revision\n", "one\ntwo\n"])

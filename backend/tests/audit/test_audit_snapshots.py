@@ -48,6 +48,11 @@ def test_serialize_record_contains_only_local_profile_fields() -> None:
     assert snapshot == {
         "email": "alice@example.com",
         "username": "alice",
+        "display_name": None,
+        "identity_kind": None,
+        "job_title": None,
+        "sponsor_user_id": None,
+        "expires_at": None,
         "status": "active",
         "role_id": str(user.role_id),
     }

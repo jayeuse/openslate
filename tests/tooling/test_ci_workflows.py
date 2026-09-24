@@ -76,7 +76,9 @@ class CiWorkflowContractTests(unittest.TestCase):
 
         self.assertIn("../packaging/backup", source)
         self.assertIn("../packaging/backup/backup_installation.py", source)
+        self.assertIn("../packaging/backup/restore_installation.py", source)
         self.assertIn("../packaging/backup/tests/test_backup_installation.py", source)
+        self.assertIn("../packaging/backup/tests/test_restore_installation.py", source)
         self.assertIn("--no-cov --basetemp .backup-contracts", source)
         self.assertIn("../tests/tooling", source)
         self.assertIn("../scripts/environment.py", source)

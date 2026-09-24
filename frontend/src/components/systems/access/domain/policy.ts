@@ -2,6 +2,7 @@ import { initialPeople, type Role } from "./model";
 
 export type AccessIdentityStatus =
   "active" | "pending" | "disabled" | "deleted" | "revoked" | "suspended";
+export type AccessDisplayStatus = AccessIdentityStatus | "expired";
 
 type AccessIdentityBase = {
   id: string;
@@ -29,6 +30,7 @@ export type GuestIdentity = AccessIdentityBase & {
 
 export type ServiceIdentity = AccessIdentityBase & {
   kind: "service";
+  effectiveStatus?: "active" | "disabled" | "expired" | "deleted";
   ownerId: string;
   purpose: string;
   expiresAt: string;
@@ -36,6 +38,20 @@ export type ServiceIdentity = AccessIdentityBase & {
 };
 
 export type AccessIdentity = InternalIdentity | GuestIdentity | ServiceIdentity;
+
+export function displayIdentityStatus(
+  identity: AccessIdentity,
+): AccessDisplayStatus {
+  if (identity.kind === "service")
+    return identity.effectiveStatus ?? identity.status;
+  if (
+    identity.status === "active" &&
+    identity.expiresAt &&
+    Date.parse(identity.expiresAt) <= Date.now()
+  )
+    return "expired";
+  return identity.status;
+}
 
 export type AccessGroup = {
   id: string;

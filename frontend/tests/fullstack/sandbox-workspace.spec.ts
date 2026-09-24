@@ -33,10 +33,25 @@ async function applyTemplate(page: Page, name: string) {
 
 async function publishDraft(page: Page, password: string) {
   await page.getByRole("button", { name: "Review & Publish" }).click();
+  const preview = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        "/api/sandbox/publication-previews" &&
+      response.request().method() === "POST",
+    { timeout: 45_000 },
+  );
   await page.getByRole("button", { name: "Review changes" }).click();
+  expect((await preview).status()).toBe(200);
   await expect(page.getByRole("heading", { name: "Changes" })).toBeVisible();
   await page.getByLabel("Your password").fill(password);
+  const published = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/sandbox/publications" &&
+      response.request().method() === "POST",
+    { timeout: 45_000 },
+  );
   await page.getByRole("button", { name: "Publish changes" }).click();
+  expect((await published).status()).toBe(201);
   await expect(
     page.getByText("Your changes are now published to the live workspace."),
   ).toBeVisible();
@@ -45,6 +60,8 @@ async function publishDraft(page: Page, password: string) {
 test("Sandbox exposes the simplified Build, Automations, Test, and History journey", async ({
   page,
 }) => {
+  // Six sequential template publications measured 44.97s against the shared 45s default.
+  test.setTimeout(90_000);
   const credentials = fixture().admin;
   await page.goto("/login");
   await page.getByLabel("Email or username").fill(credentials.email);

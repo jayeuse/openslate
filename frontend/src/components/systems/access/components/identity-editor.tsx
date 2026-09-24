@@ -55,15 +55,29 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { toast } from "@/components/ui/toast";
-import { departments } from "../domain/model";
-import { applyPatch, changedPatch } from "../helpers/editor-helpers";
+import {
+  applyPatch,
+  changedPatch,
+  closedDepartmentMemberships,
+  sameList,
+  updateDepartmentSelection,
+} from "../helpers/editor-helpers";
 import type {
   AccessController,
   ControllerMutationResult,
   CreateIdentityInput,
   UpdateIdentityPatch,
 } from "../state/controller";
+import { useAccessDraftRegistration } from "../state/draft-navigation";
 import {
+  clearAccessIdentityDraft,
+  editableAccessIdentity,
+  readAccessIdentityDraft,
+  writeAccessIdentityDraft,
+} from "../state/draft-journal";
+import { useVerifiedWorkspaceUserId } from "../../shared/runtime/workspace-identity";
+import {
+  displayIdentityStatus,
   validateAccessIdentity,
   type AccessIdentity,
   type AccessIdentityStatus,
@@ -80,7 +94,10 @@ type IdentityEditorProps = {
 type ConfirmationMode = "delete" | "admin-change" | "destructive-action" | null;
 type EditableField = keyof UpdateIdentityPatch;
 type ReviewedAction =
-  | { type: "disable" | "revoke-invite" | "delete"; identity: AccessIdentity }
+  | {
+      type: "enable" | "disable" | "revoke-invite" | "delete";
+      identity: AccessIdentity;
+    }
   | {
       type: "revoke-session";
       identity: AccessIdentity;
@@ -106,10 +123,6 @@ const statusLabels: Record<AccessIdentityStatus, string> = {
   revoked: "Invitation revoked",
   suspended: "Suspended",
 };
-
-function departmentId(name: string): string {
-  return `department:${name.toLowerCase().replaceAll(" ", "-")}`;
-}
 
 function datetimeLocal(value: string | undefined): string {
   if (!value) return "";
@@ -271,6 +284,7 @@ const fieldLabels: Record<EditableField, string> = {
 };
 
 const reviewedActionLabels: Record<ReviewedAction["type"], string> = {
+  enable: "Enable identity",
   disable: "Disable identity",
   "revoke-invite": "Revoke invitation",
   delete: "Delete identity",
@@ -279,10 +293,12 @@ const reviewedActionLabels: Record<ReviewedAction["type"], string> = {
 };
 
 function reviewedActionImpact(action: ReviewedAction): string {
+  if (action.type === "enable")
+    return "Status becomes active. Expiry and policy may still limit access.";
   if (action.type === "disable")
     return "Removed: this identity will lose active access until restored.";
   if (action.type === "revoke-invite")
-    return "Removed: the pending invitation will no longer grant access.";
+    return "The existing invitation link and temporary password will stop working. The profile remains in Access and can be resent.";
   if (action.type === "delete")
     return "Removed: the identity, memberships, and sessions leave the active directory.";
   if (action.type === "revoke-session")
@@ -295,17 +311,31 @@ function reviewedActionImpact(action: ReviewedAction): string {
 function membershipLabels(
   identity: AccessIdentity,
   controller: AccessController,
+  historical: AccessIdentity = identity,
 ): string[] {
   const groups = identity.groupIds.map(
     (id) =>
       controller.state.groups.find((group) => group.id === id)?.name ?? id,
   );
   if (identity.kind !== "internal") return groups;
+  const historicalPerson = controller.state.people.find(
+    (person) => person.id === historical.id,
+  );
+  const historicalNames = new Map(
+    historicalPerson
+      ? (
+          historicalPerson.departmentIds ??
+          (historical.kind === "internal" ? historical.departmentIds : [])
+        ).map((id, index) => [id, historicalPerson.departments[index]])
+      : [],
+  );
   return [
     ...identity.departmentIds.map(
       (id) =>
-        departments.find((name) => departmentId(name) === id) ??
-        id.replace(/^department:/, "").replaceAll("-", " "),
+        controller.departmentCatalog.find((department) => department.id === id)
+          ?.name ??
+        historicalNames.get(id) ??
+        "Closed department",
     ),
     ...groups,
   ];
@@ -316,7 +346,7 @@ function accessImpact(
   after: AccessIdentity,
   controller: AccessController,
 ): string {
-  if (!before && after.roleId === "sample-admin")
+  if (!before && after.roleId === controller.adminRoleId)
     return "Elevated: new Administrator access is prepared and remains pending until active.";
   if (!before)
     return after.status === "active"
@@ -327,9 +357,9 @@ function accessImpact(
   if (before.status === "active" && after.status !== "active")
     return "Removed: active access will be unavailable.";
   if (before.roleId !== after.roleId) {
-    if (after.roleId === "sample-admin")
+    if (after.roleId === controller.adminRoleId)
       return "Elevated: the identity will become an Administrator.";
-    if (before.roleId === "sample-admin")
+    if (before.roleId === controller.adminRoleId)
       return "Removed: Administrator access will be removed.";
     const beforeCount =
       controller.state.roles.find((role) => role.id === before.roleId)?.grants
@@ -356,7 +386,7 @@ function accessImpact(
       return "Removed: the access period is shortened.";
   }
   const beforeMembership = new Set(membershipLabels(before, controller));
-  const afterMembership = new Set(membershipLabels(after, controller));
+  const afterMembership = new Set(membershipLabels(after, controller, before));
   const added = [...afterMembership].some(
     (item) => !beforeMembership.has(item),
   );
@@ -377,6 +407,7 @@ export function IdentityEditor({
   open,
   onOpenChange,
 }: IdentityEditorProps) {
+  const userId = useVerifiedWorkspaceUserId();
   const existing = identityId
     ? (controller.state.identities.find((item) => item.id === identityId) ??
       controller.state.deletedIdentities.find(
@@ -387,6 +418,8 @@ export function IdentityEditor({
   const [draft, setDraft] = useState<AccessIdentity | null>(null);
   const [baseline, setBaseline] = useState<AccessIdentity | null>(null);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const [journalIssue, setJournalIssue] = useState("");
+  const [savedButUncleared, setSavedButUncleared] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmationMode, setConfirmationMode] =
@@ -403,7 +436,6 @@ export function IdentityEditor({
     useState<ReviewedAction | null>(null);
   const [pendingCreateIdentity, setPendingCreateIdentity] =
     useState<AccessIdentity | null>(null);
-  const [resetPreview, setResetPreview] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
   const nameId = useId();
   const errorId = useId();
@@ -414,15 +446,35 @@ export function IdentityEditor({
       return;
     }
     const key = existing?.id ?? (createKind ? `create:${createKind}` : null);
-    if (!key || loadedKey === key) return;
-    const next = existing
-      ? copyIdentity(existing)
-      : createKind
-        ? createDraft(createKind, controller)
+    const effectiveKey = key ?? identityId;
+    if (!effectiveKey || loadedKey === effectiveKey) return;
+    const stored = readAccessIdentityDraft(userId);
+    const restored =
+      stored.value &&
+      ((stored.value.mode === "edit" && identityId === stored.value.draft.id) ||
+        (stored.value.mode === "create" &&
+          createKind === stored.value.draft.kind))
+        ? stored.value
         : null;
+    const next =
+      restored?.draft ??
+      (existing
+        ? copyIdentity(existing)
+        : createKind
+          ? createDraft(createKind, controller)
+          : null);
     setDraft(next);
-    setBaseline(next ? copyIdentity(next) : null);
-    setLoadedKey(key);
+    setBaseline(restored?.baseline ?? (next ? copyIdentity(next) : null));
+    setLoadedKey(effectiveKey);
+    setSavedButUncleared(false);
+    if (stored.status === "unavailable")
+      setJournalIssue(
+        "Browser draft storage is unavailable. Identity changes may not survive reload.",
+      );
+    else if (stored.status === "invalid")
+      setJournalIssue(
+        "A saved identity draft could not be safely restored. It was not applied.",
+      );
     setErrors([]);
     setConfirmationMode(null);
     setConfirmationName("");
@@ -431,22 +483,95 @@ export function IdentityEditor({
     setPendingReview(null);
     setPendingDestructiveAction(null);
     setPendingCreateIdentity(null);
-  }, [controller, createKind, existing, loadedKey, open]);
+  }, [controller, createKind, existing, identityId, loadedKey, open, userId]);
 
   const dirty =
     draft !== null && baseline !== null && !sameValue(draft, baseline);
+  function closeEditor(): boolean {
+    if (!clearAccessIdentityDraft(userId)) {
+      setJournalIssue(
+        "The browser could not clear your saved identity draft. Keep editing or clear this site's browser data.",
+      );
+      return false;
+    }
+    setConfirmClose(false);
+    setDraft(null);
+    setBaseline(null);
+    setLoadedKey(null);
+    onOpenChange(false);
+    return true;
+  }
+  useAccessDraftRegistration("identity-editor", open && dirty, closeEditor);
+  const targetMissing =
+    (identityId !== null && !existing) ||
+    (draft !== null &&
+      (!controller.state.roles.some((role) => role.id === draft.roleId) ||
+        draft.groupIds.some(
+          (id) => !controller.state.groups.some((group) => group.id === id),
+        ) ||
+        (draft.kind === "internal" &&
+          draft.departmentIds.some(
+            (id) =>
+              !controller.departmentCatalog.some(
+                (department) => department.id === id,
+              ),
+          )) ||
+        (draft.kind === "guest" &&
+          Boolean(draft.sponsorId) &&
+          !controller.state.identities.some(
+            (identity) => identity.id === draft.sponsorId,
+          )) ||
+        (draft.kind === "service" &&
+          Boolean(draft.ownerId) &&
+          !controller.state.identities.some(
+            (identity) => identity.id === draft.ownerId,
+          ))));
   const roles = controller.state.roles.filter(
-    (role) => draft?.kind === "internal" || role.id !== "sample-admin",
+    (role) => draft?.kind === "internal" || role.id !== controller.adminRoleId,
   );
+  const activeDepartmentIds = new Set(
+    controller.departmentCatalog.map((department) => department.id),
+  );
+  const historicalPerson =
+    baseline?.kind === "internal"
+      ? controller.state.people.find((person) => person.id === baseline.id)
+      : undefined;
+  const historicalDepartmentNames = new Map(
+    (historicalPerson?.departmentIds ?? []).map((id, index) => [
+      id,
+      historicalPerson?.departments[index] ?? "Closed department",
+    ]),
+  );
+  const closedDepartments =
+    draft?.kind === "internal"
+      ? closedDepartmentMemberships(
+          draft.departmentIds,
+          activeDepartmentIds,
+          historicalDepartmentNames,
+        )
+      : [];
   const internalIdentities = controller.state.identities.filter(
-    (identity) => identity.kind === "internal" && identity.status === "active",
+    (identity) =>
+      identity.kind === "internal" &&
+      displayIdentityStatus(identity) === "active",
   );
   const sessions = existing
-    ? controller.state.sessions.filter(
-        (session) =>
-          session.identityId === existing.id && session.status === "active",
-      )
+    ? controller.sessionResource.identityId === existing.id
+      ? controller.state.sessions.filter(
+          (session) =>
+            session.identityId === existing.id && session.status === "active",
+        )
+      : []
     : [];
+  const sessionResource = controller.sessionResource;
+  const sessionStatus =
+    sessionResource.identityId === existing?.id
+      ? sessionResource.status
+      : "idle";
+  useEffect(() => {
+    if (!open || !existing || existing.kind === "service") return;
+    void sessionResource.load(existing.id);
+  }, [existing?.id, existing?.kind, open, sessionResource.load]);
   const guestInvitation =
     existing?.kind === "guest"
       ? controller.state.guests.find((guest) => guest.id === existing.id)
@@ -465,13 +590,35 @@ export function IdentityEditor({
       setConfirmClose(true);
       return;
     }
-    onOpenChange(false);
+    closeEditor();
   }
 
   function update(patch: Partial<AccessIdentity>) {
-    setDraft((current) =>
-      current ? ({ ...current, ...patch } as AccessIdentity) : null,
+    if (!draft || !baseline) return;
+    const next = { ...draft, ...patch } as AccessIdentity;
+    const changed = !sameValue(
+      editableAccessIdentity(next),
+      editableAccessIdentity(baseline),
     );
+    const preserved = changed
+      ? writeAccessIdentityDraft(userId, {
+          mode: identityId === null ? "create" : "edit",
+          baseline,
+          draft: next,
+        })
+      : clearAccessIdentityDraft(userId);
+    if (!preserved) {
+      clearAccessIdentityDraft(userId);
+      setJournalIssue(
+        "The browser could not keep your latest identity change for reload. Keep this tab open and save it before leaving.",
+      );
+    } else setJournalIssue("");
+    setDraft(next);
+  }
+
+  function updateDepartment(id: string, checked: boolean) {
+    if (draft?.kind !== "internal") return;
+    update(updateDepartmentSelection(draft, id, checked, activeDepartmentIds));
   }
 
   function showError(message: string) {
@@ -503,6 +650,18 @@ export function IdentityEditor({
 
   function persist() {
     if (!draft) return;
+    if (savedButUncleared) {
+      showError(
+        "This change was already applied. Clear the saved browser draft before editing again.",
+      );
+      return;
+    }
+    if (targetMissing) {
+      showError(
+        "This identity draft refers to a person, role, group, department, sponsor, or owner that is no longer available. Discard it and start again.",
+      );
+      return;
+    }
     if (controller.isPending()) {
       showError(
         "Another Access change is already in progress. Try again shortly.",
@@ -528,6 +687,16 @@ export function IdentityEditor({
       !/^\S+@\S+\.\S+$/.test(normalized.email)
     )
       nextErrors.push("Enter a valid email address.");
+    if (
+      normalized.kind === "internal" &&
+      baseline?.kind === "internal" &&
+      (!sameList(normalized.departmentIds, baseline.departmentIds) ||
+        normalized.primaryDepartmentId !== baseline.primaryDepartmentId) &&
+      normalized.departmentIds.some((id) => !activeDepartmentIds.has(id))
+    )
+      nextErrors.push(
+        "Remove closed departments before saving department changes.",
+      );
     if (nextErrors.length) {
       setErrors([...new Set(nextErrors)]);
       requestAnimationFrame(() => errorRef.current?.focus());
@@ -541,7 +710,7 @@ export function IdentityEditor({
     const patch = changedIdentityPatch(baseline, normalized);
     const fields = Object.keys(patch) as EditableField[];
     if (fields.length === 0) {
-      onOpenChange(false);
+      closeEditor();
       return;
     }
     const conflicts = fields.filter(
@@ -552,7 +721,7 @@ export function IdentityEditor({
         ) && !sameValue(identityValue(existing, field), patch[field]),
     );
     if (conflicts.length > 0) {
-      setDraft(normalized);
+      update(normalized);
       setPendingPatch(patch);
       setConflictFields(conflicts);
       return;
@@ -603,7 +772,7 @@ export function IdentityEditor({
       return;
     }
     if (pendingReview.kind === "create") {
-      if (pendingReview.identity.roleId === "sample-admin") {
+      if (pendingReview.identity.roleId === controller.adminRoleId) {
         setPendingCreateIdentity(pendingReview.identity);
         setPendingReview(null);
         setConfirmationMode("admin-change");
@@ -617,13 +786,13 @@ export function IdentityEditor({
       );
       if (accepted) {
         setPendingReview(null);
-        onOpenChange(false);
+        if (!closeEditor()) setSavedButUncleared(true);
       }
       return;
     }
     const changesAdministratorAccess =
-      (pendingReview.before.roleId === "sample-admin" ||
-        pendingReview.after.roleId === "sample-admin") &&
+      (pendingReview.before.roleId === controller.adminRoleId ||
+        pendingReview.after.roleId === controller.adminRoleId) &&
       (pendingReview.before.roleId !== pendingReview.after.roleId ||
         pendingReview.before.status !== pendingReview.after.status);
     if (changesAdministratorAccess) {
@@ -642,7 +811,7 @@ export function IdentityEditor({
       )
     ) {
       setPendingReview(null);
-      onOpenChange(false);
+      if (!closeEditor()) setSavedButUncleared(true);
     }
   }
 
@@ -671,7 +840,7 @@ export function IdentityEditor({
         setConfirmationMode(null);
         setPendingCreateIdentity(null);
         setPendingPatch(null);
-        onOpenChange(false);
+        if (!closeEditor()) setSavedButUncleared(true);
       }
       return;
     }
@@ -679,14 +848,16 @@ export function IdentityEditor({
     const result =
       pendingDestructiveAction?.type === "disable"
         ? controller.actions.disableIdentity(existing.id)
-        : pendingDestructiveAction?.type === "revoke-invite"
-          ? controller.actions.revokeInvite(existing.id)
-          : controller.actions.deleteIdentity(existing.id);
+        : pendingDestructiveAction?.type === "enable"
+          ? controller.actions.setIdentityStatus(existing.id, "active")
+          : pendingDestructiveAction?.type === "revoke-invite"
+            ? controller.actions.revokeInvite(existing.id)
+            : controller.actions.deleteIdentity(existing.id);
     if (await report(result)) {
       setConfirmationMode(null);
       setConfirmationName("");
       setPendingDestructiveAction(null);
-      onOpenChange(false);
+      if (!closeEditor()) setSavedButUncleared(true);
     }
   }
 
@@ -736,7 +907,11 @@ export function IdentityEditor({
           <SheetHeader className="border-b p-5 pr-14">
             <div className="flex flex-wrap items-center gap-2">
               <SheetTitle>
-                {existing ? draft.name : `Add ${draft.kind} identity`}
+                {existing
+                  ? draft.name
+                  : identityId
+                    ? "Identity no longer available"
+                    : `Add ${draft.kind} identity`}
               </SheetTitle>
               <Badge variant="outline">{draft.kind}</Badge>
               <Badge
@@ -754,13 +929,30 @@ export function IdentityEditor({
             <SheetDescription>
               {draft.kind === "service"
                 ? "Metadata only. Credentials are never displayed or generated."
-                : "No messages or credentials are sent from this editor."}
+                : existing
+                  ? "Profile changes do not send credentials. Resending an invitation sends email."
+                  : "Saving sends an email invitation. Passwords are never shown here."}
             </SheetDescription>
           </SheetHeader>
 
           <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
-            <fieldset disabled={pending} className="contents">
+            <fieldset
+              disabled={pending || savedButUncleared}
+              className="contents"
+            >
               <div className="flex-1 space-y-6 overflow-y-auto p-5">
+                {journalIssue ? (
+                  <Alert role="alert" variant="warning">
+                    {journalIssue}
+                  </Alert>
+                ) : null}
+                {targetMissing ? (
+                  <Alert role="alert" variant="warning">
+                    This identity draft refers to a person, role, group,
+                    department, sponsor, or owner that is no longer available.
+                    It cannot be saved. Discard it and start again.
+                  </Alert>
+                ) : null}
                 {errors.length > 0 && (
                   <div ref={errorRef} id={errorId} tabIndex={-1}>
                     <Alert variant="destructive">
@@ -800,12 +992,15 @@ export function IdentityEditor({
                         type="email"
                         className="min-h-11"
                         value={draft.email}
+                        disabled={Boolean(existing)}
                         onChange={(event) =>
                           update({ email: event.target.value })
                         }
                       />
                       <FieldDescription>
-                        Used only to represent invitation state.
+                        {existing
+                          ? "Email addresses cannot be changed here."
+                          : "An email invitation will be sent. No password is shown here."}
                       </FieldDescription>
                     </Field>
                   )}
@@ -862,8 +1057,8 @@ export function IdentityEditor({
                   <FieldSet>
                     <FieldLegend>Departments</FieldLegend>
                     <div className="grid gap-1 sm:grid-cols-2">
-                      {departments.map((name) => {
-                        const id = departmentId(name);
+                      {controller.departmentCatalog.map((department) => {
+                        const { id, name } = department;
                         return (
                           <label
                             key={id}
@@ -871,27 +1066,35 @@ export function IdentityEditor({
                           >
                             <Checkbox
                               checked={draft.departmentIds.includes(id)}
-                              onCheckedChange={(checked) => {
-                                const departmentIds = checked
-                                  ? [...draft.departmentIds, id]
-                                  : draft.departmentIds.filter(
-                                      (item) => item !== id,
-                                    );
-                                update({
-                                  departmentIds,
-                                  primaryDepartmentId: departmentIds.includes(
-                                    draft.primaryDepartmentId,
-                                  )
-                                    ? draft.primaryDepartmentId
-                                    : (departmentIds[0] ?? ""),
-                                });
-                              }}
+                              onCheckedChange={(checked) =>
+                                updateDepartment(id, checked === true)
+                              }
                             />
                             {name}
                           </label>
                         );
                       })}
+                      {closedDepartments.map(({ id, name }) => (
+                        <label
+                          key={id}
+                          className="hover:bg-muted flex min-h-11 items-center gap-3 rounded-md px-3 text-sm"
+                        >
+                          <Checkbox
+                            checked
+                            onCheckedChange={(checked) =>
+                              updateDepartment(id, checked === true)
+                            }
+                          />
+                          {name} (closed — remove to change departments)
+                        </label>
+                      ))}
                     </div>
+                    {closedDepartments.length > 0 && (
+                      <p className="text-muted-foreground text-sm">
+                        Closed departments cannot be added again. Remove all
+                        closed departments before saving department changes.
+                      </p>
+                    )}
                     <Field>
                       <FieldLabel htmlFor={`${nameId}-primary`}>
                         Primary department
@@ -908,10 +1111,15 @@ export function IdentityEditor({
                           No primary department
                         </NativeSelectOption>
                         {draft.departmentIds.map((id) => (
-                          <NativeSelectOption key={id} value={id}>
-                            {departments.find(
-                              (name) => departmentId(name) === id,
-                            ) ?? id}
+                          <NativeSelectOption
+                            key={id}
+                            value={id}
+                            disabled={!activeDepartmentIds.has(id)}
+                          >
+                            {controller.departmentCatalog.find(
+                              (department) => department.id === id,
+                            )?.name ??
+                              `${closedDepartments.find((department) => department.id === id)?.name ?? "Closed department"} (closed)`}
                           </NativeSelectOption>
                         ))}
                       </NativeSelect>
@@ -922,33 +1130,24 @@ export function IdentityEditor({
                 {draft.kind !== "service" && (
                   <FieldSet>
                     <FieldLegend>Group membership</FieldLegend>
-                    {controller.state.groups.length === 0 ? (
+                    <p className="text-muted-foreground text-sm">
+                      To change membership, close this editor and open the
+                      Groups tab. Choose a group and edit its members there.
+                    </p>
+                    {draft.groupIds.length === 0 ? (
                       <p className="text-muted-foreground text-sm">
-                        No groups are available.
+                        No groups assigned.
                       </p>
                     ) : (
-                      <div className="grid gap-1 sm:grid-cols-2">
-                        {controller.state.groups.map((group) => (
-                          <label
-                            key={group.id}
-                            className="hover:bg-muted flex min-h-11 items-center gap-3 rounded-md px-3 text-sm"
-                          >
-                            <Checkbox
-                              checked={draft.groupIds.includes(group.id)}
-                              onCheckedChange={(checked) =>
-                                update({
-                                  groupIds: checked
-                                    ? [...draft.groupIds, group.id]
-                                    : draft.groupIds.filter(
-                                        (id) => id !== group.id,
-                                      ),
-                                })
-                              }
-                            />
-                            {group.name}
-                          </label>
+                      <ul className="list-disc space-y-1 pl-5 text-sm">
+                        {draft.groupIds.map((groupId) => (
+                          <li key={groupId}>
+                            {controller.state.groups.find(
+                              (group) => group.id === groupId,
+                            )?.name ?? "Group no longer available"}
+                          </li>
                         ))}
-                      </div>
+                      </ul>
                     )}
                   </FieldSet>
                 )}
@@ -957,10 +1156,11 @@ export function IdentityEditor({
                   <FieldGroup>
                     <Field>
                       <FieldLabel htmlFor={`${nameId}-sponsor`}>
-                        Sponsor
+                        Sponsor (required)
                       </FieldLabel>
                       <NativeSelect
                         id={`${nameId}-sponsor`}
+                        aria-describedby={`${nameId}-sponsor-help`}
                         className="w-full [&_select]:min-h-11"
                         value={draft.sponsorId}
                         onChange={(event) =>
@@ -979,6 +1179,10 @@ export function IdentityEditor({
                           </NativeSelectOption>
                         ))}
                       </NativeSelect>
+                      <FieldDescription id={`${nameId}-sponsor-help`}>
+                        A sponsor is required for guest access. Choose an
+                        internal person responsible for this guest.
+                      </FieldDescription>
                     </Field>
                     <ExpiryField
                       id={`${nameId}-guest-expiry`}
@@ -987,13 +1191,21 @@ export function IdentityEditor({
                     />
                     {guestInvitation && (
                       <p className="text-muted-foreground text-xs">
-                        Invitation marked sent{" "}
-                        {guestInvitation.sentAt
-                          ? new Date(guestInvitation.sentAt).toLocaleString()
-                          : "without a recorded timestamp"}
-                        {guestInvitation.resendCount > 0
-                          ? ` · Resent ${guestInvitation.resendCount} ${guestInvitation.resendCount === 1 ? "time" : "times"}`
-                          : ""}
+                        {draft.status === "revoked" ? (
+                          "Invitation revoked. Resend it to issue a new link."
+                        ) : (
+                          <>
+                            Invitation marked sent{" "}
+                            {guestInvitation.sentAt
+                              ? new Date(
+                                  guestInvitation.sentAt,
+                                ).toLocaleString()
+                              : "without a recorded timestamp"}
+                            {guestInvitation.resendCount > 0
+                              ? ` · Resent ${guestInvitation.resendCount} ${guestInvitation.resendCount === 1 ? "time" : "times"}`
+                              : ""}
+                          </>
+                        )}
                       </p>
                     )}
                   </FieldGroup>
@@ -1010,9 +1222,12 @@ export function IdentityEditor({
                       </div>
                     </Alert>
                     <Field>
-                      <FieldLabel htmlFor={`${nameId}-owner`}>Owner</FieldLabel>
+                      <FieldLabel htmlFor={`${nameId}-owner`}>
+                        Owner (required)
+                      </FieldLabel>
                       <NativeSelect
                         id={`${nameId}-owner`}
+                        aria-describedby={`${nameId}-owner-help`}
                         className="w-full [&_select]:min-h-11"
                         value={draft.ownerId}
                         onChange={(event) =>
@@ -1031,6 +1246,10 @@ export function IdentityEditor({
                           </NativeSelectOption>
                         ))}
                       </NativeSelect>
+                      <FieldDescription id={`${nameId}-owner-help`}>
+                        An owner is required for service access. Choose an
+                        internal person accountable for this service.
+                      </FieldDescription>
                     </Field>
                     <Field>
                       <FieldLabel htmlFor={`${nameId}-purpose`}>
@@ -1070,68 +1289,65 @@ export function IdentityEditor({
                     <div className="flex flex-wrap gap-2">
                       {(existing.kind === "internal" ||
                         existing.kind === "guest") &&
-                        existing.status === "pending" && (
-                          <>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="min-h-11"
-                              disabled={pending}
-                              onClick={() =>
-                                void report(
-                                  controller.actions.resendInvite(existing.id),
-                                )
-                              }
-                            >
-                              <Mail /> Resend invitation
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="min-h-11"
-                              disabled={pending}
-                              onClick={() =>
-                                setPendingReview({
-                                  kind: "action",
-                                  action: {
-                                    type: "revoke-invite",
-                                    identity: copyIdentity(existing),
-                                  },
-                                })
-                              }
-                            >
-                              Revoke invitation
-                            </Button>
-                          </>
-                        )}
-                      {existing.kind === "internal" &&
-                        existing.status === "active" && (
+                        (existing.status === "pending" ||
+                          existing.status === "revoked") && (
                           <Button
                             type="button"
                             variant="outline"
                             className="min-h-11"
-                            onClick={() => setResetPreview(true)}
+                            disabled={pending}
+                            onClick={() =>
+                              void report(
+                                controller.actions.resendInvite(existing.id),
+                              )
+                            }
                           >
-                            <KeyRound /> Preview password reset
+                            <Mail /> Resend invitation
                           </Button>
                         )}
-                      {existing.status === "disabled" ||
-                      existing.status === "revoked" ||
-                      existing.status === "deleted" ? (
+                      {(existing.kind === "internal" ||
+                        existing.kind === "guest") &&
+                        existing.status === "pending" && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="min-h-11"
+                            disabled={
+                              pending ||
+                              !controller.availability.invitationRevocation
+                            }
+                            onClick={() =>
+                              setPendingReview({
+                                kind: "action",
+                                action: {
+                                  type: "revoke-invite",
+                                  identity: copyIdentity(existing),
+                                },
+                              })
+                            }
+                          >
+                            Revoke invitation
+                          </Button>
+                        )}
+                      {existing.status === "disabled" ? (
                         <Button
                           type="button"
                           variant="outline"
                           className="min-h-11"
                           disabled={pending}
                           onClick={() =>
-                            void report(
-                              controller.actions.restoreIdentity(existing.id),
-                            )
+                            setPendingReview({
+                              kind: "action",
+                              action: {
+                                type: "enable",
+                                identity: copyIdentity(existing),
+                              },
+                            })
                           }
                         >
-                          <RotateCcw /> Restore identity
+                          <RotateCcw /> Enable identity
                         </Button>
-                      ) : (
+                      ) : existing.status === "active" ? (
                         <Button
                           type="button"
                           variant="outline"
@@ -1141,12 +1357,12 @@ export function IdentityEditor({
                         >
                           Disable identity
                         </Button>
-                      )}
+                      ) : null}
                     </div>
                   </section>
                 )}
 
-                {existing && (
+                {existing && existing.kind !== "service" && (
                   <section
                     aria-labelledby={`${nameId}-sessions`}
                     className="space-y-3 border-t pt-5"
@@ -1158,7 +1374,7 @@ export function IdentityEditor({
                       >
                         Sessions
                       </h3>
-                      {sessions.length > 1 && (
+                      {sessionStatus === "ready" && sessions.length > 1 && (
                         <Button
                           type="button"
                           variant="ghost"
@@ -1181,11 +1397,27 @@ export function IdentityEditor({
                         </Button>
                       )}
                     </div>
-                    {sessions.length === 0 ? (
+                    {sessionStatus === "loading" ? (
+                      <p className="text-muted-foreground text-sm">
+                        Loading active sessions…
+                      </p>
+                    ) : sessionStatus === "error" ? (
+                      <Alert variant="warning">
+                        <p>{sessionResource.error}</p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="mt-2 min-h-11"
+                          onClick={() => void sessionResource.load(existing.id)}
+                        >
+                          Retry sessions
+                        </Button>
+                      </Alert>
+                    ) : sessionStatus === "ready" && sessions.length === 0 ? (
                       <p className="text-muted-foreground text-sm">
                         No active sessions.
                       </p>
-                    ) : (
+                    ) : sessionStatus === "ready" ? (
                       <ul className="divide-y rounded-md border">
                         {sessions.map((session) => (
                           <li
@@ -1230,7 +1462,7 @@ export function IdentityEditor({
                           </li>
                         ))}
                       </ul>
-                    )}
+                    ) : null}
                   </section>
                 )}
 
@@ -1281,8 +1513,12 @@ export function IdentityEditor({
                 Cancel
               </Button>
               {existing?.status !== "deleted" && (
-                <Button type="submit" className="min-h-11" disabled={pending}>
-                  {existing ? "Save changes" : "Add identity"}
+                <Button
+                  type="submit"
+                  className="min-h-11"
+                  disabled={pending || savedButUncleared || targetMissing}
+                >
+                  {identityId ? "Save changes" : "Add identity"}
                 </Button>
               )}
             </SheetFooter>
@@ -1452,7 +1688,7 @@ export function IdentityEditor({
                     description: "No draft-only changes remained to save.",
                     type: "info",
                   });
-                  onOpenChange(false);
+                  closeEditor();
                 } else stageUpdate(next);
               }}
             >
@@ -1491,7 +1727,7 @@ export function IdentityEditor({
               disabled={pending}
               onClick={() => {
                 setConfirmClose(false);
-                onOpenChange(false);
+                closeEditor();
               }}
             >
               Discard changes
@@ -1517,9 +1753,11 @@ export function IdentityEditor({
               {confirmationMode === "delete"
                 ? "Delete identity?"
                 : confirmationMode === "destructive-action"
-                  ? pendingDestructiveAction?.type === "disable"
-                    ? "Disable identity?"
-                    : "Revoke invitation?"
+                  ? pendingDestructiveAction?.type === "enable"
+                    ? "Enable identity?"
+                    : pendingDestructiveAction?.type === "disable"
+                      ? "Disable identity?"
+                      : "Revoke invitation?"
                   : "Change administrator access?"}
             </DialogTitle>
             <DialogDescription>
@@ -1560,7 +1798,11 @@ export function IdentityEditor({
               Cancel
             </DialogClose>
             <Button
-              variant="destructive"
+              variant={
+                pendingDestructiveAction?.type === "enable"
+                  ? "default"
+                  : "destructive"
+              }
               className="min-h-11"
               disabled={confirmationName !== confirmationTargetName || pending}
               onClick={confirmSensitiveAction}
@@ -1568,35 +1810,13 @@ export function IdentityEditor({
               {confirmationMode === "delete"
                 ? "Delete identity"
                 : confirmationMode === "destructive-action"
-                  ? pendingDestructiveAction?.type === "disable"
-                    ? "Disable identity"
-                    : "Revoke invitation"
+                  ? pendingDestructiveAction?.type === "enable"
+                    ? "Enable identity"
+                    : pendingDestructiveAction?.type === "disable"
+                      ? "Disable identity"
+                      : "Revoke invitation"
                   : "Confirm access change"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={resetPreview} onOpenChange={setResetPreview}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Password reset preview</DialogTitle>
-            <DialogDescription>
-              No email is sent and no password or reset token is generated.
-            </DialogDescription>
-          </DialogHeader>
-          <Alert>
-            <Mail className="size-4" />
-            <p className="font-medium">No email sent</p>
-            <div className="text-muted-foreground mt-1">
-              This action leaves the identity’s password and sign-in access
-              unchanged.
-            </div>
-          </Alert>
-          <DialogFooter>
-            <DialogClose render={<Button className="min-h-11" />}>
-              Done
-            </DialogClose>
           </DialogFooter>
         </DialogContent>
       </Dialog>

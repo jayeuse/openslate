@@ -2,10 +2,28 @@ import { expect, test } from "@playwright/test";
 import { z } from "zod";
 import {
   apiFetch,
+  apiFetchWithMetadata,
   ApiError,
   ApiContractError,
   getApiFieldErrors,
 } from "../../../src/lib/api";
+
+test("parses a strict response while preserving its ETag metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json({ id: "record-1" }, { headers: { ETag: '"record-7"' } });
+  try {
+    const result = await apiFetchWithMetadata(
+      "/records/one",
+      z.strictObject({ id: z.string() }),
+    );
+    expect(result.data).toEqual({ id: "record-1" });
+    expect(result.etag).toBe('"record-7"');
+    expect(result.response.headers.get("ETag")).toBe('"record-7"');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("uses the same-origin API path and includes the CSRF cookie for mutations", async () => {
   const originalFetch = globalThis.fetch;

@@ -1,6 +1,6 @@
 """Account-security behavior for users with local Identity credentials."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
 import pytest
@@ -10,16 +10,36 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.systems.access.users.account_operations as account_operations
+import app.systems.access.users.coordination as coordination
+import app.systems.access.users.roles_router as roles_router
 import app.systems.access.users.service as user_service
 from app.systems.access.identity.models import ActionTokenPurpose
 from app.systems.access.identity.service import ActionTokenInvalid, consume_action_token
+from app.systems.access.policy.models import AccessPolicyDefaults
+from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import Role, UserRole, UserStatus
 from app.systems.access.users.roles_router import delete_role, update_role
 from app.systems.access.users.schemas import RoleUpdate, UserUpdate
-from app.systems.access.users.service import InvitationError
 from tests.users.test_local_identity_users import _role, _user
 
 pytestmark = pytest.mark.usefixtures("local_identity_security_events")
+
+
+@pytest.fixture(autouse=True)
+def no_service_identity_references(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        account_operations, "non_deleted_service_identity_count", lambda *_args, **_kwargs: 0
+    )
+    monkeypatch.setattr(
+        roles_router, "non_deleted_service_identity_count", lambda *_args, **_kwargs: 0
+    )
+    monkeypatch.setattr(
+        roles_router,
+        "get_defaults",
+        lambda *_args, **_kwargs: AccessPolicyDefaults(
+            singleton_key="workspace", default_role_id=uuid7()
+        ),
+    )
 
 
 @pytest.mark.parametrize("operation", ["disable", "delete"])
@@ -77,22 +97,28 @@ def test_resend_invalidates_the_previous_invitation_token(
     db.scalar.side_effect = [admin_role, admin, pending]
     issued = Mock(return_value="replacement")
     monkeypatch.setattr(user_service, "issue_action_token", issued)
+    monkeypatch.setattr(user_service, "load_invitation_expiry_days", lambda _db: 7)
 
     result = user_service.resend_invitation(db, pending.id, actor_id=admin.id)
 
     assert result is pending
     issued.assert_called_once_with(
-        db, pending.id, ActionTokenPurpose.INVITATION, created_by=admin.id
+        db,
+        pending.id,
+        ActionTokenPurpose.INVITATION,
+        created_by=admin.id,
+        invitation_lifetime=timedelta(days=7),
     )
     db.commit.assert_called_once()
 
 
-def test_resend_rejects_non_pending_or_deleted_profiles() -> None:
+def test_resend_rejects_non_pending_or_deleted_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
     admin_role = _role(UserRole.ADMIN)
     admin = _user(admin_role)
     active = _user(_role())
     db = Mock(spec=Session)
     db.scalar.side_effect = [admin_role, admin, active]
+    monkeypatch.setattr(user_service, "load_invitation_expiry_days", lambda _db: 7)
 
     with pytest.raises(InvitationError, match="not pending"):
         user_service.resend_invitation(db, active.id, actor_id=admin.id)
@@ -136,6 +162,67 @@ def test_last_active_admin_cannot_be_deleted() -> None:
 
     assert error.value.status_code == 409
     assert target.is_deleted is False
+
+
+@pytest.mark.parametrize("expiry_offset", [-timedelta(days=1), timedelta(days=1)])
+def test_last_administrator_cannot_be_given_an_expiry(expiry_offset: timedelta) -> None:
+    admin_role = _role(UserRole.ADMIN)
+    actor = _user(admin_role)
+    target = _user(admin_role)
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [admin_role, actor, target, 1, 1]
+
+    with pytest.raises(HTTPException) as error:
+        account_operations.update_user(
+            target.id,
+            UserUpdate(expires_at=datetime.now(UTC) + expiry_offset),
+            actor,
+            db,
+        )
+
+    assert error.value.status_code == 409
+    assert target.expires_at is None
+    db.commit.assert_not_called()
+
+
+def test_only_durable_administrator_cannot_be_disabled_when_another_will_expire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin_role = _role(UserRole.ADMIN)
+    actor = _user(admin_role)
+    target = _user(admin_role)
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [admin_role, actor, target, 2, 1]
+    db.scalars.return_value = []
+    monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
+
+    with pytest.raises(HTTPException) as error:
+        account_operations.update_user(
+            target.id, UserUpdate(status=UserStatus.DISABLED), actor, db
+        )
+
+    assert error.value.status_code == 409
+    assert target.status == UserStatus.ACTIVE.value
+    db.commit.assert_not_called()
+
+
+def test_only_durable_administrator_cannot_be_deleted_when_another_will_expire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin_role = _role(UserRole.ADMIN)
+    actor = _user(admin_role)
+    target = _user(admin_role)
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [admin_role, actor, target, 2, 1]
+    db.scalars.return_value = []
+    monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
+
+    with pytest.raises(HTTPException) as error:
+        account_operations.delete_user(target.id, actor, db)
+
+    assert error.value.status_code == 409
+    assert target.is_deleted is False
+    db.commit.assert_not_called()
 
 
 def test_disabled_user_is_locally_revoked_without_provider_call(
@@ -220,6 +307,110 @@ def test_role_with_non_deleted_user_cannot_be_archived() -> None:
 
     assert error.value.status_code == 409
     assert editor.is_deleted is False
+
+
+def test_configured_default_role_cannot_be_archived(monkeypatch: pytest.MonkeyPatch) -> None:
+    admin_role = _role(UserRole.ADMIN)
+    admin = _user(admin_role)
+    editor = Role(id=uuid7(), role="editor", permissions={}, is_deleted=False)
+    defaults = AccessPolicyDefaults(singleton_key="workspace", default_role_id=editor.id)
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [admin_role, admin, editor, 0, 0]
+    monkeypatch.setattr(
+        roles_router, "get_defaults", lambda *_args, **_kwargs: defaults, raising=False
+    )
+
+    with pytest.raises(HTTPException) as error:
+        delete_role(editor.id, admin, db)
+
+    assert error.value.status_code == 409
+    assert editor.is_deleted is False
+    db.commit.assert_not_called()
+
+
+def test_role_with_non_deleted_service_identity_cannot_be_archived(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin_role = _role(UserRole.ADMIN)
+    admin = _user(admin_role)
+    editor = Role(id=uuid7(), role="editor", permissions={}, is_deleted=False)
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [admin_role, admin, editor, 0]
+    monkeypatch.setattr(
+        roles_router, "non_deleted_service_identity_count", lambda *_args, **_kwargs: 1
+    )
+
+    with pytest.raises(HTTPException) as error:
+        delete_role(editor.id, admin, db)
+
+    assert error.value.status_code == 409
+    assert editor.is_deleted is False
+
+
+@pytest.mark.parametrize("operation", ["disable", "delete"])
+def test_service_identity_owner_must_reassign_before_lifecycle_change(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    admin_role = _role(UserRole.ADMIN)
+    admin = _user(admin_role)
+    member = _user(_role())
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [admin_role, admin, member]
+    monkeypatch.setattr(
+        account_operations, "non_deleted_service_identity_count", lambda *_args, **_kwargs: 1
+    )
+
+    with pytest.raises(HTTPException) as error:
+        if operation == "disable":
+            account_operations.update_user(
+                member.id, UserUpdate(status=UserStatus.DISABLED), admin, db
+            )
+        else:
+            account_operations.delete_user(member.id, admin, db)
+
+    assert error.value.status_code == 409
+    assert member.is_deleted is False
+    assert member.status == UserStatus.ACTIVE.value
+
+
+def test_disable_with_profile_patch_blocks_before_any_profile_or_membership_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin_role = _role(UserRole.ADMIN)
+    admin = _user(admin_role)
+    member = _user(_role())
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [admin_role, admin, member]
+    apply_profile = Mock()
+    monkeypatch.setattr(account_operations, "_apply_profile_update", apply_profile)
+    monkeypatch.setattr(
+        account_operations, "non_deleted_service_identity_count", lambda *_args, **_kwargs: 1
+    )
+
+    with pytest.raises(HTTPException) as error:
+        account_operations.update_user(
+            member.id,
+            UserUpdate(status=UserStatus.DISABLED, display_name="Changed"),
+            admin,
+            db,
+        )
+
+    assert error.value.status_code == 409
+    apply_profile.assert_not_called()
+    db.flush.assert_not_called()
+    db.rollback.assert_called_once()
+    assert member.display_name is None
+
+
+def test_service_identity_reference_query_rolls_back_on_database_failure() -> None:
+    db = Mock(spec=Session)
+    db.scalar.side_effect = SQLAlchemyError("unavailable")
+
+    with pytest.raises(HTTPException) as error:
+        coordination.non_deleted_service_identity_count(db, owner_id=uuid7())
+
+    assert error.value.status_code == 503
+    db.rollback.assert_called_once()
 
 
 def test_user_cannot_delete_their_own_account() -> None:

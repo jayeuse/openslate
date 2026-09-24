@@ -9,7 +9,7 @@ from typing import Final
 from uuid import UUID
 
 from sqlalchemy import or_, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.base_model import utc_now
 from app.core.config import get_settings
@@ -20,7 +20,8 @@ from app.systems.access.identity.contracts import (
     ActionTokenInvalid as ActionTokenInvalid,
 )
 from app.systems.access.identity.contracts import (
-    IdentityError as IdentityError,
+    IdentityError,
+    IssuedSession,
 )
 from app.systems.access.identity.contracts import (
     IdentityRateLimited as IdentityRateLimited,
@@ -29,16 +30,21 @@ from app.systems.access.identity.contracts import (
     InvalidCredentials as InvalidCredentials,
 )
 from app.systems.access.identity.contracts import (
-    IssuedSession as IssuedSession,
-)
-from app.systems.access.identity.contracts import (
     RefreshReplayDetected as RefreshReplayDetected,
 )
+from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.identity.models import (
     ActionTokenPurpose,
     IdentityActionToken,
     IdentityCredential,
     IdentitySession,
+)
+from app.systems.access.identity.session_revocation import (
+    invalidate_action_tokens as invalidate_action_tokens,
+)
+from app.systems.access.identity.session_revocation import revoke_session as revoke_session
+from app.systems.access.identity.session_revocation import (
+    revoke_user_sessions as revoke_user_sessions,
 )
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import User, UserStatus
@@ -188,7 +194,7 @@ def authenticate_password(
     valid = (
         user is not None
         and credential is not None
-        and not user.is_deleted
+        and is_identity_eligible(user, now=timestamp)
         and user.status in {UserStatus.PENDING.value, UserStatus.ACTIVE.value}
         and password_valid
     )
@@ -220,6 +226,8 @@ def issue_session(
     now: datetime | None = None,
 ) -> IssuedSession:
     timestamp = _now(now)
+    if not is_identity_eligible(user, now=timestamp):
+        raise InvalidCredentials("Invalid credentials")
     credential = db.get(IdentityCredential, user.id)
     if credential is None:
         raise IdentityError("Identity credential is unavailable")
@@ -275,7 +283,11 @@ def refresh_session(
             raise RefreshReplayDetected("Refresh token replay detected")
         raise InvalidCredentials("Invalid credentials")
     user = db.scalar(select(User).options(joinedload(User.role)).where(User.id == user_id))
-    if user is None or user.is_deleted or user.status == UserStatus.DISABLED.value:
+    if (
+        user is None
+        or not is_identity_eligible(user, now=timestamp)
+        or user.status == UserStatus.DISABLED.value
+    ):
         session.revoked_at = timestamp
         raise InvalidCredentials("Invalid credentials")
     credential = db.get(IdentityCredential, user.id)
@@ -339,10 +351,14 @@ def validate_access_session(
         or session.expires_at <= timestamp
     ):
         return None
-    user = db.scalar(select(User).options(joinedload(User.role)).where(User.id == user_id))
+    user = db.scalar(
+        select(User)
+        .options(joinedload(User.role), selectinload(User.department_memberships))
+        .where(User.id == user_id)
+    )
     active_user = (
         user is not None
-        and not user.is_deleted
+        and is_identity_eligible(user, now=timestamp)
         and user.status == UserStatus.ACTIVE.value
         and is_established_user(user)
         and user.role is not None
@@ -351,7 +367,7 @@ def validate_access_session(
     setup_user = (
         allow_setup
         and user is not None
-        and not user.is_deleted
+        and is_identity_eligible(user, now=timestamp)
         and user.status == UserStatus.PENDING.value
         and user.role is not None
         and not user.role.is_deleted
@@ -369,16 +385,6 @@ def validate_access_session(
 
 def validate_csrf(session: IdentitySession, csrf_token: str) -> bool:
     return bool(csrf_token) and session.csrf_token_digest == _digest(csrf_token)
-
-
-def revoke_session(
-    db: Session, session_id: UUID, user_id: UUID, *, now: datetime | None = None
-) -> bool:
-    session = db.get(IdentitySession, session_id, with_for_update=True)
-    if session is None or session.user_id != user_id:
-        return False
-    session.revoked_at = _now(now)
-    return True
 
 
 def revoke_refresh_session(
@@ -409,34 +415,6 @@ def revoke_refresh_session(
     return True
 
 
-def revoke_user_sessions(
-    db: Session, user_id: UUID, *, except_session_id: UUID | None, now: datetime | None = None
-) -> None:
-    timestamp = _now(now)
-    for session in db.scalars(
-        select(IdentitySession).where(
-            IdentitySession.user_id == user_id, IdentitySession.revoked_at.is_(None)
-        )
-    ):
-        if session.id != except_session_id:
-            session.revoked_at = timestamp
-
-
-def invalidate_action_tokens(db: Session, user_id: UUID, *, now: datetime | None = None) -> None:
-    """Consume outstanding setup and recovery secrets after identity changes."""
-
-    timestamp = _now(now)
-    for action in db.scalars(
-        select(IdentityActionToken)
-        .where(
-            IdentityActionToken.user_id == user_id,
-            IdentityActionToken.consumed_at.is_(None),
-        )
-        .with_for_update()
-    ):
-        action.consumed_at = timestamp
-
-
 def issue_action_token(
     db: Session,
     user_id: UUID,
@@ -444,10 +422,11 @@ def issue_action_token(
     *,
     created_by: UUID | None = None,
     now: datetime | None = None,
+    invitation_lifetime: timedelta | None = None,
 ) -> str:
     timestamp = _now(now)
     user = db.get(User, user_id, with_for_update=True)
-    if user is None or user.is_deleted:
+    if user is None or not is_identity_eligible(user, now=timestamp):
         raise ActionTokenInvalid("Token recipient is unavailable")
     for item in db.scalars(
         select(IdentityActionToken)
@@ -460,17 +439,21 @@ def issue_action_token(
     ):
         item.consumed_at = timestamp
     raw_token = token_urlsafe(32)
+    if invitation_lifetime is not None and (
+        purpose is not ActionTokenPurpose.INVITATION or invitation_lifetime <= timedelta()
+    ):
+        raise ValueError("Invitation lifetime is invalid")
+    lifetime = (
+        invitation_lifetime or _INVITATION_LIFETIME
+        if purpose is ActionTokenPurpose.INVITATION
+        else _RECOVERY_LIFETIME
+    )
     db.add(
         IdentityActionToken(
             user_id=user_id,
             purpose=purpose,
             token_digest=_digest(raw_token),
-            expires_at=timestamp
-            + (
-                _INVITATION_LIFETIME
-                if purpose is ActionTokenPurpose.INVITATION
-                else _RECOVERY_LIFETIME
-            ),
+            expires_at=timestamp + lifetime,
             created_by=created_by,
         )
     )
@@ -487,7 +470,7 @@ def consume_action_token(
     if candidate is None:
         raise ActionTokenInvalid("Token is invalid")
     user = db.get(User, candidate.user_id, with_for_update=True)
-    if user is None or user.is_deleted:
+    if user is None or not is_identity_eligible(user, now=timestamp):
         raise ActionTokenInvalid("Token is invalid")
     action = db.scalar(
         select(IdentityActionToken)
@@ -503,7 +486,11 @@ def consume_action_token(
     ):
         raise ActionTokenInvalid("Token is invalid")
     if (purpose is ActionTokenPurpose.RECOVERY and user.status != UserStatus.ACTIVE.value) or (
-        purpose is ActionTokenPurpose.INVITATION and user.status != UserStatus.PENDING.value
+        purpose is ActionTokenPurpose.INVITATION
+        and (
+            user.status != UserStatus.PENDING.value
+            or user.invitation_sent_at is None
+        )
     ):
         raise ActionTokenInvalid("Token is invalid")
     action.consumed_at = timestamp

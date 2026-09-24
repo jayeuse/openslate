@@ -27,8 +27,9 @@ def enqueue_uploaded(file: File, *, now: datetime | None = None) -> None:
 
 
 def request_scan(db: Session, actor_id: UUID, file_id: UUID) -> FileResponse:
+    candidate = load(db, file_id, active_parent=True)
+    authorize(db, fresh_user(db, actor_id), candidate.purpose, write=True)
     file = load(db, file_id, active_parent=True, lock=True)
-    authorize(fresh_user(db, actor_id), file.purpose, write=True)
     if file.is_deleted or file.state != "pending_scan":
         raise error("file_scan_conflict", "File is not awaiting scanning")
     if file.failure_code == UNRESOLVED:

@@ -1,0 +1,111 @@
+import { readFileSync } from "node:fs";
+import { expect, test, type Page } from "@playwright/test";
+
+type Fixture = Readonly<{
+  runId: string;
+  baseURL: string;
+  admin: Readonly<{ email: string; password: string }>;
+}>;
+
+function fixture(): Fixture {
+  const location = process.env.OPENSLATE_FULLSTACK_FIXTURE;
+  const runId = process.env.OPENSLATE_FULLSTACK_RUN_ID;
+  if (!location || !runId) throw new Error("full-stack fixture is unavailable");
+  const value = JSON.parse(readFileSync(location, "utf8")) as Fixture;
+  if (
+    value.runId !== runId ||
+    value.baseURL !== test.info().project.use.baseURL ||
+    !value.admin.email ||
+    !value.admin.password
+  )
+    throw new Error("full-stack fixture does not match this gateway run");
+  return value;
+}
+
+async function signIn(page: Page) {
+  const credentials = fixture().admin;
+  await page.goto("/login");
+  await page.getByLabel("Email or username").fill(credentials.email);
+  await page.getByLabel("Password").fill(credentials.password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/openview$/);
+}
+
+test("Access defaults and identity editor offer only controls their save paths support", async ({
+  page,
+}) => {
+  await signIn(page);
+
+  await page.goto("/access?view=reviews");
+  await expect(
+    page.getByText("Formal access reviews are not available yet."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start access review" }),
+  ).toHaveCount(0);
+  const configureDefaults = page.getByRole("button", {
+    name: "Configure defaults",
+  });
+  await configureDefaults.focus();
+  await page.keyboard.press("Enter");
+  const defaultRole = page.getByLabel("Default role");
+  await expect(
+    defaultRole.locator("option").filter({ hasText: /^admin$/i }),
+  ).toHaveCount(0);
+  await expect(
+    defaultRole.locator("option").filter({ hasText: /^member$/i }),
+  ).toHaveCount(1);
+
+  await page.keyboard.press("Escape");
+  await expect(configureDefaults).toBeFocused();
+  await page.getByRole("link", { name: "People & services" }).click();
+  await expect(page).toHaveURL(/\/access\?view=identities$/);
+  await page.getByRole("button", { name: "Add identity" }).click();
+  await page.getByRole("menuitem", { name: "Internal identity" }).click();
+  await expect(
+    page.getByText(
+      "To change membership, close this editor and open the Groups tab.",
+    ),
+  ).toBeVisible();
+});
+
+test("Access keeps seven views usable at 390px and only offers truthful directory filters", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const views = [
+    ["overview", "Access overview"],
+    ["identities", "Identity directory"],
+    ["roles", "Roles"],
+    ["groups", "Groups & departments"],
+    ["rules", "Access rules"],
+    ["simulator", "Check access"],
+    ["reviews", "Access reviews"],
+  ] as const;
+
+  for (const [view, heading] of views) {
+    await page.goto(`/access?view=${view}`);
+    await expect(
+      page.getByRole("heading", { level: 2, name: heading }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  }
+
+  await page.goto("/access?view=identities");
+  const filters = page.getByRole("search", { name: "Identity filters" });
+  const status = filters.getByLabel("Status");
+  await expect(status.locator('option[value="deleted"]')).toHaveCount(0);
+  await expect(status.locator('option[value="suspended"]')).toHaveCount(0);
+  await expect(filters.getByLabel("Activity")).toHaveCount(0);
+  await filters.getByText("More filters").click();
+  await expect(filters.getByLabel("Group")).toBeVisible();
+  await expect(filters.getByLabel("Expiry")).toBeVisible();
+  await expect(
+    filters.getByLabel("Sort").locator('option[value="activity"]'),
+  ).toHaveCount(0);
+});

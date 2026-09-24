@@ -27,7 +27,7 @@ from app.systems.platform.files.validation_worker import validate_bounded
 
 
 def reserve(db: Session, user: User, payload: FileCreate) -> FileResponse:
-    authorize(user, payload.purpose, write=True)
+    authorize(db, user, payload.purpose, write=True)
     lock_quota(db)
     require_capacity(db, payload.purpose, payload.expected_size)
     parent(db, payload.record_id, active=True, lock=True)
@@ -58,8 +58,9 @@ def _current(db: Session, file_id: UUID, token: UUID, state: str) -> File:
 def upload(
     db: Session, actor_id: UUID, file_id: UUID, content: bytes, storage: StorageBackend
 ) -> FileResponse:
+    candidate = load(db, file_id, active_parent=True)
+    authorize(db, fresh_user(db, actor_id), candidate.purpose, write=True)
     file = load(db, file_id, active_parent=True, lock=True)
-    authorize(fresh_user(db, actor_id), file.purpose, write=True)
     if file.is_deleted or file.state != "awaiting_upload":
         raise error("file_upload_conflict", "File cannot accept an upload")
     require_live_reservation(file)
@@ -68,8 +69,9 @@ def upload(
     filename, logo = file.filename, file.purpose == "workspace_logo"
     db.rollback()
     validated = validate_bounded(filename, content, logo=logo)
+    candidate = load(db, file_id, active_parent=True)
+    authorize(db, fresh_user(db, actor_id), candidate.purpose, write=True)
     file = load(db, file_id, active_parent=True, lock=True)
-    authorize(fresh_user(db, actor_id), file.purpose, write=True)
     if file.is_deleted or file.state != "awaiting_upload":
         raise error("file_upload_conflict", "File cannot accept an upload")
     require_live_reservation(file)
@@ -118,8 +120,9 @@ def upload(
         raise error(
             "upload_unresolved", "Upload outcome needs administrator reconciliation", 503
         ) from exc
+    candidate = load(db, file_id, active_parent=True)
+    authorize(db, fresh_user(db, actor_id), candidate.purpose, write=True)
     file = _current(db, file_id, token, "uploading")
-    authorize(fresh_user(db, actor_id), file.purpose, write=True)
     parent(db, file.record_id, active=True)
     if file.is_deleted:
         raise error("file_archived", "File was archived during upload")
@@ -145,14 +148,15 @@ def download(
     *,
     current_logo: bool = False,
 ) -> tuple[bytes, str, str]:
-    file = load(db, file_id, lock=True, shared_lock=True)
+    candidate = load(db, file_id)
     user = fresh_user(db, actor_id)
     if current_logo:
         # Caller must check the profile reference under its lock first.
-        if file.purpose != "workspace_logo" or file.is_deleted:
+        if candidate.purpose != "workspace_logo" or candidate.is_deleted:
             raise error("file_not_found", "Logo not found", 404)
     else:
-        authorize(user, file.purpose)
+        authorize(db, user, candidate.purpose)
+    file = load(db, file_id, lock=True, shared_lock=True)
     if file.state != "ready":
         raise error("file_not_ready", "File is not available")
     key, digest, size = file.object_key, file.digest, file.actual_size
@@ -165,14 +169,15 @@ def download(
     if content is None or sha256(content).hexdigest() != digest or len(content) != size:
         raise error("file_integrity_error", "File content is unavailable", 503)
     # Recheck after provider latency, including a concurrent deletion/admission change.
+    candidate = load(db, file_id)
+    fresh_actor = fresh_user(db, actor_id)
+    if not current_logo:
+        authorize(db, fresh_actor, candidate.purpose)
     file = load(db, file_id, lock=True, shared_lock=True)
     if file.state != "ready":
         raise error("file_not_ready", "File is not available")
-    fresh_actor = fresh_user(db, actor_id)
     if current_logo and file.is_deleted:
         raise error("file_not_found", "Logo not found", 404)
-    if not current_logo:
-        authorize(fresh_actor, file.purpose)
     db.commit()
     try:
         append_committed_security_event(
@@ -191,8 +196,9 @@ def download(
 
 
 def archive(db: Session, actor_id: UUID, file_id: UUID, *, reopen: bool = False) -> FileResponse:
+    candidate = load(db, file_id, active_parent=reopen)
+    authorize(db, fresh_user(db, actor_id), candidate.purpose, write=True)
     file = load(db, file_id, active_parent=reopen, lock=True)
-    authorize(fresh_user(db, actor_id), file.purpose, write=True)
     if file.state in {"deleting", "purged"}:
         raise error("file_archive_conflict", "File is being permanently removed")
     file.is_deleted = not reopen
@@ -204,7 +210,7 @@ def archive(db: Session, actor_id: UUID, file_id: UUID, *, reopen: bool = False)
 def reconcile(db: Session, actor_id: UUID, file_id: UUID, storage: StorageBackend) -> FileResponse:
     lock_quota(db)
     user = fresh_user(db, actor_id)
-    authorize(user, "library_document", write=True)
+    authorize(db, user, "library_document", write=True)
     file = load(db, file_id, lock=True)
     if file.state == "deleting":
         from app.systems.platform.files.purge import purge_confirmed
@@ -224,7 +230,7 @@ def reconcile(db: Session, actor_id: UUID, file_id: UUID, storage: StorageBacken
         if token is None:
             raise error("upload_unresolved", "Upload outcome remains unresolved")
         file = _current(db, file_id, token, "uploading")
-        authorize(fresh_user(db, actor_id), "library_document", write=True)
+        authorize(db, fresh_user(db, actor_id), "library_document", write=True)
         from app.systems.platform.files.scan_queue import enqueue_uploaded
 
         enqueue_uploaded(file)
@@ -259,7 +265,7 @@ def reconcile(db: Session, actor_id: UUID, file_id: UUID, storage: StorageBacken
         if file.is_deleted:
             db.rollback()
             raise error("file_archived", "File was archived during scan recovery")
-        authorize(fresh_user(db, actor_id), "library_document", write=True)
+        authorize(db, fresh_user(db, actor_id), "library_document", write=True)
         file.operation_id = None
         file.operation_expires_at = None
         file.failure_code = None

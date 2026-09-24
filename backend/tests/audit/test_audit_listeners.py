@@ -69,6 +69,11 @@ def test_create_listener_stages_and_writes_create_log() -> None:
     assert audit_log.after == {
         "email": "alice@example.com",
         "username": "alice",
+        "display_name": None,
+        "identity_kind": None,
+        "job_title": None,
+        "sponsor_user_id": None,
+        "expires_at": None,
         "status": "active",
         "role_id": str(user.role_id),
     }

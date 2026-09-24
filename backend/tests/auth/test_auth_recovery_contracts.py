@@ -1,5 +1,6 @@
 """Recovery, invitation, and dependency contracts for local Identity routes."""
 
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -12,10 +13,12 @@ from uuid6 import uuid7
 import app.common.dependencies.auth as dependencies
 import app.systems.access.auth.router as auth_router
 from app.common.dependencies.auth import CurrentIdentity
-from app.systems.access.identity.models import ActionTokenPurpose
+from app.systems.access.identity.models import ActionTokenPurpose, IdentitySession
 from app.systems.access.identity.schemas import ActionTokenCompleteRequest, RecoveryRequest
 from app.systems.access.identity.service import ActionTokenInvalid
-from app.systems.access.users.models import UserRole, UserStatus
+from app.systems.access.policy.models import AccessPolicyVersion
+from app.systems.access.users.models import IdentityKind, UserRole, UserStatus
+from app.systems.access.users.permissions import Capability
 from tests.auth.test_auth_router_contracts import _request, _role, _user
 
 pytestmark = pytest.mark.usefixtures("local_auth_router_settings")
@@ -227,8 +230,8 @@ def test_recovery_request_has_identical_success_response_for_known_and_unknown_u
     monkeypatch.setattr(auth_router, "recovery_request_permitted", lambda *_args, **_kwargs: True)
     issue = Mock(return_value="recovery-token")
     queue = Mock()
-    monkeypatch.setattr(auth_router, "issue_action_token", issue)
-    monkeypatch.setattr(auth_router, "queue_action_delivery", queue)
+    monkeypatch.setattr(auth_router.recovery, "issue_action_token", issue)
+    monkeypatch.setattr(auth_router.recovery, "queue_action_delivery", queue)
 
     assert auth_router.request_recovery(payload, _request(), db).status_code == 204
     issue.assert_called_once_with(db, user.id, ActionTokenPurpose.RECOVERY)
@@ -277,6 +280,47 @@ def test_current_identity_validates_one_transport_and_cookie_mutation_csrf(
     assert csrf.value.status_code == 401
 
 
+def test_recovery_request_hides_an_expired_account_without_issuing_a_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    user = _user()
+    user.expires_at = datetime.now(UTC)
+    db.scalar.return_value = user
+    issue = Mock(return_value="recovery-token")
+    monkeypatch.setattr(auth_router, "smtp_delivery_enabled", lambda: True)
+    monkeypatch.setattr(auth_router, "recovery_request_permitted", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(auth_router.recovery, "issue_action_token", issue)
+    monkeypatch.setattr(auth_router.recovery, "queue_action_delivery", Mock())
+
+    response = auth_router.request_recovery(RecoveryRequest(identifier=user.email), _request(), db)
+
+    assert response.status_code == 204
+    issue.assert_not_called()
+    db.commit.assert_called_once()
+
+
+def test_recovery_request_hides_an_expiry_race_after_rate_limit_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    user = _user()
+    db.scalar.return_value = user
+    monkeypatch.setattr(auth_router, "smtp_delivery_enabled", lambda: True)
+    monkeypatch.setattr(auth_router, "recovery_request_permitted", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        auth_router.recovery,
+        "issue_action_token",
+        Mock(side_effect=ActionTokenInvalid("recipient expired")),
+    )
+
+    response = auth_router.request_recovery(RecoveryRequest(identifier=user.email), _request(), db)
+
+    assert response.status_code == 204
+    db.commit.assert_called_once()
+    db.rollback.assert_not_called()
+
+
 def test_dependency_authorization_fails_closed_for_stale_admin_and_setup_identity() -> None:
     setup = CurrentIdentity(_user(), uuid7(), False, True)
     with pytest.raises(HTTPException) as setup_denied:
@@ -298,3 +342,66 @@ def test_dependency_authorization_fails_closed_for_stale_admin_and_setup_identit
     with pytest.raises(HTTPException) as denied:
         dependencies.require_roles(UserRole.ADMIN)(_user())
     assert denied.value.status_code == 403
+
+
+def test_guest_with_an_inconsistent_admin_role_cannot_obtain_admin_authority() -> None:
+    admin_role = _role(UserRole.ADMIN)
+    guest = _user(role=admin_role)
+    guest.identity_kind = IdentityKind.GUEST.value
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [admin_role, guest]
+
+    with pytest.raises(HTTPException) as exact_admin_denied:
+        dependencies.require_fresh_exact_admin(db, guest.id)
+    assert exact_admin_denied.value.status_code == 403
+
+    with pytest.raises(HTTPException) as role_denied:
+        dependencies.require_roles(UserRole.ADMIN)(guest)
+    assert role_denied.value.status_code == 403
+
+    with pytest.raises(HTTPException) as capability_denied:
+        dependencies.require_legacy_capability(Capability.DEPARTMENTS_READ)(guest)
+    assert capability_denied.value.status_code == 403
+
+
+def test_fresh_exact_admin_and_capability_reloads_reject_an_expired_identity() -> None:
+    now = datetime.now(UTC)
+    admin_role = _role(UserRole.ADMIN)
+    actor = _user(role=admin_role)
+    actor.expires_at = now
+    exact_admin_db = Mock(spec=Session)
+    exact_admin_db.scalar.side_effect = [admin_role, actor]
+
+    with pytest.raises(HTTPException) as exact_admin_denied:
+        dependencies.require_fresh_exact_admin(exact_admin_db, actor.id)
+    assert exact_admin_denied.value.status_code == 403
+
+    member_role = _role()
+    member_role.permissions = {Capability.DEPARTMENTS_READ.value: True}
+    actor.role_id = member_role.id
+    actor.role = member_role
+    session = IdentitySession(
+        id=uuid7(),
+        user_id=actor.id,
+        refresh_token_digest="refresh-digest",
+        csrf_token_digest="csrf-digest",
+        expires_at=now + timedelta(days=1),
+    )
+    capabilities_db = Mock(spec=Session)
+    capabilities_db.get.return_value = session
+    policy_version = AccessPolicyVersion(singleton_key="workspace", revision=1)
+    policy_version.is_deleted = False
+    capabilities_db.scalar.side_effect = [policy_version, member_role, actor]
+    capabilities_db.execute.return_value.all.return_value = []
+    capabilities_db.scalars.return_value.all.return_value = []
+
+    with pytest.raises(HTTPException) as capabilities_denied:
+        dependencies.require_fresh_capabilities(
+            capabilities_db,
+            actor_id=actor.id,
+            session_id=session.id,
+            expected_role_id=member_role.id,
+            capabilities=(Capability.DEPARTMENTS_READ,),
+        )
+    assert capabilities_denied.value.status_code == 403
+    assert capabilities_db.scalar.call_args_list[2].args[0]._for_update_arg.read is False

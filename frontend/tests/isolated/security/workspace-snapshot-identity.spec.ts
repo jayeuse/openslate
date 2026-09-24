@@ -9,6 +9,7 @@ import {
   clearVerifiedWorkspaceSessionSnapshot,
   workspaceSessionSnapshotStorageKey,
 } from "../../../src/components/systems/shared/runtime/workspace-identity";
+import { accessDraftStorageKey } from "../../../src/components/systems/access/state/draft-journal";
 import {
   commsDraftTextKey,
   ownedCommsDraftTextId,
@@ -76,7 +77,7 @@ test("unreadable saved workspace state remains recoverable", () => {
   });
 });
 
-test("shell-only cleanup removes only the verified account's workspace state", async () => {
+test("session cleanup removes Access drafts without deleting another account's sample state", async () => {
   const data = new Map<string, string>();
   const storage = {
     get length() {
@@ -102,7 +103,7 @@ test("shell-only cleanup removes only the verified account's workspace state", a
   );
   Object.defineProperty(globalThis, "window", {
     configurable: true,
-    value: {},
+    value: { sessionStorage: storage },
   });
   Object.defineProperty(globalThis, "sessionStorage", {
     configurable: true,
@@ -112,6 +113,8 @@ test("shell-only cleanup removes only the verified account's workspace state", a
     data.set("openslate.sample.v1", "legacy workspace");
     data.set(workspaceSessionSnapshotStorageKey("user-a"), "A workspace");
     data.set(workspaceSessionSnapshotStorageKey("user-b"), "B workspace");
+    data.set(accessDraftStorageKey("user-a", "rules"), "A Access draft");
+    data.set(accessDraftStorageKey("user-b", "rules"), "B Access draft");
     data.set(commsDraftTextKey("thread-1"), "legacy draft");
     data.set(
       commsDraftTextKey(ownedCommsDraftTextId("user-a", "thread-1")),
@@ -131,6 +134,8 @@ test("shell-only cleanup removes only the verified account's workspace state", a
       "B workspace",
     );
     expect(data.get("openslate.sample.v1")).toBe("legacy workspace");
+    expect(data.get(accessDraftStorageKey("user-a", "rules"))).toBeUndefined();
+    expect(data.get(accessDraftStorageKey("user-b", "rules"))).toBeUndefined();
     expect(
       data.get(commsDraftTextKey(ownedCommsDraftTextId("user-a", "thread-1"))),
     ).toBeUndefined();
@@ -138,6 +143,10 @@ test("shell-only cleanup removes only the verified account's workspace state", a
       data.get(commsDraftTextKey(ownedCommsDraftTextId("user-b", "thread-1"))),
     ).toBe("B draft");
     expect(data.get(commsDraftTextKey("thread-1"))).toBe("legacy draft");
+
+    data.set(accessDraftStorageKey("user-a", "rules"), "A after reload");
+    await clearVerifiedWorkspaceSessionSnapshot(null);
+    expect(data.get(accessDraftStorageKey("user-a", "rules"))).toBeUndefined();
   } finally {
     if (originalWindow)
       Object.defineProperty(globalThis, "window", originalWindow);

@@ -82,8 +82,8 @@ def _suspend(file: File) -> None:
 
 
 def claim_next(db: Session, now: datetime) -> ScanClaim | None:
-    identity = db.scalar(
-        select(File.id)
+    candidate = db.scalar(
+        select(File)
         .where(
             File.state == "pending_scan",
             File.operation_id.is_(None),
@@ -92,10 +92,30 @@ def claim_next(db: Session, now: datetime) -> ScanClaim | None:
         .order_by(File.scan_next_attempt_at, File.id)
         .limit(1)
     )
-    if identity is None:
+    if candidate is None:
         db.rollback()
         return None
-    file = load(db, identity, lock=True)
+    if candidate.scan_requested_by is not None:
+        try:
+            authorize(
+                db,
+                fresh_user(db, candidate.scan_requested_by),
+                candidate.purpose,
+                write=True,
+            )
+        except HTTPException as error:
+            db.rollback()
+            if error.status_code != 403:
+                raise
+            file = load(db, candidate.id, lock=True)
+            if file.state == "pending_scan" and file.operation_id is None:
+                system_audit(db)
+                _suspend(file)
+                db.commit()
+            else:
+                db.rollback()
+            return None
+    file = load(db, candidate.id, lock=True)
     # Reloaded after ancestor locks: another request may have changed the candidate.
     if (
         file.state != "pending_scan"
@@ -113,7 +133,9 @@ def claim_next(db: Session, now: datetime) -> ScanClaim | None:
         db.commit()
         return None
     try:
-        authorize(fresh_user(db, file.scan_requested_by), file.purpose, write=True)
+        if file.scan_requested_by != candidate.scan_requested_by:
+            db.rollback()
+            return None
         parent(db, file.record_id, active=True)
         if file.is_deleted:
             raise HTTPException(409, "File is archived")
@@ -197,9 +219,19 @@ def finish_attempt(
     verdict: ScanVerdict | None = None,
     failure: str | None = None,
 ) -> None:
+    candidate = load(db, claim.file_id)
+    try:
+        authorize(db, fresh_user(db, claim.requester_id), candidate.purpose, write=True)
+    except HTTPException as error:
+        db.rollback()
+        if error.status_code != 403:
+            raise
+        file = _locked_claim(db, claim, now)
+        _suspend(file)
+        db.commit()
+        return
     file = _locked_claim(db, claim, now)
     try:
-        authorize(fresh_user(db, claim.requester_id), file.purpose, write=True)
         parent(db, file.record_id, active=True)
         if file.is_deleted:
             raise HTTPException(409, "File is archived")

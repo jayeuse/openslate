@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -90,7 +89,7 @@ def _preflight(runtime_url: str, owner_url: str) -> None:
         owner_engine.dispose()
 
 
-def _load_admin(runtime_engine: Engine, actor_id: UUID) -> User:
+def _load_user(runtime_engine: Engine, actor_id: UUID) -> User:
     with Session(runtime_engine) as database:
         actor = database.scalar(
             select(User)
@@ -98,7 +97,7 @@ def _load_admin(runtime_engine: Engine, actor_id: UUID) -> User:
             .where(User.id == actor_id)
         )
         if actor is None or actor.role is None:
-            raise RuntimeError("The owned relationship administrator could not be loaded")
+            raise RuntimeError("The owned relationship user could not be loaded")
         database.expunge_all()
         return actor
 
@@ -111,8 +110,10 @@ class RelationshipHTTPFixture:
         self.owner_engine = create_engine(owner_url, pool_size=4)
         self.app = create_app()
         self.actor_id = uuid7()
+        self.member_id = uuid7()
+        self.member: User | None = None
         self.graph: RelationshipGraph | None = None
-        self._all_ids: set[UUID] = {self.actor_id}
+        self._all_ids: set[UUID] = {self.actor_id, self.member_id}
         try:
             self.actor = self._seed()
         except BaseException:
@@ -146,24 +147,38 @@ class RelationshipHTTPFixture:
             )
             if not isinstance(admin_role_id, UUID):
                 raise RuntimeError("The local database must contain an active admin role")
+            member_role_id = connection.scalar(
+                text(
+                    "SELECT id FROM public.roles "
+                    "WHERE role = 'member' AND is_deleted = false ORDER BY id LIMIT 1"
+                )
+            )
+            if not isinstance(member_role_id, UUID):
+                raise RuntimeError("The local database must contain an active member role")
             prefix = graph.department_id.hex[:12]
             email = f"rel-http-{prefix}@example.com"
             updated = connection.execute(
                 text(
                     "INSERT INTO public.users (id, email, username, status, role_id) "
-                    "VALUES (:id, :email, :username, 'active', :role_id)"
+                    "VALUES (:id, :email, :username, 'active', :role_id), "
+                    "(:member_id, :member_email, :member_username, 'active', :member_role_id)"
                 ),
                 {
                     "id": self.actor_id,
                     "email": email,
                     "username": f"rel_http_{prefix}",
                     "role_id": admin_role_id,
+                    "member_id": self.member_id,
+                    "member_email": f"rel-http-member-{prefix}@example.com",
+                    "member_username": f"rel_http_member_{prefix}",
+                    "member_role_id": member_role_id,
                 },
             )
-            if updated.rowcount != 1:
-                raise RuntimeError("The local test actor could not be created")
+            if updated.rowcount != 2:
+                raise RuntimeError("The local test actors could not be created")
             self._insert_graph(connection, graph)
-        return _load_admin(self.runtime_engine, self.actor_id)
+        self.member = _load_user(self.runtime_engine, self.member_id)
+        return _load_user(self.runtime_engine, self.actor_id)
 
     @staticmethod
     def _insert_graph(connection: Any, graph: RelationshipGraph) -> None:
@@ -242,7 +257,7 @@ class RelationshipHTTPFixture:
             },
         )
 
-    def _install_overrides(self, actor: User | SimpleNamespace) -> None:
+    def _install_overrides(self, actor: User) -> None:
         self.app.dependency_overrides[get_current_user] = lambda: actor
         self.app.dependency_overrides[get_db] = self._request_database
 
@@ -261,7 +276,7 @@ class RelationshipHTTPFixture:
         finally:
             database.close()
 
-    def client(self, actor: User | SimpleNamespace | None = None) -> TestClient:
+    def client(self, actor: User | None = None) -> TestClient:
         if actor is not None:
             self._install_overrides(actor)
         return TestClient(self.app)
@@ -312,8 +327,10 @@ class RelationshipHTTPFixture:
         try:
             with self.owner_engine.begin() as connection:
                 ids = list(self._all_ids)
+                user_ids = [self.actor_id, self.member_id]
                 if ids:
                     expanded = bindparam("ids", expanding=True)
+                    expanded_user_ids = bindparam("user_ids", expanding=True)
                     connection.execute(
                         text(
                             "DELETE FROM public.relationship_edges "
@@ -328,9 +345,9 @@ class RelationshipHTTPFixture:
                     connection.execute(
                         text(
                             "DELETE FROM public.audit_logs "
-                            "WHERE entity_id IN :ids OR performed_by = :actor_id"
-                        ).bindparams(expanded),
-                        {"ids": ids, "actor_id": self.actor_id},
+                            "WHERE entity_id IN :ids OR performed_by IN :user_ids"
+                        ).bindparams(expanded, expanded_user_ids),
+                        {"ids": ids, "user_ids": user_ids},
                     )
                     for table in ("records", "fields", "modules", "departments"):
                         connection.execute(
@@ -340,7 +357,10 @@ class RelationshipHTTPFixture:
                             {"ids": ids},
                         )
                 connection.execute(
-                    text("DELETE FROM public.users WHERE id = :id"), {"id": self.actor_id}
+                    text("DELETE FROM public.users WHERE id IN :user_ids").bindparams(
+                        bindparam("user_ids", expanding=True)
+                    ),
+                    {"user_ids": user_ids},
                 )
         finally:
             self.owner_engine.dispose()
@@ -355,7 +375,3 @@ def relationship_http_fixture() -> Generator[RelationshipHTTPFixture, None, None
         yield fixture
     finally:
         fixture.cleanup()
-
-
-def detached_member() -> SimpleNamespace:
-    return SimpleNamespace(id=uuid7(), role=SimpleNamespace(role="member", permissions={}))

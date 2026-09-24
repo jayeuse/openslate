@@ -12,6 +12,13 @@ EXPECTED_DATABASE_NAME = "openslate"
 EXPECTED_DATABASE_USER = "openslate_owner"
 
 APPLICATION_TABLES = (
+    "access_default_departments",
+    "access_default_groups",
+    "access_group_members",
+    "access_groups",
+    "access_policy_defaults",
+    "access_policy_versions",
+    "access_rules",
     "audit_logs",
     "departments",
     "fields",
@@ -40,6 +47,8 @@ APPLICATION_TABLES = (
     "sandbox_versions",
     "saved_views",
     "security_events",
+    "service_identities",
+    "user_departments",
     "users",
     "workspace_profiles",
 )
@@ -49,6 +58,8 @@ NON_PRESERVED_TABLES = tuple(
     if table
     not in {
         "identity_credentials",
+        "access_policy_defaults",
+        "access_policy_versions",
         "roles",
         "sandbox_documents",
         "sandbox_versions",
@@ -57,6 +68,13 @@ NON_PRESERVED_TABLES = tuple(
     }
 )
 DELETE_ORDER = (
+    "access_group_members",
+    "access_default_groups",
+    "access_default_departments",
+    "user_departments",
+    "service_identities",
+    "access_rules",
+    "access_groups",
     "identity_sessions",
     "identity_delivery_outbox",
     "identity_action_tokens",
@@ -86,6 +104,8 @@ DELETE_ORDER = (
 
 _RESET_ADVISORY_LOCK_KEY = 8_341_721
 _SCANNER_LEADER_LOCK_KEY = 57_168_423_129_478_012
+ACCESS_POLICY_DEFAULTS_ID = UUID("00000000-0000-7000-8000-000000000004")
+ACCESS_POLICY_VERSION_ID = UUID("00000000-0000-0000-0000-000000000001")
 _COUNT_STATEMENTS = tuple(
     (table, f"SELECT count(*) FROM public.{table}") for table in APPLICATION_TABLES
 )
@@ -96,7 +116,9 @@ SELECT table_name FROM information_schema.tables
 _ALEMBIC_HEAD_STATEMENT = "SELECT version_num FROM public.alembic_version"
 _PROFILE_STATEMENT = """
 SELECT id, created_at, deleted_at, is_deleted, updated_at, performed_by,
-       email, username, status, role_id
+       email, username, status, role_id, display_name, identity_kind, job_title,
+       sponsor_user_id, expires_at, invitation_sent_at, invitation_accepted_at,
+       tokens_valid_after
   FROM public.users WHERE id = %s
 """
 _CREDENTIAL_STATEMENT = """
@@ -111,8 +133,19 @@ SELECT id, singleton_key, display_name, legal_name, description, contact_email,
   FROM public.workspace_profiles
 """
 _ROLES_STATEMENT = """
-SELECT id, created_at, deleted_at, is_deleted, updated_at, performed_by, role, permissions
+SELECT id, created_at, deleted_at, is_deleted, updated_at, performed_by, role, permissions,
+       description
   FROM public.roles
+"""
+_ACCESS_POLICY_DEFAULTS_STATEMENT = """
+SELECT id, singleton_key, default_role_id, invitation_expiry_days, guest_duration_days,
+       service_duration_days, default_deny, require_guest_sponsor, require_service_owner,
+       revision, created_at, deleted_at, is_deleted, updated_at, performed_by
+  FROM public.access_policy_defaults
+"""
+_ACCESS_POLICY_VERSION_STATEMENT = """
+SELECT id, singleton_key, revision, created_at, deleted_at, is_deleted, updated_at, performed_by
+  FROM public.access_policy_versions
 """
 _EFFECTIVE_ADMIN_PROFILES_STATEMENT = """
 SELECT profile.id FROM public.users AS profile
@@ -131,14 +164,17 @@ _LOCK_APPLICATION_STATEMENT = """
 LOCK TABLE public.alembic_version, public.audit_logs, public.departments, public.fields,
  public.files, public.identity_action_tokens, public.identity_delivery_outbox,
  public.identity_credentials, public.identity_rate_limit_buckets, public.identity_sessions,
+ public.access_default_departments, public.access_default_groups, public.access_group_members,
+ public.access_groups, public.access_policy_defaults, public.access_policy_versions,
+ public.access_rules,
  public.lifecycle_confirmation_challenges, public.lifecycle_rate_limit_buckets,
  public.lifecycle_rate_limit_failures, public.modules, public.records,
  public.published_automation_actions, public.published_automation_conditions,
  public.published_automation_definitions, public.published_automation_events,
  public.published_automation_runs, public.relationship_edges, public.roles,
  public.sandbox_bindings, public.sandbox_documents, public.sandbox_publications,
- public.sandbox_test_runs, public.sandbox_versions, public.saved_views,
- public.security_events, public.users, public.workspace_profiles
+ public.sandbox_test_runs, public.sandbox_versions, public.saved_views, public.service_identities,
+ public.security_events, public.user_departments, public.users, public.workspace_profiles
  IN ACCESS EXCLUSIVE MODE NOWAIT
 """
 
@@ -159,6 +195,14 @@ class ProfileSnapshot:
     username: object
     status: object
     role_id: UUID
+    display_name: object
+    identity_kind: object
+    job_title: object
+    sponsor_user_id: object
+    expires_at: object
+    invitation_sent_at: object
+    invitation_accepted_at: object
+    tokens_valid_after: object
 
 
 @dataclass(frozen=True)
@@ -180,6 +224,38 @@ class RoleSnapshot:
     performed_by: object
     role: object
     permissions: object
+    description: object
+
+
+@dataclass(frozen=True)
+class AccessPolicyDefaultsSnapshot:
+    id: UUID
+    singleton_key: object
+    default_role_id: UUID
+    invitation_expiry_days: object
+    guest_duration_days: object
+    service_duration_days: object
+    default_deny: object
+    require_guest_sponsor: object
+    require_service_owner: object
+    revision: object
+    created_at: object
+    deleted_at: object
+    is_deleted: object
+    updated_at: object
+    performed_by: object
+
+
+@dataclass(frozen=True)
+class AccessPolicyVersionSnapshot:
+    id: UUID
+    singleton_key: object
+    revision: object
+    created_at: object
+    deleted_at: object
+    is_deleted: object
+    updated_at: object
+    performed_by: object
 
 
 @dataclass(frozen=True)
@@ -242,5 +318,7 @@ class ResetPlan:
     admin_role_snapshot: RoleSnapshot
     member_role_snapshot: RoleSnapshot
     workspace_snapshot: WorkspaceSnapshot
+    access_policy_defaults_snapshot: AccessPolicyDefaultsSnapshot
+    access_policy_version_snapshot: AccessPolicyVersionSnapshot
     storage_object_keys: tuple[str, ...]
     alembic_head: str

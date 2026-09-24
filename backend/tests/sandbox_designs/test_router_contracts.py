@@ -1,10 +1,7 @@
 from unittest.mock import Mock
 
-from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.common.dependencies.auth import get_current_user
-from app.core.database import get_db
 from app.main import create_app
 from app.systems.access.users.permissions import Capability
 from app.systems.sandbox.designs.schemas import DocumentResponse
@@ -29,17 +26,16 @@ def _document_response() -> DocumentResponse:
 
 def test_document_read_requires_every_structural_read_capability(monkeypatch) -> None:
     import app.systems.sandbox.designs.router as designs_router
-    from tests.rbac.support import make_user
+    from tests.rbac.support import _client, make_user
 
     application = create_app()
-    application.dependency_overrides[get_db] = lambda: Mock(spec=Session)
+    database = Mock(spec=Session)
     monkeypatch.setattr(designs_router, "read_document", lambda _db: _document_response())
     partial = make_user("partial", permissions={Capability.DEPARTMENTS_READ.value: True})
-    application.dependency_overrides[get_current_user] = lambda: partial
 
-    assert TestClient(application).get("/api/sandbox/document").status_code == 403
+    assert _client(application, partial, database).get("/api/sandbox/document").status_code == 403
 
-    application.dependency_overrides[get_current_user] = lambda: make_user(
+    reader = make_user(
         "reader",
         permissions={
             capability.value: True
@@ -51,7 +47,7 @@ def test_document_read_requires_every_structural_read_capability(monkeypatch) ->
             )
         },
     )
-    response = TestClient(application).get("/api/sandbox/document")
+    response = _client(application, reader, database).get("/api/sandbox/document")
 
     assert response.status_code == 200
     assert response.json()["document"]["schemaVersion"] == 2
@@ -59,12 +55,11 @@ def test_document_read_requires_every_structural_read_capability(monkeypatch) ->
 
 def test_document_write_returns_route_local_stale_revision_conflict(monkeypatch) -> None:
     import app.systems.sandbox.designs.router as designs_router
-    from tests.rbac.support import make_user
+    from tests.rbac.support import _client, make_user
 
     database = Mock(spec=Session)
     application = create_app()
-    application.dependency_overrides[get_db] = lambda: database
-    application.dependency_overrides[get_current_user] = lambda: make_user(
+    writer = make_user(
         "writer",
         permissions={
             capability.value: True
@@ -84,7 +79,7 @@ def test_document_write_returns_route_local_stale_revision_conflict(monkeypatch)
         ),
     )
 
-    response = TestClient(application).put(
+    response = _client(application, writer, database).put(
         "/api/sandbox/document",
         json={
             "expectedRevision": 1,

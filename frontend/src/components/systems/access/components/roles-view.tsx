@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpDown,
+  ChevronDown,
   Copy,
-  MoreHorizontal,
   Plus,
   Scale,
   Search,
@@ -53,6 +53,11 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { AccessController } from "../state/controller";
 import type { EditorIntent } from "../helpers/editor-helpers";
 import type { Role } from "../domain/model";
+import {
+  readAccessRoleDraft,
+  type AccessRoleDraft,
+} from "../state/draft-journal";
+import { useVerifiedWorkspaceUserId } from "../../shared/runtime/workspace-identity";
 import { RoleEditor } from "./role-group-editors";
 import {
   completeCollection,
@@ -66,9 +71,9 @@ const PAGE_SIZE = 5;
 
 function roleDescription(role: Role): string {
   if (role.description) return role.description;
-  if (role.id === "sample-admin")
+  if (role.name.toLowerCase() === "admin")
     return "Full protected administration of the workspace.";
-  if (role.id === "sample-member")
+  if (role.name.toLowerCase() === "member")
     return "Standard access to assigned workspace resources.";
   return "No description";
 }
@@ -86,16 +91,48 @@ function draftFromTemplate(
 }
 
 export function RolesView({ controller }: RolesViewProps) {
+  const userId = useVerifiedWorkspaceUserId();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<RoleFilter>("all");
   const [sort, setSort] = useState<RoleSort>("name");
   const [page, setPage] = useState(0);
   const [draft, setDraft] = useState<Role | null>(null);
   const [draftIntent, setDraftIntent] = useState<EditorIntent>("edit");
+  const [restoredValues, setRestoredValues] = useState<
+    AccessRoleDraft["values"] | null
+  >(null);
+  const [journalIssue, setJournalIssue] = useState("");
+  const restoredUserId = useRef<string | null>(null);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [message, setMessage] = useState("");
+  const permissionNames = new Map(
+    controller.permissionCatalog.map((permission) => [
+      permission.id,
+      permission.name,
+    ]),
+  );
+
+  useEffect(() => {
+    if (restoredUserId.current === userId) return;
+    restoredUserId.current = userId;
+    const stored = readAccessRoleDraft(userId);
+    if (stored.value) {
+      setDraft(stored.value.baseline);
+      setDraftIntent(stored.value.intent);
+      setRestoredValues(stored.value.values);
+    }
+    if (stored.status === "unavailable")
+      setJournalIssue(
+        "Browser draft storage is unavailable. Role changes may not survive reload.",
+      );
+    else if (stored.status === "invalid")
+      setJournalIssue(
+        "A saved role draft could not be safely restored. It was not applied.",
+      );
+  }, [userId]);
 
   const memberCount = (roleId: string) =>
     controller.state.identities.filter((identity) => identity.roleId === roleId)
@@ -130,6 +167,23 @@ export function RolesView({ controller }: RolesViewProps) {
   const compared = compareIds
     .map((id) => controller.state.roles.find((role) => role.id === id))
     .filter((role): role is Role => Boolean(role));
+  const recommendedTemplateId = controller.state.templates.some(
+    (template) => template.id === "template:viewer",
+  )
+    ? "template:viewer"
+    : undefined;
+
+  function startCompare() {
+    setMessage("");
+    setCompareIds([]);
+    setCompareMode(true);
+  }
+
+  function cancelCompare() {
+    setMessage("");
+    setCompareIds([]);
+    setCompareMode(false);
+  }
 
   function toggleCompare(roleId: string, checked: boolean) {
     setMessage("");
@@ -153,34 +207,59 @@ export function RolesView({ controller }: RolesViewProps) {
   }
 
   function editRole(role: Role) {
+    setRestoredValues(null);
     setDraftIntent("edit");
     setDraft({ ...role, grants: [...role.grants] });
   }
 
   function createRoleFromTemplate(template: Role) {
+    setRestoredValues(null);
     setDraftIntent("create");
     setDraft(template);
   }
 
+  function startCreateRole() {
+    if (controller.state.templates.length) {
+      setTemplateOpen(true);
+      return;
+    }
+    createRoleFromTemplate({
+      id: "draft:new-role",
+      name: "",
+      description: "",
+      builtin: false,
+      grants: [],
+    });
+  }
+
   const roleColumns = useMemo<DataTableColumn<Role>[]>(
     () => [
-      {
-        id: "compare",
-        header: () => <span className="sr-only">Compare</span>,
-        cell: ({ row }) => {
-          const role = row.original;
-          return (
-            <Checkbox
-              aria-label={`Compare ${role.name}`}
-              checked={compareIds.includes(role.id)}
-              disabled={!compareIds.includes(role.id) && compareIds.length >= 4}
-              onCheckedChange={(checked) =>
-                toggleCompare(role.id, checked === true)
-              }
-            />
-          );
-        },
-      },
+      ...(compareMode
+        ? [
+            {
+              id: "compare",
+              header: "Compare",
+              cell: ({ row }: { row: { original: Role } }) => {
+                const role = row.original;
+                return (
+                  <label className="flex min-h-11 items-center gap-2">
+                    <Checkbox
+                      aria-label={`Compare ${role.name}`}
+                      checked={compareIds.includes(role.id)}
+                      disabled={
+                        !compareIds.includes(role.id) && compareIds.length >= 4
+                      }
+                      onCheckedChange={(checked) =>
+                        toggleCompare(role.id, checked === true)
+                      }
+                    />
+                    <span>Compare</span>
+                  </label>
+                );
+              },
+            } satisfies DataTableColumn<Role>,
+          ]
+        : []),
       {
         id: "role",
         header: "Role",
@@ -218,34 +297,22 @@ export function RolesView({ controller }: RolesViewProps) {
         cell: ({ row }) => {
           const role = row.original;
           return (
-            <div className="flex justify-end">
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="size-11"
-                      aria-label={`Role actions for ${role.name}`}
-                    />
-                  }
-                >
-                  <MoreHorizontal />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuGroup>
-                    <DropdownMenuItem onClick={() => editRole(role)}>
-                      Edit role
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={controller.isPending()}
-                      onClick={() => void duplicate(role)}
-                    >
-                      <Copy /> Duplicate role
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                className="min-h-11"
+                onClick={() => editRole(role)}
+              >
+                {role.builtin ? "View role" : "Edit role"}
+              </Button>
+              <Button
+                variant="ghost"
+                className="min-h-11"
+                disabled={controller.isPending()}
+                onClick={() => void duplicate(role)}
+              >
+                <Copy /> Duplicate
+              </Button>
             </div>
           );
         },
@@ -253,6 +320,7 @@ export function RolesView({ controller }: RolesViewProps) {
     ],
     [
       compareIds,
+      compareMode,
       controller.isPending,
       controller.state.identities,
       duplicate,
@@ -279,19 +347,30 @@ export function RolesView({ controller }: RolesViewProps) {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            className="min-h-11"
-            disabled={compareIds.length < 2}
-            onClick={() => setCompareOpen(true)}
-          >
-            <Scale data-icon="inline-start" />
-            Compare {compareIds.length || "roles"}
-          </Button>
+          {compareMode ? (
+            <>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                onClick={cancelCompare}
+              >
+                Cancel compare
+              </Button>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                disabled={compareIds.length < 2}
+                onClick={() => setCompareOpen(true)}
+              >
+                <Scale data-icon="inline-start" />
+                Compare roles ({compareIds.length})
+              </Button>
+            </>
+          ) : null}
           <Button
             className="min-h-11"
             disabled={controller.isPending()}
-            onClick={() => setTemplateOpen(true)}
+            onClick={startCreateRole}
           >
             <Plus data-icon="inline-start" />
             Create role
@@ -310,9 +389,21 @@ export function RolesView({ controller }: RolesViewProps) {
         </div>
       </Alert>
 
+      {journalIssue ? (
+        <Alert role="alert" variant="warning">
+          {journalIssue}
+        </Alert>
+      ) : null}
+
       {message && (
         <p role="status" className="text-muted-foreground text-sm">
           {message}
+        </p>
+      )}
+
+      {compareMode && (
+        <p className="text-muted-foreground text-sm" role="status">
+          Choose two to four roles, then select Compare roles.
         </p>
       )}
 
@@ -336,7 +427,7 @@ export function RolesView({ controller }: RolesViewProps) {
             />
           </div>
         </Field>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <ToggleGroup
             aria-label="Filter roles"
             value={[filter]}
@@ -362,41 +453,61 @@ export function RolesView({ controller }: RolesViewProps) {
               Custom
             </ToggleGroupItem>
           </ToggleGroup>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={<Button variant="outline" className="min-h-11" />}
-            >
-              <ArrowUpDown data-icon="inline-start" /> Sort
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" aria-label="Sort roles">
-              <DropdownMenuGroup>
-                <DropdownMenuItem
-                  onClick={() => {
-                    setSort("name");
-                    setPage(0);
-                  }}
+          <details className="group w-full rounded-md border sm:w-auto">
+            <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2">
+              <span>More options</span>
+              <ChevronDown
+                className="size-4 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+                aria-hidden="true"
+              />
+            </summary>
+            <div className="flex flex-wrap items-center gap-2 border-t p-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={<Button variant="outline" className="min-h-11" />}
                 >
-                  Name
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    setSort("members");
-                    setPage(0);
-                  }}
+                  <ArrowUpDown data-icon="inline-start" /> Sort
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" aria-label="Sort roles">
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setSort("name");
+                        setPage(0);
+                      }}
+                    >
+                      Name
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setSort("members");
+                        setPage(0);
+                      }}
+                    >
+                      Most members
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setSort("grants");
+                        setPage(0);
+                      }}
+                    >
+                      Most grants
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {!compareMode ? (
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={startCompare}
                 >
-                  Most members
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    setSort("grants");
-                    setPage(0);
-                  }}
-                >
-                  Most grants
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  <Scale data-icon="inline-start" /> Compare roles
+                </Button>
+              ) : null}
+            </div>
+          </details>
         </div>
       </div>
 
@@ -408,14 +519,14 @@ export function RolesView({ controller }: RolesViewProps) {
             </EmptyMedia>
             <EmptyTitle>No roles found</EmptyTitle>
             <EmptyDescription>
-              Adjust the search or create a role from a template.
+              Adjust the search or create a role.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
             <Button
               className="min-h-11"
               disabled={controller.isPending()}
-              onClick={() => setTemplateOpen(true)}
+              onClick={startCreateRole}
             >
               Create role
             </Button>
@@ -448,16 +559,22 @@ export function RolesView({ controller }: RolesViewProps) {
                         {roleDescription(role)}
                       </CardDescription>
                     </div>
-                    <Checkbox
-                      aria-label={`Compare ${role.name}`}
-                      checked={compareIds.includes(role.id)}
-                      disabled={
-                        !compareIds.includes(role.id) && compareIds.length >= 4
-                      }
-                      onCheckedChange={(checked) =>
-                        toggleCompare(role.id, checked)
-                      }
-                    />
+                    {compareMode && (
+                      <label className="flex min-h-11 items-center gap-2">
+                        <Checkbox
+                          aria-label={`Compare ${role.name}`}
+                          checked={compareIds.includes(role.id)}
+                          disabled={
+                            !compareIds.includes(role.id) &&
+                            compareIds.length >= 4
+                          }
+                          onCheckedChange={(checked) =>
+                            toggleCompare(role.id, checked === true)
+                          }
+                        />
+                        <span>Compare</span>
+                      </label>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent className="grid grid-cols-2 gap-3 text-sm">
@@ -476,7 +593,7 @@ export function RolesView({ controller }: RolesViewProps) {
                     className="min-h-11 flex-1"
                     onClick={() => editRole(role)}
                   >
-                    Edit
+                    {role.builtin ? "View role" : "Edit role"}
                   </Button>
                   <Button
                     variant="ghost"
@@ -521,7 +638,12 @@ export function RolesView({ controller }: RolesViewProps) {
                   createRoleFromTemplate(draftFromTemplate(template));
                 }}
               >
-                <span className="font-medium">{template.name}</span>
+                <span className="flex items-center gap-2 font-medium">
+                  {template.name}
+                  {template.id === recommendedTemplateId && (
+                    <Badge variant="secondary">Recommended</Badge>
+                  )}
+                </span>
                 <span className="text-muted-foreground mt-1 block text-sm">
                   {template.description}
                 </span>
@@ -549,6 +671,12 @@ export function RolesView({ controller }: RolesViewProps) {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
+                  {role.name.toLowerCase() === "admin" ? (
+                    <p className="text-muted-foreground mb-3 text-xs">
+                      Protected Administrator management access is additional to
+                      these data permissions.
+                    </p>
+                  ) : null}
                   <ul className="flex flex-col gap-2 text-sm">
                     {role.grants.length ? (
                       role.grants.map((grant) => (
@@ -556,7 +684,7 @@ export function RolesView({ controller }: RolesViewProps) {
                           key={grant}
                           className="bg-muted rounded-md px-2 py-1"
                         >
-                          {grant}
+                          {permissionNames.get(grant) ?? grant}
                         </li>
                       ))
                     ) : (
@@ -586,7 +714,11 @@ export function RolesView({ controller }: RolesViewProps) {
         controller={controller}
         draft={draft}
         intent={draftIntent}
-        onClose={() => setDraft(null)}
+        restoredValues={restoredValues}
+        onClose={() => {
+          setDraft(null);
+          setRestoredValues(null);
+        }}
       />
     </section>
   );

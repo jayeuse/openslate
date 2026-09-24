@@ -29,7 +29,8 @@ from app.core.middleware.trusted_hosts import ExactTrustedHostMiddleware
 from app.core.observability import configure_observability_logging, log_event
 from app.core.readiness import dispose_readiness_resources, is_database_ready
 from app.core.static_site import StaticSite
-from app.systems.access.auth.router import router as auth_router
+from app.systems.access.auth.aggregate_router import router as auth_router
+from app.systems.access.policy import router as access_policy_router
 from app.systems.manage.audit.router import internal_security_events_router, security_events_router
 from app.systems.manage.audit.router import router as audit_router
 from app.systems.manage.workspace.router import router as workspace_router
@@ -261,6 +262,7 @@ def create_app() -> FastAPI:
             reset_request_context(token)
 
     app.include_router(auth_router, prefix="/api")
+    app.include_router(access_policy_router, prefix="/api")
     app.include_router(departments_router, prefix="/api")
     app.include_router(sandbox_designs_router, prefix="/api")
     app.include_router(sandbox_publications_router, prefix="/api")

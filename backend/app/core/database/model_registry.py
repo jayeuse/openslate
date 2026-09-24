@@ -6,6 +6,16 @@ from app.systems.access.identity.models import (  # noqa: F401
     IdentityRateLimitBucket,
     IdentitySession,
 )
+from app.systems.access.policy.models import (  # noqa: F401
+    AccessDefaultDepartment,
+    AccessDefaultGroup,
+    AccessGroup,
+    AccessGroupMember,
+    AccessPolicyDefaults,
+    AccessPolicyVersion,
+    AccessRule,
+)
+from app.systems.access.service_identities.models import ServiceIdentity  # noqa: F401
 from app.systems.access.users.models import Role, User  # noqa: F401
 from app.systems.manage.audit.models import AuditLog, SecurityEvent  # noqa: F401
 from app.systems.manage.workspace.models import WorkspaceProfile  # noqa: F401

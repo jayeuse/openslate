@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.systems.sandbox.departments.router import router as departments_router
 from app.systems.sandbox.fields.router import (
@@ -16,6 +15,7 @@ from app.systems.sandbox.fields.router import (
 from app.systems.sandbox.fields.router import router as fields_router
 from app.systems.sandbox.modules.router import router as modules_router
 from app.systems.sandbox.records.router import router as records_router
+from tests.catalog.auth_support import override_catalog_authorization
 
 
 def test_routers_expose_crud_restore_and_reorder_contract() -> None:
@@ -95,9 +95,7 @@ def _catalog_rejection_client(db: Session) -> TestClient:
     app = FastAPI()
     for router in (fields_router, records_router, modules_router, departments_router):
         app.include_router(router, prefix="/api")
-    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
-        id=None, role=SimpleNamespace(role="admin")
-    )
+    override_catalog_authorization(app)
     app.dependency_overrides[get_db] = lambda: db
     return TestClient(app)
 

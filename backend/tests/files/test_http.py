@@ -36,7 +36,15 @@ def test_non_admin_cannot_list_library_or_logos(client):
         assert response.json()["detail"]["code"] == "forbidden"
 
 
-def test_read_only_cannot_reserve_attachment(client):
+def test_read_only_cannot_reserve_attachment(client, monkeypatch):
+    from app.systems.platform.files import access
+
+    def denied(_db, **_kwargs):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    monkeypatch.setattr(access, "authorize_workspace_capabilities", denied)
     response = client.post(
         "/api/files",
         json={

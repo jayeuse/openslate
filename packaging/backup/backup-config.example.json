@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "installation_id": "00000000000000000000000000000000",
   "database_url": "postgresql://openslate_owner@127.0.0.1:5432/openslate",
   "pg_password_file": "/protected/openslate/pg-password",
@@ -10,6 +10,8 @@
   "maintenance_state_file": "/protected/openslate/maintenance-state.json",
   "maintenance_lock_file": "/protected/openslate/maintenance.lock",
   "maintenance_max_age_seconds": 300,
-  "private_file_roots": ["/protected/openslate/private-files"],
+  "private_file_roots": [
+    {"id": "private_files", "path": "/protected/openslate/private-files"}
+  ],
   "initialize_repository": true
 }

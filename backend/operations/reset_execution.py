@@ -15,6 +15,8 @@ if __package__:
         _LOCK_APPLICATION_STATEMENT,
         _RESET_ADVISORY_LOCK_KEY,
         _SCANNER_LEADER_LOCK_KEY,
+        ACCESS_POLICY_DEFAULTS_ID,
+        ACCESS_POLICY_VERSION_ID,
         DELETE_ORDER,
         NON_PRESERVED_TABLES,
         ResetError,
@@ -23,6 +25,8 @@ if __package__:
     )
     from .reset_planning import (  # type: ignore[import-not-found]
         _expected_snapshot_payload,
+        _read_access_policy_defaults,
+        _read_access_policy_version,
         _read_alembic_head,
         _read_credential,
         _read_profile,
@@ -37,6 +41,8 @@ else:
         _LOCK_APPLICATION_STATEMENT,
         _RESET_ADVISORY_LOCK_KEY,
         _SCANNER_LEADER_LOCK_KEY,
+        ACCESS_POLICY_DEFAULTS_ID,
+        ACCESS_POLICY_VERSION_ID,
         DELETE_ORDER,
         NON_PRESERVED_TABLES,
         ResetError,
@@ -45,6 +51,8 @@ else:
     )
     from reset_planning import (
         _expected_snapshot_payload,
+        _read_access_policy_defaults,
+        _read_access_policy_version,
         _read_alembic_head,
         _read_credential,
         _read_profile,
@@ -92,6 +100,30 @@ def _reset_sandbox_workspace(connection: Any) -> None:
     )
 
 
+def _reset_access_policy_singletons(connection: Any, plan: ResetPlan) -> None:
+    """Restore seeded Access policy values without replacing either singleton row."""
+    _execute(
+        connection,
+        """UPDATE public.access_policy_defaults
+              SET singleton_key = 'workspace', default_role_id = %s,
+                  invitation_expiry_days = 7, guest_duration_days = 30,
+                  service_duration_days = 90, default_deny = true,
+                  require_guest_sponsor = true, require_service_owner = true,
+                  revision = 1, deleted_at = NULL, is_deleted = false,
+                  updated_at = now(), performed_by = NULL
+            WHERE id = %s""",
+        (plan.preserved_member_role_id, ACCESS_POLICY_DEFAULTS_ID),
+    )
+    _execute(
+        connection,
+        """UPDATE public.access_policy_versions
+              SET singleton_key = 'workspace', revision = 1, deleted_at = NULL,
+                  is_deleted = false, updated_at = now(), performed_by = NULL
+            WHERE id = %s""",
+        (ACCESS_POLICY_VERSION_ID,),
+    )
+
+
 def _validate_postconditions(
     connection: Any,
     plan: ResetPlan,
@@ -110,6 +142,11 @@ def _validate_postconditions(
         raise ResetError("The reset postcondition was not met")
     if _single_value(connection, count_statements["roles"]) != 2:
         raise ResetError("The reset postcondition was not met")
+    if (
+        _single_value(connection, count_statements["access_policy_defaults"]) != 1
+        or _single_value(connection, count_statements["access_policy_versions"]) != 1
+    ):
+        raise ResetError("The Access policy singleton reset postcondition was not met")
     if (
         _single_value(connection, count_statements["sandbox_documents"]) != 1
         or _single_value(connection, count_statements["sandbox_versions"]) != 0
@@ -161,6 +198,37 @@ def _validate_postconditions(
     credential = _read_credential(connection, plan.preserved_admin_id)
     if stable_snapshot_payload(credential) != stable_snapshot_payload(plan.credential_snapshot):
         raise ResetError("The preserved administrator credential changed")
+
+    policy_defaults = _read_access_policy_defaults(connection)
+    if (
+        policy_defaults.id != plan.access_policy_defaults_snapshot.id
+        or policy_defaults.singleton_key != "workspace"
+        or policy_defaults.created_at != plan.access_policy_defaults_snapshot.created_at
+        or policy_defaults.default_role_id != plan.preserved_member_role_id
+        or policy_defaults.invitation_expiry_days != 7
+        or policy_defaults.guest_duration_days != 30
+        or policy_defaults.service_duration_days != 90
+        or policy_defaults.default_deny is not True
+        or policy_defaults.require_guest_sponsor is not True
+        or policy_defaults.require_service_owner is not True
+        or policy_defaults.revision != 1
+        or policy_defaults.deleted_at is not None
+        or policy_defaults.is_deleted is not False
+        or policy_defaults.performed_by is not None
+    ):
+        raise ResetError("The Access policy defaults reset postcondition was not met")
+
+    policy_version = _read_access_policy_version(connection)
+    if (
+        policy_version.id != plan.access_policy_version_snapshot.id
+        or policy_version.singleton_key != "workspace"
+        or policy_version.created_at != plan.access_policy_version_snapshot.created_at
+        or policy_version.revision != 1
+        or policy_version.deleted_at is not None
+        or policy_version.is_deleted is not False
+        or policy_version.performed_by is not None
+    ):
+        raise ResetError("The Access policy version reset postcondition was not met")
 
     if _read_alembic_head(connection) != plan.alembic_head:
         raise ResetError("The database migration head changed")
@@ -218,10 +286,16 @@ def apply_reset(
         )
         for table_name in DELETE_ORDER:
             _execute(connection, f"DELETE FROM public.{table_name}")
+        _reset_access_policy_singletons(connection, locked_plan)
         _reset_sandbox_workspace(connection)
         _execute(
             connection,
             "DELETE FROM public.identity_credentials WHERE user_id <> %s",
+            (locked_plan.preserved_admin_id,),
+        )
+        _execute(
+            connection,
+            "DELETE FROM public.users WHERE identity_kind = 'guest' AND id <> %s",
             (locked_plan.preserved_admin_id,),
         )
         _execute(

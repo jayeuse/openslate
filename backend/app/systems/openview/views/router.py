@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_capability
+from app.common.dependencies import require_legacy_capability
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -25,7 +25,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.query import invalid_view, validate_definition
 
 router = APIRouter(prefix="/views", tags=["views"])
-Reader = Annotated[User, Depends(require_capability(Capability.RECORDS_READ))]
+Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
 Database = Annotated[Session, Depends(get_db)]
 
 
