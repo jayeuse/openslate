@@ -6,6 +6,7 @@ from app.common.dependencies.auth import (
     require_capability,
     require_fresh_capabilities,
     require_fresh_exact_admin,
+    require_fresh_legacy_capabilities,
     require_legacy_capability,
     require_roles,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "require_all_capabilities",
     "require_capability",
     "require_fresh_capabilities",
+    "require_fresh_legacy_capabilities",
     "require_fresh_exact_admin",
     "require_legacy_capability",
     "require_roles",

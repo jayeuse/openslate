@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import SecretStr
 
+from app.core.config.instance import InstanceTargetError
 from operations import seed_sample_data as sample_seeder
 from operations.seed_sample_data_specs import FIELD_SPECS, RECORD_SPECS
 
@@ -56,6 +57,10 @@ class _FakeSeedApiClient:
         }
         self.next_id = 0
         self.invitation_payloads: list[dict[str, str]] = []
+        self.verified_identity: str | None = None
+
+    def verify_instance(self, expected_identity: str) -> None:
+        self.verified_identity = expected_identity
 
     def request(self, method, path, payload=None, query=None):
         self.calls.append((method, path, dict(query) if query is not None else None))
@@ -80,15 +85,73 @@ class _FakeSeedApiClient:
 
 
 def _run_sample_seed(
-    monkeypatch: pytest.MonkeyPatch, client: _FakeSeedApiClient, *arguments: str
+    monkeypatch: pytest.MonkeyPatch,
+    client: _FakeSeedApiClient,
+    *arguments: str,
+    backend_url: str = "http://127.0.0.1:8000",
 ) -> None:
     settings = SimpleNamespace(
-        backend_url="https://api.example.test",
+        backend_url=backend_url,
         seed_access_token=SecretStr("test-access-token"),
     )
+    application = SimpleNamespace(
+        database_url="postgresql+psycopg://openslate_runtime:test@127.0.0.1:54322/openslate",
+        backend_port=8000,
+    )
     monkeypatch.setattr(sample_seeder, "get_seed_settings", lambda: settings)
+    monkeypatch.setattr(sample_seeder, "get_settings", lambda: application)
+    monkeypatch.setattr(sample_seeder, "instance_target_for_process", lambda *_args: None)
+    monkeypatch.setattr(sample_seeder, "instance_identity_for_process", lambda: "unit-instance")
     monkeypatch.setattr(sample_seeder, "ApiClient", lambda *_args, **_kwargs: client)
     sample_seeder.main(list(arguments))
+
+
+def test_sample_seed_rejects_remote_or_different_worktree_api_before_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeSeedApiClient("http://127.0.0.1:8000")
+
+    with pytest.raises(InstanceTargetError, match="BACKEND_URL"):
+        _run_sample_seed(monkeypatch, client, backend_url="https://api.example.test:8000")
+
+    assert client.calls == []
+
+
+@pytest.mark.parametrize("observed", [None, "different-instance"])
+def test_seed_api_identity_mismatch_is_rejected_before_authenticated_requests(
+    monkeypatch: pytest.MonkeyPatch, observed: str | None
+) -> None:
+    seen = {}
+
+    class _Response:
+        def __init__(self) -> None:
+            self.headers = {} if observed is None else {"X-OpenSlate-Instance": observed}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"status":"ok","service":"openslate-api"}'
+
+        def geturl(self) -> str:
+            return "http://127.0.0.1:8000/api/health"
+
+    def open_request(request):
+        seen["request"] = request
+        return _Response()
+
+    monkeypatch.setattr(sample_seeder, "urlopen", open_request)
+    client = sample_seeder.ApiClient(
+        "http://127.0.0.1:8000", token="must-not-be-sent-before-verification"
+    )
+
+    with pytest.raises(RuntimeError, match="BACKEND_URL"):
+        client.verify_instance("expected-instance")
+
+    assert seen["request"].get_header("Authorization") is None
 
 
 @pytest.mark.parametrize(

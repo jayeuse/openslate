@@ -95,6 +95,69 @@ def test_query_bounds_and_operator_allowlist():
         QueryDefinition(columns=[reference, reference])
 
 
+def test_query_definition_accepts_or_logic_and_bounded_search_fields() -> None:
+    text = {"field_id": uuid7(), "expected_type": "text"}
+    long_text = {"field_id": uuid7(), "expected_type": "long_text"}
+
+    definition = QueryDefinition(
+        logic="or",
+        search="x" * 240,
+        search_fields=[text, long_text],
+    )
+
+    assert definition.logic == "or"
+    assert definition.search == "x" * 240
+    assert [reference.field_id for reference in definition.search_fields] == [
+        text["field_id"],
+        long_text["field_id"],
+    ]
+    with pytest.raises(ValidationError):
+        QueryDefinition(search="x" * 241)
+
+
+@pytest.mark.parametrize(
+    ("kind", "operator", "value"),
+    [
+        (FieldType.TEXT, "neq", "expected"),
+        (FieldType.LONG_TEXT, "suffix", "suffix"),
+        (FieldType.EMAIL, "suffix", "example.test"),
+        (FieldType.URL, "suffix", "/item"),
+        (FieldType.SELECT, "contains", "active"),
+        (FieldType.TEXT, "blank", None),
+        (FieldType.INTEGER, "not_blank", None),
+    ],
+)
+def test_query_filter_accepts_phase_one_operators(
+    kind: FieldType, operator: str, value: object
+) -> None:
+    item = field(kind)
+
+    predicate = QueryFilter(
+        field_id=item.id,
+        expected_type=kind,
+        operator=operator,
+        value=value,
+    )
+
+    assert predicate.operator == operator
+
+
+@pytest.mark.parametrize(
+    ("kind", "operator", "value"),
+    [
+        (FieldType.SELECT, "suffix", "a"),
+        (FieldType.INTEGER, "contains", "1"),
+        (FieldType.TEXT, "blank", "unexpected"),
+        (FieldType.SELECT, "not_blank", "unexpected"),
+    ],
+)
+def test_query_filter_rejects_incompatible_phase_one_operators(
+    kind: FieldType, operator: str, value: object
+) -> None:
+    with pytest.raises(ValidationError):
+        QueryFilter(field_id=uuid7(), expected_type=kind, operator=operator, value=value)
+
+
 @pytest.mark.parametrize(
     ("offset", "valid"),
     [(10_000, True), (10_001, True), (100_001, True), (-1, False)],

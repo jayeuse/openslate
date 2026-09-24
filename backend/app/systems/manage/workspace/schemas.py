@@ -1,11 +1,11 @@
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from babel.core import Locale, UnknownLocaleError
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from app.common.normalization import normalize_email
 
@@ -122,3 +122,7 @@ class WorkspaceResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+    @computed_field
+    def today(self) -> date:
+        return datetime.now(ZoneInfo(self.timezone)).date()

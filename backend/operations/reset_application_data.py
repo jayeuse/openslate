@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from psycopg import connect
+
+from app.core.config.environment import environment_inputs
+from app.core.config.instance import assert_psycopg_target, instance_target_for_process
+from app.core.config.settings import DOTENV_PATH
 
 if __package__:
     from .reset_execution import (  # type: ignore[import-not-found]
@@ -153,10 +156,28 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
     connection: Any = None
     try:
-        migration_url, admin_email = required_environment(os.environ)
-        storage_root, backend_host, backend_port = required_storage_environment(os.environ)
-        validate_local_database_url(migration_url)
-        connection = connect(_psycopg_database_url(migration_url))
+        values = environment_inputs(DOTENV_PATH)
+        environment = values.get("ENVIRONMENT", "").strip().casefold()
+        if environment not in {"development", "dev", "local", "test"}:
+            raise ResetError(
+                "Application data reset is available only for local development or disposable tests"
+            )
+        migration_url, admin_email = required_environment(values)
+        storage_root, backend_host, backend_port = required_storage_environment(values)
+        target = instance_target_for_process(migration_url, "openslate_owner")
+        runner_manifest_authorized = target is None
+        validate_local_database_url(
+            migration_url, target, runner_manifest_authorized=runner_manifest_authorized
+        )
+        connection = connect(
+            _psycopg_database_url(
+                migration_url,
+                target,
+                runner_manifest_authorized=runner_manifest_authorized,
+            )
+        )
+        if target is not None:
+            assert_psycopg_target(connection, target, expected_user="openslate_owner")
         storage = ResetStorage(Path(storage_root))
         plan = build_reset_plan(
             connection, admin_email, storage_object_keys=storage.list_object_keys()

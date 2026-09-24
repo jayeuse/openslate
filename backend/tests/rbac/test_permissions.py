@@ -127,3 +127,20 @@ def test_legacy_capability_guard_rejects_missing_or_malformed_permissions(
         require_legacy_capability(Capability.RECORDS_WRITE)(user)
 
     assert raised.value.status_code == 403
+
+
+def test_legacy_guard_requires_every_capability_for_combined_board_and_report_actions() -> None:
+    read_only = make_user("read_only", permissions={"records.read": True})
+    editor = make_user(
+        "editor_both",
+        permissions={"records.read": True, "records.write": True},
+    )
+    combined_guard = require_legacy_capability(
+        Capability.RECORDS_READ, Capability.RECORDS_WRITE
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        combined_guard(read_only)
+
+    assert raised.value.status_code == 403
+    assert combined_guard(editor) is editor

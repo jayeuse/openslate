@@ -5,7 +5,12 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.systems.platform.files.access import authorize, error, fresh_user, load
+from app.systems.platform.files.access import (
+    authorize_contextual_file,
+    error,
+    fresh_user,
+    load,
+)
 from app.systems.platform.files.models import File
 from app.systems.platform.files.schemas import FileResponse
 
@@ -26,10 +31,15 @@ def enqueue_uploaded(file: File, *, now: datetime | None = None) -> None:
     file.failure_code = None if file.scan_requested_by else "scan_adoption_required"
 
 
-def request_scan(db: Session, actor_id: UUID, file_id: UUID) -> FileResponse:
+def request_scan(
+    db: Session, actor_id: UUID, file_id: UUID, *, board_id: UUID | None = None
+) -> FileResponse:
     candidate = load(db, file_id, active_parent=True)
-    authorize(db, fresh_user(db, actor_id), candidate.purpose, write=True)
+    authorize_contextual_file(
+        db, fresh_user(db, actor_id), candidate, board_id=board_id, write=True
+    )
     file = load(db, file_id, active_parent=True, lock=True)
+    authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True)
     if file.is_deleted or file.state != "pending_scan":
         raise error("file_scan_conflict", "File is not awaiting scanning")
     if file.failure_code == UNRESOLVED:

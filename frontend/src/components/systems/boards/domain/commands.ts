@@ -16,7 +16,9 @@ import {
   parseBoardConfiguration,
 } from "../adapters/portability";
 import {
+  canViewBoardAudience,
   getAnnouncementLifecycle,
+  type BoardViewer,
   validateBoardEvent,
   validateBoardAnnouncement,
 } from "./content";
@@ -70,6 +72,7 @@ export type BoardCommandContext = {
   preview: boolean;
   now: string;
   id: string;
+  viewer: BoardViewer;
   can: (
     boardId: string | null,
     permission: "view" | "edit" | "manage",
@@ -99,6 +102,27 @@ export function executeBoardCommand(
     return fail(
       "This identity is unavailable. Choose an active identity in Access.",
     );
+  if (context.viewer.id !== context.actorId || !context.viewer.active)
+    return fail(
+      "This identity is unavailable. Choose an active identity in Access.",
+    );
+  function canViewAudience(audience: BoardAudience, authorId: string): boolean {
+    return canViewBoardAudience(audience, context.viewer, authorId);
+  }
+  function canViewAnnouncementDraft(announcement: BoardAnnouncement): boolean {
+    return canViewAudience(announcement.audience, announcement.authorId);
+  }
+  function canViewAnnouncementWhole(announcement: BoardAnnouncement): boolean {
+    const revision = getAnnouncementLifecycle(
+      announcement,
+      context.now,
+    ).revision;
+    return (
+      canViewAnnouncementDraft(announcement) &&
+      (revision === null ||
+        canViewAudience(revision.audience, announcement.authorId))
+    );
+  }
   function success(
     next: BoardsState,
     boardId: string,
@@ -186,6 +210,37 @@ export function executeBoardCommand(
   if (command.type === "personal") {
     if (command.value.identityId !== context.actorId)
       return fail("Personal settings belong to the current identity.");
+    const previous = state.personal[context.actorId];
+    const newlyPersonalized = new Set([
+      ...command.value.readAnnouncementIds.filter(
+        (id) => !previous?.readAnnouncementIds.includes(id),
+      ),
+      ...command.value.bookmarkedAnnouncementIds.filter(
+        (id) => !previous?.bookmarkedAnnouncementIds.includes(id),
+      ),
+    ]);
+    for (const announcementId of newlyPersonalized) {
+      const announcement = state.announcements.find(
+        (item) => item.id === announcementId,
+      );
+      const board = state.boards.find(
+        (item) => item.id === announcement?.boardId,
+      );
+      const lifecycle = announcement
+        ? getAnnouncementLifecycle(announcement, context.now)
+        : null;
+      if (
+        !announcement ||
+        !board ||
+        board.status !== "active" ||
+        !context.can(board.id, "view") ||
+        lifecycle?.status !== "published" ||
+        !lifecycle.visible ||
+        !lifecycle.revision ||
+        !canViewAudience(lifecycle.revision.audience, announcement.authorId)
+      )
+        return fail("This announcement is no longer available.");
+    }
     return {
       state: {
         ...state,
@@ -386,6 +441,8 @@ export function executeBoardCommand(
     const existing = state.events.find((item) => item.id === event.id);
     if (existing?.archived)
       return fail("Restore this archived event before editing it.");
+    if (existing && !canViewAudience(existing.audience, existing.authorId))
+      return fail("This event is unavailable or you cannot change it.");
     if (
       existing &&
       (existing.boardId !== event.boardId ||
@@ -439,6 +496,7 @@ export function executeBoardCommand(
     if (
       !event ||
       !boardWritable(command.boardId, "edit") ||
+      !canViewAudience(event.audience, event.authorId) ||
       (event.authorId !== context.actorId &&
         !context.can(command.boardId, "manage"))
     )
@@ -492,6 +550,8 @@ export function executeBoardCommand(
     );
     if (existing?.status === "archived")
       return fail("Restore this archived announcement before editing it.");
+    if (existing && !canViewAnnouncementDraft(existing))
+      return fail("This announcement is unavailable or you cannot change it.");
     if (
       existing &&
       (existing.boardId !== announcement.boardId ||
@@ -591,6 +651,7 @@ export function executeBoardCommand(
     if (
       !item ||
       !boardWritable(command.boardId, "edit") ||
+      !canViewAnnouncementWhole(item) ||
       (item.authorId !== context.actorId &&
         !context.can(command.boardId, "manage"))
     )

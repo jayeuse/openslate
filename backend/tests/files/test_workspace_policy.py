@@ -123,8 +123,8 @@ def test_attachment_mutations_authorize_before_the_file_lock(
             raise StopAtFileLock
         return candidate
 
-    def authorize(_db, _user, purpose, *, write=False):
-        assert purpose == "record_attachment" and write is True
+    def authorize_contextual_file(_db, _user, file, *, board_id=None, write=False):
+        assert file.purpose == "record_attachment" and board_id is None and write is True
         events.append("policy")
         return actor
 
@@ -134,8 +134,8 @@ def test_attachment_mutations_authorize_before_the_file_lock(
     )
     monkeypatch.setattr(
         service if operation is service.upload else scan_queue,
-        "authorize",
-        authorize,
+        "authorize_contextual_file",
+        authorize_contextual_file,
     )
 
     with pytest.raises(StopAtFileLock):
@@ -147,7 +147,7 @@ def test_attachment_mutations_authorize_before_the_file_lock(
 def test_claim_next_suspends_only_deliberate_policy_denial(monkeypatch: pytest.MonkeyPatch):
     actor = _actor()
     candidate = SimpleNamespace(
-        id=uuid4(), scan_requested_by=actor.id, purpose="record_attachment"
+        id=uuid4(), scan_requested_by=actor.id, purpose="record_attachment", board_id=None
     )
     locked = SimpleNamespace(
         state="pending_scan",
@@ -162,7 +162,7 @@ def test_claim_next_suspends_only_deliberate_policy_denial(monkeypatch: pytest.M
     monkeypatch.setattr(scan_processing, "fresh_user", lambda _db, _id: actor)
     monkeypatch.setattr(
         scan_processing,
-        "authorize",
+        "authorize_contextual_file",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(HTTPException(status_code=403)),
     )
     monkeypatch.setattr(scan_processing, "load", lambda *_args, **_kwargs: locked)
@@ -177,7 +177,7 @@ def test_claim_next_propagates_policy_unavailability_without_suspending(
 ):
     actor = _actor()
     candidate = SimpleNamespace(
-        id=uuid4(), scan_requested_by=actor.id, purpose="record_attachment"
+        id=uuid4(), scan_requested_by=actor.id, purpose="record_attachment", board_id=None
     )
     rollbacks: list[str] = []
     database = SimpleNamespace(
@@ -188,7 +188,7 @@ def test_claim_next_propagates_policy_unavailability_without_suspending(
     monkeypatch.setattr(scan_processing, "fresh_user", lambda _db, _id: actor)
     monkeypatch.setattr(
         scan_processing,
-        "authorize",
+        "authorize_contextual_file",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(HTTPException(status_code=503)),
     )
     monkeypatch.setattr(
@@ -219,7 +219,7 @@ def _claim() -> ScanClaim:
 
 def test_finish_attempt_suspends_only_deliberate_policy_denial(monkeypatch: pytest.MonkeyPatch):
     claim = _claim()
-    candidate = SimpleNamespace(purpose="record_attachment")
+    candidate = SimpleNamespace(purpose="record_attachment", board_id=None)
     locked = SimpleNamespace(
         state="pending_scan",
         operation_id=claim.operation_id,
@@ -243,7 +243,7 @@ def test_finish_attempt_suspends_only_deliberate_policy_denial(monkeypatch: pyte
     monkeypatch.setattr(scan_processing, "fresh_user", lambda _db, _id: _actor())
     monkeypatch.setattr(
         scan_processing,
-        "authorize",
+        "authorize_contextual_file",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(HTTPException(status_code=403)),
     )
 
@@ -257,14 +257,14 @@ def test_finish_attempt_propagates_policy_unavailability_without_suspending(
     monkeypatch: pytest.MonkeyPatch,
 ):
     claim = _claim()
-    candidate = SimpleNamespace(purpose="record_attachment")
+    candidate = SimpleNamespace(purpose="record_attachment", board_id=None)
     rollbacks: list[str] = []
     database = SimpleNamespace(info={}, rollback=lambda: rollbacks.append("rollback"))
     monkeypatch.setattr(scan_processing, "load", lambda *_args, **_kwargs: candidate)
     monkeypatch.setattr(scan_processing, "fresh_user", lambda _db, _id: _actor())
     monkeypatch.setattr(
         scan_processing,
-        "authorize",
+        "authorize_contextual_file",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(HTTPException(status_code=503)),
     )
 

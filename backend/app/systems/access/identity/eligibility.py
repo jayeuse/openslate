@@ -2,6 +2,9 @@
 
 from datetime import UTC, datetime
 
+from sqlalchemy import and_, or_
+from sqlalchemy.sql.elements import ColumnElement
+
 from app.core.base_model import utc_now
 from app.systems.access.users.models import IdentityKind, User
 
@@ -16,6 +19,16 @@ def is_identity_eligible(user: User, *, now: datetime | None = None) -> bool:
     if expires_at is not None and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=UTC)
     return not user.is_deleted and (expires_at is None or expires_at > timestamp)
+
+
+def identity_eligible_clause(*, now: datetime | None = None) -> ColumnElement[bool]:
+    """SQL equivalent of the account-expiry boundary for recipient queries."""
+
+    timestamp = now or utc_now()
+    return and_(
+        User.is_deleted.is_(False),
+        or_(User.expires_at.is_(None), User.expires_at > timestamp),
+    )
 
 
 def is_internal_identity(user: User) -> bool:

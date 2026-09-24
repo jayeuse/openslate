@@ -7,9 +7,8 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 
+from app.core.config.instance import InstanceTarget
 from operations import reset_application_data as reset
 from operations import reset_execution as execution
 from operations import reset_planning
@@ -104,7 +103,6 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
     )
     monkeypatch.setattr(execution, "_single_value", lambda *_: True)
     monkeypatch.setattr(execution, "_validate_postconditions", lambda *_args, **_kwargs: None)
-
     with pytest.raises(execution.ResetError, match="reset committed but private storage"):
         execution.apply_reset(
             database,
@@ -136,27 +134,67 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
     )
 
 
-def test_reset_rejects_remote_runtime_or_missing_owner_environment() -> None:
-    local = "postgresql://openslate_owner:secret@127.0.0.1:54322/openslate"
-    assert reset.validate_local_database_url(local) is None
-    for url in (
-        local.replace("127.0.0.1", "remote.example"),
-        local.replace("openslate_owner", "openslate_runtime"),
-        local.replace("54322", "55322"),
-    ):
-        with pytest.raises(reset.ResetError):
-            reset.validate_local_database_url(url)
-    with pytest.raises(reset.ResetError):
-        reset.required_environment({"DATABASE_URL": local, "ADMIN_EMAIL": "admin@example.test"})
-    with pytest.raises(reset.ResetError):
-        reset.required_storage_environment(
-            {"BACKEND_BIND_HOST": "127.0.0.1", "BACKEND_PORT": "8000"}
-        )
+def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
+    monkeypatch, tmp_path
+) -> None:
+    url = "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55322/openslate_boards"
+    target = InstanceTarget(
+        instance_id="openslate-boards-a1b2c3d4",
+        host="127.0.0.1",
+        port=55322,
+        database="openslate_boards",
+        attestation_path=tmp_path / "instance.json",
+    )
+    values = {
+        "ENVIRONMENT": "development",
+        "MIGRATION_DATABASE_URL": url,
+        "ADMIN_EMAIL": "admin@example.test",
+        "FILES_STORAGE_ROOT": str(tmp_path),
+        "BACKEND_BIND_HOST": "127.0.0.1",
+        "BACKEND_PORT": "8000",
+    }
+    connection = Mock()
+    storage = Mock(list_object_keys=Mock(return_value=()))
+    seen_paths = []
+    monkeypatch.setattr(reset, "environment_inputs", lambda path: seen_paths.append(path) or values)
+    monkeypatch.setattr(reset, "instance_target_for_process", lambda *_args: target)
+    monkeypatch.setattr(reset, "connect", lambda _url: connection)
+    monkeypatch.setattr(reset, "ResetStorage", lambda _root: storage)
+    monkeypatch.setattr(reset, "build_reset_plan", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(reset, "_print_plan", lambda _plan: None)
+    monkeypatch.setattr(reset, "assert_psycopg_target", Mock())
+
+    reset.main([])
+
+    assert seen_paths == [reset.DOTENV_PATH]
+    reset.assert_psycopg_target.assert_called_once_with(
+        connection, target, expected_user="openslate_owner"
+    )
+    connection.close.assert_called_once()
 
 
-def test_reset_derives_the_single_current_alembic_head() -> None:
-    config = Config()
-    config.set_main_option("script_location", "migrations")
-    heads = ScriptDirectory.from_config(config).get_heads()
-    assert len(heads) == 1
-    assert reset_planning._expected_alembic_head() == heads[0]
+@pytest.mark.parametrize("environment", ["production", "prod"])
+def test_reset_rejects_production_before_target_resolution_or_connection(
+    monkeypatch, tmp_path, environment
+) -> None:
+    values = {
+        "ENVIRONMENT": environment,
+        "MIGRATION_DATABASE_URL": (
+            "postgresql+psycopg://openslate_owner:secret@db.example.test:5432/openslate"
+        ),
+        "ADMIN_EMAIL": "admin@example.test",
+        "FILES_STORAGE_ROOT": str(tmp_path),
+        "BACKEND_BIND_HOST": "127.0.0.1",
+        "BACKEND_PORT": "8000",
+    }
+    target = Mock()
+    connection = Mock()
+    monkeypatch.setattr(reset, "environment_inputs", lambda _path: values)
+    monkeypatch.setattr(reset, "instance_target_for_process", target)
+    monkeypatch.setattr(reset, "connect", connection)
+
+    with pytest.raises(SystemExit, match="local development or disposable tests"):
+        reset.main([])
+
+    target.assert_not_called()
+    connection.assert_not_called()

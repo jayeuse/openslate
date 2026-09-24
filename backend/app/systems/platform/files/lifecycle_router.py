@@ -14,7 +14,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.platform.files.access import error, load
+from app.systems.platform.files.access import error, load, require_unlinked
 from app.systems.platform.files.providers import StorageBackend, hold_file_worker
 from app.systems.platform.files.purge import purge_confirmed
 from app.systems.platform.files.schemas import FileResponse
@@ -40,7 +40,9 @@ Admin = Annotated[User, Depends(require_roles("admin"))]
 DB = Annotated[Session, Depends(get_db)]
 
 
-def purge_impact(db: Session, actor_id: UUID, file_id: UUID) -> LifecycleImpactResponse:
+def purge_impact(
+    db: Session, actor_id: UUID, file_id: UUID, *, board_id: UUID | None = None
+) -> LifecycleImpactResponse:
     if not get_settings().lifecycle_purge_enabled:
         raise error("purge_disabled", "Permanent purge is disabled", 403)
     # Workspace mutations lock profile before file; use that same order.
@@ -52,6 +54,12 @@ def purge_impact(db: Session, actor_id: UUID, file_id: UUID) -> LifecycleImpactR
     if profile is not None and profile.logo_file_id == file_id:
         raise error("file_current_logo", "Replace or remove the current logo before purging")
     file = load(db, file_id, lock=True)
+    if file.purpose == "board_attachment":
+        if board_id is None or file.board_id != board_id:
+            raise error("file_not_found", "File not found", 404)
+        require_unlinked(db, file.id)
+    elif board_id is not None:
+        raise error("file_not_found", "File not found", 404)
     if not file.is_deleted:
         raise error("close_required", "Archive the file before purging")
     if file.state == "uploading" or file.operation_id is not None:
@@ -67,6 +75,7 @@ def purge_impact(db: Session, actor_id: UUID, file_id: UUID) -> LifecycleImpactR
                 "operation": str(file.operation_id),
                 "purpose": file.purpose,
                 "parent": str(file.record_id),
+                "board": str(file.board_id),
                 "bytes": file.actual_size,
                 "scan_requested_by": str(file.scan_requested_by),
                 "scan_attempts": file.scan_attempts,

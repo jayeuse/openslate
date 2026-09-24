@@ -19,6 +19,8 @@ def test_uncertain_probe_stops_cli_without_claiming_or_reprobing(monkeypatch, ca
             pass
 
     monkeypatch.setattr("sys.argv", ["worker"])
+    # This unit test owns a synthetic worker without a live attested database.
+    monkeypatch.setattr(worker, "instance_target_for_process", lambda *args: None)
     monkeypatch.setattr(worker, "get_engine", lambda: object())
     monkeypatch.setattr(worker, "ScannerLeader", lambda engine: nullcontext(Leader()))
     monkeypatch.setattr(worker, "AuditSession", lambda engine: nullcontext(object()))

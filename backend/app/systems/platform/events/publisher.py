@@ -17,10 +17,17 @@ def publish_invalidations(events: Iterable[InvalidationEvent]) -> bool:
     """Publish one committed transaction's deduplicated invalidations on one connection."""
 
     unique_events = tuple(dict.fromkeys(events))
+    public_events = tuple(event for event in unique_events if event.recipient_id is None)
+    private_events = tuple(event for event in unique_events if event.recipient_id is not None)
+    if len(public_events) > MAX_INVALIDATIONS_PER_COMMIT:
+        public_events = (resync_event(),)
+    if len(private_events) > MAX_INVALIDATIONS_PER_COMMIT:
+        # Recipient-specific invalidations are best effort; never turn them into
+        # a resync signal visible to another recipient.
+        private_events = ()
+    unique_events = public_events + private_events
     if not unique_events:
         return True
-    if len(unique_events) > MAX_INVALIDATIONS_PER_COMMIT:
-        unique_events = (resync_event(),)
 
     try:
         settings = get_settings()
@@ -32,7 +39,7 @@ def publish_invalidations(events: Iterable[InvalidationEvent]) -> bool:
             options=f"-c statement_timeout={settings.database_statement_timeout_ms}",
         ) as connection:
             for event in unique_events:
-                connection.execute("SELECT pg_notify(%s, %s)", (CHANNEL, event.to_json()))
+                connection.execute("SELECT pg_notify(%s, %s)", (CHANNEL, event.to_transport_json()))
     except psycopg.Error:
         log_event(
             "realtime_invalidation_failure",

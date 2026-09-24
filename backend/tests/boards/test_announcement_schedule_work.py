@@ -1,0 +1,313 @@
+"""Announcement schedule intent and lifecycle are one durable Board mutation."""
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy import event, select
+from sqlalchemy.engine import Connection
+from sqlalchemy.orm import Session
+from uuid6 import uuid7
+
+from app.common.dependencies.auth import get_current_user
+from app.core.database import get_db
+from app.systems.access.users.models import Role, User
+from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
+from app.systems.boards.announcement_router import router
+from app.systems.boards.models import Board
+from app.systems.platform.scheduling.announcement_execution import (
+    claim_due_announcement_work,
+    finalize_announcement_claim,
+)
+from app.systems.platform.scheduling.models import (
+    InAppNotification,
+    ScheduledWork,
+    WorkKind,
+    WorkState,
+)
+
+pytestmark = pytest.mark.integration
+
+
+def _client(db: Session, actor: User) -> TestClient:
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: actor
+    return TestClient(app)
+
+
+def _subject(db: Session) -> tuple[TestClient, Board, User]:
+    role = Role(
+        role=f"announcement-scheduler-{uuid7().hex}",
+        permissions={"records.read": True, "records.write": True},
+    )
+    actor_id = uuid7()
+    actor = User(
+        id=actor_id,
+        email=f"announcement-scheduler-{actor_id.hex}@example.test",
+        username=f"announcement_scheduler_{actor_id.hex[:12]}",
+        status="active",
+        role=role,
+    )
+    db.add(actor)
+    db.flush()
+    board = Board(owner_id=actor.id, name=f"Announcement schedule {uuid7().hex[:8]}")
+    db.add(board)
+    db.commit()
+    return _client(db, actor), board, actor
+
+
+def _create(client: TestClient, board: Board) -> tuple[str, str]:
+    root = f"/api/boards/{board.id}/announcements"
+    created = client.post(
+        root,
+        json={
+            "board_revision": board.revision,
+            "title": "Scheduled notice",
+            "body": "Publication content",
+            "audience": {"kind": "everyone"},
+        },
+    )
+    assert created.status_code == 201
+    return root, created.json()["id"]
+
+
+def _schedule(
+    client: TestClient, root: str, item_id: str, board_revision: int,
+    item_revision: int, when: datetime,
+) -> dict[str, int | str]:
+    result = client.post(
+        f"{root}/{item_id}/schedule",
+        json={
+            "board_revision": board_revision,
+            "announcement_revision": item_revision,
+            "publish_at": when.isoformat(),
+        },
+    )
+    assert result.status_code == 200, result.text
+    return result.json()
+
+
+def _work(db: Session, item_id: str) -> list[ScheduledWork]:
+    return list(
+        db.scalars(
+            select(ScheduledWork)
+            .where(ScheduledWork.announcement_id == item_id)
+            .order_by(ScheduledWork.source_revision)
+        )
+    )
+
+
+def test_schedule_creates_one_due_work_and_supersede_cancels_the_old_occurrence(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    client, board, actor = _subject(db)
+    root, item_id = _create(client, board)
+    first_time = datetime.now(UTC) + timedelta(days=2)
+
+    first = _schedule(client, root, item_id, 2, 1, first_time)
+    rows = _work(db, item_id)
+    assert len(rows) == 1
+    assert rows[0].kind == WorkKind.ANNOUNCEMENT_PUBLISH
+    assert rows[0].state == WorkState.PENDING
+    assert rows[0].source_revision == first["announcement_revision"] == 2
+    assert rows[0].scheduled_for == first_time
+    assert rows[0].next_attempt_at == first_time
+    assert rows[0].scheduling_actor_id == actor.id
+
+    second_time = first_time + timedelta(days=1)
+    second = _schedule(client, root, item_id, 3, 2, second_time)
+    rows = _work(db, item_id)
+    assert len(rows) == 2
+    assert [row.state for row in rows] == [WorkState.CANCELED, WorkState.PENDING]
+    assert rows[0].failure_code == "schedule_changed"
+    assert rows[1].source_revision == second["announcement_revision"] == 3
+    assert rows[1].scheduled_for == second_time
+
+
+@pytest.mark.parametrize("mutation", ["patch", "publish", "archive"])
+def test_mutating_scheduled_announcement_resolves_pending_work(
+    integration_owner_db: Session, mutation: str,
+) -> None:
+    db = integration_owner_db
+    client, board, _ = _subject(db)
+    root, item_id = _create(client, board)
+    _schedule(client, root, item_id, 2, 1, datetime.now(UTC) + timedelta(days=2))
+    body: dict[str, object] = {"board_revision": 3, "announcement_revision": 2}
+    if mutation == "patch":
+        body["title"] = "Edited before publication"
+        result = client.patch(f"{root}/{item_id}", json=body)
+    elif mutation == "publish":
+        body["publication_key"] = str(uuid7())
+        result = client.post(f"{root}/{item_id}/publish", json=body)
+    else:
+        result = client.post(f"{root}/{item_id}/archive", json=body)
+    assert result.status_code == 200, result.text
+    row = _work(db, item_id)[0]
+    assert row.state == (WorkState.SUCCEEDED if mutation == "publish" else WorkState.CANCELED)
+    if mutation == "publish":
+        assert row.publication_result_id is not None
+        assert row.scheduled_for <= datetime.now(UTC)
+    assert row.lease_token is None and row.lease_expires_at is None
+
+
+def test_stale_schedule_denial_does_not_create_or_cancel_work(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    client, board, actor = _subject(db)
+    root, item_id = _create(client, board)
+    first = _schedule(client, root, item_id, 2, 1, datetime.now(UTC) + timedelta(days=2))
+    denied = client.post(
+        f"{root}/{item_id}/schedule",
+        json={
+            "board_revision": first["board_revision"],
+            "announcement_revision": 1,
+            "publish_at": (datetime.now(UTC) + timedelta(days=3)).isoformat(),
+        },
+    )
+    assert denied.status_code == 409
+    assert denied.json()["detail"]["code"] == "stale_announcement_revision"
+    outsider_id = uuid7()
+    outsider = User(
+        id=outsider_id,
+        email=f"announcement-outsider-{outsider_id.hex}@example.test",
+        username=f"announcement_outsider_{outsider_id.hex[:12]}",
+        status="active",
+        role_id=actor.role_id,
+    )
+    db.add(outsider)
+    db.commit()
+    forbidden = _client(db, outsider).post(
+        f"{root}/{item_id}/schedule",
+        json={
+            "board_revision": first["board_revision"],
+            "announcement_revision": first["announcement_revision"],
+            "publish_at": (datetime.now(UTC) + timedelta(days=3)).isoformat(),
+        },
+    )
+    assert forbidden.status_code == 404
+    rows = _work(db, item_id)
+    assert len(rows) == 1 and rows[0].state == WorkState.PENDING
+
+
+def test_edit_cancels_an_already_claimed_publication_before_finalization(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    client, board, _ = _subject(db)
+    root, item_id = _create(client, board)
+    publish_at = datetime.now(UTC) + timedelta(days=2)
+    _schedule(client, root, item_id, 2, 1, publish_at)
+    claim = claim_due_announcement_work(db, now=publish_at)[0]
+    assert _work(db, item_id)[0].state == WorkState.RUNNING
+
+    changed = client.patch(
+        f"{root}/{item_id}",
+        json={"board_revision": 3, "announcement_revision": 2, "title": "Replaced draft"},
+    )
+    assert changed.status_code == 200
+    assert _work(db, item_id)[0].state == WorkState.CANCELED
+    assert finalize_announcement_claim(db, claim, now=publish_at) is None
+    revisions = db.scalars(
+        select(BoardAnnouncementRevision).where(
+            BoardAnnouncementRevision.announcement_id == item_id
+        )
+    ).all()
+    assert revisions == []
+
+
+def test_unpublish_cancels_replacement_schedule_without_deleting_prior_revision(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    client, board, _ = _subject(db)
+    root, item_id = _create(client, board)
+    published = client.post(
+        f"{root}/{item_id}/publish",
+        json={"board_revision": 2, "announcement_revision": 1, "publication_key": str(uuid7())},
+    )
+    assert published.status_code == 200
+    revision_id = published.json()["id"]
+    _schedule(client, root, item_id, 3, 2, datetime.now(UTC) + timedelta(days=2))
+
+    unpublished = client.post(
+        f"{root}/{item_id}/unpublish",
+        json={"board_revision": 4, "announcement_revision": 3},
+    )
+    assert unpublished.status_code == 200
+    assert _work(db, item_id)[-1].state == WorkState.CANCELED
+    assert db.get(BoardAnnouncementRevision, revision_id) is not None
+
+
+def test_delete_archived_announcement_removes_work_before_immutable_revision(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    client, board, actor = _subject(db)
+    root, item_id = _create(client, board)
+    published = client.post(
+        f"{root}/{item_id}/publish",
+        json={"board_revision": 2, "announcement_revision": 1, "publication_key": str(uuid7())},
+    )
+    assert published.status_code == 200
+    manual_revision_id = published.json()["id"]
+    publish_at = datetime.now(UTC) + timedelta(days=2)
+    _schedule(client, root, item_id, 3, 2, publish_at)
+    work = _work(db, item_id)[-1]
+    claim = claim_due_announcement_work(db, now=publish_at)[0]
+    revision_id = finalize_announcement_claim(db, claim, now=publish_at)
+    assert revision_id is not None
+    assert db.scalar(
+        select(InAppNotification).where(
+            InAppNotification.work_id == work.id,
+            InAppNotification.recipient_id == actor.id,
+        )
+    ) is not None
+    archived = client.post(
+        f"{root}/{item_id}/archive",
+        json={"board_revision": 5, "announcement_revision": 4},
+    )
+    assert archived.status_code == 200
+    removed = client.request(
+        "DELETE", f"{root}/{item_id}",
+        json={"board_revision": 6, "announcement_revision": 5},
+    )
+    assert removed.status_code == 204, removed.text
+    assert db.get(BoardAnnouncement, item_id) is None
+    assert db.get(BoardAnnouncementRevision, revision_id) is None
+    assert db.get(BoardAnnouncementRevision, manual_revision_id) is None
+    assert db.get(ScheduledWork, work.id) is None
+    remaining = db.scalars(
+        select(InAppNotification).where(InAppNotification.work_id == work.id)
+    ).all()
+    assert remaining == []
+
+
+def test_schedule_locks_board_then_announcement_then_prior_work(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    client, board, _ = _subject(db)
+    root, item_id = _create(client, board)
+    _schedule(client, root, item_id, 2, 1, datetime.now(UTC) + timedelta(days=2))
+    statements: list[str] = []
+    connection: Connection = db.connection()
+
+    def collect_sql(_connection, _cursor, statement, _parameters, _context, _executemany) -> None:
+        if "FOR UPDATE" in statement:
+            statements.append(statement)
+
+    event.listen(connection, "before_cursor_execute", collect_sql)
+    try:
+        result = _schedule(client, root, item_id, 3, 2, datetime.now(UTC) + timedelta(days=3))
+        assert result["announcement_revision"] == 3
+    finally:
+        event.remove(connection, "before_cursor_execute", collect_sql)
+    board_lock = next(i for i, sql in enumerate(statements) if "FROM boards " in sql)
+    item_lock = next(i for i, sql in enumerate(statements) if "FROM board_announcements " in sql)
+    work_lock = next(i for i, sql in enumerate(statements) if "FROM scheduled_work " in sql)
+    assert board_lock < item_lock < work_lock

@@ -14,6 +14,13 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_provision_settings
+from app.core.config.instance import (
+    InstanceTarget,
+    assert_database_url,
+    assert_psycopg_target,
+    instance_target_for_process,
+    test_manifest_authorizes_process,
+)
 
 OWNER_ROLE = "openslate_owner"
 PRIVILEGE_ROLE = "openslate_app"
@@ -183,6 +190,8 @@ def provision(
     migration_url: str,
     runtime_url: str,
     inspector_url: str | None = None,
+    *,
+    instance_target: InstanceTarget | None = None,
 ) -> None:
     bootstrap = _postgres_url(bootstrap_url, name="DATABASE_BOOTSTRAP_URL")
     owner = _postgres_url(migration_url, name="MIGRATION_DATABASE_URL")
@@ -200,8 +209,16 @@ def provision(
     database = _assert_same_database(
         bootstrap, owner, runtime, *([inspector] if inspector is not None else [])
     )
+    if instance_target is not None:
+        assert_database_url(bootstrap_url, instance_target, expected_user=None)
+        assert_database_url(migration_url, instance_target, expected_user=OWNER_ROLE)
+        assert_database_url(runtime_url, instance_target, expected_user=RUNTIME_ROLE)
+        if inspector_url is not None:
+            assert_database_url(inspector_url, instance_target, expected_user=INSPECTOR_ROLE)
 
     with connect(_psycopg_url(bootstrap)) as connection:
+        if instance_target is not None:
+            assert_psycopg_target(connection, instance_target, expected_user=bootstrap.username)
         with connection.cursor() as cursor:
             _create_role(
                 cursor,
@@ -326,6 +343,26 @@ def provision(
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
     settings = get_provision_settings()
+    target = instance_target_for_process(settings.migration_database_url, OWNER_ROLE)
+    if target is None:
+        bootstrap_user = _postgres_url(
+            settings.database_bootstrap_url, name="DATABASE_BOOTSTRAP_URL"
+        ).username
+        urls = [
+            (settings.database_bootstrap_url, bootstrap_user),
+            (settings.migration_database_url, OWNER_ROLE),
+            (settings.database_url, RUNTIME_ROLE),
+        ]
+        if settings.database_inspector_url is not None:
+            urls.append((settings.database_inspector_url, INSPECTOR_ROLE))
+        if any(
+            expected_user is None
+            or not test_manifest_authorizes_process(url, expected_user)
+            for url, expected_user in urls
+        ):
+            raise SystemExit(
+                "Provisioning requires exact runner-owned database URLs in its manifest"
+            )
     if settings.environment.strip().casefold() not in LOCAL_ENVIRONMENTS and not args.confirm:
         raise SystemExit("--confirm is required outside development, local, and test environments")
     provision(
@@ -333,6 +370,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         settings.migration_database_url,
         settings.database_url,
         settings.database_inspector_url,
+        instance_target=target,
     )
     print("Provisioned OpenSlate PostgreSQL roles")
 

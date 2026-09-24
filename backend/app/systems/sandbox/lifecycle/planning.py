@@ -56,7 +56,7 @@ def plan_lifecycle(
         raise LifecycleUnsupportedOperation(
             f"Unsupported lifecycle operation: {operation}"
         ) from error
-    if resolved_target is LifecycleTargetType.FILE:
+    if resolved_target in {LifecycleTargetType.FILE, LifecycleTargetType.BOARD}:
         raise LifecycleInvalidTarget(f"Unsupported lifecycle target: {target_type}")
 
     scope = load_lifecycle_scope(db, resolved_target, target_id, resolved_operation)

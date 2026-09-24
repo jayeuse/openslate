@@ -16,6 +16,7 @@ from app.core.observability import log_event
 from app.systems.access.users.models import Role
 from app.systems.access.users.permissions import effective_permissions, has_capability
 from app.systems.platform.events.models import (
+    PRIVATE_NOTIFICATION_ENTITY,
     RESYNC_ENTITY,
     InvalidationEvent,
     parse_invalidation_payload,
@@ -112,7 +113,7 @@ class EventHub:
         return changed
 
     def can_receive(self, subscription: EventSubscription, event: InvalidationEvent) -> bool:
-        return not subscription.closed and _can_receive(subscription.role, event)
+        return not subscription.closed and _can_receive(subscription, event)
 
     async def publish(self, event: InvalidationEvent) -> None:
         self._dispatch(event)
@@ -153,7 +154,7 @@ class EventHub:
 
     def _dispatch(self, event: InvalidationEvent) -> None:
         for subscription in tuple(self._by_id.values()):
-            if subscription.closed or not _can_receive(subscription.role, event):
+            if subscription.closed or not _can_receive(subscription, event):
                 continue
             self._queue(subscription, event)
 
@@ -178,9 +179,12 @@ class EventHub:
             self._subscribers_by_user[subscription.user_id] = count - 1
 
 
-def _can_receive(role: object, event: InvalidationEvent) -> bool:
+def _can_receive(subscription: EventSubscription, event: InvalidationEvent) -> bool:
+    role = subscription.role
     if role is None:
         return False
+    if event.entity == PRIVATE_NOTIFICATION_ENTITY:
+        return event.recipient_id is not None and subscription.user_id == event.recipient_id
     if event.all_authenticated:
         return True
     if getattr(role, "role", None) == "admin":

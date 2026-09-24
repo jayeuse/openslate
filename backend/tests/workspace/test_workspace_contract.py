@@ -170,11 +170,14 @@ def test_get_workspace_returns_existing_singleton_without_creating_it(
 ) -> None:
     database = _Session(_profile())
 
+    before = datetime.now(UTC).date()
     response = _client(monkeypatch, database).get("/api/workspace")
+    after = datetime.now(UTC).date()
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["display_name"] == "OpenSlate"
     assert response.json()["revision"] == 3
+    assert response.json()["today"] in {before.isoformat(), after.isoformat()}
     assert database.commit_count == 0
 
 
@@ -291,6 +294,22 @@ def test_workspace_response_contract_has_only_public_profile_fields() -> None:
         "updated_at",
     }
     assert all(field not in fields for field in {"singleton_key", "performed_by", "is_deleted"})
+
+
+def test_workspace_response_exposes_server_day_in_workspace_timezone() -> None:
+    from datetime import date
+    from zoneinfo import ZoneInfo
+
+    schemas = _schemas_module()
+    profile = _profile()
+    profile.timezone = "Pacific/Kiritimati"
+
+    before = datetime.now(ZoneInfo(profile.timezone)).date()
+    response = schemas.WorkspaceResponse.model_validate(profile).model_dump(mode="json")
+    after = datetime.now(ZoneInfo(profile.timezone)).date()
+
+    assert response["today"] in {before.isoformat(), after.isoformat()}
+    assert date.fromisoformat(response["today"]).isoformat() == response["today"]
 
 
 def test_workspace_model_redacts_contact_fields_from_audit_snapshots() -> None:

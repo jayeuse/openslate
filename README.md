@@ -67,8 +67,10 @@ uv run --directory backend python ../scripts/environment.py check
 Run these commands from the repository root unless a directory is shown.
 
 1. For a new checkout, copy `.env.example` to `.env` and restrict its access.
-   Keep an existing configured `.env`. Start the documented disposable
-   PostgreSQL service before applying the schema.
+   Keep an existing configured `.env`. For each additional worktree, set a
+   different `OPENSLATE_INSTANCE_ID`, `OPENSLATE_INSTANCE_ROOT`, and unused
+   `POSTGRES_PORT`; update its database URLs to that port. Start only that
+   checkout's disposable PostgreSQL service before applying the schema.
 
    ```bash
    cp .env.example .env
@@ -252,12 +254,12 @@ Stop local development services while preserving their data:
 ./scripts/dev.py stop
 ```
 
-For a destructive disposable database reset, remove only the documented local
-PostgreSQL volume, restart the database, then apply the application schema:
+For a destructive disposable database reset, remove the current worktree's
+attested PostgreSQL container and data volume without removing other named
+volumes, restart its database, then apply the application schema:
 
 ```bash
-docker compose rm --stop --force postgres
-docker volume rm openslate_postgres-data
+uv run --directory backend python ../scripts/environment.py reset-database
 ./scripts/dev.py db
 cd backend
 uv run python operations/provision_database_role.py

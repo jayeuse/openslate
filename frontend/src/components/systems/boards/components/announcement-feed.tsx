@@ -147,7 +147,6 @@ type FeedEntry = {
   announcement: BoardAnnouncement;
   lifecycle: ReturnType<typeof getAnnouncementLifecycle>;
   display: AnnouncementDisplay;
-  audience: BoardAudience;
   isAuthor: boolean;
   hasDraft: boolean;
   showDraft: boolean;
@@ -236,8 +235,6 @@ export function AnnouncementFeed({
     .map((announcement) => {
       const lifecycle = getAnnouncementLifecycle(announcement, now);
       const isAuthor = announcement.authorId === viewer.id;
-      const revision = lifecycle.revision;
-      const audience = revisionAudience(revision, announcement.audience);
       const hasDraft =
         announcement.status === "draft" ||
         (announcement.status === "scheduled" &&
@@ -247,7 +244,6 @@ export function AnnouncementFeed({
       return {
         announcement,
         lifecycle,
-        audience,
         isAuthor,
         hasDraft,
         showDraft,
@@ -259,14 +255,35 @@ export function AnnouncementFeed({
       } satisfies FeedEntry;
     });
 
-  function isVisibleToViewer(entry: FeedEntry): boolean {
+  function isVisibleToViewer(entry: FeedEntry, status: FeedStatus): boolean {
+    const audience =
+      status === "drafts"
+        ? entry.announcement.audience
+        : revisionAudience(
+            entry.lifecycle.revision,
+            entry.announcement.audience,
+          );
+    return canViewBoardAudience(audience, viewer, entry.announcement.authorId);
+  }
+
+  function canManageContent(entry: FeedEntry): boolean {
     return (
-      managingAllowed ||
-      canViewBoardAudience(entry.audience, viewer, entry.announcement.authorId)
+      canViewBoardAudience(
+        entry.announcement.audience,
+        viewer,
+        entry.announcement.authorId,
+      ) &&
+      (!entry.announcement.publishedRevision ||
+        canViewBoardAudience(
+          entry.announcement.publishedRevision.audience,
+          viewer,
+          entry.announcement.authorId,
+        ))
     );
   }
 
   function isInStatus(entry: FeedEntry, status: FeedStatus): boolean {
+    if (!isVisibleToViewer(entry, status)) return false;
     const { announcement, lifecycle, isAuthor } = entry;
     const canSeePrivate = isAuthor || managingAllowed;
     if (status === "archive") {
@@ -278,10 +295,7 @@ export function AnnouncementFeed({
     }
     const lifecycleIsPublished =
       lifecycle.status === "published" || lifecycle.status === "expired";
-    return (
-      lifecycleIsPublished &&
-      (lifecycle.visible ? isVisibleToViewer(entry) : canSeePrivate)
-    );
+    return lifecycleIsPublished && (lifecycle.visible || canSeePrivate);
   }
 
   const statusCounts = {
@@ -291,8 +305,10 @@ export function AnnouncementFeed({
     archive: allEntries.filter((entry) => isInStatus(entry, "archive")).length,
   };
   const query = search.trim().toLocaleLowerCase();
-  const filteredEntries = allEntries
-    .filter((entry) => isInStatus(entry, activeStatus))
+  const availableEntries = allEntries.filter((entry) =>
+    isInStatus(entry, activeStatus),
+  );
+  const filteredEntries = availableEntries
     .filter((entry) =>
       authorFilter === "all"
         ? true
@@ -301,7 +317,10 @@ export function AnnouncementFeed({
     .filter((entry) => {
       if (!query) return true;
       const author = authorName(entry.announcement.authorId, people);
-      const audience = boardAudienceLabel(entry.audience, audienceLookup);
+      const audience = boardAudienceLabel(
+        entry.display.audience,
+        audienceLookup,
+      );
       return [entry.display.title, entry.display.body, author, audience].some(
         (value) => value.toLocaleLowerCase().includes(query),
       );
@@ -520,6 +539,7 @@ export function AnnouncementFeed({
 
   const emptyState = emptyFeedState(
     allEntries,
+    availableEntries,
     filteredEntries,
     activeStatus,
     search,
@@ -732,9 +752,14 @@ export function AnnouncementFeed({
               canEdit={
                 !pending &&
                 !preview &&
+                canViewBoardAudience(
+                  entry.announcement.audience,
+                  viewer,
+                  entry.announcement.authorId,
+                ) &&
                 (canManage || (canEdit && entry.isAuthor))
               }
-              canManage={managingAllowed}
+              canManage={managingAllowed && canManageContent(entry)}
               preview={preview}
               viewerActive={viewer.active}
               read={personal.readAnnouncementIds.includes(
@@ -999,7 +1024,7 @@ function AnnouncementCard({
             <p className="mt-1">
               {announcement.publishedRevision
                 ? "Readers continue to see the last published version until this draft is published."
-                : "Only the author and board managers can see this draft."}
+                : "Only people in this draft's audience who can edit or manage the board can see it."}
             </p>
           </Alert>
         ) : null}
@@ -1393,6 +1418,7 @@ function announcementStatusVariant(
 
 function emptyFeedState(
   allEntries: readonly FeedEntry[],
+  availableEntries: readonly FeedEntry[],
   filteredEntries: readonly FeedEntry[],
   status: FeedStatus,
   search: string,
@@ -1401,7 +1427,7 @@ function emptyFeedState(
   if (filteredEntries.length > 0) return "none";
   if (search.trim() || authorFilter !== "all") return "filtered";
   if (status === "published" && allEntries.length === 0) return "first-use";
-  if (allEntries.length === 0) return "permission";
+  if (availableEntries.length === 0) return "permission";
   return "filtered";
 }
 

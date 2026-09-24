@@ -146,6 +146,56 @@ def require_fresh_capabilities(
     )
 
 
+def require_fresh_legacy_capabilities(
+    db: Session,
+    *,
+    actor_id: UUID,
+    session_id: UUID,
+    expected_role_id: UUID,
+    capabilities: tuple[Capability, ...],
+) -> User:
+    """Recheck a Report actor without applying Sandbox workspace policy."""
+
+    timestamp = utc_now()
+    try:
+        session = db.get(IdentitySession, session_id, with_for_update=True, populate_existing=True)
+        role = db.scalar(
+            select(Role)
+            .where(Role.id == expected_role_id)
+            .execution_options(populate_existing=True)
+            .with_for_update(read=True)
+        )
+        actor = db.scalar(
+            select(User)
+            .where(User.id == actor_id)
+            .execution_options(populate_existing=True)
+            .with_for_update(of=User)
+        )
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Unable to reload Report actor") from error
+    if (
+        session is None
+        or session.user_id != actor_id
+        or session.revoked_at is not None
+        or session.expires_at <= timestamp
+        or role is None
+        or role.is_deleted
+        or role.deleted_at is not None
+        or actor is None
+        or actor.role_id != expected_role_id
+        or actor.status != "active"
+        or not is_established_user(actor)
+        or not is_identity_eligible(actor, now=timestamp)
+        or (role.role == UserRole.ADMIN.value and not is_internal_identity(actor))
+        or not all(has_capability(role, capability) for capability in capabilities)
+    ):
+        db.rollback()
+        raise HTTPException(status_code=403, detail="Forbidden")
+    actor.role = role
+    return actor
+
+
 def require_roles(*roles: UserRole | str) -> Callable[[User], User]:
     def check_role(user: Annotated[User, Depends(get_current_user)]) -> User:
         allowed_roles = {role.value if isinstance(role, UserRole) else role for role in roles}
@@ -158,16 +208,20 @@ def require_roles(*roles: UserRole | str) -> Callable[[User], User]:
     return check_role
 
 
-def require_legacy_capability(capability: Capability | str) -> Callable[[User], User]:
-    """Retain legacy role-only authorization for explicitly isolated endpoints."""
+def require_legacy_capability(*capabilities: Capability | str) -> Callable[[User], User]:
+    """Retain role-only authorization for explicitly isolated endpoints."""
 
-    required_capability = Capability(capability)
+    required_capabilities = tuple(Capability(capability) for capability in capabilities)
+    if not required_capabilities:
+        raise ValueError("At least one capability is required")
 
     def check_capability(user: Annotated[User, Depends(get_current_user)]) -> User:
         has_invalid_administrator_identity = (
             user.role.role == UserRole.ADMIN.value and not is_internal_identity(user)
         )
-        if has_invalid_administrator_identity or not has_capability(user.role, required_capability):
+        if has_invalid_administrator_identity or not all(
+            has_capability(user.role, capability) for capability in required_capabilities
+        ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         return user
 

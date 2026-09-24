@@ -22,6 +22,9 @@ import httpx
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
+from app.core.config.instance import assert_instance_target, instance_target_for_process
+from app.core.database import model_registry  # noqa: F401
+
 if __package__:
     from .backend_batches import parse_batch, run_backend_batches
     from .backend_coverage import run_backend_coverage
@@ -42,6 +45,7 @@ BACKEND = ROOT / "backend"
 FRONTEND = ROOT / "frontend"
 API = "http://127.0.0.1:8008"
 WEB = f"https://localhost:{GATEWAY_PORT}"
+RUNNER_CONCURRENCY_LIMIT = 64
 
 __all__ = (
     "CADDY_IMAGE",
@@ -79,7 +83,7 @@ def measure_admission():
     """Exercise a bounded local burst and recovery; this is not a capacity target."""
     held = []
     try:
-        for _ in range(32):
+        for _ in range(RUNNER_CONCURRENCY_LIMIT):
             held.append(socket.create_connection(("127.0.0.1", 8008), timeout=2))
         if httpx.get(API + "/api/health", timeout=6).status_code != 503:
             raise RuntimeError("admission limit was not enforced")
@@ -125,15 +129,19 @@ def wait_for(url, process, *, verify: bool = True):
     raise RuntimeError("application startup deadline exceeded")
 
 
-def seed(owner_url, run_id):
+def seed(owner_url, run_id, database_environment):
     """Owner-only fixture setup, guarded by a brand-new empty application DB."""
     from app.systems.access.identity.service import create_credential
     from app.systems.access.users.models import Role, User, UserStatus
 
+    target = instance_target_for_process(owner_url, "openslate_owner", database_environment)
     engine = create_engine(owner_url)
     identities = {}
     try:
         with Session(engine) as db:
+            if target is None:
+                raise RuntimeError("Disposable seed target identity is unavailable")
+            assert_instance_target(db.connection(), target, expected_user="openslate_owner")
             if db.scalar(text("SELECT count(*) FROM public.users")) != 0:
                 raise RuntimeError("refusing to seed a nonempty database")
             for role in ("admin", "member"):
@@ -226,7 +234,16 @@ def main(arguments=()):
         database_env = postgres.urls()
         database_manifest = postgres.write_manifest()
         owner_url = database_env["MIGRATION_DATABASE_URL"]
-        migration_env = {**base_env, **database_env, "ENVIRONMENT": "test"}
+        migration_env = {
+            **base_env,
+            **database_env,
+            "ENVIRONMENT": "test",
+            "E2E_ALLOW_MUTATIONS": "true",
+            "OPENSLATE_FULLSTACK_RUN_ID": run_id,
+            "OPENSLATE_TEST_DATABASE_MANIFEST": str(database_manifest),
+        }
+        if instance_target_for_process(owner_url, "openslate_owner", migration_env) is None:
+            raise RuntimeError("Disposable PostgreSQL target identity is unavailable")
         stage = "database role bootstrap"
         run(
             [sys.executable, "operations/provision_database_role.py", "--confirm"],
@@ -265,7 +282,7 @@ def main(arguments=()):
             "READINESS_CALLER_TIMEOUT_SECONDS": "2",
             "BACKEND_BIND_HOST": "127.0.0.1",
             "BACKEND_PORT": "8008",
-            "SERVER_MAX_CONCURRENCY": "32",
+            "SERVER_MAX_CONCURRENCY": str(RUNNER_CONCURRENCY_LIMIT),
             "SERVER_KEEP_ALIVE_SECONDS": "5",
         }
         if not scanner_only and not acceptance_only:
@@ -292,7 +309,7 @@ def main(arguments=()):
             scanner_observations = scanner.observations
             scanner.start()
             stage = "dedicated identities"
-            identities = seed(owner_url, run_id)
+            identities = seed(owner_url, run_id, migration_env)
             fixture = private / "fixture.json"
             fixture.write_text(
                 json.dumps(
@@ -321,7 +338,7 @@ def main(arguments=()):
                         "8008",
                         "--no-access-log",
                         "--limit-concurrency",
-                        "32",
+                        str(RUNNER_CONCURRENCY_LIMIT),
                     ],
                     cwd=BACKEND,
                     env=api_env,

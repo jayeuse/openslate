@@ -16,15 +16,15 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from pypdf import PdfWriter
 
-from app.core.config import Settings
 from tests.postgres_runtime import (
-    assert_runner_database_url,
-    container_runtime_database_url,
-    postgres_network_name,
+    assert_scanner_worker_database,
+    prepare_scanner_worker_database,
+    write_scanner_worker_environment,
 )
 
 BASE_IMAGE_DIGEST = "sha256:488ff88a78d9769efa7e1bac7028419b696d54cecdae1b696c6c7cd670b3bb4b"
 MANIFEST = "/run/scanner-manifest.json"
+WORKER_DATABASE_MANIFEST = "/run/openslate-test-database.json"
 WORKER_STORAGE_ROOT = "/run/openslate-private-files"
 
 
@@ -410,43 +410,26 @@ class DisposableScanner:
         *,
         acknowledge_engine_replacement: bool = False,
     ) -> None:
-        try:
-            assert_runner_database_url(
-                application_env["DATABASE_URL"],
-                application_env,
-                allowed_roles=frozenset({"openslate_runtime"}),
-            )
-        except RuntimeError:
-            raise RuntimeError("Worker requires exact disposable runtime credentials") from None
+        assert_scanner_worker_database(application_env)
         storage_root = self._worker_storage_root(application_env)
-        expected_network = postgres_network_name(self.run_id)
-        if database_network is not None and database_network != expected_network:
-            raise RuntimeError("Worker requires the run-owned database network")
-        if database_network is not None:
-            self.database_network = database_network
-        if self.database_network is None:
-            raise RuntimeError("Worker requires the run-owned database network")
-        if self.database_network != expected_network:
-            raise RuntimeError("Worker requires exact disposable runtime credentials")
-        worker_env = {
-            key: application_env[key]
-            for key in (name.upper() for name in Settings.model_fields)
-            if key in application_env
-        }
-        worker_env["DATABASE_URL"] = container_runtime_database_url(worker_env["DATABASE_URL"])
-        worker_env.update(
-            OPENSLATE_ENV_SOURCE="process",
-            LOG_DIR="/tmp/logs",
-            FILES_CLAMAV_HOST=self.container,
-            FILES_CLAMAV_PORT="3310",
-            FILES_CLAMAV_MANIFEST_PATH=MANIFEST,
-            FILES_STORAGE_ROOT=WORKER_STORAGE_ROOT,
+        worker_database_url, worker_database_manifest, self.database_network = (
+            prepare_scanner_worker_database(
+                application_env,
+                run_id=self.run_id,
+                private=self.private,
+                current_network=self.database_network,
+                requested_network=database_network,
+            )
         )
-        credentials = self.private / "scanner-worker.env"
-        credentials.write_text(
-            "\n".join(f"{key}={value}" for key, value in worker_env.items()) + "\n"
+        credentials = write_scanner_worker_environment(
+            application_env,
+            private=self.private,
+            clamav_host=self.container,
+            database_url=worker_database_url,
+            database_manifest_path=WORKER_DATABASE_MANIFEST,
+            scanner_manifest_path=MANIFEST,
+            storage_root=WORKER_STORAGE_ROOT,
         )
-        credentials.chmod(0o600)
         if self.egress not in self.networks:
             self.networks.append(self.egress)
             self._run(
@@ -468,6 +451,8 @@ class DisposableScanner:
                 str(credentials),
                 "--mount",
                 f"type=bind,src={storage_root},dst={WORKER_STORAGE_ROOT}",
+                "--mount",
+                f"type=bind,src={worker_database_manifest},dst={WORKER_DATABASE_MANIFEST},readonly",
                 "--mount",
                 f"type=bind,src={self.manifest},dst={MANIFEST},readonly",
                 "--entrypoint",
