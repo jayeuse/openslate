@@ -63,6 +63,14 @@ test("a returning tab conceals the old account before revalidation and ignores d
   const oldSessionStarted = new Promise<void>((resolve) => {
     signalOldSession = resolve;
   });
+  let releaseNewSession = () => {};
+  let signalNewSession = () => {};
+  const newSessionReleased = new Promise<void>((resolve) => {
+    releaseNewSession = resolve;
+  });
+  const newSessionStarted = new Promise<void>((resolve) => {
+    signalNewSession = resolve;
+  });
   let holdNextNotice = false;
   let releaseOldNotice = () => {};
   let signalOldNotice = () => {};
@@ -79,6 +87,10 @@ test("a returning tab conceals the old account before revalidation and ignores d
       holdNextSession = false;
       signalOldSession();
       await oldSessionReleased;
+    }
+    if (requestedUser === userB) {
+      signalNewSession();
+      await newSessionReleased;
     }
     await route.fulfill({
       contentType: "application/json",
@@ -158,9 +170,18 @@ test("a returning tab conceals the old account before revalidation and ignores d
   activeUser = userB;
   await page.bringToFront();
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-  await expect(page.getByText("Checking your session…")).toBeVisible();
-  releaseOldSession();
-  releaseOldNotice();
+  await newSessionStarted;
+  try {
+    await expect(
+      page
+        .getByRole("dialog", { name: "Session verification" })
+        .getByText("Checking your session…"),
+    ).toBeVisible();
+  } finally {
+    releaseOldSession();
+    releaseOldNotice();
+    releaseNewSession();
+  }
 
   const currentNotices = page.getByRole("region", {
     name: "Connected notifications",
