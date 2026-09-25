@@ -186,13 +186,16 @@ test("revoked invitations can be resent while revoke stays pending-only", () => 
   const source = componentSource(
     "components/systems/access/components/identity-editor.tsx",
   );
+  const identityHelpers = componentSource(
+    "components/systems/access/helpers/identity-editor.ts",
+  );
 
   expect(source).toContain('existing.status === "revoked"');
   expect(source).toContain('existing.status === "pending" && (');
   expect(source).not.toContain(
     'title="Invitation revocation is not available yet."',
   );
-  expect(source).toContain(
+  expect(identityHelpers).toContain(
     "The existing invitation link and temporary password will stop working. The profile remains in Access and can be resent.",
   );
   expect(source).toContain('existing.status === "disabled" ? (');
