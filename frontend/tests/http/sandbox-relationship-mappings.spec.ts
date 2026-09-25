@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { migrateSandboxFileV1 } from "../../src/components/systems/sandbox/domain/document";
 import {
   initialDesign,
@@ -431,7 +433,7 @@ test("automation editing is locked while its save is pending", async ({
     await expect(name).toBeDisabled();
     await expect(page.getByLabel("Trigger", { exact: true })).toBeDisabled();
     await expect(
-      page.getByRole("button", { name: "Delete automation" }),
+      page.getByRole("button", { name: "Automation options" }),
     ).toBeDisabled();
   } finally {
     releaseSave();
@@ -980,4 +982,238 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
       .getByText("Test results are temporarily unavailable."),
   ).toBeVisible();
   await expect(clear).toBeEnabled();
+});
+
+test("automation flow preview and summary follow the unsaved rule draft", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(page);
+  await page.getByRole("link", { name: "Automations", exact: true }).click();
+
+  const flow = page.getByRole("region", { name: "Flow preview" });
+  const summary = page.getByRole("region", { name: "Rule summary" });
+  const settings = page.getByRole("region", { name: "Rule settings" });
+  await expect(settings).toBeVisible();
+  await expect(
+    flow.getByRole("button", { name: "Edit trigger" }),
+  ).toBeVisible();
+  await expect(
+    flow.getByRole("button", { name: "Edit condition 1" }),
+  ).toBeVisible();
+  await expect(
+    flow.getByRole("button", { name: "Edit action 1" }),
+  ).toBeVisible();
+
+  const savedAutomations = sandbox.document().automations;
+  await page
+    .getByLabel("Condition 1 field")
+    .selectOption({ label: "Priority" });
+  const conditionValue = settings.getByLabel("Value", { exact: true }).first();
+  await settings
+    .getByText(/Value options/)
+    .first()
+    .click();
+  await conditionValue.fill("Needs immediate review");
+  await expect(
+    flow.getByRole("button", { name: "Edit condition 1" }),
+  ).toContainText("Needs immediate review");
+  await expect(summary).toContainText("Needs immediate review");
+  expect(sandbox.document().automations).toEqual(savedAutomations);
+
+  await page.getByLabel("Condition group operator").selectOption("any");
+  await expect(flow).toContainText(/any condition/i);
+  await expect(summary).toContainText(/any condition/i);
+
+  await page.getByRole("button", { name: "Add condition" }).click();
+  await expect(
+    flow.getByRole("button", { name: "Edit condition 2" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Remove condition" }).last().click();
+  await expect(
+    flow.getByRole("button", { name: "Edit condition 2" }),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Add action" }).click();
+  await expect(
+    flow.getByRole("button", { name: "Edit action 2" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Remove action" }).last().click();
+  await expect(flow.getByRole("button", { name: "Edit action 2" })).toHaveCount(
+    0,
+  );
+
+  await page.getByLabel("Trigger", { exact: true }).selectOption("schedule");
+  await expect(
+    flow.getByRole("button", { name: "Edit trigger" }),
+  ).toContainText(/schedule/i);
+  await expect(summary).toContainText(/schedule/i);
+});
+
+test("keyboard activation on an automation flow node focuses its editor", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page);
+  await page.getByRole("link", { name: "Automations", exact: true }).click();
+
+  const flow = page.getByRole("region", { name: "Flow preview" });
+  const condition = page.getByLabel("Condition 1 field");
+  const conditionNode = flow.getByRole("button", {
+    name: "Edit condition 1",
+  });
+  await conditionNode.focus();
+  await page.keyboard.press("Enter");
+  await expect(condition).toBeFocused();
+});
+
+test("Automation Studio layout screenshots can be captured for theme and viewport review", async ({
+  page,
+}) => {
+  test.skip(
+    process.env.AUTOMATION_LAYOUT_SCREENSHOTS !== "1",
+    "Set AUTOMATION_LAYOUT_SCREENSHOTS=1 to capture layout evidence",
+  );
+
+  const screenshotDirectory = resolve(
+    "..",
+    ".agent-runtime/automations-layout-20260925",
+  );
+  await mkdir(screenshotDirectory, { recursive: true });
+  await openAuthenticatedSandbox(page);
+  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "Flow preview" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "New automation" }).click();
+  await page.getByLabel("Automation name").fill("Service request follow-up");
+  await page
+    .getByLabel("Trigger", { exact: true })
+    .selectOption("field-changed");
+  const settings = page.getByRole("region", { name: "Rule settings" });
+  await settings
+    .getByLabel("Trigger module")
+    .selectOption({ label: "Service requests" });
+  await settings.getByLabel("Trigger field").selectOption({ label: "Status" });
+  await page.getByRole("button", { name: "Add condition" }).click();
+  await settings
+    .getByLabel("Condition 1 field")
+    .selectOption({ label: "Status" });
+  await settings.getByLabel("Condition 1 operator").selectOption("=");
+  await settings
+    .getByLabel("Set field target")
+    .first()
+    .selectOption({ label: "Status" });
+  const values = settings.getByLabel("Value", { exact: true });
+  await values.first().fill("Open");
+  await values.last().fill("In progress");
+
+  const views = [
+    { width: 1440, height: 1080, theme: "light" },
+    { width: 1440, height: 1080, theme: "dark" },
+    { width: 1920, height: 1200, theme: "light" },
+    { width: 1920, height: 1200, theme: "dark" },
+    { width: 390, height: 844, theme: "light" },
+    { width: 390, height: 844, theme: "dark" },
+  ] as const;
+
+  for (const view of views) {
+    await page.setViewportSize({ width: view.width, height: view.height });
+    await page.evaluate((theme) => {
+      document.documentElement.classList.toggle("dark", theme === "dark");
+    }, view.theme);
+    const widths = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      page: document.documentElement.scrollWidth,
+    }));
+    expect(widths.page).toBeLessThanOrEqual(widths.viewport);
+    await page.screenshot({
+      path: join(
+        screenshotDirectory,
+        `automation-${view.width}-${view.theme}.png`,
+      ),
+      fullPage: true,
+      animations: "disabled",
+    });
+  }
+});
+
+test("automation panels resize with their requested minimum widths and remain usable", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1200 });
+  await openAuthenticatedSandbox(page);
+  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  const list = page.getByRole("complementary", { name: "Automation list" });
+  const settings = page.getByRole("region", { name: "Rule settings" });
+  const listHandle = page.getByRole("separator", {
+    name: "Resize automation list",
+  });
+  const settingsHandle = page.getByRole("separator", {
+    name: "Resize rule settings",
+  });
+  await expect(listHandle).toBeVisible();
+  const width = async (locator: typeof list) =>
+    (await locator.boundingBox())!.width;
+  const rem = await page.evaluate(() =>
+    parseFloat(getComputedStyle(document.documentElement).fontSize),
+  );
+  const drag = async (handle: typeof listHandle, distance: number) => {
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + distance, box.y + box.height / 2, {
+      steps: 12,
+    });
+    await page.mouse.up();
+  };
+  const initialListWidth = await width(list);
+  await drag(listHandle, 120);
+  await expect.poll(() => width(list)).toBeGreaterThan(initialListWidth + 80);
+  await drag(listHandle, -1500);
+  await expect.poll(() => width(list)).toBeCloseTo(18.2 * rem, 0);
+  await drag(settingsHandle, 1500);
+  await expect.poll(() => width(settings)).toBeCloseTo(13 * rem, 0);
+  await settings
+    .getByLabel("Automation name")
+    .fill("Narrow settings stay editable");
+  await expect(settings.getByLabel("Automation name")).toHaveValue(
+    "Narrow settings stay editable",
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
+      ),
+    )
+    .toBeLessThanOrEqual(0);
+  if (process.env.AUTOMATION_LAYOUT_SCREENSHOTS === "1") {
+    await page.screenshot({
+      path: resolve(
+        "..",
+        ".agent-runtime/automations-layout-20260925/automation-resized-minimum.png",
+      ),
+      fullPage: true,
+      animations: "disabled",
+    });
+  }
+  const narrowWidth = await width(settings);
+  await settingsHandle.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect.poll(() => width(settings)).toBeGreaterThan(narrowWidth);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(settingsHandle).toBeHidden();
+  await expect(settings.getByLabel("Automation name")).toHaveValue(
+    "Narrow settings stay editable",
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
+      ),
+    )
+    .toBeLessThanOrEqual(0);
 });
