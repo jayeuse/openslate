@@ -13,7 +13,8 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.common.dependencies import (
     CurrentIdentity,
     get_current_identity,
-    require_fresh_legacy_capabilities,
+    require_all_capabilities,
+    require_fresh_capabilities,
     require_legacy_capability,
 )
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
@@ -62,7 +63,7 @@ Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_RE
 Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
 RunWriter = Annotated[
     User,
-    Depends(require_legacy_capability(Capability.RECORDS_READ, Capability.RECORDS_WRITE)),
+    Depends(require_all_capabilities(Capability.RECORDS_READ, Capability.RECORDS_WRITE)),
 ]
 Identity = Annotated[CurrentIdentity, Depends(get_current_identity)]
 Database = Annotated[Session, Depends(get_db)]
@@ -353,7 +354,7 @@ def create_report_run(
     # Report writes lock the recipe before policy targets; keep the same order
     # when finalizing a run so an audience edit cannot invert the lock graph.
     _report(db, user, report_id, lock=True)
-    fresh_actor = require_fresh_legacy_capabilities(
+    fresh_actor = require_fresh_capabilities(
         db,
         actor_id=actor_id,
         session_id=identity.session_id,

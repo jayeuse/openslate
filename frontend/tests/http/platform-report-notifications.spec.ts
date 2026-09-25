@@ -202,6 +202,14 @@ test("Report notification SSE resync and recipient invalidation refresh without 
   await expect(
     connected.getByText("No connected notifications on this page."),
   ).toBeVisible();
+  await page.evaluate(() => {
+    const stream = (
+      window as Window & {
+        reportEventSources?: Array<EventTarget & { closed: boolean }>;
+      }
+    ).reportEventSources?.findLast((candidate) => !candidate.closed);
+    stream?.dispatchEvent(new MessageEvent("resync", { data: "{}" }));
+  });
   const baselineReads = listReads;
   available = true;
   await page.evaluate(() => {
@@ -382,6 +390,14 @@ test("a revoked notification 404 clears old references before a failed first-pag
     name: "Connected notifications",
   });
   await expect(connected.getByText("Scheduled report run")).toBeVisible();
+  await page.evaluate(() => {
+    const stream = (
+      window as Window & {
+        reportEventSources?: Array<EventTarget & { closed: boolean }>;
+      }
+    ).reportEventSources?.findLast((candidate) => !candidate.closed);
+    stream?.dispatchEvent(new MessageEvent("resync", { data: "{}" }));
+  });
   staleRefreshRequested = true;
   await page.evaluate(() => {
     const stream = (

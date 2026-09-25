@@ -18,6 +18,7 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
+from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.models import Role, User, UserStatus
 from app.systems.access.users.permissions import Capability, has_capability
@@ -117,6 +118,7 @@ def list_report_audience_users(
             User.is_deleted.is_(False),
             User.deleted_at.is_(None),
             established_user_clause(),
+            identity_eligible_clause(),
             Role.id.in_(eligible_ids),
             Role.is_deleted.is_(False),
             Role.deleted_at.is_(None),

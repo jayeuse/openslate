@@ -2,6 +2,8 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";
+const roleId = "00000000-0000-4000-8000-000000000108";
+const duplicateReportId = "00000000-0000-4000-8000-000000000109";
 const moduleId = "00000000-0000-4000-8000-000000000103";
 const fieldId = "00000000-0000-4000-8000-000000000104";
 const reportId = "00000000-0000-4000-8000-000000000105";
@@ -43,6 +45,9 @@ const report = {
   created_at: timestamp,
   updated_at: timestamp,
 };
+type ReportFixture = Omit<typeof report, "audience"> & {
+  audience: { kind: string; role_id: string | null; user_id: string | null };
+};
 const run = {
   id: runId,
   report_id: reportId,
@@ -52,10 +57,19 @@ const run = {
   created_at: timestamp,
 };
 
-async function installReportsApi(page: Page, sharedOnly = false) {
+async function installReportsApi(
+  page: Page,
+  sharedOnly = false,
+  initialReport: ReportFixture = report,
+) {
+  const sourceReport = initialReport;
+  let copiedReport: Record<string, unknown> | null = null;
   let manualRuns = 0;
   let scheduleWrites = 0;
   let csvReads = 0;
+  let reportCreates = 0;
+  let reportUpdates = 0;
+  const createdReports: Array<{ request: unknown; response: unknown }> = [];
   await page.route("**/api/auth/session", (route) =>
     route.fulfill({
       contentType: "application/json",
@@ -63,6 +77,17 @@ async function installReportsApi(page: Page, sharedOnly = false) {
         authenticated: true,
         user_id: userId,
         setup_required: false,
+      }),
+    }),
+  );
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: userId,
+        role_id: roleId,
+        role: "member",
+        permissions: ["records.read", "records.write"],
       }),
     }),
   );
@@ -102,6 +127,55 @@ async function installReportsApi(page: Page, sharedOnly = false) {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const method = request.method();
+    if (path === "/api/reports" && method === "POST") {
+      reportCreates += 1;
+      const body = request.postDataJSON() as Record<string, unknown>;
+      const created = {
+        ...initialReport,
+        id: duplicateReportId,
+        owner_id: userId,
+        module_id: body.module_id,
+        name: body.name,
+        subtitle: body.subtitle,
+        recipe: body.recipe,
+        audience: body.audience ?? {
+          kind: "private",
+          role_id: null,
+          user_id: null,
+        },
+        revision: 1,
+        is_deleted: false,
+      };
+      createdReports.push({ request: body, response: created });
+      copiedReport = created;
+      return route.fulfill({
+        status: 201,
+        headers: { Location: `/api/reports/${duplicateReportId}` },
+        contentType: "application/json",
+        body: JSON.stringify(created),
+      });
+    }
+    if (path === `/api/reports/${reportId}` && method === "GET")
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(sourceReport),
+      });
+    if (
+      path === `/api/reports/${duplicateReportId}` &&
+      method === "GET" &&
+      copiedReport
+    )
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(copiedReport),
+      });
+    if (path === `/api/reports/${reportId}` && method === "PATCH") {
+      reportUpdates += 1;
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ ...sourceReport, revision: 2 }),
+      });
+    }
     if (path === "/api/reports/shared-runs")
       return route.fulfill({
         contentType: "application/json",
@@ -122,7 +196,15 @@ async function installReportsApi(page: Page, sharedOnly = false) {
     if (path === "/api/reports" && method === "GET")
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(pageOf(sharedOnly ? [] : [report])),
+        body: JSON.stringify(
+          pageOf(
+            sharedOnly
+              ? []
+              : copiedReport
+                ? [sourceReport, copiedReport]
+                : [sourceReport],
+          ),
+        ),
       });
     if (path === `/api/reports/${reportId}/schedule` && method === "GET")
       return route.fulfill({
@@ -179,6 +261,9 @@ async function installReportsApi(page: Page, sharedOnly = false) {
   });
   return {
     counts: () => ({ manualRuns, scheduleWrites, csvReads }),
+    reportCreates: () => reportCreates,
+    reportUpdates: () => reportUpdates,
+    createdReports: () => createdReports,
   };
 }
 
@@ -221,6 +306,105 @@ test("connected Reports expose only authorized shared-run metadata to a reader",
     scheduleWrites: 0,
     csvReads: 1,
   });
+});
+
+test("excluded Report owner cannot run it while eligible scheduling stays available", async ({
+  page,
+}) => {
+  const excluded = {
+    ...report,
+    audience: { kind: "user", role_id: null, user_id: ownerId },
+  };
+  const api = await installReportsApi(page, false, excluded);
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "Operations review" }).click();
+
+  await expect(page.getByRole("button", { name: "Run now" })).toBeDisabled();
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "not included in this Report audience" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("checkbox", { name: "Enable scheduled runs" }),
+  ).toBeEnabled();
+  expect(api.counts().manualRuns).toBe(0);
+});
+
+test("duplicating a saved Report creates a separate draft on its first Save", async ({
+  page,
+}) => {
+  const api = await installReportsApi(page);
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "Operations review" }).click();
+  await page.getByRole("button", { name: "Duplicate" }).click();
+
+  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
+    "Copy of Operations review",
+  );
+  await expect(
+    page.getByText("Save to create a separate Report with the same audience."),
+  ).toBeVisible();
+  expect(api.reportCreates()).toBe(0);
+
+  await page.getByRole("button", { name: "Create Report" }).click();
+  await expect(page.getByText("Report created.")).toBeVisible();
+  expect(api.reportCreates()).toBe(1);
+  expect(api.reportUpdates()).toBe(0);
+  expect(api.createdReports()[0]?.response).toMatchObject({
+    id: duplicateReportId,
+    owner_id: userId,
+    name: "Copy of Operations review",
+    audience: report.audience,
+    recipe: report.recipe,
+  });
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Operations review", exact: true })
+    .click();
+  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
+    "Operations review",
+  );
+  await page
+    .getByRole("button", { name: "Copy of Operations review", exact: true })
+    .click();
+  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
+    "Copy of Operations review",
+  );
+});
+
+test("a saved Report can start an independent new Report through the template chooser", async ({
+  page,
+}) => {
+  const api = await installReportsApi(page);
+  await page.goto("/openview?section=reports");
+  await page.getByLabel("Start from saved Report").selectOption(reportId);
+  await page.getByRole("button", { name: "Start from saved Report" }).click();
+
+  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
+    "Copy of Operations review",
+  );
+  expect(api.reportCreates()).toBe(0);
+  expect(api.reportUpdates()).toBe(0);
+  await page.getByRole("button", { name: "Create Report" }).click();
+  await expect(page.getByText("Report created.")).toBeVisible();
+  expect(api.reportCreates()).toBe(1);
+  expect(api.reportUpdates()).toBe(0);
+  expect(api.createdReports()[0]?.request).toMatchObject({
+    name: "Copy of Operations review",
+    audience: report.audience,
+    recipe: report.recipe,
+  });
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Operations review", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Copy of Operations review",
+      exact: true,
+    }),
+  ).toBeVisible();
 });
 
 test("unsaved Report edits guard workspace navigation", async ({ page }) => {

@@ -1,6 +1,6 @@
 """Least-privilege Report audience choices on runner-owned PostgreSQL."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -99,6 +99,8 @@ def test_report_user_choices_filter_active_established_eligible_roles_before_pag
     gamma.status = UserStatus.PENDING.value
     delta = _user(db, prefix, "delta", allowed)
     delta.invitation_sent_at = datetime.now(UTC)
+    expired = _user(db, prefix, "expired", allowed)
+    expired.expires_at = datetime.now(UTC) - timedelta(minutes=1)
     epsilon = _user(db, prefix, "epsilon", allowed)
     epsilon.is_deleted = True
     omega = _user(db, prefix, "omega", allowed)
@@ -119,7 +121,7 @@ def test_report_user_choices_filter_active_established_eligible_roles_before_pag
         assert client.get(f"/api/reports/audience-users?id={omega.id}").json()[
             "items"
         ] == [{"id": str(omega.id), "username": omega.username}]
-        for excluded in (beta, gamma, delta, epsilon):
+        for excluded in (beta, gamma, delta, expired, epsilon):
             assert client.get(f"/api/reports/audience-users?id={excluded.id}").json()[
                 "pagination"
             ]["total"] == 0

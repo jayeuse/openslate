@@ -69,7 +69,7 @@ def authorize_workspace_capabilities(
     db: Session,
     *,
     actor_id: UUID,
-    expected_role_id: UUID,
+    expected_role_id: UUID | None,
     capabilities: Iterable[Capability | str],
     session_id: UUID | None = None,
     actor_lock_mode: ActorLockMode = ActorLockMode.SHARED,

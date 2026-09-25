@@ -7,20 +7,21 @@ from uuid import UUID
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.core.security.tokens import TokenType, decode_token
+from app.systems.access.policy.models import AccessRule
 from app.systems.access.users.models import User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.openview.reports.models import ReportRunEligibleUser
 from app.systems.platform.scheduling.execution import execute_due_report_runs
-from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork
+from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
 from app.systems.platform.scheduling.notification_router import router as notification_router
-from tests.platform_scheduling.test_execution import NOW
+from tests.platform_scheduling.test_execution import NOW, _counts
 from tests.reports.test_report_run_routes import _RunFixture
 
 pytestmark = pytest.mark.integration
@@ -53,6 +54,51 @@ def test_expired_identity_is_not_captured_for_new_report_run(
     assert created.status_code == 201, created.text
     with Session(fixture.owner_engine) as db:
         assert db.get(ReportRunEligibleUser, (UUID(created.json()["id"]), outsider_id)) is None
+
+
+def test_scheduled_report_is_not_captured_when_workspace_access_denies_owner(
+    scheduled_report: _RunFixture,
+) -> None:
+    fixture = scheduled_report
+    rule_id = uuid7()
+    with AuditSession(fixture.owner_engine) as writer:
+        writer.info[AUDIT_CONTEXT_KEY] = AuditContext(
+            performed_by=fixture.owner_id,
+            request_id=uuid7(),
+            request_method="POST",
+            request_path="/api/report-run-test/scheduled-access-denial",
+        )
+        writer.add(
+            AccessRule(
+                id=rule_id,
+                subject_kind="user",
+                subject_id=fixture.owner_id,
+                scope_kind="workspace",
+                scope_id=None,
+                permission_id="records.read",
+                decision="deny",
+                policy_version=1,
+            )
+        )
+        writer.commit()
+
+    try:
+        assert execute_due_report_runs(fixture.runtime_engine, now=NOW) == []
+        with Session(fixture.owner_engine) as observer:
+            work = observer.scalar(
+                select(ScheduledWork).where(ScheduledWork.report_id == fixture.report_id)
+            )
+            assert work is not None
+            assert work.state == WorkState.PENDING, (
+                work.state,
+                work.failure_code,
+                work.attempt_count,
+            )
+            assert work.attempt_count == 1
+            assert _counts(observer, fixture.report_id) == (0, 0)
+    finally:
+        with fixture.owner_engine.begin() as cleanup:
+            cleanup.execute(text("DELETE FROM public.access_rules WHERE id = :id"), {"id": rule_id})
 
 
 def test_audience_expansion_grants_only_future_runs_and_current_access(

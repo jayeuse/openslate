@@ -30,6 +30,7 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.records.query_router import router as record_query_router
 from tests.conftest import _guard_integration_database, guarded_create_engine
 
 pytestmark = pytest.mark.integration
@@ -209,6 +210,7 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
 
         application = FastAPI()
         application.include_router(router, prefix="/api")
+        application.include_router(record_query_router, prefix="/api")
 
         def database(request: Request) -> Generator[Session, None, None]:
             with AuditSession(runtime_engine) as db:
@@ -386,10 +388,15 @@ def test_manual_report_run_denies_foreign_and_incomplete_capabilities(
     assert malformed.status_code == 422
 
 
-def test_report_run_keeps_legacy_role_boundary_when_access_rule_denies_sandbox(
+def test_report_run_and_output_require_workspace_access_policy(
     report_run_fixture: _RunFixture,
 ) -> None:
     fixture = report_run_fixture
+    path = f"/api/reports/{fixture.report_id}/runs"
+    first_key = uuid7()
+    created = fixture.client.post(path, headers=fixture.headers(key=first_key))
+    assert created.status_code == 201, created.text
+    run_id = created.json()["id"]
     rule_id = uuid7()
     with AuditSession(fixture.owner_engine) as writer:
         writer.info[AUDIT_CONTEXT_KEY] = AuditContext(
@@ -412,11 +419,51 @@ def test_report_run_keeps_legacy_role_boundary_when_access_rule_denies_sandbox(
         )
         writer.commit()
     try:
-        created = fixture.client.post(
-            f"/api/reports/{fixture.report_id}/runs",
-            headers=fixture.headers(key=uuid7()),
+        direct_query = fixture.client.post(
+            "/api/records/query",
+            headers=fixture.headers(),
+            json={
+                "module_id": str(fixture.module_id),
+                "definition": {
+                    "version": 1,
+                    "columns": [
+                        {
+                            "field_id": str(fixture.note_field_id),
+                            "expected_type": "text",
+                        }
+                    ],
+                },
+            },
         )
-        assert created.status_code == 201, created.text
+        assert direct_query.status_code == 403
+        assert fixture.client.post(path, headers=fixture.headers(key=first_key)).status_code == 403
+        denied_run = fixture.client.post(path, headers=fixture.headers(key=uuid7()))
+        assert denied_run.status_code == 403
+        assert fixture.client.get(path, headers=fixture.headers()).status_code == 403
+        assert (
+            fixture.client.get(
+                f"{path}/{run_id}", headers=fixture.headers()
+            ).status_code
+            == 403
+        )
+        assert (
+            fixture.client.get(
+                f"{path}/{run_id}/csv", headers=fixture.headers()
+            ).status_code
+            == 403
+        )
+        assert fixture.client.get(
+            "/api/reports/shared-runs", headers=fixture.headers()
+        ).status_code == 403
+        with Session(fixture.owner_engine) as observer:
+            assert (
+                observer.scalar(
+                    select(func.count())
+                    .select_from(ReportRun)
+                    .where(ReportRun.report_id == fixture.report_id)
+                )
+                == 1
+            )
     finally:
         with fixture.owner_engine.begin() as cleanup:
             cleanup.execute(text("DELETE FROM public.access_rules WHERE id = :id"), {"id": rule_id})

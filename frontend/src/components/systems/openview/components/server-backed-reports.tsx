@@ -9,6 +9,7 @@ import {
   type FormEvent,
 } from "react";
 import { ApiError } from "@/lib/api";
+import { getAuthMe, type AuthMe } from "@/lib/auth-api";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -35,6 +36,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { Select } from "@/components/ui/select";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import {
   archiveOpenViewReport,
@@ -99,9 +101,29 @@ function printFrozenCsv(printWindow: Window, csv: string, title: string): void {
   printWindow.print();
 }
 
+function ownerIncludedByAudience(
+  report: OpenViewReport,
+  identity: AuthMe,
+): boolean {
+  if (identity.id !== report.ownerId) return false;
+  switch (report.audience.kind) {
+    case "private":
+    case "everyone":
+      return true;
+    case "role":
+      return report.audience.roleId === identity.roleId;
+    case "user":
+      return report.audience.userId === identity.id;
+  }
+}
+
 export default function ServerBackedReports() {
+  const [currentIdentity, setCurrentIdentity] = useState<AuthMe | null>(null);
+  const [currentIdentityLoading, setCurrentIdentityLoading] = useState(true);
+  const [currentIdentityError, setCurrentIdentityError] = useState("");
   const [reports, setReports] = useState<OpenViewReport[]>([]);
   const [showArchived, setShowArchived] = useState(false);
+  const [templateReportId, setTemplateReportId] = useState("");
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState("");
   const [listOffset, setListOffset] = useState(0);
@@ -153,6 +175,11 @@ export default function ServerBackedReports() {
   const dirty =
     reportDraftSignature(draft) !== reportDraftSignature(baselineDraft);
   const canEdit = !baselineReport?.isDeleted && !actionPending;
+  const ownerExcludedFromAudience = Boolean(
+    baselineReport &&
+    currentIdentity &&
+    !ownerIncludedByAudience(baselineReport, currentIdentity),
+  );
 
   const navigationGuard = useCallback(
     (href: string, resume: () => void) => {
@@ -169,6 +196,31 @@ export default function ServerBackedReports() {
     [dirty, setPendingNavigation],
   );
   useWorkspaceNavigationGuard(navigationGuard);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    void getAuthMe(controller.signal)
+      .then((identity) => {
+        if (active) {
+          setCurrentIdentity(identity);
+          setCurrentIdentityError("");
+        }
+      })
+      .catch(() => {
+        if (active)
+          setCurrentIdentityError(
+            "Your Report audience could not be confirmed. Reload to try again.",
+          );
+      })
+      .finally(() => {
+        if (active) setCurrentIdentityLoading(false);
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, []);
 
   useEffect(() => {
     moduleIdRef.current = draft.moduleId;
@@ -383,6 +435,47 @@ export default function ServerBackedReports() {
     setStale(false);
     setRuns([]);
     runRetryRef.current = null;
+  }
+
+  async function startFromSavedReport(reportId: string): Promise<void> {
+    if (
+      !reportId ||
+      actionRef.current ||
+      (dirty && !window.confirm("Discard unsaved Report changes?")) ||
+      !beginAction("template")
+    )
+      return;
+    try {
+      const source = await getOpenViewReport(reportId);
+      if (source.isDeleted) {
+        setError("Restore the saved Report before using it as a template.");
+        return;
+      }
+      const nextDraft = reportDraftFrom(source);
+      nextDraft.name = `Copy of ${source.name}`.slice(0, 80);
+      setBaselineReport(null);
+      setDraft(nextDraft);
+      setBaselineDraft(emptyReportDraft());
+      setRuns([]);
+      setRunsOffset(0);
+      setRunsError("");
+      setTemplateReportId("");
+      setStale(false);
+      setError("");
+      setNotice(
+        `Started from “${source.name}”. Save to create a separate Report with the same audience.`,
+      );
+      runRetryRef.current = null;
+    } catch (reason) {
+      setError(
+        safeMessage(
+          reason,
+          "The saved Report could not be loaded as a template.",
+        ),
+      );
+    } finally {
+      endAction();
+    }
   }
 
   function changeModule(moduleId: string): void {
@@ -792,7 +885,7 @@ export default function ServerBackedReports() {
               ) : null}
               <ul className="flex min-w-0 flex-col gap-2">
                 {reports.map((report) => (
-                  <li key={report.id}>
+                  <li key={report.id} className="flex min-w-0 gap-2">
                     <Button
                       type="button"
                       variant={
@@ -800,7 +893,7 @@ export default function ServerBackedReports() {
                           ? "secondary"
                           : "outline"
                       }
-                      className="min-h-11 w-full justify-start text-left"
+                      className="min-h-11 min-w-0 flex-1 justify-start text-left"
                       disabled={Boolean(actionPending)}
                       onClick={() => openReport(report)}
                     >
@@ -811,9 +904,51 @@ export default function ServerBackedReports() {
                         </Badge>
                       ) : null}
                     </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      disabled={Boolean(actionPending) || report.isDeleted}
+                      onClick={() => void startFromSavedReport(report.id)}
+                    >
+                      Duplicate
+                    </Button>
                   </li>
                 ))}
               </ul>
+              {!showArchived && reports.length > 0 ? (
+                <div className="flex flex-wrap items-end gap-2">
+                  <Field className="min-w-48 flex-1">
+                    <FieldLabel htmlFor="report-template-source">
+                      Start from saved Report
+                    </FieldLabel>
+                    <Select
+                      id="report-template-source"
+                      value={templateReportId}
+                      onValueChange={setTemplateReportId}
+                      placeholder="Choose a saved Report"
+                      disabled={Boolean(actionPending)}
+                    >
+                      {reports
+                        .filter((report) => !report.isDeleted)
+                        .map((report) => (
+                          <option key={report.id} value={report.id}>
+                            {report.name}
+                          </option>
+                        ))}
+                    </Select>
+                  </Field>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={!templateReportId || Boolean(actionPending)}
+                    onClick={() => void startFromSavedReport(templateReportId)}
+                  >
+                    Start from saved Report
+                  </Button>
+                </div>
+              ) : null}
               {listHasMore ? (
                 <Button
                   type="button"
@@ -995,11 +1130,29 @@ export default function ServerBackedReports() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
+                {currentIdentityError ? (
+                  <Alert role="alert" variant="destructive">
+                    {currentIdentityError}
+                  </Alert>
+                ) : null}
+                {ownerExcludedFromAudience ? (
+                  <p role="status" className="text-muted-foreground text-sm">
+                    Your account is not included in this Report audience, so you
+                    cannot run it. Scheduled runs remain available for eligible
+                    recipients.
+                  </p>
+                ) : null}
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
                     className="min-h-11"
-                    disabled={Boolean(actionPending) || dirty}
+                    disabled={
+                      Boolean(actionPending) ||
+                      dirty ||
+                      currentIdentityLoading ||
+                      !currentIdentity ||
+                      ownerExcludedFromAudience
+                    }
                     onClick={() => void runReport()}
                   >
                     {actionPending === "run" ? "Running…" : "Run now"}

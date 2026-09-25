@@ -10,6 +10,8 @@ from fastapi import HTTPException
 from sqlalchemy import Engine, literal, select
 from sqlalchemy.orm import Session
 
+from app.systems.access.policy.authorization import authorize_workspace_capabilities
+from app.systems.access.users.permissions import Capability
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.reports.models import Report, ReportRun
 from app.systems.openview.reports.schemas import ReportRecipe
@@ -126,6 +128,12 @@ def capture_report_snapshot(engine: Engine, report_id: UUID, owner_id: UUID) -> 
 
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
         with Session(bind=connection) as db:
+            authorize_workspace_capabilities(
+                db,
+                actor_id=owner_id,
+                expected_role_id=None,
+                capabilities=(Capability.RECORDS_READ, Capability.RECORDS_WRITE),
+            )
             report = _active_report(db, report_id, owner_id)
             recipe = ReportRecipe.model_validate(report.recipe)
             definition = _definition(recipe)

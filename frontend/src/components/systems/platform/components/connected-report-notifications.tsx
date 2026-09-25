@@ -7,6 +7,7 @@ import {
   markOpenViewReportNotificationRead,
   type OpenViewReportNotification,
 } from "@/components/systems/openview/adapters/report-notification-api";
+import { subscribeOpenViewInvalidations } from "@/components/systems/openview/adapters/invalidation-events";
 import type { OpenViewPage } from "@/components/systems/openview/adapters/views-api";
 import { Action, Panel } from "../../shared/components/ui";
 
@@ -107,31 +108,10 @@ export default function ConnectedReportNotifications() {
 
   useEffect(() => {
     if (denied) return;
-    const stream = new EventSource("/api/events");
-    const refresh = () => void loadPage(currentOffset.current);
-    const onInvalidate = (event: MessageEvent) => {
-      let payload: unknown;
-      try {
-        payload = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      if (
-        typeof payload === "object" &&
-        payload !== null &&
-        "entity" in payload &&
-        payload.entity === "in_app_notifications"
-      ) {
-        refresh();
-      }
-    };
-    stream.addEventListener("resync", refresh);
-    stream.addEventListener("invalidate", onInvalidate);
-    return () => {
-      stream.removeEventListener("resync", refresh);
-      stream.removeEventListener("invalidate", onInvalidate);
-      stream.close();
-    };
+    return subscribeOpenViewInvalidations((event) => {
+      if (event.type === "resync" || event.entity === "in_app_notifications")
+        void loadPage(currentOffset.current);
+    });
   }, [denied, loadPage]);
 
   async function markRead(notificationId: string) {

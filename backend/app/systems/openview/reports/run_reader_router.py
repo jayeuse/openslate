@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, load_only
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import require_capability
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
 from app.systems.access.users.models import User
@@ -25,7 +25,7 @@ from app.systems.openview.reports.schemas import (
 )
 
 router = APIRouter()
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
+Reader = Annotated[User, Depends(require_capability(Capability.RECORDS_READ))]
 Database = Annotated[Session, Depends(get_db)]
 
 RUN_LIST_SPEC = ListQuerySpec(
