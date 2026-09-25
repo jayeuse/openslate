@@ -115,6 +115,10 @@ Statuses describe the pinned source, not proposed implementation.
 - Keep the ten global capabilities.
 - OpenView reads require `records.read`; mutations require `records.write`.
 - Board reads require `records.read`; Board mutations require `records.write`.
+- A Workspace Access denial of Record data wins on every surface, including
+  OpenView queries, Board Record pickers/widgets, and Report runs and downloads.
+  Report generation rechecks the policy after snapshot capture. Board grants
+  and content audiences remain additional, independent checks.
   Boards additionally enforce per-Board view/edit/manage grants. Administrators
   and the creator manage; manage implies edit/view; edit implies view. Identity
   rules outrank role/everyone, deny wins at equal priority, and explicit view
