@@ -1978,33 +1978,143 @@ test("browser Back and Forward restore unsaved Access defaults without submittin
   await discardRestoredDraft(pageUnderTest, restored);
 });
 
-test("role advanced options remain keyboard reachable without mobile overflow", async ({
+test("role directory keeps its controls clear and compares baselines across pages", async ({
   page: pageUnderTest,
 }) => {
-  await mockAccessApi(pageUnderTest);
+  const additionalRoles = [
+    ["00000000-0000-4000-8000-000000000100", "Operator"],
+    ["00000000-0000-4000-8000-000000000101", "Viewer"],
+    ["00000000-0000-4000-8000-000000000102", "Finance reviewer"],
+    ["00000000-0000-4000-8000-000000000103", "Warehouse coordinator"],
+  ].map(([id, role]) => ({
+    ...roles[0]!,
+    id: id!,
+    role: role!,
+    ...(role === "Warehouse coordinator" ? { permissions: {} } : {}),
+    description: `${role} permissions.`,
+  }));
+  const directoryRoles = [...roles, ...additionalRoles];
+  await mockAccessApi(
+    pageUnderTest,
+    undefined,
+    undefined,
+    undefined,
+    () => directoryRoles,
+  );
   await pageUnderTest.setViewportSize({ width: 390, height: 844 });
   await pageUnderTest.goto("/access?view=roles");
   await expect(
     pageUnderTest.getByRole("heading", { name: "Roles" }),
   ).toBeVisible();
-  await expect(pageUnderTest.getByLabel("Search roles")).toBeVisible();
   await expect(
-    pageUnderTest.getByRole("group", { name: "Filter roles" }),
+    pageUnderTest.getByText("Built-in roles", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    pageUnderTest.getByText("Custom roles", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    pageUnderTest.getByText(
+      "The last active Administrator cannot be reassigned or disabled.",
+    ),
+  ).toBeVisible();
+  await expect(pageUnderTest.getByLabel("Search roles")).toBeVisible();
+  const filters = pageUnderTest.getByRole("group", { name: "Filter roles" });
+  await expect(filters.getByRole("button", { name: "All 6" })).toBeVisible();
+  await expect(
+    filters.getByRole("button", { name: "Built-in 2" }),
+  ).toBeVisible();
+  await expect(filters.getByRole("button", { name: "Custom 4" })).toBeVisible();
+  await expect(pageUnderTest.getByLabel("Sort")).toHaveValue("name");
+  await pageUnderTest.getByLabel("Sort").selectOption("grants");
+  await pageUnderTest.getByLabel("Sort").selectOption("name");
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Compare roles", exact: true }),
+  ).toBeVisible();
+  await expect(pageUnderTest.getByText("Showing 1–5 of 6")).toBeVisible();
+  await expect(
+    pageUnderTest
+      .getByRole("button", { name: "View role", exact: true })
+      .first(),
+  ).toBeVisible();
+  await expect(
+    pageUnderTest
+      .getByRole("button", { name: "Edit role", exact: true })
+      .first(),
   ).toBeVisible();
 
-  const moreOptions = pageUnderTest.locator("summary").filter({
-    hasText: "More options",
-  });
-  await moreOptions.focus();
-  await pageUnderTest.keyboard.press("Enter");
-  await expect(
-    pageUnderTest.getByRole("button", { name: "Sort" }),
-  ).toBeVisible();
   await pageUnderTest.getByRole("button", { name: "Compare roles" }).click();
   await expect(
     pageUnderTest.getByRole("button", { name: "Cancel compare" }),
   ).toBeVisible();
+  await pageUnderTest
+    .getByRole("checkbox", { name: "Compare admin", exact: true })
+    .check();
+  await pageUnderTest
+    .getByRole("navigation", { name: "Role pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
+  await pageUnderTest
+    .getByRole("checkbox", {
+      name: "Compare Warehouse coordinator",
+      exact: true,
+    })
+    .check();
+  await pageUnderTest
+    .getByRole("button", { name: "Compare roles (2)" })
+    .click();
+
+  const dialog = pageUnderTest.getByRole("dialog", { name: "Compare roles" });
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole("columnheader", { name: /admin/ }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("columnheader", { name: /Warehouse coordinator/ }),
+  ).toBeVisible();
+  const permissionRow = dialog.getByRole("row", { name: /Read records/ });
+  await expect(permissionRow).toContainText("Not granted");
+  await expect(permissionRow).toContainText("Granted");
+  await expect(
+    dialog.getByText(
+      "These are role baselines. Detailed rules may affect actual access.",
+    ),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText(
+      "Protected Administrator management access is additional to these data permissions.",
+    ),
+  ).toBeVisible();
+  const matrixRegion = pageUnderTest.getByRole("region", {
+    name: "Role permission comparison",
+  });
+  expect(
+    await matrixRegion.evaluate(
+      (element) => element.scrollWidth > element.clientWidth,
+    ),
+  ).toBe(true);
+  expect(
+    await pageUnderTest.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await pageUnderTest.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
   await pageUnderTest.getByRole("button", { name: "Cancel compare" }).click();
+  await pageUnderTest
+    .getByRole("navigation", { name: "Role pages" })
+    .getByRole("button", { name: "Go to previous page" })
+    .click();
+  await expect(
+    pageUnderTest.getByRole("button", { name: "More actions for admin" }),
+  ).toBeVisible();
+  await pageUnderTest
+    .getByRole("button", { name: "More actions for admin" })
+    .focus();
+  await pageUnderTest.keyboard.press("Enter");
+  await expect(
+    pageUnderTest.getByRole("menuitem", { name: "Duplicate" }),
+  ).toBeVisible();
+  await pageUnderTest.keyboard.press("Escape");
   expect(
     await pageUnderTest.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

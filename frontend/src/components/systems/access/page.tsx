@@ -288,7 +288,9 @@ function AccessControlCenter() {
     <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 p-3 sm:px-5 sm:py-4">
       <header
         className={
-          activeView === "overview" || activeView === "identities"
+          activeView === "overview" ||
+          activeView === "identities" ||
+          activeView === "roles"
             ? "flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
             : "flex shrink-0 items-start justify-between gap-3"
         }
@@ -312,7 +314,7 @@ function AccessControlCenter() {
         <Button
           asChild
           variant="outline"
-          className={`min-h-11 shrink-0 px-3 ${activeView === "overview" || activeView === "identities" ? "w-full sm:w-auto" : ""}`}
+          className={`min-h-11 shrink-0 px-3 ${activeView === "overview" || activeView === "identities" || activeView === "roles" ? "w-full sm:w-auto" : ""}`}
         >
           <GuardedWorkspaceLink href="/manage?view=security">
             <ShieldCheck aria-hidden="true" />
