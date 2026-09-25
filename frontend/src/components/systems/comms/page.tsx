@@ -16,19 +16,10 @@ import {
   X,
 } from "lucide-react";
 import {
-  initialPeople,
-  initialRoles,
-  type Person,
-  type Role,
-} from "../access/domain/model";
-import {
-  useSampleRuntime,
   useSampleState,
   type SampleTransactionDraft,
 } from "../shared/runtime/sample-state";
 import { SampleOperationError } from "../shared/runtime/sample-runtime";
-import { useSampleResource } from "../shared/runtime/sample-async";
-import { INITIAL_RECORDS, type SampleRecord } from "../shared/data/sample-data";
 import {
   Dialog,
   DialogContent,
@@ -48,7 +39,6 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import type { PanelImperativeHandle } from "react-resizable-panels";
 import {
   Collapsible,
   CollapsibleTrigger,
@@ -79,8 +69,6 @@ import {
   ThreadPanel,
   MessageTimeline,
   MessageComposer,
-  type MessageDraft,
-  type ThreadChangeOptions,
 } from "./components/ui";
 import { Action } from "../shared/components/ui";
 import {
@@ -88,8 +76,18 @@ import {
   messageFromCommsError,
   readCommsConfiguration,
   stageCommsConfiguration,
-  useCommsCommands,
 } from "./state/runtime";
+import {
+  INITIAL_DIRECTS,
+  useCommsWorkspace,
+} from "./state/use-comms-workspace";
+import { useCommsPanelLayout } from "./state/use-comms-panel-layout";
+import {
+  createCommsNavigationActions,
+  useCommsNavigationState,
+} from "./state/use-comms-navigation";
+import { createCommsMessageOperations } from "./state/use-comms-message-operations";
+import { createCommsConversationOperations } from "./state/use-comms-conversation-operations";
 import { ChannelDialog, newChannel } from "./components/channel-dialog";
 import {
   FloatingList,
@@ -104,7 +102,6 @@ import {
   CATEGORIES,
   CHANNELS,
   MESSAGES,
-  PEOPLE,
   OPEN_PERMISSIONS,
   messageAuthorId,
   threadMessages,
@@ -112,15 +109,12 @@ import {
   type Channel,
   type Direct,
   type Message,
-  type Thread,
   type RecordThread,
 } from "./domain/model";
 
 import {
   CommsConfigurationProvider,
   CommsPlatformPreferencesProvider,
-  DEFAULT_PLATFORM_PREFERENCES,
-  useCommsConfiguration,
 } from "./state/configuration-state";
 import {
   DEFAULT_COMMS_PREFERENCES,
@@ -131,88 +125,6 @@ import {
 } from "./domain/configuration";
 import { CommsSettingsDialog } from "./components/settings-dialog";
 import { CommsToolsDialog } from "./components/tools-dialog";
-import {
-  validateCommsMessage,
-  validateCommsMessageChange,
-} from "./domain/message-policy";
-import {
-  EXAMPLE_PEOPLE,
-  EXAMPLE_CATEGORIES,
-  EXAMPLE_CHANNELS,
-  EXAMPLE_MESSAGES,
-  EXAMPLE_THREADS,
-  EXAMPLE_DIRECTS,
-} from "./data/examples";
-
-function appendExamples<T extends { id: string }>(
-  current: T[],
-  examples: T[],
-): T[] {
-  const existing = new Set(current.map((item) => item.id));
-  return [...current, ...examples.filter((item) => !existing.has(item.id))];
-}
-
-const COMMS_RESOURCE_KEYS = [
-  "comms-configuration",
-  "access-people",
-  "access-roles",
-  "commsCategories",
-  "commsChannels",
-  "commsMessages",
-  "commsThreads",
-  "commsDirects",
-  "records",
-  "commsRecordThreads",
-  "platformAccount",
-  "platformNotificationPreferences",
-] as const;
-type SampleAccount = {
-  language: string;
-  theme: string;
-  presence: string;
-  passwordChanged: boolean;
-  signedOut: boolean;
-};
-const INITIAL_ACCOUNT: SampleAccount = {
-  language: "English",
-  theme: "Light",
-  presence: "Available",
-  passwordChanged: false,
-  signedOut: false,
-};
-const INITIAL_DIRECTS: Direct[] = [
-  { id: "sample-dm-alex", user: PEOPLE[0], read: false, blocked: false },
-];
-
-function mergeThreadReplies(
-  current: Message[],
-  base: Message[],
-  desired: (Message | string)[],
-): (Message | string)[] {
-  if (desired.some((reply) => typeof reply === "string")) return desired;
-  const desiredMessages = desired.filter(
-    (reply): reply is Message => typeof reply !== "string",
-  );
-  const baseIds = new Set(base.map((reply) => reply.id));
-  const desiredById = new Map(
-    desiredMessages.map((reply) => [reply.id, reply] as const),
-  );
-  const next = current
-    .filter((reply) => !baseIds.has(reply.id) || desiredById.has(reply.id))
-    .map((reply) => desiredById.get(reply.id) ?? reply);
-  const present = new Set(
-    next
-      .filter((reply): reply is Message => typeof reply !== "string")
-      .map((reply) => reply.id),
-  );
-  for (const reply of desiredMessages) {
-    if (!present.has(reply.id)) {
-      next.push(reply);
-      present.add(reply.id);
-    }
-  }
-  return next;
-}
 
 function stageCommsEditor(
   draft: SampleTransactionDraft,
@@ -257,9 +169,6 @@ type ToolView =
 type Editor = (
   { kind: "channel"; value: Channel } | { kind: "category"; value: Category }
 ) & { opener: HTMLElement };
-type MessageSendResult =
-  { ok: true; threadId?: string } | { ok: false; error: string };
-
 type WorkspaceSetting =
   | "create-channel"
   | "edit-channel"
@@ -349,51 +258,9 @@ function CommsMenu({
 }
 
 export default function SampleComms() {
-  const [initialConfig] = useCommsConfiguration();
-  const runtime = useSampleRuntime();
-  const { run, isPending } = useCommsCommands();
-  const commsResource = useSampleResource({
-    keys: COMMS_RESOURCE_KEYS,
-    queryKey: "comms-workspace",
-    load: (signal) =>
-      runtime.load(
-        (draft) => ({
-          configuration: readCommsConfiguration(draft),
-          people: draft.read<Person[]>("access-people", initialPeople),
-          roles: draft.read<Role[]>("access-roles", initialRoles),
-          categories: draft.read<Category[]>("commsCategories", CATEGORIES),
-          channels: draft.read<Channel[]>("commsChannels", CHANNELS),
-          messages: draft.read<Message[]>("commsMessages", MESSAGES),
-          threads: draft.read<Thread[]>("commsThreads", []),
-          directs: draft.read<Direct[]>("commsDirects", INITIAL_DIRECTS),
-          records: draft.read<SampleRecord[]>("records", INITIAL_RECORDS),
-          recordThreads: draft.read<RecordThread[]>("commsRecordThreads", []),
-          account: draft.read<SampleAccount>(
-            "platformAccount",
-            INITIAL_ACCOUNT,
-          ),
-          platformPreferences: draft.read(
-            "platformNotificationPreferences",
-            DEFAULT_PLATFORM_PREFERENCES,
-          ),
-        }),
-        { keys: COMMS_RESOURCE_KEYS, signal },
-      ),
-  });
-  const workspace = commsResource.data ?? {
-    configuration: initialConfig,
-    people: initialPeople,
-    roles: initialRoles,
-    categories: CATEGORIES,
-    channels: CHANNELS,
-    messages: MESSAGES,
-    threads: [] as Thread[],
-    directs: INITIAL_DIRECTS,
-    records: INITIAL_RECORDS,
-    recordThreads: [] as RecordThread[],
-    account: INITIAL_ACCOUNT,
-    platformPreferences: DEFAULT_PLATFORM_PREFERENCES,
-  };
+  const [notice, setNotice] = useState("");
+  const { commsResource, workspace, run, isPending } =
+    useCommsWorkspace(setNotice);
   const {
     configuration: config,
     people,
@@ -408,6 +275,26 @@ export default function SampleComms() {
     account,
     platformPreferences,
   } = workspace;
+  const navigation = useCommsNavigationState();
+  const {
+    selected,
+    setSelected,
+    mobileConversation,
+    setMobileConversation,
+    threadId,
+    setThreadId,
+    memberOpen,
+    setMemberOpen,
+    search,
+    setSearch,
+    replyingTo,
+    setReplyingTo,
+    highlightedId,
+    setHighlightedId,
+    awayFromLatest,
+    setAwayFromLatest,
+    messageList,
+  } = navigation;
   const [settingsDialog, setSettingsDialog] = useState<{
     scope: CommsScope | "personal";
     opener: HTMLElement;
@@ -421,106 +308,12 @@ export default function SampleComms() {
     threadId?: string;
     messageId?: string;
   } | null>(null);
-  const [examplesLoaded] = useSampleState("commsExamplesLoaded", false);
-  const [notice, setNotice] = useState("");
   const guardWorkspaceNavigation = useCallback(() => {
     if (!isPending()) return true;
     setNotice("Finish the current OpenComms change before leaving this page.");
     return false;
   }, [isPending]);
   useWorkspaceNavigationGuard(guardWorkspaceNavigation);
-  useEffect(() => {
-    if (examplesLoaded) return;
-    void run(
-      "seed-examples",
-      (draft) => {
-        if (draft.read("commsExamplesLoaded", false)) return false;
-        const currentCategories = draft.read<Category[]>(
-          "commsCategories",
-          CATEGORIES,
-        );
-        const currentChannels = draft.read<Channel[]>(
-          "commsChannels",
-          CHANNELS,
-        );
-        const currentDirects = draft.read<Direct[]>(
-          "commsDirects",
-          INITIAL_DIRECTS,
-        );
-        const currentMessages = draft.read<Message[]>(
-          "commsMessages",
-          MESSAGES,
-        );
-        const categoryIds = new Set(
-          [...currentCategories, ...EXAMPLE_CATEGORIES].map((item) => item.id),
-        );
-        const newChannels = EXAMPLE_CHANNELS.filter((item) =>
-          categoryIds.has(item.categoryId),
-        );
-        const conversationIds = new Set(
-          [
-            ...currentChannels,
-            ...newChannels,
-            ...currentDirects,
-            ...EXAMPLE_DIRECTS,
-          ].map((item) => item.id),
-        );
-        const newMessages = EXAMPLE_MESSAGES.filter((item) =>
-          conversationIds.has(item.conversation),
-        );
-        const messageIds = new Set(
-          [...currentMessages, ...newMessages].map((item) => item.id),
-        );
-        draft.update<Person[]>("access-people", initialPeople, (items) =>
-          appendExamples(items, EXAMPLE_PEOPLE),
-        );
-        draft.update<Category[]>("commsCategories", CATEGORIES, (items) =>
-          appendExamples(items, EXAMPLE_CATEGORIES),
-        );
-        draft.update<Channel[]>("commsChannels", CHANNELS, (items) =>
-          appendExamples(items, newChannels),
-        );
-        draft.update<Direct[]>("commsDirects", INITIAL_DIRECTS, (items) =>
-          appendExamples(items, EXAMPLE_DIRECTS),
-        );
-        draft.update<Message[]>("commsMessages", MESSAGES, (items) =>
-          appendExamples(items, newMessages),
-        );
-        draft.update<Thread[]>("commsThreads", [], (items) =>
-          appendExamples(
-            items,
-            EXAMPLE_THREADS.filter((item) => messageIds.has(item.messageId)),
-          ),
-        );
-        draft.update("commsExamplesLoaded", false, true);
-        return true;
-      },
-      [
-        "access-people",
-        "commsCategories",
-        "commsChannels",
-        "commsDirects",
-        "commsMessages",
-        "commsThreads",
-        "commsExamplesLoaded",
-      ],
-    ).catch((error: unknown) => {
-      setNotice(
-        messageFromCommsError(error, "Conversations could not be loaded."),
-      );
-    });
-  }, [examplesLoaded, run]);
-  const [selected, setSelected] = useState(() =>
-    typeof window === "undefined"
-      ? CHANNELS[0].id
-      : new URLSearchParams(window.location.search).get("conversation") ||
-        CHANNELS[0].id,
-  );
-  const [mobileConversation, setMobileConversation] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).has("conversation"),
-  );
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [dmOpen, setDmOpen] = useState(false);
@@ -529,58 +322,17 @@ export default function SampleComms() {
   const [threadDirectory, setThreadDirectory] = useState<HTMLElement | null>(
     null,
   );
-  const [memberOpen, setMemberOpen] = useState(false);
   const [panelWidths] = useSampleState("commsPanelWidths", {
     channels: 240,
     members: 220,
   });
   const [preferredThreadWidth] = useSampleState("commsThreadWidth", 380);
-  const container = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(0);
-  useEffect(() => {
-    const element = container.current;
-    if (!element) return;
-    const observer = new ResizeObserver(([entry]) =>
-      setContainerWidth(entry.contentRect.width),
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  const channelsPanel = useRef<PanelImperativeHandle>(null);
-  const rightPanel = useRef<PanelImperativeHandle>(null);
-  const [desktop, setDesktop] = useState(false);
-  useEffect(() => {
-    const query = window.matchMedia("(min-width: 768px)");
-    const update = () => setDesktop(query.matches);
-    update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, []);
-  const [wide, setWide] = useState(false);
   const [membersVisible, setMembersVisible] = useState(true);
-  useEffect(() => {
-    const query = window.matchMedia("(min-width: 1280px)");
-    const update = () => setWide(query.matches);
-    update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, []);
   const [memberSearch, setMemberSearch] = useState("");
   const [conversationSearch, setConversationSearch] = useState("");
-  const [search, setSearch] = useState("");
-  const [threadId, setThreadId] = useState(() =>
-    typeof window === "undefined"
-      ? ""
-      : (new URLSearchParams(window.location.search).get("thread") ?? ""),
-  );
   const [threadFilter, setThreadFilter] = useState<"active" | "inactive">(
     "active",
   );
-  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
-  const [highlightedId, setHighlightedId] = useState("");
-  const [awayFromLatest, setAwayFromLatest] = useState(false);
-  const messageList = useRef<HTMLDivElement>(null);
   const viewerId = "sample-eli";
   const viewer = people.find(
     (person) => person.id === viewerId && person.active,
@@ -706,64 +458,56 @@ export default function SampleComms() {
   const currentThread = canView
     ? threads.find((item) => item.id === threadId)
     : undefined;
-  const availableWidth = containerWidth || 1200;
-  const rightOpen = wide && (!!currentThread || membersVisible);
-  const minimumChatWidth = Math.min(360, Math.max(280, availableWidth - 212));
-  const channelMaximum = Math.max(
-    200,
-    Math.min(
-      360,
-      availableWidth -
-        minimumChatWidth -
-        (rightOpen ? (currentThread ? 320 : 200) : 0) -
-        12,
-    ),
-  );
-  const channelWidth = Math.round(
-    Math.max(200, Math.min(channelMaximum, preferences.channelWidth)),
-  );
-  const memberMaximum = Math.max(
-    200,
-    Math.min(360, availableWidth - channelWidth - minimumChatWidth - 12),
-  );
-  const memberWidth = Math.round(
-    Math.max(200, Math.min(memberMaximum, preferences.memberWidth)),
-  );
-  const threadMaximum = Math.max(
-    320,
-    Math.floor(
-      Math.min(560, availableWidth - channelWidth - minimumChatWidth - 12),
-    ),
-  );
-  const threadWidth = Math.round(
-    Math.max(320, Math.min(threadMaximum, preferences.threadWidth)),
-  );
-  useEffect(() => {
-    // Panel refs are exposed before the group commits its new layout.
-    const frame = requestAnimationFrame(() => {
-      if (
-        desktop &&
-        channelsPanel.current &&
-        Math.abs(channelsPanel.current.getSize().inPixels - channelWidth) > 0.5
-      )
-        channelsPanel.current.resize(channelWidth);
-      const width = currentThread ? threadWidth : memberWidth;
-      if (
-        rightOpen &&
-        rightPanel.current &&
-        Math.abs(rightPanel.current.getSize().inPixels - width) > 0.5
-      )
-        rightPanel.current.resize(width);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [
+  const {
+    container,
+    channelsPanel,
+    rightPanel,
     desktop,
+    wide,
     rightOpen,
-    !!currentThread,
+    minimumChatWidth,
+    channelMaximum,
     channelWidth,
+    memberMaximum,
     memberWidth,
+    threadMaximum,
     threadWidth,
-  ]);
+  } = useCommsPanelLayout({
+    preferences,
+    hasThread: !!currentThread,
+    membersVisible,
+  });
+  const {
+    channelUnread,
+    latestChannelActivity,
+    select,
+    openThread,
+    jumpToMessage,
+    beginReply,
+    scrollToLatest,
+  } = createCommsNavigationActions({
+    state: navigation,
+    preferences,
+    clockNow,
+    allMessages,
+    threads,
+    canParticipate,
+    patchPreferences,
+    setThreadDirectory,
+  });
+  const { startDirect, startThread, patchThread } =
+    createCommsConversationOperations({
+      run,
+      selected,
+      threadId,
+      viewerId,
+      select,
+      setDirectError,
+      setNotice,
+      setDmOpen,
+      setThreadId,
+      setMemberOpen,
+    });
   const threadMessage = allMessages.find(
     (item) => item.id === currentThread?.messageId,
   );
@@ -870,44 +614,6 @@ export default function SampleComms() {
         () => setNotice("The browser could not copy the link."),
       );
   }
-  function latestChannelActivity(id: string) {
-    return Math.max(
-      0,
-      ...allMessages
-        .filter(
-          (message) =>
-            message.conversation === id ||
-            threads.some(
-              (thread) =>
-                thread.id === message.conversation &&
-                thread.conversation === id,
-            ),
-        )
-        .map((message) => message.created),
-    );
-  }
-  function channelUnread(id: string) {
-    return (
-      preferences.readAt[id] === 0 ||
-      latestChannelActivity(id) > (preferences.readAt[id] ?? 0)
-    );
-  }
-  function select(id: string) {
-    patchPreferences({
-      readAt: {
-        ...preferences.readAt,
-        [id]: Math.max(clockNow, latestChannelActivity(id)),
-      },
-    });
-    setSelected(id);
-    setMobileConversation(true);
-    setThreadId("");
-    setSearch("");
-    setReplyingTo(null);
-    setHighlightedId("");
-    setMemberOpen(false);
-    setAwayFromLatest(false);
-  }
   function openWorkspaceSetting(
     setting: WorkspaceSetting,
     opener: HTMLElement,
@@ -963,11 +669,6 @@ export default function SampleComms() {
     else if (setting === "edit-category" && category)
       setEditor({ kind: "category", value: category, opener });
   }
-  function openThread(item: Thread, conversation: string) {
-    select(conversation);
-    setThreadId(item.id);
-    setThreadDirectory(null);
-  }
   const workspaceThreads = threads.flatMap((item) => {
     const message = allMessages.find((entry) => entry.id === item.messageId);
     const conversation = item.conversation ?? message?.conversation;
@@ -1003,727 +704,26 @@ export default function SampleComms() {
       ),
     }),
   );
-  async function startDirect(name: string) {
-    const result = await run(
-      `direct:${name}`,
-      (draft) => {
-        const currentConfig = readCommsConfiguration(draft);
-        const currentPeople = draft.read<Person[]>(
-          "access-people",
-          initialPeople,
-        );
-        const currentCategories = draft.read<Category[]>(
-          "commsCategories",
-          CATEGORIES,
-        );
-        const currentChannels = draft.read<Channel[]>(
-          "commsChannels",
-          CHANNELS,
-        );
-        const currentDirects = draft.read<Direct[]>(
-          "commsDirects",
-          INITIAL_DIRECTS,
-        );
-        const existing = currentDirects.find((item) => item.user === name);
-        if (existing) return { ok: true as const, id: existing.id };
-        const currentViewer = currentPeople.find(
-          (person) => person.id === viewerId && person.active,
-        );
-        const target = currentPeople.find(
-          (person) => person.name === name && person.active,
-        );
-        const dmRule = resolveCommsSettings(currentConfig).values.dmRule;
-        if (!currentViewer || !target)
-          return draft.reject({
-            ok: false as const,
-            error: "Choose an active person in this workspace.",
-          });
-        if (dmRule === "none")
-          return draft.reject({
-            ok: false as const,
-            error: "New direct messages are disabled by workspace policy.",
-          });
-        if (
-          dmRule === "shared-channel" &&
-          !currentChannels.some((item) =>
-            [currentViewer, target].every(
-              (person) =>
-                resolveCommsPermission(
-                  currentConfig,
-                  { person, channel: item, categories: currentCategories },
-                  "viewChannel",
-                ).allowed,
-            ),
-          )
-        )
-          return draft.reject({
-            ok: false as const,
-            error: "New direct messages require a shared channel.",
-          });
-        const id = `sample-dm-${crypto.randomUUID()}`;
-        draft.update<Direct[]>("commsDirects", INITIAL_DIRECTS, (items) => [
-          ...items,
-          { id, user: name, read: false, blocked: false },
-        ]);
-        return { ok: true as const, id };
-      },
-      [
-        "commsDirects",
-        COMMS_CONFIGURATION_KEY,
-        "access-people",
-        "commsCategories",
-        "commsChannels",
-      ],
-    ).catch((error: unknown) => ({
-      ok: false as const,
-      error: messageFromCommsError(
-        error,
-        "The direct conversation could not be opened.",
-      ),
-    }));
-    if (!result.ok) {
-      setDirectError(result.error);
-      setNotice(result.error);
-      return;
-    }
-    setDirectError("");
-    select(result.id);
-    setDmOpen(false);
-  }
-  async function startThread(message: Message) {
-    const result = await run(
-      `thread:create:${message.id}`,
-      (draft) => {
-        const currentConfig = readCommsConfiguration(draft);
-        const currentPeople = draft.read<Person[]>(
-          "access-people",
-          initialPeople,
-        );
-        const currentCategories = draft.read<Category[]>(
-          "commsCategories",
-          CATEGORIES,
-        );
-        const currentChannels = draft.read<Channel[]>(
-          "commsChannels",
-          CHANNELS,
-        );
-        const currentMessages = draft.read<Message[]>(
-          "commsMessages",
-          MESSAGES,
-        );
-        const currentThreads = draft.read<Thread[]>("commsThreads", []);
-        const currentDirect = draft
-          .read<Direct[]>("commsDirects", INITIAL_DIRECTS)
-          .find((item) => item.id === selected);
-        const currentViewer = currentPeople.find(
-          (person) => person.id === viewerId && person.active,
-        );
-        const currentChannel = currentChannels.find(
-          (item) => item.id === selected,
-        );
-        const currentSettings = resolveCommsSettings(
-          currentConfig,
-          currentChannel,
-          currentCategories,
-        ).values;
-        const access = resolveCommsPermission(
-          currentConfig,
-          {
-            person: currentViewer,
-            channel: currentChannel,
-            categories: currentCategories,
-          },
-          "createThread",
-        );
-        if (
-          !currentViewer ||
-          (!currentChannel && !currentDirect) ||
-          currentChannel?.archived ||
-          currentDirect?.blocked ||
-          currentSettings.locked ||
-          !access.allowed
-        )
-          return draft.reject({
-            ok: false as const,
-            error: "You cannot start a thread in this conversation.",
-          });
-        const parent = [
-          ...currentMessages.filter((item) => item.conversation === selected),
-          ...currentThreads
-            .filter(
-              (thread) =>
-                (thread.conversation ??
-                  currentMessages.find((item) => item.id === thread.messageId)
-                    ?.conversation) === selected,
-            )
-            .flatMap(threadMessages),
-        ].find((item) => item.id === message.id);
-        if (!parent)
-          return draft.reject({
-            ok: false as const,
-            error: "This message is no longer available.",
-          });
-        const existing = currentThreads.find(
-          (item) => item.messageId === message.id,
-        );
-        const id = existing?.id ?? `sample-thread-${crypto.randomUUID()}`;
-        if (!existing)
-          draft.update<Thread[]>("commsThreads", [], (items) => [
-            ...items,
-            {
-              id,
-              messageId: message.id,
-              conversation: selected,
-              resolved: false,
-              replies: [],
-              subscribed: currentSettings.defaultThreadSubscription,
-            },
-          ]);
-        return { ok: true as const, id };
-      },
-      [
-        "commsThreads",
-        "commsMessages",
-        "commsDirects",
-        COMMS_CONFIGURATION_KEY,
-        "access-people",
-        "commsCategories",
-        "commsChannels",
-      ],
-    ).catch((error: unknown) => ({
-      ok: false as const,
-      error: messageFromCommsError(error, "The thread could not be opened."),
-    }));
-    if (!result.ok) {
-      setNotice(result.error);
-      return;
-    }
-    setThreadId(result.id);
-    setMemberOpen(false);
-  }
-  async function patchThread(
-    patch: Partial<Thread>,
-    options: ThreadChangeOptions = {},
-  ): Promise<string | null> {
-    const result = await run(
-      `thread:update:${threadId}`,
-      (draft) => {
-        const currentConfig = readCommsConfiguration(draft);
-        const currentPeople = draft.read<Person[]>(
-          "access-people",
-          initialPeople,
-        );
-        const currentCategories = draft.read<Category[]>(
-          "commsCategories",
-          CATEGORIES,
-        );
-        const currentChannels = draft.read<Channel[]>(
-          "commsChannels",
-          CHANNELS,
-        );
-        const currentMessages = draft.read<Message[]>(
-          "commsMessages",
-          MESSAGES,
-        );
-        const currentThreads = draft.read<Thread[]>("commsThreads", []);
-        const currentViewer = currentPeople.find(
-          (person) => person.id === viewerId && person.active,
-        );
-        const currentChannel = currentChannels.find(
-          (item) => item.id === selected,
-        );
-        const currentDirect = draft
-          .read<Direct[]>("commsDirects", INITIAL_DIRECTS)
-          .find((item) => item.id === selected);
-        const currentSettings = resolveCommsSettings(
-          currentConfig,
-          currentChannel,
-          currentCategories,
-        ).values;
-        const access = resolveCommsPermission(
-          currentConfig,
-          {
-            person: currentViewer,
-            channel: currentChannel,
-            categories: currentCategories,
-          },
-          patch.replies || options.archiveMessage || options.historyMessage
-            ? "reply"
-            : "viewChannel",
-        );
-        const currentThread = currentThreads.find(
-          (item) => item.id === threadId,
-        );
-        const threadConversation =
-          currentThread?.conversation ??
-          currentMessages.find((item) => item.id === currentThread?.messageId)
-            ?.conversation;
-        if (
-          !currentViewer ||
-          !currentThread ||
-          threadConversation !== selected ||
-          (!currentChannel && !currentDirect) ||
-          currentChannel?.archived ||
-          currentDirect?.blocked ||
-          currentSettings.locked ||
-          !access.allowed
-        )
-          return draft.reject("This thread is read-only.");
-        const nextPatch: Partial<Thread> = { ...patch };
-        if (patch.replies && options.replyBase)
-          nextPatch.replies = mergeThreadReplies(
-            threadMessages(currentThread),
-            options.replyBase,
-            patch.replies,
-          );
-        draft.update<Thread[]>("commsThreads", [], (items) =>
-          items.map((item) =>
-            item.id === threadId ? { ...item, ...nextPatch } : item,
-          ),
-        );
-        if (
-          patch.resolved !== undefined ||
-          patch.subscribed !== undefined ||
-          options.archiveMessage ||
-          options.historyMessage
-        )
-          stageCommsConfiguration(draft, (current) => ({
-            ...current,
-            ...(patch.resolved !== undefined || patch.subscribed !== undefined
-              ? {
-                  threadMeta: {
-                    ...current.threadMeta,
-                    [threadId]: {
-                      ...current.threadMeta[threadId],
-                      ...(patch.resolved !== undefined
-                        ? { resolved: patch.resolved }
-                        : {}),
-                      ...(patch.subscribed !== undefined
-                        ? {
-                            followedBy: patch.subscribed ? [viewerId] : [],
-                          }
-                        : {}),
-                    },
-                  },
-                }
-              : {}),
-            ...(options.archiveMessage
-              ? {
-                  tombstones: {
-                    ...current.tombstones,
-                    [options.archiveMessage.id]: options.archiveMessage,
-                  },
-                }
-              : {}),
-            ...(options.historyMessage
-              ? {
-                  messageHistory: {
-                    ...current.messageHistory,
-                    [options.historyMessage.id]: [
-                      ...(current.messageHistory[options.historyMessage.id] ??
-                        []),
-                      options.historyMessage,
-                    ],
-                  },
-                }
-              : {}),
-          }));
-        return null;
-      },
-      [
-        "commsThreads",
-        "commsMessages",
-        "commsDirects",
-        COMMS_CONFIGURATION_KEY,
-        "access-people",
-        "commsCategories",
-        "commsChannels",
-      ],
-    ).catch((error: unknown) =>
-      messageFromCommsError(error, "The thread could not be updated."),
-    );
-    if (result) setNotice(result);
-    return result;
-  }
-  function jumpToMessage(id: string) {
-    setSearch("");
-    setHighlightedId(id);
-    const containingThread = threads.find((item) =>
-      threadMessages(item).some((reply) => reply.id === id),
-    );
-    if (containingThread) setThreadId(containingThread.id);
-    requestAnimationFrame(() => {
-      const target = document.getElementById(id);
-      target?.focus();
-      target?.scrollIntoView({ block: "center" });
-    });
-  }
-  function beginReply(message: Message) {
-    if (!canParticipate) return;
-    setReplyingTo(message);
-    requestAnimationFrame(() =>
-      document.getElementById(`composer-${selected}`)?.focus(),
-    );
-  }
-  async function changeMessage(
-    id: string,
-    patch: Partial<Message>,
-  ): Promise<string | null> {
-    const result = await run(
-      `message:update:${id}`,
-      (draft) => {
-        const currentConfig = readCommsConfiguration(draft);
-        const currentPeople = draft.read<Person[]>(
-          "access-people",
-          initialPeople,
-        );
-        const currentCategories = draft.read<Category[]>(
-          "commsCategories",
-          CATEGORIES,
-        );
-        const currentChannels = draft.read<Channel[]>(
-          "commsChannels",
-          CHANNELS,
-        );
-        const currentMessages = draft.read<Message[]>(
-          "commsMessages",
-          MESSAGES,
-        );
-        const currentViewer = currentPeople.find(
-          (person) => person.id === viewerId && person.active,
-        );
-        const currentChannel = currentChannels.find(
-          (item) => item.id === selected,
-        );
-        const message = currentMessages.find((item) => item.id === id);
-        if (!currentViewer || !message)
-          return draft.reject("This message is no longer available.");
-        const currentSettings = resolveCommsSettings(
-          currentConfig,
-          currentChannel,
-          currentCategories,
-        ).values;
-        if (
-          currentChannel?.archived ||
-          currentSettings.locked ||
-          !resolveCommsPermission(
-            currentConfig,
-            {
-              person: currentViewer,
-              channel: currentChannel,
-              categories: currentCategories,
-            },
-            "viewChannel",
-          ).allowed
-        )
-          return draft.reject("This conversation is read-only.");
-        if (patch.text !== undefined) {
-          const error = validateCommsMessageChange({
-            config: currentConfig,
-            person: currentViewer,
-            channel: currentChannel,
-            categories: currentCategories,
-            people: currentPeople,
-            message,
-            kind: "edit",
-          });
-          if (error) return draft.reject(error);
-        }
-        if (
-          patch.pinned !== undefined &&
-          !resolveCommsPermission(
-            currentConfig,
-            {
-              person: currentViewer,
-              channel: currentChannel,
-              categories: currentCategories,
-            },
-            "pin",
-          ).allowed
-        )
-          return draft.reject("You do not have permission to pin messages.");
-        if (
-          patch.reactions !== undefined &&
-          !resolveCommsPermission(
-            currentConfig,
-            {
-              person: currentViewer,
-              channel: currentChannel,
-              categories: currentCategories,
-            },
-            "react",
-          ).allowed
-        )
-          return draft.reject(
-            "You do not have permission to react to messages.",
-          );
-        if (patch.text !== undefined)
-          stageCommsConfiguration(draft, (current) => ({
-            ...current,
-            messageHistory: {
-              ...current.messageHistory,
-              [id]: [...(current.messageHistory[id] ?? []), message],
-            },
-          }));
-        draft.update<Message[]>("commsMessages", MESSAGES, (items) =>
-          items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-        );
-        return null;
-      },
-      [
-        "commsMessages",
-        COMMS_CONFIGURATION_KEY,
-        "access-people",
-        "commsCategories",
-        "commsChannels",
-      ],
-    ).catch((error: unknown) =>
-      messageFromCommsError(error, "The message could not be updated."),
-    );
-    if (result) setNotice(result);
-    return result;
-  }
-  async function deleteMessage(id: string): Promise<string | null> {
-    const result = await run(
-      `message:delete:${id}`,
-      (draft) => {
-        const currentConfig = readCommsConfiguration(draft);
-        const currentPeople = draft.read<Person[]>(
-          "access-people",
-          initialPeople,
-        );
-        const currentCategories = draft.read<Category[]>(
-          "commsCategories",
-          CATEGORIES,
-        );
-        const currentChannels = draft.read<Channel[]>(
-          "commsChannels",
-          CHANNELS,
-        );
-        const currentMessages = draft.read<Message[]>(
-          "commsMessages",
-          MESSAGES,
-        );
-        const currentViewer = currentPeople.find(
-          (person) => person.id === viewerId && person.active,
-        );
-        const currentChannel = currentChannels.find(
-          (item) => item.id === selected,
-        );
-        const message = currentMessages.find((item) => item.id === id);
-        if (!currentViewer || !message)
-          return draft.reject("This message is no longer available.");
-        const error = validateCommsMessageChange({
-          config: currentConfig,
-          person: currentViewer,
-          channel: currentChannel,
-          categories: currentCategories,
-          people: currentPeople,
-          message,
-          kind: "delete",
-        });
-        if (error) return draft.reject(error);
-        stageCommsConfiguration(draft, (current) => ({
-          ...current,
-          tombstones: { ...current.tombstones, [id]: message },
-        }));
-        draft.update<Message[]>("commsMessages", MESSAGES, (items) =>
-          items.filter((item) => item.id !== id),
-        );
-        return null;
-      },
-      [
-        "commsMessages",
-        COMMS_CONFIGURATION_KEY,
-        "access-people",
-        "commsCategories",
-        "commsChannels",
-      ],
-    ).catch((error: unknown) =>
-      messageFromCommsError(error, "The message could not be deleted."),
-    );
-    if (result) setNotice(result);
-    return result;
-  }
-  function validateDraft(
-    draft: MessageDraft,
-    kind: "post" | "reply" | "thread",
-  ) {
-    return validateCommsMessage({
+  const { changeMessage, deleteMessage, validateDraft, sendMessage } =
+    createCommsMessageOperations({
+      run,
+      selected,
+      viewerId,
+      replyingTo,
+      setThreadId,
+      setReplyingTo,
+      setNotice,
+      scrollToLatest,
       config,
-      person: viewer,
+      viewer,
       channel,
       categories,
       people,
       roles,
-      messages: allMessages.filter(
-        (item) =>
-          item.conversation === selected ||
-          channelThreads.some((thread) => thread.id === item.conversation),
-      ),
-      text: draft.text,
-      files: draft.files,
-      record: records.find((item) => item.id === draft.recordId),
-      now: draft.sentAt,
-      kind,
+      allMessages,
+      channelThreads,
+      records,
     });
-  }
-  async function sendMessage(draft: MessageDraft): Promise<string | null> {
-    const replyToId = replyingTo?.id;
-    const result: MessageSendResult = await run<MessageSendResult>(
-      `message:send:${selected}`,
-      (transaction) => {
-        const currentConfig = readCommsConfiguration(transaction);
-        const currentPeople = transaction.read<Person[]>(
-          "access-people",
-          initialPeople,
-        );
-        const currentRoles = transaction.read<Role[]>(
-          "access-roles",
-          initialRoles,
-        );
-        const currentCategories = transaction.read<Category[]>(
-          "commsCategories",
-          CATEGORIES,
-        );
-        const currentChannels = transaction.read<Channel[]>(
-          "commsChannels",
-          CHANNELS,
-        );
-        const currentMessages = transaction.read<Message[]>(
-          "commsMessages",
-          MESSAGES,
-        );
-        const currentThreads = transaction.read<Thread[]>("commsThreads", []);
-        const currentRecords = transaction.read<SampleRecord[]>(
-          "records",
-          INITIAL_RECORDS,
-        );
-        const currentViewer = currentPeople.find(
-          (person) => person.id === viewerId && person.active,
-        );
-        const currentChannel = currentChannels.find(
-          (item) => item.id === selected,
-        );
-        const currentDirect = transaction
-          .read<Direct[]>("commsDirects", INITIAL_DIRECTS)
-          .find((item) => item.id === selected);
-        const currentSettings = resolveCommsSettings(
-          currentConfig,
-          currentChannel,
-          currentCategories,
-        ).values;
-        const kind = replyToId
-          ? "reply"
-          : currentChannel && currentSettings.mode === "thread-first"
-            ? "thread"
-            : "post";
-        const currentChannelThreads = currentThreads.filter(
-          (thread) =>
-            (thread.conversation ??
-              currentMessages.find((message) => message.id === thread.messageId)
-                ?.conversation) === selected,
-        );
-        const currentAllMessages = [
-          ...currentMessages,
-          ...currentThreads.flatMap(threadMessages),
-        ];
-        const error = validateCommsMessage({
-          config: currentConfig,
-          person: currentViewer,
-          channel: currentChannel,
-          categories: currentCategories,
-          people: currentPeople,
-          roles: currentRoles,
-          messages: currentAllMessages.filter(
-            (item) =>
-              item.conversation === selected ||
-              currentChannelThreads.some(
-                (thread) => thread.id === item.conversation,
-              ),
-          ),
-          text: draft.text,
-          files: draft.files,
-          record: currentRecords.find((item) => item.id === draft.recordId),
-          now: draft.sentAt,
-          kind,
-        });
-        if (error || !currentViewer || (!currentChannel && !currentDirect))
-          return transaction.reject({
-            ok: false as const,
-            error: error ?? "This conversation is read-only.",
-          });
-        if (
-          replyToId &&
-          !currentAllMessages.some((item) => item.id === replyToId)
-        )
-          return transaction.reject({
-            ok: false as const,
-            error: "This message is no longer available.",
-          });
-        const id = `sample-message-${crypto.randomUUID()}`;
-        transaction.update<Message[]>("commsMessages", MESSAGES, (items) => [
-          ...items,
-          {
-            id,
-            conversation: selected,
-            author: currentViewer.name,
-            authorId: currentViewer.id,
-            text: draft.text.trim() || "Shared a file",
-            created: draft.sentAt,
-            pinned: false,
-            ...(draft.files.length ? { files: draft.files } : {}),
-            ...(draft.recordId ? { recordId: draft.recordId } : {}),
-            ...(replyToId ? { replyToId } : {}),
-          },
-        ]);
-        let threadId: string | undefined;
-        if (kind === "thread") {
-          threadId = `sample-thread-${crypto.randomUUID()}`;
-          transaction.update<Thread[]>("commsThreads", [], (items) => [
-            ...items,
-            {
-              id: threadId!,
-              messageId: id,
-              conversation: selected,
-              resolved: false,
-              replies: [],
-              subscribed: currentSettings.defaultThreadSubscription,
-            },
-          ]);
-        }
-        return {
-          ok: true as const,
-          ...(threadId ? { threadId } : {}),
-        };
-      },
-      [
-        "commsMessages",
-        "commsThreads",
-        "commsDirects",
-        "records",
-        COMMS_CONFIGURATION_KEY,
-        "access-people",
-        "access-roles",
-        "commsCategories",
-        "commsChannels",
-      ],
-    ).catch((error: unknown) => ({
-      ok: false as const,
-      error: messageFromCommsError(error, "The message could not be sent."),
-    }));
-    if (!result.ok) {
-      setNotice(result.error);
-      return result.error;
-    }
-    if (result.threadId) setThreadId(result.threadId);
-    setReplyingTo(null);
-    setNotice("Message sent.");
-    requestAnimationFrame(() =>
-      messageList.current?.scrollTo({ top: messageList.current.scrollHeight }),
-    );
-    return null;
-  }
   async function moveCategory(id: string, direction: number) {
     try {
       await run(
