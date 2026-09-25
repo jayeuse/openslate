@@ -87,6 +87,57 @@ const defaults = {
   performed_by: null,
 };
 
+const directoryUsers = [
+  { ...person, role_id: ids.adminRole },
+  {
+    ...person,
+    id: "00000000-0000-4000-8000-000000000006",
+    email: "jamie@example.test",
+    username: "jamie",
+    display_name: "Jamie Chen",
+  },
+  {
+    ...person,
+    id: "00000000-0000-4000-8000-000000000007",
+    email: "sam@example.test",
+    username: "sam",
+    display_name: "Sam Rivera",
+    identity_kind: "guest" as const,
+    status: "pending",
+    job_title: null,
+    sponsor_user_id: ids.person,
+    expires_at: "2026-10-25T16:00:00Z",
+  },
+  {
+    ...person,
+    id: "00000000-0000-4000-8000-000000000008",
+    email: "taylor@example.test",
+    username: "taylor",
+    display_name: "Taylor Brooks",
+    identity_kind: "guest" as const,
+    sponsor_user_id: "00000000-0000-4000-8000-000000000011",
+    expires_at: "2026-12-31T16:00:00Z",
+  },
+];
+
+const directoryServices = [
+  {
+    id: "00000000-0000-4000-8000-000000000009",
+    name: "Weekly summary sync",
+    purpose: "Prepare workspace summaries",
+    owner_id: ids.person,
+    role_id: ids.memberRole,
+    expires_at: "2026-12-31T16:00:00Z",
+    status: "active",
+    effective_status: "active",
+    created_at: timestamp,
+    updated_at: timestamp,
+    deleted_at: null,
+    is_deleted: false,
+    performed_by: null,
+  },
+];
+
 function page(items: unknown[]) {
   return {
     items,
@@ -107,6 +158,7 @@ async function mockAccessApi(
   currentUsers: () => unknown[] = () => [],
   currentRoles: () => unknown[] = () => roles,
   currentGroups: () => (typeof group)[] = () => (groupPresent() ? [group] : []),
+  currentServices: () => unknown[] = () => [],
 ) {
   await pageUnderTest.route("**/api/**", async (route) => {
     const { pathname } = new URL(route.request().url());
@@ -191,7 +243,29 @@ async function mockAccessApi(
     if (pathname === "/api/access/service-identities") {
       await route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(page([])),
+        body: JSON.stringify(page(currentServices())),
+      });
+      return;
+    }
+    if (pathname.startsWith("/api/access/service-identities/")) {
+      const identity = currentServices().find(
+        (item) =>
+          typeof item === "object" &&
+          item !== null &&
+          "id" in item &&
+          item.id === pathname.slice("/api/access/service-identities/".length),
+      );
+      if (!identity) {
+        await route.fulfill({
+          status: 404,
+          body: "Service identity not found",
+        });
+        return;
+      }
+      await route.fulfill({
+        contentType: "application/json",
+        headers: { ETag: '"service-1"' },
+        body: JSON.stringify(identity),
       });
       return;
     }
@@ -212,6 +286,221 @@ async function mockAccessApi(
     });
   });
 }
+
+test("Access overview quick actions open all four destinations", async ({
+  page: pageUnderTest,
+}) => {
+  await mockAccessApi(pageUnderTest);
+
+  const destinations = [
+    { label: /^Open People & services:/, view: "identities" },
+    { label: /^Open Roles:/, view: "roles" },
+    { label: /^Open Groups:/, view: "groups" },
+    { label: /^Open Detailed rules:/, view: "rules" },
+  ] as const;
+
+  for (const destination of destinations) {
+    await pageUnderTest.goto("/access?view=overview");
+    await pageUnderTest
+      .getByRole("button", { name: destination.label })
+      .click();
+    await expect(pageUnderTest).toHaveURL(
+      new RegExp(`/access\\?view=${destination.view}$`),
+    );
+  }
+});
+
+test("People & services keeps kind filters, advanced filters, and pagination together", async ({
+  page: pageUnderTest,
+}) => {
+  await mockAccessApi(
+    pageUnderTest,
+    () => true,
+    () => [],
+    () => directoryUsers,
+    () => roles,
+    () => [group],
+    () => directoryServices,
+  );
+  await pageUnderTest.setViewportSize({ width: 1280, height: 900 });
+  await pageUnderTest.goto("/access?view=identities");
+
+  await expect(
+    pageUnderTest.getByRole("heading", { name: "People & services" }),
+  ).toBeVisible();
+  await expect(pageUnderTest.getByRole("tab", { name: "All 5" })).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("tab", { name: "Internal 2" }),
+  ).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("tab", { name: "Guests 2" }),
+  ).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("tab", { name: "Services 1" }),
+  ).toBeVisible();
+  await expect(pageUnderTest.getByText("Showing 1–3 of 5")).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Go to previous page" }),
+  ).toBeDisabled();
+
+  await pageUnderTest.getByRole("button", { name: "Go to next page" }).click();
+  await expect(pageUnderTest.getByText("Showing 4–5 of 5")).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Go to next page" }),
+  ).toBeDisabled();
+  await expect(
+    pageUnderTest.getByRole("button", {
+      name: "View details for Taylor Brooks",
+    }),
+  ).toBeVisible();
+
+  await pageUnderTest.getByLabel("Rows per page").selectOption("5");
+  await expect(pageUnderTest.getByText("Showing 1–5 of 5")).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Go to next page" }),
+  ).toBeDisabled();
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Go to previous page" }),
+  ).toBeDisabled();
+  await expect(
+    pageUnderTest.getByLabel("Page 1 of 1", { exact: true }),
+  ).toHaveText("1");
+
+  await pageUnderTest.getByRole("tab", { name: "Internal 2" }).click();
+  await pageUnderTest.getByText("More filters", { exact: true }).click();
+  await pageUnderTest.getByLabel("Role").selectOption(ids.adminRole);
+  await expect(pageUnderTest.getByText("Showing 1–1 of 1")).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("button", { name: "View details for Alex Ops" }),
+  ).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("button", { name: "View details for Jamie Chen" }),
+  ).toHaveCount(0);
+
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Reset directory" }),
+  ).toHaveCount(0);
+  await pageUnderTest.getByLabel("Role").selectOption("all");
+  await pageUnderTest.getByRole("tab", { name: "All 5" }).click();
+  await expect(pageUnderTest.getByText("Showing 1–5 of 5")).toBeVisible();
+  await expect(pageUnderTest.getByLabel("Rows per page")).toHaveValue("5");
+  await expect(
+    pageUnderTest.getByRole("tab", { name: "All 5" }),
+  ).toHaveAttribute("aria-selected", "true");
+});
+
+test("identity previews show current kind-specific details without making changes", async ({
+  page: pageUnderTest,
+}) => {
+  await mockAccessApi(
+    pageUnderTest,
+    () => true,
+    () => [],
+    () => directoryUsers,
+    () => roles,
+    () => [group],
+    () => directoryServices,
+  );
+  const mutations = trackAccessMutations(pageUnderTest);
+  await pageUnderTest.setViewportSize({ width: 1280, height: 900 });
+  await pageUnderTest.goto("/access?view=identities");
+  await pageUnderTest.getByLabel("Rows per page").selectOption("5");
+
+  const preview = pageUnderTest.getByRole("dialog", {
+    name: "Identity details",
+  });
+
+  await pageUnderTest
+    .getByRole("button", { name: "View details for Alex Ops" })
+    .click();
+  await expect(
+    preview.getByRole("heading", { name: "Alex Ops" }),
+  ).toBeVisible();
+  await expect(preview.getByText("alex@example.test")).toBeVisible();
+  await expect(preview.getByText("Internal", { exact: true })).toBeVisible();
+  await expect(preview.getByText("Active", { exact: true })).toBeVisible();
+  await expect(preview.getByText("admin", { exact: true })).toBeVisible();
+  await expect(preview.getByText("No expiry", { exact: true })).toBeVisible();
+  await preview.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(preview).toBeHidden();
+
+  await pageUnderTest
+    .getByRole("button", { name: "View details for Sam Rivera" })
+    .click();
+  await expect(preview.getByText("Sponsor", { exact: true })).toBeVisible();
+  await expect(preview.getByText("Alex Ops", { exact: true })).toBeVisible();
+  await expect(
+    preview.getByText("Access expires", { exact: true }),
+  ).toBeVisible();
+  await preview.getByRole("button", { name: "Close", exact: true }).click();
+
+  await pageUnderTest
+    .getByRole("button", { name: "View details for Taylor Brooks" })
+    .click();
+  await expect(preview.getByText("Unavailable", { exact: true })).toBeVisible();
+  await expect(preview.getByText("Sponsor", { exact: true })).toBeVisible();
+  await preview.getByRole("button", { name: "Close", exact: true }).click();
+
+  await pageUnderTest
+    .getByRole("button", { name: "View details for Weekly summary sync" })
+    .click();
+  await expect(preview.getByText("Owner", { exact: true })).toBeVisible();
+  await expect(preview.getByText("Alex Ops", { exact: true })).toBeVisible();
+  await expect(
+    preview.getByText("Prepare workspace summaries", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    preview.getByText("Access expires", { exact: true }),
+  ).toBeVisible();
+  await expect(preview.getByRole("textbox")).toHaveCount(0);
+
+  expect(mutations).toEqual([]);
+});
+
+test("identity preview restores focus on Escape and hands off to the existing editor", async ({
+  page: pageUnderTest,
+}) => {
+  await mockAccessApi(
+    pageUnderTest,
+    () => true,
+    () => [],
+    () => directoryUsers,
+    () => roles,
+    () => [group],
+    () => directoryServices,
+  );
+  const mutations = trackAccessMutations(pageUnderTest);
+  await pageUnderTest.setViewportSize({ width: 1280, height: 900 });
+  await pageUnderTest.goto("/access?view=identities");
+
+  const trigger = pageUnderTest.getByRole("button", {
+    name: "View details for Alex Ops",
+  });
+  await trigger.click();
+  const preview = pageUnderTest.getByRole("dialog", {
+    name: "Identity details",
+  });
+  await expect(preview).toBeVisible();
+  await pageUnderTest.keyboard.press("Escape");
+  await expect(preview).toBeHidden();
+  await expect(trigger).toBeFocused();
+
+  await trigger.click();
+  await pageUnderTest
+    .getByRole("dialog", { name: "Identity details" })
+    .getByRole("button", { name: "Manage identity" })
+    .click();
+
+  const editor = pageUnderTest.getByRole("dialog", { name: "Alex Ops" });
+  await expect(editor).toBeVisible();
+  await expect(editor.getByLabel("Name", { exact: true })).toHaveValue(
+    "Alex Ops",
+  );
+  await expect(pageUnderTest).toHaveURL(
+    new RegExp(`/access\\?view=identities&user=${ids.person}$`),
+  );
+  expect(mutations).toEqual([]);
+});
 
 test("Access rule drafts pause security navigation and resume only after discard", async ({
   page: pageUnderTest,
@@ -1034,8 +1323,11 @@ test("a restored identity edit cannot turn a deleted target into a new identity"
   );
   await pageUnderTest.goto("/access?view=identities");
   await pageUnderTest
-    .getByRole("button", { name: /Alex Ops/ })
-    .first()
+    .getByRole("button", { name: "View details for Alex Ops", exact: true })
+    .click();
+  await pageUnderTest
+    .getByRole("dialog", { name: "Identity details", exact: true })
+    .getByRole("button", { name: "Manage identity", exact: true })
     .click();
   await pageUnderTest.getByLabel("Job title").fill("Shift lead");
 

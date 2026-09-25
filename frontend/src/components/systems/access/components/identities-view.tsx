@@ -5,6 +5,8 @@ import {
   ArrowDownAZ,
   Bot,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Search,
   UserRound,
   UserRoundPlus,
@@ -43,8 +45,13 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
-import { PaginationControls } from "@/components/ui/pagination-controls";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+} from "@/components/ui/pagination";
 import { toast } from "@/components/ui/toast";
 import {
   completeCollection,
@@ -55,6 +62,7 @@ import type {
   BulkIdentityUpdateInput,
 } from "../state/controller";
 import { IdentityEditor } from "./identity-editor";
+import { IdentityPreview } from "./identity-preview";
 import { readAccessIdentityDraft } from "../state/draft-journal";
 import { useVerifiedWorkspaceUserId } from "../../shared/runtime/workspace-identity";
 import {
@@ -98,6 +106,15 @@ const directoryStatusOptions = [
   "revoked",
 ] as const satisfies readonly AccessDisplayStatus[];
 
+function isKindFilter(value: string | null): value is KindFilter {
+  return (
+    value === "all" ||
+    value === "internal" ||
+    value === "guest" ||
+    value === "service"
+  );
+}
+
 function statusVariant(status: AccessDisplayStatus) {
   if (status === "active") return "success" as const;
   if (status === "pending") return "warning" as const;
@@ -139,6 +156,11 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
   const [pageSize, setPageSize] = useState<number>(3);
   const [selected, setSelected] = useState<string[]>([]);
   const [editorIdentityId, setEditorIdentityId] = useState<string | null>(null);
+  const [previewIdentityId, setPreviewIdentityId] = useState<string | null>(
+    null,
+  );
+  const previewTriggerIdRef = useRef<string | null>(null);
+  const suppressPreviewFocusRestoreRef = useRef(false);
   const [createKind, setCreateKind] = useState<AccessIdentity["kind"] | null>(
     null,
   );
@@ -157,6 +179,22 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
     ...controller.state.identities,
     ...controller.state.deletedIdentities.map((item) => item.identity),
   ];
+  const kindCounts: Record<KindFilter, number> = {
+    all: directoryIdentities.length,
+    internal: directoryIdentities.filter(
+      (identity) => identity.kind === "internal",
+    ).length,
+    guest: directoryIdentities.filter((identity) => identity.kind === "guest")
+      .length,
+    service: directoryIdentities.filter(
+      (identity) => identity.kind === "service",
+    ).length,
+  };
+  const previewIdentity = previewIdentityId
+    ? (directoryIdentities.find(
+        (identity) => identity.id === previewIdentityId,
+      ) ?? null)
+    : null;
 
   useEffect(() => {
     const identityId = new URLSearchParams(window.location.search).get("user");
@@ -354,12 +392,23 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
         header: "Identity",
         cell: ({ row }) => {
           const identity = row.original;
+          const KindIcon =
+            identity.kind === "internal"
+              ? UserRound
+              : identity.kind === "guest"
+                ? UsersRound
+                : Bot;
           return (
-            <div className="max-w-72 min-w-0">
-              <p className="truncate font-medium">{identity.name}</p>
-              <p className="text-muted-foreground truncate text-xs">
-                {identityDetail(identity)}
-              </p>
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="bg-muted text-muted-foreground flex size-9 shrink-0 items-center justify-center rounded-full">
+                <KindIcon className="size-4" aria-hidden="true" />
+              </span>
+              <div className="max-w-72 min-w-0">
+                <p className="font-medium break-words">{identity.name}</p>
+                <p className="text-muted-foreground text-xs break-words">
+                  {identityDetail(identity)}
+                </p>
+              </div>
             </div>
           );
         },
@@ -393,10 +442,13 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
             <Button
               variant="outline"
               className="min-h-11 shrink-0"
-              aria-label={`Manage ${row.original.name}`}
-              onClick={() => openIdentity(row.original.id)}
+              id={`identity-preview-trigger-desktop-${row.original.id}`}
+              aria-label={`View details for ${row.original.name}`}
+              onClick={(event) =>
+                openIdentityPreview(row.original.id, event.currentTarget)
+              }
             >
-              Manage
+              View details
             </Button>
           </div>
         ),
@@ -409,7 +461,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
     allVisibleSelected,
     controller.availability.bulkIdentityUpdates,
     controller.state.roles,
-    openIdentity,
+    openIdentityPreview,
     selected,
     visibleIds,
   ]);
@@ -432,6 +484,28 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
     setCreateKind(null);
     setEditorOpen(true);
     replaceUserQuery(identityId);
+  }
+
+  function openIdentityPreview(identityId: string, trigger: HTMLElement) {
+    previewTriggerIdRef.current = trigger.id;
+    suppressPreviewFocusRestoreRef.current = false;
+    setPreviewIdentityId(identityId);
+  }
+
+  function managePreviewIdentity(identityId: string) {
+    suppressPreviewFocusRestoreRef.current = true;
+    setPreviewIdentityId(null);
+    openIdentity(identityId);
+  }
+
+  function getPreviewFinalFocus(): HTMLElement | null | false {
+    if (suppressPreviewFocusRestoreRef.current) return false;
+    const triggerId = previewTriggerIdRef.current;
+    return triggerId ? document.getElementById(triggerId) : null;
+  }
+
+  function updatePreviewOpen(open: boolean) {
+    if (!open) setPreviewIdentityId(null);
   }
 
   function openCreate(nextKind: AccessIdentity["kind"]) {
@@ -487,25 +561,19 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
   const hasNonDefaultDirectorySettings = activeDirectorySettingsCount > 0;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {journalIssue ? (
         <Alert role="alert" variant="warning">
           {journalIssue}
         </Alert>
       ) : null}
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h2 id="identity-directory" className="text-lg font-semibold">
-            Identity directory
-          </h2>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Internal people, sponsored guests, and service metadata in one
-            directory.
-          </p>
-        </div>
+      <h2 id="identity-directory" className="sr-only">
+        Identity directory
+      </h2>
+      <div className="flex justify-end">
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={<Button className="min-h-11 w-full lg:w-auto" />}
+            render={<Button className="min-h-11 w-full sm:w-auto" />}
           >
             <UserRoundPlus /> Add identity
           </DropdownMenuTrigger>
@@ -532,360 +600,440 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
         </DropdownMenu>
       </div>
 
-      <Card className="w-full" role="search" aria-label="Identity filters">
-        <CardContent className="p-0">
-          <div className="grid gap-3 p-3 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor="identity-search">
-                Search identities
-              </FieldLabel>
-              <div className="relative">
-                <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-                <Input
-                  id="identity-search"
-                  type="search"
-                  className="min-h-11 pl-9"
-                  placeholder="Name, email, or purpose"
-                  value={query}
-                  onChange={(event) => {
-                    setQuery(event.target.value);
-                    setPageIndex(0);
-                  }}
+      <Tabs
+        value={kind}
+        onValueChange={(value) => {
+          if (!isKindFilter(value)) return;
+          setKind(value);
+          setPageIndex(0);
+        }}
+        className="gap-3"
+      >
+        <TabsList
+          aria-label="Filter by identity type"
+          className="grid h-auto w-full grid-cols-4 sm:w-fit"
+        >
+          {(
+            [
+              ["all", "All"],
+              ["internal", "Internal"],
+              ["guest", "Guests"],
+              ["service", "Services"],
+            ] as const
+          ).map(([value, label]) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              aria-label={`${label} ${kindCounts[value]}`}
+              className="min-h-11 min-w-0 gap-1 px-2 sm:min-w-24 sm:gap-2 sm:px-4"
+            >
+              <span className="truncate">{label}</span>
+              <Badge variant="outline" className="shrink-0 px-1.5">
+                {kindCounts[value]}
+              </Badge>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        <TabsContent value={kind} className="space-y-3">
+          <Card className="w-full" role="search" aria-label="Identity filters">
+            <CardContent className="p-0">
+              <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-12">
+                <Field className="sm:col-span-2 xl:col-span-6">
+                  <FieldLabel htmlFor="identity-search">
+                    Search identities
+                  </FieldLabel>
+                  <div className="relative">
+                    <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+                    <Input
+                      id="identity-search"
+                      type="search"
+                      className="min-h-11 pl-9"
+                      placeholder="Name, email, or purpose"
+                      value={query}
+                      onChange={(event) => {
+                        setQuery(event.target.value);
+                        setPageIndex(0);
+                      }}
+                    />
+                  </div>
+                </Field>
+                <Field className="xl:col-span-3">
+                  <FieldLabel htmlFor="identity-status">Status</FieldLabel>
+                  <NativeSelect
+                    id="identity-status"
+                    className="w-full [&_select]:min-h-11"
+                    value={status}
+                    onChange={(event) => {
+                      setStatus(event.target.value as StatusFilter);
+                      setPageIndex(0);
+                    }}
+                  >
+                    <NativeSelectOption value="all">
+                      All statuses
+                    </NativeSelectOption>
+                    {directoryStatusOptions.map((value) => (
+                      <NativeSelectOption key={value} value={value}>
+                        {statusLabels[value]}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </Field>
+                <Field className="xl:col-span-3">
+                  <FieldLabel htmlFor="identity-sort">Sort</FieldLabel>
+                  <NativeSelect
+                    id="identity-sort"
+                    className="w-full [&_select]:min-h-11"
+                    value={sort}
+                    onChange={(event) => {
+                      setSort(event.target.value as SortOption);
+                      setPageIndex(0);
+                    }}
+                  >
+                    <NativeSelectOption value="name">Name</NativeSelectOption>
+                    <NativeSelectOption value="kind">Kind</NativeSelectOption>
+                    <NativeSelectOption value="status">
+                      Status
+                    </NativeSelectOption>
+                    <NativeSelectOption value="role">Role</NativeSelectOption>
+                    <NativeSelectOption value="expiry">
+                      Expiry soonest
+                    </NativeSelectOption>
+                  </NativeSelect>
+                </Field>
+              </div>
+
+              <details className="group border-t">
+                <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2">
+                  <span>More filters</span>
+                  <span className="flex items-center gap-2">
+                    <Badge variant="outline">
+                      {activeDirectorySettingsCount} active
+                    </Badge>
+                    <ChevronDown
+                      className="size-4 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+                      aria-hidden="true"
+                    />
+                  </span>
+                </summary>
+                <div className="grid gap-3 border-t p-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <Field>
+                    <FieldLabel htmlFor="identity-role-filter">Role</FieldLabel>
+                    <NativeSelect
+                      id="identity-role-filter"
+                      className="w-full [&_select]:min-h-11"
+                      value={roleId}
+                      onChange={(event) => {
+                        setRoleId(event.target.value);
+                        setPageIndex(0);
+                      }}
+                    >
+                      <NativeSelectOption value="all">
+                        All roles
+                      </NativeSelectOption>
+                      {controller.state.roles.map((role) => (
+                        <NativeSelectOption key={role.id} value={role.id}>
+                          {role.name}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="identity-group-filter">
+                      Group
+                    </FieldLabel>
+                    <NativeSelect
+                      id="identity-group-filter"
+                      className="w-full [&_select]:min-h-11"
+                      value={groupId}
+                      onChange={(event) => {
+                        setGroupId(event.target.value);
+                        setPageIndex(0);
+                      }}
+                    >
+                      <NativeSelectOption value="all">
+                        All groups
+                      </NativeSelectOption>
+                      <NativeSelectOption value="none">
+                        No groups
+                      </NativeSelectOption>
+                      {controller.state.groups.map((group) => (
+                        <NativeSelectOption key={group.id} value={group.id}>
+                          {group.name}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="identity-department-filter">
+                      Department
+                    </FieldLabel>
+                    <NativeSelect
+                      id="identity-department-filter"
+                      className="w-full [&_select]:min-h-11"
+                      value={department}
+                      onChange={(event) => {
+                        setDepartment(event.target.value);
+                        setPageIndex(0);
+                      }}
+                    >
+                      <NativeSelectOption value="all">
+                        All departments
+                      </NativeSelectOption>
+                      {controller.departmentCatalog.map((department) => (
+                        <NativeSelectOption
+                          key={department.id}
+                          value={department.id}
+                        >
+                          {department.name}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="identity-expiry-filter">
+                      Expiry
+                    </FieldLabel>
+                    <NativeSelect
+                      id="identity-expiry-filter"
+                      className="w-full [&_select]:min-h-11"
+                      value={expiry}
+                      onChange={(event) => {
+                        setExpiry(event.target.value as ExpiryFilter);
+                        setPageIndex(0);
+                      }}
+                    >
+                      <NativeSelectOption value="all">
+                        Any expiry
+                      </NativeSelectOption>
+                      <NativeSelectOption value="expired">
+                        Expired
+                      </NativeSelectOption>
+                      <NativeSelectOption value="next-30-days">
+                        Next 30 days
+                      </NativeSelectOption>
+                      <NativeSelectOption value="no-expiry">
+                        No expiry
+                      </NativeSelectOption>
+                    </NativeSelect>
+                  </Field>
+                </div>
+              </details>
+            </CardContent>
+          </Card>
+
+          {controller.availability.bulkIdentityUpdates &&
+            selected.length > 0 && (
+              <div className="bg-muted flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm font-medium" role="status">
+                  {selected.length}{" "}
+                  {selected.length === 1 ? "identity" : "identities"} selected
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="ghost"
+                    className="min-h-11"
+                    onClick={() => setSelected([])}
+                  >
+                    Clear selection
+                  </Button>
+                  <Button
+                    className="min-h-11"
+                    disabled={
+                      controller.isPending() ||
+                      !controller.availability.bulkIdentityUpdates
+                    }
+                    title="Bulk identity updates are not available yet."
+                    onClick={() => setBulkOpen(true)}
+                  >
+                    Review bulk action
+                  </Button>
+                </div>
+              </div>
+            )}
+
+          {filtered.length === 0 ? (
+            <Empty className="min-h-72 border">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  {directoryIdentities.length === 0 ? (
+                    <UsersRound />
+                  ) : (
+                    <Search />
+                  )}
+                </EmptyMedia>
+                <EmptyTitle>
+                  {directoryIdentities.length === 0
+                    ? "No identities yet"
+                    : "No identities match"}
+                </EmptyTitle>
+                <EmptyDescription>
+                  {directoryIdentities.length === 0
+                    ? "Add an internal person, guest, or service metadata entry."
+                    : "Change the search or filters to see more identities."}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                {hasNonDefaultDirectorySettings ? (
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={resetFilters}
+                  >
+                    Clear filters
+                  </Button>
+                ) : (
+                  <Button
+                    className="min-h-11"
+                    onClick={() => openCreate("internal")}
+                  >
+                    <UserRoundPlus /> Add internal identity
+                  </Button>
+                )}
+              </EmptyContent>
+            </Empty>
+          ) : (
+            <div className="overflow-hidden rounded-md border">
+              <div className="hidden md:block">
+                <DataTable
+                  ariaLabel="Identity directory"
+                  columns={identityColumns}
+                  data={visible}
+                  cellClassName="py-3"
+                  getRowId={(identity) => identity.id}
+                  rowState={(identity) =>
+                    selected.includes(identity.id) ? "selected" : undefined
+                  }
                 />
               </div>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="identity-status">Status</FieldLabel>
-              <NativeSelect
-                id="identity-status"
-                className="w-full [&_select]:min-h-11"
-                value={status}
-                onChange={(event) => {
-                  setStatus(event.target.value as StatusFilter);
-                  setPageIndex(0);
-                }}
-              >
-                <NativeSelectOption value="all">
-                  All statuses
-                </NativeSelectOption>
-                {directoryStatusOptions.map((value) => (
-                  <NativeSelectOption key={value} value={value}>
-                    {statusLabels[value]}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </Field>
-          </div>
 
-          {hasNonDefaultDirectorySettings && (
-            <div className="border-t px-3 py-2">
-              <Button
-                variant="ghost"
-                className="min-h-11"
-                onClick={resetFilters}
-              >
-                Reset directory
-              </Button>
+              <div className="grid min-w-0 gap-3 p-3 md:hidden">
+                {visible.map((identity) => (
+                  <IdentityCard
+                    key={identity.id}
+                    identity={identity}
+                    controller={controller}
+                    selected={selected.includes(identity.id)}
+                    onSelect={(checked) =>
+                      setSelected((current) =>
+                        checked
+                          ? [...new Set([...current, identity.id])]
+                          : current.filter((id) => id !== identity.id),
+                      )
+                    }
+                    onOpen={(trigger) =>
+                      openIdentityPreview(identity.id, trigger)
+                    }
+                  />
+                ))}
+              </div>
+
+              <div className="bg-card flex flex-col gap-3 border-t p-4 lg:flex-row lg:items-center lg:justify-between">
+                <p className="text-muted-foreground text-sm">
+                  Showing {pageResult.total === 0 ? 0 : pageResult.offset + 1}–
+                  {Math.min(
+                    pageResult.offset + pageResult.limit,
+                    pageResult.total,
+                  )}{" "}
+                  of {pageResult.total}
+                </p>
+                <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+                  <div className="flex items-center gap-2">
+                    <label
+                      htmlFor="identity-page-size"
+                      className="text-muted-foreground text-sm"
+                    >
+                      Rows per page
+                    </label>
+                    <NativeSelect
+                      id="identity-page-size"
+                      className="w-20 [&_select]:min-h-11"
+                      value={String(pageSize)}
+                      onChange={(event) => {
+                        const nextPageSize = Number(event.target.value);
+                        if (
+                          !PAGE_SIZE_OPTIONS.some(
+                            (option) => option === nextPageSize,
+                          )
+                        )
+                          return;
+                        setPageSize(nextPageSize);
+                        setPageIndex(0);
+                      }}
+                    >
+                      {PAGE_SIZE_OPTIONS.map((option) => (
+                        <NativeSelectOption key={option} value={String(option)}>
+                          {option}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </div>
+                  <Pagination
+                    className="mx-0 w-auto"
+                    aria-label="Identity pages"
+                  >
+                    <PaginationContent className="gap-2">
+                      <PaginationItem>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="icon"
+                          aria-label="Go to previous page"
+                          disabled={safePageIndex === 0}
+                          className="size-11"
+                          onClick={() => {
+                            if (safePageIndex > 0)
+                              setPageIndex(safePageIndex - 1);
+                          }}
+                        >
+                          <ChevronLeft aria-hidden="true" />
+                        </Button>
+                      </PaginationItem>
+                      <PaginationItem>
+                        <span
+                          aria-current="page"
+                          aria-label={`Page ${safePageIndex + 1} of ${pageCount}`}
+                          className="bg-muted flex size-11 items-center justify-center rounded-[var(--radius)] text-sm font-medium tabular-nums"
+                        >
+                          {safePageIndex + 1}
+                        </span>
+                      </PaginationItem>
+                      <PaginationItem>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="icon"
+                          aria-label="Go to next page"
+                          disabled={safePageIndex === pageCount - 1}
+                          className="size-11"
+                          onClick={() => {
+                            if (safePageIndex < pageCount - 1)
+                              setPageIndex(safePageIndex + 1);
+                          }}
+                        >
+                          <ChevronRight aria-hidden="true" />
+                        </Button>
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                </div>
+              </div>
             </div>
           )}
+        </TabsContent>
+      </Tabs>
 
-          <details className="group border-t">
-            <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2">
-              <span>More filters</span>
-              <span className="flex items-center gap-2">
-                <Badge variant="outline">
-                  {activeDirectorySettingsCount} active
-                </Badge>
-                <ChevronDown
-                  className="size-4 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none"
-                  aria-hidden="true"
-                />
-              </span>
-            </summary>
-            <div className="grid gap-3 border-t p-3 sm:grid-cols-2 xl:grid-cols-4">
-              <Field>
-                <FieldLabel htmlFor="identity-kind">Kind</FieldLabel>
-                <NativeSelect
-                  id="identity-kind"
-                  className="w-full [&_select]:min-h-11"
-                  value={kind}
-                  onChange={(event) => {
-                    setKind(event.target.value as KindFilter);
-                    setPageIndex(0);
-                  }}
-                >
-                  <NativeSelectOption value="all">All kinds</NativeSelectOption>
-                  <NativeSelectOption value="internal">
-                    Internal
-                  </NativeSelectOption>
-                  <NativeSelectOption value="guest">Guest</NativeSelectOption>
-                  <NativeSelectOption value="service">
-                    Service
-                  </NativeSelectOption>
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="identity-sort">Sort</FieldLabel>
-                <NativeSelect
-                  id="identity-sort"
-                  className="w-full [&_select]:min-h-11"
-                  value={sort}
-                  onChange={(event) => {
-                    setSort(event.target.value as SortOption);
-                    setPageIndex(0);
-                  }}
-                >
-                  <NativeSelectOption value="name">Name</NativeSelectOption>
-                  <NativeSelectOption value="kind">Kind</NativeSelectOption>
-                  <NativeSelectOption value="status">Status</NativeSelectOption>
-                  <NativeSelectOption value="role">Role</NativeSelectOption>
-                  <NativeSelectOption value="expiry">
-                    Expiry soonest
-                  </NativeSelectOption>
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="identity-page-size">
-                  Rows per page
-                </FieldLabel>
-                <NativeSelect
-                  id="identity-page-size"
-                  className="w-full [&_select]:min-h-11"
-                  value={String(pageSize)}
-                  onChange={(event) => {
-                    const nextPageSize = Number(event.target.value);
-                    if (
-                      !PAGE_SIZE_OPTIONS.some(
-                        (option) => option === nextPageSize,
-                      )
-                    )
-                      return;
-                    setPageSize(nextPageSize);
-                    setPageIndex(0);
-                  }}
-                >
-                  {PAGE_SIZE_OPTIONS.map((option) => (
-                    <NativeSelectOption key={option} value={String(option)}>
-                      {option}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </Field>
-
-              <Field>
-                <FieldLabel htmlFor="identity-role-filter">Role</FieldLabel>
-                <NativeSelect
-                  id="identity-role-filter"
-                  className="w-full [&_select]:min-h-11"
-                  value={roleId}
-                  onChange={(event) => {
-                    setRoleId(event.target.value);
-                    setPageIndex(0);
-                  }}
-                >
-                  <NativeSelectOption value="all">All roles</NativeSelectOption>
-                  {controller.state.roles.map((role) => (
-                    <NativeSelectOption key={role.id} value={role.id}>
-                      {role.name}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="identity-group-filter">Group</FieldLabel>
-                <NativeSelect
-                  id="identity-group-filter"
-                  className="w-full [&_select]:min-h-11"
-                  value={groupId}
-                  onChange={(event) => {
-                    setGroupId(event.target.value);
-                    setPageIndex(0);
-                  }}
-                >
-                  <NativeSelectOption value="all">
-                    All groups
-                  </NativeSelectOption>
-                  <NativeSelectOption value="none">
-                    No groups
-                  </NativeSelectOption>
-                  {controller.state.groups.map((group) => (
-                    <NativeSelectOption key={group.id} value={group.id}>
-                      {group.name}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="identity-department-filter">
-                  Department
-                </FieldLabel>
-                <NativeSelect
-                  id="identity-department-filter"
-                  className="w-full [&_select]:min-h-11"
-                  value={department}
-                  onChange={(event) => {
-                    setDepartment(event.target.value);
-                    setPageIndex(0);
-                  }}
-                >
-                  <NativeSelectOption value="all">
-                    All departments
-                  </NativeSelectOption>
-                  {controller.departmentCatalog.map((department) => (
-                    <NativeSelectOption
-                      key={department.id}
-                      value={department.id}
-                    >
-                      {department.name}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="identity-expiry-filter">Expiry</FieldLabel>
-                <NativeSelect
-                  id="identity-expiry-filter"
-                  className="w-full [&_select]:min-h-11"
-                  value={expiry}
-                  onChange={(event) => {
-                    setExpiry(event.target.value as ExpiryFilter);
-                    setPageIndex(0);
-                  }}
-                >
-                  <NativeSelectOption value="all">
-                    Any expiry
-                  </NativeSelectOption>
-                  <NativeSelectOption value="expired">
-                    Expired
-                  </NativeSelectOption>
-                  <NativeSelectOption value="next-30-days">
-                    Next 30 days
-                  </NativeSelectOption>
-                  <NativeSelectOption value="no-expiry">
-                    No expiry
-                  </NativeSelectOption>
-                </NativeSelect>
-              </Field>
-            </div>
-          </details>
-        </CardContent>
-      </Card>
-
-      {controller.availability.bulkIdentityUpdates && selected.length > 0 && (
-        <div className="bg-muted flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm font-medium" role="status">
-            {selected.length}{" "}
-            {selected.length === 1 ? "identity" : "identities"} selected
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="ghost"
-              className="min-h-11"
-              onClick={() => setSelected([])}
-            >
-              Clear selection
-            </Button>
-            <Button
-              className="min-h-11"
-              disabled={
-                controller.isPending() ||
-                !controller.availability.bulkIdentityUpdates
-              }
-              title="Bulk identity updates are not available yet."
-              onClick={() => setBulkOpen(true)}
-            >
-              Review bulk action
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {filtered.length === 0 ? (
-        <Empty className="min-h-72 border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              {directoryIdentities.length === 0 ? <UsersRound /> : <Search />}
-            </EmptyMedia>
-            <EmptyTitle>
-              {directoryIdentities.length === 0
-                ? "No identities yet"
-                : "No identities match"}
-            </EmptyTitle>
-            <EmptyDescription>
-              {directoryIdentities.length === 0
-                ? "Add an internal person, guest, or service metadata entry."
-                : "Change the search or filters to see more identities."}
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            {hasNonDefaultDirectorySettings ? (
-              <Button
-                variant="outline"
-                className="min-h-11"
-                onClick={resetFilters}
-              >
-                Clear filters
-              </Button>
-            ) : (
-              <Button
-                className="min-h-11"
-                onClick={() => openCreate("internal")}
-              >
-                <UserRoundPlus /> Add internal identity
-              </Button>
-            )}
-          </EmptyContent>
-        </Empty>
-      ) : (
-        <>
-          <div className="hidden overflow-hidden rounded-md border md:block">
-            <DataTable
-              ariaLabel="Identity directory"
-              columns={identityColumns}
-              data={visible}
-              getRowId={(identity) => identity.id}
-              rowState={(identity) =>
-                selected.includes(identity.id) ? "selected" : undefined
-              }
-            />
-          </div>
-
-          <div className="grid min-w-0 gap-3 md:hidden">
-            {visible.map((identity) => (
-              <IdentityCard
-                key={identity.id}
-                identity={identity}
-                controller={controller}
-                selected={selected.includes(identity.id)}
-                onSelect={(checked) =>
-                  setSelected((current) =>
-                    checked
-                      ? [...new Set([...current, identity.id])]
-                      : current.filter((id) => id !== identity.id),
-                  )
-                }
-                onOpen={() => openIdentity(identity.id)}
-              />
-            ))}
-          </div>
-
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-muted-foreground text-sm">
-              Showing {pageResult.total === 0 ? 0 : pageResult.offset + 1}–
-              {Math.min(pageResult.offset + pageResult.limit, pageResult.total)}{" "}
-              of {pageResult.total} · {pageResult.limit} per page
-            </p>
-            <PaginationControls
-              ariaLabel="Identity pages"
-              className="w-auto justify-start sm:justify-end"
-              pageCount={pageCount}
-              pageIndex={safePageIndex}
-              onPageIndexChange={setPageIndex}
-              variant="compact"
-            />
-          </div>
-        </>
-      )}
+      <IdentityPreview
+        identity={previewIdentity}
+        identities={directoryIdentities}
+        roles={controller.state.roles}
+        groups={controller.state.groups}
+        departments={controller.departmentCatalog}
+        open={previewIdentityId !== null}
+        finalFocus={getPreviewFinalFocus}
+        onOpenChange={updatePreviewOpen}
+        onManage={managePreviewIdentity}
+      />
 
       <IdentityEditor
         controller={controller}
@@ -1014,7 +1162,7 @@ function IdentityCard({
   controller: AccessController;
   selected: boolean;
   onSelect: (checked: boolean) => void;
-  onOpen: () => void;
+  onOpen: (trigger: HTMLElement) => void;
 }) {
   const role = controller.state.roles.find(
     (item) => item.id === identity.roleId,
@@ -1056,8 +1204,14 @@ function IdentityCard({
             <dd>{role?.name ?? "Unknown role"}</dd>
           </div>
         </dl>
-        <Button variant="outline" className="min-h-11 w-full" onClick={onOpen}>
-          Manage {identity.name}
+        <Button
+          variant="outline"
+          className="min-h-11 w-full"
+          id={`identity-preview-trigger-mobile-${identity.id}`}
+          aria-label={`View details for ${identity.name}`}
+          onClick={(event) => onOpen(event.currentTarget)}
+        >
+          View details
         </Button>
       </CardContent>
     </Card>
