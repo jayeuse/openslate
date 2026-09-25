@@ -1,10 +1,28 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "@/components/ui/collapsible";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { Switch } from "@/components/ui/switch";
+import { MoreHorizontal, Plus, Trash2, ChevronDown } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import { AutomationFlow, automationTriggerLabel } from "./automation-flow";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -539,29 +557,7 @@ function ValueEditor({
   const referenceId = useId();
   const references = compatibleReferenceOptions(design, automation, target);
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      <Field>
-        <FieldLabel htmlFor={sourceId}>Value source</FieldLabel>
-        <NativeSelect
-          id={sourceId}
-          value={value.kind}
-          onChange={(event) =>
-            onChange(
-              event.target.value === "field-reference" && references[0]
-                ? { kind: "field-reference", ...references[0].reference }
-                : defaultLiteral(target),
-            )
-          }
-        >
-          <NativeSelectOption value="literal">Literal value</NativeSelectOption>
-          <NativeSelectOption
-            value="field-reference"
-            disabled={!references.length}
-          >
-            Field reference
-          </NativeSelectOption>
-        </NativeSelect>
-      </Field>
+    <div className="grid min-w-0 gap-3 @min-[450px]/settings:grid-cols-2">
       {value.kind === "literal" ? (
         <Field>
           <FieldLabel htmlFor={literalId}>Value</FieldLabel>
@@ -673,6 +669,39 @@ function ValueEditor({
           </NativeSelect>
         </Field>
       )}
+      <Collapsible className="min-w-0 self-end">
+        <CollapsibleTrigger className="text-muted-foreground focus-visible:outline-ring flex min-h-11 cursor-pointer items-center gap-2 text-xs focus-visible:outline-2">
+          <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
+          Value options ·{" "}
+          {value.kind === "field-reference" ? "Field reference" : "Fixed value"}
+        </CollapsibleTrigger>
+        <CollapsibleContent keepMounted>
+          <Field>
+            <FieldLabel htmlFor={sourceId}>Value source</FieldLabel>
+            <NativeSelect
+              id={sourceId}
+              value={value.kind}
+              onChange={(event) =>
+                onChange(
+                  event.target.value === "field-reference" && references[0]
+                    ? { kind: "field-reference", ...references[0].reference }
+                    : defaultLiteral(target),
+                )
+              }
+            >
+              <NativeSelectOption value="literal">
+                Literal value
+              </NativeSelectOption>
+              <NativeSelectOption
+                value="field-reference"
+                disabled={!references.length}
+              >
+                Field reference
+              </NativeSelectOption>
+            </NativeSelect>
+          </Field>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }
@@ -688,6 +717,30 @@ export function AutomationStudio({
   onStateChange,
 }: AutomationStudioProps) {
   const [draft, setDraft] = useState(automations);
+  const studioRef = useRef<HTMLElement>(null);
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    const element = studioRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setWide(entry.contentRect.width >= 1100);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const settingsRef = useRef<HTMLDivElement>(null);
+  const [selectedStep, setSelectedStep] = useState("trigger");
+  function selectStep(step: string) {
+    setSelectedStep(step);
+    const section = settingsRef.current?.querySelector<HTMLElement>(
+      `[data-rule-target="${CSS.escape(step)}"]`,
+    );
+    const control = section?.querySelector<HTMLElement>(
+      "input:not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled)",
+    );
+    (control ?? section)?.focus({ preventScroll: true });
+    section?.scrollIntoView({ block: "nearest", behavior: "instant" });
+  }
   const [selectedId, setSelectedId] = useState(
     initialSelectedId &&
       automations.some((item) => item.id === initialSelectedId)
@@ -748,147 +801,297 @@ export function AutomationStudio({
   }
   return (
     <section
+      ref={studioRef}
       aria-labelledby="automation-studio-title"
-      className="grid gap-4 lg:grid-cols-[15rem_minmax(0,1fr)]"
+      className="@container/studio min-w-0"
     >
-      <Card className="w-full">
-        <CardHeader>
-          <CardTitle id="automation-studio-title">Automations</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-2">
-          <Button
-            onClick={() => {
-              const next = defaultAutomation(design);
-              setSelectedId(next.id);
-              updateDraft([...draft, next]);
-            }}
-            disabled={pending || draft.length >= 500}
+      <div className="border-border min-w-0 overflow-hidden rounded-xl border @min-[1100px]/studio:h-[calc(100dvh-15rem)]">
+        <ResizablePanelGroup
+          orientation="horizontal"
+          disabled={!wide}
+          className="block! h-auto! @min-[1100px]/studio:flex! @min-[1100px]/studio:h-full!"
+        >
+          <ResizablePanel
+            id="automation-list"
+            defaultSize="18.2rem"
+            minSize={wide ? "18.2rem" : 0}
+            groupResizeBehavior="preserve-pixel-size"
+            className="min-w-0 overflow-visible! @min-[1100px]/studio:h-full @min-[1100px]/studio:overflow-hidden!"
           >
-            New automation
-          </Button>
-          {draft.map((automation) => (
-            <div
-              key={automation.id}
-              className="border-border flex items-center gap-1 rounded-md border p-2"
+            <aside
+              aria-label="Automation list"
+              className="bg-card border-border min-w-0 border-b p-4 @min-[1100px]/studio:h-full @min-[1100px]/studio:overflow-y-auto @min-[1100px]/studio:border-b-0"
             >
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <h2 id="automation-studio-title" className="font-semibold">
+                  Automations
+                </h2>
+                <span className="text-muted-foreground text-xs">
+                  {draft.length}
+                </span>
+              </div>
               <Button
-                variant={automation.id === selectedId ? "secondary" : "ghost"}
-                className="min-w-0 flex-1 justify-start"
-                onClick={() => setSelectedId(automation.id)}
+                variant="outline"
+                className="mb-4 min-h-11 w-full"
+                onClick={() => {
+                  const next = defaultAutomation(design);
+                  setSelectedId(next.id);
+                  setSelectedStep("trigger");
+                  updateDraft([...draft, next]);
+                }}
+                disabled={pending || draft.length >= 500}
               >
-                {automation.name}
+                <Plus aria-hidden="true" />
+                New automation
               </Button>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-      <Card className="min-w-0">
-        <CardHeader>
-          <CardTitle>{selected?.name ?? "Select an automation"}</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-5">
-          {error ? (
-            <Alert variant="destructive" role="alert">
-              {error}
-            </Alert>
-          ) : null}
-          {!selected ? (
-            <p className="text-muted-foreground text-sm">
-              Create an automation to define triggers, conditions, and actions.
-            </p>
-          ) : (
-            <AutomationEditor
-              design={design}
-              automation={selected}
-              pending={pending}
-              onChange={update}
-              onDelete={() =>
-                updateDraft(draft.filter((item) => item.id !== selected.id))
-              }
-            />
+              <nav
+                aria-label="Automation list"
+                className="grid max-h-64 gap-1 overflow-y-auto @min-[1100px]/studio:max-h-none"
+              >
+                {draft.map((automation) => (
+                  <Button
+                    key={automation.id}
+                    variant={
+                      automation.id === selectedId ? "secondary" : "ghost"
+                    }
+                    aria-current={
+                      automation.id === selectedId ? "true" : undefined
+                    }
+                    className="h-auto min-h-16 w-full min-w-0 flex-col items-start justify-center gap-1 px-3 py-3 text-left whitespace-normal"
+                    onClick={() => {
+                      setSelectedId(automation.id);
+                      setSelectedStep("trigger");
+                    }}
+                  >
+                    <span className="w-full [overflow-wrap:anywhere] break-words">
+                      {automation.name || "Untitled automation"}
+                    </span>
+                    <span className="text-muted-foreground text-xs font-normal">
+                      {automationTriggerLabel(automation)}
+                      {!automation.enabled ? " · Disabled" : ""}
+                    </span>
+                  </Button>
+                ))}
+              </nav>
+            </aside>
+          </ResizablePanel>
+          {wide && (
+            <ResizableHandle withHandle aria-label="Resize automation list" />
           )}
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setDraft(automations);
-                setSelectedId(automations[0]?.id ?? "");
-                setError("");
-              }}
-              disabled={pending || !dirty}
-            >
-              Discard changes
-            </Button>
-            <Button onClick={() => void save()} disabled={pending || !dirty}>
-              Save automations
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-      <section
-        aria-labelledby="automation-activity-title"
-        className="grid gap-3 lg:col-span-2"
-      >
-        <div>
-          <h3 id="automation-activity-title" className="font-semibold">
-            Recent activity
-          </h3>
-          <p className="text-muted-foreground mt-1 text-sm">
-            See what published automations did in the live workspace.
-          </p>
-          <Button
-            variant="outline"
-            className="mt-2 min-h-11"
-            disabled={activity.loading}
-            onClick={() => void onRefreshActivity()}
+          <ResizablePanel
+            id="automation-graph"
+            minSize={wide ? "18rem" : 0}
+            className="min-w-0 overflow-visible! @min-[1100px]/studio:h-full @min-[1100px]/studio:overflow-hidden!"
           >
-            {activity.loading ? "Refreshing…" : "Refresh activity"}
-          </Button>
-        </div>
-        {activity.error ? (
-          <Alert variant="destructive">
-            {activity.error}{" "}
-            <Button
-              variant="outline"
-              size="sm"
-              className="min-h-11"
-              onClick={() => void onRefreshActivity()}
+            <div className="border-border min-w-0 border-b p-5 @min-[1100px]/studio:h-full @min-[1100px]/studio:overflow-y-auto @min-[1100px]/studio:border-b-0">
+              {selected ? (
+                <>
+                  <div className="border-border mb-5 flex items-start justify-between gap-3 border-b pb-5">
+                    <div className="min-w-0">
+                      <h2 className="text-lg font-semibold [overflow-wrap:anywhere] break-words">
+                        {selected.name || "Untitled automation"}
+                      </h2>
+                      <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
+                        Follow the steps to see when this automation makes a
+                        change.
+                      </p>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-11 shrink-0"
+                            aria-label="Automation options"
+                            disabled={pending}
+                          />
+                        }
+                      >
+                        <MoreHorizontal aria-hidden="true" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          variant="destructive"
+                          disabled={pending}
+                          onClick={() =>
+                            updateDraft(
+                              draft.filter((item) => item.id !== selected.id),
+                            )
+                          }
+                        >
+                          <Trash2 aria-hidden="true" />
+                          Delete automation
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                  <AutomationFlow
+                    automation={selected}
+                    design={design}
+                    selectedStep={selectedStep}
+                    onSelect={selectStep}
+                  />
+                </>
+              ) : (
+                <p className="text-muted-foreground py-10 text-sm">
+                  Create an automation to define triggers, conditions, and
+                  actions.
+                </p>
+              )}
+              <Collapsible className="border-border mt-6 border-t pt-4">
+                <h3>
+                  <CollapsibleTrigger className="focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center justify-between text-sm font-medium focus-visible:outline-2">
+                    Recent activity
+                    <ChevronDown className="size-4" aria-hidden="true" />
+                  </CollapsibleTrigger>
+                </h3>
+                <CollapsibleContent keepMounted>
+                  <section
+                    aria-label="Recent activity details"
+                    className="mt-4 grid gap-3"
+                  >
+                    <div>
+                      <p className="text-muted-foreground mt-1 text-sm">
+                        See what published automations did in the live
+                        workspace.
+                      </p>
+                      <Button
+                        variant="outline"
+                        className="mt-2 min-h-11"
+                        disabled={activity.loading}
+                        onClick={() => void onRefreshActivity()}
+                      >
+                        {activity.loading ? "Refreshing…" : "Refresh activity"}
+                      </Button>
+                    </div>
+                    {activity.error ? (
+                      <Alert variant="destructive">
+                        {activity.error}{" "}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="min-h-11"
+                          onClick={() => void onRefreshActivity()}
+                        >
+                          Retry
+                        </Button>
+                      </Alert>
+                    ) : null}
+                    {runs.length ? (
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        {runs.map((run) => (
+                          <Card key={run.id}>
+                            <CardHeader className="gap-1">
+                              <CardTitle className="text-base">
+                                {run.automationName}
+                              </CardTitle>
+                              <p className="text-muted-foreground text-xs">
+                                <time dateTime={run.createdAt}>
+                                  {new Date(run.createdAt).toLocaleString()}
+                                </time>
+                              </p>
+                            </CardHeader>
+                            <CardContent className="grid gap-1 text-sm">
+                              <p className="font-medium">
+                                {automationRunStatus(run)}
+                              </p>
+                              <p className="text-muted-foreground">
+                                {runDetail(run)}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    ) : activity.loading ? (
+                      <p
+                        className="text-muted-foreground text-sm"
+                        role="status"
+                      >
+                        Loading recent activity…
+                      </p>
+                    ) : activity.error ? null : (
+                      <p className="text-muted-foreground text-sm">
+                        No published automation activity yet.
+                      </p>
+                    )}
+                  </section>
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+          </ResizablePanel>
+          {wide && (
+            <ResizableHandle withHandle aria-label="Resize rule settings" />
+          )}
+          <ResizablePanel
+            id="automation-settings"
+            defaultSize="26rem"
+            minSize={wide ? "13rem" : 0}
+            groupResizeBehavior="preserve-pixel-size"
+            className="min-w-0 overflow-visible! @min-[1100px]/studio:h-full @min-[1100px]/studio:overflow-hidden!"
+          >
+            <section
+              aria-label="Rule settings"
+              className="bg-card @container/settings flex min-w-0 flex-col @min-[1100px]/studio:h-full @min-[1100px]/studio:min-h-0"
             >
-              Retry
-            </Button>
-          </Alert>
-        ) : null}
-        {runs.length ? (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {runs.map((run) => (
-              <Card key={run.id}>
-                <CardHeader className="gap-1">
-                  <CardTitle className="text-base">
-                    {run.automationName}
-                  </CardTitle>
-                  <p className="text-muted-foreground text-xs">
-                    <time dateTime={run.createdAt}>
-                      {new Date(run.createdAt).toLocaleString()}
-                    </time>
-                  </p>
-                </CardHeader>
-                <CardContent className="grid gap-1 text-sm">
-                  <p className="font-medium">{automationRunStatus(run)}</p>
-                  <p className="text-muted-foreground">{runDetail(run)}</p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : activity.loading ? (
-          <p className="text-muted-foreground text-sm" role="status">
-            Loading recent activity…
-          </p>
-        ) : activity.error ? null : (
-          <p className="text-muted-foreground text-sm">
-            No published automation activity yet.
-          </p>
-        )}
-      </section>
+              <div className="border-border border-b px-5 py-4">
+                <h2 className="font-semibold">Rule settings</h2>
+              </div>
+              <div
+                ref={settingsRef}
+                className="min-w-0 flex-1 space-y-4 p-4 @min-[1100px]/studio:overflow-y-auto [&_[data-slot=native-select-wrapper]]:w-full [&_input]:min-w-0 [&_select]:w-full"
+                onFocusCapture={(event) => {
+                  const target = (
+                    event.target as HTMLElement
+                  ).closest<HTMLElement>("[data-rule-target]")?.dataset
+                    .ruleTarget;
+                  if (target) setSelectedStep(target);
+                }}
+              >
+                {error && (
+                  <Alert variant="destructive" role="alert">
+                    {error}
+                  </Alert>
+                )}
+                {selected && (
+                  <AutomationEditor
+                    design={design}
+                    automation={selected}
+                    pending={pending}
+                    onChange={update}
+                    selectedStep={selectedStep}
+                  />
+                )}
+              </div>
+              <div className="border-border flex flex-wrap items-center justify-end gap-3 border-t p-4">
+                <p className="text-muted-foreground mr-auto text-xs">
+                  Saves all automation drafts. Publishing is a separate step.
+                </p>
+                <Button
+                  variant="ghost"
+                  className="min-h-11"
+                  onClick={() => {
+                    setDraft(automations);
+                    setSelectedId(automations[0]?.id ?? "");
+                    setSelectedStep("trigger");
+                    setError("");
+                  }}
+                  disabled={pending || !dirty}
+                >
+                  Discard changes
+                </Button>
+                <Button
+                  className="min-h-11"
+                  onClick={() => void save()}
+                  disabled={pending || !dirty}
+                >
+                  {pending ? "Saving…" : "Save automations"}
+                </Button>
+              </div>
+            </section>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
     </section>
   );
 }
@@ -898,13 +1101,13 @@ function AutomationEditor({
   automation,
   pending,
   onChange,
-  onDelete,
+  selectedStep,
 }: {
   design: SandboxDocumentDesign;
   automation: SandboxAutomation;
   pending: boolean;
   onChange: (automation: SandboxAutomation) => void;
-  onDelete: () => void;
+  selectedStep: string;
 }) {
   const nameId = useId();
   const triggerId = useId();
@@ -948,12 +1151,12 @@ function AutomationEditor({
   };
   return (
     <fieldset
-      className="grid min-w-0 gap-5 border-0 p-0"
+      className="grid min-w-0 gap-3 border-0 p-0"
       disabled={pending}
       aria-busy={pending}
     >
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field className="sm:col-span-2">
+      <div className="grid min-w-0 items-end gap-4 @min-[350px]/settings:grid-cols-[minmax(0,1fr)_auto]">
+        <Field>
           <FieldLabel htmlFor={nameId}>Automation name</FieldLabel>
           <Input
             id={nameId}
@@ -963,172 +1166,188 @@ function AutomationEditor({
             }
           />
         </Field>
-        <Field>
-          <FieldLabel htmlFor={triggerId}>Trigger</FieldLabel>
-          <NativeSelect
-            id={triggerId}
-            value={automation.trigger.kind}
-            onChange={(event) =>
-              changeTrigger(
-                event.target.value as SandboxAutomation["trigger"]["kind"],
-              )
-            }
-          >
-            <NativeSelectOption value="record-created">
-              Item added
-            </NativeSelectOption>
-            <NativeSelectOption value="field-changed">
-              Field changed
-            </NativeSelectOption>
-            <NativeSelectOption value="threshold-crossed">
-              Threshold crossed
-            </NativeSelectOption>
-            <NativeSelectOption value="schedule">Schedule</NativeSelectOption>
-          </NativeSelect>
-        </Field>
-        <Field className="flex-row items-center gap-3 pt-6">
-          <Checkbox
+        <Field className="min-h-11 flex-row items-center justify-between gap-3 @min-[350px]/settings:flex-col @min-[350px]/settings:items-end">
+          <FieldLabel htmlFor={enabledId}>Enabled in draft</FieldLabel>
+          <Switch
             id={enabledId}
+            disabled={pending}
             checked={automation.enabled}
             onCheckedChange={(checked) =>
               onChange({ ...automation, enabled: checked })
             }
           />
-          <FieldLabel htmlFor={enabledId}>Enabled</FieldLabel>
         </Field>
       </div>
-      {automation.trigger.kind !== "schedule" ? (
-        <Field>
-          <FieldLabel htmlFor={triggerModuleId}>Trigger module</FieldLabel>
-          <NativeSelect
-            id={triggerModuleId}
-            value={triggerModule}
-            onChange={(event) => {
-              const moduleId = event.target.value;
-              const field =
-                automation.trigger.kind === "threshold-crossed"
-                  ? firstOpenNumberField(design, moduleId)
-                  : firstOpenField(design, moduleId);
-              const trigger =
-                automation.trigger.kind === "record-created"
-                  ? { kind: "record-created" as const, moduleId }
-                  : automation.trigger.kind === "field-changed"
-                    ? {
-                        kind: "field-changed" as const,
-                        moduleId,
-                        fieldId: field?.id ?? "",
-                      }
-                    : {
-                        kind: "threshold-crossed" as const,
-                        moduleId,
-                        fieldId: field?.id ?? "",
-                        operator: thresholdTrigger?.operator ?? ">=",
-                        value: thresholdTrigger?.value ?? defaultLiteral(field),
-                      };
-              onChange({ ...automation, trigger });
-            }}
-          >
-            <ModuleOptions design={design} />
-          </NativeSelect>
-        </Field>
-      ) : scheduleTrigger ? (
-        <div className="grid gap-3 sm:grid-cols-2">
+      <section
+        data-rule-target="trigger"
+        tabIndex={-1}
+        className={`border-border grid grid-cols-1 gap-3 rounded-xl border p-4 @min-[450px]/settings:grid-cols-3 ${selectedStep === "trigger" ? "ring-ring ring-1" : ""}`}
+      >
+        <h3 className="col-span-full font-semibold">When</h3>
+        <p className="text-muted-foreground col-span-full text-sm">
+          Choose what starts this automation.
+        </p>
+        <div className="contents">
           <Field>
-            <FieldLabel htmlFor={scheduleModuleId}>Module</FieldLabel>
+            <FieldLabel htmlFor={triggerId}>Trigger</FieldLabel>
             <NativeSelect
-              id={scheduleModuleId}
-              value={scheduleTrigger.moduleId ?? ""}
+              id={triggerId}
+              value={automation.trigger.kind}
               onChange={(event) =>
-                onChange({
-                  ...automation,
-                  trigger: { ...scheduleTrigger, moduleId: event.target.value },
-                })
+                changeTrigger(
+                  event.target.value as SandboxAutomation["trigger"]["kind"],
+                )
               }
             >
-              <NativeSelectOption value="">Choose module</NativeSelectOption>
+              <NativeSelectOption value="record-created">
+                Item added
+              </NativeSelectOption>
+              <NativeSelectOption value="field-changed">
+                Field changed
+              </NativeSelectOption>
+              <NativeSelectOption value="threshold-crossed">
+                Threshold crossed
+              </NativeSelectOption>
+              <NativeSelectOption value="schedule">Schedule</NativeSelectOption>
+            </NativeSelect>
+          </Field>
+        </div>
+        {automation.trigger.kind !== "schedule" ? (
+          <Field>
+            <FieldLabel htmlFor={triggerModuleId}>Trigger module</FieldLabel>
+            <NativeSelect
+              id={triggerModuleId}
+              value={triggerModule}
+              onChange={(event) => {
+                const moduleId = event.target.value;
+                const field =
+                  automation.trigger.kind === "threshold-crossed"
+                    ? firstOpenNumberField(design, moduleId)
+                    : firstOpenField(design, moduleId);
+                const trigger =
+                  automation.trigger.kind === "record-created"
+                    ? { kind: "record-created" as const, moduleId }
+                    : automation.trigger.kind === "field-changed"
+                      ? {
+                          kind: "field-changed" as const,
+                          moduleId,
+                          fieldId: field?.id ?? "",
+                        }
+                      : {
+                          kind: "threshold-crossed" as const,
+                          moduleId,
+                          fieldId: field?.id ?? "",
+                          operator: thresholdTrigger?.operator ?? ">=",
+                          value:
+                            thresholdTrigger?.value ?? defaultLiteral(field),
+                        };
+                onChange({ ...automation, trigger });
+              }}
+            >
               <ModuleOptions design={design} />
             </NativeSelect>
           </Field>
-          <Field>
-            <FieldLabel htmlFor={scheduleFrequencyId}>Frequency</FieldLabel>
-            <NativeSelect
-              id={scheduleFrequencyId}
-              value={scheduleTrigger.frequency}
-              onChange={(event) =>
-                onChange({
-                  ...automation,
-                  trigger: scheduleFrequencyChange(
-                    scheduleTrigger,
-                    event.target.value as "daily" | "weekly",
-                  ),
-                })
-              }
-            >
-              <NativeSelectOption value="daily">Daily</NativeSelectOption>
-              <NativeSelectOption value="weekly">Weekly</NativeSelectOption>
-            </NativeSelect>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={scheduleTimeId}>Time</FieldLabel>
-            <Input
-              id={scheduleTimeId}
-              type="time"
-              value={scheduleTrigger.time}
-              onChange={(event) =>
-                onChange({
-                  ...automation,
-                  trigger: { ...scheduleTrigger, time: event.target.value },
-                })
-              }
-            />
-          </Field>
-          {scheduleTrigger.frequency === "weekly" ? (
+        ) : scheduleTrigger ? (
+          <div className="col-span-full grid gap-3 @min-[350px]/settings:grid-cols-2">
             <Field>
-              <FieldLabel htmlFor={scheduleWeekdayId}>Weekday</FieldLabel>
+              <FieldLabel htmlFor={scheduleModuleId}>Module</FieldLabel>
               <NativeSelect
-                id={scheduleWeekdayId}
-                value={String(scheduleTrigger.weekday ?? 1)}
+                id={scheduleModuleId}
+                value={scheduleTrigger.moduleId ?? ""}
                 onChange={(event) =>
                   onChange({
                     ...automation,
                     trigger: {
                       ...scheduleTrigger,
-                      weekday: Number(event.target.value),
+                      moduleId: event.target.value,
                     },
                   })
                 }
               >
-                {[1, 2, 3, 4, 5, 6, 7].map((weekday) => (
-                  <NativeSelectOption key={weekday} value={String(weekday)}>
-                    Day {weekday}
-                  </NativeSelectOption>
-                ))}
+                <NativeSelectOption value="">Choose module</NativeSelectOption>
+                <ModuleOptions design={design} />
               </NativeSelect>
             </Field>
-          ) : null}
-        </div>
-      ) : null}
-      {automation.trigger.kind === "field-changed" ||
-      automation.trigger.kind === "threshold-crossed" ? (
-        <TriggerFieldEditor
-          design={design}
-          automation={automation}
-          onChange={onChange}
-        />
-      ) : null}
+            <Field>
+              <FieldLabel htmlFor={scheduleFrequencyId}>Frequency</FieldLabel>
+              <NativeSelect
+                id={scheduleFrequencyId}
+                value={scheduleTrigger.frequency}
+                onChange={(event) =>
+                  onChange({
+                    ...automation,
+                    trigger: scheduleFrequencyChange(
+                      scheduleTrigger,
+                      event.target.value as "daily" | "weekly",
+                    ),
+                  })
+                }
+              >
+                <NativeSelectOption value="daily">Daily</NativeSelectOption>
+                <NativeSelectOption value="weekly">Weekly</NativeSelectOption>
+              </NativeSelect>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={scheduleTimeId}>Time</FieldLabel>
+              <Input
+                id={scheduleTimeId}
+                type="time"
+                value={scheduleTrigger.time}
+                onChange={(event) =>
+                  onChange({
+                    ...automation,
+                    trigger: { ...scheduleTrigger, time: event.target.value },
+                  })
+                }
+              />
+            </Field>
+            {scheduleTrigger.frequency === "weekly" ? (
+              <Field>
+                <FieldLabel htmlFor={scheduleWeekdayId}>Weekday</FieldLabel>
+                <NativeSelect
+                  id={scheduleWeekdayId}
+                  value={String(scheduleTrigger.weekday ?? 1)}
+                  onChange={(event) =>
+                    onChange({
+                      ...automation,
+                      trigger: {
+                        ...scheduleTrigger,
+                        weekday: Number(event.target.value),
+                      },
+                    })
+                  }
+                >
+                  {[1, 2, 3, 4, 5, 6, 7].map((weekday) => (
+                    <NativeSelectOption key={weekday} value={String(weekday)}>
+                      Day {weekday}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+            ) : null}
+          </div>
+        ) : null}
+        {automation.trigger.kind === "field-changed" ||
+        automation.trigger.kind === "threshold-crossed" ? (
+          <TriggerFieldEditor
+            design={design}
+            automation={automation}
+            onChange={onChange}
+          />
+        ) : null}
+      </section>
       <ConditionEditor
         design={design}
         automation={automation}
         onChange={onChange}
+        selectedStep={selectedStep}
       />
       <ActionEditor
         design={design}
         automation={automation}
         onChange={onChange}
+        selectedStep={selectedStep}
       />
-      <Button variant="destructive" onClick={onDelete} disabled={pending}>
-        Delete automation
-      </Button>
     </fieldset>
   );
 }
@@ -1159,7 +1378,13 @@ function TriggerFieldEditor({
   );
   const field = triggerFields.find((item) => item.id === trigger.fieldId);
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
+    <div
+      className={
+        trigger.kind === "field-changed"
+          ? "contents"
+          : "col-span-full grid gap-3 @min-[350px]/settings:grid-cols-2"
+      }
+    >
       <Field>
         <FieldLabel htmlFor={triggerFieldId}>Trigger field</FieldLabel>
         <NativeSelect
@@ -1249,10 +1474,12 @@ function ConditionEditor({
   design,
   automation,
   onChange,
+  selectedStep,
 }: {
   design: SandboxDocumentDesign;
   automation: SandboxAutomation;
   onChange: (automation: SandboxAutomation) => void;
+  selectedStep: string;
 }) {
   const moduleId = automationOrigin(automation, design);
   const update = (index: number, condition: SandboxAutomationCondition) =>
@@ -1268,8 +1495,15 @@ function ConditionEditor({
       },
     });
   return (
-    <fieldset className="border-border grid gap-3 rounded-md border p-3">
-      <legend className="px-1 text-sm font-medium">Conditions</legend>
+    <fieldset
+      data-rule-target="conditions"
+      tabIndex={-1}
+      className="border-border grid min-w-0 gap-3 rounded-xl border p-4"
+    >
+      <legend className="px-1 font-semibold">If</legend>
+      <p className="text-muted-foreground text-sm">
+        Only continue when these conditions match.
+      </p>
       <NativeSelect
         aria-label="Condition group operator"
         value={automation.conditionGroup.operator}
@@ -1297,9 +1531,11 @@ function ConditionEditor({
         return (
           <div
             key={condition.id}
-            className="bg-muted/40 grid gap-2 rounded-md p-3"
+            data-rule-target={`condition:${condition.id}`}
+            tabIndex={-1}
+            className={`grid min-w-0 gap-3 rounded-lg p-2 ${selectedStep === `condition:${condition.id}` ? "bg-accent ring-ring ring-1" : "bg-muted/40"}`}
           >
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2 @min-[350px]/settings:grid-cols-2">
               <NativeSelect
                 aria-label={`Condition ${index + 1} field`}
                 value={
@@ -1392,10 +1628,12 @@ function ActionEditor({
   design,
   automation,
   onChange,
+  selectedStep,
 }: {
   design: SandboxDocumentDesign;
   automation: SandboxAutomation;
   onChange: (automation: SandboxAutomation) => void;
+  selectedStep: string;
 }) {
   const update = (index: number, action: SandboxAutomationAction) =>
     onChange({
@@ -1403,10 +1641,22 @@ function ActionEditor({
       actions: replaceAt(automation.actions, index, action),
     });
   return (
-    <fieldset className="border-border grid gap-3 rounded-md border p-3">
-      <legend className="px-1 text-sm font-medium">Actions</legend>
+    <fieldset
+      data-rule-target="actions"
+      tabIndex={-1}
+      className="border-border grid min-w-0 gap-3 rounded-xl border p-4"
+    >
+      <legend className="px-1 font-semibold">Then</legend>
+      <p className="text-muted-foreground text-sm">
+        Choose what changes when the conditions match.
+      </p>
       {automation.actions.map((action, index) => (
-        <div key={action.id} className="bg-muted/40 grid gap-2 rounded-md p-3">
+        <div
+          key={action.id}
+          data-rule-target={`action:${action.id}`}
+          tabIndex={-1}
+          className={`grid min-w-0 gap-3 rounded-lg p-2 ${selectedStep === `action:${action.id}` ? "bg-accent ring-ring ring-1" : "bg-muted/40"}`}
+        >
           <p className="text-sm font-medium">
             {action.kind === "set-field" ? "Set field" : "Unsupported action"}
           </p>
@@ -1433,7 +1683,6 @@ function ActionEditor({
                 ),
               })
             }
-            disabled={false}
           >
             Remove action
           </Button>
@@ -1444,7 +1693,7 @@ function ActionEditor({
         onClick={() => onChange(addAutomationAction(automation, design))}
         disabled={automation.actions.length >= 20}
       >
-        Add Set field action
+        Add action
       </Button>
     </fieldset>
   );

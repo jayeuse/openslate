@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { migrateSandboxFileV1 } from "../../src/components/systems/sandbox/domain/document";
 import {
   initialDesign,
@@ -296,7 +298,7 @@ test("a detailed template remains usable when moving from Automations to Test", 
 
   await expect(
     page.getByRole("heading", {
-      name: /Test your setup|Workspace data could not be opened/,
+      name: /Test setup|Workspace data could not be opened/,
     }),
   ).toBeVisible();
   expect({ pageErrors, consoleErrors }).toEqual({
@@ -304,7 +306,7 @@ test("a detailed template remains usable when moving from Automations to Test", 
     consoleErrors: [],
   });
   await expect(
-    page.getByRole("heading", { name: "Test your setup" }),
+    page.getByRole("heading", { name: "Test setup", exact: true }),
   ).toBeVisible();
 });
 
@@ -431,7 +433,7 @@ test("automation editing is locked while its save is pending", async ({
     await expect(name).toBeDisabled();
     await expect(page.getByLabel("Trigger", { exact: true })).toBeDisabled();
     await expect(
-      page.getByRole("button", { name: "Delete automation" }),
+      page.getByRole("button", { name: "Automation options" }),
     ).toBeDisabled();
   } finally {
     releaseSave();
@@ -519,7 +521,9 @@ test("running and clearing tests protect browser exits until each request settle
   ).toBeDisabled();
   await page.keyboard.press("Escape");
   releaseRun();
-  await expect(page.getByText("Test result")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Test result", exact: true }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Clear results" }).click();
   await expect.poll(() => clearStarted).toBe(true);
@@ -968,7 +972,7 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
 
   await page.goto("/sandbox?section=test");
   await expect(
-    page.getByRole("heading", { name: "Test your setup" }),
+    page.getByRole("heading", { name: "Test setup", exact: true }),
   ).toBeVisible();
   const clear = page.getByRole("button", { name: "Clear results" });
   await expect(clear).toBeEnabled();
@@ -976,8 +980,964 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
   await expect.poll(() => clearRequests).toBe(1);
   await expect(
     page
-      .getByRole("region", { name: "Test your setup" })
+      .getByRole("region", { name: "Sandbox test", exact: true })
       .getByText("Test results are temporarily unavailable."),
   ).toBeVisible();
   await expect(clear).toBeEnabled();
+});
+
+test("automation flow preview and summary follow the unsaved rule draft", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(page);
+  await page.getByRole("link", { name: "Automations", exact: true }).click();
+
+  const flow = page.getByRole("region", { name: "Flow preview" });
+  const summary = page.getByRole("region", { name: "Rule summary" });
+  const settings = page.getByRole("region", { name: "Rule settings" });
+  await expect(settings).toBeVisible();
+  await expect(
+    flow.getByRole("button", { name: "Edit trigger" }),
+  ).toBeVisible();
+  await expect(
+    flow.getByRole("button", { name: "Edit condition 1" }),
+  ).toBeVisible();
+  await expect(
+    flow.getByRole("button", { name: "Edit action 1" }),
+  ).toBeVisible();
+
+  const savedAutomations = sandbox.document().automations;
+  await page
+    .getByLabel("Condition 1 field")
+    .selectOption({ label: "Priority" });
+  const conditionValue = settings.getByLabel("Value", { exact: true }).first();
+  await settings
+    .getByText(/Value options/)
+    .first()
+    .click();
+  await conditionValue.fill("Needs immediate review");
+  await expect(
+    flow.getByRole("button", { name: "Edit condition 1" }),
+  ).toContainText("Needs immediate review");
+  await expect(summary).toContainText("Needs immediate review");
+  expect(sandbox.document().automations).toEqual(savedAutomations);
+
+  await page.getByLabel("Condition group operator").selectOption("any");
+  await expect(flow).toContainText(/any condition/i);
+  await expect(summary).toContainText(/any condition/i);
+
+  await page.getByRole("button", { name: "Add condition" }).click();
+  await expect(
+    flow.getByRole("button", { name: "Edit condition 2" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Remove condition" }).last().click();
+  await expect(
+    flow.getByRole("button", { name: "Edit condition 2" }),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Add action" }).click();
+  await expect(
+    flow.getByRole("button", { name: "Edit action 2" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Remove action" }).last().click();
+  await expect(flow.getByRole("button", { name: "Edit action 2" })).toHaveCount(
+    0,
+  );
+
+  await page.getByLabel("Trigger", { exact: true }).selectOption("schedule");
+  await expect(
+    flow.getByRole("button", { name: "Edit trigger" }),
+  ).toContainText(/schedule/i);
+  await expect(summary).toContainText(/schedule/i);
+});
+
+test("keyboard activation on an automation flow node focuses its editor", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page);
+  await page.getByRole("link", { name: "Automations", exact: true }).click();
+
+  const flow = page.getByRole("region", { name: "Flow preview" });
+  const condition = page.getByLabel("Condition 1 field");
+  const conditionNode = flow.getByRole("button", {
+    name: "Edit condition 1",
+  });
+  await conditionNode.focus();
+  await page.keyboard.press("Enter");
+  await expect(condition).toBeFocused();
+});
+
+test("Automation Studio layout screenshots can be captured for theme and viewport review", async ({
+  page,
+}) => {
+  test.skip(
+    process.env.AUTOMATION_LAYOUT_SCREENSHOTS !== "1",
+    "Set AUTOMATION_LAYOUT_SCREENSHOTS=1 to capture layout evidence",
+  );
+
+  const screenshotDirectory = resolve(
+    "..",
+    ".agent-runtime/automations-layout-20260925",
+  );
+  await mkdir(screenshotDirectory, { recursive: true });
+  await openAuthenticatedSandbox(page);
+  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "Flow preview" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "New automation" }).click();
+  await page.getByLabel("Automation name").fill("Service request follow-up");
+  await page
+    .getByLabel("Trigger", { exact: true })
+    .selectOption("field-changed");
+  const settings = page.getByRole("region", { name: "Rule settings" });
+  await settings
+    .getByLabel("Trigger module")
+    .selectOption({ label: "Service requests" });
+  await settings.getByLabel("Trigger field").selectOption({ label: "Status" });
+  await page.getByRole("button", { name: "Add condition" }).click();
+  await settings
+    .getByLabel("Condition 1 field")
+    .selectOption({ label: "Status" });
+  await settings.getByLabel("Condition 1 operator").selectOption("=");
+  await settings
+    .getByLabel("Set field target")
+    .first()
+    .selectOption({ label: "Status" });
+  const values = settings.getByLabel("Value", { exact: true });
+  await values.first().fill("Open");
+  await values.last().fill("In progress");
+
+  const views = [
+    { width: 1440, height: 1080, theme: "light" },
+    { width: 1440, height: 1080, theme: "dark" },
+    { width: 1920, height: 1200, theme: "light" },
+    { width: 1920, height: 1200, theme: "dark" },
+    { width: 390, height: 844, theme: "light" },
+    { width: 390, height: 844, theme: "dark" },
+  ] as const;
+
+  for (const view of views) {
+    await page.setViewportSize({ width: view.width, height: view.height });
+    await page.evaluate((theme) => {
+      document.documentElement.classList.toggle("dark", theme === "dark");
+    }, view.theme);
+    const widths = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      page: document.documentElement.scrollWidth,
+    }));
+    expect(widths.page).toBeLessThanOrEqual(widths.viewport);
+    await page.screenshot({
+      path: join(
+        screenshotDirectory,
+        `automation-${view.width}-${view.theme}.png`,
+      ),
+      fullPage: true,
+      animations: "disabled",
+    });
+  }
+});
+
+test("automation panels resize with their requested minimum widths and remain usable", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1200 });
+  await openAuthenticatedSandbox(page);
+  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  const list = page.getByRole("complementary", { name: "Automation list" });
+  const settings = page.getByRole("region", { name: "Rule settings" });
+  const listHandle = page.getByRole("separator", {
+    name: "Resize automation list",
+  });
+  const settingsHandle = page.getByRole("separator", {
+    name: "Resize rule settings",
+  });
+  await expect(listHandle).toBeVisible();
+  const width = async (locator: typeof list) =>
+    (await locator.boundingBox())!.width;
+  const rem = await page.evaluate(() =>
+    parseFloat(getComputedStyle(document.documentElement).fontSize),
+  );
+  const drag = async (handle: typeof listHandle, distance: number) => {
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + distance, box.y + box.height / 2, {
+      steps: 12,
+    });
+    await page.mouse.up();
+  };
+  const initialListWidth = await width(list);
+  await drag(listHandle, 120);
+  await expect.poll(() => width(list)).toBeGreaterThan(initialListWidth + 80);
+  await drag(listHandle, -1500);
+  await expect.poll(() => width(list)).toBeCloseTo(18.2 * rem, 0);
+  await drag(settingsHandle, 1500);
+  await expect.poll(() => width(settings)).toBeCloseTo(13 * rem, 0);
+  await settings
+    .getByLabel("Automation name")
+    .fill("Narrow settings stay editable");
+  await expect(settings.getByLabel("Automation name")).toHaveValue(
+    "Narrow settings stay editable",
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
+      ),
+    )
+    .toBeLessThanOrEqual(0);
+  if (process.env.AUTOMATION_LAYOUT_SCREENSHOTS === "1") {
+    await page.screenshot({
+      path: resolve(
+        "..",
+        ".agent-runtime/automations-layout-20260925/automation-resized-minimum.png",
+      ),
+      fullPage: true,
+      animations: "disabled",
+    });
+  }
+  const narrowWidth = await width(settings);
+  await settingsHandle.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect.poll(() => width(settings)).toBeGreaterThan(narrowWidth);
+  for (const height of [768, 1000]) {
+    await page.setViewportSize({ width: 1440, height });
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const root = document.scrollingElement!;
+          const main = document.querySelector("main")!;
+          return Math.max(
+            root.scrollHeight - root.clientHeight,
+            main.scrollHeight - main.clientHeight,
+          );
+        }),
+      )
+      .toBeLessThanOrEqual(1);
+    await expect(
+      settings.getByRole("button", { name: "Save automations", exact: true }),
+    ).toBeVisible();
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(settingsHandle).toBeHidden();
+  await expect(settings.getByLabel("Automation name")).toHaveValue(
+    "Narrow settings stay editable",
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
+      ),
+    )
+    .toBeLessThanOrEqual(0);
+});
+
+test("Test field search preserves hidden edits in the submitted temporary values", async ({
+  page,
+}) => {
+  let submitted: Record<string, unknown> | undefined;
+  const design = structuredClone(configuredSandboxDesign);
+  design.rules = [];
+  for (let index = 1; index <= 24; index++) {
+    design.modules[0].fields.push({
+      id: `extra-${index}`,
+      name: `Extra field ${index}`,
+      type: "Text",
+      required: false,
+      value: "",
+      options: "",
+      closed: false,
+    });
+  }
+  await openAuthenticatedSandbox(page, design);
+  await page.route("**/api/sandbox/tests", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const request = route.request().postDataJSON() as {
+      moduleId: string;
+      values: Record<string, string | number | boolean | null>;
+      event: { kind: string };
+    };
+    submitted = request.values;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "00000000-0000-4000-8000-000000000021",
+        createdAt: "2026-09-25T10:00:00Z",
+        documentRevision: 1,
+        input: { moduleId: request.moduleId, values: request.values },
+        event: request.event,
+        automationIds: null,
+        result: {
+          values: { ...request.values, "sample-field-Status": "Complete" },
+          automationTraces: [],
+          routes: [],
+          issues: [],
+        },
+      }),
+    });
+  });
+  await page.getByRole("link", { name: "Test", exact: true }).click();
+  const setup = page.getByRole("region", { name: "Test setup", exact: true });
+  await expect(setup.getByLabel("Find a field")).toBeVisible();
+  await expect(setup.getByLabel("Title", { exact: true })).toHaveCount(0);
+  await setup.getByLabel("Request number", { exact: true }).fill("TEST-001");
+  await setup
+    .getByRole("button", { name: "All input fields", exact: true })
+    .click();
+  await expect(setup.getByLabel("Extra field 24", { exact: true })).toHaveCount(
+    0,
+  );
+  await setup
+    .getByRole("button", { name: "Show more fields", exact: true })
+    .click();
+  await setup
+    .getByRole("button", { name: "Show more fields", exact: true })
+    .click();
+  await setup
+    .getByLabel("Extra field 24", { exact: true })
+    .fill("Retained beyond first page");
+  await setup.getByLabel("Find a field").fill("Title");
+  await setup.getByLabel("Title", { exact: true }).fill("Keep this hidden");
+  await setup.getByLabel("Find a field").fill("");
+  await setup
+    .getByRole("button", { name: "Relevant fields", exact: true })
+    .click();
+  await expect(setup.getByLabel("Title", { exact: true })).toHaveCount(0);
+  await setup
+    .getByRole("button", { name: "Edited fields", exact: true })
+    .click();
+  await expect(setup.getByLabel("Title", { exact: true })).toHaveValue(
+    "Keep this hidden",
+  );
+  await setup
+    .getByRole("button", { name: "Relevant fields", exact: true })
+    .click();
+  await setup.getByRole("button", { name: "Run test", exact: true }).click();
+  await expect
+    .poll(() => submitted?.["sample-field-Title"])
+    .toBe("Keep this hidden");
+  expect(submitted?.["extra-24"]).toBe("Retained beyond first page");
+  await expect(
+    page
+      .getByRole("region", { name: "Field comparison", exact: true })
+      .getByRole("row", { name: /Status/ }),
+  ).toContainText("Complete");
+  await setup.getByLabel("Find a field").fill("Status");
+  await setup.getByLabel("Status", { exact: true }).selectOption("Open");
+  await expect(
+    page
+      .getByRole("region", { name: "Field comparison", exact: true })
+      .getByRole("row", { name: /Status/ }),
+  ).toContainText("Complete");
+  if (process.env.SANDBOX_TEST_SCREENSHOTS) {
+    const output = resolve(process.env.SANDBOX_TEST_SCREENSHOTS);
+    await mkdir(output, { recursive: true });
+    await setup.getByLabel("Find a field").fill("");
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    const handle = page.getByRole("separator", { name: "Resize test setup" });
+    await expect(handle).toBeVisible();
+    const beforeWidth = (await setup.boundingBox())!.width;
+    await handle.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect
+      .poll(async () => (await setup.boundingBox())!.width)
+      .toBeGreaterThan(beforeWidth);
+    await expect(
+      setup.getByLabel("Request number", { exact: true }),
+    ).toHaveValue("TEST-001");
+    await page.keyboard.press("ArrowLeft");
+    for (const height of [768, 1000]) {
+      await page.setViewportSize({ width: 1440, height });
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const root = document.scrollingElement!;
+            const main = document.querySelector("main")!;
+            return Math.max(
+              root.scrollHeight - root.clientHeight,
+              main.scrollHeight - main.clientHeight,
+            );
+          }),
+        )
+        .toBeLessThanOrEqual(1);
+    }
+    for (const width of [1920, 1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        )
+        .toBe(true);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate(
+          (value) =>
+            document.documentElement.classList.toggle("dark", value === "dark"),
+          theme,
+        );
+        await page.screenshot({
+          path: join(output, `test-workbench-${width}-${theme}.png`),
+          fullPage: true,
+          animations: "disabled",
+        });
+      }
+    }
+  }
+});
+
+test("Test comparisons use saved inputs, preserve typed values, and distinguish missing results", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const testModule = design.modules[0];
+  const priority = testModule.fields.find(
+    (field) => field.name === "Priority",
+  )!;
+  priority.type = "Number";
+  priority.config = { kind: "number", defaultValue: 0 };
+  testModule.fields.push({
+    id: "review-field",
+    options: "",
+    name: "Needs review",
+    type: "Checkbox",
+    required: false,
+    closed: false,
+    value: "false",
+    config: { kind: "checkbox", defaultValue: false },
+  });
+  const base = {
+    documentRevision: 1,
+    event: { kind: "record-created" },
+    automationIds: null,
+  };
+  await openAuthenticatedSandbox(page, design, {
+    testRuns: [
+      {
+        ...base,
+        id: "00000000-0000-4000-8000-000000000032",
+        createdAt: "2026-09-25T10:01:00Z",
+        input: {
+          moduleId: testModule.id,
+          values: { "sample-field-Priority": "bad", "review-field": false },
+        },
+        result: {
+          values: { "review-field": false },
+          automationTraces: [],
+          routes: [],
+          issues: [
+            {
+              code: "value_invalid",
+              message: "Priority must be a number.",
+              targetId: "sample-field-Priority",
+            },
+          ],
+        },
+      },
+      {
+        ...base,
+        id: "00000000-0000-4000-8000-000000000031",
+        createdAt: "2026-09-25T10:00:00Z",
+        input: {
+          moduleId: testModule.id,
+          values: {
+            "sample-field-Priority": 0,
+            "review-field": false,
+            "sample-field-Title": null,
+          },
+        },
+        result: {
+          values: {
+            "sample-field-Priority": 0,
+            "review-field": true,
+            "sample-field-Title": null,
+          },
+          automationTraces: [
+            {
+              automationId: "sample-urgent",
+              label: "Review request",
+              outcome: "Applied",
+            },
+            {
+              automationId: "sample-urgent",
+              label: "Review request",
+              outcome: "No changes",
+            },
+          ],
+          routes: [],
+          issues: [],
+        },
+      },
+    ],
+  });
+  await page.getByRole("link", { name: "Test", exact: true }).click();
+  const comparison = page.getByRole("region", {
+    name: "Field comparison",
+    exact: true,
+  });
+  await page
+    .getByRole("button", { name: "Show Priority input", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("region", { name: "Test setup", exact: true })
+      .getByLabel("Priority", { exact: true }),
+  ).toBeFocused();
+  await expect(comparison).toBeVisible();
+  await comparison
+    .getByRole("button", { name: "All result fields", exact: true })
+    .click();
+  await expect(comparison.getByRole("row", { name: /Priority/ })).toContainText(
+    "Not returned",
+  );
+  await page
+    .getByRole("region", { name: "Recent test results", exact: true })
+    .getByRole("button", { name: "View test 2", exact: true })
+    .click();
+  await expect(
+    comparison.getByRole("row", { name: /Needs review/ }),
+  ).toContainText("No");
+  await expect(
+    comparison.getByRole("row", { name: /Needs review/ }),
+  ).toContainText("Yes");
+  await expect(comparison.getByRole("row", { name: /Priority/ })).toHaveCount(
+    0,
+  );
+  await comparison
+    .getByRole("button", { name: "All result fields", exact: true })
+    .click();
+  await expect(
+    comparison
+      .getByRole("row", { name: /Priority/ })
+      .getByRole("cell", { name: "0", exact: true }),
+  ).toHaveCount(2);
+  await expect(
+    comparison
+      .getByRole("row", { name: /Title/ })
+      .getByRole("cell", { name: "No value", exact: true }),
+  ).toHaveCount(2);
+  const setup = page.getByRole("region", { name: "Test setup", exact: true });
+  await setup.getByLabel("Find a field").fill("Priority");
+  await setup.getByLabel("Priority", { exact: true }).fill("42");
+  await expect(
+    comparison
+      .getByRole("row", { name: /Priority/ })
+      .getByRole("cell", { name: "0", exact: true }),
+  ).toHaveCount(2);
+  await setup
+    .getByLabel("Module", { exact: true })
+    .selectOption("sample-equipment");
+  await expect(
+    comparison.getByRole("row", { name: /Needs review/ }),
+  ).toContainText("Yes");
+});
+
+function historyVersionFixture(
+  index: number,
+  label: string,
+  kind = "checkpoint",
+  note: string | null = null,
+) {
+  return {
+    id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    sequence: index,
+    kind,
+    label,
+    note,
+    sourceDocumentRevision: 1,
+    sourceVersionId: null,
+    contentHash: "c".repeat(64),
+    byteCount: 321,
+    metadataRevision: 1,
+    createdAt: `2026-09-${20 + index}T10:00:00Z`,
+    performedBy: null,
+    isDeleted: false,
+    deletedAt: null,
+  };
+}
+
+test("History timeline filters preserve the selected action target and published protections", async ({
+  page,
+}) => {
+  const versions = [
+    historyVersionFixture(1, "Published structure", "published"),
+    historyVersionFixture(
+      2,
+      "Release snapshot 1",
+      "checkpoint",
+      "Supplier setup",
+    ),
+    historyVersionFixture(3, "Before import"),
+  ];
+  // API history is returned newest first.
+  versions.sort((a, b) => b.sequence - a.sequence);
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const timeline = page.getByRole("region", {
+    name: "Version timeline",
+    exact: true,
+  });
+  const inspector = page.getByRole("region", {
+    name: "Selected version",
+    exact: true,
+  });
+  await expect(
+    inspector.getByRole("heading", { name: "Before import", exact: true }),
+  ).toBeVisible();
+  await expect(
+    timeline.getByRole("button", { name: /^View / }).first(),
+  ).toHaveAccessibleName("View Before import");
+  await timeline
+    .getByRole("button", { name: "View Release snapshot 1", exact: true })
+    .click();
+  await expect(
+    inspector.getByRole("heading", { name: "Release snapshot 1", exact: true }),
+  ).toBeVisible();
+  await timeline.getByLabel("Find a version").fill("Supplier");
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Release snapshot 1",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    timeline.getByRole("button", { name: "View Before import", exact: true }),
+  ).toHaveCount(0);
+  await timeline.getByLabel("Find a version").fill("no matching version");
+  await expect(
+    inspector.getByRole("heading", { name: "Release snapshot 1", exact: true }),
+  ).toBeVisible();
+  await inspector
+    .getByRole("button", { name: "Restore version", exact: true })
+    .click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "Restore Release snapshot 1?",
+  );
+  await page
+    .getByRole("button", { name: "Cancel restore", exact: true })
+    .click();
+  await expect(
+    inspector.getByRole("button", { name: "Restore version", exact: true }),
+  ).toBeFocused();
+  await timeline.getByLabel("Find a version").fill("");
+  await timeline
+    .getByRole("button", { name: "Published versions", exact: true })
+    .click();
+  await expect(
+    timeline.getByRole("button", { name: "View Before import", exact: true }),
+  ).toHaveCount(0);
+  await timeline
+    .getByRole("button", { name: "View Published structure", exact: true })
+    .click();
+  await expect(
+    inspector.getByRole("button", { name: "Delete version", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    inspector.getByRole("button", {
+      name: "Edit checkpoint label",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await timeline
+    .getByRole("button", { name: "All versions", exact: true })
+    .click();
+  await timeline
+    .getByRole("button", { name: "View Release snapshot 1", exact: true })
+    .click();
+  await inspector
+    .getByRole("button", { name: "Edit checkpoint label", exact: true })
+    .click();
+  await inspector
+    .getByLabel("Checkpoint label", { exact: true })
+    .fill("Unsaved label");
+  await expect(
+    timeline.getByRole("button", { name: "View Before import", exact: true }),
+  ).toBeDisabled();
+  await inspector
+    .getByRole("button", { name: "Cancel label edit", exact: true })
+    .click();
+});
+
+test("History comparison stays tied to compared versions while inspecting another timeline entry", async ({
+  page,
+}) => {
+  const versions = [
+    historyVersionFixture(1, "Published structure", "published"),
+    historyVersionFixture(
+      2,
+      "Release snapshot 1",
+      "checkpoint",
+      "Supplier setup",
+    ),
+    historyVersionFixture(3, "Before import"),
+  ];
+  const before = migrateSandboxFileV1({
+    kind: "openslate-sandbox",
+    schemaVersion: 1,
+    design: structuredClone(configuredSandboxDesign),
+  });
+  const after = structuredClone(before);
+  after.design.modules[0].name = "Updated requests";
+  let reads = 0;
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  await page.route("**/api/sandbox/versions/*", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    reads++;
+    const id = new URL(route.request().url()).pathname.split("/").at(-1);
+    const version = versions.find((item) => item.id === id)!;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...version,
+        document: id === versions[1].id ? after : before,
+      }),
+    });
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  await page.getByLabel("Compare first version").selectOption(versions[0].id);
+  await page.getByLabel("Compare second version").selectOption(versions[1].id);
+  expect(reads).toBe(0);
+  await page
+    .getByRole("button", { name: "Compare versions", exact: true })
+    .click();
+  const comparison = page.getByRole("region", {
+    name: "Version comparison",
+    exact: true,
+  });
+  await expect(comparison).toContainText("Updated requests");
+  const savedComparison = await comparison.innerText();
+  await page
+    .getByRole("button", { name: "View Before import", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Selected version", exact: true }),
+  ).toContainText("Before import");
+  expect(await comparison.innerText()).toBe(savedComparison);
+  expect(reads).toBe(2);
+  if (process.env.HISTORY_LAYOUT_SCREENSHOTS) {
+    const output = resolve(process.env.HISTORY_LAYOUT_SCREENSHOTS);
+    await mkdir(output, { recursive: true });
+    await page
+      .getByRole("button", { name: "View Release snapshot 1", exact: true })
+      .click();
+    for (const view of [
+      { width: 1920, height: 1000 },
+      { width: 1440, height: 768 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(view);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              document.documentElement.scrollWidth -
+              document.documentElement.clientWidth,
+          ),
+        )
+        .toBeLessThanOrEqual(1);
+      if (view.width >= 1440) {
+        await expect
+          .poll(() =>
+            page.evaluate(() => {
+              const root = document.scrollingElement!;
+              const main = document.querySelector("main")!;
+              return Math.max(
+                root.scrollHeight - root.clientHeight,
+                main.scrollHeight - main.clientHeight,
+              );
+            }),
+          )
+          .toBeLessThanOrEqual(1);
+      }
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate((value) => {
+          document.documentElement.classList.toggle("dark", value === "dark");
+          window.scrollTo(0, 0);
+        }, theme);
+        await page.screenshot({
+          path: join(output, `history-${view.width}-${theme}.png`),
+          fullPage: true,
+          animations: "disabled",
+        });
+      }
+    }
+  }
+});
+
+test("History deletion failure retains its target and successful deletion selects an available version", async ({
+  page,
+}) => {
+  const published = historyVersionFixture(
+    1,
+    "Published structure",
+    "published",
+  );
+  const checkpoint = historyVersionFixture(2, "Disposable checkpoint");
+  let versions = [published, checkpoint];
+  let deleteAttempts = 0;
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  await page.route("**/api/sandbox/versions?*", async (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: versions,
+        limit: 50,
+        offset: 0,
+        count: versions.length,
+        total: versions.length,
+        hasMore: false,
+      }),
+    }),
+  );
+  await page.route("**/api/sandbox/versions/*", async (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    expect(new URL(route.request().url()).pathname).toContain(checkpoint.id);
+    deleteAttempts++;
+    if (deleteAttempts === 1)
+      return route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Try deletion again." }),
+      });
+    versions = [published];
+    return route.fulfill({ status: 204 });
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  await page
+    .getByRole("button", { name: "View Disposable checkpoint", exact: true })
+    .click();
+  const inspector = page.getByRole("region", {
+    name: "Selected version",
+    exact: true,
+  });
+  await inspector
+    .getByRole("button", { name: "Delete version", exact: true })
+    .click();
+  const dialog = page.getByRole("alertdialog");
+  await dialog
+    .getByRole("button", { name: "Delete Disposable checkpoint", exact: true })
+    .click();
+  await expect.poll(() => deleteAttempts).toBe(1);
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole("button", {
+      name: "Delete Disposable checkpoint",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await dialog
+    .getByRole("button", { name: "Delete Disposable checkpoint", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByRole("button", {
+      name: "View Disposable checkpoint",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    inspector.getByRole("heading", {
+      name: "Published structure",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    inspector.getByRole("button", { name: "Delete version", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("heading", { name: "History", exact: true }),
+  ).toBeFocused();
+});
+
+test("History change groups keep large comparisons scannable without hiding access to any entry", async ({
+  page,
+}) => {
+  const first = historyVersionFixture(1, "Full setup", "published");
+  const second = historyVersionFixture(2, "Empty checkpoint");
+  const before = migrateSandboxFileV1({
+    kind: "openslate-sandbox",
+    schemaVersion: 1,
+    design: structuredClone(configuredSandboxDesign),
+  });
+  const after = structuredClone(before);
+  after.design.modules = [];
+  after.design.departments = [];
+  after.design.relationships = [];
+  after.automations = [];
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    versions: [second, first],
+  });
+  await page.route("**/api/sandbox/versions/*", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const isFirst = new URL(route.request().url()).pathname.endsWith(first.id);
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...(isFirst ? first : second),
+        document: isFirst ? before : after,
+      }),
+    });
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  await page.getByLabel("Compare first version").selectOption(first.id);
+  await page.getByLabel("Compare second version").selectOption(second.id);
+  await page
+    .getByRole("button", { name: "Compare versions", exact: true })
+    .click();
+  const comparison = page.getByRole("region", {
+    name: "Version comparison",
+    exact: true,
+  });
+  const fields = comparison.getByRole("button", {
+    name: "Fields, 12 change entries",
+    exact: true,
+  });
+  await expect(fields).toBeVisible();
+  await expect(
+    comparison.getByText("Field removed: Service requests · Request number", {
+      exact: true,
+    }),
+  ).toBeHidden();
+  await fields.click();
+  await expect(
+    comparison.getByText("Field removed: Service requests · Request number", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    comparison.getByText("Field removed: Customers · Email", { exact: true }),
+  ).toBeVisible();
+  await expect(comparison.getByRole("row", { name: /Fields/ })).toContainText(
+    "12",
+  );
+  await fields.click();
+  await expect(
+    comparison.getByText("Field removed: Customers · Email", { exact: true }),
+  ).toBeHidden();
+  if (process.env.HISTORY_LAYOUT_SCREENSHOTS) {
+    const output = resolve(process.env.HISTORY_LAYOUT_SCREENSHOTS);
+    await mkdir(output, { recursive: true });
+    for (const width of [1920, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.evaluate(() => {
+        document.documentElement.classList.add("dark");
+        window.scrollTo(0, 0);
+      });
+      await comparison.evaluate((element) => {
+        element.scrollTop = 0;
+      });
+      await page.screenshot({
+        path: join(output, `history-change-review-${width}.png`),
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
+  }
 });
