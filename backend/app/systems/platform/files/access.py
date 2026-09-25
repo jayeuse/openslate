@@ -89,9 +89,9 @@ def board_parent(
     board = db.scalar(statement.execution_options(populate_existing=True))
     if board is None:
         raise error("file_not_found", "File parent not found", 404)
-    if active and (
-        board.is_deleted or board.deleted_at is not None or board.status != BoardStatus.ACTIVE
-    ):
+    if board.is_deleted or board.deleted_at is not None:
+        raise error("file_parent_closed", "File parent is not active")
+    if active and board.status != BoardStatus.ACTIVE:
         raise error("file_parent_closed", "File parent is not active")
     return board
 
@@ -103,7 +103,7 @@ def authorize_board_file(
     """A Board-scoped grant, never the generic file-purpose capability."""
     if not is_established_user(user):
         raise error("file_not_found", "File not found", 404)
-    board = board_parent(db, board_id, active=True, lock=lock)
+    board = board_parent(db, board_id, active=write, lock=lock)
     grants = db.scalars(
         select(BoardGrant).where(
             BoardGrant.board_id == board_id,

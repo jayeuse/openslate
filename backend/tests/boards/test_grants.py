@@ -2,7 +2,7 @@
 
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from unittest.mock import Mock
 from uuid import UUID
@@ -279,6 +279,8 @@ def test_inactive_or_unaccepted_grantees_are_rejected_without_revision_bump(
         invitation_sent_at=datetime.now(UTC),
     )
     deleted_user = _actor(db, permissions={}, role=manager.role, deleted=True)
+    expired_user = _actor(db, permissions={}, role=manager.role)
+    expired_user.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     deleted_role = Role(
         role=f"board-grantee-deleted-{uuid7().hex}",
         permissions={},
@@ -292,6 +294,7 @@ def test_inactive_or_unaccepted_grantees_are_rejected_without_revision_bump(
         ("user", disabled_user.id),
         ("user", unaccepted_user.id),
         ("user", deleted_user.id),
+        ("user", expired_user.id),
         ("role", deleted_role.id),
     ):
         body = _grant_request(

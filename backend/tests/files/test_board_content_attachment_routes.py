@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Role, User
 from app.systems.boards.announcement_models import (
     BoardAnnouncement,
     BoardAnnouncementRevision,
@@ -23,7 +23,7 @@ from app.systems.boards.attachment_models import (
 )
 from app.systems.boards.attachment_router import router as content_router
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board
+from app.systems.boards.models import Board, BoardGrant, BoardStatus
 from app.systems.platform.files.board_router import router as board_file_router
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import transfer_slot
@@ -183,3 +183,160 @@ def test_published_announcement_file_uses_snapshot_audience_not_manager_or_draft
         downloaded = client.get(f"{path}/{file.id}/content")
         assert downloaded.status_code == 200 and downloaded.content == content
     assert len(logged) == 1
+
+
+def test_viewer_can_read_linked_event_attachment_after_board_archive_but_cannot_write(
+    guarded_db, actor, monkeypatch
+):
+    db = guarded_db
+    reader_role = Role(
+        role=f"archived-board-viewer-{uuid4().hex}",
+        permissions={"records.read": True, "records.write": True},
+    )
+    db.add(reader_role)
+    db.flush()
+    viewer = User(
+        id=uuid4(),
+        email=f"archived-viewer-{uuid4().hex}@example.test",
+        username=f"archived_viewer_{uuid4().hex[:12]}",
+        status="active",
+        role_id=reader_role.id,
+    )
+    board = Board(owner_id=actor.id, name="Archived Board", status=BoardStatus.ACTIVE)
+    db.add_all((viewer, board))
+    db.flush()
+    db.add(
+        BoardGrant(
+            board_id=board.id,
+            principal_type="user",
+            principal_user_id=viewer.id,
+            permission="view",
+            effect="allow",
+        )
+    )
+    event = BoardEvent(
+        board_id=board.id,
+        author_id=actor.id,
+        title="Retained event",
+        all_day=True,
+        start_date=date(2026, 9, 24),
+        end_date=date(2026, 9, 24),
+        timezone_name="Asia/Manila",
+        audience_kind="everyone",
+    )
+    content = b"retained event attachment"
+    file = File(
+        purpose="board_attachment",
+        board_id=board.id,
+        record_id=None,
+        creator_id=actor.id,
+        filename="retained.pdf",
+        expected_size=len(content),
+        actual_size=len(content),
+        digest=sha256(content).hexdigest(),
+        scanner_version="test",
+        signature_version="test",
+        object_key=uuid4().hex,
+        media_type="application/pdf",
+        state="ready",
+    )
+    db.add_all((event, file))
+    db.flush()
+    db.add(BoardContentAttachment(board_id=board.id, file_id=file.id, event_id=event.id))
+    db.commit()
+    store = Store(db)
+    store.objects[file.object_key] = content
+    monkeypatch.setattr(
+        "app.systems.boards.attachment_router.append_committed_security_event",
+        lambda _event: None,
+    )
+
+    with _client(db, viewer, store) as client:
+        denied_write = client.request(
+            "DELETE",
+            f"/api/boards/{board.id}/events/{event.id}/attachments/{file.id}",
+            json={"board_revision": board.revision, "content_revision": event.revision},
+        )
+    assert denied_write.status_code == 404
+
+    board.status = BoardStatus.ARCHIVED
+    db.commit()
+    with _client(db, viewer, store) as client:
+        listing = client.get(f"/api/boards/{board.id}/events/{event.id}/attachments")
+        downloaded = client.get(
+            f"/api/boards/{board.id}/events/{event.id}/attachments/{file.id}/content"
+        )
+        refused_write = client.request(
+            "DELETE",
+            f"/api/boards/{board.id}/events/{event.id}/attachments/{file.id}",
+            json={"board_revision": board.revision, "content_revision": event.revision},
+        )
+
+    assert listing.status_code == 200
+    assert listing.json()["items"][0]["id"] == str(file.id)
+    assert downloaded.status_code == 200 and downloaded.content == content
+    assert refused_write.status_code == 409
+
+
+def test_archived_board_attachment_still_obeys_content_audience(
+    guarded_db, actor, monkeypatch
+):
+    db = guarded_db
+    board = Board(owner_id=actor.id, name="Archived audience Board", status=BoardStatus.ACTIVE)
+    db.add(board)
+    db.flush()
+    event = BoardEvent(
+        board_id=board.id,
+        author_id=actor.id,
+        title="Author only",
+        all_day=True,
+        start_date=date(2026, 9, 24),
+        end_date=date(2026, 9, 24),
+        timezone_name="Asia/Manila",
+        audience_kind="author",
+    )
+    file = File(
+        purpose="board_attachment",
+        board_id=board.id,
+        record_id=None,
+        creator_id=actor.id,
+        filename="private.pdf",
+        expected_size=3,
+        actual_size=3,
+        digest=sha256(b"own").hexdigest(),
+        scanner_version="test",
+        signature_version="test",
+        object_key=uuid4().hex,
+        state="ready",
+        media_type="application/pdf",
+    )
+    db.add_all((event, file))
+    db.flush()
+    db.add(BoardContentAttachment(board_id=board.id, file_id=file.id, event_id=event.id))
+    db.commit()
+    board.status = BoardStatus.ARCHIVED
+    db.commit()
+    excluded = User(
+        id=uuid4(),
+        email=f"archived-excluded-{uuid4().hex}@example.test",
+        username=f"archived_excluded_{uuid4().hex[:12]}",
+        status="active",
+        role_id=actor.role_id,
+    )
+    db.add(excluded)
+    db.commit()
+    store = Store(db)
+    store.objects[file.object_key] = b"own"
+    monkeypatch.setattr(
+        "app.systems.boards.attachment_router.append_committed_security_event",
+        lambda _event: None,
+    )
+
+    with _client(db, excluded, store) as client:
+        listing = client.get(f"/api/boards/{board.id}/events/{event.id}/attachments")
+        downloaded = client.get(
+            f"/api/boards/{board.id}/events/{event.id}/attachments/{file.id}/content"
+        )
+
+    assert listing.status_code == 404
+    assert downloaded.status_code == 404

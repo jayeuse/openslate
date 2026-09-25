@@ -14,6 +14,7 @@ from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.systems.access.users.models import Role, User, UserStatus
 from app.systems.boards.models import Board, BoardGrant
+from app.systems.boards.personal_models import BoardFavorite
 from app.systems.boards.router import router
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditAction, AuditLog
@@ -151,6 +152,49 @@ def test_list_applies_user_role_everyone_precedence_before_count_and_pagination(
         "total": 3,
         "has_more": False,
     }
+
+
+def test_list_filters_favorites_before_combined_filters_and_offset_pagination(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    actor = _actor(db, capabilities={"records.read": True})
+    department = Department(department_name=f"Favorite filter {uuid7().hex}")
+    other_department = Department(department_name=f"Other filter {uuid7().hex}")
+    db.add_all((department, other_department))
+    db.flush()
+    favorite_one = _board(db, actor.id, "A favorite")
+    favorite_one.department_id = department.id
+    favorite_two = _board(db, actor.id, "B favorite")
+    favorite_two.department_id = department.id
+    _board(db, actor.id, "C not favorite").department_id = department.id
+    _board(db, actor.id, "D other department").department_id = other_department.id
+    db.add_all(
+        [
+            BoardFavorite(user_id=actor.id, board_id=favorite_one.id),
+            BoardFavorite(user_id=actor.id, board_id=favorite_two.id),
+        ]
+    )
+    db.flush()
+    client = _client(db, actor)
+
+    page = client.get(
+        f"/api/boards?favorites_only=true&department_id={department.id}"
+        "&status=active&limit=1&offset=1"
+    )
+    all_boards = client.get("/api/boards?favorites_only=false&limit=10")
+
+    assert page.status_code == 200
+    assert [item["name"] for item in page.json()["items"]] == ["B favorite"]
+    assert page.json()["pagination"] == {
+        "limit": 1,
+        "offset": 1,
+        "count": 1,
+        "total": 2,
+        "has_more": False,
+    }
+    assert all_boards.status_code == 200
+    assert all_boards.json()["pagination"]["total"] == 4
 
 
 def test_global_record_capability_gates_are_enforced_by_routes(

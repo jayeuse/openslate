@@ -122,6 +122,30 @@ test("announcement published list uses bounded query and immutable published fie
   }
 });
 
+test("announcement editor loads mutable published content without using the recipient feed", async () => {
+  const editable = {
+    ...draft,
+    status: "published",
+    publish_at: timestamp,
+  };
+  const mock = installFetch(() =>
+    jsonResponse({ items: [editable], pagination: page, board_revision: 4 }),
+  );
+  try {
+    const result = await listBoardAnnouncements(boardId, { view: "editable" });
+    expect(result.items[0]).toMatchObject({
+      id: announcementId,
+      title: "Unpublished replacement",
+      status: "published",
+      announcementRevision: 2,
+      publicationNumber: null,
+    });
+    expect(String(mock.requests[0]?.input)).toContain("view=editable");
+  } finally {
+    mock.restore();
+  }
+});
+
 test("announcement draft read and writes preserve exclusive audience and UTC fields", async () => {
   const responses = [
     jsonResponse(draft),

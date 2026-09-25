@@ -13,6 +13,8 @@ from uuid6 import uuid7
 
 from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
+from app.systems.access.policy.authorization import ActorLockMode, authorize_workspace_capabilities
+from app.systems.access.users.permissions import Capability
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.openview.reports.audience import capture_run_eligible_users
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
@@ -81,7 +83,22 @@ def _finalize_claim(
             .with_for_update()
             .execution_options(populate_existing=True)
         )
-        owner = _eligible_owner(db, report, lock=True) if report is not None else None
+        # Check Workspace policy before locking the owner and its role. Access
+        # rule writes lock the policy version before those rows.
+        preflight_owner = _eligible_owner(db, report, lock=False) if report is not None else None
+        if preflight_owner is not None:
+            authorize_workspace_capabilities(
+                db,
+                actor_id=preflight_owner.id,
+                expected_role_id=preflight_owner.role_id,
+                capabilities=(Capability.RECORDS_READ, Capability.RECORDS_WRITE),
+                actor_lock_mode=ActorLockMode.UPDATE,
+            )
+        owner = (
+            _eligible_owner(db, report, lock=True)
+            if report is not None and preflight_owner is not None
+            else None
+        )
         work = _locked_claim(db, claim, _current(now))
         if work is None or work.report_id != report_id:
             return None

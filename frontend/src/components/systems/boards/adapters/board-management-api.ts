@@ -216,6 +216,67 @@ const boardListSchema = z
   .object({ items: z.array(boardSchema), pagination: paginationSchema })
   .strict()
   .refine(({ items, pagination }) => items.length === pagination.count);
+const lifecycleRowStateSchema = z
+  .object({
+    entity_type: z.string().min(1).max(100),
+    entity_id: uuidSchema,
+    is_deleted: z.boolean(),
+    deleted_at: timestampSchema.nullable(),
+    updated_at: timestampSchema,
+    state_fingerprint: z.string().max(128),
+    byte_count: z.number().int().min(0).nullable(),
+  })
+  .strict();
+const lifecycleBlockerSchema = z
+  .object({
+    code: z.string().min(1).max(100),
+    entity_type: z.string().min(1).max(100),
+    entity_id: uuidSchema,
+    detail: z.string().max(500),
+    conflicting_entity_type: z.string().max(100).nullable(),
+    conflicting_entity_id: uuidSchema.nullable(),
+    field_id: uuidSchema.nullable(),
+    field_name: z.string().max(150).nullable(),
+    module_id: uuidSchema.nullable(),
+    module_name: z.string().max(150).nullable(),
+    department_id: uuidSchema.nullable(),
+    department_name: z.string().max(150).nullable(),
+  })
+  .strict();
+const lifecycleImpactSchema = z
+  .object({
+    target_type: z.literal("board"),
+    target_id: uuidSchema,
+    operation: z.literal("purge"),
+    actor_id: uuidSchema.nullable(),
+    rows: z.array(lifecycleRowStateSchema),
+    external_impacts: z.array(z.record(z.string(), z.unknown())),
+    key_strips: z.array(z.record(z.string(), z.unknown())),
+    blockers: z.array(lifecycleBlockerSchema),
+    impact_digest: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+const boardPurgePreviewSchema = z
+  .object({
+    impact: lifecycleImpactSchema,
+    token: z.string().min(1).max(128),
+    expires_at: timestampSchema,
+    confirmation_name: uuidSchema,
+  })
+  .strict();
+const boardPurgeResultSchema = z
+  .object({
+    impact: lifecycleImpactSchema,
+    operation_id: uuidSchema.nullable(),
+  })
+  .strict();
+const boardPurgeInputSchema = z
+  .object({
+    token: z.string().min(1).max(128),
+    confirmationName: z.string().trim().min(1).max(150),
+    password: z.string().min(1).max(256),
+  })
+  .strict();
 const personalSchema = z
   .object({
     favorite_board_ids: z
@@ -249,6 +310,7 @@ const boardListOptionsSchema = z
     status: z.enum(["active", "archived", "all"]).default("active"),
     search: z.string().trim().min(1).max(100).optional(),
     departmentId: uuidSchema.optional(),
+    favoritesOnly: z.boolean().default(false),
   })
   .strict();
 const boardCreateSchema = z
@@ -271,6 +333,7 @@ const boardUpdateSchema = boardCreateSchema
 export type PortableBoardBundle = z.output<typeof bundleSchema>;
 export type BoardManagementBoard = z.output<typeof boardSchema>;
 export type BoardManagementPage = z.output<typeof boardListSchema>;
+export type BoardPurgePreview = z.output<typeof boardPurgePreviewSchema>;
 export type BoardListOptions = z.input<typeof boardListOptionsSchema>;
 export type BoardCreateInput = z.input<typeof boardCreateSchema>;
 export type BoardUpdateInput = z.input<typeof boardUpdateSchema>;
@@ -329,6 +392,38 @@ const safeCodes: Record<string, { status: number; message: string }> = {
   personal_state_conflict: {
     status: 409,
     message: "Board preferences changed; retry",
+  },
+  board_purge_conflict: {
+    status: 409,
+    message: "Board dependencies changed; get a new review",
+  },
+  purge_disabled: {
+    status: 409,
+    message: "Permanent Board deletion is disabled",
+  },
+  purge_requires_closed: {
+    status: 409,
+    message: "Archive the Board before deletion",
+  },
+  confirmation_name_mismatch: {
+    status: 409,
+    message: "The Board ID confirmation did not match",
+  },
+  challenge_expired: {
+    status: 409,
+    message: "The review expired; get a new review",
+  },
+  challenge_not_found: {
+    status: 409,
+    message: "The review is unavailable; get a new review",
+  },
+  challenge_binding_mismatch: {
+    status: 409,
+    message: "The review is unavailable; get a new review",
+  },
+  challenge_exhausted: {
+    status: 409,
+    message: "The review is unavailable; get a new review",
   },
 };
 
@@ -550,6 +645,7 @@ export async function listBoards(
     sort_by: options.sortBy,
     sort_order: options.sortOrder,
     status: options.status,
+    favorites_only: String(options.favoritesOnly),
   };
   if (options.search !== undefined) values.search = options.search;
   if (options.departmentId !== undefined)
@@ -629,6 +725,50 @@ export async function restoreBoard(
     method: "POST",
     body: JSON.stringify({ revision }),
   });
+}
+
+export async function previewBoardPurge(
+  rawBoardId: string,
+): Promise<BoardPurgePreview> {
+  const boardId = uuidSchema.parse(rawBoardId);
+  const preview = await safeBoardJson(
+    `/boards/${encodeURIComponent(boardId)}/purge/preview`,
+    boardPurgePreviewSchema,
+    { method: "POST" },
+  );
+  if (
+    preview.confirmation_name !== boardId ||
+    preview.impact.target_id !== boardId
+  )
+    throw new ApiContractError();
+  return preview;
+}
+
+export async function purgeBoard(
+  rawBoardId: string,
+  rawInput: z.input<typeof boardPurgeInputSchema>,
+): Promise<z.output<typeof boardPurgeResultSchema>> {
+  const boardId = uuidSchema.parse(rawBoardId);
+  const input = boardPurgeInputSchema.parse(rawInput);
+  if (input.confirmationName !== boardId) throw new ApiContractError();
+  const result = await safeBoardJson(
+    `/boards/${encodeURIComponent(boardId)}/purge`,
+    boardPurgeResultSchema,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        token: input.token,
+        confirmation_name: input.confirmationName,
+        password: input.password,
+      }),
+    },
+  );
+  if (
+    result.impact.target_id !== boardId ||
+    result.impact.operation !== "purge"
+  )
+    throw new ApiContractError();
+  return result;
 }
 
 export async function downloadBoardConfiguration(

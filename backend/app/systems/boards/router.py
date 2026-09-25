@@ -26,6 +26,7 @@ from app.systems.boards.models import (
     BoardPrincipalType,
     BoardStatus,
 )
+from app.systems.boards.personal_models import BoardFavorite
 from app.systems.boards.schemas import (
     BoardCreate,
     BoardListRequest,
@@ -255,6 +256,17 @@ def list_boards(
         statement = statement.where(Board.status == params.status.value)
     if params.department_id is not None:
         statement = statement.where(Board.department_id == params.department_id)
+    if params.favorites_only:
+        statement = statement.where(
+            exists(
+                select(BoardFavorite.id).where(
+                    BoardFavorite.user_id == user.id,
+                    BoardFavorite.board_id == Board.id,
+                    BoardFavorite.is_deleted.is_(False),
+                    BoardFavorite.deleted_at.is_(None),
+                )
+            )
+        )
 
     result = execute_standard_list(db, statement, params, BOARD_LIST_SPEC)
     return BoardListResponse(

@@ -19,6 +19,7 @@ from app.common.listing import (
 )
 from app.common.listing.schemas import PaginationMetadata
 from app.core.database import get_db
+from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.models import Role, User, UserDepartment, UserStatus
 from app.systems.access.users.permissions import Capability
@@ -148,14 +149,17 @@ def _audience_clause(actor: User) -> ColumnElement[bool]:
 
 
 def _event(
-    db: Session, board_id: UUID, event_id: UUID, actor: User, *, lock: bool = False
+    db: Session, board_id: UUID, event_id: UUID, actor: User, *, lock: bool = False,
+    allow_author: bool = False,
 ) -> BoardEvent:
     statement = select(BoardEvent).where(
         BoardEvent.id == event_id,
         BoardEvent.board_id == board_id,
         BoardEvent.is_deleted.is_(False),
         BoardEvent.deleted_at.is_(None),
-        _audience_clause(actor),
+        or_(_audience_clause(actor), BoardEvent.author_id == actor.id)
+        if allow_author
+        else _audience_clause(actor),
     )
     if lock:
         statement = statement.with_for_update().execution_options(populate_existing=True)
@@ -244,6 +248,7 @@ def _validate_target(db: Session, audience: EventAudience) -> None:
                 User.status == UserStatus.ACTIVE.value,
                 User.is_deleted.is_(False),
                 User.deleted_at.is_(None),
+                identity_eligible_clause(),
                 Role.is_deleted.is_(False),
                 Role.deleted_at.is_(None),
                 established_user_clause(),
@@ -303,17 +308,17 @@ def list_event_occurrences(
     board_id: UUID, actor: Reader, db: Database, params: Annotated[OccurrenceRequest, Query()]
 ) -> OccurrenceListResponse:
     board = _board_with_access(db, actor, board_id, BoardPermission.VIEW)
+    statement = select(BoardEvent).where(
+        BoardEvent.board_id == board.id,
+        BoardEvent.is_deleted.is_(False),
+        BoardEvent.deleted_at.is_(None),
+        BoardEvent.archived.is_(False),
+        _audience_clause(actor),
+    )
+    if params.search is not None:
+        statement = statement.where(BoardEvent.title.icontains(params.search, autoescape=True))
     candidates = db.scalars(
-        select(BoardEvent)
-        .where(
-            BoardEvent.board_id == board.id,
-            BoardEvent.is_deleted.is_(False),
-            BoardEvent.deleted_at.is_(None),
-            BoardEvent.archived.is_(False),
-            _audience_clause(actor),
-        )
-        .order_by(BoardEvent.id)
-        .limit(MAX_SERIES_CANDIDATES + 1)
+        statement.order_by(BoardEvent.id).limit(MAX_SERIES_CANDIDATES + 1)
     ).all()
     if len(candidates) > MAX_SERIES_CANDIDATES:
         raise _conflict("event_candidate_limit", "Too many visible event series; archive events")
@@ -400,7 +405,7 @@ def create_board_event(
 @router.get("/{board_id}/events/{event_id}", response_model=EventResponse)
 def read_board_event(board_id: UUID, event_id: UUID, actor: Reader, db: Database) -> EventResponse:
     board = _board_with_access(db, actor, board_id, BoardPermission.VIEW)
-    return _response(_event(db, board.id, event_id, actor), board.revision)
+    return _response(_event(db, board.id, event_id, actor, allow_author=True), board.revision)
 
 
 @router.patch("/{board_id}/events/{event_id}", response_model=EventMutationResponse)
@@ -410,7 +415,7 @@ def update_board_event(
     board = _board_with_access(db, actor, board_id, BoardPermission.EDIT, lock=True)
     _check_board(board, payload.board_revision)
     manager = _manager(db, board, actor)
-    event = _event(db, board.id, event_id, actor, lock=True)
+    event = _event(db, board.id, event_id, actor, lock=True, allow_author=True)
     if event.author_id != actor.id and not manager:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Manage access required")
     _check_event(event, payload.event_revision)
@@ -442,7 +447,7 @@ def _lifecycle_event(
 ) -> tuple[Board, BoardEvent]:
     board = _board_with_access(db, actor, board_id, BoardPermission.MANAGE, lock=True)
     _check_board(board, payload.board_revision)
-    event = _event(db, board.id, event_id, actor, lock=True)
+    event = _event(db, board.id, event_id, actor, lock=True, allow_author=True)
     _check_event(event, payload.event_revision)
     return board, event
 

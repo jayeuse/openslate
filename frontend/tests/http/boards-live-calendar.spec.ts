@@ -81,6 +81,55 @@ test("calendar month navigation requests one inclusive bounded month", () => {
   expect(shiftCalendarMonth("2026-01", -1)).toBe("2025-12");
 });
 
+test("calendar appends the next page only while Board revision and occurrence total are stable", async () => {
+  const eventsHookModule =
+    await import("../../src/components/systems/boards/hooks/use-server-board-events");
+  const merge = eventsHookModule.mergeCalendarOccurrencePages as (
+    first: BoardEventOccurrencePage,
+    next: BoardEventOccurrencePage,
+  ) => BoardEventOccurrencePage | null;
+  const first: BoardEventOccurrencePage = {
+    ...page,
+    pagination: { limit: 100, offset: 0, count: 1, total: 2, hasMore: true },
+  };
+  const nextItem = {
+    ...visibleOccurrence,
+    id: `${eventId}:2026-09-15`,
+    date: "2026-09-15",
+  };
+  const next: BoardEventOccurrencePage = {
+    ...page,
+    items: [nextItem],
+    pagination: { limit: 100, offset: 1, count: 1, total: 2, hasMore: false },
+  };
+  const merged = merge(first, next);
+  expect(merged?.items.map((item) => item.id)).toEqual([
+    visibleOccurrence.id,
+    nextItem.id,
+  ]);
+  expect(merged?.pagination).toEqual({
+    limit: 100,
+    offset: 0,
+    count: 2,
+    total: 2,
+    hasMore: false,
+  });
+  expect(merge(first, { ...next, boardRevision: 2 })).toBeNull();
+  expect(
+    merge(first, { ...next, pagination: { ...next.pagination, total: 3 } }),
+  ).toBeNull();
+});
+
+test("calendar compact default follows the 1024px boundary", async () => {
+  const calendarModule =
+    await import("../../src/components/systems/boards/components/server-backed-board-calendar");
+  const defaultView = calendarModule.defaultCalendarViewForViewport as (
+    compact: boolean,
+  ) => "agenda" | "month";
+  expect(defaultView(true)).toBe("agenda");
+  expect(defaultView(false)).toBe("month");
+});
+
 test("calendar renders only returned occurrences and marks all-day range", () => {
   const html = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {

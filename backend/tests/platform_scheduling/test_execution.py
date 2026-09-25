@@ -9,6 +9,7 @@ from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
 from app.core.security.tokens import TokenType, decode_token
+from app.systems.access.policy.models import AccessRule
 from app.systems.access.users.models import Role, User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.openview.reports.models import (
@@ -151,7 +152,8 @@ def test_revision_change_after_capture_retries_without_orphan_run(scheduled_repo
 
 
 @pytest.mark.parametrize(
-    "change", ["archive", "source", "permission", "audience_role", "audience_user"]
+    "change",
+    ["archive", "source", "permission", "audience_role", "audience_user", "workspace_access"],
 )
 def test_unavailable_report_after_capture_cancels_without_output(
     scheduled_report, monkeypatch, change
@@ -160,6 +162,7 @@ def test_unavailable_report_after_capture_cancels_without_output(
 
     subject = scheduled_report
     original = execution.capture_report_snapshot
+    access_rule_id = uuid7()
     outsider_claims = decode_token(subject.outsider_token, TokenType.ACCESS)
     assert outsider_claims is not None
     outsider_id = UUID(str(outsider_claims["sub"]))
@@ -168,7 +171,20 @@ def test_unavailable_report_after_capture_cancels_without_output(
         snapshot = original(engine, report_id, owner_id)
         with AuditSession(subject.owner_engine) as db:
             db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
-            if change == "archive":
+            if change == "workspace_access":
+                db.add(
+                    AccessRule(
+                        id=access_rule_id,
+                        subject_kind="user",
+                        subject_id=owner_id,
+                        scope_kind="workspace",
+                        scope_id=None,
+                        permission_id="records.read",
+                        decision="deny",
+                        policy_version=1,
+                    )
+                )
+            elif change == "archive":
                 report = db.get(Report, report_id)
                 assert report is not None
                 report.is_deleted = True
@@ -195,25 +211,41 @@ def test_unavailable_report_after_capture_cancels_without_output(
         return snapshot
 
     monkeypatch.setattr(execution, "capture_report_snapshot", remove_access_after_capture)
-    completed = execution.execute_due_report_runs(subject.runtime_engine, now=NOW)
-    with AuditSession(subject.owner_engine) as db:
-        work = db.scalar(select(ScheduledWork).where(ScheduledWork.report_id == subject.report_id))
-        assert work is not None
-        if change.startswith("audience_"):
-            assert len(completed) == 1
-            assert work.state == WorkState.SUCCEEDED
-            assert _counts(db, subject.report_id) == (1, 1)
-            assert db.get(ReportRunEligibleUser, (completed[0], outsider_id)) is not None
-            assert db.get(ReportRunEligibleUser, (completed[0], subject.owner_id)) is None
-            notice = db.scalar(
-                select(InAppNotification).where(InAppNotification.work_id == work.id)
+    try:
+        completed = execution.execute_due_report_runs(subject.runtime_engine, now=NOW)
+        with AuditSession(subject.owner_engine) as db:
+            work = db.scalar(
+                select(ScheduledWork).where(ScheduledWork.report_id == subject.report_id)
             )
-            assert notice is not None and notice.recipient_id == outsider_id
-        else:
-            assert completed == []
-            assert work.state == WorkState.CANCELED
-            assert work.failure_code == "source_unavailable"
-            assert _counts(db, subject.report_id) == (0, 0)
+            assert work is not None
+            if change.startswith("audience_"):
+                assert len(completed) == 1
+                assert work.state == WorkState.SUCCEEDED
+                assert _counts(db, subject.report_id) == (1, 1)
+                assert db.get(ReportRunEligibleUser, (completed[0], outsider_id)) is not None
+                assert db.get(ReportRunEligibleUser, (completed[0], subject.owner_id)) is None
+                notice = db.scalar(
+                    select(InAppNotification).where(InAppNotification.work_id == work.id)
+                )
+                assert notice is not None and notice.recipient_id == outsider_id
+            elif change == "workspace_access":
+                assert completed == []
+                assert work.state == WorkState.PENDING
+                assert work.failure_code == "run_failed"
+                assert work.attempt_count == 1
+                assert _counts(db, subject.report_id) == (0, 0)
+            else:
+                assert completed == []
+                assert work.state == WorkState.CANCELED
+                assert work.failure_code == "source_unavailable"
+                assert _counts(db, subject.report_id) == (0, 0)
+    finally:
+        if change == "workspace_access":
+            with subject.owner_engine.begin() as cleanup:
+                cleanup.execute(
+                    text("DELETE FROM public.access_rules WHERE id = :id"),
+                    {"id": access_rule_id},
+                )
 
 
 def test_lost_lease_after_capture_cannot_save_or_notify(scheduled_report, monkeypatch):

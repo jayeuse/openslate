@@ -97,6 +97,27 @@ test("editable draft shows save, publish, and a pending audience control", () =>
   expect(html).toContain("Private change");
 });
 
+test("author can choose and edit a published announcement from the authoring list", () => {
+  const ownPublished: BoardAnnouncement = {
+    ...draft,
+    status: "published",
+    publishAt: now,
+  };
+  const html = markup({
+    ...baseView,
+    drafts: [ownPublished],
+    selected: ownPublished,
+    dirty: true,
+  });
+  expect(html).toContain("Private change");
+  expect(html).toContain("Published");
+  expect(html).toContain("Edit announcement");
+  expect(html).toContain("Save draft");
+  expect(html).toContain(
+    "Save your changes as a draft before managing attachments and Record links.",
+  );
+});
+
 test("saved drafts offer device-local scheduling with an explicit UTC conversion", () => {
   const html = markup(baseView);
   expect(html).toContain("Publication date and time");
@@ -174,7 +195,7 @@ test("initial load and retriable failure explain status without exposing drafts"
     status: "loading",
     canEdit: false,
   });
-  expect(loading).toContain("Loading draft announcements");
+  expect(loading).toContain("Loading editable announcements");
   expect(loading).not.toContain("Private change");
 
   const failed = markup({
@@ -200,7 +221,7 @@ test("unsaved text cannot be displaced by switching drafts without an explicit d
     },
   });
   expect(html).toContain("Unsaved change");
-  expect(html).toContain("Refresh drafts");
+  expect(html).toContain("Refresh announcements");
   expect(html).toContain("Discard changes");
   expect(html).toContain(
     "Save changes before publishing or choosing another draft.",

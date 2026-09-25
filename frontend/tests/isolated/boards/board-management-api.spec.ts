@@ -129,6 +129,7 @@ test("Board collection sends bounded filters and returns a validated page", asyn
       search: "  Dispatch  ",
       status: "archived",
       departmentId: ownerId,
+      favoritesOnly: true,
     });
     expect(page.items[0]).toMatchObject({ id: boardId, ownerId });
     expect(page.pagination).toEqual({
@@ -138,9 +139,21 @@ test("Board collection sends bounded filters and returns a validated page", asyn
       total: 25,
       hasMore: true,
     });
-    expect(String(mock.requests[0]?.input)).toBe(
-      `/api/boards?limit=10&offset=20&sort_by=updated_at&sort_order=desc&status=archived&search=Dispatch&department_id=${ownerId}`,
+    const requestUrl = new URL(
+      String(mock.requests[0]?.input),
+      "http://localhost",
     );
+    expect(requestUrl.pathname).toBe("/api/boards");
+    expect(Object.fromEntries(requestUrl.searchParams)).toEqual({
+      limit: "10",
+      offset: "20",
+      sort_by: "updated_at",
+      sort_order: "desc",
+      status: "archived",
+      favorites_only: "true",
+      search: "Dispatch",
+      department_id: ownerId,
+    });
     expect(mock.requests[0]?.init?.cache).toBe("no-store");
   } finally {
     mock.restore();

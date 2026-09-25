@@ -96,6 +96,33 @@ export function transitionCalendarState(
   };
 }
 
+export function mergeCalendarOccurrencePages(
+  current: BoardEventOccurrencePage,
+  next: BoardEventOccurrencePage,
+): BoardEventOccurrencePage | null {
+  if (
+    current.pagination.offset !== 0 ||
+    current.pagination.count !== current.items.length ||
+    next.pagination.offset !== current.items.length ||
+    next.pagination.count !== next.items.length ||
+    current.boardRevision !== next.boardRevision ||
+    current.pagination.total !== next.pagination.total
+  )
+    return null;
+  const items = [...current.items, ...next.items];
+  if (items.length > next.pagination.total) return null;
+  return {
+    ...current,
+    items,
+    pagination: {
+      ...current.pagination,
+      count: items.length,
+      total: next.pagination.total,
+      hasMore: next.pagination.hasMore,
+    },
+  };
+}
+
 function retainOnFailure(error: unknown): boolean {
   if (error instanceof ApiError) return error.status >= 500;
   return error instanceof TypeError;
@@ -111,16 +138,30 @@ const initialState: CalendarState = {
 
 export function useServerBoardEvents(
   boardId: string,
-  window: CalendarWindow,
+  window: CalendarWindow | null,
   refreshKey: number,
+  search = "",
 ) {
   const [state, setState] = useState<CalendarState>(initialState);
   const [retry, setRetry] = useState(0);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const sequence = useRef(0);
-  const key = `${boardId}:${window.start}:${window.end}`;
+  const loadingMore = useRef(false);
+  const normalizedSearch = search.trim();
+  const key = `${boardId}:${window?.start ?? "workspace-date-pending"}:${window?.end ?? ""}:${normalizedSearch}`;
 
   useEffect(() => {
     const request = ++sequence.current;
+    setLoadMoreError(null);
+    setIsLoadingMore(false);
+    loadingMore.current = false;
+    if (!window) {
+      setState({ ...initialState, key, sequence: request, status: "loading" });
+      return () => {
+        sequence.current += 1;
+      };
+    }
     setState((current) =>
       transitionCalendarState(current, {
         type: "begin",
@@ -133,6 +174,7 @@ export function useServerBoardEvents(
       windowEnd: window.end,
       limit: 100,
       offset: 0,
+      ...(normalizedSearch ? { search: normalizedSearch } : {}),
     })
       .then((data) => {
         if (request !== sequence.current) return;
@@ -163,7 +205,75 @@ export function useServerBoardEvents(
     return () => {
       sequence.current += 1;
     };
-  }, [boardId, key, refreshKey, retry, window.end, window.start]);
+  }, [
+    boardId,
+    key,
+    normalizedSearch,
+    refreshKey,
+    retry,
+    window?.end,
+    window?.start,
+  ]);
+
+  async function loadNextPage() {
+    const current = state.key === key ? state.data : null;
+    if (!window || !current?.pagination.hasMore || loadingMore.current) return;
+    loadingMore.current = true;
+    setIsLoadingMore(true);
+    setLoadMoreError(null);
+    const request = sequence.current;
+    try {
+      const next = await listBoardEventOccurrences(boardId, {
+        windowStart: window.start,
+        windowEnd: window.end,
+        limit: 100,
+        offset: current.items.length,
+        ...(normalizedSearch ? { search: normalizedSearch } : {}),
+      });
+      if (request !== sequence.current) return;
+      if (!mergeCalendarOccurrencePages(current, next)) {
+        const invalidation = ++sequence.current;
+        setState((latest) =>
+          transitionCalendarState(latest, {
+            type: "invalidate",
+            key,
+            sequence: invalidation,
+          }),
+        );
+        setRetry((value) => value + 1);
+        return;
+      }
+      setState((latest) => {
+        if (
+          latest.key !== key ||
+          latest.sequence !== request ||
+          latest.data === null
+        )
+          return latest;
+        const merged = mergeCalendarOccurrencePages(latest.data, next);
+        return merged
+          ? { ...latest, data: merged, status: "ready", error: null }
+          : latest;
+      });
+    } catch (error) {
+      if (request !== sequence.current) return;
+      const retain = retainOnFailure(error);
+      if (!retain)
+        setState((latest) =>
+          latest.key === key && latest.sequence === request
+            ? { ...latest, data: null, status: "error" }
+            : latest,
+        );
+      setLoadMoreError(
+        error instanceof ApiError && error.status < 500
+          ? "Calendar access changed or the results are unavailable. Refresh and retry."
+          : "Could not load more events. Your current calendar is still available; try again.",
+      );
+    } finally {
+      loadingMore.current = false;
+      setIsLoadingMore(false);
+    }
+  }
 
   return {
     state:
@@ -171,6 +281,9 @@ export function useServerBoardEvents(
         ? state
         : { ...initialState, key, status: "loading" as const },
     retry: () => setRetry((value) => value + 1),
+    loadMore: loadNextPage,
+    isLoadingMore,
+    loadMoreError,
     invalidate: () => {
       const request = ++sequence.current;
       setState((current) =>

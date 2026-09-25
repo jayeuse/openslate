@@ -1,6 +1,6 @@
 """Board-manager access preview against the runner-owned PostgreSQL database."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -215,6 +215,29 @@ def test_preview_user_chooser_filters_before_bounded_pagination_and_exposes_no_p
         {"id": str(eligible[2].id), "username": "choice_gamma"},
     ]
     assert client.get(f"/api/boards/{board.id}/preview-users?limit=101").status_code == 422
+
+
+def test_expired_active_identity_is_hidden_from_preview_and_chooser(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    manager, board = _board_for_manager(db)
+    expired = _user(db, username="choice_expired")
+    expired.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db.flush()
+    client = _client(db, manager)
+
+    chooser = client.get(f"/api/boards/{board.id}/preview-users?search=choice_expired")
+    missing = client.get(f"/api/boards/{board.id}/access-preview?user_id={uuid7()}")
+    direct = client.get(
+        f"/api/boards/{board.id}/access-preview?user_id={expired.id}"
+    )
+
+    assert chooser.status_code == 200
+    assert chooser.json()["items"] == []
+    assert chooser.json()["pagination"]["total"] == 0
+    assert direct.status_code == missing.status_code == 404
+    assert direct.json() == missing.json()
 
 
 def test_my_access_returns_only_the_authenticated_readers_effective_permissions(

@@ -269,3 +269,11 @@ def cancel_reminder(board_id: UUID, reminder_id: UUID, actor: Reader, db: Databa
         work.state = WorkState.CANCELED
         work.failure_code = "recipient_canceled"
         _commit(db)
+    elif work.state != WorkState.CANCELED:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "reminder_not_cancelable",
+                "message": "The reminder is already running or complete",
+            },
+        )

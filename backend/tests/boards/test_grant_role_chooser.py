@@ -1,6 +1,6 @@
 """Board-manager role chooser route contracts on disposable PostgreSQL."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -165,3 +165,26 @@ def test_role_chooser_rejects_archived_and_hides_soft_deleted_board(
     deleted = client.get(path)
     assert deleted.status_code == 404
     assert deleted.json() == {"detail": "Board not found"}
+
+
+def test_content_audience_user_chooser_excludes_expired_active_identities(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    manager, board = _managed_board(db)
+    active = _user(db, permissions={}, role=manager.role)
+    expired = _user(db, permissions={}, role=manager.role)
+    active.username = f"audience-active-{uuid7().hex}"
+    expired.username = f"audience-expired-{uuid7().hex}"
+    expired.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db.flush()
+    client = _client(db, manager)
+
+    response = client.get(
+        f"/api/boards/{board.id}/content-audience-targets?kind=user"
+        f"&search=audience-"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == [{"id": str(active.id), "label": active.username}]
+    assert response.json()["pagination"]["total"] == 1

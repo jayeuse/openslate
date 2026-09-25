@@ -14,9 +14,9 @@ from app.common.dependencies import require_legacy_capability
 from app.core.database import get_db
 from app.systems.access.users.models import User
 from app.systems.access.users.permissions import Capability
+from app.systems.boards.announcement_listing import display_join
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.announcement_personal_models import BoardAnnouncementPersonalState
-from app.systems.boards.announcement_router import _display_join
 from app.systems.boards.announcement_service import (
     audience_clause,
     conflict,
@@ -68,7 +68,7 @@ def _displayed_item(
     manager = read_manager(db, board, actor)
     statement = (
         select(BoardAnnouncement)
-        .join(BoardAnnouncementRevision, _display_join())
+        .join(BoardAnnouncementRevision, display_join())
         .where(
             BoardAnnouncement.id == announcement_id,
             BoardAnnouncement.board_id == board.id,
@@ -148,7 +148,7 @@ def list_announcement_personal_states(
     manager = read_manager(db, board, actor)
     visible = db.execute(
         select(BoardAnnouncement.id, BoardAnnouncement.displayed_publication_number)
-        .join(BoardAnnouncementRevision, _display_join())
+        .join(BoardAnnouncementRevision, display_join())
         .where(
             BoardAnnouncement.id.in_(announcement_ids),
             BoardAnnouncement.board_id == board.id,

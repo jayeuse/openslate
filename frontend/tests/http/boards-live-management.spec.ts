@@ -1,7 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { BoardManagementBoard } from "../../src/components/systems/boards/adapters/board-management-api";
+import type {
+  BoardManagementBoard,
+  BoardPurgePreview,
+} from "../../src/components/systems/boards/adapters/board-management-api";
 import { listBoardDepartments } from "../../src/components/systems/boards/adapters/board-departments-api";
 import {
   ServerBoardManagementDisplay,
@@ -53,6 +56,23 @@ function markup(view: BoardManagementView): string {
     createElement(ServerBoardManagementDisplay, { view }),
   );
 }
+
+const purgePreview: BoardPurgePreview = {
+  impact: {
+    target_type: "board",
+    target_id: boardId,
+    operation: "purge",
+    actor_id: ownerId,
+    rows: [],
+    external_impacts: [],
+    key_strips: [],
+    blockers: [],
+    impact_digest: "a".repeat(64),
+  },
+  token: "server-issued-challenge",
+  expires_at: "2026-09-25T00:00:00Z",
+  confirmation_name: boardId,
+};
 
 test("Department denial leaves Board creation available without leaking IDs or claiming an assignment", () => {
   const view: BoardManagementView = {
@@ -228,6 +248,36 @@ test("Board access revocation clears private management state and invalidates pe
   expect(notifications).toBe(1);
 });
 
+test("manage-only denial clears its editor without revoking the authorized Board", () => {
+  let boardRevocations = 0;
+  const noOp = () => undefined;
+  revokeBoardManagementState(
+    {
+      accessRequest: { current: 0 },
+      departmentsRequest: { current: 0 },
+      actionRequest: { current: 0 },
+      departmentsAbort: { current: null },
+      setBoard: noOp,
+      setDraft: noOp,
+      setDraftBase: noOp,
+      setDepartments: noOp,
+      setDepartmentsStatus: noOp,
+      setAccess: noOp,
+      setConflict: noOp,
+      setLatestReady: noOp,
+      setError: noOp,
+      setNotice: noOp,
+      setConfirmation: noOp,
+      setDiscardOpen: noOp,
+      onAccessDenied: () => {
+        boardRevocations += 1;
+      },
+    },
+    false,
+  );
+  expect(boardRevocations).toBe(0);
+});
+
 test("archived Board offers restore without editable Department or metadata", () => {
   const html = markup({
     ...baseView,
@@ -236,6 +286,18 @@ test("archived Board offers restore without editable Department or metadata", ()
   expect(html).toContain("Restore Board");
   expect(html).not.toContain("Save changes");
   expect(html).not.toContain("Remove department");
+});
+
+test("archived Board exposes the guarded permanent-delete review using its exact UUID", () => {
+  const html = renderToStaticMarkup(
+    createElement(ServerBoardManagementDisplay, {
+      view: { ...baseView, board: { ...board, status: "archived" } },
+      purgePreview,
+    }),
+  );
+  expect(html).toContain("Permanently delete Board");
+  expect(html).toContain(boardId);
+  expect(html).toContain("password");
 });
 
 test("Department chooser labels come only from the permission-gated Department API", async () => {

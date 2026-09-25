@@ -214,9 +214,43 @@ def test_personal_reminder_create_list_cancel_and_manager_audience_denial(
     canceled = _client(db, owner).delete(f"/api/boards/{board.id}/reminders/{created.json()['id']}")
     assert canceled.status_code == 204
     assert (
+        _client(db, owner)
+        .delete(f"/api/boards/{board.id}/reminders/{created.json()['id']}")
+        .status_code
+        == 204
+    )
+    assert (
         _client(db, owner).get(f"/api/boards/{board.id}/reminders").json()["pagination"]["total"]
         == 0
     )
+
+    work = db.scalar(
+        select(ScheduledWork).where(ScheduledWork.reminder_id == created.json()["id"])
+    )
+    assert work is not None
+    work.state = WorkState.RUNNING
+    work.lease_token = uuid7()
+    work.lease_expires_at = datetime.now(UTC) + timedelta(minutes=1)
+    db.commit()
+    running = _client(db, owner).delete(
+        f"/api/boards/{board.id}/reminders/{created.json()['id']}"
+    )
+    assert running.status_code == 409
+    assert running.json()["detail"]["code"] == "reminder_not_cancelable"
+    db.refresh(work)
+    assert work.state == WorkState.RUNNING
+
+    work.state = WorkState.SUCCEEDED
+    work.lease_token = None
+    work.lease_expires_at = None
+    db.commit()
+    completed = _client(db, owner).delete(
+        f"/api/boards/{board.id}/reminders/{created.json()['id']}"
+    )
+    assert completed.status_code == 409
+    assert completed.json()["detail"]["code"] == "reminder_not_cancelable"
+    db.refresh(work)
+    assert work.state == WorkState.SUCCEEDED
 
 
 @pytest.mark.integration

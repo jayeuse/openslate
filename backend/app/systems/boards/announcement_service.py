@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 from uuid6 import uuid7
 
+from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.models import Role, User, UserDepartment, UserStatus
 from app.systems.boards.access import can_access_board, can_read_board_grants
@@ -339,6 +340,7 @@ def active_audience_target(db: Session, audience: AnnouncementAudience) -> None:
                 User.status == UserStatus.ACTIVE.value,
                 User.is_deleted.is_(False),
                 User.deleted_at.is_(None),
+                identity_eligible_clause(),
                 Role.is_deleted.is_(False),
                 Role.deleted_at.is_(None),
                 established_user_clause(),
@@ -369,7 +371,10 @@ def announcement(
         BoardAnnouncement.board_id == board_id,
         BoardAnnouncement.is_deleted.is_(False),
         BoardAnnouncement.deleted_at.is_(None),
-        audience_clause(BoardAnnouncement, actor),
+        or_(
+            audience_clause(BoardAnnouncement, actor),
+            BoardAnnouncement.author_id == actor.id,
+        ),
     )
     if lock:
         statement = statement.with_for_update().execution_options(populate_existing=True)
@@ -417,7 +422,11 @@ def actionable(
     """Call only after taking the Board FOR UPDATE lock; then lock child and snapshot."""
     item = announcement(db, board_id, announcement_id, actor, lock=True)
     displayed = displayed_revision(db, item, lock=True)
-    if displayed is not None and not revision_visible(db, displayed, actor):
+    if (
+        displayed is not None
+        and item.author_id != actor.id
+        and not revision_visible(db, displayed, actor)
+    ):
         raise not_found()
     return item, displayed
 

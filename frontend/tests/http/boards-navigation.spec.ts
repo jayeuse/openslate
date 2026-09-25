@@ -16,6 +16,12 @@ const board = {
 };
 
 async function installServerBoards(page: Page) {
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ today: "2026-09-23" }),
+    }),
+  );
   await page.route("**/api/auth/session", (route) =>
     route.fulfill({
       contentType: "application/json",
@@ -84,7 +90,7 @@ test("Board content sections stay on the authorized UUID and fail closed when co
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
   await expect(
     page.getByText(
-      "Calendar unavailable. Ask a Board manager to check your access, or retry.",
+      "No events are shown. Retry or ask a Board manager to check your access.",
     ),
   ).toBeVisible();
   await expect(page.getByText("Manager-visible event")).toHaveCount(0);
@@ -97,7 +103,7 @@ test("Board content sections stay on the authorized UUID and fail closed when co
   );
   await expect(
     page.getByText(
-      "Announcements unavailable. Check your access or try again.",
+      "No announcement content is shown. Retry or ask a Board manager to check your access.",
     ),
   ).toBeVisible();
   await expect(

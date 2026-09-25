@@ -85,10 +85,13 @@ def test_manual_publication_inbox_snapshots_only_eligible_board_readers(
     owner = _actor(db, "inbox-owner")
     viewer = _actor(db, "inbox-viewer")
     manager = _actor(db, "inbox-manager")
+    expired_viewer = _actor(db, "inbox-expired-viewer")
+    expired_viewer.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     outsider = _actor(db, "inbox-outsider")
     board = _board(db, owner)
     _grant(db, board, viewer, "view")
     _grant(db, board, manager, "manage")
+    _grant(db, board, expired_viewer, "view")
     item = BoardAnnouncement(
         board_id=board.id,
         author_id=owner.id,
@@ -137,6 +140,7 @@ def test_manual_publication_inbox_snapshots_only_eligible_board_readers(
         expected.update((viewer.id, manager.id))
     assert recipients == expected
     assert outsider.id not in recipients
+    assert expired_viewer.id not in recipients
 
     replay = publish_locked(
         db,

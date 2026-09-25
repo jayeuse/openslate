@@ -13,6 +13,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
+from app.systems.access.policy.models import AccessPolicyVersion, AccessRule
 from app.systems.access.users.models import Role, User, UserDepartment
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.announcement_router import router
@@ -193,7 +194,14 @@ def test_announcement_published_and_draft_queries_prefilter_audience_for_manager
         _client(db, draft_manager).get(f"{root}?view=published").json()["pagination"]["total"] == 0
     )
     assert _client(db, draft_manager).get(f"{root}?view=draft").json()["pagination"]["total"] == 1
-    assert _client(db, owner).get(f"{root}?view=draft").json()["pagination"]["total"] == 0
+    own_drafts = _client(db, owner).get(f"{root}?view=draft")
+    assert own_drafts.status_code == 200
+    assert own_drafts.json()["pagination"]["total"] == 1
+    assert own_drafts.json()["items"][0]["id"] == str(announcement.id)
+    own_draft = _client(db, owner).get(f"{root}/{announcement.id}?view=draft")
+    assert own_draft.status_code == 200
+    assert own_draft.json()["id"] == str(announcement.id)
+    assert own_draft.json()["audience"]["kind"] == "department"
     assert _client(db, owner).get(f"{root}?view=published").json()["pagination"]["total"] == 0
     assert _client(db, outsider).get(root).status_code == 404
     for actor, view in ((published_manager, "draft"), (draft_manager, "published")):
@@ -217,6 +225,105 @@ def test_announcement_published_and_draft_queries_prefilter_audience_for_manager
         .status_code
         == 404
     )
+
+
+@pytest.mark.integration
+def test_announcement_author_can_reload_and_edit_published_content_outside_recipient_audience(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    author = _actor(db, "editable-author")
+    recipient = _actor(db, "editable-recipient")
+    excluded_manager = _actor(db, "editable-manager")
+    read_only_author = _actor(db, "editable-read-only", write=False)
+    board = _board(db, author)
+    _grant(db, board, recipient, "view")
+    _grant(db, board, excluded_manager, "manage")
+    _grant(db, board, read_only_author, "edit")
+    db.commit()
+    root = f"/api/boards/{board.id}/announcements"
+    author_client = _client(db, author)
+    created = author_client.post(
+        root,
+        json=_create_payload(1, audience={"kind": "user", "user_id": str(recipient.id)}),
+    )
+    assert created.status_code == 201
+    item_id = created.json()["id"]
+    published = author_client.post(
+        f"{root}/{item_id}/publish",
+        json={
+            "board_revision": 2,
+            "announcement_revision": 1,
+            "publication_key": str(uuid7()),
+        },
+    )
+    assert published.status_code == 200
+
+    # The recipient feed must not become an authoring escape hatch.
+    assert author_client.get(f"{root}?view=published").json()["pagination"]["total"] == 0
+    assert (
+        _client(db, excluded_manager).get(f"{root}?view=published").json()["pagination"]["total"]
+        == 0
+    )
+    assert _client(db, recipient).get(f"{root}?view=published").json()["pagination"]["total"] == 1
+
+    # Workspace Record denial does not revoke this Board author's text editor.
+    version = db.scalar(select(AccessPolicyVersion).with_for_update())
+    assert version is not None
+    version.revision += 1
+    db.add(
+        AccessRule(
+            subject_kind="user",
+            subject_id=author.id,
+            scope_kind="workspace",
+            scope_id=None,
+            permission_id="records.write",
+            decision="deny",
+            starts_at=None,
+            ends_at=None,
+            locked=False,
+            policy_version=version.revision,
+        )
+    )
+    db.commit()
+
+    reloaded_author = _client(db, author)
+    own = reloaded_author.get(f"{root}?view=editable")
+    assert own.status_code == 200
+    assert own.json()["pagination"]["total"] == 1
+    assert own.json()["items"][0]["id"] == item_id
+    assert own.json()["items"][0]["announcement_revision"] == 2
+    detail = reloaded_author.get(f"{root}/{item_id}?view=editable")
+    assert detail.status_code == 200
+    assert detail.json()["title"] == "Opening notice"
+    changed = reloaded_author.patch(
+        f"{root}/{item_id}",
+        json={"board_revision": 3, "announcement_revision": 2, "title": "New author draft"},
+    )
+    assert changed.status_code == 200
+    assert changed.json()["board_revision"] == 4
+    assert _client(db, recipient).get(f"{root}/{item_id}?view=published").json()[
+        "title"
+    ] == "Opening notice"
+    republished = reloaded_author.post(
+        f"{root}/{item_id}/publish",
+        json={
+            "board_revision": 4,
+            "announcement_revision": 3,
+            "publication_key": str(uuid7()),
+        },
+    )
+    assert republished.status_code == 200
+    assert _client(db, recipient).get(f"{root}/{item_id}?view=published").json()[
+        "title"
+    ] == "New author draft"
+    assert reloaded_author.get(f"{root}?view=published").json()["pagination"]["total"] == 0
+
+    manager_client = _client(db, excluded_manager)
+    assert manager_client.get(f"{root}?view=editable").json()["pagination"]["total"] == 0
+    assert manager_client.get(f"{root}/{item_id}?view=editable").status_code == 404
+    assert _client(db, recipient).get(f"{root}?view=editable").status_code == 404
+    assert _client(db, read_only_author).get(f"{root}?view=editable").status_code == 403
 
 
 @pytest.mark.integration
@@ -272,15 +379,10 @@ def test_announcement_publication_retry_and_archive_delete_preserve_snapshot_rul
     )
     assert changed.status_code == 200
     assert changed.json()["board_revision"] == 4
-    assert owner_client.get(f"{root}/{announcement_id}?view=draft").status_code == 404
-    assert owner_client.get(f"{root}/{announcement_id}?view=published").status_code == 200
-    assert (
-        owner_client.post(
-            f"{root}/{announcement_id}/publish",
-            json={"board_revision": 4, "announcement_revision": 3, "publication_key": str(uuid7())},
-        ).status_code
-        == 404
+    assert owner_client.get(f"{root}/{announcement_id}?view=draft").json()["title"] == (
+        "Restricted replacement"
     )
+    assert owner_client.get(f"{root}/{announcement_id}?view=published").status_code == 200
     mismatch = manager_client.post(
         f"{root}/{announcement_id}/publish",
         json={"board_revision": 4, "announcement_revision": 3, "publication_key": str(key)},
@@ -361,6 +463,7 @@ def test_announcement_rejects_stale_inactive_and_unmanaged_writes_without_partia
     editor = _actor(db, "failure-editor")
     other_editor = _actor(db, "failure-other-editor")
     manager = _actor(db, "failure-manager")
+    expired_user = _actor(db, "failure-expired-user")
     board = _board(db, owner)
     for actor, permission in ((editor, "edit"), (other_editor, "edit"), (manager, "manage")):
         _grant(db, board, actor, permission)
@@ -368,6 +471,7 @@ def test_announcement_rejects_stale_inactive_and_unmanaged_writes_without_partia
     db.add(inactive)
     db.flush()
     inactive.is_deleted = True
+    expired_user.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     db.commit()
     root = f"/api/boards/{board.id}/announcements"
     client = _client(db, editor)
@@ -378,6 +482,12 @@ def test_announcement_rejects_stale_inactive_and_unmanaged_writes_without_partia
     )
     assert unavailable.status_code == 409
     assert unavailable.json()["detail"]["code"] == "audience_unavailable"
+    expired_target = client.post(
+        root,
+        json=_create_payload(1, audience={"kind": "user", "user_id": str(expired_user.id)}),
+    )
+    assert expired_target.status_code == 409
+    assert expired_target.json()["detail"]["code"] == "audience_unavailable"
     assert (
         db.scalars(select(BoardAnnouncement.id).where(BoardAnnouncement.board_id == board.id)).all()
         == []

@@ -105,6 +105,7 @@ class AnnouncementPublish(AnnouncementRevisionWrite):
 class AnnouncementView(StrEnum):
     PUBLISHED = "published"
     DRAFT = "draft"
+    EDITABLE = "editable"
     ARCHIVE = "archive"
 
 

@@ -20,6 +20,7 @@ import {
   archiveBoardEvent,
   createBoardEvent,
   listBoardEvents,
+  listMyBoardEvents,
   readBoardEvent,
   restoreBoardEvent,
   updateBoardEvent,
@@ -29,6 +30,7 @@ import {
 } from "../adapters/board-events-api";
 import type { BoardAttachmentVersions } from "../adapters/board-files-api";
 import { readBoard } from "../adapters/board-management-api";
+import { getBoardWorkspaceToday } from "../adapters/board-workspace-date-api";
 import {
   getMyBoardAccess,
   type BoardMyAccess,
@@ -61,6 +63,13 @@ import { ServerBoardReminders } from "./server-backed-board-reminders";
 import { ServerBoardRecordLinks } from "./server-backed-board-record-links";
 
 type Occurrence = BoardEventOccurrencePage["items"][number];
+type CalendarView = "month" | "agenda" | "archived" | "mine";
+type MyEventsState = {
+  key: string;
+  status: "loading" | "ready" | "error";
+  page: BoardEventPage | null;
+  error: string | null;
+};
 
 function sameEventContent(left: BoardEvent, right: BoardEvent): boolean {
   return (
@@ -84,9 +93,10 @@ function sameEventContent(left: BoardEvent, right: BoardEvent): boolean {
   );
 }
 
-function todayDate(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+export function defaultCalendarViewForViewport(
+  compact: boolean,
+): "agenda" | "month" {
+  return compact ? "agenda" : "month";
 }
 
 function formatDate(date: string): string {
@@ -341,11 +351,13 @@ function MonthGrid({
   window,
   page,
   selectedDate,
+  today,
   onSelect,
 }: {
   window: CalendarWindow;
   page: BoardEventOccurrencePage;
   selectedDate: string;
+  today: string | null;
   onSelect: (date: string) => void;
 }) {
   const first = new Date(`${window.start}T12:00:00Z`);
@@ -355,7 +367,6 @@ function MonthGrid({
     { length: Math.ceil((leading + days) / 7) * 7 },
     (_, index) => index - leading + 1,
   );
-  const today = todayDate();
   return (
     <Card className="min-w-0 overflow-hidden">
       <CardContent className="p-0">
@@ -424,6 +435,85 @@ function MonthGrid({
   );
 }
 
+function myEventSchedule(event: BoardEvent): string {
+  return event.allDay
+    ? `${event.startDate}–${event.endDate} · All day`
+    : `${event.startAt}–${event.endAt} · ${event.timezoneName}`;
+}
+
+function MyEventsDisplay({
+  page,
+  onEdit,
+  onPrevious,
+  onNext,
+}: {
+  page: BoardEventPage;
+  onEdit: (event: BoardEvent) => void;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  const first = page.pagination.count === 0 ? 0 : page.pagination.offset + 1;
+  const last = page.pagination.offset + page.pagination.count;
+  return (
+    <section aria-label="My events" className="space-y-4">
+      <p role="status" className="text-muted-foreground text-sm">
+        Showing {first}–{last} of {page.pagination.total} events you created.
+      </p>
+      {page.items.length === 0 ? (
+        <BoardEmpty
+          title="No events created by you"
+          description="Events you create appear here, including events that are not addressed to you."
+        />
+      ) : (
+        <ul className="space-y-3" aria-label="Events you created">
+          {page.items.map((event) => (
+            <li
+              key={event.id}
+              className="border-border flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4"
+            >
+              <div className="min-w-0 space-y-1">
+                <h3 className="font-medium break-words">{event.title}</h3>
+                <p className="text-muted-foreground text-sm">
+                  {myEventSchedule(event)} · Audience: {event.audience.kind}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                aria-label={`Edit ${event.title}`}
+                onClick={() => onEdit(event)}
+              >
+                Edit
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-wrap gap-2" aria-label="My events pages">
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          disabled={page.pagination.offset === 0}
+          onClick={onPrevious}
+        >
+          Previous events
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          disabled={!page.pagination.hasMore}
+          onClick={onNext}
+        >
+          Next events
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 export function ServerBackedBoardCalendar({
   boardId,
   refreshKey,
@@ -440,9 +530,21 @@ export function ServerBackedBoardCalendar({
   ) => void;
 }) {
   const viewerId = useVerifiedWorkspaceUserId();
-  const [month, setMonth] = useState(() => todayDate().slice(0, 7));
-  const [selectedDate, setSelectedDate] = useState(() => todayDate());
-  const [view, setView] = useState<"month" | "agenda" | "archived">("month");
+  const [workspaceToday, setWorkspaceToday] = useState<string | null>(null);
+  const [workspaceDateError, setWorkspaceDateError] = useState<string | null>(
+    null,
+  );
+  const [workspaceDateRetry, setWorkspaceDateRetry] = useState(0);
+  const [month, setMonth] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [view, setView] = useState<CalendarView>("month");
+  const [search, setSearch] = useState("");
+  const [myEventsOffset, setMyEventsOffset] = useState(0);
+  const [myEventsRetry, setMyEventsRetry] = useState(0);
+  const [myEventsState, setMyEventsState] = useState<MyEventsState | null>(
+    null,
+  );
+  const initializedBoard = useRef(boardId);
   const [archivedOffset, setArchivedOffset] = useState(0);
   const [archivedVersion, setArchivedVersion] = useState(0);
   const [archivedState, setArchivedState] = useState<{
@@ -479,12 +581,14 @@ export function ServerBackedBoardCalendar({
     status: "needs-check" | "checking" | "ready";
     latest: BoardEventLatestVersion | null;
   } | null>(null);
-  const window = calendarWindowForMonth(month);
-  const { state, retry, invalidate } = useServerBoardEvents(
-    boardId,
-    window,
-    refreshKey,
-  );
+  const calendarMonth = month ?? workspaceToday?.slice(0, 7) ?? null;
+  const calendarWindow = calendarMonth
+    ? calendarWindowForMonth(calendarMonth)
+    : null;
+  const selectedCalendarDate =
+    selectedDate ?? workspaceToday ?? calendarWindow?.start ?? "";
+  const { state, retry, invalidate, loadMore, isLoadingMore, loadMoreError } =
+    useServerBoardEvents(boardId, calendarWindow, refreshKey, search);
   const invalidateRef = useRef(invalidate);
   const accessKey = `${boardId}:${refreshKey}:${boardActive}:${accessVersion}`;
   const currentAccess =
@@ -505,8 +609,100 @@ export function ServerBackedBoardCalendar({
     archivedState.status === "ready"
       ? archivedState.page
       : null;
-  const activeDraft =
-    canEdit && calendarPage && draft?.boardId === boardId ? draft : null;
+  const activeDraft = canEdit && draft?.boardId === boardId ? draft : null;
+  const myEventsKey = `${boardId}:${refreshKey}:${myEventsOffset}:${myEventsRetry}`;
+
+  useEffect(() => {
+    let active = true;
+    async function refreshWorkspaceDate() {
+      try {
+        const today = await getBoardWorkspaceToday();
+        if (!active) return;
+        setWorkspaceToday(today);
+        setWorkspaceDateError(null);
+        setMonth((current) => current ?? today.slice(0, 7));
+        setSelectedDate((current) => current ?? today);
+      } catch {
+        if (active) setWorkspaceDateError("Could not load the Workspace date.");
+      }
+    }
+    void refreshWorkspaceDate();
+    const timer = globalThis.window.setInterval(
+      () => void refreshWorkspaceDate(),
+      60_000,
+    );
+    return () => {
+      active = false;
+      globalThis.window.clearInterval(timer);
+    };
+  }, [refreshKey, workspaceDateRetry]);
+
+  useEffect(() => {
+    setView(
+      defaultCalendarViewForViewport(
+        globalThis.window.matchMedia("(max-width: 1023px)").matches,
+      ),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (initializedBoard.current === boardId) return;
+    initializedBoard.current = boardId;
+    setMonth(workspaceToday?.slice(0, 7) ?? null);
+    setSelectedDate(workspaceToday);
+    setView(
+      defaultCalendarViewForViewport(
+        globalThis.window.matchMedia("(max-width: 1023px)").matches,
+      ),
+    );
+    setSearch("");
+    setMyEventsOffset(0);
+    setMyEventsState(null);
+  }, [boardId, workspaceToday]);
+
+  useEffect(() => {
+    if (view !== "mine" || !canEdit) {
+      setMyEventsState(null);
+      return;
+    }
+    let active = true;
+    setMyEventsState({
+      key: myEventsKey,
+      status: "loading",
+      page: null,
+      error: null,
+    });
+    void listMyBoardEvents(boardId, {
+      limit: 25,
+      offset: myEventsOffset,
+      archived: "active",
+    })
+      .then((page) => {
+        if (active)
+          setMyEventsState({
+            key: myEventsKey,
+            status: "ready",
+            page,
+            error: null,
+          });
+      })
+      .catch((error: unknown) => {
+        if (active)
+          setMyEventsState({
+            key: myEventsKey,
+            status: "error",
+            page: null,
+            error:
+              error instanceof ApiError &&
+              [401, 403, 404].includes(error.status)
+                ? "My events are unavailable because Board access changed."
+                : "Could not load your events. Try again.",
+          });
+      });
+    return () => {
+      active = false;
+    };
+  }, [boardId, canEdit, myEventsKey, myEventsOffset, view]);
 
   useEffect(() => {
     onDraftStateChange?.(
@@ -543,7 +739,6 @@ export function ServerBackedBoardCalendar({
     setEditorNotice(null);
     setConflict(null);
     setBlockedBoardId(null);
-    setView("month");
     setArchivedOffset(0);
     setArchivedState(null);
     setLifecycleTarget(null);
@@ -808,6 +1003,7 @@ export function ServerBackedBoardCalendar({
       setConflict(null);
       setEditorNotice(draftToSave.eventId ? "Event saved." : "Event created.");
       retry();
+      setMyEventsRetry((value) => value + 1);
       setAccessVersion((value) => value + 1);
     } catch (error) {
       if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
@@ -1014,7 +1210,8 @@ export function ServerBackedBoardCalendar({
   }
 
   function moveMonth(amount: number) {
-    const next = shiftCalendarMonth(month, amount);
+    if (!calendarMonth) return;
+    const next = shiftCalendarMonth(calendarMonth, amount);
     setMonth(next);
     setSelectedDate(`${next}-01`);
   }
@@ -1024,12 +1221,37 @@ export function ServerBackedBoardCalendar({
       aria-label="Board calendar"
       className="flex min-w-0 flex-col gap-4"
     >
+      {workspaceDateError && (
+        <Alert variant="warning">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {workspaceToday
+                ? "The Workspace date could not be refreshed. The last loaded date is still in use."
+                : workspaceDateError}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setWorkspaceDateRetry((value) => value + 1)}
+            >
+              Retry Workspace date
+            </Button>
+          </div>
+        </Alert>
+      )}
+      {!calendarWindow && !workspaceDateError && (
+        <p role="status" className="text-muted-foreground">
+          Loading the Workspace date…
+        </p>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
             className="size-11"
+            disabled={!calendarMonth}
             aria-label="Previous month"
             onClick={() => moveMonth(-1)}
           >
@@ -1039,12 +1261,13 @@ export function ServerBackedBoardCalendar({
             className="min-w-32 text-center text-lg font-semibold"
             aria-live="polite"
           >
-            {window.label}
+            {calendarWindow?.label ?? "Calendar"}
           </h2>
           <Button
             variant="ghost"
             size="icon"
             className="size-11"
+            disabled={!calendarMonth}
             aria-label="Next month"
             onClick={() => moveMonth(1)}
           >
@@ -1053,10 +1276,11 @@ export function ServerBackedBoardCalendar({
           <Button
             variant="outline"
             className="ml-2 min-h-11"
+            disabled={workspaceToday === null}
             onClick={() => {
-              const today = todayDate();
-              setMonth(today.slice(0, 7));
-              setSelectedDate(today);
+              if (!workspaceToday) return;
+              setMonth(workspaceToday.slice(0, 7));
+              setSelectedDate(workspaceToday);
             }}
           >
             Today
@@ -1092,8 +1316,36 @@ export function ServerBackedBoardCalendar({
               Archived events
             </Button>
           )}
+          {canEdit && !activeDraft && (
+            <Button
+              variant={view === "mine" ? "secondary" : "ghost"}
+              className="min-h-11"
+              aria-pressed={view === "mine"}
+              onClick={() => {
+                setMyEventsOffset(0);
+                setMyEventsState(null);
+                setMyEventsRetry((value) => value + 1);
+                setView("mine");
+              }}
+            >
+              My events
+            </Button>
+          )}
         </div>
       </div>
+      {view !== "archived" && view !== "mine" && calendarWindow && (
+        <label className="grid max-w-xl gap-1 text-sm font-medium">
+          <span>Search events</span>
+          <input
+            type="search"
+            className="border-input bg-background min-h-11 rounded-md border px-3 font-normal"
+            maxLength={100}
+            value={search}
+            disabled={activeDraft !== null}
+            onChange={(event) => setSearch(event.currentTarget.value)}
+          />
+        </label>
+      )}
       {editorNotice && <Alert role="status">{editorNotice}</Alert>}
       {lifecycleNotice && <Alert role="status">{lifecycleNotice}</Alert>}
       {accessFailed && (
@@ -1122,7 +1374,7 @@ export function ServerBackedBoardCalendar({
                 newBoardEventDraft(
                   boardId,
                   calendarPage.boardRevision,
-                  selectedDate,
+                  selectedCalendarDate,
                 ),
               );
             }}
@@ -1287,7 +1539,53 @@ export function ServerBackedBoardCalendar({
           </div>
         </Alert>
       )}
-      {view !== "archived" && state.error && (
+      {view === "mine" &&
+        canEdit &&
+        !activeDraft &&
+        myEventsState?.key === myEventsKey &&
+        myEventsState.status === "loading" && (
+          <p role="status" className="text-muted-foreground py-8 text-sm">
+            Loading your events…
+          </p>
+        )}
+      {view === "mine" &&
+        canEdit &&
+        !activeDraft &&
+        myEventsState?.key === myEventsKey &&
+        myEventsState.error && (
+          <Alert variant="warning">
+            {myEventsState.error}
+            <Button
+              type="button"
+              variant="outline"
+              className="ml-2 min-h-11"
+              onClick={() => setMyEventsRetry((value) => value + 1)}
+            >
+              Retry My events
+            </Button>
+          </Alert>
+        )}
+      {view === "mine" &&
+        canEdit &&
+        !activeDraft &&
+        myEventsState?.key === myEventsKey &&
+        myEventsState.page && (
+          <MyEventsDisplay
+            page={myEventsState.page}
+            onEdit={(event) => {
+              if (!mayEditEvent(event)) return;
+              setEditorError(null);
+              setEditorNotice(null);
+              setConflict(null);
+              setDraft(boardEventDraftFromEvent(event));
+            }}
+            onPrevious={() =>
+              setMyEventsOffset((value) => Math.max(0, value - 25))
+            }
+            onNext={() => setMyEventsOffset((value) => value + 25)}
+          />
+        )}
+      {view !== "archived" && view !== "mine" && state.error && (
         <Alert variant={state.data ? "warning" : "destructive"}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span>
@@ -1300,68 +1598,99 @@ export function ServerBackedBoardCalendar({
           </div>
         </Alert>
       )}
-      {view !== "archived" && calendarPage && (
-        <>
-          {calendarPage.pagination.hasMore && (
-            <Alert variant="warning">
-              Showing only the first {calendarPage.items.length} of{" "}
-              {calendarPage.pagination.total} occurrences this month. Remaining
-              occurrences are not shown.
-            </Alert>
-          )}
-          <p
-            className="text-muted-foreground text-sm"
-            role="status"
-            aria-live="polite"
-          >
-            {calendarPage.items.length}{" "}
-            {calendarPage.items.length === 1 ? "occurrence" : "occurrences"}
-            {state.status === "loading" ? " · Refreshing…" : ""}
-          </p>
-          {view === "month" && (
-            <MonthGrid
-              window={window}
-              page={calendarPage}
-              selectedDate={selectedDate}
-              onSelect={setSelectedDate}
+      {view !== "archived" &&
+        view !== "mine" &&
+        calendarPage &&
+        calendarWindow && (
+          <>
+            {calendarPage.pagination.hasMore && (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <Alert variant="warning">
+                  Showing {calendarPage.items.length} of{" "}
+                  {calendarPage.pagination.total} occurrences. Load the next
+                  page to include more events and reminder choices.
+                </Alert>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={isLoadingMore}
+                  onClick={() => void loadMore()}
+                >
+                  {isLoadingMore
+                    ? "Loading next 100 events…"
+                    : "Load next 100 events"}
+                </Button>
+              </div>
+            )}
+            {loadMoreError && (
+              <Alert variant="warning">
+                {loadMoreError}{" "}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={isLoadingMore}
+                  onClick={() => void loadMore()}
+                >
+                  Retry next 100 events
+                </Button>
+              </Alert>
+            )}
+            <p
+              className="text-muted-foreground text-sm"
+              role="status"
+              aria-live="polite"
+            >
+              {calendarPage.items.length}{" "}
+              {calendarPage.items.length === 1 ? "occurrence" : "occurrences"}
+              {state.status === "loading" ? " · Refreshing…" : ""}
+            </p>
+            {view === "month" && (
+              <MonthGrid
+                window={calendarWindow}
+                page={calendarPage}
+                selectedDate={selectedCalendarDate}
+                today={workspaceToday}
+                onSelect={setSelectedDate}
+              />
+            )}
+            <div id="server-board-calendar-day">
+              <ServerBoardCalendarDisplay
+                page={calendarPage}
+                window={calendarWindow}
+                date={view === "month" ? selectedCalendarDate : undefined}
+                includeAttachments
+                canEditEvent={mayEditEvent}
+                onEditEvent={(event) => {
+                  if (!mayEditEvent(event)) return;
+                  setEditorError(null);
+                  setEditorNotice(null);
+                  setConflict(null);
+                  setDraft(boardEventDraftFromEvent(event));
+                }}
+                canArchiveEvent={(event) =>
+                  !activeDraft &&
+                  prepareBoardEventLifecycleAction(
+                    event,
+                    boardId,
+                    calendarPage.boardRevision,
+                    currentAccess,
+                    boardActive,
+                    "archive",
+                  ) !== null
+                }
+                onArchiveEvent={(event) => beginLifecycle("archive", event)}
+              />
+            </div>
+            <ServerBoardReminders
+              boardId={boardId}
+              boardActive={boardActive}
+              occurrences={calendarPage.items}
+              refreshKey={calendarPage.boardRevision}
             />
-          )}
-          <div id="server-board-calendar-day">
-            <ServerBoardCalendarDisplay
-              page={calendarPage}
-              window={window}
-              date={view === "month" ? selectedDate : undefined}
-              includeAttachments
-              canEditEvent={mayEditEvent}
-              onEditEvent={(event) => {
-                if (!mayEditEvent(event)) return;
-                setEditorError(null);
-                setEditorNotice(null);
-                setConflict(null);
-                setDraft(boardEventDraftFromEvent(event));
-              }}
-              canArchiveEvent={(event) =>
-                !activeDraft &&
-                prepareBoardEventLifecycleAction(
-                  event,
-                  boardId,
-                  calendarPage.boardRevision,
-                  currentAccess,
-                  boardActive,
-                  "archive",
-                ) !== null
-              }
-              onArchiveEvent={(event) => beginLifecycle("archive", event)}
-            />
-          </div>
-          <ServerBoardReminders
-            boardId={boardId}
-            boardActive={boardActive}
-            occurrences={calendarPage.items}
-            refreshKey={calendarPage.boardRevision}
-          />
-        </>
-      )}
+          </>
+        )}
       {view === "archived" && canManage && archivedPage && (
         <>
           <p className="text-muted-foreground text-sm" role="status">
@@ -1439,6 +1768,8 @@ export function ServerBackedBoardCalendar({
         </p>
       )}
       {view !== "archived" &&
+        view !== "mine" &&
+        calendarWindow &&
         !calendarPage &&
         !accessDenied &&
         state.status === "loading" && (
@@ -1447,7 +1778,10 @@ export function ServerBackedBoardCalendar({
           </p>
         )}
       {!calendarPage &&
-        (accessDenied || (view !== "archived" && state.status === "error")) && (
+        (accessDenied ||
+          (view !== "archived" &&
+            view !== "mine" &&
+            state.status === "error")) && (
           <BoardEmpty
             title="Calendar unavailable"
             description="No events are shown. Retry or ask a Board manager to check your access."

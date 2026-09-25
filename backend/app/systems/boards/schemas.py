@@ -26,6 +26,7 @@ class BoardStatusFilter(StrEnum):
 class BoardListRequest(StandardListRequest[BoardSort]):
     status: BoardStatusFilter = BoardStatusFilter.ACTIVE
     department_id: UUID | None = None
+    favorites_only: bool = False
 
 
 class BoardCreate(BaseModel):

@@ -8,6 +8,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useWorkspaceNavigationGuard,
@@ -53,6 +54,10 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import type { BoardManagementBoard } from "../adapters/board-management-api";
+import {
+  listBoardDepartments,
+  type BoardDepartmentChoice,
+} from "../adapters/board-departments-api";
 import { ServerBackedBoardActivity } from "./server-backed-board-activity";
 import { ServerBackedBoardAccessPreview } from "./server-backed-board-access-preview";
 import { ServerBackedBoardAnnouncementEditor } from "./server-backed-board-announcement-editor";
@@ -182,10 +187,19 @@ function ServerBackedBoardsContent() {
   const searchParams = useSearchParams();
   const route = parseBoardRoute(searchParams.toString());
   const [statusFilter, setStatusFilter] = useState<BoardListStatus>("active");
+  const [departmentFilter, setDepartmentFilter] = useState<string | null>(null);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [searchDraft, setSearchDraft] = useState("");
   const [appliedSearch, setAppliedSearch] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const [browsing, setBrowsing] = useState(false);
+  const [departmentChoices, setDepartmentChoices] = useState<
+    BoardDepartmentChoice[]
+  >([]);
+  const [departmentChoicesStatus, setDepartmentChoicesStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [departmentChoicesRetry, setDepartmentChoicesRetry] = useState(0);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [portabilityOpen, setPortabilityOpen] = useState(false);
   const [activitySelection, setActivitySelection] =
@@ -211,6 +225,8 @@ function ServerBackedBoardsContent() {
     statusFilter,
     offset,
     appliedSearch,
+    departmentFilter,
+    favoritesOnly,
   );
   const board = resource.selectedBoard;
   const activityOpen = isSelectedBoardActivityOpen(
@@ -246,6 +262,25 @@ function ServerBackedBoardsContent() {
     [],
   );
   const section = resolveBoardSection(route, board);
+
+  useEffect(() => {
+    if (!browsing) return;
+    const controller = new AbortController();
+    setDepartmentChoicesStatus("loading");
+    void listBoardDepartments(controller.signal).then(
+      (departments) => {
+        if (controller.signal.aborted) return;
+        setDepartmentChoices(departments);
+        setDepartmentChoicesStatus("ready");
+      },
+      () => {
+        if (controller.signal.aborted) return;
+        setDepartmentChoices([]);
+        setDepartmentChoicesStatus("error");
+      },
+    );
+    return () => controller.abort();
+  }, [browsing, departmentChoicesRetry]);
   const currentDraftState =
     draftState !== null &&
     board !== null &&
@@ -311,7 +346,14 @@ function ServerBackedBoardsContent() {
   const isHome =
     board !== null && resource.personal.data?.homeBoardId === board.id;
   const currentListPage =
-    resource.list.key === boardListKey(statusFilter, offset, appliedSearch)
+    resource.list.key ===
+    boardListKey(
+      statusFilter,
+      offset,
+      appliedSearch,
+      departmentFilter,
+      favoritesOnly,
+    )
       ? resource.list.data
       : null;
 
@@ -405,6 +447,21 @@ function ServerBackedBoardsContent() {
     setStatusFilter(value);
     setOffset(0);
   }
+
+  function resetBoardFilters() {
+    setStatusFilter("active");
+    setDepartmentFilter(null);
+    setFavoritesOnly(false);
+    setSearchDraft("");
+    setAppliedSearch(null);
+    setOffset(0);
+  }
+
+  const hasBoardFilters =
+    statusFilter !== "active" ||
+    departmentFilter !== null ||
+    favoritesOnly ||
+    appliedSearch !== null;
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
@@ -534,6 +591,69 @@ function ServerBackedBoardsContent() {
                 ]}
                 onValueChange={changeStatus}
               />
+              <SearchSelect
+                label="Department"
+                value={departmentFilter ?? ""}
+                placeholder="All departments"
+                options={[
+                  { value: "", label: "All departments" },
+                  ...departmentChoices.map((department) => ({
+                    value: department.id,
+                    label: department.name,
+                  })),
+                ]}
+                onValueChange={(departmentId) => {
+                  setDepartmentFilter(departmentId || null);
+                  setOffset(0);
+                }}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant={favoritesOnly ? "default" : "outline"}
+                  className="min-h-11"
+                  aria-pressed={favoritesOnly}
+                  onClick={() => {
+                    setFavoritesOnly((value) => !value);
+                    setOffset(0);
+                  }}
+                >
+                  <Star data-icon="inline-start" /> Favorites only
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="min-h-11"
+                  disabled={!hasBoardFilters}
+                  onClick={resetBoardFilters}
+                >
+                  Reset filters
+                </Button>
+                {departmentChoicesStatus === "loading" && (
+                  <span className="text-muted-foreground text-sm" role="status">
+                    Loading departments…
+                  </span>
+                )}
+                {departmentChoicesStatus === "error" && (
+                  <span
+                    className="flex items-center gap-2 text-sm"
+                    role="alert"
+                  >
+                    Department choices are unavailable.
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      onClick={() => {
+                        setDepartmentChoicesStatus("idle");
+                        setDepartmentChoicesRetry((value) => value + 1);
+                      }}
+                    >
+                      Retry departments
+                    </Button>
+                  </span>
+                )}
+              </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-muted-foreground text-sm">
                   {currentListPage
@@ -596,6 +716,20 @@ function ServerBackedBoardsContent() {
                 closeWidgets();
                 closeAnnouncementManager();
                 resource.revokeAccess();
+              }}
+              onPurged={() => {
+                const href: Route = "/boards";
+                const resume = () => {
+                  closeActivity();
+                  closePreview();
+                  closeGrants();
+                  closeWidgets();
+                  closeAnnouncementManager();
+                  setBrowsing(false);
+                  router.push(href, { scroll: false });
+                  resource.refresh();
+                };
+                if (requestNavigation(href, resume)) resume();
               }}
             />
           )}

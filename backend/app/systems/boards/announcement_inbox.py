@@ -6,6 +6,7 @@ from sqlalchemy import exists, select
 from sqlalchemy.orm import Session, joinedload
 from uuid6 import uuid7
 
+from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.models import User, UserDepartment, UserStatus
 from app.systems.boards.access import can_access_board
@@ -75,6 +76,7 @@ def stage_publication_inbox(
             User.status == UserStatus.ACTIVE.value,
             User.is_deleted.is_(False),
             User.deleted_at.is_(None),
+            identity_eligible_clause(),
             established_user_clause(),
         )
     )

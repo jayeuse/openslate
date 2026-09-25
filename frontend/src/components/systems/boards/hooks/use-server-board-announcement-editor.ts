@@ -468,7 +468,7 @@ export function useServerBoardAnnouncementEditor({
           return;
         }
         const page = await listBoardAnnouncements(boardId, {
-          view: "draft",
+          view: "editable",
           limit: 25,
           offset,
           sortBy: "updated_at",
@@ -476,7 +476,7 @@ export function useServerBoardAnnouncementEditor({
         });
         const selected = selectedRef.current;
         const verified = selected
-          ? await readBoardAnnouncement(boardId, selected.id, "draft")
+          ? await readBoardAnnouncement(boardId, selected.id, "editable")
           : null;
         if (request !== loadSequence.current) return;
         if (verified && verified.authorId !== actorId && !access.manage) {
@@ -1024,7 +1024,11 @@ export function useServerBoardAnnouncementEditor({
     )
       throw new ApiContractError();
     try {
-      const latest = await readBoardAnnouncement(boardId, selected.id, "draft");
+      const latest = await readBoardAnnouncement(
+        boardId,
+        selected.id,
+        "editable",
+      );
       if (
         latest.announcementRevision === null ||
         !sameAnnouncementContent(selected, latest)

@@ -14,8 +14,9 @@ from app.core.database import get_db
 from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.models import Role, User, UserStatus
 from app.systems.access.users.permissions import Capability
+from app.systems.boards.announcement_listing import display_join
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
-from app.systems.boards.announcement_router import MAX_ANNOUNCEMENTS, _display_join
+from app.systems.boards.announcement_router import MAX_ANNOUNCEMENTS
 from app.systems.boards.announcement_service import audience_clause, published_expiry, read_manager
 from app.systems.boards.models import BoardPermission
 from app.systems.boards.router import _board_with_access
@@ -43,7 +44,7 @@ def list_announcement_authors(
     manager = read_manager(db, board, actor)
     visible_author_ids = (
         select(BoardAnnouncementRevision.author_id)
-        .join(BoardAnnouncement, _display_join())
+        .join(BoardAnnouncement, display_join())
         .where(
             BoardAnnouncement.board_id == board.id,
             BoardAnnouncement.is_deleted.is_(False),

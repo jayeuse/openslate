@@ -206,6 +206,71 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
 
 
 @pytest.mark.integration
+def test_event_occurrence_search_escapes_like_wildcards_and_filters_before_count(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    owner, target = _actor(db), _actor(db)
+    board = Board(owner_id=owner.id, name=f"Search calendar {uuid7().hex[:12]}", status="active")
+    db.add(board)
+    db.flush()
+    visible_literal = BoardEvent(
+        board_id=board.id,
+        author_id=owner.id,
+        title="Budget 100%_ signed",
+        all_day=True,
+        start_date=date(2026, 7, 4),
+        end_date=date(2026, 7, 4),
+        timezone_name="UTC",
+        audience_kind="everyone",
+    )
+    visible_similar = BoardEvent(
+        board_id=board.id,
+        author_id=owner.id,
+        title="Budget 100XY signed",
+        all_day=True,
+        start_date=date(2026, 7, 5),
+        end_date=date(2026, 7, 5),
+        timezone_name="UTC",
+        audience_kind="everyone",
+    )
+    hidden = BoardEvent(
+        board_id=board.id,
+        author_id=owner.id,
+        title="Budget 100%_ secret",
+        all_day=True,
+        start_date=date(2026, 7, 6),
+        end_date=date(2026, 7, 6),
+        timezone_name="UTC",
+        audience_kind="user",
+        audience_user_id=target.id,
+    )
+    db.add_all((visible_literal, visible_similar, hidden))
+    db.commit()
+
+    root = f"/api/boards/{board.id}/events/occurrences"
+    client = _client(db, owner)
+    params = {"window_start": "2026-07-01", "window_end": "2026-07-10"}
+    literal = client.get(root, params={**params, "search": "100%_"})
+    assert literal.status_code == 200, literal.text
+    assert literal.json()["pagination"]["total"] == 1
+    assert literal.json()["items"][0]["event_id"] == str(visible_literal.id)
+
+    underscore = client.get(root, params={**params, "search": "_"})
+    assert underscore.status_code == 200
+    assert underscore.json()["pagination"]["total"] == 1
+    assert underscore.json()["items"][0]["event_id"] == str(visible_literal.id)
+
+    broad = client.get(root, params={**params, "search": "Budget"})
+    assert broad.status_code == 200
+    assert broad.json()["pagination"]["total"] == 2
+    assert {item["event_id"] for item in broad.json()["items"]} == {
+        str(visible_literal.id),
+        str(visible_similar.id),
+    }
+
+
+@pytest.mark.integration
 def test_timed_event_reads_and_occurrences_survive_non_utc_postgres_session(
     integration_owner_db: Session,
 ) -> None:

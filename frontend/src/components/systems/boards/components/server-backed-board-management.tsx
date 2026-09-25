@@ -25,7 +25,10 @@ import {
   createBoard,
   readBoard,
   restoreBoard,
+  previewBoardPurge,
+  purgeBoard,
   updateBoard,
+  type BoardPurgePreview,
   type BoardCreateInput,
   type BoardManagementBoard,
   type BoardUpdateInput,
@@ -66,6 +69,7 @@ type Props =
       board: BoardManagementBoard;
       onUpdated: (board: BoardManagementBoard) => void;
       onAccessDenied: (boardId: string) => void;
+      onPurged: (boardId: string) => void;
     };
 
 const blankDraft: BoardManagementDraft = {
@@ -170,6 +174,7 @@ export type BoardManagementRevocation = {
 
 export function revokeBoardManagementState(
   targets: BoardManagementRevocation,
+  revokeBoard = true,
 ): void {
   targets.accessRequest.current += 1;
   targets.departmentsRequest.current += 1;
@@ -188,7 +193,7 @@ export function revokeBoardManagementState(
   targets.setNotice(null);
   targets.setConfirmation(null);
   targets.setDiscardOpen(false);
-  targets.onAccessDenied();
+  if (revokeBoard) targets.onAccessDenied();
 }
 
 function departmentCanBeChosen(view: BoardManagementView): boolean {
@@ -208,6 +213,15 @@ type DisplayProps = {
   onRetryWithDraft?: () => void;
   onUseLatest?: () => void;
   onConfirmLifecycle?: (action: "archive" | "restore") => void;
+  onBeginPurge?: () => void;
+  purgePreviewLoading?: boolean;
+  purgePreview?: BoardPurgePreview | null;
+  purgeConfirmationName?: string;
+  purgePassword?: string;
+  onChangePurgeConfirmationName?: (value: string) => void;
+  onChangePurgePassword?: (value: string) => void;
+  onCancelPurge?: () => void;
+  onConfirmPurge?: () => void;
   onRetryAccess?: () => void;
   onRetryDepartments?: () => void;
 };
@@ -220,6 +234,15 @@ export function ServerBoardManagementDisplay({
   onRetryWithDraft = () => undefined,
   onUseLatest = () => undefined,
   onConfirmLifecycle = () => undefined,
+  onBeginPurge = () => undefined,
+  purgePreviewLoading = false,
+  purgePreview = null,
+  purgeConfirmationName = "",
+  purgePassword = "",
+  onChangePurgeConfirmationName = () => undefined,
+  onChangePurgePassword = () => undefined,
+  onCancelPurge = () => undefined,
+  onConfirmPurge = () => undefined,
   onRetryAccess = () => undefined,
   onRetryDepartments = () => undefined,
 }: DisplayProps) {
@@ -561,6 +584,125 @@ export function ServerBoardManagementDisplay({
             },
             "Restore Board",
           ),
+          e(
+            "div",
+            { className: "border-border space-y-3 border-t pt-4" },
+            e("h3", { className: "text-sm font-medium" }, "Permanent deletion"),
+            e(
+              "p",
+              { className: "text-muted-foreground text-sm" },
+              "Administrators can permanently delete this archived Board after reviewing its dependencies.",
+            ),
+            e(
+              "button",
+              {
+                type: "button",
+                className: `${secondaryButton} border-destructive text-destructive`,
+                disabled: view.pending || view.conflict || purgePreviewLoading,
+                onClick: onBeginPurge,
+              },
+              purgePreviewLoading
+                ? "Preparing review…"
+                : "Permanently delete Board",
+            ),
+            purgePreview
+              ? e(
+                  "form",
+                  {
+                    className: "border-border space-y-4 rounded-lg border p-4",
+                    onSubmit: (event: FormEvent<HTMLFormElement>) => {
+                      event.preventDefault();
+                      onConfirmPurge();
+                    },
+                  },
+                  e(
+                    "p",
+                    { className: "text-sm", role: "status" },
+                    `The review includes ${purgePreview.impact.rows.length} retained items. Type the exact Board UUID and enter your administrator password to continue.`,
+                  ),
+                  e(
+                    "p",
+                    { className: "text-sm" },
+                    e("span", null, "Board UUID: "),
+                    e(
+                      "code",
+                      { className: "break-all" },
+                      purgePreview.confirmation_name,
+                    ),
+                  ),
+                  e(
+                    "div",
+                    { className: "space-y-2" },
+                    e(
+                      "label",
+                      {
+                        htmlFor: `${id}-purge-confirmation`,
+                        className: "text-sm font-medium",
+                      },
+                      "Type the Board UUID",
+                    ),
+                    e("input", {
+                      id: `${id}-purge-confirmation`,
+                      value: purgeConfirmationName,
+                      autoComplete: "off",
+                      disabled: view.pending,
+                      className: controlClass,
+                      onChange: (event: ChangeEvent<HTMLInputElement>) =>
+                        onChangePurgeConfirmationName(event.target.value),
+                    }),
+                  ),
+                  e(
+                    "div",
+                    { className: "space-y-2" },
+                    e(
+                      "label",
+                      {
+                        htmlFor: `${id}-purge-password`,
+                        className: "text-sm font-medium",
+                      },
+                      "Administrator password",
+                    ),
+                    e("input", {
+                      id: `${id}-purge-password`,
+                      type: "password",
+                      value: purgePassword,
+                      autoComplete: "current-password",
+                      disabled: view.pending,
+                      className: controlClass,
+                      onChange: (event: ChangeEvent<HTMLInputElement>) =>
+                        onChangePurgePassword(event.target.value),
+                    }),
+                  ),
+                  e(
+                    "div",
+                    { className: "flex flex-wrap gap-2" },
+                    e(
+                      "button",
+                      {
+                        type: "submit",
+                        className: `${primaryButton} bg-destructive text-destructive-foreground`,
+                        disabled:
+                          view.pending ||
+                          purgeConfirmationName !==
+                            purgePreview.confirmation_name ||
+                          purgePassword.length === 0,
+                      },
+                      view.pending ? "Deleting…" : "Confirm permanent deletion",
+                    ),
+                    e(
+                      "button",
+                      {
+                        type: "button",
+                        className: secondaryButton,
+                        disabled: view.pending,
+                        onClick: onCancelPurge,
+                      },
+                      "Cancel",
+                    ),
+                  ),
+                )
+              : null,
+          ),
         )
       : form,
     view.mode === "manage" && !archived
@@ -603,6 +745,12 @@ function ManagementInstance(props: Props) {
   const [confirmation, setConfirmation] = useState<
     "archive" | "restore" | null
   >(null);
+  const [purgePreview, setPurgePreview] = useState<BoardPurgePreview | null>(
+    null,
+  );
+  const [purgePreviewLoading, setPurgePreviewLoading] = useState(false);
+  const [purgeConfirmationName, setPurgeConfirmationName] = useState("");
+  const [purgePassword, setPurgePassword] = useState("");
   const [board, setBoard] = useState<BoardManagementBoard | null>(
     incomingBoard,
   );
@@ -635,8 +783,15 @@ function ManagementInstance(props: Props) {
   const boardId = incomingBoard?.id ?? null;
   const onAccessDenied = props.mode === "manage" ? props.onAccessDenied : null;
 
+  const clearPurgeReview = useCallback(() => {
+    setPurgePreview(null);
+    setPurgePreviewLoading(false);
+    setPurgeConfirmationName("");
+    setPurgePassword("");
+  }, []);
+
   const handleDenied = useCallback(
-    (failure: unknown): boolean => {
+    (failure: unknown, revokeBoard = true): boolean => {
       if (
         !(failure instanceof ApiError) ||
         ![401, 403, 404].includes(failure.status)
@@ -649,30 +804,34 @@ function ManagementInstance(props: Props) {
       }
       if (deniedRef.current) return true;
       deniedRef.current = true;
-      revokeBoardManagementState({
-        accessRequest,
-        departmentsRequest,
-        actionRequest,
-        departmentsAbort,
-        setBoard,
-        setDraft,
-        setDraftBase,
-        setDepartments,
-        setDepartmentsStatus,
-        setAccess,
-        setConflict,
-        setLatestReady,
-        setError,
-        setNotice,
-        setConfirmation,
-        setDiscardOpen,
-        onAccessDenied: () => {
-          if (boardId !== null) onAccessDenied?.(boardId);
+      clearPurgeReview();
+      revokeBoardManagementState(
+        {
+          accessRequest,
+          departmentsRequest,
+          actionRequest,
+          departmentsAbort,
+          setBoard,
+          setDraft,
+          setDraftBase,
+          setDepartments,
+          setDepartmentsStatus,
+          setAccess,
+          setConflict,
+          setLatestReady,
+          setError,
+          setNotice,
+          setConfirmation,
+          setDiscardOpen,
+          onAccessDenied: () => {
+            if (boardId !== null) onAccessDenied?.(boardId);
+          },
         },
-      });
+        revokeBoard,
+      );
       return true;
     },
-    [mode, boardId, onAccessDenied],
+    [mode, boardId, onAccessDenied, clearPurgeReview],
   );
 
   useEffect(() => {
@@ -694,6 +853,9 @@ function ManagementInstance(props: Props) {
       draftBase !== null &&
       boardUpdateForDraft(draftBase, draft, true) !== null;
     setBoard(incomingBoard);
+    setPurgePreview(null);
+    setPurgeConfirmationName("");
+    setPurgePassword("");
     if (changed) {
       setConflict(true);
       setLatestReady(true);
@@ -716,7 +878,10 @@ function ManagementInstance(props: Props) {
         if (!current || request !== accessRequest.current || deniedRef.current)
           return;
         if (!permissions.manage) {
-          handleDenied(new ApiError(403, "Board management unavailable"));
+          handleDenied(
+            new ApiError(403, "Board management unavailable"),
+            !permissions.view,
+          );
           return;
         }
         setAccess("ready");
@@ -795,7 +960,10 @@ function ManagementInstance(props: Props) {
   function close() {
     if (pendingRef.current) return;
     if (dirty) setDiscardOpen(true);
-    else setOpen(false);
+    else {
+      clearPurgeReview();
+      setOpen(false);
+    }
   }
 
   async function save() {
@@ -949,6 +1117,7 @@ function ManagementInstance(props: Props) {
       setDraftBase(changed);
       setDraft(draftFromBoard(changed));
       setConfirmation(null);
+      clearPurgeReview();
       setNotice(action === "archive" ? "Board archived." : "Board restored.");
       props.onUpdated(changed);
     } catch (failure) {
@@ -974,6 +1143,126 @@ function ManagementInstance(props: Props) {
     } finally {
       pendingRef.current = false;
       if (mountedRef.current) setPending(false);
+    }
+  }
+
+  async function beginPurgeReview() {
+    if (
+      mode !== "manage" ||
+      !board ||
+      board.status !== "archived" ||
+      access !== "ready" ||
+      pendingRef.current ||
+      deniedRef.current ||
+      conflict ||
+      dirty
+    )
+      return;
+    const request = ++actionRequest.current;
+    pendingRef.current = true;
+    setPending(true);
+    clearPurgeReview();
+    setPurgePreviewLoading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const preview = await previewBoardPurge(board.id);
+      if (
+        !mountedRef.current ||
+        deniedRef.current ||
+        request !== actionRequest.current
+      )
+        return;
+      setPurgePreview(preview);
+    } catch (failure) {
+      if (
+        !mountedRef.current ||
+        deniedRef.current ||
+        request !== actionRequest.current
+      )
+        return;
+      if (
+        failure instanceof ApiError &&
+        [401, 404].includes(failure.status) &&
+        handleDenied(failure)
+      )
+        return;
+      setError(
+        failure instanceof ApiError && failure.status === 403
+          ? "Only an administrator can permanently delete a Board."
+          : "A permanent-deletion review could not be prepared. Check the Board and try again.",
+      );
+    } finally {
+      pendingRef.current = false;
+      if (mountedRef.current) {
+        setPending(false);
+        setPurgePreviewLoading(false);
+      }
+    }
+  }
+
+  async function confirmPurge() {
+    if (
+      mode !== "manage" ||
+      !board ||
+      board.status !== "archived" ||
+      access !== "ready" ||
+      !purgePreview ||
+      purgeConfirmationName !== purgePreview.confirmation_name ||
+      purgePassword.length === 0 ||
+      pendingRef.current ||
+      deniedRef.current ||
+      conflict ||
+      dirty
+    )
+      return;
+    const boardId = board.id;
+    const request = ++actionRequest.current;
+    const password = purgePassword;
+    pendingRef.current = true;
+    setPending(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await purgeBoard(boardId, {
+        token: purgePreview.token,
+        confirmationName: purgePreview.confirmation_name,
+        password,
+      });
+      if (
+        !mountedRef.current ||
+        deniedRef.current ||
+        request !== actionRequest.current
+      )
+        return;
+      clearPurgeReview();
+      setOpen(false);
+      if (props.mode === "manage") props.onPurged(boardId);
+    } catch (failure) {
+      if (
+        !mountedRef.current ||
+        deniedRef.current ||
+        request !== actionRequest.current
+      )
+        return;
+      if (
+        failure instanceof ApiError &&
+        [401, 404].includes(failure.status) &&
+        handleDenied(failure)
+      )
+        return;
+      setError(
+        failure instanceof ApiError && failure.status === 403
+          ? "Administrator verification failed. Confirm your password and access, then request a new review."
+          : failure instanceof ApiError && failure.status === 409
+            ? "The Board or its dependencies changed, or the review expired. Request a new review."
+            : "The Board was not permanently deleted. Request a new review and try again.",
+      );
+      clearPurgeReview();
+    } finally {
+      pendingRef.current = false;
+      if (mountedRef.current) setPending(false);
+      setPurgePassword("");
     }
   }
 
@@ -1038,6 +1327,22 @@ function ManagementInstance(props: Props) {
             onConfirmLifecycle={(action) => {
               if (!deniedRef.current) setConfirmation(action);
             }}
+            onBeginPurge={() => {
+              void beginPurgeReview();
+            }}
+            purgePreviewLoading={purgePreviewLoading}
+            purgePreview={purgePreview}
+            purgeConfirmationName={purgeConfirmationName}
+            purgePassword={purgePassword}
+            onChangePurgeConfirmationName={setPurgeConfirmationName}
+            onChangePurgePassword={setPurgePassword}
+            onCancelPurge={() => {
+              clearPurgeReview();
+              setError(null);
+            }}
+            onConfirmPurge={() => {
+              void confirmPurge();
+            }}
             onRetryAccess={() => setAccessRetry((value) => value + 1)}
             onRetryDepartments={() => setDepartmentsRetry((value) => value + 1)}
           />
@@ -1058,6 +1363,7 @@ function ManagementInstance(props: Props) {
           setDraftBase(board);
           setConflict(false);
           setLatestReady(false);
+          clearPurgeReview();
           setDiscardOpen(false);
           setOpen(false);
         }}

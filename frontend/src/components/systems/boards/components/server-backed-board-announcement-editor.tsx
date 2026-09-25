@@ -105,7 +105,7 @@ export function ServerBoardAnnouncementEditorDisplay({
   const heading = createElement(
     "h2",
     { className: "text-lg font-semibold" },
-    "Draft announcements",
+    "Editable announcements",
   );
   if (!view.active || view.status === "denied") {
     return createElement(
@@ -133,8 +133,8 @@ export function ServerBoardAnnouncementEditorDisplay({
           className: "mt-2 text-sm",
         },
         view.status === "loading"
-          ? "Loading draft announcements…"
-          : (view.error ?? "Draft announcements are unavailable."),
+          ? "Loading editable announcements…"
+          : (view.error ?? "Editable announcements are unavailable."),
       ),
       view.status === "error"
         ? createElement(
@@ -196,7 +196,7 @@ export function ServerBoardAnnouncementEditorDisplay({
             disabled: view.pending,
             className: secondaryClass,
           },
-          "Refresh drafts",
+          "Refresh announcements",
         ),
         createElement(
           "button",
@@ -305,13 +305,13 @@ export function ServerBoardAnnouncementEditorDisplay({
         createElement(
           "h3",
           { className: "text-sm font-medium" },
-          `Drafts (${view.total})`,
+          `Announcements (${view.total})`,
         ),
         view.drafts.length === 0
           ? createElement(
               "p",
               { className: "text-muted-foreground mt-2 text-sm" },
-              "No drafts on this page. Create an announcement to begin.",
+              "No editable announcements on this page. Create one to begin.",
             )
           : createElement(
               "ul",
@@ -333,7 +333,11 @@ export function ServerBoardAnnouncementEditorDisplay({
                         "border-border bg-card text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 py-2 text-left text-sm break-words focus-visible:outline-2 focus-visible:outline-offset-2",
                     },
                     item.title,
-                    item.status === "scheduled" ? " · Scheduled" : "",
+                    item.status === "scheduled"
+                      ? " · Scheduled"
+                      : item.status === "published"
+                        ? " · Published"
+                        : "",
                   ),
                 ),
               ),
@@ -342,7 +346,7 @@ export function ServerBoardAnnouncementEditorDisplay({
           ? createElement(
               "nav",
               {
-                "aria-label": "Draft announcement pages",
+                "aria-label": "Editable announcement pages",
                 className: "mt-3 flex flex-wrap items-center gap-2",
               },
               createElement(
@@ -387,7 +391,7 @@ export function ServerBoardAnnouncementEditorDisplay({
             createElement(
               "h3",
               { className: "font-semibold" },
-              selected ? "Edit draft" : "New draft",
+              selected ? "Edit announcement" : "New draft",
             ),
             selected?.status === "scheduled"
               ? createElement(
@@ -558,52 +562,60 @@ export function ServerBoardAnnouncementEditorDisplay({
                 "Add link",
               ),
             ),
-            selected && selected.announcementRevision !== null
-              ? createElement(HydratedBoardAttachments, {
-                  key: `draft-attachments:${selected.id}`,
-                  access: "edit",
-                  target: {
-                    kind: "announcement",
-                    boardId,
-                    contentId: selected.id,
-                    view: "draft",
-                  },
-                  versions: {
-                    boardRevision: selected.boardRevision,
-                    contentRevision: selected.announcementRevision,
-                  },
-                  refreshVersions: refreshAttachmentVersions,
-                  onBusyChange: onAttachmentBusyChange,
-                  locked: view.conflict || view.pending,
-                })
-              : createElement(
+            selected?.status === "published"
+              ? createElement(
                   "p",
                   { className: "text-muted-foreground text-sm" },
-                  "Save this draft before adding attachments.",
-                ),
-            selected && selected.announcementRevision !== null
-              ? createElement(HydratedBoardRecordLinks, {
-                  key: `draft-record-links:${selected.id}`,
-                  access: "edit",
-                  target: {
-                    kind: "announcement",
-                    boardId,
-                    contentId: selected.id,
-                    view: "draft",
-                  },
-                  versions: {
-                    boardRevision: selected.boardRevision,
-                    contentRevision: selected.announcementRevision,
-                  },
-                  refreshVersions: refreshAttachmentVersions,
-                  onBusyChange: onRecordLinkBusyChange,
-                  locked: view.conflict || view.pending,
-                })
-              : createElement(
-                  "p",
-                  { className: "text-muted-foreground text-sm" },
-                  "Save this draft before linking Records.",
-                ),
+                  "Save your changes as a draft before managing attachments and Record links.",
+                )
+              : selected && selected.announcementRevision !== null
+                ? createElement(HydratedBoardAttachments, {
+                    key: `draft-attachments:${selected.id}`,
+                    access: "edit",
+                    target: {
+                      kind: "announcement",
+                      boardId,
+                      contentId: selected.id,
+                      view: "draft",
+                    },
+                    versions: {
+                      boardRevision: selected.boardRevision,
+                      contentRevision: selected.announcementRevision,
+                    },
+                    refreshVersions: refreshAttachmentVersions,
+                    onBusyChange: onAttachmentBusyChange,
+                    locked: view.conflict || view.pending,
+                  })
+                : createElement(
+                    "p",
+                    { className: "text-muted-foreground text-sm" },
+                    "Save this draft before adding attachments.",
+                  ),
+            selected?.status === "published"
+              ? null
+              : selected && selected.announcementRevision !== null
+                ? createElement(HydratedBoardRecordLinks, {
+                    key: `draft-record-links:${selected.id}`,
+                    access: "edit",
+                    target: {
+                      kind: "announcement",
+                      boardId,
+                      contentId: selected.id,
+                      view: "draft",
+                    },
+                    versions: {
+                      boardRevision: selected.boardRevision,
+                      contentRevision: selected.announcementRevision,
+                    },
+                    refreshVersions: refreshAttachmentVersions,
+                    onBusyChange: onRecordLinkBusyChange,
+                    locked: view.conflict || view.pending,
+                  })
+                : createElement(
+                    "p",
+                    { className: "text-muted-foreground text-sm" },
+                    "Save this draft before linking Records.",
+                  ),
             createElement(
               "div",
               { className: "border-border space-y-3 rounded-md border p-3" },

@@ -1,20 +1,20 @@
 """Board announcement API, intentionally unmounted until Phase 5 integration."""
 
 from datetime import UTC, datetime
-from typing import Annotated, Any, cast
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
-from sqlalchemy import and_, func, or_, select, true
+from sqlalchemy import and_, func, literal, or_, select
 from sqlalchemy.orm import Session
-from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.dependencies import require_legacy_capability
-from app.common.listing import ListQuerySpec, execute_standard_list
+from app.common.listing import execute_standard_list
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
+from app.systems.access.users.permissions import Capability, has_capability
+from app.systems.boards.announcement_listing import display_join, editable_statement, list_spec
 from app.systems.boards.announcement_models import (
     BoardAnnouncement,
     BoardAnnouncementRevision,
@@ -32,7 +32,6 @@ from app.systems.boards.announcement_schemas import (
     AnnouncementResponse,
     AnnouncementRevisionWrite,
     AnnouncementSchedule,
-    AnnouncementSort,
     AnnouncementView,
 )
 from app.systems.boards.announcement_service import (
@@ -80,32 +79,9 @@ Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WR
 Database = Annotated[Session, Depends(get_db)]
 
 
-def _list_spec(view: AnnouncementView) -> ListQuerySpec[AnnouncementSort]:
-    source = BoardAnnouncementRevision if view is AnnouncementView.PUBLISHED else BoardAnnouncement
-    return ListQuerySpec(
-        sort_fields={
-            AnnouncementSort.CREATED_AT: cast(ColumnElement[Any], source.created_at),
-            AnnouncementSort.UPDATED_AT: cast(ColumnElement[Any], source.updated_at),
-            AnnouncementSort.TITLE: cast(ColumnElement[Any], source.title),
-        },
-        default_sort=AnnouncementSort.UPDATED_AT,
-        tie_breaker=cast(ColumnElement[Any], BoardAnnouncement.id),
-        search_fields=(
-            cast(ColumnElement[str], source.title),
-            cast(ColumnElement[str], source.body),
-        ),
-        deleted_field=None,
-    )
-
-
-def _display_join() -> ColumnElement[bool]:
-    return and_(
-        BoardAnnouncementRevision.announcement_id == BoardAnnouncement.id,
-        BoardAnnouncementRevision.publication_number
-        == BoardAnnouncement.displayed_publication_number,
-        BoardAnnouncementRevision.is_deleted.is_(False),
-        BoardAnnouncementRevision.deleted_at.is_(None),
-    )
+def _require_editor_role(actor: User) -> None:
+    if not has_capability(actor.role, Capability.RECORDS_WRITE):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
 
 @router.get("/{board_id}/announcements", response_model=AnnouncementListResponse)
@@ -115,7 +91,12 @@ def list_announcements(
     db: Database,
     params: Annotated[AnnouncementListRequest, Query()],
 ) -> AnnouncementListResponse:
-    board = _board_with_access(db, actor, board_id, BoardPermission.VIEW)
+    editable = params.view is AnnouncementView.EDITABLE
+    if editable:
+        _require_editor_role(actor)
+    board = _board_with_access(
+        db, actor, board_id, BoardPermission.EDIT if editable else BoardPermission.VIEW
+    )
     manager = read_manager(db, board, actor)
     base = select(BoardAnnouncement).where(
         BoardAnnouncement.board_id == board.id,
@@ -123,21 +104,25 @@ def list_announcements(
         BoardAnnouncement.deleted_at.is_(None),
     )
     if params.view is AnnouncementView.PUBLISHED:
-        statement = base.join(BoardAnnouncementRevision, _display_join()).where(
+        statement = base.join(BoardAnnouncementRevision, display_join()).where(
             BoardAnnouncement.status != "archived",
             audience_clause(BoardAnnouncementRevision, actor),
             published_expiry(actor, manager, datetime.now(UTC)),
         )
+    elif params.view is AnnouncementView.EDITABLE:
+        statement = editable_statement(base, actor, manager)
     elif params.view is AnnouncementView.DRAFT:
         statement = base.where(
             BoardAnnouncement.status.in_(("draft", "scheduled")),
-            true() if manager else BoardAnnouncement.author_id == actor.id,
-            audience_clause(BoardAnnouncement, actor),
+            or_(
+                BoardAnnouncement.author_id == actor.id,
+                and_(literal(manager), audience_clause(BoardAnnouncement, actor)),
+            ),
         )
     else:
         if not manager:
             raise not_found()
-        statement = base.outerjoin(BoardAnnouncementRevision, _display_join()).where(
+        statement = base.outerjoin(BoardAnnouncementRevision, display_join()).where(
             BoardAnnouncement.status == "archived",
             audience_clause(BoardAnnouncement, actor),
             or_(
@@ -152,7 +137,7 @@ def list_announcements(
             else BoardAnnouncement
         )
         statement = statement.where(author_source.author_id == params.author_id)
-    result = execute_standard_list(db, statement, params, _list_spec(params.view))
+    result = execute_standard_list(db, statement, params, list_spec(params.view))
     items = [
         announcement_response(
             item,
@@ -206,12 +191,17 @@ def read_announcement(
     db: Database,
     view: AnnouncementView = AnnouncementView.PUBLISHED,
 ) -> AnnouncementResponse:
-    board = _board_with_access(db, actor, board_id, BoardPermission.VIEW)
+    editable = view is AnnouncementView.EDITABLE
+    if editable:
+        _require_editor_role(actor)
+    board = _board_with_access(
+        db, actor, board_id, BoardPermission.EDIT if editable else BoardPermission.VIEW
+    )
     manager = read_manager(db, board, actor)
     if view is AnnouncementView.PUBLISHED:
         item = db.scalar(
             select(BoardAnnouncement)
-            .join(BoardAnnouncementRevision, _display_join())
+            .join(BoardAnnouncementRevision, display_join())
             .where(
                 BoardAnnouncement.id == announcement_id,
                 BoardAnnouncement.board_id == board.id,
@@ -226,7 +216,17 @@ def read_announcement(
             raise not_found()
         return announcement_response(item, board, displayed_revision(db, item))
     item = announcement(db, board.id, announcement_id, actor)
-    if view is AnnouncementView.DRAFT:
+    if editable:
+        if item.status not in ("draft", "scheduled", "published"):
+            raise not_found()
+        if item.author_id != actor.id:
+            if not manager:
+                raise not_found()
+            if item.status == "published":
+                displayed = displayed_revision(db, item)
+                if displayed is None or not revision_visible(db, displayed, actor):
+                    raise not_found()
+    elif view is AnnouncementView.DRAFT:
         if item.status not in ("draft", "scheduled") or not (item.author_id == actor.id or manager):
             raise not_found()
     else:

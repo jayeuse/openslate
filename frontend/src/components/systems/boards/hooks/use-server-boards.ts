@@ -200,8 +200,16 @@ export function boardListKey(
   status: BoardListStatus,
   offset: number,
   search: string | null,
+  departmentId: string | null = null,
+  favoritesOnly = false,
 ): string {
-  return JSON.stringify([status, offset, search ?? ""]);
+  return JSON.stringify([
+    status,
+    offset,
+    search ?? "",
+    departmentId ?? "",
+    favoritesOnly,
+  ]);
 }
 
 export function useServerBoardsResource(
@@ -209,6 +217,8 @@ export function useServerBoardsResource(
   status: BoardListStatus,
   offset: number,
   search: string | null,
+  departmentId: string | null,
+  favoritesOnly: boolean,
 ) {
   const [list, setList] =
     useState<ResourceState<BoardManagementPage>>(emptyResource);
@@ -265,7 +275,13 @@ export function useServerBoardsResource(
     };
   }, []);
 
-  const listKey = boardListKey(status, offset, search);
+  const listKey = boardListKey(
+    status,
+    offset,
+    search,
+    departmentId,
+    favoritesOnly,
+  );
   useEffect(() => {
     const sequence = ++listSequence.current;
     setList((current) =>
@@ -276,6 +292,8 @@ export function useServerBoardsResource(
       limit: 25,
       offset,
       ...(search ? { search } : {}),
+      ...(departmentId ? { departmentId } : {}),
+      favoritesOnly,
     })
       .then((data) => {
         if (sequence !== listSequence.current) return;
@@ -319,7 +337,16 @@ export function useServerBoardsResource(
     return () => {
       listSequence.current += 1;
     };
-  }, [listKey, status, offset, search, listRetry, invalidateAccess]);
+  }, [
+    listKey,
+    status,
+    offset,
+    search,
+    departmentId,
+    favoritesOnly,
+    listRetry,
+    invalidateAccess,
+  ]);
 
   useEffect(() => {
     const sequence = ++personalSequence.current;
@@ -542,8 +569,13 @@ export function useServerBoardsResource(
   );
 
   const saveFavorite = useCallback(
-    (boardId: string, favorite: boolean) =>
-      updatePersonal(boardId, () => setBoardFavorite(boardId, favorite)),
+    async (boardId: string, favorite: boolean) => {
+      const saved = await updatePersonal(boardId, () =>
+        setBoardFavorite(boardId, favorite),
+      );
+      if (saved && mounted.current) setListRetry((value) => value + 1);
+      return saved;
+    },
     [updatePersonal],
   );
   const saveHome = useCallback(

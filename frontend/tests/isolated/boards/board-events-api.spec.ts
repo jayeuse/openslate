@@ -9,6 +9,7 @@ import {
   readBoardEvent,
   restoreBoardEvent,
   updateBoardEvent,
+  type BoardEventPage,
 } from "../../../src/components/systems/boards/adapters/board-events-api";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
@@ -98,6 +99,47 @@ test("Board event series list uses bounded query and parses only the audience-vi
       `/api/boards/${boardId}/events?limit=25&offset=0&sort_by=created_at&sort_order=desc&archived=all&search=Plan`,
     );
     expect(mock.requests[0]?.init?.cache).toBe("no-store");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("My events uses its own bounded paged endpoint", async () => {
+  const mock = installFetch(() =>
+    jsonResponse({
+      items: [allDayEvent],
+      pagination: {
+        limit: 25,
+        offset: 25,
+        count: 1,
+        total: 26,
+        has_more: false,
+      },
+      board_revision: 3,
+    }),
+  );
+  try {
+    const events =
+      (await import("../../../src/components/systems/boards/adapters/board-events-api")) as unknown as {
+        listMyBoardEvents: (
+          id: string,
+          options: { limit: number; offset: number; search: string },
+        ) => Promise<BoardEventPage>;
+      };
+    const result = await events.listMyBoardEvents(boardId, {
+      limit: 25,
+      offset: 25,
+      search: "  Planning  ",
+    });
+    expect(result.items[0]?.id).toBe(eventId);
+    expect(result.pagination).toMatchObject({
+      total: 26,
+      offset: 25,
+      hasMore: false,
+    });
+    expect(String(mock.requests[0]?.input)).toBe(
+      `/api/boards/${boardId}/events/mine?limit=25&offset=25&sort_by=created_at&sort_order=desc&archived=active&search=Planning`,
+    );
   } finally {
     mock.restore();
   }
@@ -231,6 +273,7 @@ test("Board event occurrence window is inclusive, bounded, paged and carries its
       windowEnd: "2026-09-20",
       limit: 10,
       offset: 5,
+      search: "  Budget%_ ",
     });
     expect(result.items[0]).toMatchObject({
       id: `${eventId}:2026-09-14`,
@@ -243,7 +286,7 @@ test("Board event occurrence window is inclusive, bounded, paged and carries its
     });
     expect(result.pagination).toMatchObject({ total: 6, hasMore: false });
     expect(String(mock.requests[0]?.input)).toBe(
-      `/api/boards/${boardId}/events/occurrences?window_start=2026-09-14&window_end=2026-09-20&limit=10&offset=5`,
+      `/api/boards/${boardId}/events/occurrences?window_start=2026-09-14&window_end=2026-09-20&limit=10&offset=5&search=Budget%25_`,
     );
   } finally {
     mock.restore();

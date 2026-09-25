@@ -1,6 +1,6 @@
 """Board event API authorization, audience, lifecycle, and occurrence contracts."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import Mock
 
 import pytest
@@ -14,6 +14,7 @@ from uuid6 import uuid7
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.systems.access.users.models import Role, User, UserDepartment
+from app.systems.boards.event_author_router import router as author_router
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.event_router import router
 from app.systems.boards.event_schemas import EventCreate
@@ -24,6 +25,7 @@ from tests.rbac.support import make_role, make_user
 
 def _client(db: Session, actor: User) -> TestClient:
     app = FastAPI()
+    app.include_router(author_router, prefix="/api")
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: actor
@@ -448,7 +450,24 @@ def test_event_revisioned_author_and_manager_lifecycle_with_self_excluding_write
     )
     assert hidden_create.status_code == 201
     assert set(hidden_create.json()) == {"id", "event_revision", "board_revision"}
-    assert editor_client.get(f"{root}/{hidden_create.json()['id']}").status_code == 404
+    hidden_id = hidden_create.json()["id"]
+    assert editor_client.get(f"{root}/{hidden_id}").status_code == 200
+    regular = editor_client.get(root)
+    assert regular.json()["pagination"]["total"] == 1
+    assert hidden_id not in [item["id"] for item in regular.json()["items"]]
+    mine = editor_client.get(f"{root}/mine?limit=1&offset=0")
+    assert mine.status_code == 200
+    assert mine.json()["pagination"] == {
+        "limit": 1,
+        "offset": 0,
+        "count": 1,
+        "total": 1,
+        "has_more": False,
+    }
+    assert [item["id"] for item in mine.json()["items"]] == [hidden_id]
+    other_mine = _client(db, other).get(f"{root}/mine")
+    assert other_mine.json()["pagination"]["total"] == 1
+    assert hidden_id not in [item["id"] for item in other_mine.json()["items"]]
     assert manager_client.get(f"{root}/{hidden_create.json()['id']}").status_code == 200
     board.status = "archived"
     db.commit()
@@ -464,12 +483,14 @@ def test_event_creation_rejects_inactive_audience_targets_without_a_partial_writ
     db = integration_owner_db
     owner = _actor(db, "inactive-target-owner")
     target_user = _actor(db, "inactive-target-user")
+    expired_user = _actor(db, "expired-target-user")
     target_role = Role(role=f"inactive-event-role-{uuid7().hex}", permissions={})
     department = Department(department_name=f"Inactive event department {uuid7().hex}")
     board = _board(db, owner)
     db.add_all([target_role, department])
     db.flush()
     target_user.is_deleted = True
+    expired_user.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     target_role.is_deleted = True
     department.is_deleted = True
     db.commit()
@@ -479,6 +500,7 @@ def test_event_creation_rejects_inactive_audience_targets_without_a_partial_writ
     for audience in (
         {"kind": "role", "role_id": str(target_role.id)},
         {"kind": "user", "user_id": str(target_user.id)},
+        {"kind": "user", "user_id": str(expired_user.id)},
         {"kind": "department", "department_id": str(department.id)},
     ):
         response = client.post(root, json=_payload(1, audience=audience))

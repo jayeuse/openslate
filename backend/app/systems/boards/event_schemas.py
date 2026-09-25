@@ -6,7 +6,7 @@ from typing import Literal, Self
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from app.common.listing import SortOrder, StandardListRequest, StandardListResponse
 from app.systems.boards.content_links import ContentLink
@@ -184,6 +184,14 @@ class OccurrenceRequest(BaseModel):
     window_end: date
     limit: int = Field(default=100, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
+    search: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @field_validator("search", mode="before")
+    @classmethod
+    def normalize_search(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
     @model_validator(mode="after")
     def bounded_window(self) -> Self:

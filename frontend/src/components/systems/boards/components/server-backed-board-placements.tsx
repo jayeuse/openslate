@@ -171,6 +171,10 @@ function failure(error: unknown): { message: string; denied: boolean } {
   };
 }
 
+function choiceQueryRevokedBoardAccess(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
 export function ServerBoardPlacementsDisplay({
   page,
   canEdit = false,
@@ -424,7 +428,7 @@ export function ServerBackedBoardPlacements({
               ? "Record sources are unavailable with your current access."
               : "Could not load record sources. Try again.",
         });
-        if (error instanceof ApiError && [401, 403].includes(error.status)) {
+        if (choiceQueryRevokedBoardAccess(error)) {
           const deniedSequence = ++workspaceSequence.current;
           setWorkspace({
             key: workspaceKey,
@@ -473,7 +477,7 @@ export function ServerBackedBoardPlacements({
               ? "Records are unavailable with your current access."
               : "Could not load records. Try again.",
         });
-        if (error instanceof ApiError && [401, 403].includes(error.status)) {
+        if (choiceQueryRevokedBoardAccess(error)) {
           const deniedSequence = ++workspaceSequence.current;
           setWorkspace({
             key: workspaceKey,

@@ -12,7 +12,7 @@ const utc = z.iso
   .datetime({ offset: true })
   .refine((value) => /(?:Z|[+-]00:00)$/i.test(value));
 const revision = z.number().int().min(1);
-const view = z.enum(["published", "draft", "archive"]);
+const view = z.enum(["published", "draft", "editable", "archive"]);
 const linkUrl = z
   .string()
   .trim()
@@ -420,7 +420,12 @@ function matchesView(
     : selected === "draft"
       ? (item.status === "draft" || item.status === "scheduled") &&
         item.announcementRevision !== null
-      : item.status === "archived" && item.announcementRevision !== null;
+      : selected === "editable"
+        ? (item.status === "draft" ||
+            item.status === "scheduled" ||
+            item.status === "published") &&
+          item.announcementRevision !== null
+        : item.status === "archived" && item.announcementRevision !== null;
 }
 
 export async function listBoardAnnouncements(

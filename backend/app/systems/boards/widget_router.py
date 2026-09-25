@@ -13,6 +13,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.common.dependencies import require_legacy_capability
 from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.database import get_db
+from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.models import Role, User, UserStatus
 from app.systems.access.users.permissions import Capability
@@ -226,6 +227,7 @@ def _validate_audience(db: Session, audience: BoardWidgetAudience) -> None:
                 User.status == UserStatus.ACTIVE.value,
                 User.is_deleted.is_(False),
                 User.deleted_at.is_(None),
+                identity_eligible_clause(),
                 established_user_clause(),
                 Role.is_deleted.is_(False),
                 Role.deleted_at.is_(None),

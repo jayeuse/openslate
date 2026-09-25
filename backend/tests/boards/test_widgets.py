@@ -1,5 +1,6 @@
 """Board widget configuration, audience, and mutation boundaries."""
 
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -236,6 +237,20 @@ def test_board_widgets_reject_invalid_sources_audiences_archives_and_limit(
     )
     assert unavailable.status_code == 409
     assert unavailable.json()["detail"]["code"] == "audience_invalid"
+    expired = _actor(db, {"records.read": True})
+    expired.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db.flush()
+    expired_audience = client.post(
+        root,
+        json={
+            "revision": 1,
+            "widget": _widget(
+                module.id, field.id, audience={"kind": "user", "user_id": str(expired.id)}
+            ),
+        },
+    )
+    assert expired_audience.status_code == 409
+    assert expired_audience.json()["detail"]["code"] == "audience_invalid"
     field.is_deleted = True
     db.commit()
     removed_field = client.post(root, json={"revision": 1, "widget": _widget(module.id, field.id)})

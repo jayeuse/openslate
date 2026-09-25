@@ -263,6 +263,7 @@ const occurrenceOptions = z
     windowEnd: date,
     limit: z.number().int().min(1).max(100).default(100),
     offset: z.number().int().min(0).default(0),
+    search: z.string().trim().min(1).max(100).optional(),
   })
   .strict()
   .refine(({ windowStart, windowEnd }) => {
@@ -441,8 +442,9 @@ function queryString(values: Record<string, string | number>): string {
   return query.toString();
 }
 
-export async function listBoardEvents(
+async function listEvents(
   rawBoardId: string,
+  mine: boolean,
   raw: BoardEventListOptions = {},
 ): Promise<BoardEventPage> {
   const boardId = uuid.parse(rawBoardId);
@@ -456,12 +458,26 @@ export async function listBoardEvents(
   };
   if (options.search !== undefined) values.search = options.search;
   const page = await eventJson(
-    `/boards/${boardId}/events?${queryString(values)}`,
+    `/boards/${boardId}/events${mine ? "/mine" : ""}?${queryString(values)}`,
     eventListWire,
   );
   if (page.items.some((item) => item.boardId !== boardId))
     throw new ApiContractError();
   return page;
+}
+
+export function listBoardEvents(
+  boardId: string,
+  options: BoardEventListOptions = {},
+): Promise<BoardEventPage> {
+  return listEvents(boardId, false, options);
+}
+
+export function listMyBoardEvents(
+  boardId: string,
+  options: BoardEventListOptions = {},
+): Promise<BoardEventPage> {
+  return listEvents(boardId, true, options);
 }
 
 export async function readBoardEvent(
@@ -690,13 +706,15 @@ export async function listBoardEventOccurrences(
 ): Promise<BoardEventOccurrencePage> {
   const boardId = uuid.parse(rawBoardId);
   const options = occurrenceOptions.parse(raw);
+  const values: Record<string, string | number> = {
+    window_start: options.windowStart,
+    window_end: options.windowEnd,
+    limit: options.limit,
+    offset: options.offset,
+  };
+  if (options.search !== undefined) values.search = options.search;
   const page = await eventJson(
-    `/boards/${boardId}/events/occurrences?${queryString({
-      window_start: options.windowStart,
-      window_end: options.windowEnd,
-      limit: options.limit,
-      offset: options.offset,
-    })}`,
+    `/boards/${boardId}/events/occurrences?${queryString(values)}`,
     occurrenceListWire,
   );
   if (page.items.some((item) => item.event.boardId !== boardId))

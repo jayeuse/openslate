@@ -50,6 +50,7 @@ from app.systems.boards.announcement_personal_router import (
 )
 from app.systems.boards.announcement_router import router as board_announcements_router
 from app.systems.boards.attachment_router import router as board_attachments_router
+from app.systems.boards.event_author_router import router as board_event_authors_router
 from app.systems.boards.event_router import router as board_events_router
 from app.systems.boards.grant_router import router as board_grants_router
 from app.systems.boards.lifecycle_router import router as board_lifecycle_router
@@ -336,6 +337,7 @@ def create_app() -> FastAPI:
     app.include_router(board_lifecycle_router, prefix="/api")
     app.include_router(board_widgets_router, prefix="/api")
     app.include_router(board_placements_router, prefix="/api")
+    app.include_router(board_event_authors_router, prefix="/api")
     app.include_router(board_events_router, prefix="/api")
     app.include_router(board_reminders_router, prefix="/api")
     app.include_router(board_record_links_router, prefix="/api")

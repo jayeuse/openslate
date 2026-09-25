@@ -217,7 +217,7 @@ def visible_file(
         )
     if link is None:
         raise _hidden()
-    file = load(db, file_id, active_parent=True)
+    file = load(db, file_id)
     if (
         file.board_id != board_id
         or file.purpose != "board_attachment"
