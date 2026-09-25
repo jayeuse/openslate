@@ -1,6 +1,4 @@
 "use client";
-import { useBoardsController } from "../boards/state/controller";
-import { DEFAULT_BOARD_ID } from "../boards/domain/model";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type { Route } from "next";
@@ -24,6 +22,7 @@ import {
 import { Action, Choice, Panel, Toggle } from "../shared/components/ui";
 import ImportExport from "./components/import-export";
 import Account from "./components/account";
+import ConnectedReportNotifications from "./components/connected-report-notifications";
 import {
   PLATFORM_OWNER_KEYS,
   pagePlatformSearch,
@@ -111,16 +110,6 @@ export default function SamplePlatform() {
   const [query, setQuery] = useState("");
   const [fileQuery, setFileQuery] = useState("");
   const fileId = searchParams.get("file") ?? "";
-  const boardsController = useBoardsController();
-  const boardRecords = boardsController.state.placements
-    .filter((placement) => placement.boardId === DEFAULT_BOARD_ID)
-    .map((placement) => placement.recordId);
-  const canPlaceOnBoard =
-    boardsController.state.boards.some(
-      (board) => board.id === DEFAULT_BOARD_ID && board.status === "active",
-    ) &&
-    (boardsController.can(DEFAULT_BOARD_ID, "edit") ||
-      boardsController.can(DEFAULT_BOARD_ID, "manage"));
   const [recordId, setRecordId] = useState(workspace.records[0]?.id ?? "");
   const [notice, setNotice] = useState("");
   const selectedRecord =
@@ -183,9 +172,7 @@ export default function SamplePlatform() {
         `platform:notification:simulate:${pendingRecordId}`,
       )
     : false;
-  const boardPending = boardsController.isPending();
-  const isNavigationPending = () =>
-    platformCommands.isPending() || boardsController.isPending();
+  const isNavigationPending = () => platformCommands.isPending();
   const navigationPending = isNavigationPending();
   const assignmentValue = selectedRecord
     ? (assigneeDrafts[selectedRecord.id] ?? selectedRecord.assignee)
@@ -198,7 +185,7 @@ export default function SamplePlatform() {
       nextTab: PlatformSection,
       options?: { fileId?: string; replace?: boolean },
     ) => {
-      if (platformCommands.isPending() || boardsController.isPending()) return;
+      if (platformCommands.isPending()) return;
       const params = new URLSearchParams(searchParams.toString());
       if (options?.fileId) {
         params.set("file", options.fileId);
@@ -209,12 +196,7 @@ export default function SamplePlatform() {
       if (options?.replace) router.replace(href as Route, { scroll: false });
       else router.push(href as Route, { scroll: false });
     },
-    [
-      router,
-      searchParams,
-      platformCommands.isPending,
-      boardsController.isPending,
-    ],
+    [router, searchParams, platformCommands.isPending],
   );
 
   useWorkspaceNavigationGuard(
@@ -251,16 +233,11 @@ export default function SamplePlatform() {
       window.removeEventListener("hashchange", syncHash);
       document.removeEventListener("click", click);
     };
-  }, [platformCommands.isPending, boardsController.isPending]);
+  }, [platformCommands.isPending]);
   useEffect(() => {
     if (isNavigationPending() || recordId === selectedRecordId) return;
     setRecordId(selectedRecordId);
-  }, [
-    recordId,
-    selectedRecordId,
-    platformCommands.isPending,
-    boardsController.isPending,
-  ]);
+  }, [recordId, selectedRecordId, platformCommands.isPending]);
   useEffect(() => {
     if (!selectedRecord) return;
     const draft = assigneeDrafts[selectedRecord.id];
@@ -359,26 +336,6 @@ export default function SamplePlatform() {
     const assignee = assigneeDrafts[selectedRecord.id];
     if (assignee === undefined) return;
     void assignRecord(selectedRecord.id, assignee);
-  }
-  async function placeRecordOnBoard() {
-    if (!selectedRecord) return;
-    const now = new Date().toISOString();
-    const result = await boardsController.run({
-      type: "place-record",
-      placement: {
-        id: `board-placement-${crypto.randomUUID()}`,
-        boardId: DEFAULT_BOARD_ID,
-        recordId: selectedRecord.id,
-        moduleId: "service-requests",
-        pinned: false,
-        position: boardRecords.length,
-        createdAt: now,
-        updatedAt: now,
-      },
-    });
-    setNotice(
-      result.ok ? "Record added to the organization board." : result.error,
-    );
   }
   async function startRecordDiscussion() {
     if (!selectedRecord) return;
@@ -553,138 +510,150 @@ export default function SamplePlatform() {
           </p>
         </section>
       ) : tab === "Notifications" ? (
-        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <Panel title="Notification center">
-            <div className="flex flex-wrap gap-2">
-              <Action
-                onClick={() => void markAllNotificationsRead()}
-                disabled={
-                  !notifications.some((item) => !item.read) ||
-                  platformCommands.isPending("platform:notifications:read-all")
-                }
-              >
-                Mark all as read
-              </Action>
-              <Action
-                aria-describedby={
-                  selectedRecord ? undefined : "record-update-unavailable"
-                }
-                onClick={() => void simulateRecordUpdate()}
-                disabled={!selectedRecord || pendingSimulation}
-              >
-                {pendingSimulation
-                  ? "Simulating update…"
-                  : "Simulate record update"}
-              </Action>
-            </div>
-            {!selectedRecord && (
-              <p
-                id="record-update-unavailable"
-                className="text-muted-foreground text-sm"
-              >
-                Record update simulation is unavailable because this workspace
-                has no records.
+        <div className="space-y-5">
+          <ConnectedReportNotifications />
+          <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <Panel title="Preview notifications">
+              <p className="text-muted-foreground text-sm">
+                These sample updates stay in this browser and are not connected
+                to live delivery.
               </p>
-            )}
-            {!notifications.length && (
-              <div className="py-12 text-center">
-                <Bell className="text-muted-foreground mx-auto mb-3 size-7" />
-                <p className="text-sm font-medium">You’re all caught up</p>
-                <p className="text-muted-foreground mt-2 text-xs">
-                  Simulate an update or a thread reply to try notifications.
-                </p>
+              <div className="flex flex-wrap gap-2">
+                <Action
+                  onClick={() => void markAllNotificationsRead()}
+                  disabled={
+                    !notifications.some((item) => !item.read) ||
+                    platformCommands.isPending(
+                      "platform:notifications:read-all",
+                    )
+                  }
+                >
+                  Mark all as read
+                </Action>
+                <Action
+                  aria-describedby={
+                    selectedRecord ? undefined : "record-update-unavailable"
+                  }
+                  onClick={() => void simulateRecordUpdate()}
+                  disabled={!selectedRecord || pendingSimulation}
+                >
+                  {pendingSimulation
+                    ? "Simulating update…"
+                    : "Simulate record update"}
+                </Action>
               </div>
-            )}
-            {notifications.map((item) => (
-              <article
-                key={item.id}
-                className={`space-y-3 rounded-lg border p-4 ${item.read ? "" : "bg-muted/40"}`}
-              >
-                <p className="text-sm font-medium">{item.title}</p>
-                <div className="flex flex-wrap items-center gap-3">
-                  <Action
-                    onClick={() =>
-                      void platformCommands
-                        .toggleNotification(item.id)
-                        .then((result) => {
-                          if (!result.ok) setNotice(result.error);
-                        })
-                        .catch((error: unknown) =>
-                          setNotice(
-                            commandError(
-                              error,
-                              "This notification could not be updated.",
-                            ),
-                          ),
-                        )
-                    }
-                    disabled={platformCommands.isPending(
-                      `platform:notification:${item.id}`,
-                    )}
-                  >
-                    Mark {item.read ? "unread" : "read"}
-                  </Action>
-                  {item.recordId ? (
-                    <Link
-                      className="inline-flex min-h-11 items-center text-sm underline underline-offset-4"
-                      href={`/openview?record=${encodeURIComponent(item.recordId)}`}
-                    >
-                      Open linked record
-                    </Link>
-                  ) : (
-                    <Link
-                      className="inline-flex min-h-11 items-center text-sm underline"
-                      href={
-                        item.channelId
-                          ? `/comms?conversation=${encodeURIComponent(item.channelId)}${item.messageId ? `&message=${encodeURIComponent(item.messageId)}` : ""}`
-                          : "/comms"
-                      }
-                    >
-                      Open conversation
-                    </Link>
-                  )}
+              {!selectedRecord && (
+                <p
+                  id="record-update-unavailable"
+                  className="text-muted-foreground text-sm"
+                >
+                  Record update simulation is unavailable because this workspace
+                  has no records.
+                </p>
+              )}
+              {!notifications.length && (
+                <div className="py-12 text-center">
+                  <Bell className="text-muted-foreground mx-auto mb-3 size-7" />
+                  <p className="text-sm font-medium">You’re all caught up</p>
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    Simulate an update or a thread reply to try notifications.
+                  </p>
                 </div>
-              </article>
-            ))}
-          </Panel>
-          <Panel title="Personal preferences">
-            <Toggle
-              control="switch"
-              label="Thread reply notifications"
-              checked={preferences.threads}
-              disabled={platformCommands.isPending(
-                "platform:notification-preferences",
               )}
-              onCheckedChange={(checked) =>
-                void updateNotificationPreference({ threads: checked })
-              }
-            />
-            <Toggle
-              control="switch"
-              label="Record update notifications"
-              checked={preferences.records}
-              disabled={platformCommands.isPending(
-                "platform:notification-preferences",
-              )}
-              onCheckedChange={(checked) =>
-                void updateNotificationPreference({ records: checked })
-              }
-            />
-            <Toggle
-              control="switch"
-              label="Daily digest"
-              checked={preferences.digest}
-              disabled={platformCommands.isPending(
-                "platform:notification-preferences",
-              )}
-              onCheckedChange={(checked) =>
-                void updateNotificationPreference({ digest: checked })
-              }
-            />
-            <p className="text-muted-foreground text-xs">
-              Preferences updated. No emails or background jobs are sent.
-            </p>
-          </Panel>
+              {notifications.map((item) => (
+                <article
+                  key={item.id}
+                  className={`space-y-3 rounded-lg border p-4 ${item.read ? "" : "bg-muted/40"}`}
+                >
+                  <p className="text-sm font-medium">{item.title}</p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Action
+                      onClick={() =>
+                        void platformCommands
+                          .toggleNotification(item.id)
+                          .then((result) => {
+                            if (!result.ok) setNotice(result.error);
+                          })
+                          .catch((error: unknown) =>
+                            setNotice(
+                              commandError(
+                                error,
+                                "This notification could not be updated.",
+                              ),
+                            ),
+                          )
+                      }
+                      disabled={platformCommands.isPending(
+                        `platform:notification:${item.id}`,
+                      )}
+                    >
+                      Mark {item.read ? "unread" : "read"}
+                    </Action>
+                    {item.recordId ? (
+                      <Link
+                        className="inline-flex min-h-11 items-center text-sm underline underline-offset-4"
+                        href={`/openview?record=${encodeURIComponent(item.recordId)}`}
+                      >
+                        Open linked record
+                      </Link>
+                    ) : (
+                      <Link
+                        className="inline-flex min-h-11 items-center text-sm underline"
+                        href={
+                          item.channelId
+                            ? `/comms?conversation=${encodeURIComponent(item.channelId)}${item.messageId ? `&message=${encodeURIComponent(item.messageId)}` : ""}`
+                            : "/comms"
+                        }
+                      >
+                        Open conversation
+                      </Link>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </Panel>
+            <Panel title="Preview preferences">
+              <p className="text-muted-foreground text-sm">
+                These settings affect the local notification preview only.
+              </p>
+              <Toggle
+                control="switch"
+                label="Thread reply notifications"
+                checked={preferences.threads}
+                disabled={platformCommands.isPending(
+                  "platform:notification-preferences",
+                )}
+                onCheckedChange={(checked) =>
+                  void updateNotificationPreference({ threads: checked })
+                }
+              />
+              <Toggle
+                control="switch"
+                label="Record update notifications"
+                checked={preferences.records}
+                disabled={platformCommands.isPending(
+                  "platform:notification-preferences",
+                )}
+                onCheckedChange={(checked) =>
+                  void updateNotificationPreference({ records: checked })
+                }
+              />
+              <Toggle
+                control="switch"
+                label="Daily digest"
+                checked={preferences.digest}
+                disabled={platformCommands.isPending(
+                  "platform:notification-preferences",
+                )}
+                onCheckedChange={(checked) =>
+                  void updateNotificationPreference({ digest: checked })
+                }
+              />
+              <p className="text-muted-foreground text-xs">
+                Preferences updated. No emails or background jobs are sent.
+              </p>
+            </Panel>
+          </div>
         </div>
       ) : tab === "File library" ? (
         <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
@@ -835,22 +804,6 @@ export default function SamplePlatform() {
                 )}
                 <div className="flex flex-wrap gap-2">
                   <Action
-                    onClick={() => void placeRecordOnBoard()}
-                    disabled={
-                      !canPlaceOnBoard ||
-                      boardRecords.includes(selectedRecord.id) ||
-                      boardPending
-                    }
-                  >
-                    {boardPending
-                      ? "Adding to Board…"
-                      : !canPlaceOnBoard
-                        ? "Organization board unavailable"
-                        : boardRecords.includes(selectedRecord.id)
-                          ? "Added to Board"
-                          : "Add record to Board"}
-                  </Action>
-                  <Action
                     onClick={() => void startRecordDiscussion()}
                     disabled={platformCommands.isPending(
                       `platform:record-discussion:${selectedRecord.id}`,
@@ -880,6 +833,9 @@ export default function SamplePlatform() {
                   </Action>
                 </div>
                 <p className="text-muted-foreground text-sm">
+                  These sample records can’t be linked to connected Boards.
+                </p>
+                <p className="text-muted-foreground text-sm">
                   {followed.includes(selectedRecord.id)
                     ? "Following this record for future updates."
                     : "Follow this record to keep its changes in your notification center."}
@@ -905,7 +861,7 @@ export default function SamplePlatform() {
               className="flex min-h-14 items-center justify-between rounded-lg border p-4 text-sm"
               href="/boards"
             >
-              Open organization Board
+              Open Boards
               <ArrowUpRight className="size-4" />
             </Link>
             <Link

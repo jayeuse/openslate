@@ -11,7 +11,7 @@ from uuid6 import uuid7
 
 import app.systems.sandbox.publications.router as publication_router
 from app.common.dependencies.auth import CurrentIdentity
-from app.systems.access.identity.service import IdentityRateLimited, InvalidCredentials
+from app.systems.access.identity.contracts import IdentityRateLimited, InvalidCredentials
 from app.systems.access.users.models import Role, User, UserStatus
 from app.systems.sandbox.publications.schemas import PublicationRequest
 
@@ -52,14 +52,24 @@ def test_failed_publication_password_commits_rate_limit_and_maps_rate_limit(
 ) -> None:
     database = Mock(spec=Session)
     identity = _identity()
+    calls: list[str] = []
     monkeypatch.setattr(
-        publication_router, "authenticate_password", Mock(side_effect=InvalidCredentials("bad"))
+        publication_router,
+        "require_fresh_capabilities",
+        lambda *_args, **_kwargs: calls.append("policy"),
     )
+
+    def invalid_password(*_args: object, **_kwargs: object) -> User:
+        calls.append("password")
+        raise InvalidCredentials("bad")
+
+    monkeypatch.setattr(publication_router, "authenticate_password", invalid_password)
 
     with pytest.raises(HTTPException) as invalid:
         publication_router.post_publication(_payload(), identity, database, "publication-key")
 
     assert invalid.value.status_code == 403
+    assert calls == ["policy", "password"]
     database.commit.assert_called_once()
     database.rollback.assert_not_called()
     monkeypatch.setattr(

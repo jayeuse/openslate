@@ -42,6 +42,23 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { AccessController } from "../state/controller";
+import { useAccessDraftRegistration } from "../state/draft-navigation";
+import {
+  accessDraftSubmissionNeedsReload,
+  beginAccessGroupDraftSubmission,
+  beginAccessRoleDraftSubmission,
+  clearAccessGroupDraft,
+  clearAccessRoleDraft,
+  completeAccessGroupDraftSubmission,
+  completeAccessRoleDraftSubmission,
+  discardUncertainAccessGroupDraft,
+  discardUncertainAccessRoleDraft,
+  writeAccessGroupDraft,
+  writeAccessRoleDraft,
+  type AccessGroupDraft,
+  type AccessRoleDraft,
+} from "../state/draft-journal";
+import { useVerifiedWorkspaceUserId } from "../../shared/runtime/workspace-identity";
 import {
   changedPatch,
   hasThreeWayConflict,
@@ -51,7 +68,7 @@ import {
   type EditorIntent,
   type FieldConflict,
 } from "../helpers/editor-helpers";
-import { permissions, type Role } from "../domain/model";
+import type { Role } from "../domain/model";
 import type { AccessGroup } from "../domain/policy";
 
 type EditorProps<T> = {
@@ -59,7 +76,126 @@ type EditorProps<T> = {
   draft: T | null;
   intent: EditorIntent;
   onClose: () => void;
+  restoredUncertain?: boolean;
 };
+
+type DraftReviewValues = {
+  name: string;
+  description: string;
+  entries: readonly { id: string; label: string }[];
+};
+
+function DraftReviewDetails({
+  label,
+  values,
+  entriesLabel,
+}: {
+  label: string;
+  values: DraftReviewValues;
+  entriesLabel: string;
+}) {
+  return (
+    <section aria-label={label} className="rounded-md border p-3 text-sm">
+      <h4 className="font-medium">{label}</h4>
+      <dl className="mt-2 space-y-2">
+        <div>
+          <dt className="text-muted-foreground">Name</dt>
+          <dd className="break-words whitespace-pre-wrap">{values.name}</dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Description</dt>
+          <dd className="break-words whitespace-pre-wrap">
+            {values.description || "None"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">{entriesLabel}</dt>
+          <dd>
+            {values.entries.length ? (
+              <ul className="list-inside list-disc">
+                {values.entries.map((entry) => (
+                  <li key={entry.id} className="break-words">
+                    {entry.label}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              "None"
+            )}
+          </dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+function UncertainDraftWarning({
+  subject,
+  currentSummary,
+  savedValues,
+  currentValues,
+  entriesLabel,
+  canResolve,
+  pending,
+  onResolve,
+}: {
+  subject: "role" | "group";
+  currentSummary: string;
+  savedValues: DraftReviewValues;
+  currentValues: DraftReviewValues | null;
+  entriesLabel: string;
+  canResolve: boolean;
+  pending: boolean;
+  onResolve: () => void;
+}) {
+  return (
+    <Alert role="alert">
+      <ShieldCheck aria-hidden />
+      <div className="mt-2 space-y-2">
+        <p className="font-medium">This {subject} change may have completed.</p>
+        <p>
+          The saved values are read-only. Review the current Access state before
+          starting a new draft.
+        </p>
+        {canResolve && <p>{currentSummary}</p>}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <DraftReviewDetails
+            label={`Saved ${subject} draft`}
+            values={savedValues}
+            entriesLabel={entriesLabel}
+          />
+          {canResolve && currentValues ? (
+            <DraftReviewDetails
+              label={`Current Access ${subject}`}
+              values={currentValues}
+              entriesLabel={entriesLabel}
+            />
+          ) : (
+            <section
+              aria-label={`Current Access ${subject}`}
+              className="rounded-md border p-3 text-sm"
+            >
+              <h4 className="font-medium">Current Access {subject}</h4>
+              <p className="mt-2">
+                {canResolve
+                  ? `No matching ${subject} is present in current Access.`
+                  : "Reload Access to compare the current values."}
+              </p>
+            </section>
+          )}
+        </div>
+        <Button
+          variant="outline"
+          className="min-h-11"
+          disabled={pending}
+          onClick={canResolve ? onResolve : () => window.location.reload()}
+        >
+          {canResolve ? "Discard after review" : "Reload Access to review"}
+        </Button>
+      </div>
+    </Alert>
+  );
+}
 
 function ConflictDialog({
   open,
@@ -173,15 +309,33 @@ export function RoleEditor({
   draft,
   intent,
   onClose,
-}: EditorProps<Role>) {
+  restoredValues,
+  restoredUncertain = false,
+}: EditorProps<Role> & { restoredValues?: AccessRoleDraft["values"] | null }) {
+  const userId = useVerifiedWorkspaceUserId();
   const original =
     intent === "edit" && draft
       ? controller.state.roles.find((role) => role.id === draft.id)
       : undefined;
-  const [name, setName] = useState(draft?.name ?? "");
-  const [description, setDescription] = useState(draft?.description ?? "");
-  const [grants, setGrants] = useState<string[]>(draft?.grants ?? []);
+  const [name, setName] = useState(restoredValues?.name ?? draft?.name ?? "");
+  const [description, setDescription] = useState(
+    restoredValues?.description ?? draft?.description ?? "",
+  );
+  const [grants, setGrants] = useState<string[]>(
+    restoredValues?.grants ?? draft?.grants ?? [],
+  );
   const [error, setError] = useState("");
+  const [journalIssue, setJournalIssue] = useState("");
+  const [savedButUncleared, setSavedButUncleared] = useState(false);
+  const [submissionUncertain, setSubmissionUncertain] =
+    useState(restoredUncertain);
+  const [confirmUncertainDiscard, setConfirmUncertainDiscard] = useState(false);
+  const canResolveAfterReview =
+    restoredUncertain &&
+    !accessDraftSubmissionNeedsReload(userId, "role") &&
+    controller.resource.status === "ready" &&
+    controller.resource.error === null &&
+    !controller.resource.refreshing;
   const [confirmSave, setConfirmSave] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [deleteName, setDeleteName] = useState("");
@@ -191,6 +345,11 @@ export function RoleEditor({
     Record<string, ConflictChoice | undefined>
   >({});
   const isBuiltin = original?.builtin ?? false;
+  const currentRole =
+    intent === "edit"
+      ? original
+      : controller.state.roles.find((role) => role.name === name.trim());
+  const permissions = controller.permissionCatalog;
   const dirty = Boolean(
     draft &&
     (!original ||
@@ -198,6 +357,90 @@ export function RoleEditor({
       description !== (draft.description ?? "") ||
       grants.join("\u0000") !== draft.grants.join("\u0000")),
   );
+  function finishEditor(afterSubmission: boolean): boolean {
+    if (
+      !(afterSubmission
+        ? completeAccessRoleDraftSubmission(userId)
+        : clearAccessRoleDraft(userId))
+    ) {
+      setJournalIssue(
+        "The browser could not clear your saved role draft. Keep editing or clear this site's browser data.",
+      );
+      return false;
+    }
+    onClose();
+    return true;
+  }
+  function closeEditor(): boolean {
+    return finishEditor(false);
+  }
+  function completeEditor(): boolean {
+    return finishEditor(true);
+  }
+  useAccessDraftRegistration(
+    "role-editor",
+    Boolean(draft && dirty && !submissionUncertain),
+    closeEditor,
+  );
+  const targetMissing =
+    (intent === "edit" && !original) ||
+    grants.some(
+      (grant) => !permissions.some((permission) => permission.id === grant),
+    );
+
+  function stageValues(values: AccessRoleDraft["values"]) {
+    if (!draft || submissionUncertain) return;
+    const changed =
+      values.name !== draft.name ||
+      values.description !== (draft.description ?? "") ||
+      !sameList(values.grants, draft.grants);
+    const preserved = changed
+      ? writeAccessRoleDraft(userId, { intent, baseline: draft, values })
+      : clearAccessRoleDraft(userId);
+    if (!preserved) {
+      clearAccessRoleDraft(userId);
+      setJournalIssue(
+        "The browser could not keep your latest role change for reload. Keep this tab open and save it before leaving.",
+      );
+    } else setJournalIssue("");
+    setName(values.name);
+    setDescription(values.description);
+    setGrants(values.grants);
+  }
+  function beginSubmission(): boolean {
+    if (!draft || submissionUncertain) return false;
+    if (
+      !beginAccessRoleDraftSubmission(userId, {
+        intent,
+        baseline: draft,
+        values: { name, description, grants },
+      })
+    ) {
+      setError("Browser draft storage is unavailable. Save was not sent.");
+      setConfirmSave(false);
+      setConfirmDelete(false);
+      return false;
+    }
+    setSubmissionUncertain(true);
+    return true;
+  }
+  function discardAfterReview() {
+    if (!canResolveAfterReview) {
+      setConfirmUncertainDiscard(false);
+      setError("Reload Access before discarding this uncertain role draft.");
+      return;
+    }
+    if (!discardUncertainAccessRoleDraft(userId)) {
+      setError(
+        "The browser could not discard this role draft. It remains locked.",
+      );
+      setConfirmUncertainDiscard(false);
+      return;
+    }
+    setConfirmUncertainDiscard(false);
+    setSubmissionUncertain(false);
+    onClose();
+  }
   const memberCount = original
     ? controller.state.identities.filter(
         (identity) => identity.roleId === original.id,
@@ -250,6 +493,10 @@ export function RoleEditor({
   );
 
   function requestClose() {
+    if (submissionUncertain) {
+      setError("Review this role change before discarding its saved draft.");
+      return;
+    }
     if (controller.isPending()) {
       setError(
         "Another Access change is already in progress. Try again shortly.",
@@ -257,10 +504,17 @@ export function RoleEditor({
       return;
     }
     if (dirty) setConfirmDiscard(true);
-    else onClose();
+    else closeEditor();
   }
 
   function requestRoleSave() {
+    if (savedButUncleared || submissionUncertain) return;
+    if (targetMissing) {
+      setError(
+        "This role draft refers to a role or permission that is no longer available. Discard it and start again.",
+      );
+      return;
+    }
     if (!name.trim()) {
       setError("Enter a role name.");
       return;
@@ -274,6 +528,13 @@ export function RoleEditor({
 
   async function saveRole() {
     if (!draft) return;
+    if (savedButUncleared || submissionUncertain) return;
+    if (targetMissing) {
+      setError(
+        "This role draft refers to a role or permission that is no longer available. Discard it and start again.",
+      );
+      return;
+    }
     if (roleConflicts.some((conflict) => !conflictChoices[conflict.id])) {
       setConfirmSave(false);
       setConflictOpen(true);
@@ -292,6 +553,7 @@ export function RoleEditor({
       return;
     }
     if (intent === "create") {
+      if (!beginSubmission()) return;
       const result = await controller.actions.createRole({
         name: trimmedName,
         description: description.trim(),
@@ -303,7 +565,12 @@ export function RoleEditor({
         return;
       }
       setConfirmSave(false);
-      onClose();
+      if (!completeEditor()) {
+        setSavedButUncleared(true);
+        setError(
+          "Role created, but its saved browser draft could not be cleared. Reload Access to review it.",
+        );
+      }
       return;
     }
     if (!original) {
@@ -331,9 +598,10 @@ export function RoleEditor({
     if (conflictChoices.grants === "current") delete patch.grants;
     if (Object.keys(patch).length === 0) {
       setConfirmSave(false);
-      onClose();
+      closeEditor();
       return;
     }
+    if (!beginSubmission()) return;
     const result = await controller.actions.updateRole(
       original.id,
       patch,
@@ -345,10 +613,16 @@ export function RoleEditor({
       return;
     }
     setConfirmSave(false);
-    onClose();
+    if (!completeEditor()) {
+      setSavedButUncleared(true);
+      setError(
+        "Role updated, but its saved browser draft could not be cleared. Reload Access to review it.",
+      );
+    }
   }
 
   async function deleteRole() {
+    if (savedButUncleared || submissionUncertain) return;
     if (pending) {
       setError(
         "Another Access change is already in progress. Try again shortly.",
@@ -362,6 +636,7 @@ export function RoleEditor({
       setConfirmDelete(false);
       return;
     }
+    if (!beginSubmission()) return;
     const result = await controller.actions.deleteRole(original.id);
     if (!result.ok) {
       setError(result.error);
@@ -369,7 +644,12 @@ export function RoleEditor({
       return;
     }
     setConfirmDelete(false);
-    onClose();
+    if (!completeEditor()) {
+      setSavedButUncleared(true);
+      setError(
+        "Role deleted, but its saved browser draft could not be cleared. Reload Access to review it.",
+      );
+    }
   }
 
   return (
@@ -387,7 +667,7 @@ export function RoleEditor({
                 {intent === "create"
                   ? "Create role"
                   : original
-                    ? `Edit ${original.name}`
+                    ? `${isBuiltin ? "View" : "Edit"} ${original.name}`
                     : "Edit role"}
               </SheetTitle>
               {isBuiltin && <Badge variant="secondary">Built-in</Badge>}
@@ -398,7 +678,49 @@ export function RoleEditor({
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5">
-            <fieldset disabled={pending} className="contents">
+            {submissionUncertain && (
+              <UncertainDraftWarning
+                subject="role"
+                savedValues={{
+                  name,
+                  description,
+                  entries: grants.map((grant) => ({
+                    id: grant,
+                    label:
+                      permissions.find((permission) => permission.id === grant)
+                        ?.name ?? grant,
+                  })),
+                }}
+                currentValues={
+                  currentRole
+                    ? {
+                        name: currentRole.name,
+                        description: currentRole.description ?? "",
+                        entries: currentRole.grants.map((grant) => ({
+                          id: grant,
+                          label:
+                            permissions.find(
+                              (permission) => permission.id === grant,
+                            )?.name ?? grant,
+                        })),
+                      }
+                    : null
+                }
+                entriesLabel="Baseline grants"
+                currentSummary={
+                  currentRole
+                    ? `Current Access role: ${currentRole.name}; ${currentRole.grants.length} baseline grants.`
+                    : `Current Access has no role named ${name || "this draft"}.`
+                }
+                canResolve={canResolveAfterReview}
+                pending={pending}
+                onResolve={() => setConfirmUncertainDiscard(true)}
+              />
+            )}
+            <fieldset
+              disabled={pending || savedButUncleared || submissionUncertain}
+              className="contents"
+            >
               {isBuiltin && (
                 <Alert>
                   <ShieldCheck />
@@ -407,11 +729,26 @@ export function RoleEditor({
                     <p className="mt-1">
                       Built-in roles are immutable. Duplicate this role to
                       create an editable baseline.
+                      {original?.name.toLowerCase() === "admin"
+                        ? " A copy receives the data permissions shown below, not protected administrator powers."
+                        : ""}
                     </p>
                   </div>
                 </Alert>
               )}
               <ActionError message={error} />
+              {journalIssue ? (
+                <Alert role="alert" variant="warning">
+                  {journalIssue}
+                </Alert>
+              ) : null}
+              {targetMissing && draft ? (
+                <Alert role="alert" variant="warning">
+                  This role draft refers to a role or permission that is no
+                  longer available. It cannot be saved. Discard it and start
+                  again.
+                </Alert>
+              ) : null}
               <FieldGroup>
                 <Field data-disabled={isBuiltin}>
                   <FieldLabel htmlFor="role-name">Role name</FieldLabel>
@@ -419,7 +756,13 @@ export function RoleEditor({
                     id="role-name"
                     value={name}
                     disabled={isBuiltin}
-                    onChange={(event) => setName(event.target.value)}
+                    onChange={(event) =>
+                      stageValues({
+                        name: event.target.value,
+                        description,
+                        grants,
+                      })
+                    }
                   />
                 </Field>
                 <Field data-disabled={isBuiltin}>
@@ -430,40 +773,50 @@ export function RoleEditor({
                     id="role-description"
                     value={description}
                     disabled={isBuiltin}
-                    onChange={(event) => setDescription(event.target.value)}
+                    onChange={(event) =>
+                      stageValues({
+                        name,
+                        description: event.target.value,
+                        grants,
+                      })
+                    }
                     placeholder="Explain when this role should be assigned."
                   />
                 </Field>
                 <FieldSet disabled={isBuiltin}>
                   <FieldLegend>Baseline grants</FieldLegend>
                   <p className="text-muted-foreground text-sm">
-                    Selected grants apply before scoped allow and deny rules.
+                    {original?.name.toLowerCase() === "admin"
+                      ? "Administrator always has these data permissions and protected management access, regardless of scoped rules."
+                      : "Selected grants apply before scoped allow and deny rules."}
                   </p>
                   <div className="grid gap-1 sm:grid-cols-2">
                     {permissions.map((permission) => (
                       <Field
-                        key={permission}
+                        key={permission.id}
                         className="min-h-11 flex-row items-center rounded-md px-2"
                       >
                         <Checkbox
-                          id={controlId("role-grant", permission)}
-                          checked={grants.includes(permission)}
+                          id={controlId("role-grant", permission.id)}
+                          checked={grants.includes(permission.id)}
                           disabled={isBuiltin}
                           onCheckedChange={(checked) =>
-                            setGrants((current) =>
-                              checked
-                                ? [...current, permission]
-                                : current.filter(
-                                    (grant) => grant !== permission,
+                            stageValues({
+                              name,
+                              description,
+                              grants: checked
+                                ? [...grants, permission.id]
+                                : grants.filter(
+                                    (grant) => grant !== permission.id,
                                   ),
-                            )
+                            })
                           }
                         />
                         <FieldLabel
-                          htmlFor={controlId("role-grant", permission)}
+                          htmlFor={controlId("role-grant", permission.id)}
                           className="min-w-0 flex-1 font-normal"
                         >
-                          {permission}
+                          {permission.name}
                         </FieldLabel>
                       </Field>
                     ))}
@@ -477,7 +830,7 @@ export function RoleEditor({
               <Button
                 variant="destructive"
                 className="min-h-11 sm:mr-auto"
-                disabled={pending}
+                disabled={pending || savedButUncleared || submissionUncertain}
                 onClick={() => setConfirmDelete(true)}
               >
                 Delete role
@@ -492,7 +845,14 @@ export function RoleEditor({
             </Button>
             <Button
               className="min-h-11"
-              disabled={isBuiltin || !dirty || pending}
+              disabled={
+                isBuiltin ||
+                !dirty ||
+                pending ||
+                targetMissing ||
+                savedButUncleared ||
+                submissionUncertain
+              }
               onClick={requestRoleSave}
             >
               Save role
@@ -500,6 +860,34 @@ export function RoleEditor({
           </SheetFooter>
         </SheetContent>
       </Sheet>
+
+      <AlertDialog
+        open={confirmUncertainDiscard}
+        onOpenChange={setConfirmUncertainDiscard}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Discard this uncertain role draft?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Confirm that you reviewed the current Access roles. The saved
+              values will be removed and you can start a new draft.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmUncertainDiscard(false)}
+            >
+              Keep for review
+            </Button>
+            <Button variant="destructive" onClick={discardAfterReview}>
+              Discard and start fresh
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmDiscard} onOpenChange={setConfirmDiscard}>
         <AlertDialogContent>
@@ -521,7 +909,7 @@ export function RoleEditor({
               variant="destructive"
               className="min-h-11"
               disabled={pending}
-              onClick={onClose}
+              onClick={closeEditor}
             >
               Discard changes
             </Button>
@@ -647,21 +1035,41 @@ export function GroupEditor({
   draft,
   intent,
   onClose,
-}: EditorProps<AccessGroup>) {
+  restoredValues,
+  restoredUncertain = false,
+}: EditorProps<AccessGroup> & {
+  restoredValues?: AccessGroupDraft["values"] | null;
+}) {
+  const userId = useVerifiedWorkspaceUserId();
   const original =
     intent === "edit" && draft
       ? controller.state.groups.find((group) => group.id === draft.id)
       : undefined;
-  const [name, setName] = useState(draft?.name ?? "");
-  const [description, setDescription] = useState(draft?.description ?? "");
+  const [name, setName] = useState(restoredValues?.name ?? draft?.name ?? "");
+  const [description, setDescription] = useState(
+    restoredValues?.description ?? draft?.description ?? "",
+  );
   const [memberIds, setMemberIds] = useState<string[]>(() =>
-    (draft?.memberIds ?? []).filter((id) =>
-      controller.state.identities.some(
-        (identity) => identity.id === id && identity.kind !== "service",
-      ),
-    ),
+    restoredValues
+      ? [...restoredValues.memberIds]
+      : (draft?.memberIds ?? []).filter((id) =>
+          controller.state.identities.some(
+            (identity) => identity.id === id && identity.kind !== "service",
+          ),
+        ),
   );
   const [error, setError] = useState("");
+  const [journalIssue, setJournalIssue] = useState("");
+  const [savedButUncleared, setSavedButUncleared] = useState(false);
+  const [submissionUncertain, setSubmissionUncertain] =
+    useState(restoredUncertain);
+  const [confirmUncertainDiscard, setConfirmUncertainDiscard] = useState(false);
+  const canResolveAfterReview =
+    restoredUncertain &&
+    !accessDraftSubmissionNeedsReload(userId, "group") &&
+    controller.resource.status === "ready" &&
+    controller.resource.error === null &&
+    !controller.resource.refreshing;
   const [confirmSave, setConfirmSave] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -671,8 +1079,14 @@ export function GroupEditor({
     Record<string, ConflictChoice | undefined>
   >({});
   const eligibleIdentities = controller.state.identities.filter(
-    (identity) => identity.kind !== "service" && identity.status !== "deleted",
+    (identity) =>
+      identity.kind !== "service" &&
+      (identity.status === "active" || draft?.memberIds.includes(identity.id)),
   );
+  const currentGroup =
+    intent === "edit"
+      ? original
+      : controller.state.groups.find((group) => group.name === name.trim());
   const dirty = Boolean(
     draft &&
     (!original ||
@@ -680,6 +1094,93 @@ export function GroupEditor({
       description !== draft.description ||
       memberIds.join("\u0000") !== draft.memberIds.join("\u0000")),
   );
+  function finishEditor(afterSubmission: boolean): boolean {
+    if (
+      !(afterSubmission
+        ? completeAccessGroupDraftSubmission(userId)
+        : clearAccessGroupDraft(userId))
+    ) {
+      setJournalIssue(
+        "The browser could not clear your saved group draft. Keep editing or clear this site's browser data.",
+      );
+      return false;
+    }
+    onClose();
+    return true;
+  }
+  function closeEditor(): boolean {
+    return finishEditor(false);
+  }
+  function completeEditor(): boolean {
+    return finishEditor(true);
+  }
+  useAccessDraftRegistration(
+    "group-editor",
+    Boolean(draft && dirty && !submissionUncertain),
+    closeEditor,
+  );
+  const targetMissing =
+    (intent === "edit" && !original) ||
+    memberIds.some(
+      (id) =>
+        !controller.state.identities.some(
+          (identity) => identity.id === id && identity.kind !== "service",
+        ),
+    );
+
+  function stageValues(values: AccessGroupDraft["values"]) {
+    if (!draft || submissionUncertain) return;
+    const changed =
+      values.name !== draft.name ||
+      values.description !== draft.description ||
+      !sameList(values.memberIds, draft.memberIds);
+    const preserved = changed
+      ? writeAccessGroupDraft(userId, { intent, baseline: draft, values })
+      : clearAccessGroupDraft(userId);
+    if (!preserved) {
+      clearAccessGroupDraft(userId);
+      setJournalIssue(
+        "The browser could not keep your latest group change for reload. Keep this tab open and save it before leaving.",
+      );
+    } else setJournalIssue("");
+    setName(values.name);
+    setDescription(values.description);
+    setMemberIds(values.memberIds);
+  }
+  function beginSubmission(): boolean {
+    if (!draft || submissionUncertain) return false;
+    if (
+      !beginAccessGroupDraftSubmission(userId, {
+        intent,
+        baseline: draft,
+        values: { name, description, memberIds },
+      })
+    ) {
+      setError("Browser draft storage is unavailable. Save was not sent.");
+      setConfirmSave(false);
+      setConfirmDelete(false);
+      return false;
+    }
+    setSubmissionUncertain(true);
+    return true;
+  }
+  function discardAfterReview() {
+    if (!canResolveAfterReview) {
+      setConfirmUncertainDiscard(false);
+      setError("Reload Access before discarding this uncertain group draft.");
+      return;
+    }
+    if (!discardUncertainAccessGroupDraft(userId)) {
+      setError(
+        "The browser could not discard this group draft. It remains locked.",
+      );
+      setConfirmUncertainDiscard(false);
+      return;
+    }
+    setConfirmUncertainDiscard(false);
+    setSubmissionUncertain(false);
+    onClose();
+  }
   const groupConflicts: FieldConflict[] = [];
   if (draft && original) {
     if (hasThreeWayConflict(original.name, draft.name, name))
@@ -751,6 +1252,10 @@ export function GroupEditor({
   const pending = controller.isPending();
 
   function requestClose() {
+    if (submissionUncertain) {
+      setError("Review this group change before discarding its saved draft.");
+      return;
+    }
     if (controller.isPending()) {
       setError(
         "Another Access change is already in progress. Try again shortly.",
@@ -758,10 +1263,17 @@ export function GroupEditor({
       return;
     }
     if (dirty) setConfirmDiscard(true);
-    else onClose();
+    else closeEditor();
   }
 
   function requestGroupSave() {
+    if (savedButUncleared || submissionUncertain) return;
+    if (targetMissing) {
+      setError(
+        "This group draft refers to a group or member that is no longer available. Discard it and start again.",
+      );
+      return;
+    }
     if (!name.trim()) {
       setError("Enter a group name.");
       return;
@@ -775,6 +1287,13 @@ export function GroupEditor({
 
   async function saveGroup() {
     if (!draft) return;
+    if (savedButUncleared || submissionUncertain) return;
+    if (targetMissing) {
+      setError(
+        "This group draft refers to a group or member that is no longer available. Discard it and start again.",
+      );
+      return;
+    }
     if (groupConflicts.some((conflict) => !conflictChoices[conflict.id])) {
       setConfirmSave(false);
       setConflictOpen(true);
@@ -793,6 +1312,7 @@ export function GroupEditor({
       return;
     }
     if (intent === "create") {
+      if (!beginSubmission()) return;
       const result = await controller.actions.createGroup({
         name: trimmedName,
         description: description.trim(),
@@ -804,7 +1324,12 @@ export function GroupEditor({
         return;
       }
       setConfirmSave(false);
-      onClose();
+      if (!completeEditor()) {
+        setSavedButUncleared(true);
+        setError(
+          "Group created, but its saved browser draft could not be cleared. Reload Access to review it.",
+        );
+      }
       return;
     }
     if (!original) {
@@ -832,9 +1357,10 @@ export function GroupEditor({
     if (conflictChoices.memberIds === "current") delete patch.memberIds;
     if (Object.keys(patch).length === 0) {
       setConfirmSave(false);
-      onClose();
+      closeEditor();
       return;
     }
+    if (!beginSubmission()) return;
     const result = await controller.actions.updateGroup(
       original.id,
       patch,
@@ -846,10 +1372,16 @@ export function GroupEditor({
       return;
     }
     setConfirmSave(false);
-    onClose();
+    if (!completeEditor()) {
+      setSavedButUncleared(true);
+      setError(
+        "Group updated, but its saved browser draft could not be cleared. Reload Access to review it.",
+      );
+    }
   }
 
   async function deleteGroup() {
+    if (savedButUncleared || submissionUncertain) return;
     if (pending) {
       setError(
         "Another Access change is already in progress. Try again shortly.",
@@ -863,6 +1395,7 @@ export function GroupEditor({
       setConfirmDelete(false);
       return;
     }
+    if (!beginSubmission()) return;
     const result = await controller.actions.deleteGroup(original.id);
     if (!result.ok) {
       setError(result.error);
@@ -870,7 +1403,12 @@ export function GroupEditor({
       return;
     }
     setConfirmDelete(false);
-    onClose();
+    if (!completeEditor()) {
+      setSavedButUncleared(true);
+      setError(
+        "Group deleted, but its saved browser draft could not be cleared. Reload Access to review it.",
+      );
+    }
   }
 
   return (
@@ -894,15 +1432,69 @@ export function GroupEditor({
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5">
-            <fieldset disabled={pending} className="contents">
+            {submissionUncertain && (
+              <UncertainDraftWarning
+                subject="group"
+                savedValues={{
+                  name,
+                  description,
+                  entries: memberIds.map((id) => ({
+                    id,
+                    label: identityName(id),
+                  })),
+                }}
+                currentValues={
+                  currentGroup
+                    ? {
+                        name: currentGroup.name,
+                        description: currentGroup.description,
+                        entries: currentGroup.memberIds.map((id) => ({
+                          id,
+                          label: identityName(id),
+                        })),
+                      }
+                    : null
+                }
+                entriesLabel="Members"
+                currentSummary={
+                  currentGroup
+                    ? `Current Access group: ${currentGroup.name}; ${currentGroup.memberIds.length} members.`
+                    : `Current Access has no group named ${name || "this draft"}.`
+                }
+                canResolve={canResolveAfterReview}
+                pending={pending}
+                onResolve={() => setConfirmUncertainDiscard(true)}
+              />
+            )}
+            <fieldset
+              disabled={pending || savedButUncleared || submissionUncertain}
+              className="contents"
+            >
               <ActionError message={error} />
+              {journalIssue ? (
+                <Alert role="alert" variant="warning">
+                  {journalIssue}
+                </Alert>
+              ) : null}
+              {targetMissing && draft ? (
+                <Alert role="alert" variant="warning">
+                  This group draft refers to a group or member that is no longer
+                  available. It cannot be saved. Discard it and start again.
+                </Alert>
+              ) : null}
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="group-name">Group name</FieldLabel>
                   <Input
                     id="group-name"
                     value={name}
-                    onChange={(event) => setName(event.target.value)}
+                    onChange={(event) =>
+                      stageValues({
+                        name: event.target.value,
+                        description,
+                        memberIds,
+                      })
+                    }
                   />
                 </Field>
                 <Field>
@@ -912,7 +1504,13 @@ export function GroupEditor({
                   <Textarea
                     id="group-description"
                     value={description}
-                    onChange={(event) => setDescription(event.target.value)}
+                    onChange={(event) =>
+                      stageValues({
+                        name,
+                        description: event.target.value,
+                        memberIds,
+                      })
+                    }
                     placeholder="Explain the shared responsibility or access need."
                   />
                 </Field>
@@ -931,11 +1529,13 @@ export function GroupEditor({
                           id={`group-member-${identity.id}`}
                           checked={memberIds.includes(identity.id)}
                           onCheckedChange={(checked) =>
-                            setMemberIds((current) =>
-                              checked
-                                ? [...current, identity.id]
-                                : current.filter((id) => id !== identity.id),
-                            )
+                            stageValues({
+                              name,
+                              description,
+                              memberIds: checked
+                                ? [...memberIds, identity.id]
+                                : memberIds.filter((id) => id !== identity.id),
+                            })
                           }
                         />
                         <FieldLabel
@@ -971,7 +1571,7 @@ export function GroupEditor({
               <Button
                 variant="destructive"
                 className="min-h-11 sm:mr-auto"
-                disabled={pending}
+                disabled={pending || savedButUncleared || submissionUncertain}
                 onClick={() => setConfirmDelete(true)}
               >
                 Delete group
@@ -986,7 +1586,13 @@ export function GroupEditor({
             </Button>
             <Button
               className="min-h-11"
-              disabled={!dirty || pending}
+              disabled={
+                !dirty ||
+                pending ||
+                targetMissing ||
+                savedButUncleared ||
+                submissionUncertain
+              }
               onClick={requestGroupSave}
             >
               Save group
@@ -994,6 +1600,34 @@ export function GroupEditor({
           </SheetFooter>
         </SheetContent>
       </Sheet>
+
+      <AlertDialog
+        open={confirmUncertainDiscard}
+        onOpenChange={setConfirmUncertainDiscard}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Discard this uncertain group draft?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Confirm that you reviewed the current Access groups. The saved
+              values will be removed and you can start a new draft.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmUncertainDiscard(false)}
+            >
+              Keep for review
+            </Button>
+            <Button variant="destructive" onClick={discardAfterReview}>
+              Discard and start fresh
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmDiscard} onOpenChange={setConfirmDiscard}>
         <AlertDialogContent>
@@ -1015,7 +1649,7 @@ export function GroupEditor({
               variant="destructive"
               className="min-h-11"
               disabled={pending}
-              onClick={onClose}
+              onClick={closeEditor}
             >
               Discard changes
             </Button>
@@ -1099,8 +1733,9 @@ export function GroupEditor({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {original?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the group and its scoped rule subject. Enter the
-              exact group name to confirm.
+              First remove its members, default assignments, and any rules in
+              Detailed rules. Deleting the group will not delete those rules.
+              Enter the exact group name to confirm.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Field>

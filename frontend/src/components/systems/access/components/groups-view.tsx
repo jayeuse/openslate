@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Building2,
   ChevronRight,
@@ -11,6 +11,7 @@ import {
   Users,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -41,20 +42,17 @@ import type { AccessController } from "../state/controller";
 import type { EditorIntent } from "../helpers/editor-helpers";
 import type { AccessGroup, InternalIdentity } from "../domain/policy";
 import { GroupEditor } from "./role-group-editors";
+import {
+  readAccessGroupDraft,
+  type AccessGroupDraft,
+} from "../state/draft-journal";
+import { useVerifiedWorkspaceUserId } from "../../shared/runtime/workspace-identity";
 
 export type GroupsViewProps = {
   controller: AccessController;
   onOpenRulesForGroup?: (groupId: string) => void;
 };
 const PAGE_SIZE = 5;
-
-function departmentName(id: string): string {
-  return id
-    .replace(/^department:/, "")
-    .split("-")
-    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
-    .join(" ");
-}
 
 function OrganizationChart({ controller }: GroupsViewProps) {
   const internal = controller.state.identities.filter(
@@ -63,7 +61,13 @@ function OrganizationChart({ controller }: GroupsViewProps) {
   const departmentIds = [
     ...new Set(internal.flatMap((identity) => identity.departmentIds)),
   ].sort((left, right) =>
-    departmentName(left).localeCompare(departmentName(right)),
+    (
+      controller.departmentCatalog.find((item) => item.id === left)?.name ??
+      left
+    ).localeCompare(
+      controller.departmentCatalog.find((item) => item.id === right)?.name ??
+        right,
+    ),
   );
 
   return (
@@ -92,7 +96,11 @@ function OrganizationChart({ controller }: GroupsViewProps) {
             <Card key={departmentId} className="w-full">
               <CardHeader>
                 <div className="flex items-center justify-between gap-3">
-                  <CardTitle>{departmentName(departmentId)}</CardTitle>
+                  <CardTitle>
+                    {controller.departmentCatalog.find(
+                      (item) => item.id === departmentId,
+                    )?.name ?? "Unknown department"}
+                  </CardTitle>
                   <Badge variant="secondary">{members.length}</Badge>
                 </div>
                 <CardDescription>Department membership</CardDescription>
@@ -131,10 +139,37 @@ export function GroupsView({
   controller,
   onOpenRulesForGroup,
 }: GroupsViewProps) {
+  const userId = useVerifiedWorkspaceUserId();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [draft, setDraft] = useState<AccessGroup | null>(null);
   const [draftIntent, setDraftIntent] = useState<EditorIntent>("edit");
+  const [restoredValues, setRestoredValues] = useState<
+    AccessGroupDraft["values"] | null
+  >(null);
+  const [restoredUncertain, setRestoredUncertain] = useState(false);
+  const [journalIssue, setJournalIssue] = useState("");
+  const restoredUserId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (restoredUserId.current === userId) return;
+    restoredUserId.current = userId;
+    const stored = readAccessGroupDraft(userId);
+    if (stored.value) {
+      setDraft(stored.value.baseline);
+      setDraftIntent(stored.value.intent);
+      setRestoredValues(stored.value.values);
+    }
+    setRestoredUncertain(stored.status === "uncertain");
+    if (stored.status === "unavailable")
+      setJournalIssue(
+        "Browser draft storage is unavailable. Group changes may not survive reload.",
+      );
+    else if (stored.status === "invalid")
+      setJournalIssue(
+        "A saved group draft could not be safely restored. It was not applied.",
+      );
+  }, [userId]);
   const filtered = controller.state.groups
     .filter((group) =>
       `${group.name} ${group.description}`
@@ -158,11 +193,15 @@ export function GroupsView({
     "Unknown identity";
 
   function editGroup(group: AccessGroup) {
+    if (restoredUncertain) return;
+    setRestoredValues(null);
     setDraftIntent("edit");
     setDraft({ ...group, memberIds: [...group.memberIds] });
   }
 
   function createGroup() {
+    if (restoredUncertain) return;
+    setRestoredValues(null);
     setDraftIntent("create");
     setDraft({
       id: `draft:group:${crypto.randomUUID()}`,
@@ -259,12 +298,18 @@ export function GroupsView({
         </div>
         <Button
           className="min-h-11"
-          disabled={controller.isPending()}
+          disabled={controller.isPending() || restoredUncertain}
           onClick={createGroup}
         >
           <Plus data-icon="inline-start" /> Create group
         </Button>
       </div>
+
+      {journalIssue ? (
+        <Alert role="alert" variant="warning">
+          {journalIssue}
+        </Alert>
+      ) : null}
 
       <Tabs defaultValue="groups">
         <TabsList className="w-full sm:w-fit">
@@ -314,7 +359,7 @@ export function GroupsView({
               <EmptyContent>
                 <Button
                   className="min-h-11"
-                  disabled={controller.isPending()}
+                  disabled={controller.isPending() || restoredUncertain}
                   onClick={createGroup}
                 >
                   Create group
@@ -367,7 +412,13 @@ export function GroupsView({
         controller={controller}
         draft={draft}
         intent={draftIntent}
-        onClose={() => setDraft(null)}
+        restoredValues={restoredValues}
+        restoredUncertain={restoredUncertain}
+        onClose={() => {
+          setDraft(null);
+          setRestoredValues(null);
+          setRestoredUncertain(false);
+        }}
       />
     </section>
   );

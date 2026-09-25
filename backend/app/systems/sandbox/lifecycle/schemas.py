@@ -11,6 +11,7 @@ class LifecycleTargetType(StrEnum):
     FIELD = "field"
     RECORD = "record"
     FILE = "file"
+    BOARD = "board"
 
 
 class LifecycleOperation(StrEnum):
@@ -21,12 +22,18 @@ class LifecycleOperation(StrEnum):
 
 class LifecycleBlockerCode(StrEnum):
     CLOSED_ANCESTOR = "closed_ancestor"
+    DEFAULT_DEPARTMENT_REFERENCE = "default_department_reference"
     MODULE_NAME_CONFLICT = "module_name_conflict"
     FIELD_NAME_CONFLICT = "field_name_conflict"
     FIELD_POSITION_CONFLICT = "field_position_conflict"
     SCHEMA_INVALID = "schema_invalid"
     RECORD_DATA_INVALID = "record_data_invalid"
     RECORD_CLOSE_UNSUPPORTED = "record_close_unsupported"
+    PURGE_BOARD_DEPENDENCY = "purge_board_dependency"
+    PURGE_DEPARTMENT_MEMBERSHIP_DEPENDENCY = "purge_department_membership_dependency"
+    PURGE_DASHBOARD_DEPENDENCY = "purge_dashboard_dependency"
+    PURGE_REPORT_DEPENDENCY = "purge_report_dependency"
+    PURGE_REPORT_RUN_DEPENDENCY = "purge_report_run_dependency"
     PURGE_EXTERNAL_SCHEMA_DEPENDENCY = "purge_external_schema_dependency"
     PURGE_FILE_DEPENDENCY = "purge_file_dependency"
     PURGE_AUTOMATION_DEPENDENCY = "purge_automation_dependency"

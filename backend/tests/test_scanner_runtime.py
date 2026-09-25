@@ -1,25 +1,62 @@
 """Scanner worker container boundaries for disposable full-stack runs."""
 
+import hmac
 import json
 import os
 from pathlib import Path
 from subprocess import CompletedProcess
+from urllib.parse import urlsplit
 
 import pytest
 
 from app.core.config import Settings
 from tests import scanner_runtime
-from tests.postgres_runtime import POSTGRES_NETWORK_ALIAS, postgres_network_name
+from tests.postgres_runtime import (
+    POSTGRES_CONTAINER_PORT,
+    POSTGRES_DATABASE,
+    POSTGRES_NETWORK_ALIAS,
+    DisposablePostgres,
+    container_runtime_database_url,
+    postgres_network_name,
+)
 from tests.scanner_runtime import DisposableScanner
+
+
+@pytest.fixture(autouse=True)
+def _scanner_packaging_uses_a_preflighted_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scanner_runtime, "assert_scanner_worker_database", lambda _env: None)
 
 
 def _application_environment(scanner: DisposableScanner, storage_root: Path) -> dict[str, str]:
     values = {name.upper(): "test-value" for name in Settings.model_fields}
-    database_url = "postgresql+psycopg://openslate_runtime:test-password@127.0.0.1:49152/openslate"
+    database_url = (
+        f"postgresql+psycopg://openslate_runtime:test-password@127.0.0.1:49152/{POSTGRES_DATABASE}"
+    )
     database_manifest = scanner.private / "database.json"
-    database_manifest.write_text(json.dumps({"run_id": scanner.run_id, "urls": [database_url]}))
+    network = postgres_network_name(scanner.run_id)
+    database_manifest.write_text(
+        json.dumps(
+            {
+                "run_id": scanner.run_id,
+                "urls": [
+                    database_url,
+                    "postgresql+psycopg://openslate_owner:owner-password@127.0.0.1:49152/openslate",
+                    "postgresql+psycopg://openslate_inspector:inspector-password@127.0.0.1:49152/openslate",
+                    "postgresql+psycopg://postgres:bootstrap-password@127.0.0.1:49152/openslate",
+                ],
+                "container_runtime": {
+                    "url": container_runtime_database_url(database_url),
+                    "network": network,
+                    "alias": POSTGRES_NETWORK_ALIAS,
+                    "port": POSTGRES_CONTAINER_PORT,
+                },
+                "ownership": {"container": f"openslate-postgres-e2e-{scanner.run_id}"},
+            }
+        )
+    )
     database_manifest.chmod(0o600)
     values.update(
+        ENVIRONMENT="test",
         DATABASE_URL=database_url,
         FILES_STORAGE_ROOT=str(storage_root),
         E2E_ALLOW_MUTATIONS="true",
@@ -86,7 +123,7 @@ def test_build_context_supplies_unified_server_image_inputs(
     assert scanner.images == [scanner.image, scanner.backend_image]
 
 
-def test_worker_mounts_only_the_disposable_private_store_and_rewrites_its_path(
+def test_worker_mounts_its_private_store_and_limited_runner_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scanner = _scanner(tmp_path)
@@ -112,16 +149,80 @@ def test_worker_mounts_only_the_disposable_private_store_and_rewrites_its_path(
     mounts = [argument for argument in create if argument.startswith("type=bind,")]
     assert mounts == [
         f"type=bind,src={storage_root},dst=/run/openslate-private-files",
+        f"type=bind,src={scanner.private / 'scanner-worker-database.json'},"
+        "dst=/run/openslate-test-database.json,readonly",
         f"type=bind,src={scanner.manifest},dst=/run/scanner-manifest.json,readonly",
     ]
     worker_environment = (scanner.private / "scanner-worker.env").read_text()
     assert "DATABASE_URL=" in worker_environment
     assert f"@{POSTGRES_NETWORK_ALIAS}:5432/openslate\n" in worker_environment
+    assert "E2E_ALLOW_MUTATIONS=true\n" in worker_environment
+    assert f"OPENSLATE_FULLSTACK_RUN_ID={scanner.run_id}\n" in worker_environment
+    assert (
+        "OPENSLATE_TEST_DATABASE_MANIFEST=/run/openslate-test-database.json\n" in worker_environment
+    )
     assert "FILES_STORAGE_ROOT=/run/openslate-private-files\n" in worker_environment
     assert str(storage_root) not in worker_environment
     assert "host.docker.internal" not in create
     assert ["network", "connect", scanner.network, scanner.worker] in commands
     assert ["network", "connect", postgres_network_name(scanner.run_id), scanner.worker] in commands
+    worker_manifest_path = scanner.private / "scanner-worker-database.json"
+    worker_manifest = json.loads(worker_manifest_path.read_text(encoding="utf-8"))
+    worker_urls = worker_manifest["urls"]
+    source_manifest = json.loads((scanner.private / "database.json").read_text(encoding="utf-8"))
+    source_users = {urlsplit(url).username for url in source_manifest["urls"]}
+    source_runtime_url = next(
+        url for url in source_manifest["urls"] if urlsplit(url).username == "openslate_runtime"
+    )
+    assert worker_manifest_path.stat().st_mode & 0o077 == 0
+    assert set(worker_manifest) == {"run_id", "urls", "container_runtime", "ownership"}
+    assert worker_manifest["run_id"] == scanner.run_id
+    assert {urlsplit(url).username for url in worker_urls} == {"openslate_runtime"}
+    assert source_users == {
+        "openslate_runtime",
+        "openslate_owner",
+        "openslate_inspector",
+        "postgres",
+    }
+    assert hmac.compare_digest(worker_urls[0], source_runtime_url)
+    assert hmac.compare_digest(
+        worker_manifest["container_runtime"]["url"],
+        source_manifest["container_runtime"]["url"],
+    )
+    assert worker_manifest["container_runtime"]["alias"] == POSTGRES_NETWORK_ALIAS
+    assert worker_manifest["container_runtime"]["port"] == POSTGRES_CONTAINER_PORT
+    assert worker_manifest["container_runtime"]["network"] == postgres_network_name(scanner.run_id)
+    assert worker_manifest["ownership"] == source_manifest["ownership"]
+
+
+def test_postgres_manifest_records_its_exact_runtime_container_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = "a" * 32
+    log = (tmp_path / "process.log").open("w")
+    postgres = DisposablePostgres(tmp_path, run_id, {"PATH": "test"}, log)
+    postgres.port = 49152
+    postgres.passwords = {
+        "bootstrap": "fixture-bootstrap",
+        "inspector": "fixture-inspector",
+        "owner": "fixture-owner",
+        "runtime": "fixture-runtime",
+    }
+    monkeypatch.setattr(postgres, "_ownership", lambda: {"container": postgres.container})
+    try:
+        manifest = json.loads(postgres.write_manifest().read_text(encoding="utf-8"))
+    finally:
+        log.close()
+
+    runtime_url = next(
+        url for url in manifest["urls"] if urlsplit(url).username == "openslate_runtime"
+    )
+    route = manifest["container_runtime"]
+    assert manifest["run_id"] == run_id
+    assert route["network"] == postgres_network_name(run_id)
+    assert route["alias"] == POSTGRES_NETWORK_ALIAS
+    assert route["port"] == POSTGRES_CONTAINER_PORT
+    assert hmac.compare_digest(route["url"], container_runtime_database_url(runtime_url))
 
 
 def test_worker_keeps_optional_smtp_settings_absent_when_the_runner_disables_smtp(

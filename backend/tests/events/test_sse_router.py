@@ -65,6 +65,39 @@ def test_event_stream_serializes_only_opaque_invalidation_metadata() -> None:
     asyncio.run(exercise())
 
 
+def test_event_stream_emits_private_notification_without_a_recipient_identifier() -> None:
+    async def exercise() -> None:
+        from uuid6 import uuid7
+
+        from app.systems.platform.events.models import event_for_entity
+
+        hub = EventHub()
+        recipient_id = uuid7()
+        request = SimpleNamespace(is_disconnected=_not_disconnected)
+        user = SimpleNamespace(
+            id=recipient_id,
+            role=SimpleNamespace(role="member", permissions={}),
+        )
+        stream = event_stream(
+            request,
+            hub,
+            EventPrincipal("token"),
+            heartbeat_seconds=1,
+            reauthorize=_sequence_authorizer(user, user),
+        )
+
+        assert await anext(stream) == b"event: resync\ndata: {}\n\n"
+        event = event_for_entity("in_app_notifications", uuid7(), recipient_id=recipient_id)
+        assert event is not None
+        await hub.publish_notification(event.to_transport_json())
+        assert await anext(stream) == (
+            b'event: invalidate\ndata: {"entity":"in_app_notifications"}\n\n'
+        )
+        await stream.aclose()
+
+    asyncio.run(exercise())
+
+
 def test_event_stream_terminates_when_periodic_identity_check_is_revoked() -> None:
     async def exercise() -> None:
         hub = EventHub()
@@ -133,6 +166,60 @@ def test_event_principal_rejects_setup_only_token(monkeypatch) -> None:
         get_event_principal(request, bearer)
 
     assert getattr(error.value, "status_code", None) == 401
+
+
+@pytest.mark.parametrize(
+    ("headers", "allowed"),
+    [
+        ({"origin": "https://app.example"}, True),
+        ({"sec-fetch-site": "same-origin"}, True),
+        ({"origin": "https://app.example", "sec-fetch-site": "same-origin"}, True),
+        ({}, False),
+        ({"origin": "null"}, False),
+        ({"origin": "http://localhost:3001"}, False),
+        ({"origin": "https://other.example"}, False),
+        ({"sec-fetch-site": "same-site"}, False),
+        ({"sec-fetch-site": "cross-site"}, False),
+        ({"sec-fetch-site": "none"}, False),
+        ({"origin": "https://app.example", "sec-fetch-site": "cross-site"}, False),
+        ({"origin": "https://app.example", "authorization": "broken"}, False),
+    ],
+)
+def test_cookie_event_principal_checks_browser_origin_before_stream(
+    monkeypatch, headers: dict[str, str], allowed: bool
+) -> None:
+    monkeypatch.setattr(
+        "app.systems.platform.events.router.decode_token", lambda *_args: {"setup": False}
+    )
+    monkeypatch.setattr(
+        "app.systems.platform.events.router.browser_origin_is_permitted",
+        lambda _settings, origin: origin in {"https://app.example", "http://localhost:3001"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.systems.platform.events.router.get_settings",
+        lambda: SimpleNamespace(public_origin="https://app.example"),
+        raising=False,
+    )
+    request = SimpleNamespace(cookies={"openslate_access": "cookie"}, headers=headers)
+
+    if allowed:
+        assert get_event_principal(request, None) == EventPrincipal("cookie")
+    else:
+        with pytest.raises(Exception) as error:
+            get_event_principal(request, None)
+        assert getattr(error.value, "status_code", None) == 401
+
+
+def test_bearer_event_principal_does_not_require_browser_origin(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.systems.platform.events.router.decode_token", lambda *_args: {"setup": False}
+    )
+    request = SimpleNamespace(cookies={}, headers={})
+
+    assert get_event_principal(request, SimpleNamespace(credentials="bearer")) == EventPrincipal(
+        "bearer"
+    )
 
 
 def test_stalled_asgi_send_cancels_the_stream_and_releases_admission_slot() -> None:

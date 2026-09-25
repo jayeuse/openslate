@@ -95,22 +95,19 @@ export type BoardReminderEligibilityOptions = {
   now: string;
   preview?: boolean;
   canViewBoard: (boardId: string) => boolean;
-  canManageBoard: (boardId: string) => boolean;
 };
 
 export function canSetBoardReminder(
   event: BoardEvent,
   viewer: BoardViewer | undefined,
   canViewBoard: (boardId: string) => boolean,
-  canManageBoard: (boardId: string) => boolean,
 ): boolean {
   return Boolean(
     viewer &&
     viewer.active &&
     (viewer.accessStatus ?? "active") === "active" &&
     canViewBoard(event.boardId) &&
-    (canManageBoard(event.boardId) ||
-      canViewBoardAudience(event.audience, viewer, event.authorId)),
+    canViewBoardAudience(event.audience, viewer, event.authorId),
   );
 }
 
@@ -122,7 +119,6 @@ export function findEligibleBoardReminders({
   now,
   preview = false,
   canViewBoard,
-  canManageBoard,
 }: BoardReminderEligibilityOptions): BoardReminderCandidate[] {
   if (
     preview ||
@@ -143,7 +139,7 @@ export function findEligibleBoardReminders({
     if (
       !board ||
       board.status !== "active" ||
-      !canSetBoardReminder(event, viewer, canViewBoard, canManageBoard)
+      !canSetBoardReminder(event, viewer, canViewBoard)
     )
       return [];
     return [{ reminder, event }];
@@ -491,6 +487,11 @@ export function useBoardsController(previewIdentityId: string | null = null) {
       preview,
       now,
       id,
+      viewer: boardViewerFor(
+        actorId,
+        snapshot.people.find((person) => person.id === actorId),
+        lookupFrom(snapshot),
+      ),
       audienceLookup: lookupFrom(snapshot),
       recordIds: currentRecords.map((record) => record.id),
       can: (boardId, permission) =>
@@ -665,11 +666,8 @@ export function useBoardsController(previewIdentityId: string | null = null) {
           currentLookup,
         );
         if (
-          !canSetBoardReminder(
-            currentEvent,
-            currentViewer,
-            (boardId) => currentContext.can(boardId, "view"),
-            (boardId) => currentContext.can(boardId, "manage"),
+          !canSetBoardReminder(currentEvent, currentViewer, (boardId) =>
+            currentContext.can(boardId, "view"),
           )
         )
           return {
@@ -774,8 +772,6 @@ export function useBoardsController(previewIdentityId: string | null = null) {
               ),
               now,
               canViewBoard: (boardId) => currentContext.can(boardId, "view"),
-              canManageBoard: (boardId) =>
-                currentContext.can(boardId, "manage"),
             });
             if (!due.length) return undefined;
             const ids = new Set(due.map(({ reminder }) => reminder.id));

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from enum import StrEnum
 from secrets import token_urlsafe
 
@@ -12,6 +12,7 @@ from app.systems.manage.audit.snapshots import (
     serialize_record,
     serialize_value,
 )
+from app.systems.openview.reports.schedule_models import ReportSchedule
 
 BINARY_CANARY = token_urlsafe(32)
 OLD_FIELD_CANARY = token_urlsafe(32)
@@ -34,6 +35,23 @@ def test_serialize_value_handles_common_database_values() -> None:
     assert serialize_value(BINARY_CANARY.encode()) == REDACTED
 
 
+def test_report_schedule_wall_time_is_preserved_in_audit_snapshots() -> None:
+    schedule = ReportSchedule(
+        report_id=uuid7(),
+        enabled=True,
+        cadence="daily",
+        timezone_name="Asia/Manila",
+        local_time=time(9, 30),
+        next_due_at=datetime(2026, 1, 1, 1, 30, tzinfo=UTC),
+    )
+
+    assert serialize_record(schedule)["local_time"] == "09:30:00"
+    assert build_update_snapshot({"local_time": (time(9, 30), time(10))}) == {
+        "before": {"local_time": "09:30:00"},
+        "after": {"local_time": "10:00:00"},
+    }
+
+
 def test_serialize_record_contains_only_local_profile_fields() -> None:
     user = User(
         id=uuid7(),
@@ -48,6 +66,11 @@ def test_serialize_record_contains_only_local_profile_fields() -> None:
     assert snapshot == {
         "email": "alice@example.com",
         "username": "alice",
+        "display_name": None,
+        "identity_kind": None,
+        "job_title": None,
+        "sponsor_user_id": None,
+        "expires_at": None,
         "status": "active",
         "role_id": str(user.role_id),
     }

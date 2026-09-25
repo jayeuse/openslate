@@ -6,13 +6,11 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import exists, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
-from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import Role, User
-from app.systems.access.users.permissions import Capability, has_capability
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.sandbox.automations.execution import (
     ClaimedAutomationEvent,
@@ -28,6 +26,10 @@ from app.systems.sandbox.automations.models import (
     PublishedAutomationRun,
 )
 from app.systems.sandbox.automations.outbox import enqueue_child_field_event
+from app.systems.sandbox.automations.publisher_policy import (
+    CandidatePublisher,
+    authorize_candidate_publishers,
+)
 from app.systems.sandbox.designs.date_values import parse_datetime
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import validate_field_value
@@ -36,23 +38,32 @@ from app.systems.sandbox.records.models import Record
 SCHEDULE_RECORD_CHUNK = 100
 _MISSING = object()
 
-
 def execute_claim(db: Session, claim: ClaimedAutomationEvent) -> bool:
     """Execute one fenced event, requeuing only successful schedule continuations."""
 
+    candidate_event = _candidate_event(db, claim)
+    if candidate_event is None:
+        return False
+    definition_ids, publishers = _candidate_definition_ids(db, candidate_event)
+    authorized_definitions = authorize_candidate_publishers(db, publishers)
     event = locked_claim(db, claim)
     if event is None:
         return False
     root = _locked_root(db, event)
-    definition_ids, publisher_ids = _candidate_definition_ids(db, event)
-    _lock_publishers(db, publisher_ids)
     fields = _lock_module_fields(db, event.module_id)
     records, has_more = _records(db, event)
     definitions = _definitions(db, event, definition_ids)
     changed: dict[UUID, tuple[Record, dict[str, object]]] = {}
     for definition in definitions:
+        candidate_publisher = publishers.get(definition.id)
+        if (
+            candidate_publisher is None
+            or definition.publisher_id != candidate_publisher.publisher_id
+        ):
+            db.rollback()
+            raise RuntimeError("Automation publisher changed during authorization")
         _set_context(db, definition.publisher_id, definition.id)
-        if not _publisher_can_write(db, definition.publisher_id):
+        if not authorized_definitions.get(definition.id, False):
             _suspend(definition)
             _finish_run(db, event, definition, "suspended", {})
             db.flush()
@@ -89,6 +100,19 @@ def execute_claim(db: Session, claim: ClaimedAutomationEvent) -> bool:
         event.lease_expires_at = None
     db.flush()
     return True
+
+
+def _candidate_event(db: Session, claim: ClaimedAutomationEvent) -> PublishedAutomationEvent | None:
+    """Read a claimed event without taking resource locks before policy snapshots."""
+
+    return db.scalar(
+        select(PublishedAutomationEvent).where(
+            PublishedAutomationEvent.id == claim.id,
+            PublishedAutomationEvent.state == AutomationEventState.RUNNING,
+            PublishedAutomationEvent.lease_token == claim.lease_token,
+            PublishedAutomationEvent.lease_expires_at > utc_now(),
+        )
+    )
 
 
 def _locked_root(db: Session, event: PublishedAutomationEvent) -> PublishedAutomationEvent:
@@ -141,10 +165,12 @@ def _definitions(
 
 def _candidate_definition_ids(
     db: Session, event: PublishedAutomationEvent
-) -> tuple[set[UUID], set[UUID]]:
+) -> tuple[set[UUID], dict[UUID, CandidatePublisher]]:
     statement = select(
-        PublishedAutomationDefinition.id, PublishedAutomationDefinition.publisher_id
-    ).where(
+        PublishedAutomationDefinition.id,
+        PublishedAutomationDefinition.publisher_id,
+        User.role_id,
+    ).outerjoin(User, User.id == PublishedAutomationDefinition.publisher_id).where(
         PublishedAutomationDefinition.enabled.is_(True),
         PublishedAutomationDefinition.suspended_at.is_(None),
         PublishedAutomationDefinition.module_id == event.module_id,
@@ -160,24 +186,14 @@ def _candidate_definition_ids(
             PublishedAutomationDefinition.trigger_kind != "schedule",
         )
     rows = db.execute(statement).all()
-    return {row.id for row in rows}, {row.publisher_id for row in rows}
-
-
-def _lock_publishers(db: Session, publisher_ids: set[UUID]) -> None:
-    if not publisher_ids:
-        return
-    publishers = list(
-        db.scalars(
-            select(User).where(User.id.in_(publisher_ids)).order_by(User.id).with_for_update()
+    publishers = {
+        row.id: CandidatePublisher(
+            publisher_id=row.publisher_id,
+            expected_role_id=row.role_id,
         )
-    )
-    role_ids = {publisher.role_id for publisher in publishers}
-    if role_ids:
-        list(
-            db.scalars(
-                select(Role).where(Role.id.in_(role_ids)).order_by(Role.id).with_for_update()
-            )
-        )
+        for row in rows
+    }
+    return set(publishers), publishers
 
 
 def _lock_module_fields(db: Session, module_id: UUID) -> dict[UUID, Field]:
@@ -268,30 +284,6 @@ def _actions(db: Session, definition_id: UUID) -> list[PublishedAutomationAction
             .order_by(PublishedAutomationAction.position, PublishedAutomationAction.id)
             .with_for_update()
         )
-    )
-
-
-def _publisher_can_write(db: Session, publisher_id: UUID) -> bool:
-    publisher = db.scalar(
-        select(User)
-        .options(joinedload(User.role))
-        .where(User.id == publisher_id)
-        .execution_options(populate_existing=True)
-        .with_for_update(of=User)
-    )
-    role = (
-        db.scalar(select(Role).where(Role.id == publisher.role_id).with_for_update())
-        if publisher
-        else None
-    )
-    return bool(
-        publisher
-        and role
-        and not publisher.is_deleted
-        and publisher.status == "active"
-        and is_established_user(publisher)
-        and not role.is_deleted
-        and has_capability(role, Capability.RECORDS_WRITE)
     )
 
 

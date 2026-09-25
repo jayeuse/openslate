@@ -37,8 +37,8 @@ from app.systems.access.auth.request_security import (
     require_completed_identity as _require_completed_identity,
 )
 from app.systems.access.auth.request_security import source as _source
-from app.systems.access.identity.delivery import queue_action_delivery
-from app.systems.access.identity.models import ActionTokenPurpose, IdentitySession
+from app.systems.access.identity import eligibility, recovery
+from app.systems.access.identity.models import ActionTokenPurpose
 from app.systems.access.identity.rate_limits import invitation_completion_permitted
 from app.systems.access.identity.schemas import (
     ActionTokenCompleteRequest,
@@ -55,14 +55,15 @@ from app.systems.access.identity.service import (
     RefreshReplayDetected,
     authenticate_password,
     consume_action_token,
-    issue_action_token,
     issue_session,
     recovery_request_permitted,
     refresh_session,
     replace_password,
     revoke_refresh_session,
     revoke_session,
-    revoke_user_sessions,
+)
+from app.systems.access.identity.service import (
+    revoke_user_sessions as revoke_user_sessions,
 )
 from app.systems.access.users.acceptance import (
     append_invitation_acceptance_success,
@@ -70,6 +71,7 @@ from app.systems.access.users.acceptance import (
     record_invitation_acceptance_failure,
 )
 from app.systems.access.users.account_operations import router as account_operations_router
+from app.systems.access.users.coordination import InvitationConflict, InvitationError
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.access.users.permissions import effective_permissions
 from app.systems.access.users.roles_router import router as roles_router
@@ -82,8 +84,6 @@ from app.systems.access.users.schemas import (
     UserResponse,
 )
 from app.systems.access.users.service import (
-    InvitationConflict,
-    InvitationError,
     create_invitation,
     resend_invitation_delivery,
 )
@@ -160,7 +160,7 @@ def refresh(
         db.commit()
         return _cleared_auth_error()
     except InvalidCredentials:
-        db.rollback()
+        db.commit()
         return _cleared_auth_error()
     _set_browser_session(response, issued.access_token, issued.refresh_token, issued.csrf_token)
     return {"authenticated": True, "setup_required": issued.setup_only}
@@ -209,7 +209,7 @@ def refresh_bearer_token(
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid authentication credentials") from error
     except InvalidCredentials as error:
-        db.rollback()
+        db.commit()
         raise HTTPException(status_code=401, detail="Invalid authentication credentials") from error
     return TokenResponse(access_token=issued.access_token, refresh_token=issued.refresh_token)
 
@@ -329,29 +329,6 @@ def smtp_delivery_status(
     }
 
 
-@auth_router.get("/sessions")
-def list_sessions(
-    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
-    db: Annotated[Session, Depends(get_db)],
-) -> list[dict[str, object]]:
-    identity = _require_completed_identity(identity)
-    sessions = db.scalars(
-        select(IdentitySession).where(
-            IdentitySession.user_id == identity.user.id, IdentitySession.revoked_at.is_(None)
-        )
-    ).all()
-    return [
-        {
-            "id": item.id,
-            "created_at": item.created_at,
-            "refreshed_at": item.refreshed_at,
-            "expires_at": item.expires_at,
-            "current": item.id == identity.session_id,
-        }
-        for item in sessions
-    ]
-
-
 @auth_router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_one_session(
     session_id: UUID,
@@ -389,14 +366,19 @@ def change_password(
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, bool]:
+    timestamp = utc_now()
     try:
         authenticated = authenticate_password(
-            db, identity.user.email, payload.current_password, source=_source(request)
+            db,
+            identity.user.email,
+            payload.current_password,
+            source=_source(request),
+            now=timestamp,
         )
         if authenticated.id != identity.user.id:
             raise InvalidCredentials("Invalid credentials")
-        replace_password(db, identity.user, payload.password)
-        issued = issue_session(db, identity.user)
+        replace_password(db, identity.user, payload.password, now=timestamp)
+        issued = issue_session(db, identity.user, now=timestamp)
         db.commit()
     except IdentityRateLimited as error:
         db.rollback()
@@ -429,11 +411,10 @@ def request_recovery(
             enforce_rate_limit=_anonymous_rate_limits_enabled(),
         )
         and user is not None
-        and not user.is_deleted
+        and eligibility.is_identity_eligible(user)
         and user.status == UserStatus.ACTIVE.value
     ):
-        raw_token = issue_action_token(db, user.id, ActionTokenPurpose.RECOVERY)
-        queue_action_delivery(db, user.id, ActionTokenPurpose.RECOVERY, raw_token)
+        recovery.queue_recovery_delivery(db, user.id)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -498,9 +479,7 @@ def complete_invitation(
         db.commit()
     except (ActionTokenInvalid, ValueError) as error:
         db.rollback()
-        record_invitation_acceptance_failure(
-            operation_id, user_id, "invitation token is invalid"
-        )
+        record_invitation_acceptance_failure(operation_id, user_id, "invitation token is invalid")
         raise HTTPException(status_code=400, detail="Invitation token is invalid") from error
     except SQLAlchemyError as error:
         db.rollback()

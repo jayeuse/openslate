@@ -10,7 +10,7 @@ import app.systems.access.identity.admin_recovery as recovery
 from app.core.security.passwords import hash_password, verify_password
 from app.systems.access.identity.admin_recovery import LocalRecoveryError, recover_local_admin
 from app.systems.access.identity.models import IdentityCredential, IdentitySession
-from app.systems.access.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.models import IdentityKind, Role, User, UserRole, UserStatus
 
 
 def _admin() -> User:
@@ -22,6 +22,7 @@ def _admin() -> User:
         status=UserStatus.ACTIVE.value,
         role_id=role.id,
         role=role,
+        identity_kind=IdentityKind.INTERNAL.value,
     )
 
 
@@ -36,6 +37,36 @@ def test_recovery_refuses_non_admin_target() -> None:
     user.role = Role(id=uuid7(), role=UserRole.MEMBER, permissions={})
     db = Mock(spec=Session)
     db.scalar.return_value = user
+
+    with pytest.raises(LocalRecoveryError):
+        recover_local_admin(db, user.id, local_invocation=True, elevated=True)
+
+    db.rollback.assert_called_once()
+
+
+@pytest.mark.parametrize("identity_kind,expires_at", [
+    (IdentityKind.GUEST.value, None),
+    (IdentityKind.INTERNAL.value, datetime.now(UTC)),
+])
+def test_recovery_refuses_guest_or_expired_administrator_target(
+    identity_kind: str, expires_at: datetime | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = _admin()
+    user.identity_kind = identity_kind
+    user.expires_at = expires_at
+    credential = IdentityCredential(
+        user_id=user.id,
+        password_digest=hash_password("initial recovery password"),
+        must_change_password=False,
+        temporary_password_expires_at=None,
+        password_changed_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    db = Mock(spec=Session)
+    db.scalar.return_value = user
+    db.get.return_value = credential
+    db.scalars.return_value = []
+    monkeypatch.setattr(recovery, "generated_temporary_password", lambda: "recover-secret-123")
+    monkeypatch.setattr(recovery, "append_security_event", Mock())
 
     with pytest.raises(LocalRecoveryError):
         recover_local_admin(db, user.id, local_invocation=True, elevated=True)

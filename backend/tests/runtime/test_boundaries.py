@@ -327,6 +327,17 @@ def test_health_returns_service_status() -> None:
     assert response.json() == {"status": "ok", "service": "openslate-api"}
 
 
+def test_health_exposes_the_non_secret_instance_handshake(monkeypatch) -> None:
+    import app.main as main
+
+    monkeypatch.setattr(main, "instance_identity_for_process", lambda: "a" * 64)
+
+    response = TestClient(create_app()).get("/api/health")
+
+    assert response.status_code == 200
+    assert response.headers["X-OpenSlate-Instance"] == "a" * 64
+
+
 @pytest.mark.parametrize(
     ("environment_name", "invalid_value", "expected_field"),
     [

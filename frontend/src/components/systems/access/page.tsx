@@ -1,17 +1,32 @@
 "use client";
 
-import Link from "next/link";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { ArrowUpRight, ShieldCheck } from "lucide-react";
 
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import {
+  GuardedWorkspaceLink,
+  useWorkspaceNavigationGuard,
+} from "@/components/workspace-navigation-guard";
+import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import { useAccessController } from "./state/controller";
+import {
+  AccessDraftNavigationProvider,
+  useAccessDraftNavigation,
+} from "./state/draft-navigation";
 import {
   GovernanceDialogs,
   type GovernanceDialogTarget,
@@ -30,17 +45,18 @@ import { SimulatorView } from "./components/simulator-view";
 
 const accessViews = [
   { id: "overview", label: "Overview" },
-  { id: "identities", label: "Identities" },
+  { id: "identities", label: "People & services" },
   { id: "roles", label: "Roles" },
   { id: "groups", label: "Groups" },
-  { id: "rules", label: "Access rules" },
-  { id: "simulator", label: "Simulator" },
-  { id: "reviews", label: "Reviews" },
+  { id: "rules", label: "Detailed rules" },
+  { id: "simulator", label: "Check access" },
+  { id: "reviews", label: "Access reviews" },
 ] as const;
 
 const accessPanelClass = "min-h-0 flex-1 overflow-y-auto overscroll-contain";
 
 type AccessView = (typeof accessViews)[number]["id"];
+type PendingAccessNavigation = { href: string; resume: () => void };
 
 function isAccessView(value: string | null): value is AccessView {
   return accessViews.some((view) => view.id === value);
@@ -90,9 +106,12 @@ function AccessReadError({
 }
 
 export default function SampleAccess() {
+  const userId = useVerifiedWorkspaceUserId();
   return (
     <Suspense fallback={<AccessFallback />}>
-      <AccessControlCenter />
+      <AccessDraftNavigationProvider key={userId}>
+        <AccessControlCenter />
+      </AccessDraftNavigationProvider>
     </Suspense>
   );
 }
@@ -102,10 +121,14 @@ function AccessControlCenter() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const controller = useAccessController();
+  const { hasUnsavedDraft, discardUnsavedDrafts } = useAccessDraftNavigation();
   const [requestedSubject, setRequestedSubject] = useState<AccessSubjectRef>();
   const [governanceDialog, setGovernanceDialog] =
     useState<GovernanceDialogTarget | null>(null);
+  const [pendingNavigation, setPendingNavigation] =
+    useState<PendingAccessNavigation | null>(null);
   const [navigationNotice, setNavigationNotice] = useState("");
+  const commandPending = controller.isPending();
   const resource = controller.resource;
   const readReady = resource.status === "ready";
 
@@ -139,60 +162,120 @@ function AccessControlCenter() {
     searchParams,
   ]);
 
-  function blockNavigation(): boolean {
-    if (!controller.isPending()) return false;
-    setNavigationNotice(
-      "Finish the Access change before switching views or leaving this page.",
-    );
-    return true;
-  }
+  const guardWorkspaceNavigation = useCallback(
+    (href: string, resume: () => void) => {
+      if (commandPending) {
+        setNavigationNotice(
+          "Finish the Access change before switching views or leaving this page.",
+        );
+        return false;
+      }
+      if (!hasUnsavedDraft) {
+        setNavigationNotice("");
+        return true;
+      }
+      if (
+        typeof window !== "undefined" &&
+        new URL(href, window.location.origin).href === window.location.href
+      )
+        return true;
 
-  useWorkspaceNavigationGuard(() => {
-    if (controller.isPending()) {
-      setNavigationNotice(
-        "Finish the Access change before switching views or leaving this page.",
-      );
+      let resumed = false;
+      setNavigationNotice("");
+      setPendingNavigation({
+        href,
+        resume: () => {
+          if (resumed) return;
+          resumed = true;
+          resume();
+        },
+      });
       return false;
-    }
-    setNavigationNotice("");
-    return true;
-  });
+    },
+    [commandPending, hasUnsavedDraft],
+  );
 
-  function navigate(view: AccessView, options?: { keepSubject?: boolean }) {
-    if (blockNavigation()) return;
-    setNavigationNotice("");
-    if (!options?.keepSubject) setRequestedSubject(undefined);
+  useWorkspaceNavigationGuard(guardWorkspaceNavigation);
+
+  useEffect(() => {
+    if (!hasUnsavedDraft && !commandPending) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [commandPending, hasUnsavedDraft]);
+
+  function accessViewHref(view: AccessView): string {
     const next = new URLSearchParams();
     next.set("view", view);
     if (view === "identities") {
       const user = searchParams.get("user");
       if (user) next.set("user", user);
     }
-    router.push(`${pathname}?${next.toString()}` as Route);
+    return `${pathname}?${next.toString()}`;
+  }
+
+  function pushAccessView(
+    view: AccessView,
+    options?: { keepSubject?: boolean },
+  ) {
+    setNavigationNotice("");
+    if (!options?.keepSubject) setRequestedSubject(undefined);
+    router.push(accessViewHref(view) as Route);
+  }
+
+  function requestAccessNavigation(href: string, resume: () => void) {
+    if (guardWorkspaceNavigation(href, resume)) resume();
+  }
+
+  function navigate(view: AccessView, options?: { keepSubject?: boolean }) {
+    const href = accessViewHref(view);
+    requestAccessNavigation(href, () => pushAccessView(view, options));
   }
 
   function navigateFromOverview(destination: AccessOverviewDestination) {
-    if (blockNavigation()) return;
     if (
       destination === "defaults" ||
       destination === "import" ||
       destination === "export"
     ) {
-      setGovernanceDialog(destination);
+      requestAccessNavigation(
+        `${pathname}?view=overview&action=${destination}`,
+        () => {
+          setGovernanceDialog(destination);
+        },
+      );
       return;
     }
     navigate(destination);
   }
 
   function openRulesForGroup(groupId: string) {
-    if (blockNavigation()) return;
-    setRequestedSubject({ kind: "group", id: groupId });
-    navigate("rules", { keepSubject: true });
+    requestAccessNavigation(accessViewHref("rules"), () => {
+      setRequestedSubject({ kind: "group", id: groupId });
+      pushAccessView("rules", { keepSubject: true });
+    });
   }
 
-  function setActiveGovernanceDialog(dialog: GovernanceDialogTarget | null) {
-    if (dialog === null && blockNavigation()) return;
-    setGovernanceDialog(dialog);
+  function discardAndContinueNavigation() {
+    if (commandPending) {
+      setNavigationNotice(
+        "Finish the Access change before switching views or leaving this page.",
+      );
+      return;
+    }
+    const transition = pendingNavigation;
+    if (!transition) return;
+    if (!discardUnsavedDrafts()) {
+      setNavigationNotice(
+        "The browser could not clear your saved Access draft. Keep editing or clear this site's browser data before leaving.",
+      );
+      return;
+    }
+    setPendingNavigation(null);
+    transition.resume();
   }
 
   if (resource.status === "loading") return <AccessFallback />;
@@ -213,16 +296,11 @@ function AccessControlCenter() {
           </p>
         </div>
         <Button asChild variant="outline" className="min-h-11 shrink-0 px-3">
-          <Link
-            href="/manage?view=security"
-            onClick={(event) => {
-              if (blockNavigation()) event.preventDefault();
-            }}
-          >
+          <GuardedWorkspaceLink href="/manage?view=security">
             <ShieldCheck aria-hidden="true" />
-            Manage security
+            Sign-in & security
             <ArrowUpRight aria-hidden="true" />
-          </Link>
+          </GuardedWorkspaceLink>
         </Button>
       </header>
 
@@ -293,7 +371,7 @@ function AccessControlCenter() {
             <GovernanceDialogs
               controller={controller}
               dialog={governanceDialog}
-              onDialogChange={setActiveGovernanceDialog}
+              onDialogChange={setGovernanceDialog}
             />
           </>
         ) : null}
@@ -303,10 +381,51 @@ function AccessControlCenter() {
         <GovernanceDialogs
           controller={controller}
           dialog={governanceDialog}
-          onDialogChange={setActiveGovernanceDialog}
+          onDialogChange={setGovernanceDialog}
           showLauncher={false}
         />
       )}
+
+      <AlertDialog
+        open={pendingNavigation !== null}
+        onOpenChange={(open) => {
+          if (!open && !commandPending) setPendingNavigation(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard unsaved Access changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your Access draft has unsaved changes. Leaving this page will
+              discard them.
+            </AlertDialogDescription>
+            {commandPending ? (
+              <p role="status" className="text-muted-foreground text-sm">
+                Finish the Access change before continuing.
+              </p>
+            ) : null}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setPendingNavigation(null)}
+            >
+              Keep editing
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              className="min-h-11"
+              disabled={commandPending}
+              onClick={discardAndContinueNavigation}
+            >
+              Discard and continue
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

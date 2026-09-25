@@ -59,23 +59,21 @@ def setup_fingerprint(backend):
 
 
 def run_backend_batches(run, backend, private, environment, run_id, batch):
-    manifest = private / "database.json"
-    manifest.write_text(
-        json.dumps(
-            {
-                "run_id": run_id,
-                "urls": [
-                    environment["TEST_DATABASE_URL"],
-                    environment["MIGRATION_DATABASE_URL"],
-                    environment["TEST_INSPECTOR_DATABASE_URL"],
-                ],
-            }
+    if __package__:
+        from .postgres_runtime import assert_runner_database_url
+    else:
+        from postgres_runtime import assert_runner_database_url
+
+    for name, role in (
+        ("TEST_DATABASE_URL", "openslate_runtime"),
+        ("MIGRATION_DATABASE_URL", "openslate_owner"),
+        ("TEST_INSPECTOR_DATABASE_URL", "openslate_inspector"),
+    ):
+        assert_runner_database_url(
+            environment[name], environment, allowed_roles=frozenset({role})
         )
-    )
-    manifest.chmod(0o600)
     env = {
         **environment,
-        "OPENSLATE_TEST_DATABASE_MANIFEST": str(manifest),
         "OPENSLATE_REQUIRE_DATABASE_TESTS": "true",
     }
     fingerprint = setup_fingerprint(backend)

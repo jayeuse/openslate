@@ -1027,6 +1027,27 @@ test("calendar and timeline date ranges filter dated rows while retaining unsche
   ).toEqual(["before-window", "in-month", "unscheduled"]);
 });
 
+test("legacy Board record links resolve to Views and reserialize to a canonical OpenView URL", () => {
+  const legacyBoardLink = parseOpenViewUrl(
+    "/openview?section=records&module=service-requests&record=sample-sr-1005",
+  );
+
+  expect(legacyBoardLink).toEqual({
+    section: "views",
+    module: "service-requests",
+    record: "sample-sr-1005",
+    invalid: false,
+  });
+  expect(serializeOpenViewUrl(legacyBoardLink)).toBe(
+    "/openview?section=views&module=service-requests&record=sample-sr-1005",
+  );
+  expect(parseOpenViewUrl("/openview?section=records")).toEqual({
+    section: "views",
+    module: "service-requests",
+    invalid: false,
+  });
+});
+
 test("URL state only serializes allowlisted identifiers and record links resolve to Views", () => {
   expect(parseOpenViewUrl("/openview?record=sample-sr-1005")).toEqual({
     section: "views",

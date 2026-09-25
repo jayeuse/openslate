@@ -16,6 +16,8 @@ The application uses ordinary PostgreSQL ownership and grants. There are no mana
 
 `files` stores metadata, object keys, scan state, and nullable `enc_version`. Private bytes are written under a server-only `FILES_STORAGE_ROOT`: quarantine before scanning and immutable ready objects after promotion. A file row alone never grants byte access.
 
+OpenView persists owner-private Dashboards and widget configurations in [`dashboards` and `dashboard_widgets`](../../backend/app/systems/openview/dashboards/models.py), with a bounded refresh cadence on each Dashboard. [`openview_chart_preferences`](../../backend/app/systems/openview/charts/models.py) stores one versioned Chart configuration per user. These rows contain settings rather than materialized Record results; each data view queries authorized Records when rendered. The forward revisions [`7d08f4310c7b`](../../backend/migrations/versions/7d08f4310c7b_add_chart_preferences_and_dashboard_.py) and [`a1a581d48771`](../../backend/migrations/versions/a1a581d48771_complete_chart_preference_audit_foreign_.py) add the preference table, Dashboard checks, and audit foreign key.
+
 ## Schema workflow
 
 1. Change the registered SQLAlchemy model.

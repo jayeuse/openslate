@@ -17,19 +17,29 @@ class FileTransferPolicy:
     deadline_seconds: float
 
 
-_FILE_ROUTE = re.compile(
-    r"/api/files/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/(content|reconcile|purge)"
+_UUID = (
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+_FILE_ROUTE = re.compile(rf"/api/files/{_UUID}/(content|reconcile|purge)")
+_BOARD_FILE_ROUTE = re.compile(rf"/api/boards/{_UUID}/files/{_UUID}/(content|reconcile|purge)")
+_BOARD_CONTENT_ROUTE = re.compile(
+    rf"/api/boards/{_UUID}/(?:events|announcements)/{_UUID}/attachments/{_UUID}/content"
 )
 
 
 def file_transfer_policy(path: str, method: str) -> FileTransferPolicy | None:
     if path == "/api/workspace/logo" and method == "GET":
         return FileTransferPolicy(1024 * 1024, 120)
-    match = _FILE_ROUTE.fullmatch(path)
+    if method == "GET" and _BOARD_CONTENT_ROUTE.fullmatch(path):
+        return FileTransferPolicy(1024 * 1024, 120)
+    board_match = _BOARD_FILE_ROUTE.fullmatch(path)
+    match = board_match or _FILE_ROUTE.fullmatch(path)
     if match is None:
         return None
     action = match.group(1)
+    if board_match and action == "content" and method != "PUT":
+        return None
     if action == "content" and method in {"PUT", "GET"}:
         return FileTransferPolicy(25 * 1024 * 1024 if method == "PUT" else 1024 * 1024, 120)
     if action in {"reconcile", "purge"} and method == "POST":

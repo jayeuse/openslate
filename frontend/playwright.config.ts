@@ -16,6 +16,13 @@ if (!configurationMode || !["synthetic", "process"].includes(configurationMode))
 const testLayer = localProfile ? "all" : process.env.TEST_LAYER;
 if (!testLayer || !["all", "isolated", "http"].includes(testLayer))
   throw new Error("TEST_LAYER must be all, isolated, or http");
+const browserMatrix = process.env.HTTP_BROWSER_MATRIX;
+if (browserMatrix !== undefined && browserMatrix !== "all")
+  throw new Error("HTTP_BROWSER_MATRIX must be all when set");
+const httpBrowsers =
+  browserMatrix === "all"
+    ? (["chromium", "firefox", "webkit"] as const)
+    : (["chromium"] as const);
 
 const baseURL = localProfile ? "http://127.0.0.1:3104" : process.env.BASE_URL;
 if (!baseURL) throw new Error("BASE_URL is required");
@@ -79,7 +86,11 @@ export default defineConfig({
       ? [{ name: "isolated", testDir: "./tests/isolated" }]
       : []),
     ...(testLayer === "all" || testLayer === "http"
-      ? [{ name: "http", testDir: "./tests/http" }]
+      ? httpBrowsers.map((browserName) => ({
+          name: browserName === "chromium" ? "http" : `http-${browserName}`,
+          testDir: "./tests/http",
+          use: { browserName },
+        }))
       : []),
   ],
   webServer:

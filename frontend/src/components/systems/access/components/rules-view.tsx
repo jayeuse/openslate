@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { AlertTriangle, Lock, Search, Unlock } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, ChevronDown, Lock, Search, Unlock } from "lucide-react";
 
 import {
   AlertDialog,
@@ -44,6 +44,17 @@ import {
   pageCollection,
 } from "../../shared/helpers/sample-collections";
 import type { AccessController } from "../state/controller";
+import { useAccessDraftRegistration } from "../state/draft-navigation";
+import {
+  accessDraftSubmissionNeedsReload,
+  beginAccessRulesDraftSubmission,
+  clearAccessRulesDraft,
+  completeAccessRulesDraftSubmission,
+  discardUncertainAccessRulesDraft,
+  readAccessRulesDraft,
+  writeAccessRulesDraft,
+} from "../state/draft-journal";
+import { useVerifiedWorkspaceUserId } from "../../shared/runtime/workspace-identity";
 import type {
   AccessDecision,
   AccessRule,
@@ -67,24 +78,13 @@ type ConflictResolution = {
 };
 type Permission = AccessController["permissionCatalog"][number];
 
-const PAGE_SIZE = 1;
+const PAGE_SIZE = 5;
 const subjectKinds: AccessSubjectRef["kind"][] = [
   "everyone",
   "role",
   "group",
   "identity",
 ];
-const scopeKinds: AccessScopeKind[] = [
-  "workspace",
-  "department",
-  "module",
-  "field",
-  "board",
-  "openview",
-  "comms-category",
-  "comms-channel",
-];
-
 function title(value: string): string {
   return value
     .split("-")
@@ -138,6 +138,23 @@ function groupByProduct<T extends { product: string }>(items: readonly T[]) {
   return groups;
 }
 
+function PermissionDetails({ permission }: { permission: Permission }) {
+  return (
+    <details className="group mt-2 rounded-md border">
+      <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2">
+        Technical details
+        <ChevronDown
+          aria-hidden="true"
+          className="size-4 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+        />
+      </summary>
+      <p className="text-muted-foreground border-t px-3 py-2 text-xs">
+        Permission ID: <code className="font-mono">{permission.id}</code>
+      </p>
+    </details>
+  );
+}
+
 function permissionColumns(
   ruleFor: (permissionId: string) => AccessRule,
   onChange: (rule: AccessRule) => void,
@@ -151,12 +168,10 @@ function permissionColumns(
         return (
           <div>
             <p className="font-medium">{permission.name}</p>
-            <p className="text-muted-foreground mt-1 font-mono text-xs">
-              {permission.id}
-            </p>
             <Badge variant="secondary" className="mt-2">
               {permission.product}
             </Badge>
+            <PermissionDetails permission={permission} />
           </div>
         );
       },
@@ -205,10 +220,14 @@ function RuleControls({
         spacing={0}
         className="w-full [&>button]:min-h-11 [&>button]:flex-1"
       >
-        <ToggleGroupItem value="inherit">Inherit</ToggleGroupItem>
+        <ToggleGroupItem value="inherit">Use existing access</ToggleGroupItem>
         <ToggleGroupItem value="allow">Allow</ToggleGroupItem>
         <ToggleGroupItem value="deny">Deny</ToggleGroupItem>
       </ToggleGroup>
+      <p className="text-muted-foreground text-xs">
+        Use existing access follows broader or default access. A scope lock can
+        still block more specific rules.
+      </p>
       <details className="rounded-md border">
         <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2">
           Conditions and scope lock
@@ -267,6 +286,7 @@ function RuleControls({
 }
 
 export function RulesView({ controller, initialSubject }: RulesViewProps) {
+  const userId = useVerifiedWorkspaceUserId();
   const { state, actions, permissionCatalog, scopeCatalog } = controller;
   const firstScope = scopeCatalog[0] ?? {
     kind: "workspace" as const,
@@ -282,6 +302,10 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   const [baselines, setBaselines] = useState<Record<string, AccessRule | null>>(
     {},
   );
+  const [journalReady, setJournalReady] = useState(false);
+  const [journalIssue, setJournalIssue] = useState("");
+  const [uncertainDraft, setUncertainDraft] = useState(false);
+  const [uncertainDiscardOpen, setUncertainDiscardOpen] = useState(false);
   const [conflictResolutions, setConflictResolutions] = useState<
     Record<string, ConflictResolution>
   >({});
@@ -296,6 +320,92 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   );
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const recoveryNeedsReload =
+    uncertainDraft && accessDraftSubmissionNeedsReload(userId, "rules");
+
+  useEffect(() => {
+    const stored = readAccessRulesDraft(userId);
+    if (stored.value) {
+      const restoredDrafts = Object.fromEntries(
+        stored.value.drafts.map((rule) => [rule.permissionId, rule]),
+      );
+      setSelection(stored.value.selection);
+      setDrafts(restoredDrafts);
+      setBaselines(stored.value.baselines);
+    }
+    if (stored.status === "uncertain") {
+      setUncertainDraft(true);
+      setJournalIssue(
+        "This Rules change may have completed. Review the current policy and the saved choices before discarding this locked draft.",
+      );
+    } else if (stored.status === "unavailable")
+      setJournalIssue(
+        "Browser draft storage is unavailable. Keep this tab open and save your Rules changes; they may not survive reload.",
+      );
+    else if (stored.status === "invalid")
+      setJournalIssue(
+        "A saved Rules draft could not be safely restored. It was not applied.",
+      );
+    setJournalReady(true);
+  }, [userId]);
+
+  function clearDraftState(): boolean {
+    if (uncertainDraft) {
+      setJournalIssue(
+        "This Rules change may have completed. Review the current policy before discarding this locked draft.",
+      );
+      return false;
+    }
+    if (!clearAccessRulesDraft(userId)) {
+      setJournalIssue(
+        "The browser could not clear your saved Rules draft. Keep editing or clear this site's browser data before leaving.",
+      );
+      return false;
+    }
+    resetDraftState();
+    return true;
+  }
+
+  function resetDraftState() {
+    setDrafts({});
+    setBaselines({});
+    setConflictResolutions({});
+    setPendingSelection(null);
+    setDiscardOpen(false);
+    setImpactOpen(false);
+    setConfirmOpen(false);
+    setJournalIssue("");
+    setUncertainDiscardOpen(false);
+  }
+
+  function discardUncertainDraft() {
+    if (accessDraftSubmissionNeedsReload(userId, "rules")) {
+      setUncertainDiscardOpen(false);
+      setJournalIssue(
+        "Reload Access and review current policy before discarding this uncertain Rules draft.",
+      );
+      return;
+    }
+    if (
+      controller.resource.status !== "ready" ||
+      controller.resource.refreshing ||
+      controller.resource.error
+    ) {
+      setJournalIssue(
+        "Refresh Access successfully before discarding this uncertain Rules draft.",
+      );
+      return;
+    }
+    if (!discardUncertainAccessRulesDraft(userId)) {
+      setUncertainDiscardOpen(false);
+      setJournalIssue(
+        "The browser could not clear the uncertain Rules draft. It remains locked; try again when browser storage works.",
+      );
+      return;
+    }
+    setUncertainDraft(false);
+    resetDraftState();
+  }
 
   const selectedRules = state.rules.filter(
     (rule) =>
@@ -310,6 +420,11 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
     return !current || !sameRule(current, rule);
   });
   const dirty = pending.length > 0;
+  useAccessDraftRegistration(
+    "rules-view",
+    dirty || uncertainDraft,
+    clearDraftState,
+  );
   const conflicts = pending.filter((rule) => {
     if (!Object.hasOwn(baselines, rule.permissionId)) return false;
     const baseline = baselines[rule.permissionId];
@@ -345,10 +460,32 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   const scopesForKind = scopeCatalog.filter(
     (scope) => scope.kind === selection.scope.kind,
   );
+  const availableScopeKinds = [
+    ...new Set(scopeCatalog.map((scope) => scope.kind)),
+  ];
   const selectedScopeEntry = scopeCatalog.find(
     (scope) =>
       scope.kind === selection.scope.kind && scope.id === selection.scope.id,
   );
+  function subjectIsKnown(subject: AccessSubjectRef): boolean {
+    switch (subject.kind) {
+      case "everyone":
+        return true;
+      case "role":
+        return state.roles.some((role) => role.id === subject.id);
+      case "group":
+        return state.groups.some((group) => group.id === subject.id);
+      case "identity":
+        return state.identities.some((identity) => identity.id === subject.id);
+    }
+  }
+  const targetMissing =
+    !subjectIsKnown(selection.subject) ||
+    !selectedScopeEntry ||
+    Object.keys(drafts).some(
+      (permissionId) =>
+        !permissionCatalog.some((permission) => permission.id === permissionId),
+    );
   const normalizedQuery = query.trim().toLowerCase();
   const filteredPermissions = permissionCatalog.filter((permission) => {
     if (
@@ -402,17 +539,37 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   }
 
   function stage(rule: AccessRule) {
-    setBaselines((current) =>
-      Object.hasOwn(current, rule.permissionId)
-        ? current
-        : {
-            ...current,
-            [rule.permissionId]: structuredClone(
-              baseByPermission.get(rule.permissionId) ?? null,
-            ),
-          },
-    );
-    setDrafts((current) => ({ ...current, [rule.permissionId]: rule }));
+    if (uncertainDraft) return;
+    const nextBaselines = Object.hasOwn(baselines, rule.permissionId)
+      ? { ...baselines }
+      : {
+          ...baselines,
+          [rule.permissionId]: structuredClone(
+            baseByPermission.get(rule.permissionId) ?? null,
+          ),
+        };
+    const nextDrafts = { ...drafts, [rule.permissionId]: rule };
+    const current = baseByPermission.get(rule.permissionId);
+    if (current && sameRule(current, rule)) {
+      delete nextDrafts[rule.permissionId];
+      delete nextBaselines[rule.permissionId];
+    }
+    const persisted = Object.keys(nextDrafts).length
+      ? writeAccessRulesDraft(userId, {
+          selection,
+          drafts: Object.values(nextDrafts),
+          baselines: nextBaselines,
+        })
+      : clearAccessRulesDraft(userId);
+    if (!persisted) {
+      // An earlier stored value must not masquerade as the latest draft.
+      clearAccessRulesDraft(userId);
+      setJournalIssue(
+        "The browser could not keep your latest Rules change for reload. Keep this tab open and save it before leaving.",
+      );
+    } else setJournalIssue("");
+    setBaselines(nextBaselines);
+    setDrafts(nextDrafts);
     setConflictResolutions((current) => {
       const next = { ...current };
       delete next[rule.permissionId];
@@ -433,6 +590,18 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   }
 
   async function applyChanges() {
+    if (uncertainDraft) {
+      setError(
+        "Review the uncertain Rules change before starting another one.",
+      );
+      return;
+    }
+    if (targetMissing) {
+      setError(
+        "This Rules draft refers to a person, group, role, area, or permission that is no longer available. Discard it and start again.",
+      );
+      return;
+    }
     if (controller.isPending()) {
       setError(
         "Another Access change is already in progress. Try again shortly.",
@@ -440,21 +609,51 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
       return;
     }
     if (rulesToApply.length) {
+      if (
+        !beginAccessRulesDraftSubmission(userId, {
+          selection,
+          drafts: Object.values(drafts),
+          baselines,
+        })
+      ) {
+        setError(
+          "The browser could not protect your Rules draft before saving. No policy request was sent; check browser storage and try again.",
+        );
+        setImpactOpen(false);
+        setConfirmOpen(false);
+        return;
+      }
+      setUncertainDraft(true);
       const result = await actions.upsertRules(rulesToApply);
       if (!result.ok) {
         setError(result.error);
+        setJournalIssue(
+          "This Rules change may have completed. Review the current policy before discarding this locked draft.",
+        );
+        setImpactOpen(false);
+        setConfirmOpen(false);
         return;
       }
+      if (!completeAccessRulesDraftSubmission(userId)) {
+        setImpactOpen(false);
+        setConfirmOpen(false);
+        setJournalIssue(
+          "The policy change was applied, but browser cleanup failed. This Rules draft remains locked until you review current policy and discard it.",
+        );
+        return;
+      }
+      setUncertainDraft(false);
+      resetDraftState();
+      setNotice(
+        `${rulesToApply.length} policy change${rulesToApply.length === 1 ? "" : "s"} applied.`,
+      );
+      return;
     }
     setImpactOpen(false);
     setConfirmOpen(false);
-    setDrafts({});
-    setBaselines({});
-    setConflictResolutions({});
+    if (!clearDraftState()) return;
     setNotice(
-      rulesToApply.length
-        ? `${rulesToApply.length} policy change${rulesToApply.length === 1 ? "" : "s"} applied.`
-        : "Current policy was kept for every conflict; no draft rules were applied.",
+      "Current policy was kept for every conflict; no draft rules were applied.",
     );
   }
 
@@ -471,12 +670,12 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
     (identity) =>
       identity.kind === "internal" &&
       identity.status === "active" &&
-      identity.roleId === "sample-admin",
+      identity.roleId === controller.adminRoleId,
   );
 
   function identitiesAffectedBy(rule: AccessRule) {
     const candidates = state.identities.filter(
-      (identity) => identity.roleId !== "sample-admin",
+      (identity) => identity.roleId !== controller.adminRoleId,
     );
     if (rule.subject.kind === "everyone") return candidates;
     if (rule.subject.kind === "role") {
@@ -512,7 +711,15 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
 
   return (
     <section aria-labelledby="rules-title" className="flex flex-col gap-3">
-      <fieldset disabled={controller.isPending()} className="contents">
+      <fieldset
+        disabled={
+          !journalReady ||
+          uncertainDraft ||
+          controller.isPending() ||
+          !controller.availability.rules
+        }
+        className="contents"
+      >
         <div>
           <h2 id="rules-title" className="text-xl font-semibold tracking-tight">
             Access rules
@@ -524,9 +731,29 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
         </div>
 
         {notice ? <Alert variant="success">{notice}</Alert> : null}
+        <Alert>
+          Workspace-wide rules apply to Sandbox data and related files and
+          automations, including Record values queried through OpenView or
+          Boards and delivered in Report output. Rules for individual
+          departments are not active yet. Board grants and content audiences
+          remain separate. Service identities can store intended rules but
+          cannot sign in yet.
+        </Alert>
         {error ? (
           <Alert role="alert" variant="destructive">
             {error}
+          </Alert>
+        ) : null}
+        {journalIssue ? (
+          <Alert role="alert" variant="warning">
+            {journalIssue}
+          </Alert>
+        ) : null}
+        {dirty && targetMissing ? (
+          <Alert role="alert" variant="warning">
+            This saved Rules draft refers to a person, group, role, area, or
+            permission that is no longer available. It cannot be applied.
+            Discard it and start again.
           </Alert>
         ) : null}
 
@@ -535,8 +762,11 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
             <FieldGroup className="grid gap-3 md:grid-cols-2 xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(12rem,1.5fr)_auto]">
               <Field>
                 <FieldLabel htmlFor="rule-subject-kind">
-                  Subject type
+                  Who gets this?
                 </FieldLabel>
+                <FieldDescription>
+                  Choose everyone, a role, a group, a person, or a service.
+                </FieldDescription>
                 <NativeSelect
                   id="rule-subject-kind"
                   className="w-full [&>select]:min-h-11"
@@ -564,13 +794,13 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                 >
                   {subjectKinds.map((kind) => (
                     <NativeSelectOption key={kind} value={kind}>
-                      {title(kind)}
+                      {kind === "identity" ? "Person or service" : title(kind)}
                     </NativeSelectOption>
                   ))}
                 </NativeSelect>
               </Field>
               <Field>
-                <FieldLabel htmlFor="rule-subject">Subject</FieldLabel>
+                <FieldLabel htmlFor="rule-subject">Choose who</FieldLabel>
                 <NativeSelect
                   id="rule-subject"
                   className="w-full [&>select]:min-h-11"
@@ -598,14 +828,25 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                   ) : (
                     subjectOptions.map((item) => (
                       <NativeSelectOption key={item.id} value={item.id}>
-                        {item.name}
+                        {"kind" in item
+                          ? item.kind === "service"
+                            ? `Service: ${item.name}`
+                            : item.kind === "guest"
+                              ? `Guest: ${item.name}`
+                              : item.name
+                          : item.name}
                       </NativeSelectOption>
                     ))
                   )}
                 </NativeSelect>
               </Field>
               <Field>
-                <FieldLabel htmlFor="rule-scope-kind">Scope type</FieldLabel>
+                <FieldLabel htmlFor="rule-scope-kind">
+                  Where does it apply?
+                </FieldLabel>
+                <FieldDescription>
+                  Choose the type of workspace area.
+                </FieldDescription>
                 <NativeSelect
                   id="rule-scope-kind"
                   className="w-full [&>select]:min-h-11"
@@ -622,7 +863,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                     });
                   }}
                 >
-                  {scopeKinds.map((kind) => (
+                  {availableScopeKinds.map((kind) => (
                     <NativeSelectOption key={kind} value={kind}>
                       {title(kind)}
                     </NativeSelectOption>
@@ -630,7 +871,9 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                 </NativeSelect>
               </Field>
               <Field>
-                <FieldLabel htmlFor="rule-scope">Resource scope</FieldLabel>
+                <FieldLabel htmlFor="rule-scope">
+                  Choose the specific area
+                </FieldLabel>
                 <NativeSelect
                   id="rule-scope"
                   className="w-full [&>select]:min-h-11"
@@ -653,9 +896,8 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                 </NativeSelect>
               </Field>
               <Field>
-                <FieldLabel htmlFor="rule-search">
-                  Search permissions
-                </FieldLabel>
+                <FieldLabel htmlFor="rule-search">What can they do?</FieldLabel>
+                <FieldDescription>Find the action to set.</FieldDescription>
                 <div className="relative">
                   <Search
                     aria-hidden="true"
@@ -669,7 +911,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                       setQuery(event.target.value);
                       setPageIndex(0);
                     }}
-                    placeholder="Permission, product, or ID"
+                    placeholder="Search actions or technical ID"
                   />
                 </div>
               </Field>
@@ -723,12 +965,10 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                       >
                         <div>
                           <h3 className="font-medium">{permission.name}</h3>
-                          <p className="text-muted-foreground mt-1 font-mono text-xs">
-                            {permission.id}
-                          </p>
                           <Badge variant="secondary" className="mt-2">
                             {product}
                           </Badge>
+                          <PermissionDetails permission={permission} />
                         </div>
                         <RuleControls
                           rule={rule}
@@ -754,42 +994,52 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
           />
         ) : null}
 
-        <div className="bg-card/95 sticky bottom-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 shadow-sm backdrop-blur">
-          <p className="text-sm">
-            <strong>{pending.length}</strong> staged change
-            {pending.length === 1 ? "" : "s"}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              disabled={!dirty || controller.isPending()}
-              onClick={() => {
-                setPendingSelection(null);
-                setDiscardOpen(true);
-              }}
-            >
-              Discard
-            </Button>
-            <Button
-              type="button"
-              className="min-h-11"
-              disabled={!dirty || controller.isPending()}
-              onClick={() => setImpactOpen(true)}
-            >
-              Review impact
-            </Button>
+        {dirty ? (
+          <div className="bg-card/95 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 shadow-sm backdrop-blur sm:sticky sm:bottom-3">
+            <p className="text-sm">
+              <strong>{pending.length}</strong> staged change
+              {pending.length === 1 ? "" : "s"}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={!dirty || controller.isPending()}
+                onClick={() => {
+                  setPendingSelection(null);
+                  setDiscardOpen(true);
+                }}
+              >
+                Discard
+              </Button>
+              <Button
+                type="button"
+                className="min-h-11"
+                disabled={
+                  !dirty ||
+                  targetMissing ||
+                  controller.isPending() ||
+                  !controller.availability.rules
+                }
+                title="Rule editing is not available until enforcement is ready."
+                onClick={() => setImpactOpen(true)}
+              >
+                Review impact
+              </Button>
+            </div>
           </div>
-        </div>
+        ) : null}
 
         <Dialog open={impactOpen} onOpenChange={setImpactOpen}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Review policy impact</DialogTitle>
+              <DialogTitle>Review estimated policy impact</DialogTitle>
               <DialogDescription>
                 Compare the opening baseline, current policy, and staged draft
-                before applying it.
+                before applying it. Directory match counts are estimates. The
+                server checks current policy again before applying; membership
+                changes can alter the impact.
               </DialogDescription>
             </DialogHeader>
             {conflicts.length ? (
@@ -874,7 +1124,8 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                       </Badge>
                     </div>
                     <p className="text-muted-foreground text-sm">
-                      Affected non-protected identities: {affected.length}
+                      Potential non-protected directory matches:{" "}
+                      {affected.length}
                       {affected.length
                         ? ` — ${affected
                             .slice(0, 3)
@@ -1002,12 +1253,8 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                 className="min-h-11"
                 disabled={controller.isPending()}
                 onClick={() => {
-                  setDrafts({});
-                  setBaselines({});
-                  setConflictResolutions({});
+                  if (!clearDraftState()) return;
                   if (pendingSelection) setSelection(pendingSelection);
-                  setPendingSelection(null);
-                  setDiscardOpen(false);
                   setPageIndex(0);
                 }}
               >
@@ -1017,6 +1264,102 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
           </AlertDialogContent>
         </AlertDialog>
       </fieldset>
+      {uncertainDraft ? (
+        <Card>
+          <CardContent className="space-y-3 p-3">
+            <h3 className="font-semibold">
+              Current policy and saved Rules choices
+            </h3>
+            <p className="text-muted-foreground text-sm">
+              {recoveryNeedsReload
+                ? "Reload Access to compare against the latest policy."
+                : "Current policy was loaded from Access."}{" "}
+              The saved choices have not been submitted again.
+            </p>
+            <ul className="max-h-64 space-y-2 overflow-y-auto">
+              {Object.values(drafts).map((rule) => {
+                const current = baseByPermission.get(rule.permissionId);
+                const permission = permissionCatalog.find(
+                  (item) => item.id === rule.permissionId,
+                );
+                return (
+                  <li
+                    key={rule.permissionId}
+                    className="rounded-md border p-2 text-sm"
+                  >
+                    <p className="font-medium">
+                      {permission?.name ?? rule.permissionId}
+                    </p>
+                    <p>Current: {current?.decision ?? "inherit"}</p>
+                    <p>Saved: {rule.decision}</p>
+                    <p className="text-muted-foreground">
+                      Current scope lock: {current?.locked ? "On" : "Off"}.
+                      Current window: {current?.startsAt ?? "Any start"} to{" "}
+                      {current?.endsAt ?? "Any end"}.
+                    </p>
+                    <p className="text-muted-foreground">
+                      Saved scope lock: {rule.locked ? "On" : "Off"}. Saved
+                      window: {rule.startsAt ?? "Any start"} to{" "}
+                      {rule.endsAt ?? "Any end"}.
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
+      {uncertainDraft ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 self-start"
+          disabled={
+            recoveryNeedsReload ||
+            controller.resource.status !== "ready" ||
+            controller.resource.refreshing ||
+            Boolean(controller.resource.error)
+          }
+          onClick={() => setUncertainDiscardOpen(true)}
+        >
+          Review and discard locked Rules draft
+        </Button>
+      ) : null}
+      {recoveryNeedsReload ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 self-start"
+          onClick={() => window.location.reload()}
+        >
+          Reload Access before recovery
+        </Button>
+      ) : null}
+      <AlertDialog
+        open={uncertainDiscardOpen}
+        onOpenChange={setUncertainDiscardOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogTitle>Discard uncertain Rules draft?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The earlier policy change may have completed. Review the current
+            policy and your saved choices before starting a new draft.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="min-h-11">
+              Keep reviewing
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              className="min-h-11"
+              onClick={discardUncertainDraft}
+            >
+              Discard locked draft
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

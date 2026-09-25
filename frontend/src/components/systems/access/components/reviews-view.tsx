@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/dialog";
 import {
   Empty,
-  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
@@ -53,10 +52,79 @@ const reviewKinds: { value: ReviewSubjectKind; label: string }[] = [
   { value: "expiry-window", label: "Expiry window" },
 ];
 
+function reviewDecisionLabel(
+  decision: AccessReview["decisions"][number]["decision"],
+): string {
+  switch (decision) {
+    case "keep":
+      return "Keep access";
+    case "change":
+      return "Needs changes";
+    case "revoke":
+      return "Remove access";
+    case "pending":
+      return "Not decided";
+  }
+}
+
+type ReviewDecisionControlsProps = {
+  targetName: string;
+  decision: AccessReview["decisions"][number]["decision"];
+  disabled: boolean;
+  onDecisionChange: (decision: ReviewDecision) => void;
+};
+
+function ReviewDecisionControls({
+  targetName,
+  decision,
+  disabled,
+  onDecisionChange,
+}: ReviewDecisionControlsProps) {
+  function updateDecision(values: readonly string[]) {
+    const nextDecision = values[0] as ReviewDecision | undefined;
+    if (nextDecision) onDecisionChange(nextDecision);
+  }
+
+  const value = decision === "pending" ? [] : [decision];
+  const ariaLabel = `Access review decision for ${targetName}`;
+
+  return (
+    <>
+      <ToggleGroup
+        aria-label={ariaLabel}
+        value={value}
+        disabled={disabled}
+        onValueChange={updateDecision}
+        variant="outline"
+        spacing={0}
+        orientation="vertical"
+        className="w-full md:hidden [&>button]:min-h-11 [&>button]:w-full"
+      >
+        <ToggleGroupItem value="keep">Keep access</ToggleGroupItem>
+        <ToggleGroupItem value="change">Needs changes</ToggleGroupItem>
+        <ToggleGroupItem value="revoke">Remove access</ToggleGroupItem>
+      </ToggleGroup>
+      <ToggleGroup
+        aria-label={ariaLabel}
+        value={value}
+        disabled={disabled}
+        onValueChange={updateDecision}
+        variant="outline"
+        spacing={0}
+        className="hidden w-full md:flex md:w-auto [&>button]:min-h-11 [&>button]:flex-1"
+      >
+        <ToggleGroupItem value="keep">Keep access</ToggleGroupItem>
+        <ToggleGroupItem value="change">Needs changes</ToggleGroupItem>
+        <ToggleGroupItem value="revoke">Remove access</ToggleGroupItem>
+      </ToggleGroup>
+    </>
+  );
+}
+
 export function ReviewsView({ controller }: ReviewsViewProps) {
   const { state, actions } = controller;
   const administratorRole = state.roles.find(
-    (role) => role.id === "sample-admin",
+    (role) => role.id === controller.adminRoleId,
   );
   const reviewers = state.identities.filter(
     (identity) =>
@@ -146,7 +214,7 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
     setCreateOpen(false);
     setName("");
     setError("");
-    setNotice("Review campaign created.");
+    setNotice("Access review started.");
   }
 
   async function recordDecision(
@@ -168,7 +236,9 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
     if (!result.ok) setError(result.error);
     else {
       setError("");
-      setNotice(`Recorded ${decision} for ${targetName(targetId)}.`);
+      setNotice(
+        `${reviewDecisionLabel(decision)} selected for ${targetName(targetId)}.`,
+      );
     }
   }
 
@@ -187,6 +257,23 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
     }
   }
 
+  if (!controller.availability.reviews) {
+    return (
+      <section aria-labelledby="reviews-title" className="flex flex-col gap-3">
+        <h2 id="reviews-title" className="text-xl font-semibold tracking-tight">
+          Access reviews
+        </h2>
+        <Alert role="status" variant="warning">
+          <p>Formal access reviews are not available yet.</p>
+          <p>
+            Manage current access in People &amp; services, Roles, Groups, and
+            Detailed rules.
+          </p>
+        </Alert>
+      </section>
+    );
+  }
+
   return (
     <section aria-labelledby="reviews-title" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -198,8 +285,8 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
             Access reviews
           </h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            Run certification campaigns and resolve every access decision before
-            completion.
+            Review access decisions and resolve each one before finishing the
+            review.
           </p>
         </div>
         <Button
@@ -208,10 +295,10 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
           disabled={!reviewers.length || controller.isPending()}
           onClick={() => setCreateOpen(true)}
         >
-          <Plus aria-hidden="true" data-icon="inline-start" /> Create campaign
+          <Plus aria-hidden="true" data-icon="inline-start" /> Start access
+          review
         </Button>
       </div>
-
       {!reviewers.length ? (
         <Alert variant="warning">
           A review requires an active internal Administrator reviewer. Guests
@@ -231,24 +318,11 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
             <EmptyMedia variant="icon">
               <ClipboardCheck aria-hidden="true" />
             </EmptyMedia>
-            <EmptyTitle>No review campaigns</EmptyTitle>
+            <EmptyTitle>No access reviews yet</EmptyTitle>
             <EmptyDescription>
-              Create a role, group, identity-type, or expiry-window review.
-              Campaigns remain available in the workspace.
+              Start a review for a role, group, identity type, or expiry window.
             </EmptyDescription>
           </EmptyHeader>
-          {reviewers.length ? (
-            <EmptyContent>
-              <Button
-                type="button"
-                className="min-h-11"
-                disabled={controller.isPending()}
-                onClick={() => setCreateOpen(true)}
-              >
-                Create first campaign
-              </Button>
-            </EmptyContent>
-          ) : null}
         </Empty>
       ) : (
         <div className="flex flex-col gap-4">
@@ -279,7 +353,9 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
                         review.status === "complete" ? "success" : "secondary"
                       }
                     >
-                      {review.status}
+                      {review.status === "complete"
+                        ? "Completed"
+                        : "In progress"}
                     </Badge>
                     <Badge variant={unresolved ? "warning" : "outline"}>
                       {unresolved} unresolved
@@ -303,46 +379,31 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
                               {targetName(item.targetId)}
                             </p>
                             <p className="text-muted-foreground text-xs">
-                              Current decision: {item.decision}
+                              Current decision:{" "}
+                              {reviewDecisionLabel(item.decision)}
                             </p>
                           </div>
-                          <ToggleGroup
-                            aria-label={`${targetName(item.targetId)} review decision`}
-                            value={
-                              item.decision === "pending" ? [] : [item.decision]
-                            }
+                          <ReviewDecisionControls
+                            targetName={targetName(item.targetId)}
+                            decision={item.decision}
                             disabled={
                               review.status === "complete" ||
                               controller.isPending()
                             }
-                            onValueChange={(values) => {
-                              const decision = values[0] as
-                                ReviewDecision | undefined;
-                              if (decision)
-                                void recordDecision(
-                                  review.id,
-                                  item.targetId,
-                                  decision,
-                                );
+                            onDecisionChange={(decision) => {
+                              void recordDecision(
+                                review.id,
+                                item.targetId,
+                                decision,
+                              );
                             }}
-                            variant="outline"
-                            spacing={0}
-                            className="w-full md:w-auto [&>button]:min-h-11 [&>button]:flex-1"
-                          >
-                            <ToggleGroupItem value="keep">Keep</ToggleGroupItem>
-                            <ToggleGroupItem value="change">
-                              Change
-                            </ToggleGroupItem>
-                            <ToggleGroupItem value="revoke">
-                              Revoke
-                            </ToggleGroupItem>
-                          </ToggleGroup>
+                          />
                         </div>
                       ))}
                     </div>
                   ) : (
                     <Alert variant="warning">
-                      No matching targets were captured for this campaign.
+                      No people or services match this review.
                     </Alert>
                   )}
                   {review.status !== "complete" ? (
@@ -361,7 +422,7 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
                         }
                         onClick={() => completeCampaign(review)}
                       >
-                        Complete campaign
+                        Finish review
                       </Button>
                     </div>
                   ) : null}
@@ -382,7 +443,7 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
           </DialogHeader>
           <FieldGroup className="py-2">
             <Field>
-              <FieldLabel htmlFor="review-name">Campaign name</FieldLabel>
+              <FieldLabel htmlFor="review-name">Review name</FieldLabel>
               <Input
                 id="review-name"
                 className="min-h-11"
@@ -471,7 +532,7 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
               }
               onClick={createCampaign}
             >
-              Create campaign
+              Start access review
             </Button>
           </DialogFooter>
         </DialogContent>

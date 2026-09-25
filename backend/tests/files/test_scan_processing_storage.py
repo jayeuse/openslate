@@ -4,6 +4,7 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from app.systems.platform.files import providers, scan_processing
 from app.systems.platform.files.providers import ScanVerdict
@@ -59,6 +60,32 @@ def test_commit_failure_after_promotion_leaves_bytes_recoverable_for_a_retry(
     monkeypatch.setattr(scan_processing, "finish_attempt", finish)
     assert scan_processing.process_next(db, storage, scanner) is True
     assert finish.call_args.kwargs["verdict"].outcome == "clean"
+
+
+def test_policy_unavailability_after_promotion_requires_reconciliation(monkeypatch):
+    content = b"clean bytes"
+    digest = __import__("hashlib").sha256(content).hexdigest()
+    claim = scan_processing.ScanClaim(uuid4(), uuid4(), uuid4(), "a" * 32, digest, len(content))
+    storage, scanner, db = Mock(), Mock(), Mock()
+    storage.read_quarantine.return_value = content
+    scanner.scan.return_value = ScanVerdict("clean", digest, "test", "test")
+    monkeypatch.setattr(scan_processing, "require_resolved_engine", Mock())
+    monkeypatch.setattr(scan_processing, "claim_next", Mock(return_value=claim))
+    monkeypatch.setattr(
+        scan_processing,
+        "finish_attempt",
+        Mock(side_effect=HTTPException(status_code=503, detail="Authorization unavailable")),
+    )
+    unresolved = Mock(side_effect=scan_processing.WorkerHalted("reconciliation required"))
+    monkeypatch.setattr(scan_processing, "mark_promotion_unresolved", unresolved)
+
+    with pytest.raises(scan_processing.WorkerHalted, match="reconciliation required"):
+        scan_processing.process_next(db, storage, scanner)
+
+    storage.promote.assert_called_once_with(
+        claim.key, expected_digest=claim.digest, expected_size=claim.size
+    )
+    unresolved.assert_called_once_with(db, claim)
 
 
 def test_leadership_loss_after_clean_promotion_marks_recovery_required(monkeypatch, tmp_path):

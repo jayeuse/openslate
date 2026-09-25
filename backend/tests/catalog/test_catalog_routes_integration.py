@@ -1,7 +1,6 @@
 """Registered catalog routes retain state on rejected changes."""
 
 from collections.abc import Iterator
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -10,7 +9,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.systems.sandbox.departments.models import Department
@@ -22,6 +20,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.modules.router import router as modules_router
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.router import router as records_router
+from tests.catalog.auth_support import override_catalog_authorization
 from tests.catalog.dynamic_field_support import (
     _seed_committed_module,
     _seed_committed_record,
@@ -43,9 +42,7 @@ def catalog_client(integration_db: AuditSession) -> Iterator[TestClient]:
         records_router,
     ):
         app.include_router(router, prefix="/api")
-    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
-        id=None, role=SimpleNamespace(role="admin")
-    )
+    override_catalog_authorization(app)
     app.dependency_overrides[get_db] = lambda: integration_db
     _set_request(integration_db, uuid7(), "/api/catalog-contract")
     with TestClient(app) as client:

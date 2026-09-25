@@ -13,7 +13,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.platform.files.access import authorize, fresh_user, load, parent
+from app.systems.platform.files.access import authorize_contextual_file, fresh_user, load, parent
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import (
     ProviderUnavailable,
@@ -82,8 +82,8 @@ def _suspend(file: File) -> None:
 
 
 def claim_next(db: Session, now: datetime) -> ScanClaim | None:
-    identity = db.scalar(
-        select(File.id)
+    candidate = db.scalar(
+        select(File)
         .where(
             File.state == "pending_scan",
             File.operation_id.is_(None),
@@ -92,10 +92,28 @@ def claim_next(db: Session, now: datetime) -> ScanClaim | None:
         .order_by(File.scan_next_attempt_at, File.id)
         .limit(1)
     )
-    if identity is None:
+    if candidate is None:
         db.rollback()
         return None
-    file = load(db, identity, lock=True)
+    if candidate.scan_requested_by is not None:
+        try:
+            authorize_contextual_file(
+                db, fresh_user(db, candidate.scan_requested_by), candidate,
+                board_id=candidate.board_id, write=True,
+            )
+        except HTTPException as error:
+            db.rollback()
+            if error.status_code not in {403, 404, 409}:
+                raise
+            file = load(db, candidate.id, lock=True)
+            if file.state == "pending_scan" and file.operation_id is None:
+                system_audit(db)
+                _suspend(file)
+                db.commit()
+            else:
+                db.rollback()
+            return None
+    file = load(db, candidate.id, lock=True)
     # Reloaded after ancestor locks: another request may have changed the candidate.
     if (
         file.state != "pending_scan"
@@ -113,8 +131,14 @@ def claim_next(db: Session, now: datetime) -> ScanClaim | None:
         db.commit()
         return None
     try:
-        authorize(fresh_user(db, file.scan_requested_by), file.purpose, write=True)
-        parent(db, file.record_id, active=True)
+        if file.scan_requested_by != candidate.scan_requested_by:
+            db.rollback()
+            return None
+        authorize_contextual_file(
+            db, fresh_user(db, file.scan_requested_by), file,
+            board_id=file.board_id, write=True,
+        )
+        parent(db, file.record_id, active=True, board_id=file.board_id)
         if file.is_deleted:
             raise HTTPException(409, "File is archived")
     except HTTPException:
@@ -197,10 +221,27 @@ def finish_attempt(
     verdict: ScanVerdict | None = None,
     failure: str | None = None,
 ) -> None:
+    candidate = load(db, claim.file_id)
+    try:
+        authorize_contextual_file(
+            db, fresh_user(db, claim.requester_id), candidate,
+            board_id=candidate.board_id, write=True,
+        )
+    except HTTPException as error:
+        db.rollback()
+        if error.status_code not in {403, 404, 409}:
+            raise
+        file = _locked_claim(db, claim, now)
+        _suspend(file)
+        db.commit()
+        return
     file = _locked_claim(db, claim, now)
     try:
-        authorize(fresh_user(db, claim.requester_id), file.purpose, write=True)
-        parent(db, file.record_id, active=True)
+        authorize_contextual_file(
+            db, fresh_user(db, claim.requester_id), file,
+            board_id=file.board_id, write=True,
+        )
+        parent(db, file.record_id, active=True, board_id=file.board_id)
         if file.is_deleted:
             raise HTTPException(409, "File is archived")
     except HTTPException:

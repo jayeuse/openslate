@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { AccessController } from "../state/controller";
+import { displayIdentityStatus } from "../domain/policy";
 
 export type AccessOverviewDestination =
   | "identities"
@@ -89,7 +90,7 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
     {
       label: "Identities",
       value: state.identities.length,
-      detail: `${state.identities.filter((item) => item.status === "active").length} active`,
+      detail: `${state.identities.filter((item) => displayIdentityStatus(item) === "active").length} active`,
       icon: UsersRound,
       destination: "identities" as const,
     },
@@ -137,28 +138,30 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
             groups organize them, and rules handle specific access.
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
           {counts.map(({ label, value, detail, icon: Icon, destination }) => (
             <Card key={label} className="w-full">
-              <CardContent className="flex items-start justify-between gap-2 p-2.5">
-                <div>
-                  <p className="text-muted-foreground text-sm">{label}</p>
-                  <p className="mt-0.5 text-xl font-semibold tabular-nums">
-                    {value}
-                  </p>
-                  <p className="text-muted-foreground mt-0.5 text-xs">
-                    {detail}
-                  </p>
+              <CardContent className="space-y-3 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-muted-foreground text-sm">{label}</p>
+                    <p className="mt-0.5 text-xl font-semibold tabular-nums">
+                      {value}
+                    </p>
+                    <p className="text-muted-foreground mt-0.5 text-xs">
+                      {detail}
+                    </p>
+                  </div>
+                  <Icon className="text-muted-foreground mt-0.5 size-4 shrink-0" />
                 </div>
                 <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-11 shrink-0"
-                  aria-label={`Open ${label.toLowerCase()}`}
+                  variant="outline"
+                  className="h-auto min-h-11 w-full justify-between whitespace-normal"
                   disabled={!onNavigate}
                   onClick={() => onNavigate?.(destination)}
                 >
-                  <Icon className="size-4" />
+                  Open {label}
+                  <ArrowRight className="size-4" aria-hidden="true" />
                 </Button>
               </CardContent>
             </Card>
@@ -272,7 +275,8 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
           <CardContent className="p-0">
             {recentHistory.length === 0 ? (
               <p className="text-muted-foreground p-4 text-sm">
-                Changes will appear here after you edit access.
+                Recent Access changes are not shown here yet. Open Manage, then
+                Audit, to review recorded activity.
               </p>
             ) : (
               <ol className="divide-y">

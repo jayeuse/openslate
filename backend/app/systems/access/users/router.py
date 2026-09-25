@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.dependencies import require_roles
@@ -17,7 +17,14 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
-from app.systems.access.users.coordination import get_user as load_user
+from app.systems.access.users.coordination import (
+    InvitationConflict,
+    InvitationError,
+    ProfileValidationError,
+)
+from app.systems.access.users.coordination import (
+    get_user as load_user,
+)
 from app.systems.access.users.models import User, UserRole
 from app.systems.access.users.schemas import (
     InvitationCreate,
@@ -25,7 +32,9 @@ from app.systems.access.users.schemas import (
     UserCreate,
     UserResponse,
 )
-from app.systems.access.users.service import InvitationConflict, InvitationError, create_invitation
+from app.systems.access.users.service import (
+    create_invitation,
+)
 
 router = APIRouter(prefix="/users", tags=["users"])
 AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
@@ -66,7 +75,7 @@ def list_users(
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[UserListRequest, Query()],
 ) -> UserListResponse:
-    statement = select(User)
+    statement = select(User).options(selectinload(User.department_memberships))
     if params.role_id is not None:
         statement = statement.where(User.role_id == params.role_id)
     result = execute_standard_list(db, statement, params, USER_LIST_SPEC)
@@ -93,11 +102,7 @@ def create_user(
     try:
         issued = create_invitation(
             db,
-            InvitationCreate(
-                email=payload.email,
-                username=payload.username,
-                role_id=payload.role_id,
-            ),
+            InvitationCreate(**payload.model_dump()),
             actor_id=admin.id,
         )
     except InvitationConflict as error:
@@ -105,6 +110,8 @@ def create_user(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email or username is already in use",
         ) from error
+    except ProfileValidationError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
     except InvitationError as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

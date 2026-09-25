@@ -6,12 +6,9 @@ from datetime import UTC, datetime
 from unittest.mock import Mock
 
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
-from app.core.database import get_db
 from app.systems.access.users.permissions import Capability
 from app.systems.sandbox.test_runs.router import router
 from app.systems.sandbox.test_runs.schemas import (
@@ -19,18 +16,16 @@ from app.systems.sandbox.test_runs.schemas import (
     SandboxTestRunListResponse,
     SandboxTestRunResponse,
 )
-from tests.rbac.support import make_user
+from tests.rbac.support import _client, make_user
 
 
 def test_tests_require_every_structure_capability_for_reads_and_writes(monkeypatch) -> None:
     import app.systems.sandbox.test_runs.router as test_router
 
     database = Mock(spec=Session)
-    application = _application(database)
-    application.dependency_overrides[get_current_user] = lambda: make_user(
-        "partial", permissions={Capability.DEPARTMENTS_READ.value: True}
-    )
-    client = TestClient(application)
+    application = _application()
+    partial = make_user("partial", permissions={Capability.DEPARTMENTS_READ.value: True})
+    client = _client(application, partial, database)
 
     assert client.get("/api/sandbox/tests").status_code == 403
     assert client.post("/api/sandbox/tests", json=_request_body()).status_code == 403
@@ -42,8 +37,7 @@ def test_tests_require_every_structure_capability_for_reads_and_writes(monkeypat
             items=[], limit=25, offset=0, count=0, total=0, hasMore=False
         ),
     )
-    application.dependency_overrides[get_current_user] = lambda: _user(read=True)
-    response = client.get("/api/sandbox/tests")
+    response = _client(application, _user(read=True), database).get("/api/sandbox/tests")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -61,21 +55,22 @@ def test_create_detail_delete_and_validation_follow_the_frontend_contract(monkey
 
     database = Mock(spec=Session)
     response_model = _response()
-    application = _application(database)
-    application.dependency_overrides[get_current_user] = lambda: _user(write=True)
+    application = _application()
+    writer = _user(write=True)
     create = Mock(return_value=response_model)
     monkeypatch.setattr(test_router, "create_run", create)
     monkeypatch.setattr(test_router, "read_run", lambda *_args, **_kwargs: response_model)
     cleared: list[object] = []
     monkeypatch.setattr(test_router, "clear_runs", lambda *_args, **_kwargs: cleared.append(True))
-    client = TestClient(application)
+    client = _client(application, writer, database)
 
     created = client.post("/api/sandbox/tests", json=_request_body())
     detail = client.get(f"/api/sandbox/tests/{response_model.id}")
     cleared_response = client.delete("/api/sandbox/tests")
-    application.dependency_overrides[get_current_user] = lambda: _user(read=True)
-    readable_detail = client.get(f"/api/sandbox/tests/{response_model.id}")
-    application.dependency_overrides[get_current_user] = lambda: _user(write=True)
+    readable_detail = _client(application, _user(read=True), database).get(
+        f"/api/sandbox/tests/{response_model.id}"
+    )
+    client = _client(application, writer, database)
     malformed = client.post(
         "/api/sandbox/tests",
         json={**_request_body(), "event": {"kind": "record-created", "recordId": "made-up"}},
@@ -120,10 +115,9 @@ def test_test_result_response_allows_the_bounded_cascade_trace_count() -> None:
     assert len(response.automation_traces) == 501
 
 
-def _application(database: Mock) -> FastAPI:
+def _application() -> FastAPI:
     application = FastAPI()
     application.include_router(router, prefix="/api")
-    application.dependency_overrides[get_db] = lambda: database
     return application
 
 

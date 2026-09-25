@@ -12,6 +12,11 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings
+from app.core.config.instance import (
+    assert_database_url,
+    assert_instance_target,
+    instance_target_for_process,
+)
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
 from app.systems.access.identity.admin_recovery import LocalRecoveryError, recover_local_admin
@@ -27,7 +32,12 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("user_id", type=UUID)
     args = parser.parse_args(argv)
-    get_settings()
+    settings = get_settings()
+    target = instance_target_for_process(settings.database_url, "openslate_runtime")
+    if target is not None:
+        assert_database_url(settings.database_url, target, expected_user="openslate_runtime")
+        with get_engine().connect() as connection:
+            assert_instance_target(connection, target, expected_user="openslate_runtime")
     try:
         with AuditSession(get_engine()) as db:
             result = recover_local_admin(

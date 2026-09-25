@@ -54,12 +54,12 @@ const workspaceNavigationDefinitions = [
     defaultItem: "overview",
     items: [
       { id: "overview", label: "Overview" },
-      { id: "identities", label: "Identities" },
+      { id: "identities", label: "People & services" },
       { id: "roles", label: "Roles" },
       { id: "groups", label: "Groups" },
-      { id: "rules", label: "Access rules" },
-      { id: "simulator", label: "Simulator" },
-      { id: "reviews", label: "Reviews" },
+      { id: "rules", label: "Detailed rules" },
+      { id: "simulator", label: "Check access" },
+      { id: "reviews", label: "Access reviews" },
     ],
   },
   {

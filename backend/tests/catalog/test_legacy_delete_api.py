@@ -9,6 +9,10 @@ from uuid6 import uuid7
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.main import create_app
+from app.systems.access.users.models import UserRole
+from tests.catalog.auth_support import override_catalog_authorization
+from tests.rbac.support import _client as _rbac_client
+from tests.rbac.support import make_role, make_user
 
 _DELETE_ROUTES = (
     ("/api/departments/{id}", "Use Close to close this department"),
@@ -27,13 +31,12 @@ def _client(database: Session, actor: object | None = None) -> TestClient:
     app.dependency_overrides[get_db] = lambda: database
     if actor is not None:
         app.dependency_overrides[get_current_user] = lambda: actor
+        override_catalog_authorization(app)
     return TestClient(app)
 
 
 @pytest.mark.parametrize(("route_template", "message"), _DELETE_ROUTES)
-def test_registered_delete_requires_lifecycle_close(
-    route_template: str, message: str
-) -> None:
+def test_registered_delete_requires_lifecycle_close(route_template: str, message: str) -> None:
     database = Mock(spec=Session)
     target_id = uuid7()
     database.get.return_value = SimpleNamespace(id=target_id)
@@ -42,9 +45,7 @@ def test_registered_delete_requires_lifecycle_close(
     response = _client(database, actor).delete(route_template.format(id=target_id))
 
     assert response.status_code == 409
-    assert response.json() == {
-        "detail": {"code": "close_required", "message": message}
-    }
+    assert response.json() == {"detail": {"code": "close_required", "message": message}}
     database.flush.assert_not_called()
     database.add.assert_not_called()
     database.delete.assert_not_called()
@@ -79,9 +80,10 @@ def test_registered_delete_requires_authentication(route_template: str) -> None:
 @pytest.mark.parametrize("route_template", [route for route, _message in _DELETE_ROUTES])
 def test_registered_delete_requires_write_capability(route_template: str) -> None:
     database = Mock(spec=Session)
-    actor = SimpleNamespace(role=SimpleNamespace(role="staff", permissions={}))
+    actor = make_user("catalog-denied", role=make_role(UserRole.MEMBER, {}))
+    client = _rbac_client(create_app(), actor, database)
 
-    response = _client(database, actor).delete(route_template.format(id=uuid7()))
+    response = client.delete(route_template.format(id=uuid7()))
 
     assert response.status_code == 403
     assert response.json() == {"detail": "Forbidden"}

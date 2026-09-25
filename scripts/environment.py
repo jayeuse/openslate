@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import ipaddress
+import json
 import os
 import re
 import subprocess
@@ -18,12 +19,13 @@ CADDY_GENERATOR_PATH = ROOT / "infra" / "caddy" / "generate_config.py"
 LINUX_CADDY_COMPOSE_PATH = ROOT / "infra" / "caddy" / "compose.linux.yaml"
 CADDY_CONTAINER_PORT = 3448
 CADDY_HEALTH_PORT = 3449
-COMPOSE_CONTROL_PASSWORD = "compose-control-only"
 COMPOSE_GLOBAL_OPTIONS_WITH_VALUE = frozenset({"--profile"})
+INSTANCE_ID = re.compile(r"[a-z][a-z0-9-]{2,62}\Z")
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.core.config.development import is_local_development_host  # noqa: E402
 from app.core.config.environment import ConfigurationError, read_environment  # noqa: E402
+from app.core.config.instance import InstanceTargetError, load_instance_target  # noqa: E402
 
 __all__ = ("ConfigurationError", "read_environment")
 
@@ -74,6 +76,8 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         *SETTINGS_KEYS,
         *SMTP_KEYS,
         "POSTGRES_HOST",
+        "OPENSLATE_INSTANCE_ID",
+        "OPENSLATE_INSTANCE_ROOT",
         "POSTGRES_PORT",
         "POSTGRES_DATABASE",
         "FRONTEND_DEV_PORT",
@@ -200,6 +204,7 @@ def compose_environment(values: dict[str, str], *, services: set[str]) -> dict[s
     """Project only the settings consumed by the selected Compose services."""
     postgres_host(values)
     result = {
+        "OPENSLATE_INSTANCE_ID": instance_id(values),
         "POSTGRES_DATABASE": required(values, "POSTGRES_DATABASE"),
         "POSTGRES_BOOTSTRAP_PASSWORD": required(values, "POSTGRES_BOOTSTRAP_PASSWORD"),
         "POSTGRES_PORT": str(port(values, "POSTGRES_PORT")),
@@ -222,6 +227,350 @@ def compose_environment(values: dict[str, str], *, services: set[str]) -> dict[s
             }
         )
     return result
+
+
+def instance_id(values: dict[str, str]) -> str:
+    """Validate the Compose namespace shared by the container, network and volume."""
+    value = required(values, "OPENSLATE_INSTANCE_ID")
+    if INSTANCE_ID.fullmatch(value) is None:
+        raise ConfigurationError("OPENSLATE_INSTANCE_ID must be a lowercase Compose identifier")
+    root = Path(absolute_path(values, "OPENSLATE_INSTANCE_ROOT"))
+    for name in ("FILES_STORAGE_ROOT", "LOG_DIR"):
+        try:
+            Path(absolute_path(values, name)).relative_to(root)
+        except ValueError:
+            raise ConfigurationError(f"{name} must be inside OPENSLATE_INSTANCE_ROOT") from None
+    return value
+
+
+def _docker_output(arguments: list[str]) -> str:
+    child_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in COMPOSE_EXCLUDED_KEYS and not key.startswith("COMPOSE_")
+    }
+    result = subprocess.run(
+        ["docker", *arguments],
+        cwd=ROOT,
+        env=child_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        raise ConfigurationError("Docker ownership could not be verified")
+    return result.stdout
+
+
+def _docker_json(arguments: list[str]) -> Any:
+    try:
+        return json.loads(_docker_output(arguments))
+    except json.JSONDecodeError:
+        raise ConfigurationError("Docker ownership could not be verified") from None
+
+
+def _compose_project_containers(values: dict[str, str]) -> list[str]:
+    identity = instance_id(values)
+    projected = compose_environment(values, services={"postgres"})
+    child_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in COMPOSE_EXCLUDED_KEYS and not key.startswith("COMPOSE_")
+    }
+    child_env.update(projected)
+    command = [
+        "docker",
+        "compose",
+        "--env-file",
+        os.devnull,
+        "--project-name",
+        identity,
+        "-f",
+        str(ROOT / "compose.yaml"),
+        "ps",
+        "--all",
+        "-q",
+        "postgres",
+    ]
+    result = subprocess.run(
+        command, cwd=ROOT, env=child_env, capture_output=True, text=True, check=False
+    )
+    if result.returncode:
+        raise ConfigurationError("Docker ownership could not be verified")
+    return [value for value in result.stdout.splitlines() if value]
+
+
+def _compose_resource_labels(resource: dict[str, Any], identity: str, kind: str) -> bool:
+    labels = resource.get("Labels")
+    expected = "postgres-data" if kind == "volume" else "default"
+    return bool(
+        isinstance(labels, dict)
+        and labels.get("com.docker.compose.project") == identity
+        and labels.get("com.docker.compose." + kind) == expected
+    )
+
+
+def inspect_instance_ownership(
+    values: dict[str, str], *, allow_stopped: bool = False
+) -> dict[str, object]:
+    """Read container, network and volume ownership facts from Docker itself."""
+    identity = instance_id(values)
+    identifiers = _compose_project_containers(values)
+    if len(identifiers) != 1:
+        raise ConfigurationError("Owned PostgreSQL container is unavailable or ambiguous")
+    inspected = _docker_json(["inspect", identifiers[0]])
+    try:
+        container = inspected[0]
+        config = container["Config"]
+        labels = config["Labels"]
+        mounts = container["Mounts"]
+        networks = container["NetworkSettings"]["Networks"]
+        network = networks[f"{identity}_default"]
+        attached_network_id = network["NetworkID"]
+        bound_ports = container["HostConfig"]["PortBindings"]["5432/tcp"]
+        data_mounts = [
+            mount
+            for mount in mounts
+            if mount.get("Type") == "volume"
+            and mount.get("Destination") == "/var/lib/postgresql/data"
+        ]
+        network_resource = _docker_json(["network", "inspect", f"{identity}_default"])[0]
+        volume_resource = _docker_json(["volume", "inspect", f"{identity}_postgres-data"])[0]
+        network_id = network_resource["Id"]
+        volume_labels_match = _compose_resource_labels(volume_resource, identity, "volume")
+        network_labels_match = _compose_resource_labels(network_resource, identity, "network")
+        expected_port = str(port(values, "POSTGRES_PORT"))
+        owned = (
+            labels.get("com.docker.compose.project") == identity
+            and labels.get("com.docker.compose.project.working_dir") == str(ROOT)
+            and labels.get("com.docker.compose.service") == "postgres"
+            and str(config.get("Image", "")).startswith("postgres:")
+            and (
+                container["State"]["Running"] is True
+                or (allow_stopped and container["State"]["Running"] is False)
+            )
+            and len(data_mounts) == 1
+            and data_mounts[0].get("Name") == f"{identity}_postgres-data"
+            and len(bound_ports) == 1
+            and bound_ports[0]
+            == {"HostIp": "127.0.0.1", "HostPort": expected_port}
+            and network_id == attached_network_id
+            and volume_labels_match
+            and network_labels_match
+        )
+    except (IndexError, KeyError, TypeError, ValueError):
+        owned = False
+        container = {}
+        network_id = ""
+    if not owned:
+        raise ConfigurationError("Docker ownership does not match this OpenSlate worktree")
+    return {
+        "container_id": container["Id"],
+        "image": container["Config"]["Image"],
+        "working_dir": str(ROOT),
+        "compose_project": identity,
+        "network": f"{identity}_default",
+        "network_id": network_id,
+        "volume": f"{identity}_postgres-data",
+        "host_port": port(values, "POSTGRES_PORT"),
+        "container_port": 5432,
+    }
+
+
+def _read_instance_attestation(values: dict[str, str]) -> tuple[Path, dict[str, Any]]:
+    try:
+        target = load_instance_target(values)
+        path = target.attestation_path
+        if path is None:
+            raise InstanceTargetError("OpenSlate instance attestation path is unavailable")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (InstanceTargetError, OSError, json.JSONDecodeError):
+        raise ConfigurationError(
+            "OpenSlate instance attestation is unavailable or invalid"
+        ) from None
+    if not isinstance(payload, dict):
+        raise ConfigurationError("OpenSlate instance attestation is unavailable or invalid")
+    return path, payload
+
+
+def _verify_attested_resources(values: dict[str, str]) -> None:
+    """Bind a retained database volume and any surviving network to this worktree."""
+    identity = instance_id(values)
+    _path, payload = _read_instance_attestation(values)
+    ownership = payload["ownership"]
+    volume_name = f"{identity}_postgres-data"
+    network_ids = _docker_output(
+        ["network", "ls", "-q", "--filter", f"name=^{identity}_default$"]
+    ).splitlines()
+    volume = _docker_json(["volume", "inspect", volume_name])[0]
+    try:
+        valid = volume.get("Name") == volume_name and _compose_resource_labels(
+            volume, identity, "volume"
+        )
+        if network_ids:
+            if len(network_ids) != 1:
+                valid = False
+            else:
+                network = _docker_json(["network", "inspect", network_ids[0]])[0]
+                valid = (
+                    valid
+                    and network["Id"] == ownership["network_id"]
+                    and _compose_resource_labels(network, identity, "network")
+                )
+    except (KeyError, TypeError):
+        valid = False
+    if not valid:
+        raise ConfigurationError("Docker resources do not match this OpenSlate worktree")
+
+
+def _verify_live_instance(values: dict[str, str]) -> dict[str, object]:
+    ownership = inspect_instance_ownership(values, allow_stopped=True)
+    _path, payload = _read_instance_attestation(values)
+    if payload.get("ownership") != ownership:
+        raise ConfigurationError("Live Docker ownership changed; refusing the operation")
+    return ownership
+
+
+def reset_database(values: dict[str, str]) -> None:
+    """Remove only this worktree's attested PostgreSQL container and data volume."""
+    identity = instance_id(values)
+    volume_name = f"{identity}_postgres-data"
+    attestation_path, payload = _read_instance_attestation(values)
+    attested_ownership = payload["ownership"]
+    container_ids = _compose_project_containers(values)
+    if len(container_ids) > 1:
+        raise ConfigurationError("OpenSlate project has ambiguous PostgreSQL containers")
+    if container_ids:
+        live_ownership = _verify_live_instance(values)
+        if (
+            live_ownership != attested_ownership
+            or live_ownership["container_id"] != container_ids[0]
+        ):
+            raise ConfigurationError("Live Docker ownership changed; refusing the reset")
+
+    try:
+        volume = _docker_json(["volume", "inspect", volume_name])[0]
+        volume_is_owned = (
+            volume.get("Name") == volume_name
+            and _compose_resource_labels(volume, identity, "volume")
+        )
+    except (IndexError, AttributeError, TypeError):
+        volume_is_owned = False
+    if not volume_is_owned:
+        raise ConfigurationError("Attested PostgreSQL data volume is unavailable or unowned")
+
+    child_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in COMPOSE_EXCLUDED_KEYS and not key.startswith("COMPOSE_")
+    }
+    for arguments in (
+        (["rm", "--force", container_ids[0]] if container_ids else None),
+        ["volume", "rm", volume_name],
+    ):
+        if arguments is None:
+            continue
+        result = subprocess.run(
+            ["docker", *arguments],
+            cwd=ROOT,
+            env=child_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode:
+            raise ConfigurationError("Scoped PostgreSQL reset could not remove an owned resource")
+    attestation_path.unlink()
+
+
+def _preflight_compose_mutation(
+    values: dict[str, str], subcommand: str | None, arguments: list[str]
+) -> None:
+    if subcommand not in {
+        "config", "logs", "ps", "up", "start", "stop", "restart", "rm", "down"
+    }:
+        raise ConfigurationError("Compose command is not supported by the attested wrapper")
+    if subcommand == "ps":
+        if _compose_project_containers(values):
+            inspect_instance_ownership(values, allow_stopped=True)
+        return
+    if subcommand not in {"up", "start", "stop", "restart", "rm", "down"}:
+        return
+    db_targeted = (
+        subcommand == "down"
+        or "postgres" in arguments
+        or (subcommand == "up" and "pgweb" in arguments)
+        or not any(service in arguments for service in ("postgres", "pgweb", "caddy"))
+    )
+    if not db_targeted:
+        return
+    identifiers = _compose_project_containers(values)
+    if identifiers:
+        if len(identifiers) != 1:
+            raise ConfigurationError("OpenSlate project has ambiguous PostgreSQL containers")
+        if subcommand in {"stop", "restart", "rm", "down"}:
+            _verify_live_instance(values)
+        else:
+            inspect_instance_ownership(values, allow_stopped=subcommand in {"up", "start"})
+        return
+    if subcommand == "down":
+        identity = instance_id(values)
+        volumes = _docker_output(
+            ["volume", "ls", "-q", "--filter", f"name=^{identity}_postgres-data$"]
+        ).splitlines()
+        if volumes:
+            _verify_attested_resources(values)
+            return
+    if subcommand in {"stop", "restart", "rm", "down"}:
+        raise ConfigurationError("Owned PostgreSQL container is unavailable")
+    # A named volume survives `compose rm`. Reuse it only when the existing
+    # private attestation and Docker resource labels still identify this tree.
+    identity = instance_id(values)
+    volumes = _docker_output(
+        ["volume", "ls", "-q", "--filter", f"name=^{identity}_postgres-data$"]
+    ).splitlines()
+    if volumes:
+        _verify_attested_resources(values)
+    networks = _docker_output(
+        ["network", "ls", "-q", "--filter", f"name=^{identity}_default$"]
+    ).splitlines()
+    if networks and not volumes:
+        raise ConfigurationError("Docker network exists without an owned database volume")
+
+
+def write_instance_attestation(values: dict[str, str], ownership: dict[str, object]) -> Path:
+    """Persist Docker-inspected ownership facts after a successful Compose operation."""
+    identity = instance_id(values)
+    path = ROOT / ".agent-runtime" / "instances" / f"{identity}.json"
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.chmod(0o700)
+    payload = {
+        "instance_id": identity,
+        "compose_project": identity,
+        "postgres": {
+            "host": postgres_host(values),
+            "port": port(values, "POSTGRES_PORT"),
+            "database": required(values, "POSTGRES_DATABASE"),
+            "cluster_name": identity,
+        },
+        "compose": {
+            "volume": f"{identity}_postgres-data",
+            "network": f"{identity}_default",
+        },
+        "ownership": ownership,
+    }
+    temporary = path.with_suffix(".tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(payload, output, separators=(",", ":"), sort_keys=True)
+            output.write("\n")
+        temporary.chmod(0o600)
+        temporary.replace(path)
+        path.chmod(0o600)
+        return path
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def write_pgweb_passfile(values: dict[str, str]) -> Path:
@@ -380,6 +729,7 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
             raise ConfigurationError("DATABASE_BOOTSTRAP_URL must use a cluster-admin login")
     absolute_path(values, "LOG_DIR")
     absolute_path(values, "FILES_STORAGE_ROOT")
+    instance_id(values)
     if "WEB_ASSETS_ROOT" in values:
         absolute_path(values, "WEB_ASSETS_ROOT")
     from pydantic import ValidationError
@@ -429,15 +779,6 @@ def write_environment(path: Path, values: dict[str, str]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def compose_control_environment() -> dict[str, str]:
-    """Provide inert interpolation values for Compose commands that cannot start services."""
-    return {
-        "POSTGRES_DATABASE": "openslate",
-        "POSTGRES_BOOTSTRAP_PASSWORD": COMPOSE_CONTROL_PASSWORD,
-        "POSTGRES_PORT": "54322",
-    }
-
-
 def compose_subcommand(arguments: list[str]) -> str | None:
     """Return a supported Compose subcommand without interpreting option values as commands."""
     index = 0
@@ -457,6 +798,28 @@ def compose_subcommand(arguments: list[str]) -> str | None:
             return None
         return argument
     return None
+
+
+def reject_compose_scope_overrides(arguments: list[str]) -> None:
+    """Keep the wrapper's repository file, environment and Compose project authoritative."""
+    if compose_subcommand(arguments) == "down" and any(
+        argument in {"-v", "--volumes"}
+        or argument.startswith(("--volumes=", "-v="))
+        for argument in arguments
+    ):
+        raise ConfigurationError("Use reset-database to remove only the PostgreSQL volume")
+    forbidden = {"-p", "--project-name", "--project-directory", "--env-file", "-f", "--file"}
+    if any(
+        argument in forbidden
+        or (argument.startswith("-p") and argument != "-p")
+        or (argument.startswith("-f") and argument != "-f")
+        or argument.startswith(("--project-name=", "--project-directory=", "--env-file="))
+        or argument.startswith("--file=")
+        for argument in arguments
+    ):
+        raise ConfigurationError(
+            "Compose project, file and environment overrides are not supported"
+        )
 
 
 def compose_files(arguments: list[str]) -> list[Path]:
@@ -479,7 +842,9 @@ def run_compose(
     child_env = {
         name: value
         for name, value in os.environ.items()
-        if name not in root_values and name not in COMPOSE_EXCLUDED_KEYS
+        if name not in root_values
+        and name not in COMPOSE_EXCLUDED_KEYS
+        and not name.startswith("COMPOSE_")
     }
     child_env.update(projected)
     compose_file_arguments = [
@@ -493,6 +858,8 @@ def run_compose(
             "compose",
             "--env-file",
             os.devnull,
+            "--project-name",
+            projected["OPENSLATE_INSTANCE_ID"],
             *compose_file_arguments,
             *arguments,
         ],
@@ -504,7 +871,7 @@ def run_compose(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("check", "compose"))
+    parser.add_argument("command", choices=("check", "compose", "reset-database"))
     parser.add_argument("arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
@@ -513,10 +880,16 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error(
                     "compose requires Docker Compose arguments, for example: config --quiet"
                 )
-            if compose_subcommand(args.arguments) in {"ps", "stop"}:
-                return run_compose(args.arguments, compose_control_environment(), {})
-
+            reject_compose_scope_overrides(args.arguments)
         values = read_environment(ROOT / ".env")
+        if args.command == "reset-database":
+            if args.arguments:
+                parser.error("reset-database does not accept extra arguments")
+            reset_database(values)
+            print(
+                "Removed this worktree's attested disposable PostgreSQL container and data volume."
+            )
+            return 0
         if args.command == "check":
             validate(values)
             if args.arguments:
@@ -525,11 +898,20 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         services = {name for name in ("postgres", "pgweb", "caddy") if name in args.arguments}
         projected = compose_environment(values, services=services)
+        subcommand = compose_subcommand(args.arguments)
+        _preflight_compose_mutation(values, subcommand, args.arguments)
         if "pgweb" in services:
             projected["PGWEB_PASSFILE_PATH"] = str(write_pgweb_passfile(values))
         if "caddy" in services:
             projected["CADDY_CONFIG_PATH"] = str(write_caddy_config(values))
-        return run_compose(args.arguments, projected, values)
+        result = run_compose(args.arguments, projected, values)
+        if result == 0 and subcommand in {"up", "start"} and (
+            "postgres" in args.arguments
+            or (subcommand == "up" and "pgweb" in args.arguments)
+            or not services
+        ):
+            write_instance_attestation(values, inspect_instance_ownership(values))
+        return result
     except (ConfigurationError, OSError) as error:
         print(
             str(error)

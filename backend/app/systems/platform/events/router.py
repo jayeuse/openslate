@@ -10,6 +10,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.responses import StreamingResponse
 from starlette.types import Send
 
+from app.core.config import get_settings
+from app.core.config.development import browser_origin_is_permitted
 from app.core.database.session import AuditSession, get_engine
 from app.core.security.tokens import TokenType, decode_token
 from app.systems.access.identity.service import validate_access_session
@@ -85,6 +87,18 @@ def get_event_principal(
     bearer_token = bearer.credentials if bearer is not None else None
     if bool(cookie_token) == bool(bearer_token):
         raise _unauthorized()
+    if cookie_token is not None:
+        origin = request.headers.get("origin")
+        fetch_site = request.headers.get("sec-fetch-site")
+        settings = get_settings()
+        if (
+            request.headers.get("authorization") is not None
+            or (origin is None and fetch_site is None)
+            or (fetch_site is None and origin != settings.public_origin)
+            or (origin is not None and not browser_origin_is_permitted(settings, origin))
+            or (fetch_site is not None and fetch_site != "same-origin")
+        ):
+            raise _unauthorized()
     raw_token = cookie_token or bearer_token
     if raw_token is None:
         raise _unauthorized()

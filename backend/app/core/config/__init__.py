@@ -1,12 +1,14 @@
 from app.core.config.environment import ConfigurationError, read_environment
 from app.core.config.settings import (
     AdminSettings,
+    InstanceSettings,
     MigrationSettings,
     ProvisionSettings,
     ScannerSettings,
     SeedSettings,
     Settings,
     get_admin_settings,
+    get_instance_settings,
     get_migration_settings,
     get_provision_settings,
     get_scanner_settings,
@@ -16,6 +18,7 @@ from app.core.config.settings import (
 
 __all__ = [
     "AdminSettings",
+    "InstanceSettings",
     "ConfigurationError",
     "MigrationSettings",
     "ProvisionSettings",
@@ -23,6 +26,7 @@ __all__ = [
     "SeedSettings",
     "Settings",
     "get_admin_settings",
+    "get_instance_settings",
     "get_migration_settings",
     "get_provision_settings",
     "get_scanner_settings",

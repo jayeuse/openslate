@@ -71,6 +71,7 @@ export type LifecycleTargetType =
 export type LifecycleOperation = "close" | "purge" | "reopen";
 export type LifecycleBlockerCode =
   | "closed_ancestor"
+  | "default_department_reference"
   | "module_name_conflict"
   | "field_name_conflict"
   | "field_position_conflict"
@@ -248,6 +249,12 @@ export type ApiFieldErrors = Record<string, string[]>;
 
 export type ApiRequestInit = RequestInit & {
   refreshOnUnauthorized?: boolean;
+};
+
+export type ApiFetchMetadata<Schema extends z.ZodType> = {
+  data: z.output<Schema>;
+  response: Response;
+  etag: string | null;
 };
 
 const CSRF_COOKIE = "openslate_csrf";
@@ -470,11 +477,11 @@ async function parseResponse(
   return body;
 }
 
-export async function apiFetch<Schema extends z.ZodType>(
+export async function apiFetchWithMetadata<Schema extends z.ZodType>(
   path: string,
   schema: Schema,
   init: ApiRequestInit = {},
-): Promise<z.output<Schema>> {
+): Promise<ApiFetchMetadata<Schema>> {
   const { refreshOnUnauthorized, ...requestInit } = init;
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
@@ -488,7 +495,11 @@ export async function apiFetch<Schema extends z.ZodType>(
     try {
       const result = schema.safeParse(body);
       if (!result.success) throw safeApiContractError();
-      return result.data;
+      return {
+        data: result.data,
+        response,
+        etag: response.headers.get("ETag"),
+      };
     } catch (error) {
       if (error instanceof ApiContractError) throw error;
       throw safeApiContractError();
@@ -505,4 +516,12 @@ export async function apiFetch<Schema extends z.ZodType>(
     }
     throw error;
   }
+}
+
+export async function apiFetch<Schema extends z.ZodType>(
+  path: string,
+  schema: Schema,
+  init: ApiRequestInit = {},
+): Promise<z.output<Schema>> {
+  return (await apiFetchWithMetadata(path, schema, init)).data;
 }

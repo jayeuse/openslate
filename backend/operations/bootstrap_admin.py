@@ -3,6 +3,7 @@
 import argparse
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
@@ -16,12 +17,18 @@ if __package__ in {None, ""}:
 
 from app.common.normalization import normalize_email, normalize_username
 from app.core.config import Settings, get_admin_settings, get_settings
+from app.core.config.instance import (
+    assert_database_url,
+    assert_instance_target,
+    instance_target_for_process,
+)
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
 from app.systems.access.identity.service import replace_password
+from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import Role, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
-from app.systems.access.users.service import InvitationError, invite_user
+from app.systems.access.users.service import invite_user
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 
 LOCAL_ENVIRONMENTS = frozenset({"development", "dev", "local"})
@@ -29,6 +36,14 @@ LOCAL_ENVIRONMENTS = frozenset({"development", "dev", "local"})
 
 class BootstrapError(RuntimeError):
     """A safe operational error raised while provisioning an administrator."""
+
+
+@dataclass(frozen=True, slots=True)
+class BootstrapResult:
+    user_id: UUID
+    email: str
+    username: str
+    status: str
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -116,7 +131,7 @@ def _is_exact_admin_reservation(user: User, invitation: InvitationCreate, admin_
     )
 
 
-def _provision(settings: Settings, invitation: InvitationCreate, password: str) -> User:
+def _provision(settings: Settings, invitation: InvitationCreate, password: str) -> BootstrapResult:
     with AuditSession(get_engine()) as db:
         db.info[AUDIT_CONTEXT_KEY] = AuditContext()
         _, admin_role = _validate_schema_and_roles(db)
@@ -131,7 +146,12 @@ def _provision(settings: Settings, invitation: InvitationCreate, password: str) 
                 ):
                     replace_password(db, existing_profile, password, temporary=True)
                     db.commit()
-                    return existing_profile
+                    return BootstrapResult(
+                        existing_profile.id,
+                        existing_profile.email,
+                        existing_profile.username,
+                        existing_profile.status,
+                    )
                 raise BootstrapError("An administrator reservation already exists")
             raise BootstrapError("Email or username is already associated with another profile")
 
@@ -139,13 +159,14 @@ def _provision(settings: Settings, invitation: InvitationCreate, password: str) 
             raise BootstrapError("An administrator reservation already exists")
 
         try:
-            return invite_user(
+            user = invite_user(
                 db,
                 invitation.model_copy(update={"role_id": admin_role.id}),
                 actor_id=None,
                 bootstrap=True,
                 temporary_password=password,
             )
+            return BootstrapResult(user.id, user.email, user.username, user.status)
         except (InvitationError, SQLAlchemyError) as error:
             db.rollback()
             raise BootstrapError("Unable to finalize administrator profile") from error
@@ -158,17 +179,25 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         settings = get_settings()
         admin = get_admin_settings()
+        target = instance_target_for_process(settings.database_url, "openslate_runtime")
+        if target is not None:
+            assert_database_url(settings.database_url, target, expected_user="openslate_runtime")
+            with get_engine().connect() as connection:
+                assert_instance_target(connection, target, expected_user="openslate_runtime")
         password = admin.admin_password.get_secret_value()
         invitation = _invitation(admin.admin_email, admin.admin_username)
         _validate_confirmation(settings, args.confirm)
-        user = _provision(settings, invitation, password)
+        result = _provision(settings, invitation, password)
     except SystemExit:
         raise
     except Exception:
         # Keep database, Auth, and configuration details out of command output.
         raise SystemExit("Unable to provision administrator") from None
 
-    print(f"user_id={user.id} email={user.email} username={user.username} status={user.status}")
+    print(
+        f"user_id={result.user_id} email={result.email} "
+        f"username={result.username} status={result.status}"
+    )
 
 
 if __name__ == "__main__":

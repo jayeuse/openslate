@@ -15,8 +15,17 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy.engine import make_url
 
+from app.core.config.instance import (
+    InstanceTarget,
+    InstanceTargetError,
+    assert_database_url,
+    test_manifest_authorizes_process,
+)
+
 if __package__:
     from .reset_models import (  # type: ignore[import-not-found]
+        _ACCESS_POLICY_DEFAULTS_STATEMENT,
+        _ACCESS_POLICY_VERSION_STATEMENT,
         _ALEMBIC_HEAD_STATEMENT,
         _COUNT_STATEMENTS,
         _CREDENTIAL_STATEMENT,
@@ -26,11 +35,12 @@ if __package__:
         _PUBLIC_TABLES_STATEMENT,
         _ROLES_STATEMENT,
         _WORKSPACE_STATEMENT,
+        ACCESS_POLICY_DEFAULTS_ID,
+        ACCESS_POLICY_VERSION_ID,
         APPLICATION_TABLES,
-        EXPECTED_DATABASE_HOST,
-        EXPECTED_DATABASE_NAME,
-        EXPECTED_DATABASE_PORT,
         EXPECTED_DATABASE_USER,
+        AccessPolicyDefaultsSnapshot,
+        AccessPolicyVersionSnapshot,
         CredentialSnapshot,
         ProfileSnapshot,
         ResetError,
@@ -41,6 +51,8 @@ if __package__:
     )
 else:
     from reset_models import (
+        _ACCESS_POLICY_DEFAULTS_STATEMENT,
+        _ACCESS_POLICY_VERSION_STATEMENT,
         _ALEMBIC_HEAD_STATEMENT,
         _COUNT_STATEMENTS,
         _CREDENTIAL_STATEMENT,
@@ -50,11 +62,12 @@ else:
         _PUBLIC_TABLES_STATEMENT,
         _ROLES_STATEMENT,
         _WORKSPACE_STATEMENT,
+        ACCESS_POLICY_DEFAULTS_ID,
+        ACCESS_POLICY_VERSION_ID,
         APPLICATION_TABLES,
-        EXPECTED_DATABASE_HOST,
-        EXPECTED_DATABASE_NAME,
-        EXPECTED_DATABASE_PORT,
         EXPECTED_DATABASE_USER,
+        AccessPolicyDefaultsSnapshot,
+        AccessPolicyVersionSnapshot,
         CredentialSnapshot,
         ProfileSnapshot,
         ResetError,
@@ -76,14 +89,22 @@ def required_environment(mapping: Mapping[str, str]) -> tuple[str, str]:
     return values[0], values[1].casefold()
 
 
-def _validated_database_url(value: str) -> str:
+def _validated_database_url(
+    value: str,
+    target: InstanceTarget | None = None,
+    *,
+    runner_manifest_authorized: bool = False,
+) -> str:
     try:
         url = make_url(value)
+        if target is not None:
+            assert_database_url(value, target, expected_user=EXPECTED_DATABASE_USER)
+        elif not runner_manifest_authorized or not test_manifest_authorizes_process(
+            value, EXPECTED_DATABASE_USER
+        ):
+            raise ValueError
         if (
             url.drivername not in {"postgresql", "postgresql+psycopg"}
-            or url.host != EXPECTED_DATABASE_HOST
-            or url.port != EXPECTED_DATABASE_PORT
-            or url.database != EXPECTED_DATABASE_NAME
             or url.username != EXPECTED_DATABASE_USER
             or not url.password
             or url.query
@@ -96,9 +117,19 @@ def _validated_database_url(value: str) -> str:
         ) from None
 
 
-def validate_local_database_url(url: str) -> None:
+def validate_local_database_url(
+    url: str,
+    target: InstanceTarget | None = None,
+    *,
+    runner_manifest_authorized: bool = False,
+) -> None:
     """Require the one local owner connection admitted for destructive reset."""
-    _validated_database_url(url)
+    try:
+        _validated_database_url(url, target, runner_manifest_authorized=runner_manifest_authorized)
+    except InstanceTargetError:
+        raise ResetError(
+            "MIGRATION_DATABASE_URL does not target the owned OpenSlate instance"
+        ) from None
 
 
 def _normalize_email(value: object) -> str:
@@ -163,13 +194,16 @@ def _read_alembic_head(connection: Any) -> str:
 
 def _read_profile(connection: Any, user_id: UUID) -> ProfileSnapshot:
     rows = _fetchall(connection, _PROFILE_STATEMENT, (user_id,))
-    if len(rows) != 1 or len(rows[0]) != 10:
+    if len(rows) != 1 or len(rows[0]) != 18:
         raise ResetError("The administrator profile is missing or ambiguous")
     row = rows[0]
     return ProfileSnapshot(
         id=_as_uuid(row[0]), created_at=row[1], deleted_at=row[2], is_deleted=row[3],
         updated_at=row[4], performed_by=row[5], email=row[6], username=row[7],
-        status=row[8], role_id=_as_uuid(row[9]),
+        status=row[8], role_id=_as_uuid(row[9]), display_name=row[10], identity_kind=row[11],
+        job_title=row[12], sponsor_user_id=_as_uuid(row[13]) if row[13] is not None else None,
+        expires_at=row[14], invitation_sent_at=row[15], invitation_accepted_at=row[16],
+        tokens_valid_after=row[17],
     )
 
 
@@ -200,17 +234,49 @@ def _read_workspace(connection: Any) -> WorkspaceSnapshot:
 def _read_roles(connection: Any) -> tuple[RoleSnapshot, ...]:
     roles: list[RoleSnapshot] = []
     for row in _fetchall(connection, _ROLES_STATEMENT):
-        if len(row) != 8:
+        if len(row) != 9:
             raise ResetError("The role snapshot is invalid")
         roles.append(
             RoleSnapshot(
                 id=_as_uuid(row[0]), created_at=row[1], deleted_at=row[2], is_deleted=row[3],
                 updated_at=row[4], performed_by=row[5], role=row[6], permissions=row[7],
+                description=row[8],
             )
         )
     if len({role.id for role in roles}) != len(roles):
         raise ResetError("The role snapshot is ambiguous")
     return tuple(sorted(roles, key=lambda role: str(role.id)))
+
+
+def _read_access_policy_defaults(connection: Any) -> AccessPolicyDefaultsSnapshot:
+    rows = _fetchall(connection, _ACCESS_POLICY_DEFAULTS_STATEMENT)
+    if len(rows) != 1 or len(rows[0]) != 15:
+        raise ResetError("The Access policy defaults singleton is missing or ambiguous")
+    row = rows[0]
+    snapshot = AccessPolicyDefaultsSnapshot(
+        id=_as_uuid(row[0]), singleton_key=row[1], default_role_id=_as_uuid(row[2]),
+        invitation_expiry_days=row[3], guest_duration_days=row[4], service_duration_days=row[5],
+        default_deny=row[6], require_guest_sponsor=row[7], require_service_owner=row[8],
+        revision=row[9], created_at=row[10], deleted_at=row[11], is_deleted=row[12],
+        updated_at=row[13], performed_by=row[14],
+    )
+    if snapshot.id != ACCESS_POLICY_DEFAULTS_ID or snapshot.singleton_key != "workspace":
+        raise ResetError("The Access policy defaults singleton is invalid")
+    return snapshot
+
+
+def _read_access_policy_version(connection: Any) -> AccessPolicyVersionSnapshot:
+    rows = _fetchall(connection, _ACCESS_POLICY_VERSION_STATEMENT)
+    if len(rows) != 1 or len(rows[0]) != 8:
+        raise ResetError("The Access policy version singleton is missing or ambiguous")
+    row = rows[0]
+    snapshot = AccessPolicyVersionSnapshot(
+        id=_as_uuid(row[0]), singleton_key=row[1], revision=row[2], created_at=row[3],
+        deleted_at=row[4], is_deleted=row[5], updated_at=row[6], performed_by=row[7],
+    )
+    if snapshot.id != ACCESS_POLICY_VERSION_ID or snapshot.singleton_key != "workspace":
+        raise ResetError("The Access policy version singleton is invalid")
+    return snapshot
 
 
 def _read_profile_delete_counts(connection: Any, preserved_id: UUID) -> tuple[int, int]:
@@ -262,6 +328,10 @@ def _impact_digest(plan: ResetPlan) -> str:
         "admin_role": stable_snapshot_payload(plan.admin_role_snapshot),
         "member_role": stable_snapshot_payload(plan.member_role_snapshot),
         "workspace": stable_snapshot_payload(plan.workspace_snapshot),
+        "access_policy_defaults": stable_snapshot_payload(
+            plan.access_policy_defaults_snapshot
+        ),
+        "access_policy_version": stable_snapshot_payload(plan.access_policy_version_snapshot),
         "storage_object_keys": list(plan.storage_object_keys),
         "alembic_head": plan.alembic_head,
     }
@@ -296,6 +366,12 @@ def build_reset_plan(
         credential = _read_credential(connection, admin_id)
         if profile.id != admin_id or credential.user_id != admin_id:
             raise ResetError("The administrator identity is not active and preserved")
+        if (
+            profile.identity_kind != "internal"
+            or profile.sponsor_user_id is not None
+            or profile.expires_at is not None
+        ):
+            raise ResetError("The preserved administrator must have a complete internal identity")
         workspace = _read_workspace(connection)
         if workspace.singleton_key is not True or workspace.is_deleted is not False:
             raise ResetError("The workspace singleton is invalid")
@@ -306,6 +382,8 @@ def build_reset_plan(
         ):
             raise ResetError("The private storage inventory is invalid")
         roles = read_roles_fn(connection)
+        access_policy_defaults = _read_access_policy_defaults(connection)
+        access_policy_version = _read_access_policy_version(connection)
         admin_roles = [
             role for role in roles if role.role == "admin" and role.is_deleted is False
         ]
@@ -336,6 +414,8 @@ def build_reset_plan(
             admin_role_snapshot=admin_roles[0],
             member_role_snapshot=member_roles[0],
             workspace_snapshot=workspace,
+            access_policy_defaults_snapshot=access_policy_defaults,
+            access_policy_version_snapshot=access_policy_version,
             storage_object_keys=storage_object_keys,
             alembic_head=alembic_head,
         )

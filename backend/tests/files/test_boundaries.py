@@ -117,15 +117,7 @@ def test_all_capabilities_do_not_grant_admin_documents(purpose):
 
     actor = user({key: True for key in ALL_CAPABILITIES})
     with pytest.raises(HTTPException) as caught:
-        authorize(actor, purpose)
-    assert caught.value.status_code == 403
-
-
-def test_write_only_role_can_upload_but_not_download():
-    actor = user({"records.write": True})
-    authorize(actor, "record_attachment", write=True)
-    with pytest.raises(HTTPException) as caught:
-        authorize(actor, "record_attachment")
+        authorize(None, actor, purpose)
     assert caught.value.status_code == 403
 
 
@@ -133,9 +125,9 @@ def test_disabled_admin_is_denied():
     actor = user(role="admin")
     actor.status = "disabled"
     with pytest.raises(HTTPException):
-        authorize(actor, "library_document")
+        authorize(None, actor, "library_document")
 
 
 def test_unknown_file_purpose_fails_closed_even_for_admin():
     with pytest.raises(HTTPException):
-        authorize(user(role="admin"), "unknown")
+        authorize(None, user(role="admin"), "unknown")

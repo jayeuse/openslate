@@ -20,16 +20,23 @@ from app.systems.sandbox.departments.schemas import DepartmentCreate, Department
 from app.systems.sandbox.fields.schemas import FieldCreate, FieldReorder, FieldUpdate
 from app.systems.sandbox.modules.schemas import ModuleCreate, ModuleUpdate
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
+from tests.catalog.auth_support import override_catalog_authorization
 
 
 def _actor() -> SimpleNamespace:
-    return SimpleNamespace(id=uuid7(), role=SimpleNamespace(role="admin"))
+    return SimpleNamespace(
+        id=uuid7(),
+        identity_kind="internal",
+        role_id=uuid7(),
+        role=SimpleNamespace(role="admin"),
+    )
 
 
 @pytest.fixture
 def client() -> TestClient:
     application = create_app()
     application.dependency_overrides[get_current_user] = _actor
+    override_catalog_authorization(application)
     application.dependency_overrides[get_db] = lambda: object()
     with TestClient(application) as test_client:
         yield test_client

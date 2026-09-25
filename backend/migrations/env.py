@@ -4,6 +4,12 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.core.config import get_migration_settings
+from app.core.config.instance import (
+    assert_database_url,
+    assert_instance_target,
+    instance_target_for_process,
+    migration_advisory_lock,
+)
 from app.core.database import Base, model_registry  # noqa: F401
 
 config = context.config
@@ -29,19 +35,30 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    target = instance_target_for_process(settings.migration_database_url, "openslate_owner")
+    if target is not None:
+        assert_database_url(
+            settings.migration_database_url,
+            target,
+            expected_user="openslate_owner",
+        )
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        if target is not None:
+            assert_instance_target(connection, target, expected_user="openslate_owner")
+            connection.rollback()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
         )
         with context.begin_transaction():
-            context.run_migrations()
+            with migration_advisory_lock(connection):
+                context.run_migrations()
 
 
 if context.is_offline_mode():

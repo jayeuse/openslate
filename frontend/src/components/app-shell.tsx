@@ -30,7 +30,10 @@ import {
   useWorkspaceNavigationRequest,
 } from "@/components/workspace-navigation-guard";
 import { releaseAllLocalAttachments } from "@/components/systems/shared/runtime/local-attachments";
-import { clearVerifiedWorkspaceSessionSnapshot } from "@/components/systems/shared/runtime/workspace-identity";
+import {
+  clearAccessDraftsForAccountChange,
+  clearVerifiedWorkspaceSessionSnapshot,
+} from "@/components/systems/shared/runtime/workspace-identity";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
   DropdownMenu,
@@ -91,6 +94,8 @@ export function AppShell({
   } | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [signedOutDraftCleanupFailed, setSignedOutDraftCleanupFailed] =
+    useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const mobileCloseRef = useRef<HTMLButtonElement>(null);
   const navigationReturnFocus = useRef<HTMLElement | null>(null);
@@ -148,12 +153,20 @@ export function AppShell({
     else setSidebarCollapsed(!open);
   }
 
+  async function finishSignOut() {
+    if (!clearAccessDraftsForAccountChange()) {
+      setSignedOutDraftCleanupFailed(true);
+      return;
+    }
+    await clearVerifiedWorkspaceSessionSnapshot(verifiedUserId);
+    router.replace("/login");
+  }
+
   async function logout() {
     try {
       await signOut();
-      void clearVerifiedWorkspaceSessionSnapshot(verifiedUserId);
       releaseAllLocalAttachments();
-      router.replace("/login");
+      await finishSignOut();
     } catch {
       toast.add({
         title: "Could not sign out",
@@ -167,6 +180,26 @@ export function AppShell({
     "--sidebar-width": `${sidebarWidth}px`,
     "--sidebar-width-icon": "64px",
   } as CSSProperties;
+
+  if (signedOutDraftCleanupFailed)
+    return (
+      <main className="bg-background text-foreground grid min-h-screen place-items-center">
+        <div className="max-w-md px-6 text-center">
+          <h1 className="text-xl font-semibold">Signed out</h1>
+          <p className="mt-3 text-sm" role="alert">
+            We could not clear saved Access drafts in this tab. Close this tab
+            before another person signs in, or clear this site&apos;s session
+            data. You can retry cleanup here.
+          </p>
+          <Button
+            className="mt-5 min-h-11"
+            onClick={() => void finishSignOut()}
+          >
+            Retry clearing drafts
+          </Button>
+        </div>
+      </main>
+    );
 
   return (
     <WorkspaceNavigationGuardProvider

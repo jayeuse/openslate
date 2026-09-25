@@ -12,16 +12,14 @@ from sqlalchemy.orm import Session
 
 from app.common.dependencies import (
     CurrentIdentity,
+    authorize_workspace_capabilities,
     get_current_identity,
     require_fresh_capabilities,
 )
 from app.core.database import get_db
-from app.systems.access.identity.service import (
-    IdentityRateLimited,
-    InvalidCredentials,
-    authenticate_password,
-)
-from app.systems.access.users.permissions import Capability, has_capability
+from app.systems.access.identity.contracts import IdentityRateLimited, InvalidCredentials
+from app.systems.access.identity.service import authenticate_password
+from app.systems.access.users.permissions import Capability
 from app.systems.sandbox.designs.service import SandboxDesignError, read_document
 from app.systems.sandbox.publications.executor import (
     PublicationError,
@@ -51,9 +49,7 @@ _CAPABILITIES = (
 
 
 def _actor(identity: CurrentIdentity) -> CurrentIdentity:
-    if identity.setup_only or not all(
-        has_capability(identity.user.role, item) for item in _CAPABILITIES
-    ):
+    if identity.setup_only:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return identity
 
@@ -67,6 +63,12 @@ def post_preview(
     payload: PublicationPreviewRequest, identity: PublicationActor, db: Database
 ) -> PublicationPreviewResponse:
     actor = _actor(identity)
+    authorize_workspace_capabilities(
+        db,
+        actor_id=actor.user.id,
+        expected_role_id=actor.user.role_id,
+        capabilities=_CAPABILITIES,
+    )
     response = _run(db, lambda: read_document(db))
     if response.revision != payload.expected_revision:
         raise _error("stale_revision", "Sandbox document changed; reload before publishing")
@@ -107,6 +109,13 @@ def post_publication(
     actor = _actor(identity)
     if idempotency_key is None or not 1 <= len(idempotency_key) <= 128:
         raise _error("publication_unavailable", "A bounded Idempotency-Key is required", 400)
+    require_fresh_capabilities(
+        db,
+        actor_id=actor.user.id,
+        session_id=actor.session_id,
+        expected_role_id=actor.user.role_id,
+        capabilities=_CAPABILITIES,
+    )
     try:
         verified = authenticate_password(db, actor.user.email, payload.password)
     except IdentityRateLimited as error:
@@ -120,9 +129,6 @@ def post_publication(
     if verified.id != actor.user.id:
         db.rollback()
         raise _error("invalid_password", "Password verification failed", 403)
-    require_fresh_capabilities(
-        db, actor_id=actor.user.id, session_id=actor.session_id, capabilities=_CAPABILITIES
-    )
     claims = decode_preview_token(payload.preview_token)
     if claims is None:
         raise _error("preview_expired", "Publication review expired; review again")

@@ -30,8 +30,10 @@ class File(BaseModel):
             postgresql_where=text("state = 'pending_scan' AND operation_id IS NULL"),
         ),
         CheckConstraint(
-            "(purpose = 'record_attachment' AND record_id IS NOT NULL) OR "
-            "(purpose IN ('library_document', 'workspace_logo') AND record_id IS NULL)",
+            "(purpose = 'record_attachment' AND record_id IS NOT NULL AND board_id IS NULL) OR "
+            "(purpose = 'board_attachment' AND board_id IS NOT NULL AND record_id IS NULL) OR "
+            "(purpose IN ('library_document', 'workspace_logo') "
+            "AND record_id IS NULL AND board_id IS NULL)",
             name="ck_files_purpose_parent",
         ),
         CheckConstraint(
@@ -73,6 +75,9 @@ class File(BaseModel):
         ForeignKey("records.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
+    )
+    board_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("boards.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     creator_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"),

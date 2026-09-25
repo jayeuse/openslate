@@ -19,6 +19,7 @@ from app.systems.manage.audit.listeners import (
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.platform.events.models import InvalidationEvent
+from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.records.models import Record
 
@@ -69,6 +70,11 @@ def test_create_listener_stages_and_writes_create_log() -> None:
     assert audit_log.after == {
         "email": "alice@example.com",
         "username": "alice",
+        "display_name": None,
+        "identity_kind": None,
+        "job_title": None,
+        "sponsor_user_id": None,
+        "expires_at": None,
         "status": "active",
         "role_id": str(user.role_id),
     }
@@ -179,6 +185,29 @@ def test_commit_deduplicates_staged_invalidations_before_one_publish_call(
     broadcast_committed_changes(session)
 
     assert calls == [(event,)]
+
+
+def test_audit_stages_recipient_from_notification_row_and_suppresses_report_subjects() -> None:
+    from app.systems.openview.reports.models import Report
+
+    recipient_id = uuid7()
+    notification = InAppNotification(work_id=uuid7(), recipient_id=recipient_id)
+    notification.id = uuid7()
+    report = Report(owner_id=uuid7(), module_id=uuid7(), name="Private", recipe={})
+    report.id = uuid7()
+    session = FakeSession()
+    session.new = [notification, report]
+
+    capture_changes(session, None, None)
+    create_audit_logs(session, None)
+
+    assert session.info[REALTIME_INVALIDATION_KEY] == [
+        InvalidationEvent(entity="in_app_notifications", recipient_id=recipient_id)
+    ]
+    assert {entry.entity_type for entry in session.added if isinstance(entry, AuditLog)} == {
+        "in_app_notifications",
+        "reports",
+    }
 
 
 def test_bulk_mutations_are_rejected() -> None:

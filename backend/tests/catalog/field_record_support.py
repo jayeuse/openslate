@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import UUID
 
@@ -7,13 +6,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db, model_registry  # noqa: F401
-from app.systems.access.users.models import UserRole
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.router import router as fields_router
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.router import router as records_router
+from tests.catalog.auth_support import override_catalog_authorization
 
 
 def make_module(*, deleted: bool = False) -> Module:
@@ -50,15 +48,11 @@ def make_field(
     return field
 
 
-def _make_validation_client(
-    *, role: UserRole = UserRole.ADMIN, db: Session | None = None
-) -> TestClient:
+def _make_validation_client(*, db: Session | None = None) -> TestClient:
     app = FastAPI()
     app.include_router(fields_router, prefix="/api")
     app.include_router(records_router, prefix="/api")
     database = db or Mock(spec=Session)
-    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
-        role=SimpleNamespace(role=role)
-    )
+    override_catalog_authorization(app)
     app.dependency_overrides[get_db] = lambda: database
     return TestClient(app)

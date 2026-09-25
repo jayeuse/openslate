@@ -1,4 +1,5 @@
 """Permission schema and capability guard contracts."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -8,7 +9,8 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.common.dependencies.auth import require_capability
+from app.common.dependencies import auth as auth_dependencies
+from app.common.dependencies.auth import require_capability, require_legacy_capability
 from app.systems.access.users.models import UserRole
 from app.systems.access.users.permissions import (
     ALL_CAPABILITIES,
@@ -68,10 +70,10 @@ def test_malformed_persisted_permissions_are_effectively_zero(permissions: objec
 
 def test_admin_effective_permissions_are_all_even_when_persisted_document_is_malformed() -> None:
     role = SimpleNamespace(role=UserRole.ADMIN, permissions={"records": {"read": "not-a-boolean"}})
-    user = SimpleNamespace(role=role)
+    user = SimpleNamespace(identity_kind="internal", role=role)
 
     assert effective_permissions(role) == list(ALL_CAPABILITIES)
-    assert all(require_capability(capability)(user) for capability in Capability)
+    assert all(require_legacy_capability(capability)(user) for capability in Capability)
 
 
 def test_effective_permissions_are_deterministic_and_sorted() -> None:
@@ -87,10 +89,28 @@ def test_effective_permissions_are_deterministic_and_sorted() -> None:
     assert effective_permissions(role) == ["departments.read", "records.write"]
 
 
-def test_require_capability_accepts_a_permitted_non_admin() -> None:
+def test_workspace_capability_guard_delegates_to_the_authoritative_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     user = make_user("reader", permissions={"records.read": True})
+    database = object()
+    calls: list[tuple[object, object, object, object]] = []
 
-    assert require_capability(Capability.RECORDS_READ)(user) is user
+    def authorize(
+        db: object,
+        *,
+        actor_id: object,
+        expected_role_id: object,
+        capabilities: object,
+        **_kwargs: object,
+    ) -> object:
+        calls.append((db, actor_id, expected_role_id, capabilities))
+        return user
+
+    monkeypatch.setattr(auth_dependencies, "authorize_workspace_capabilities", authorize)
+
+    assert require_capability(Capability.RECORDS_READ)(user, database) is user
+    assert calls == [(database, user.id, user.role_id, (Capability.RECORDS_READ,))]
 
 
 @pytest.mark.parametrize(
@@ -98,14 +118,29 @@ def test_require_capability_accepts_a_permitted_non_admin() -> None:
     [{}, {"departments.read": True}, {"records.read": "true"}, {"records": {"read": True}}],
     ids=["missing", "unrelated", "non-boolean", "nested"],
 )
-def test_require_capability_rejects_missing_or_malformed_permissions(
+def test_legacy_capability_guard_rejects_missing_or_malformed_permissions(
     permissions: object,
 ) -> None:
     user = SimpleNamespace(role=SimpleNamespace(role="editor", permissions=permissions))
 
     with pytest.raises(HTTPException) as raised:
-        require_capability(Capability.RECORDS_WRITE)(user)
+        require_legacy_capability(Capability.RECORDS_WRITE)(user)
 
     assert raised.value.status_code == 403
 
 
+def test_legacy_guard_requires_every_capability_for_combined_board_and_report_actions() -> None:
+    read_only = make_user("read_only", permissions={"records.read": True})
+    editor = make_user(
+        "editor_both",
+        permissions={"records.read": True, "records.write": True},
+    )
+    combined_guard = require_legacy_capability(
+        Capability.RECORDS_READ, Capability.RECORDS_WRITE
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        combined_guard(read_only)
+
+    assert raised.value.status_code == 403
+    assert combined_guard(editor) is editor

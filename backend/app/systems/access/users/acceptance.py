@@ -8,9 +8,9 @@ from uuid6 import uuid7
 
 from app.common.normalization import normalize_email
 from app.core.base_model import utc_now
+from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import User, UserStatus
 from app.systems.access.users.service import (
-    InvitationError,
     _lock_admin_role,
     _lock_profile,
     _lock_role_any_state,

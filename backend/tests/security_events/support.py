@@ -7,7 +7,7 @@ from uuid6 import uuid7
 import app.systems.manage.audit.models as audit_models
 import app.systems.manage.audit.schemas as audit_schemas
 import app.systems.manage.audit.service as audit_service
-from app.systems.access.users.models import Role, User, UserRole
+from app.systems.access.users.models import IdentityKind, Role, User, UserRole
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 
 
@@ -93,6 +93,7 @@ def _user(role: UserRole | str) -> User:
         id=uuid7(),
         email=f"{str(role)}@example.com",
         username=str(role),
+        identity_kind=IdentityKind.INTERNAL.value,
         status="active",
         role_id=role_id,
         role=role_row,

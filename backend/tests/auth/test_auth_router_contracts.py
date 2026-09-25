@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.systems.access.auth.router as auth_router
+import app.systems.access.users.sessions_router as sessions_router
 from app.common.dependencies.auth import CurrentIdentity
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.schemas import (
@@ -27,7 +28,7 @@ from app.systems.access.identity.service import (
     IssuedSession,
     RefreshReplayDetected,
 )
-from app.systems.access.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.models import IdentityKind, Role, User, UserRole, UserStatus
 
 
 def _request(
@@ -71,6 +72,7 @@ def _user(*, status: UserStatus = UserStatus.ACTIVE, role: Role | None = None) -
         status=status.value,
         role_id=selected_role.id,
         role=selected_role,
+        identity_kind=IdentityKind.INTERNAL.value,
         created_at=now,
         updated_at=now,
         is_deleted=False,
@@ -157,10 +159,18 @@ def test_refresh_browser_session_enforces_cookie_csrf_and_clears_invalid_state(
     assert replay.status_code == 401
     assert any('openslate_refresh=""' in item for item in replay.headers.getlist("set-cookie"))
 
-    monkeypatch.setattr(auth_router, "refresh_session", Mock(side_effect=InvalidCredentials("bad")))
+    revoked_session = Mock(revoked_at=None)
+
+    def revoke_then_reject(*_args: object, **_kwargs: object) -> None:
+        revoked_session.revoked_at = datetime.now(UTC)
+        raise InvalidCredentials("bad")
+
+    monkeypatch.setattr(auth_router, "refresh_session", revoke_then_reject)
     invalid = auth_router.refresh(request, Response(), db)
     assert invalid.status_code == 401
-    assert db.rollback.call_count == 1
+    assert revoked_session.revoked_at is not None
+    assert db.commit.call_count == 3
+    db.rollback.assert_not_called()
 
 
 def test_bearer_token_routes_reject_mixed_setup_replay_and_invalid_credentials(
@@ -209,6 +219,64 @@ def test_bearer_token_routes_reject_mixed_setup_replay_and_invalid_credentials(
     with pytest.raises(HTTPException) as invalid_refresh:
         auth_router.refresh_bearer_token(refresh, _request(origin=None), db)
     assert invalid_refresh.value.status_code == 401
+
+
+def test_rejected_password_change_uses_one_timestamp_and_does_not_mutate_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    user = _user()
+    identity = CurrentIdentity(user, uuid7(), True, False)
+    timestamp = datetime.now(UTC)
+    authenticate = Mock(return_value=user)
+    replace = Mock()
+    issue = Mock(return_value=_issued())
+    monkeypatch.setattr(auth_router, "utc_now", lambda: timestamp)
+    monkeypatch.setattr(auth_router, "authenticate_password", authenticate)
+    monkeypatch.setattr(auth_router, "replace_password", replace)
+    monkeypatch.setattr(auth_router, "issue_session", issue)
+    payload = PasswordChangeRequest(
+        current_password="current password", password="new sufficiently long password"
+    )
+
+    result = auth_router.change_password(payload, identity, _request(), Response(), db)
+
+    assert result == {"authenticated": True, "setup_required": False}
+    assert authenticate.call_args.kwargs["now"] == timestamp
+    assert replace.call_args.kwargs["now"] == timestamp
+    assert issue.call_args.kwargs["now"] == timestamp
+
+    rejected = Mock(side_effect=InvalidCredentials("invalid"))
+    monkeypatch.setattr(auth_router, "authenticate_password", rejected)
+    with pytest.raises(HTTPException) as error:
+        auth_router.change_password(payload, identity, _request(), Response(), db)
+    assert error.value.status_code == 403
+    assert replace.call_count == 1
+    assert issue.call_count == 1
+
+
+def test_invalid_bearer_refresh_commits_a_revoked_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    session = Mock(revoked_at=None)
+    timestamp = datetime.now(UTC)
+
+    def revoke_then_reject(*_args: object, **_kwargs: object) -> None:
+        session.revoked_at = timestamp
+        raise InvalidCredentials("invalid")
+
+    monkeypatch.setattr(auth_router, "refresh_session", revoke_then_reject)
+
+    with pytest.raises(HTTPException) as error:
+        auth_router.refresh_bearer_token(
+            RefreshTokenRequest(refresh_token="x" * 32), _request(origin=None), db
+        )
+
+    assert error.value.status_code == 401
+    assert session.revoked_at == timestamp
+    db.commit.assert_called_once()
+    db.rollback.assert_not_called()
 
 
 def test_logout_rejects_bad_refresh_but_clears_a_valid_browser_session(
@@ -266,7 +334,7 @@ def test_session_and_session_management_routes_distinguish_setup_and_current_ses
     monkeypatch.setattr(auth_router, "get_current_identity", Mock(return_value=identity))
     assert auth_router.session_status(_request(method="GET", origin=None), db)["user_id"] == user.id
     db.scalars.return_value.all.return_value = [current, other]
-    sessions = auth_router.list_sessions(identity, db)
+    sessions = sessions_router.list_sessions(identity, db)
     assert [item["current"] for item in sessions] == [True, False]
     response = Response()
     monkeypatch.setattr(auth_router, "revoke_session", Mock(return_value=True))
@@ -278,7 +346,7 @@ def test_session_and_session_management_routes_distinguish_setup_and_current_ses
 
     setup_identity = CurrentIdentity(user, current.id, True, True)
     with pytest.raises(HTTPException) as setup_denied:
-        auth_router.list_sessions(setup_identity, db)
+        sessions_router.list_sessions(setup_identity, db)
     assert setup_denied.value.status_code == 401
 
 

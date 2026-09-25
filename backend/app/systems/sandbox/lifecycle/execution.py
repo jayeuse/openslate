@@ -8,8 +8,15 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
+from app.systems.access.policy.service import get_defaults
+from app.systems.access.users.models import UserDepartment
+from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
+from app.systems.boards.event_models import BoardEvent
+from app.systems.boards.models import Board, BoardRecordPlacement, BoardWidget
 from app.systems.manage.audit.context import set_audit_actor
-from app.systems.openview.views.models import SavedView
+from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
+from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
+from app.systems.openview.views.models import SavedView, SavedViewDefault
 from app.systems.platform.files.models import File
 from app.systems.sandbox.automations.models import (
     PublishedAutomationAction,
@@ -40,12 +47,25 @@ from app.systems.sandbox.relationships.models import RelationshipEdge
 
 _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("departments", Department),
+    ("user_departments", UserDepartment),
+    ("boards", Board),
+    ("board_announcements", BoardAnnouncement),
+    ("board_announcement_revisions", BoardAnnouncementRevision),
+    ("board_events", BoardEvent),
+    ("board_widgets", BoardWidget),
+    ("dashboards", Dashboard),
+    ("dashboard_widgets", DashboardWidget),
+    ("reports", Report),
     ("modules", Module),
+    ("report_runs", ReportRun),
     ("fields", Field),
     ("records", Record),
+    ("report_run_rows", ReportRunRow),
+    ("board_record_placements", BoardRecordPlacement),
     ("relationship_edges", RelationshipEdge),
     ("files", File),
     ("saved_views", SavedView),
+    ("saved_view_defaults", SavedViewDefault),
     ("published_automation_definitions", PublishedAutomationDefinition),
     ("published_automation_conditions", PublishedAutomationCondition),
     ("published_automation_actions", PublishedAutomationAction),
@@ -131,6 +151,7 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
         "records": Record,
         "files": File,
         "saved_views": SavedView,
+        "saved_view_defaults": SavedViewDefault,
     }
 
     for edge_id in plan.scope_ids.get("relationship_edges", ()):
@@ -148,7 +169,15 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
             record.data = {key: value for key, value in record.data.items() if key != key_strip.key}
             db.flush()
 
-    for entity_type in ("files", "saved_views", "records", "fields", "modules", "departments"):
+    for entity_type in (
+        "files",
+        "saved_view_defaults",
+        "saved_views",
+        "records",
+        "fields",
+        "modules",
+        "departments",
+    ):
         for row in plan.rows:
             if row.entity_type != entity_type:
                 continue
@@ -160,6 +189,11 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
 
 
 def _execute(db: Session, plan: LifecyclePlan) -> LifecycleImpactResponse:
+    if (
+        plan.operation is LifecycleOperation.CLOSE
+        and plan.target_type is LifecycleTargetType.DEPARTMENT
+    ):
+        get_defaults(db, lock=True)
     _lock_plan_scope(db, plan)
     current = _current_plan(db, plan)
     if current.impact_digest != plan.impact_digest:

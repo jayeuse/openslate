@@ -12,20 +12,27 @@ from app.common.dependencies import require_fresh_exact_admin, require_roles
 from app.core.database import get_db
 from app.systems.access.identity.service import invalidate_action_tokens
 from app.systems.access.users.coordination import (
-    active_admin_count,
+    ProfileValidationError,
     advance_token_cutoff,
     commit,
     conflict,
     ensure_projected_admin_remains,
     forbidden,
-    is_active_admin,
     lock_active_role,
     lock_user,
+    non_deleted_service_identity_count,
+    replace_department_memberships,
     unavailable,
+    validate_identity_profile,
 )
 from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import Role, User, UserRole, UserStatus
-from app.systems.access.users.patch import require_non_null_patch
+from app.systems.access.users.models import (
+    IdentityKind,
+    Role,
+    User,
+    UserRole,
+    UserStatus,
+)
 from app.systems.access.users.schemas import UserResponse, UserUpdate
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -81,6 +88,64 @@ def _record_outcome(
     )
 
 
+def _require_user_patch(payload: UserUpdate) -> None:
+    if not payload.model_fields_set:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="At least one non-null field is required",
+        )
+    nullable_profile_fields = {"display_name", "job_title", "expires_at", "primary_department_id"}
+    if any(
+        getattr(payload, field) is None
+        for field in payload.model_fields_set
+        if field not in nullable_profile_fields
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="At least one non-null field is required",
+        )
+
+
+def _apply_profile_update(
+    db: Session,
+    user: User,
+    payload: UserUpdate,
+    *,
+    destination_role: Role,
+) -> None:
+    fields = payload.model_fields_set
+    identity_kind = user.identity_kind or IdentityKind.INTERNAL.value
+    if identity_kind == IdentityKind.INTERNAL.value and "sponsor_user_id" in fields:
+        raise ProfileValidationError("Internal identities cannot have a sponsor")
+    sponsor_user_id = (
+        payload.sponsor_user_id if "sponsor_user_id" in fields else user.sponsor_user_id
+    )
+    expires_at = payload.expires_at if "expires_at" in fields else user.expires_at
+    if fields & {"role_id", "sponsor_user_id", "expires_at"}:
+        validate_identity_profile(
+            db,
+            identity_kind=identity_kind,
+            sponsor_user_id=sponsor_user_id,
+            expires_at=expires_at,
+            role=destination_role,
+        )
+    if "display_name" in fields:
+        user.display_name = payload.display_name
+    if "job_title" in fields:
+        user.job_title = payload.job_title
+    if "sponsor_user_id" in fields:
+        user.sponsor_user_id = sponsor_user_id
+    if "expires_at" in fields:
+        user.expires_at = expires_at
+    replace_department_memberships(
+        db,
+        user,
+        department_ids=payload.department_ids if "department_ids" in fields else None,
+        primary_department_id=payload.primary_department_id,
+        primary_requested="primary_department_id" in fields,
+    )
+
+
 @router.patch("/{user_id}", response_model=UserResponse)
 def update_user(
     user_id: UUID,
@@ -88,8 +153,8 @@ def update_user(
     admin: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> User:
-    require_non_null_patch(payload)
-    admin = require_fresh_exact_admin(db, admin.id)
+    _require_user_patch(payload)
+    admin = require_fresh_exact_admin(db, admin.id, serialize_admin_changes=True)
     actor_id = admin.id
     user = lock_user(db, user_id)
     target_id = user.id
@@ -104,16 +169,39 @@ def update_user(
         destination_role = lock_active_role(db, requested_role_id)
     if destination_role is None:
         raise conflict("User role is not active")
+    if (
+        user.identity_kind or IdentityKind.INTERNAL.value
+    ) == IdentityKind.GUEST.value and destination_role.role == UserRole.ADMIN.value:
+        db.rollback()
+        raise conflict("Guest identities cannot be administrators")
     destination_status = payload.status.value if payload.status is not None else user.status
     if payload.status == UserStatus.ACTIVE and not is_established_user(user):
         raise conflict("Unaccepted invitations require verified acceptance")
-    if payload.status is not None or role_change_requested:
+    if (
+        payload.status is not None
+        or role_change_requested
+        or "expires_at" in payload.model_fields_set
+    ):
         ensure_projected_admin_remains(
             db,
             user,
             destination_role=destination_role,
             destination_status=destination_status,
+            destination_expires_at=(
+                payload.expires_at if "expires_at" in payload.model_fields_set else user.expires_at
+            ),
+            expiry_requested="expires_at" in payload.model_fields_set,
         )
+    if payload.status == UserStatus.DISABLED and non_deleted_service_identity_count(
+        db, owner_id=user.id
+    ):
+        db.rollback()
+        raise conflict("Reassign service identities before disabling this user")
+    try:
+        _apply_profile_update(db, user, payload, destination_role=destination_role)
+    except ProfileValidationError as error:
+        db.rollback()
+        raise conflict(str(error)) from error
     if payload.status == UserStatus.ACTIVE:
         return _activate_user(
             db,
@@ -258,7 +346,7 @@ def delete_user(
     admin: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    admin = require_fresh_exact_admin(db, admin.id)
+    admin = require_fresh_exact_admin(db, admin.id, serialize_admin_changes=True)
     actor_id = admin.id
     user = lock_user(db, user_id)
     target_id = user.id
@@ -266,8 +354,17 @@ def delete_user(
         raise conflict("User is already deleted")
     if target_id == actor_id:
         raise forbidden("You cannot delete your own account")
-    if is_active_admin(user) and active_admin_count(db) <= 1:
-        raise conflict("Cannot delete the last active admin")
+    if user.role is None:
+        raise conflict("User role is not active")
+    ensure_projected_admin_remains(
+        db,
+        user,
+        destination_role=user.role,
+        destination_status=user.status,
+        destination_deleted=True,
+    )
+    if non_deleted_service_identity_count(db, owner_id=user.id):
+        raise conflict("Reassign service identities before deleting this user")
     operation_id = uuid7()
     user.is_deleted = True
     user.deleted_at = datetime.now(UTC)
