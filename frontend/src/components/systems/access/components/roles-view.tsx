@@ -1,5 +1,7 @@
 "use client";
 
+import { AccessSearchToolbar } from "./access-search-toolbar";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
@@ -10,7 +12,6 @@ import {
   PencilLine,
   Plus,
   Scale,
-  Search,
   ShieldCheck,
 } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
@@ -47,12 +48,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -431,6 +426,34 @@ export function RolesView({ controller }: RolesViewProps) {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {compareMode ? (
+            <>
+              <Button
+                variant="outline"
+                className="min-h-11 flex-1 sm:flex-none"
+                onClick={cancelCompare}
+              >
+                Cancel compare
+              </Button>
+              <Button
+                variant="outline"
+                className="min-h-11 flex-1 sm:flex-none"
+                disabled={compareIds.length < 2}
+                onClick={() => setCompareOpen(true)}
+              >
+                <Scale data-icon="inline-start" />
+                Compare roles ({compareIds.length})
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="outline"
+              className="min-h-11 w-full sm:w-auto"
+              onClick={startCompare}
+            >
+              <Scale data-icon="inline-start" /> Compare roles
+            </Button>
+          )}
           <Button
             className="min-h-11"
             disabled={controller.isPending() || restoredUncertain}
@@ -498,117 +521,71 @@ export function RolesView({ controller }: RolesViewProps) {
         </p>
       )}
 
-      <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <ToggleGroup
-          aria-label="Filter roles"
-          value={[filter]}
-          onValueChange={(values) => {
-            const value = values[0];
-            if (value === "all" || value === "built-in" || value === "custom") {
-              setFilter(value);
-              setPage(0);
-            }
-          }}
-          className="w-full sm:w-auto"
-        >
-          <ToggleGroupItem
-            className="min-h-11 min-w-0 flex-1 gap-2 px-2 sm:flex-none sm:px-4"
-            value="all"
-            aria-label={`All ${roleCounts.all}`}
-          >
-            <span>All</span>
-            <Badge variant="outline">{roleCounts.all}</Badge>
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            className="min-h-11 min-w-0 flex-1 gap-2 px-2 sm:flex-none sm:px-4"
-            value="built-in"
-            aria-label={`Built-in ${roleCounts["built-in"]}`}
-          >
-            <span>Built-in</span>
-            <Badge variant="outline">{roleCounts["built-in"]}</Badge>
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            className="min-h-11 min-w-0 flex-1 gap-2 px-2 sm:flex-none sm:px-4"
-            value="custom"
-            aria-label={`Custom ${roleCounts.custom}`}
-          >
-            <span>Custom</span>
-            <Badge variant="outline">{roleCounts.custom}</Badge>
-          </ToggleGroupItem>
-        </ToggleGroup>
-        <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto] sm:items-end xl:flex-1 xl:justify-end">
-          <Field className="min-w-0 sm:max-w-sm">
-            <FieldLabel htmlFor="role-search">Search roles</FieldLabel>
-            <div className="relative">
-              <Search
-                aria-hidden="true"
-                className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
-              />
-              <Input
-                id="role-search"
-                type="search"
-                className="min-h-11 pl-9"
-                value={query}
-                placeholder="Name or description"
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  setPage(0);
-                }}
-              />
-            </div>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="role-sort">Sort</FieldLabel>
-            <NativeSelect
-              id="role-sort"
-              className="w-full [&_select]:min-h-11"
-              value={sort}
-              onChange={(event) => {
-                setSort(event.target.value as RoleSort);
+      <AccessSearchToolbar
+        searchLabel="Search roles"
+        placeholder="Name or description"
+        query={query}
+        onQueryChange={(value) => {
+          setQuery(value);
+          setPage(0);
+        }}
+        sort={sort}
+        sortOptions={[
+          { value: "name", label: "Name" },
+          { value: "members", label: "Most members" },
+          { value: "grants", label: "Most grants" },
+        ]}
+        onSortChange={(value) => {
+          setSort(value);
+          setPage(0);
+        }}
+        activeFilterCount={filter === "all" ? 0 : 1}
+      >
+        <div className="min-w-0 sm:col-span-2">
+          <p className="mb-2 text-sm font-medium">Role type</p>
+          <ToggleGroup
+            aria-label="Filter roles"
+            value={[filter]}
+            onValueChange={(values) => {
+              const value = values[0];
+              if (
+                value === "all" ||
+                value === "built-in" ||
+                value === "custom"
+              ) {
+                setFilter(value);
                 setPage(0);
-              }}
+              }
+            }}
+            className="w-full sm:w-auto"
+          >
+            <ToggleGroupItem
+              className="min-h-11 min-w-0 flex-1 gap-2 px-2 sm:flex-none sm:px-4"
+              value="all"
+              aria-label={`All ${roleCounts.all}`}
             >
-              <NativeSelectOption value="name">Name</NativeSelectOption>
-              <NativeSelectOption value="members">
-                Most members
-              </NativeSelectOption>
-              <NativeSelectOption value="grants">
-                Most grants
-              </NativeSelectOption>
-            </NativeSelect>
-          </Field>
-          <div className="flex flex-wrap items-center justify-end gap-2 sm:col-span-3 xl:col-span-1">
-            {compareMode ? (
-              <>
-                <Button
-                  variant="outline"
-                  className="min-h-11 flex-1 sm:flex-none"
-                  onClick={cancelCompare}
-                >
-                  Cancel compare
-                </Button>
-                <Button
-                  variant="outline"
-                  className="min-h-11 flex-1 sm:flex-none"
-                  disabled={compareIds.length < 2}
-                  onClick={() => setCompareOpen(true)}
-                >
-                  <Scale data-icon="inline-start" />
-                  Compare roles ({compareIds.length})
-                </Button>
-              </>
-            ) : (
-              <Button
-                variant="outline"
-                className="min-h-11 w-full sm:w-auto"
-                onClick={startCompare}
-              >
-                <Scale data-icon="inline-start" /> Compare roles
-              </Button>
-            )}
-          </div>
+              <span>All</span>
+              <Badge variant="outline">{roleCounts.all}</Badge>
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              className="min-h-11 min-w-0 flex-1 gap-2 px-2 sm:flex-none sm:px-4"
+              value="built-in"
+              aria-label={`Built-in ${roleCounts["built-in"]}`}
+            >
+              <span>Built-in</span>
+              <Badge variant="outline">{roleCounts["built-in"]}</Badge>
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              className="min-h-11 min-w-0 flex-1 gap-2 px-2 sm:flex-none sm:px-4"
+              value="custom"
+              aria-label={`Custom ${roleCounts.custom}`}
+            >
+              <span>Custom</span>
+              <Badge variant="outline">{roleCounts.custom}</Badge>
+            </ToggleGroupItem>
+          </ToggleGroup>
         </div>
-      </div>
+      </AccessSearchToolbar>
 
       {compareMode && (
         <p className="text-muted-foreground text-sm" role="status">

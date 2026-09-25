@@ -1,10 +1,11 @@
 "use client";
 
+import { AccessSearchToolbar } from "./access-search-toolbar";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownAZ,
   Bot,
-  ChevronDown,
   Search,
   UserRound,
   UserRoundPlus,
@@ -38,7 +39,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -630,191 +630,141 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
         </TabsList>
 
         <TabsContent value={kind} className="space-y-3">
-          <Card className="w-full" role="search" aria-label="Identity filters">
-            <CardContent className="p-0">
-              <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-12">
-                <Field className="sm:col-span-2 xl:col-span-6">
-                  <FieldLabel htmlFor="identity-search">
-                    Search identities
-                  </FieldLabel>
-                  <div className="relative">
-                    <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-                    <Input
-                      id="identity-search"
-                      type="search"
-                      className="min-h-11 pl-9"
-                      placeholder="Name, email, or purpose"
-                      value={query}
-                      onChange={(event) => {
-                        setQuery(event.target.value);
-                        setPageIndex(0);
-                      }}
-                    />
-                  </div>
-                </Field>
-                <Field className="xl:col-span-3">
-                  <FieldLabel htmlFor="identity-status">Status</FieldLabel>
-                  <NativeSelect
-                    id="identity-status"
-                    className="w-full [&_select]:min-h-11"
-                    value={status}
-                    onChange={(event) => {
-                      setStatus(event.target.value as StatusFilter);
-                      setPageIndex(0);
-                    }}
-                  >
-                    <NativeSelectOption value="all">
-                      All statuses
-                    </NativeSelectOption>
-                    {directoryStatusOptions.map((value) => (
-                      <NativeSelectOption key={value} value={value}>
-                        {statusLabels[value]}
-                      </NativeSelectOption>
-                    ))}
-                  </NativeSelect>
-                </Field>
-                <Field className="xl:col-span-3">
-                  <FieldLabel htmlFor="identity-sort">Sort</FieldLabel>
-                  <NativeSelect
-                    id="identity-sort"
-                    className="w-full [&_select]:min-h-11"
-                    value={sort}
-                    onChange={(event) => {
-                      setSort(event.target.value as SortOption);
-                      setPageIndex(0);
-                    }}
-                  >
-                    <NativeSelectOption value="name">Name</NativeSelectOption>
-                    <NativeSelectOption value="kind">Kind</NativeSelectOption>
-                    <NativeSelectOption value="status">
-                      Status
-                    </NativeSelectOption>
-                    <NativeSelectOption value="role">Role</NativeSelectOption>
-                    <NativeSelectOption value="expiry">
-                      Expiry soonest
-                    </NativeSelectOption>
-                  </NativeSelect>
-                </Field>
-              </div>
-
-              <details className="group border-t">
-                <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2">
-                  <span>More filters</span>
-                  <span className="flex items-center gap-2">
-                    <Badge variant="outline">
-                      {activeDirectorySettingsCount} active
-                    </Badge>
-                    <ChevronDown
-                      className="size-4 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none"
-                      aria-hidden="true"
-                    />
-                  </span>
-                </summary>
-                <div className="grid gap-3 border-t p-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <Field>
-                    <FieldLabel htmlFor="identity-role-filter">Role</FieldLabel>
-                    <NativeSelect
-                      id="identity-role-filter"
-                      className="w-full [&_select]:min-h-11"
-                      value={roleId}
-                      onChange={(event) => {
-                        setRoleId(event.target.value);
-                        setPageIndex(0);
-                      }}
-                    >
-                      <NativeSelectOption value="all">
-                        All roles
-                      </NativeSelectOption>
-                      {controller.state.roles.map((role) => (
-                        <NativeSelectOption key={role.id} value={role.id}>
-                          {role.name}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="identity-group-filter">
-                      Group
-                    </FieldLabel>
-                    <NativeSelect
-                      id="identity-group-filter"
-                      className="w-full [&_select]:min-h-11"
-                      value={groupId}
-                      onChange={(event) => {
-                        setGroupId(event.target.value);
-                        setPageIndex(0);
-                      }}
-                    >
-                      <NativeSelectOption value="all">
-                        All groups
-                      </NativeSelectOption>
-                      <NativeSelectOption value="none">
-                        No groups
-                      </NativeSelectOption>
-                      {controller.state.groups.map((group) => (
-                        <NativeSelectOption key={group.id} value={group.id}>
-                          {group.name}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="identity-department-filter">
-                      Department
-                    </FieldLabel>
-                    <NativeSelect
-                      id="identity-department-filter"
-                      className="w-full [&_select]:min-h-11"
-                      value={department}
-                      onChange={(event) => {
-                        setDepartment(event.target.value);
-                        setPageIndex(0);
-                      }}
-                    >
-                      <NativeSelectOption value="all">
-                        All departments
-                      </NativeSelectOption>
-                      {controller.departmentCatalog.map((department) => (
-                        <NativeSelectOption
-                          key={department.id}
-                          value={department.id}
-                        >
-                          {department.name}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="identity-expiry-filter">
-                      Expiry
-                    </FieldLabel>
-                    <NativeSelect
-                      id="identity-expiry-filter"
-                      className="w-full [&_select]:min-h-11"
-                      value={expiry}
-                      onChange={(event) => {
-                        setExpiry(event.target.value as ExpiryFilter);
-                        setPageIndex(0);
-                      }}
-                    >
-                      <NativeSelectOption value="all">
-                        Any expiry
-                      </NativeSelectOption>
-                      <NativeSelectOption value="expired">
-                        Expired
-                      </NativeSelectOption>
-                      <NativeSelectOption value="next-30-days">
-                        Next 30 days
-                      </NativeSelectOption>
-                      <NativeSelectOption value="no-expiry">
-                        No expiry
-                      </NativeSelectOption>
-                    </NativeSelect>
-                  </Field>
-                </div>
-              </details>
-            </CardContent>
-          </Card>
+          <AccessSearchToolbar
+            searchLabel="Search identities"
+            placeholder="Name, email, or purpose"
+            query={query}
+            onQueryChange={(value) => {
+              setQuery(value);
+              setPageIndex(0);
+            }}
+            sort={sort}
+            sortOptions={[
+              { value: "name", label: "Name" },
+              { value: "kind", label: "Kind" },
+              { value: "status", label: "Status" },
+              { value: "role", label: "Role" },
+              { value: "expiry", label: "Expiry soonest" },
+            ]}
+            onSortChange={(value) => {
+              setSort(value);
+              setPageIndex(0);
+            }}
+            activeFilterCount={
+              [
+                status !== "all",
+                roleId !== "all",
+                groupId !== "all",
+                department !== "all",
+                expiry !== "all",
+              ].filter(Boolean).length
+            }
+          >
+            <Field>
+              <FieldLabel htmlFor="identity-status">Status</FieldLabel>
+              <NativeSelect
+                id="identity-status"
+                className="w-full [&_select]:min-h-11"
+                value={status}
+                onChange={(event) => {
+                  setStatus(event.target.value as StatusFilter);
+                  setPageIndex(0);
+                }}
+              >
+                <NativeSelectOption value="all">
+                  All statuses
+                </NativeSelectOption>
+                {directoryStatusOptions.map((value) => (
+                  <NativeSelectOption key={value} value={value}>
+                    {statusLabels[value]}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="identity-role-filter">Role</FieldLabel>
+              <NativeSelect
+                id="identity-role-filter"
+                className="w-full [&_select]:min-h-11"
+                value={roleId}
+                onChange={(event) => {
+                  setRoleId(event.target.value);
+                  setPageIndex(0);
+                }}
+              >
+                <NativeSelectOption value="all">All roles</NativeSelectOption>
+                {controller.state.roles.map((role) => (
+                  <NativeSelectOption key={role.id} value={role.id}>
+                    {role.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="identity-group-filter">Group</FieldLabel>
+              <NativeSelect
+                id="identity-group-filter"
+                className="w-full [&_select]:min-h-11"
+                value={groupId}
+                onChange={(event) => {
+                  setGroupId(event.target.value);
+                  setPageIndex(0);
+                }}
+              >
+                <NativeSelectOption value="all">All groups</NativeSelectOption>
+                <NativeSelectOption value="none">No groups</NativeSelectOption>
+                {controller.state.groups.map((group) => (
+                  <NativeSelectOption key={group.id} value={group.id}>
+                    {group.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="identity-department-filter">
+                Department
+              </FieldLabel>
+              <NativeSelect
+                id="identity-department-filter"
+                className="w-full [&_select]:min-h-11"
+                value={department}
+                onChange={(event) => {
+                  setDepartment(event.target.value);
+                  setPageIndex(0);
+                }}
+              >
+                <NativeSelectOption value="all">
+                  All departments
+                </NativeSelectOption>
+                {controller.departmentCatalog.map((department) => (
+                  <NativeSelectOption key={department.id} value={department.id}>
+                    {department.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="identity-expiry-filter">Expiry</FieldLabel>
+              <NativeSelect
+                id="identity-expiry-filter"
+                className="w-full [&_select]:min-h-11"
+                value={expiry}
+                onChange={(event) => {
+                  setExpiry(event.target.value as ExpiryFilter);
+                  setPageIndex(0);
+                }}
+              >
+                <NativeSelectOption value="all">Any expiry</NativeSelectOption>
+                <NativeSelectOption value="expired">Expired</NativeSelectOption>
+                <NativeSelectOption value="next-30-days">
+                  Next 30 days
+                </NativeSelectOption>
+                <NativeSelectOption value="no-expiry">
+                  No expiry
+                </NativeSelectOption>
+              </NativeSelect>
+            </Field>
+          </AccessSearchToolbar>
 
           {controller.availability.bulkIdentityUpdates &&
             selected.length > 0 && (

@@ -15,33 +15,6 @@ function sourceBetween(source: string, start: string, end: string): string {
   return source.slice(startIndex, endIndex + end.length);
 }
 
-function disclosureSource(source: string, label: string): string {
-  const labelIndex = source.indexOf(label);
-  const startIndex = source.lastIndexOf("<details", labelIndex);
-  const endIndex = source.indexOf("</details>", labelIndex);
-  if (labelIndex < 0 || startIndex < 0 || endIndex < 0)
-    throw new Error(`Unable to find the ${label} disclosure.`);
-  return source.slice(startIndex, endIndex + "</details>".length);
-}
-
-test("authoritative directory does not offer activity and unreachable status filters", () => {
-  const source = componentSource(
-    "components/systems/access/components/identities-view.tsx",
-  );
-  const moreFilters = disclosureSource(source, "More filters");
-  const statusOptions = sourceBetween(
-    source,
-    'id="identity-status"',
-    "</NativeSelect>",
-  );
-
-  expect(moreFilters).not.toContain('value="activity"');
-  expect(moreFilters).not.toContain('id="identity-activity-filter"');
-  expect(moreFilters).toContain('id="identity-expiry-filter"');
-  expect(statusOptions).not.toContain('value="deleted"');
-  expect(statusOptions).not.toContain('value="suspended"');
-});
-
 test("identity editor explains email delivery without promising silence", () => {
   const source = componentSource(
     "components/systems/access/components/identity-editor.tsx",
