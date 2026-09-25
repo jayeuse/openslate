@@ -618,6 +618,61 @@ async function exerciseConnectedBoard(
     page.getByText("Reminder saved for this occurrence."),
   ).toBeVisible();
 
+  const targetedTitle = `Member review ${runId.slice(0, 8)}`;
+  await page.getByRole("button", { name: "New event" }).click();
+  const targetedEditor = page.getByRole("form", {
+    name: "Create Board event",
+  });
+  await targetedEditor.getByLabel("Event title").fill(targetedTitle);
+  await targetedEditor.getByLabel("Audience").selectOption("role");
+  await targetedEditor
+    .getByLabel("Role", { exact: true })
+    .selectOption({ label: "member" });
+  const [targetedCreated] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === `/api/boards/${boardId}/events` &&
+        response.request().method() === "POST",
+    ),
+    targetedEditor.getByRole("button", { name: "Create event" }).click(),
+  ]);
+  expect(targetedCreated.status()).toBe(201);
+  await page.getByRole("button", { name: "My events" }).click();
+  const myEvents = page.getByRole("region", { name: "My events" });
+  await myEvents.getByRole("button", { name: `Edit ${targetedTitle}` }).click();
+  const updatedTargetedTitle = `${targetedTitle} updated`;
+  const targetedUpdateEditor = page.getByRole("form", {
+    name: "Edit Board event",
+  });
+  await targetedUpdateEditor
+    .getByLabel("Event title")
+    .fill(updatedTargetedTitle);
+  const [targetedUpdated] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname.startsWith(
+          `/api/boards/${boardId}/events/`,
+        ) && response.request().method() === "PATCH",
+    ),
+    targetedUpdateEditor.getByRole("button", { name: "Save event" }).click(),
+  ]);
+  expect(targetedUpdated.status()).toBe(200);
+  await expect(
+    myEvents.getByRole("button", { name: `Edit ${updatedTargetedTitle}` }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "My events" }).click();
+  await expect(
+    myEvents.getByRole("button", { name: `Edit ${updatedTargetedTitle}` }),
+  ).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  await page.getByRole("button", { name: "My events" }).click();
+  await expect(
+    page
+      .getByRole("region", { name: "My events" })
+      .getByRole("button", { name: `Edit ${updatedTargetedTitle}` }),
+  ).toBeVisible();
+
   await page
     .getByRole("button", { name: "Announcements", exact: true })
     .click();
@@ -676,6 +731,74 @@ async function exerciseConnectedBoard(
       .getByRole("region", { name: "Published announcements" })
       .getByRole("link", { name: "Supplier source" }),
   ).toBeVisible();
+
+  const targetedAnnouncementTitle = `Member notice ${runId.slice(0, 8)}`;
+  const announcementManager = page.getByRole("region", {
+    name: "Manage announcements",
+  });
+  await announcementManager
+    .getByRole("button", { name: "New announcement" })
+    .click();
+  await announcementManager
+    .getByLabel("Title", { exact: true })
+    .fill(targetedAnnouncementTitle);
+  await announcementManager.getByLabel("Message").fill("Members only.");
+  await announcementManager.getByLabel("Audience").selectOption("role");
+  await announcementManager
+    .getByLabel("Role", { exact: true })
+    .selectOption({ label: "member" });
+  const [targetedAnnouncementCreated] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/boards/${boardId}/announcements` &&
+        response.request().method() === "POST",
+    ),
+    announcementManager.getByRole("button", { name: "Save draft" }).click(),
+  ]);
+  expect(targetedAnnouncementCreated.status()).toBe(201);
+  const targetedAnnouncementId = (
+    (await targetedAnnouncementCreated.json()) as { id: string }
+  ).id;
+  const [targetedAnnouncementPublished] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/boards/${boardId}/announcements/${targetedAnnouncementId}/publish` &&
+        response.request().method() === "POST",
+    ),
+    announcementManager.getByRole("button", { name: "Publish now" }).click(),
+  ]);
+  expect(targetedAnnouncementPublished.status()).toBe(200);
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Announcements", exact: true })
+    .click();
+  const reloadedManager = page.getByRole("region", {
+    name: "Manage announcements",
+  });
+  await reloadedManager
+    .getByRole("button", { name: `${targetedAnnouncementTitle} · Published` })
+    .click();
+  await expect(
+    reloadedManager.getByRole("heading", { name: "Edit announcement" }),
+  ).toBeVisible();
+  await reloadedManager
+    .getByLabel("Title", { exact: true })
+    .fill(`${targetedAnnouncementTitle} revised`);
+  const [targetedAnnouncementUpdated] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/boards/${boardId}/announcements/${targetedAnnouncementId}` &&
+        response.request().method() === "PATCH",
+    ),
+    reloadedManager.getByRole("button", { name: "Save draft" }).click(),
+  ]);
+  expect(targetedAnnouncementUpdated.status()).toBe(200);
+  await expect(
+    reloadedManager.getByLabel("Title", { exact: true }),
+  ).toHaveValue(`${targetedAnnouncementTitle} revised`);
 
   await page.goto("/platform#notifications");
   await expect(
@@ -803,7 +926,7 @@ async function exercisePrivateDashboard(
   const dimensionId = await dimension.inputValue();
   expect(dimensionId).toBe(supplier.paymentTermsFieldId);
   await page.getByRole("button", { name: "Add chart widget" }).click();
-  await expect(page.getByRole("button", { name: /^Chart 1:/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^chart 1:/i })).toBeVisible();
 
   const snapshotPromise = waitForDashboardSnapshot(page);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
@@ -811,7 +934,7 @@ async function exercisePrivateDashboard(
     page.getByRole("status").filter({ hasText: "Dashboard saved." }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /^View chart 1:/ }),
+    page.getByRole("button", { name: /^View chart 1:/i }),
   ).toBeVisible();
   await expectPopulatedDashboardSnapshot(
     await snapshotPromise,
@@ -839,7 +962,7 @@ async function exercisePrivateDashboard(
   ).toHaveAttribute("aria-current", "page");
   await expect(page.getByLabel("Dashboard name")).toHaveValue(dashboardName);
   await expect(
-    page.getByRole("button", { name: /^View chart 1:/ }),
+    page.getByRole("button", { name: /^View chart 1:/i }),
   ).toBeVisible();
   const table = page.getByRole("table", { name: /^Complete data for / });
   await expect(table).toBeVisible();
@@ -1015,12 +1138,15 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
     .getAttribute("value");
   if (!calendarFieldId) throw new Error("Calendar date option has no field ID");
   await calendarField.selectOption(calendarFieldId);
-  const calendar = page.getByRole("region", { name: "Calendar records" });
+  const calendar = page.getByRole("region", {
+    name: "Calendar",
+    exact: true,
+  });
   await expect(
     calendar.getByRole("heading", { name: "Calendar · Order date" }),
   ).toBeVisible();
   await expect(
-    calendar.getByText("No scheduled records in this window"),
+    calendar.getByText(/No scheduled records in this (?:date )?window/),
   ).toBeVisible();
   const calendarWindow = nextWindowDates(
     await calendar.getByLabel("Window starts").inputValue(),
@@ -1060,7 +1186,7 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
     calendarBody.to_date,
   );
   await expect(
-    calendar.getByText("No scheduled records in this window"),
+    calendar.getByText(/No scheduled records in this (?:date )?window/),
   ).toBeVisible();
 
   await page.getByLabel("Presentation layout").selectOption("timeline");
