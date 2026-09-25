@@ -798,7 +798,7 @@ export function AutomationStudio({
       aria-labelledby="automation-studio-title"
       className="@container/studio min-w-0"
     >
-      <div className="border-border min-w-0 overflow-hidden rounded-xl border @min-[1100px]/studio:h-[calc(100dvh-14rem)] @min-[1100px]/studio:min-h-[38rem]">
+      <div className="border-border min-w-0 overflow-hidden rounded-xl border @min-[1100px]/studio:h-[calc(100dvh-15rem)]">
         <ResizablePanelGroup
           orientation="horizontal"
           disabled={!wide}
