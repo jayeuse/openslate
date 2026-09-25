@@ -8,7 +8,14 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.common.listing.schemas import StandardListRequest
-from app.systems.sandbox.records.query_schemas import AggregateSnapshotQuery
+from app.systems.sandbox.records.query_schemas import (
+    AggregateSnapshotQuery,
+    GroupedAggregateSnapshotQuery,
+    QueryDefinition,
+)
+
+DashboardRefreshCadence = Literal["manual", "one-minute", "five-minutes"]
+DashboardWidgetType = Literal["summary", "workload", "records", "chart"]
 
 
 class DashboardChartConfig(BaseModel):
@@ -27,21 +34,68 @@ class DashboardChartConfig(BaseModel):
         return self
 
 
-class DashboardWidgetSpec(BaseModel):
-    """One chart widget; list order supplies its persisted position."""
+class DashboardAggregateConfig(BaseModel):
+    """Saved grouped aggregate instructions for Summary and Workload widgets."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    version: Literal[1] = 1
+    query: GroupedAggregateSnapshotQuery
+
+
+class DashboardRecordsQuery(BaseModel):
+    """Saved live Record list query; paging is bounded by the renderer."""
 
     model_config = ConfigDict(extra="forbid")
 
-    widget_type: Literal["chart"]
-    config: DashboardChartConfig
+    module_id: UUID
+    definition: QueryDefinition
+
+
+class DashboardRecordsConfig(BaseModel):
+    """Saved Record list instructions, without persisted business data."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1] = 1
+    query: DashboardRecordsQuery
+
+
+DashboardWidgetConfig = DashboardChartConfig | DashboardAggregateConfig | DashboardRecordsConfig
+
+
+def _configuration_matches_widget(widget_type: str, config: DashboardWidgetConfig) -> bool:
+    expected = {
+        "chart": DashboardChartConfig,
+        "summary": DashboardAggregateConfig,
+        "workload": DashboardAggregateConfig,
+        "records": DashboardRecordsConfig,
+    }
+    return isinstance(config, expected[widget_type])
+
+
+class DashboardWidgetSpec(BaseModel):
+    """One live widget; list order supplies its persisted position."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    widget_type: DashboardWidgetType
+    config: DashboardWidgetConfig
+
+    @model_validator(mode="after")
+    def config_matches_widget_type(self) -> Self:
+        if not _configuration_matches_widget(self.widget_type, self.config):
+            raise ValueError("Dashboard widget config does not match its widget type")
+        return self
 
 
 class DashboardCreate(BaseModel):
-    """Create an owner-private Dashboard with up to twelve chart widgets."""
+    """Create an owner-private Dashboard with up to twelve live widgets."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     name: str = Field(min_length=1, max_length=200)
+    refresh_cadence: DashboardRefreshCadence = "manual"
     widgets: list[DashboardWidgetSpec] = Field(default_factory=list, max_length=12)
 
 
@@ -52,6 +106,7 @@ class DashboardUpdate(BaseModel):
 
     revision: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    refresh_cadence: DashboardRefreshCadence | None = None
     widgets: list[DashboardWidgetSpec] | None = Field(default=None, max_length=12)
 
     @model_validator(mode="after")
@@ -81,16 +136,22 @@ class DashboardListRequest(StandardListRequest[DashboardSort]):
 
 
 class DashboardWidgetResponse(BaseModel):
-    """One persisted chart widget without a materialized data snapshot."""
+    """One persisted live widget without a materialized data snapshot."""
 
     model_config = ConfigDict(extra="forbid")
 
     id: UUID
     position: int = Field(ge=0, lt=12)
-    widget_type: Literal["chart"]
-    config: DashboardChartConfig
+    widget_type: DashboardWidgetType
+    config: DashboardWidgetConfig
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def config_matches_widget_type(self) -> Self:
+        if not _configuration_matches_widget(self.widget_type, self.config):
+            raise ValueError("Dashboard widget config does not match its widget type")
+        return self
 
 
 class DashboardResponse(BaseModel):
@@ -101,6 +162,7 @@ class DashboardResponse(BaseModel):
     id: UUID
     owner_id: UUID
     name: str
+    refresh_cadence: DashboardRefreshCadence
     revision: int = Field(ge=1)
     is_deleted: bool
     created_at: datetime

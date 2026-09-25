@@ -18,11 +18,12 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.schemas import WorkspaceUpdate
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.fields.validation import validate_field_value
-from app.systems.sandbox.records.aggregation import aggregate_records
+from app.systems.sandbox.records.aggregation import aggregate_records, aggregate_snapshot_records
 from app.systems.sandbox.records.grouping import query_grouped_records
 from app.systems.sandbox.records.query_schemas import (
     DateSeriesAggregateQuery,
     GroupedAggregateQuery,
+    GroupedAggregateSnapshotQuery,
     GroupedRecordQuery,
 )
 
@@ -321,6 +322,92 @@ def test_datetime_series_buckets_by_validated_workspace_timezone(query_db) -> No
 
     assert [item.label for item in result.items] == ["2026-09-01", "2026-09-02"]
     assert [item.value for item in result.items] == [Decimal("1"), Decimal("2")]
+
+
+def test_grouped_snapshot_combines_or_filters_with_an_independent_date_window(query_db) -> None:
+    module, dimension, rows = setup_rows(
+        query_db, "select", ["Open", "Open", "Closed", "Closed"]
+    )
+    date_field = add_values(
+        query_db,
+        module,
+        rows,
+        "Occurred on",
+        "date",
+        ["2026-09-01", "2026-09-05", "2026-09-03", "2026-09-08"],
+    )
+    payload = GroupedAggregateSnapshotQuery(
+        module_id=module.id,
+        definition={
+            "version": 1,
+            "logic": "or",
+            "columns": [],
+            "filters": [
+                {
+                    **reference(dimension),
+                    "operator": "eq",
+                    "value": "Open",
+                },
+                {
+                    **reference(dimension),
+                    "operator": "eq",
+                    "value": "Closed",
+                },
+            ],
+        },
+        dimension=reference(dimension),
+        date_field=reference(date_field),
+        from_date=date(2026, 9, 1),
+        to_date=date(2026, 9, 5),
+        aggregation="count",
+    )
+
+    result = aggregate_snapshot_records(query_db, payload)
+
+    assert {item.label: item.record_count for item in result.items} == {
+        "Open": 2,
+        "Closed": 1,
+    }
+
+
+def test_grouped_snapshot_date_window_uses_workspace_day_bounds_for_datetime(query_db) -> None:
+    profile = query_db.scalar(
+        select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
+    )
+    assert profile is not None
+    profile.timezone = "Asia/Manila"
+    query_db.flush()
+    module, dimension, rows = setup_rows(
+        query_db, "select", ["Before", "Included", "Included", "After"]
+    )
+    date_field = add_values(
+        query_db,
+        module,
+        rows,
+        "Occurred at",
+        "datetime",
+        [
+            "2026-08-31T15:59:59Z",
+            "2026-08-31T16:00:00Z",
+            "2026-09-01T15:59:59Z",
+            "2026-09-01T16:00:00Z",
+        ],
+    )
+    payload = GroupedAggregateSnapshotQuery(
+        module_id=module.id,
+        definition={"columns": []},
+        dimension=reference(dimension),
+        date_field=reference(date_field),
+        from_date=date(2026, 9, 1),
+        to_date=date(2026, 9, 1),
+        aggregation="count",
+    )
+
+    result = aggregate_snapshot_records(query_db, payload)
+
+    assert [(item.label, item.record_count) for item in result.items] == [
+        ("Included", 2)
+    ]
 
 
 @pytest.mark.parametrize("day_count", [101, 366])

@@ -34,6 +34,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import { ApiError } from "@/lib/api";
 import {
   archiveOpenViewDashboard,
   createOpenViewDashboard,
@@ -45,7 +46,11 @@ import {
   setOpenViewDashboardDefault,
   updateOpenViewDashboard,
   type OpenViewDashboard,
+  type OpenViewDashboardAggregateConfig,
   type OpenViewDashboardChartConfig,
+  type OpenViewDashboardRecordsConfig,
+  type OpenViewDashboardRefreshCadence,
+  type OpenViewDashboardWidgetType,
   type OpenViewDashboardWidget,
   type OpenViewDashboardWidgetInput,
 } from "../adapters/dashboards-api";
@@ -56,9 +61,12 @@ import {
 import {
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
+  queryOpenViewRecords,
   type OpenViewDataSource,
   type OpenViewDataSourceField,
+  type OpenViewPage,
   type OpenViewQueryDefinition,
+  type OpenViewRecord,
 } from "../adapters/views-api";
 import { parseOpenViewUrl, serializeOpenViewUrl } from "../domain/model";
 import { OpenViewChartPreview } from "./chart-preview";
@@ -77,16 +85,18 @@ const NUMERIC_FIELD_TYPES = new Set(["int", "number", "decimal"]);
 const DATE_RANGE_DAY_MS = 86_400_000;
 
 type BuilderChartType = OpenViewDashboardChartConfig["chartType"];
-type BuilderAggregation = OpenViewDashboardChartConfig["query"]["aggregation"];
-
-type DraftWidget = {
+type BuilderAggregation =
+  OpenViewDashboardAggregateConfig["query"]["aggregation"];
+type DraftWidget = OpenViewDashboardWidgetInput & {
   key: string;
-  config: OpenViewDashboardChartConfig;
 };
+type DashboardWidgetData =
+  | { kind: "aggregate"; result: OpenViewAggregateSnapshotResult }
+  | { kind: "records"; result: OpenViewPage<OpenViewRecord> };
 type SnapshotState = {
   widgetKey: string;
   configSignature: string;
-  result: OpenViewAggregateSnapshotResult;
+  data: DashboardWidgetData;
 };
 type PendingNavigation = {
   href: string;
@@ -97,17 +107,40 @@ function safeMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+function draftWidgetFrom(widget: OpenViewDashboardWidget): DraftWidget {
+  switch (widget.widgetType) {
+    case "chart":
+      return { key: widget.id, widgetType: "chart", config: widget.config };
+    case "summary":
+    case "workload":
+      return {
+        key: widget.id,
+        widgetType: widget.widgetType,
+        config: widget.config,
+      };
+    case "records":
+      return { key: widget.id, widgetType: "records", config: widget.config };
+  }
+}
+
 function draftWidgetsFrom(dashboard: OpenViewDashboard): DraftWidget[] {
-  return dashboard.widgets.map((widget) => ({
-    key: widget.id,
-    config: widget.config,
-  }));
+  return dashboard.widgets.map(draftWidgetFrom);
 }
 
 function widgetTitle(
   widget: OpenViewDashboardWidget | DraftWidget,
   fieldsByModule: Record<string, OpenViewDataSourceField[]>,
 ): string {
+  if (widget.widgetType === "records") return "Live records";
+  if (widget.widgetType === "summary" || widget.widgetType === "workload") {
+    const { query } = widget.config;
+    const field = fieldsByModule[query.moduleId]?.find(
+      (candidate) => candidate.id === query.dimension.fieldId,
+    );
+    return widget.widgetType === "summary"
+      ? `Total records by ${field?.name ?? "selected field"}`
+      : `Workload by ${field?.name ?? "selected field"}`;
+  }
   const { query } = widget.config;
   const { aggregation } = query;
   const operation =
@@ -128,7 +161,14 @@ function widgetTitle(
   if (query.mode === "date_series")
     return `${operation}${measureLabel} over time`;
   const field = fieldsByModule[query.moduleId]?.find(
-    (candidate) => candidate.id === query.dimension.fieldId,
+    (candidate) =>
+      candidate.id ===
+      (
+        query as Extract<
+          OpenViewDashboardChartConfig["query"],
+          { mode: "groups" }
+        >
+      ).dimension.fieldId,
   );
   return `${operation}${measureLabel} by ${field?.name ?? "selected field"}`;
 }
@@ -186,11 +226,58 @@ function lastValidTablePage(currentPage: number, itemCount: number): number {
 }
 
 function inputWidgets(widgets: DraftWidget[]): OpenViewDashboardWidgetInput[] {
-  return widgets.map(({ config }) => ({ widgetType: "chart", config }));
+  return widgets.map((widget) => {
+    switch (widget.widgetType) {
+      case "chart":
+        return { widgetType: "chart", config: widget.config };
+      case "summary":
+      case "workload":
+        return { widgetType: widget.widgetType, config: widget.config };
+      case "records":
+        return { widgetType: "records", config: widget.config };
+    }
+  });
 }
 
-function configSignature(widget: DraftWidget | undefined): string {
-  return widget ? JSON.stringify(widget.config) : "";
+function displayRecordValue(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number")
+    return String(value);
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value))
+    return value.map((item) => displayRecordValue(item)).join(", ");
+  return "—";
+}
+
+function loadDashboardWidgetData(
+  widget: DraftWidget,
+  recordOffset: number,
+): Promise<DashboardWidgetData> {
+  if (widget.widgetType === "records") {
+    return queryOpenViewRecords({
+      moduleId: widget.config.query.moduleId,
+      definition: widget.config.query.definition,
+      limit: PAGE_SIZE,
+      offset: recordOffset,
+    }).then((result) => ({ kind: "records", result }));
+  }
+  return queryOpenViewAggregateSnapshot(widget.config.query).then((result) => ({
+    kind: "aggregate",
+    result,
+  }));
+}
+
+function isAccessDenied(error: unknown): boolean {
+  return error instanceof ApiError && [401, 403].includes(error.status);
+}
+
+function configSignature(widget: DraftWidget | undefined, page = 0): string {
+  return widget
+    ? JSON.stringify({
+        widgetType: widget.widgetType,
+        config: widget.config,
+        ...(widget.widgetType === "records" ? { page } : {}),
+      })
+    : "";
 }
 
 export default function ServerBackedDashboards() {
@@ -217,9 +304,12 @@ export default function ServerBackedDashboards() {
   const [dashboardError, setDashboardError] = useState("");
   const [notice, setNotice] = useState("");
   const [dashboardName, setDashboardName] = useState("");
+  const [refreshCadence, setRefreshCadence] =
+    useState<OpenViewDashboardRefreshCadence>("manual");
   const [draftWidgets, setDraftWidgets] = useState<DraftWidget[]>([]);
   const [activeWidgetKey, setActiveWidgetKey] = useState("");
   const [savePending, setSavePending] = useState(false);
+  const [duplicatePending, setDuplicatePending] = useState(false);
   const [archivePending, setArchivePending] = useState(false);
   const [restorePendingId, setRestorePendingId] = useState("");
   const [dashboardDefaultId, setDashboardDefaultId] = useState<string | null>(
@@ -243,11 +333,14 @@ export default function ServerBackedDashboards() {
   const [fieldsLoadingMore, setFieldsLoadingMore] = useState(false);
   const [catalogRetry, setCatalogRetry] = useState(0);
   const [builderModuleId, setBuilderModuleId] = useState("");
+  const [builderWidgetType, setBuilderWidgetType] =
+    useState<OpenViewDashboardWidgetType>("chart");
   const [builderChartType, setBuilderChartType] =
     useState<BuilderChartType>("bar");
   const [builderAggregation, setBuilderAggregation] =
     useState<BuilderAggregation>("count");
   const [builderDimensionId, setBuilderDimensionId] = useState("");
+  const [builderRecordFieldId, setBuilderRecordFieldId] = useState("");
   const [builderMeasureId, setBuilderMeasureId] = useState("");
   const [builderDateFieldId, setBuilderDateFieldId] = useState("");
   const [builderFromDate, setBuilderFromDate] = useState("");
@@ -257,6 +350,7 @@ export default function ServerBackedDashboards() {
   const [lastGoodSnapshot, setLastGoodSnapshot] =
     useState<SnapshotState | null>(null);
   const [tablePage, setTablePage] = useState(0);
+  const [pageVisible, setPageVisible] = useState(false);
   const requestSequence = useRef(0);
   const routeLoadSequence = useRef(0);
   const dashboardListRequestSequence = useRef(0);
@@ -273,6 +367,8 @@ export default function ServerBackedDashboards() {
     () => {},
   );
   const lastGoodSnapshotRef = useRef<SnapshotState | null>(null);
+  const snapshotInFlightRef = useRef<number | null>(null);
+  const refreshActiveSnapshotRef = useRef<() => void>(() => {});
   const restorePendingRef = useRef("");
   const skipRouteLoadForId = useRef("");
 
@@ -399,6 +495,7 @@ export default function ServerBackedDashboards() {
     setFieldsLoadingMore(false);
     if (!builderModuleId) {
       setBuilderDimensionId("");
+      setBuilderRecordFieldId("");
       setBuilderDateFieldId("");
       setFieldsHasMore(false);
       setFieldOffset(0);
@@ -420,10 +517,16 @@ export default function ServerBackedDashboards() {
         setFieldOffset(page.items.length);
         setFieldsHasMore(page.pagination.hasMore);
         const categoricalFields = page.items.filter(isCategoricalField);
+        const queryableFields = page.items;
         setBuilderDimensionId((current) =>
           categoricalFields.some((field) => field.id === current)
             ? current
             : (categoricalFields[0]?.id ?? ""),
+        );
+        setBuilderRecordFieldId((current) =>
+          queryableFields.some((field) => field.id === current)
+            ? current
+            : (queryableFields[0]?.id ?? ""),
         );
       })
       .catch((error: unknown) => {
@@ -487,7 +590,7 @@ export default function ServerBackedDashboards() {
   const activePersistedWidget = selectedDashboard?.widgets.find(
     (widget) => widget.id === activeWidgetKey,
   );
-  const activeSignature = configSignature(activeWidget);
+  const activeSignature = configSignature(activeWidget, tablePage);
   const visibleSnapshot =
     activeWidget &&
     lastGoodSnapshot?.widgetKey === activeWidget.key &&
@@ -496,16 +599,27 @@ export default function ServerBackedDashboards() {
       : null;
   const widgetsChanged = selectedDashboard
     ? JSON.stringify(
-        selectedDashboard.widgets.map((widget) => widget.config),
-      ) !== JSON.stringify(draftWidgets.map((widget) => widget.config))
+        selectedDashboard.widgets.map(({ widgetType, config }) => ({
+          widgetType,
+          config,
+        })),
+      ) !==
+      JSON.stringify(
+        draftWidgets.map(({ widgetType, config }) => ({ widgetType, config })),
+      )
     : draftWidgets.length > 0;
   const draftDirty = selectedDashboard
-    ? dashboardName !== selectedDashboard.name || widgetsChanged
-    : Boolean(dashboardName.trim()) || draftWidgets.length > 0;
+    ? dashboardName !== selectedDashboard.name ||
+      refreshCadence !== selectedDashboard.refreshCadence ||
+      widgetsChanged
+    : Boolean(dashboardName.trim()) ||
+      refreshCadence !== "manual" ||
+      draftWidgets.length > 0;
   draftDirtyRef.current = draftDirty;
   const navigationGuard = useCallback(
     (href: string, resume: () => void) => {
-      if (savePending || archivePending || restorePendingId) return false;
+      if (savePending || duplicatePending || archivePending || restorePendingId)
+        return false;
       if (!draftDirty) return true;
       if (
         typeof window !== "undefined" &&
@@ -515,9 +629,32 @@ export default function ServerBackedDashboards() {
       setPendingNavigation({ href, resume });
       return false;
     },
-    [archivePending, draftDirty, restorePendingId, savePending],
+    [
+      archivePending,
+      draftDirty,
+      duplicatePending,
+      restorePendingId,
+      savePending,
+    ],
   );
   useWorkspaceNavigationGuard(navigationGuard);
+  useEffect(() => {
+    const updateVisibility = () => {
+      const visible = document.visibilityState === "visible";
+      if (!visible) {
+        requestSequence.current += 1;
+        snapshotInFlightRef.current = null;
+        setSnapshotLoading(false);
+      }
+      setPageVisible(visible);
+    };
+    updateVisibility();
+    document.addEventListener("visibilitychange", updateVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", updateVisibility);
+      requestSequence.current += 1;
+    };
+  }, []);
   useEffect(() => {
     void refreshDashboardDefault(true);
     return () => {
@@ -527,10 +664,12 @@ export default function ServerBackedDashboards() {
   const activeTitle = activeWidget
     ? widgetTitle(activeWidget, fieldsByModule)
     : "";
-  const builderIsDateSeries = builderChartType === "line";
+  const builderIsDateSeries =
+    builderWidgetType === "chart" && builderChartType === "line";
   const builderFields = (fieldsByModule[builderModuleId] ?? []).filter(
     isCategoricalField,
   );
+  const builderRecordFields = fieldsByModule[builderModuleId] ?? [];
   const builderNumericFields = (fieldsByModule[builderModuleId] ?? []).filter(
     (field) => NUMERIC_FIELD_TYPES.has(field.type),
   );
@@ -551,6 +690,31 @@ export default function ServerBackedDashboards() {
   );
   const builderDateRangeValid =
     builderDateRangeDays !== null && builderDateRangeDays <= 366;
+  const builderDimensionValid = builderFields.some(
+    (field) => field.id === builderDimensionId,
+  );
+  const builderRecordField = builderRecordFields.find(
+    (field) => field.id === builderRecordFieldId,
+  );
+  const builderCanAddWidget =
+    builderWidgetType === "records"
+      ? Boolean(builderModuleId && builderRecordField)
+      : builderWidgetType === "summary"
+        ? Boolean(builderModuleId && builderDimensionValid)
+        : builderWidgetType === "workload"
+          ? Boolean(
+              builderModuleId && builderDimensionValid && builderMeasureValid,
+            )
+          : builderIsDateSeries
+            ? Boolean(
+                builderModuleId &&
+                builderDateField &&
+                builderDateRangeValid &&
+                builderMeasureValid,
+              )
+            : Boolean(
+                builderModuleId && builderDimensionValid && builderMeasureValid,
+              );
   const builderDateRangeDescription =
     !builderFromDate || !builderToDate
       ? "Choose an inclusive start and end date spanning 1 to 366 days."
@@ -559,14 +723,25 @@ export default function ServerBackedDashboards() {
         : builderDateRangeDays > 366
           ? "The inclusive date range cannot exceed 366 days."
           : `Both dates are included (${builderDateRangeDays} ${builderDateRangeDays === 1 ? "day" : "days"}).`;
-  const activeIsDateSeries = activeWidget?.config.query.mode === "date_series";
-  const chartPreview = visibleSnapshot
-    ? chartValues(visibleSnapshot.result, Boolean(activeIsDateSeries))
-    : [];
+  const activeIsDateSeries =
+    activeWidget?.widgetType === "chart" &&
+    activeWidget.config.query.mode === "date_series";
+  const aggregateSnapshot =
+    visibleSnapshot?.data.kind === "aggregate"
+      ? visibleSnapshot.data.result
+      : null;
+  const recordsSnapshot =
+    visibleSnapshot?.data.kind === "records"
+      ? visibleSnapshot.data.result
+      : null;
+  const chartPreview =
+    aggregateSnapshot && activeWidget?.widgetType === "chart"
+      ? chartValues(aggregateSnapshot, activeIsDateSeries)
+      : [];
   const chartPointDescription = activeIsDateSeries
     ? `${chartPreview.length} daily points; point labels and dots are suppressed`
     : `${chartPreview.length} categories`;
-  const snapshotRows = visibleSnapshot?.result.items ?? [];
+  const snapshotRows = aggregateSnapshot?.items ?? [];
   const tablePageCount = Math.max(
     1,
     Math.ceil(snapshotRows.length / PAGE_SIZE),
@@ -577,6 +752,22 @@ export default function ServerBackedDashboards() {
     firstRowIndex,
     firstRowIndex + PAGE_SIZE,
   );
+  const recordsFields =
+    activeWidget?.widgetType === "records"
+      ? activeWidget.config.query.definition.columns.map((column, index) => ({
+          id: column.fieldId,
+          name:
+            fieldsByModule[activeWidget.config.query.moduleId]?.find(
+              (field) => field.id === column.fieldId,
+            )?.name ?? `Field ${index + 1}`,
+        }))
+      : [];
+  const summaryTotalRecords =
+    aggregateSnapshot?.items.reduce(
+      (total, item) => total + item.recordCount,
+      0,
+    ) ?? 0;
+  const recordsPagination = recordsSnapshot?.pagination;
 
   useEffect(() => {
     setTablePage(0);
@@ -590,7 +781,7 @@ export default function ServerBackedDashboards() {
       setSnapshotError("");
       return;
     }
-    const signature = configSignature(activeWidget);
+    const signature = configSignature(activeWidget, tablePage);
     const previous = lastGoodSnapshotRef.current;
     if (
       previous?.widgetKey === activeWidget.key &&
@@ -603,36 +794,50 @@ export default function ServerBackedDashboards() {
       return;
     }
     const sequence = ++requestSequence.current;
+    snapshotInFlightRef.current = sequence;
     setSnapshotLoading(true);
     setSnapshotError("");
-    void queryOpenViewAggregateSnapshot(activeWidget.config.query)
-      .then((result) => {
+    void loadDashboardWidgetData(activeWidget, tablePage * PAGE_SIZE)
+      .then((data) => {
         if (!active || requestSequence.current !== sequence) return;
         const next = {
           widgetKey: activeWidget.key,
           configSignature: signature,
-          result,
+          data,
         };
         lastGoodSnapshotRef.current = next;
         setLastGoodSnapshot(next);
-        setTablePage((current) =>
-          lastValidTablePage(current, result.items.length),
-        );
-      })
-      .catch((error: unknown) => {
-        if (active && requestSequence.current === sequence)
-          setSnapshotError(
-            safeMessage(error, "This chart could not be refreshed."),
+        if (data.kind === "aggregate")
+          setTablePage((current) =>
+            lastValidTablePage(current, data.result.items.length),
           );
       })
+      .catch((error: unknown) => {
+        if (!active || requestSequence.current !== sequence) return;
+        if (
+          isAccessDenied(error) &&
+          lastGoodSnapshotRef.current?.widgetKey === activeWidget.key
+        ) {
+          lastGoodSnapshotRef.current = null;
+          setLastGoodSnapshot(null);
+        }
+        setSnapshotError(
+          safeMessage(error, "This Dashboard widget could not be refreshed."),
+        );
+      })
       .finally(() => {
+        if (snapshotInFlightRef.current === sequence)
+          snapshotInFlightRef.current = null;
         if (active && requestSequence.current === sequence)
           setSnapshotLoading(false);
       });
     return () => {
       active = false;
+      if (requestSequence.current === sequence) requestSequence.current += 1;
+      if (snapshotInFlightRef.current === sequence)
+        snapshotInFlightRef.current = null;
     };
-  }, [activePersistedWidget, activeWidget]);
+  }, [activePersistedWidget, activeWidget, tablePage]);
 
   useEffect(() => {
     let active = true;
@@ -724,6 +929,7 @@ export default function ServerBackedDashboards() {
     const widgets = draftWidgetsFrom(dashboard);
     setSelectedDashboard(dashboard);
     setDashboardName(dashboard.name);
+    setRefreshCadence(dashboard.refreshCadence);
     setDraftWidgets(widgets);
     setActiveWidgetKey(widgets[0]?.key ?? "");
     selectBuilderModule(widgets[0]?.config.query.moduleId ?? "");
@@ -747,6 +953,7 @@ export default function ServerBackedDashboards() {
     routeLoadSequence.current += 1;
     setSelectedDashboard(null);
     setDashboardName("");
+    setRefreshCadence("manual");
     setDraftWidgets([]);
     setActiveWidgetKey("");
     lastGoodSnapshotRef.current = null;
@@ -768,6 +975,7 @@ export default function ServerBackedDashboards() {
     if (selectedDashboard || routeDashboardId) {
       setSelectedDashboard(null);
       setDashboardName("");
+      setRefreshCadence("manual");
       setDraftWidgets([]);
       setActiveWidgetKey("");
       lastGoodSnapshotRef.current = null;
@@ -854,7 +1062,7 @@ export default function ServerBackedDashboards() {
   }
 
   function addGroupedChart() {
-    if (builderChartType === "line") return;
+    if (builderWidgetType !== "chart" || builderChartType === "line") return;
     const field = (fieldsByModule[builderModuleId] ?? []).find(
       (candidate) =>
         candidate.id === builderDimensionId && isCategoricalField(candidate),
@@ -896,7 +1104,11 @@ export default function ServerBackedDashboards() {
         dimension: { fieldId: field.id, expectedType: field.type },
       },
     };
-    const next = { key: crypto.randomUUID(), config };
+    const next: DraftWidget = {
+      key: crypto.randomUUID(),
+      widgetType: "chart",
+      config,
+    };
     suppressInitialDefaultSelection();
     setDraftWidgets((current) => [...current, next]);
     setActiveWidgetKey(next.key);
@@ -904,6 +1116,7 @@ export default function ServerBackedDashboards() {
   }
 
   function addLineChart() {
+    if (builderWidgetType !== "chart") return;
     const field = builderDateFields.find(
       (candidate) => candidate.id === builderDateFieldId,
     );
@@ -950,7 +1163,98 @@ export default function ServerBackedDashboards() {
         toDate: builderToDate,
       },
     };
-    const next = { key: crypto.randomUUID(), config };
+    const next: DraftWidget = {
+      key: crypto.randomUUID(),
+      widgetType: "chart",
+      config,
+    };
+    suppressInitialDefaultSelection();
+    setDraftWidgets((current) => [...current, next]);
+    setActiveWidgetKey(next.key);
+    setNotice("");
+  }
+
+  function addGroupedAggregateWidget() {
+    if (builderWidgetType !== "summary" && builderWidgetType !== "workload")
+      return;
+    const field = (fieldsByModule[builderModuleId] ?? []).find(
+      (candidate) =>
+        candidate.id === builderDimensionId && isCategoricalField(candidate),
+    );
+    const aggregation =
+      builderWidgetType === "summary" ? "count" : builderAggregation;
+    const measure = aggregation === "count" ? undefined : builderMeasure;
+    if (
+      !field ||
+      (aggregation !== "count" && !measure) ||
+      draftWidgets.length >= 12
+    )
+      return;
+    const config: OpenViewDashboardAggregateConfig = {
+      version: 1,
+      query: {
+        mode: "groups",
+        moduleId: builderModuleId,
+        definition: {
+          version: 1,
+          logic: "and",
+          columns: [],
+          filters: [],
+          sort: [],
+          deleted: "exclude",
+          search: null,
+          searchFields: [],
+        },
+        aggregation,
+        ...(measure
+          ? {
+              measure: {
+                fieldId: measure.id,
+                expectedType: measure.type,
+              },
+            }
+          : {}),
+        dimension: { fieldId: field.id, expectedType: field.type },
+      },
+    };
+    const next: DraftWidget = {
+      key: crypto.randomUUID(),
+      widgetType: builderWidgetType,
+      config,
+    };
+    suppressInitialDefaultSelection();
+    setDraftWidgets((current) => [...current, next]);
+    setActiveWidgetKey(next.key);
+    setNotice("");
+  }
+
+  function addRecordsWidget() {
+    const field = builderRecordFields.find(
+      (candidate) => candidate.id === builderRecordFieldId,
+    );
+    if (builderWidgetType !== "records" || !field || draftWidgets.length >= 12)
+      return;
+    const config: OpenViewDashboardRecordsConfig = {
+      version: 1,
+      query: {
+        moduleId: builderModuleId,
+        definition: {
+          version: 1,
+          logic: "and",
+          columns: [{ fieldId: field.id, expectedType: field.type }],
+          filters: [],
+          sort: [],
+          deleted: "exclude",
+          search: null,
+          searchFields: [],
+        },
+      },
+    };
+    const next: DraftWidget = {
+      key: crypto.randomUUID(),
+      widgetType: "records",
+      config,
+    };
     suppressInitialDefaultSelection();
     setDraftWidgets((current) => [...current, next]);
     setActiveWidgetKey(next.key);
@@ -993,9 +1297,14 @@ export default function ServerBackedDashboards() {
             id: selectedDashboard.id,
             revision: selectedDashboard.revision,
             name: dashboardName,
+            refreshCadence,
             widgets,
           })
-        : await createOpenViewDashboard({ name: dashboardName, widgets });
+        : await createOpenViewDashboard({
+            name: dashboardName,
+            refreshCadence,
+            widgets,
+          });
       applyDashboard(saved);
       refreshDashboardList();
       if (saved.id !== routeDashboardId) {
@@ -1029,6 +1338,49 @@ export default function ServerBackedDashboards() {
     }
   }
 
+  async function duplicateDashboard() {
+    if (
+      !selectedDashboard ||
+      selectedDashboard.isDeleted ||
+      duplicatePending ||
+      savePending ||
+      draftDirty
+    ) {
+      if (draftDirty)
+        setNotice("Save or reload this Dashboard before duplicating it.");
+      return;
+    }
+    setDuplicatePending(true);
+    setDashboardError("");
+    setNotice("");
+    try {
+      const duplicate = await createOpenViewDashboard({
+        name: `Copy of ${selectedDashboard.name}`.slice(0, 200),
+        refreshCadence: selectedDashboard.refreshCadence,
+        widgets: inputWidgets(draftWidgetsFrom(selectedDashboard)),
+      });
+      applyDashboard(duplicate);
+      refreshDashboardList();
+      skipRouteLoadForId.current = duplicate.id;
+      router.replace(
+        serializeOpenViewUrl({
+          section: "dashboards",
+          dashboard: duplicate.id,
+        }) as Route,
+        { scroll: false },
+      );
+      setNotice(
+        "Dashboard duplicated. The original and default are unchanged.",
+      );
+    } catch (error) {
+      setDashboardError(
+        safeMessage(error, "The Dashboard could not be duplicated."),
+      );
+    } finally {
+      setDuplicatePending(false);
+    }
+  }
+
   async function reloadSelectedDashboard(discardDraft = false) {
     if (!selectedDashboard || (draftDirty && !discardDraft) || dashboardLoading)
       return;
@@ -1047,7 +1399,7 @@ export default function ServerBackedDashboards() {
   }
 
   async function archiveDashboard() {
-    if (!selectedDashboard || archivePending) return;
+    if (!selectedDashboard || archivePending || duplicatePending) return;
     setArchivePending(true);
     setDashboardError("");
     try {
@@ -1057,6 +1409,7 @@ export default function ServerBackedDashboards() {
       });
       setSelectedDashboard(null);
       setDashboardName("");
+      setRefreshCadence("manual");
       setDraftWidgets([]);
       setActiveWidgetKey("");
       lastGoodSnapshotRef.current = null;
@@ -1080,6 +1433,7 @@ export default function ServerBackedDashboards() {
     suppressInitialDefaultSelection();
     if (
       restorePendingRef.current ||
+      duplicatePending ||
       draftDirty ||
       savePending ||
       archivePending
@@ -1124,38 +1478,88 @@ export default function ServerBackedDashboards() {
   }
 
   function refreshActiveSnapshot() {
-    if (!activeWidget || !activePersistedWidget) return;
-    const signature = configSignature(activeWidget);
+    if (
+      !activeWidget ||
+      !activePersistedWidget ||
+      snapshotInFlightRef.current !== null
+    )
+      return;
+    const signature = configSignature(activeWidget, tablePage);
     const sequence = ++requestSequence.current;
+    snapshotInFlightRef.current = sequence;
     setSnapshotLoading(true);
     setSnapshotError("");
-    void queryOpenViewAggregateSnapshot(activeWidget.config.query)
-      .then((result) => {
+    void loadDashboardWidgetData(activeWidget, tablePage * PAGE_SIZE)
+      .then((data) => {
         if (requestSequence.current !== sequence) return;
         const next = {
           widgetKey: activeWidget.key,
           configSignature: signature,
-          result,
+          data,
         };
         lastGoodSnapshotRef.current = next;
         setLastGoodSnapshot(next);
-        setTablePage((current) =>
-          lastValidTablePage(current, result.items.length),
-        );
-      })
-      .catch((error: unknown) => {
-        if (requestSequence.current === sequence)
-          setSnapshotError(
-            safeMessage(
-              error,
-              "Refresh failed; the last successful snapshot remains visible.",
-            ),
+        if (data.kind === "aggregate")
+          setTablePage((current) =>
+            lastValidTablePage(current, data.result.items.length),
           );
       })
+      .catch((error: unknown) => {
+        if (requestSequence.current !== sequence) return;
+        if (
+          isAccessDenied(error) &&
+          lastGoodSnapshotRef.current?.widgetKey === activeWidget.key
+        ) {
+          lastGoodSnapshotRef.current = null;
+          setLastGoodSnapshot(null);
+        }
+        setSnapshotError(
+          safeMessage(error, "The Dashboard widget could not be refreshed."),
+        );
+      })
       .finally(() => {
+        if (snapshotInFlightRef.current === sequence)
+          snapshotInFlightRef.current = null;
         if (requestSequence.current === sequence) setSnapshotLoading(false);
       });
   }
+
+  refreshActiveSnapshotRef.current = refreshActiveSnapshot;
+
+  useEffect(() => {
+    const cadence = selectedDashboard?.refreshCadence;
+    if (
+      !selectedDashboard ||
+      selectedDashboard.isDeleted ||
+      !activePersistedWidget ||
+      !activeWidget ||
+      draftDirty ||
+      snapshotLoading ||
+      !pageVisible ||
+      routeDashboardId !== selectedDashboard.id ||
+      cadence === undefined ||
+      cadence === "manual"
+    )
+      return;
+    const intervalMs = cadence === "one-minute" ? 60_000 : 300_000;
+    const timer = window.setInterval(() => {
+      if (
+        document.visibilityState === "visible" &&
+        !draftDirtyRef.current &&
+        snapshotInFlightRef.current === null
+      )
+        refreshActiveSnapshotRef.current();
+    }, intervalMs);
+    return () => window.clearInterval(timer);
+  }, [
+    activePersistedWidget,
+    activeWidget,
+    draftDirty,
+    pageVisible,
+    routeDashboardId,
+    selectedDashboard,
+    snapshotLoading,
+  ]);
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -1166,8 +1570,8 @@ export default function ServerBackedDashboards() {
             Private dashboards
           </h1>
           <p className="text-muted-foreground mt-2 max-w-3xl text-sm">
-            Save chart layouts for your own use. This page currently supports
-            live chart widgets only.
+            Save private summaries, workload views, record lists, and charts.
+            Each widget reads current data through the existing OpenView APIs.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1176,6 +1580,7 @@ export default function ServerBackedDashboards() {
             className="min-h-11"
             disabled={
               savePending ||
+              duplicatePending ||
               archivePending ||
               dashboardDefaultPending ||
               Boolean(restorePendingId)
@@ -1189,6 +1594,7 @@ export default function ServerBackedDashboards() {
             className="min-h-11"
             disabled={
               savePending ||
+              duplicatePending ||
               archivePending ||
               dashboardDefaultPending ||
               Boolean(restorePendingId)
@@ -1274,6 +1680,7 @@ export default function ServerBackedDashboards() {
                       dashboardLoading ||
                       routeClearPending ||
                       savePending ||
+                      duplicatePending ||
                       archivePending ||
                       dashboardDefaultPending ||
                       Boolean(restorePendingId)
@@ -1372,11 +1779,40 @@ export default function ServerBackedDashboards() {
                 />
                 <FieldDescription>Private to your account.</FieldDescription>
               </Field>
+              <Field className="min-w-48">
+                <FieldLabel htmlFor="dashboard-refresh-cadence">
+                  Refresh cadence
+                </FieldLabel>
+                <Select
+                  id="dashboard-refresh-cadence"
+                  className="min-h-11 w-full"
+                  value={refreshCadence}
+                  disabled={
+                    selectedDashboard?.isDeleted ||
+                    savePending ||
+                    duplicatePending ||
+                    archivePending ||
+                    Boolean(restorePendingId)
+                  }
+                  onValueChange={(value) => {
+                    suppressInitialDefaultSelection();
+                    setRefreshCadence(value as OpenViewDashboardRefreshCadence);
+                  }}
+                >
+                  <option value="manual">Manual</option>
+                  <option value="one-minute">Every minute</option>
+                  <option value="five-minutes">Every five minutes</option>
+                </Select>
+                <FieldDescription>
+                  Automatic refresh runs only while this page is visible.
+                </FieldDescription>
+              </Field>
               <Button
                 className="min-h-11"
                 onClick={() => void saveDashboard()}
                 disabled={
                   savePending ||
+                  duplicatePending ||
                   routeClearPending ||
                   archivePending ||
                   Boolean(restorePendingId) ||
@@ -1394,8 +1830,28 @@ export default function ServerBackedDashboards() {
                       variant="outline"
                       className="min-h-11"
                       disabled={
+                        draftDirty ||
+                        duplicatePending ||
+                        savePending ||
+                        archivePending ||
+                        Boolean(restorePendingId)
+                      }
+                      aria-busy={duplicatePending}
+                      onClick={() => void duplicateDashboard()}
+                    >
+                      {duplicatePending
+                        ? "Duplicating…"
+                        : "Duplicate Dashboard"}
+                    </Button>
+                  ) : null}
+                  {!selectedDashboard.isDeleted ? (
+                    <Button
+                      variant="outline"
+                      className="min-h-11"
+                      disabled={
                         dashboardDefaultLoading ||
                         dashboardDefaultPending ||
+                        duplicatePending ||
                         archivePending ||
                         Boolean(restorePendingId)
                       }
@@ -1412,7 +1868,7 @@ export default function ServerBackedDashboards() {
                   <Button
                     variant="outline"
                     className="min-h-11"
-                    disabled={dashboardLoading}
+                    disabled={dashboardLoading || duplicatePending}
                     onClick={() => void reloadSelectedDashboard(draftDirty)}
                   >
                     {draftDirty
@@ -1426,6 +1882,7 @@ export default function ServerBackedDashboards() {
                       disabled={
                         draftDirty ||
                         archivePending ||
+                        duplicatePending ||
                         Boolean(restorePendingId)
                       }
                       aria-busy={restorePendingId === selectedDashboard.id}
@@ -1438,7 +1895,10 @@ export default function ServerBackedDashboards() {
                       variant="outline"
                       className="min-h-11"
                       disabled={
-                        archivePending || draftDirty || dashboardDefaultPending
+                        archivePending ||
+                        duplicatePending ||
+                        draftDirty ||
+                        dashboardDefaultPending
                       }
                       onClick={() => void archiveDashboard()}
                     >
@@ -1450,18 +1910,15 @@ export default function ServerBackedDashboards() {
             </div>
 
             <section
-              aria-labelledby="dashboard-chart-widgets"
+              aria-labelledby="dashboard-widgets"
               className="flex min-w-0 flex-col gap-4"
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2
-                  id="dashboard-chart-widgets"
-                  className="text-lg font-semibold"
-                >
-                  Chart widgets
+                <h2 id="dashboard-widgets" className="text-lg font-semibold">
+                  Dashboard widgets
                 </h2>
                 <p role="status" className="text-muted-foreground text-sm">
-                  {draftWidgets.length} of 12 chart widgets
+                  {draftWidgets.length} of 12 widgets
                 </p>
               </div>
               {!selectedDashboard?.isDeleted ? (
@@ -1472,6 +1929,7 @@ export default function ServerBackedDashboards() {
                       id="dashboard-module"
                       className="min-h-11 w-full"
                       value={builderModuleId}
+                      disabled={duplicatePending}
                       onValueChange={(value) => {
                         suppressInitialDefaultSelection();
                         selectBuilderModule(value);
@@ -1488,42 +1946,74 @@ export default function ServerBackedDashboards() {
                     </Select>
                   </Field>
                   <Field className="min-w-0">
-                    <FieldLabel htmlFor="dashboard-chart-type">
-                      Chart type
+                    <FieldLabel htmlFor="dashboard-widget-type">
+                      Widget type
                     </FieldLabel>
                     <Select
-                      id="dashboard-chart-type"
+                      id="dashboard-widget-type"
                       className="min-h-11 w-full"
-                      value={builderChartType}
+                      value={builderWidgetType}
+                      disabled={duplicatePending}
                       onValueChange={(value) => {
                         suppressInitialDefaultSelection();
-                        setBuilderChartType(value as BuilderChartType);
+                        const nextType = value as OpenViewDashboardWidgetType;
+                        setBuilderWidgetType(nextType);
+                        if (nextType === "summary")
+                          setBuilderAggregation("count");
                       }}
                     >
-                      <option value="bar">By category (bar)</option>
-                      <option value="pie">By category (pie)</option>
-                      <option value="line">Over time (line)</option>
+                      <option value="summary">Summary</option>
+                      <option value="workload">Workload</option>
+                      <option value="records">Record list</option>
+                      <option value="chart">Chart</option>
                     </Select>
                   </Field>
-                  <Field className="min-w-0">
-                    <FieldLabel htmlFor="dashboard-aggregation">
-                      Aggregation
-                    </FieldLabel>
-                    <Select
-                      id="dashboard-aggregation"
-                      className="min-h-11 w-full"
-                      value={builderAggregation}
-                      onValueChange={(value) => {
-                        suppressInitialDefaultSelection();
-                        setBuilderAggregation(value as BuilderAggregation);
-                      }}
-                    >
-                      <option value="count">Count</option>
-                      <option value="sum">Sum</option>
-                      <option value="average">Average</option>
-                    </Select>
-                  </Field>
-                  {builderAggregation !== "count" ? (
+                  {builderWidgetType === "chart" ? (
+                    <Field className="min-w-0">
+                      <FieldLabel htmlFor="dashboard-chart-type">
+                        Chart type
+                      </FieldLabel>
+                      <Select
+                        id="dashboard-chart-type"
+                        className="min-h-11 w-full"
+                        value={builderChartType}
+                        disabled={duplicatePending}
+                        onValueChange={(value) => {
+                          suppressInitialDefaultSelection();
+                          setBuilderChartType(value as BuilderChartType);
+                        }}
+                      >
+                        <option value="bar">By category (bar)</option>
+                        <option value="pie">By category (pie)</option>
+                        <option value="line">Over time (line)</option>
+                      </Select>
+                    </Field>
+                  ) : null}
+                  {builderWidgetType === "chart" ||
+                  builderWidgetType === "workload" ? (
+                    <Field className="min-w-0">
+                      <FieldLabel htmlFor="dashboard-aggregation">
+                        Aggregation
+                      </FieldLabel>
+                      <Select
+                        id="dashboard-aggregation"
+                        className="min-h-11 w-full"
+                        value={builderAggregation}
+                        disabled={duplicatePending}
+                        onValueChange={(value) => {
+                          suppressInitialDefaultSelection();
+                          setBuilderAggregation(value as BuilderAggregation);
+                        }}
+                      >
+                        <option value="count">Count</option>
+                        <option value="sum">Sum</option>
+                        <option value="average">Average</option>
+                      </Select>
+                    </Field>
+                  ) : null}
+                  {(builderWidgetType === "chart" ||
+                    builderWidgetType === "workload") &&
+                  builderAggregation !== "count" ? (
                     <Field className="min-w-0">
                       <FieldLabel htmlFor="dashboard-measure">
                         Numeric measure
@@ -1533,7 +2023,9 @@ export default function ServerBackedDashboards() {
                         className="min-h-11 w-full"
                         value={builderMeasureId}
                         disabled={
-                          !builderModuleId || !builderNumericFields.length
+                          duplicatePending ||
+                          !builderModuleId ||
+                          !builderNumericFields.length
                         }
                         onValueChange={(value) => {
                           suppressInitialDefaultSelection();
@@ -1554,7 +2046,38 @@ export default function ServerBackedDashboards() {
                       ) : null}
                     </Field>
                   ) : null}
-                  {!builderIsDateSeries ? (
+                  {builderWidgetType === "records" ? (
+                    <Field className="min-w-0">
+                      <FieldLabel htmlFor="dashboard-record-field">
+                        Display field
+                      </FieldLabel>
+                      <Select
+                        id="dashboard-record-field"
+                        className="min-h-11 w-full"
+                        value={builderRecordFieldId}
+                        disabled={
+                          duplicatePending ||
+                          !builderModuleId ||
+                          !builderRecordFields.length
+                        }
+                        onValueChange={(value) => {
+                          suppressInitialDefaultSelection();
+                          setBuilderRecordFieldId(value);
+                        }}
+                      >
+                        <option value="">Choose a field</option>
+                        {builderRecordFields.map((field) => (
+                          <option key={field.id} value={field.id}>
+                            {field.name}
+                          </option>
+                        ))}
+                      </Select>
+                      <FieldDescription>
+                        The saved widget stores the query, then loads current
+                        rows.
+                      </FieldDescription>
+                    </Field>
+                  ) : !builderIsDateSeries ? (
                     <Field className="min-w-0">
                       <FieldLabel htmlFor="dashboard-dimension">
                         Group records by
@@ -1563,7 +2086,11 @@ export default function ServerBackedDashboards() {
                         id="dashboard-dimension"
                         className="min-h-11 w-full"
                         value={builderDimensionId}
-                        disabled={!builderModuleId || !builderFields.length}
+                        disabled={
+                          duplicatePending ||
+                          !builderModuleId ||
+                          !builderFields.length
+                        }
                         onValueChange={(value) => {
                           suppressInitialDefaultSelection();
                           setBuilderDimensionId(value);
@@ -1577,10 +2104,15 @@ export default function ServerBackedDashboards() {
                         ))}
                       </Select>
                       <FieldDescription>
-                        Creates a categorical Count chart from live records.
+                        {builderWidgetType === "summary"
+                          ? "Counts matching records across the selected groups."
+                          : builderWidgetType === "workload"
+                            ? "Compares the selected aggregate across live record groups."
+                            : "Creates a categorical chart from live records."}
                       </FieldDescription>
                     </Field>
-                  ) : (
+                  ) : null}
+                  {builderIsDateSeries ? (
                     <>
                       <Field className="min-w-0">
                         <FieldLabel htmlFor="dashboard-date-field">
@@ -1591,7 +2123,9 @@ export default function ServerBackedDashboards() {
                           className="min-h-11 w-full"
                           value={builderDateFieldId}
                           disabled={
-                            !builderModuleId || !builderDateFields.length
+                            duplicatePending ||
+                            !builderModuleId ||
+                            !builderDateFields.length
                           }
                           onValueChange={(value) => {
                             suppressInitialDefaultSelection();
@@ -1606,8 +2140,7 @@ export default function ServerBackedDashboards() {
                           ))}
                         </Select>
                         <FieldDescription>
-                          Date and date-time fields create daily aggregate
-                          values.
+                          Date fields create daily aggregate values.
                         </FieldDescription>
                       </Field>
                       <Field className="min-w-0">
@@ -1618,6 +2151,7 @@ export default function ServerBackedDashboards() {
                           id="dashboard-from-date"
                           type="date"
                           required
+                          disabled={duplicatePending}
                           className="min-h-11 w-full"
                           value={builderFromDate}
                           aria-describedby="dashboard-date-range-description"
@@ -1635,6 +2169,7 @@ export default function ServerBackedDashboards() {
                           id="dashboard-to-date"
                           type="date"
                           required
+                          disabled={duplicatePending}
                           className="min-h-11 w-full"
                           value={builderToDate}
                           aria-describedby="dashboard-date-range-description"
@@ -1648,42 +2183,44 @@ export default function ServerBackedDashboards() {
                         </FieldDescription>
                       </Field>
                     </>
-                  )}
+                  ) : null}
                   <Button
                     variant="outline"
                     className="min-h-11"
-                    onClick={
-                      builderIsDateSeries ? addLineChart : addGroupedChart
-                    }
+                    onClick={() => {
+                      if (builderWidgetType === "records") addRecordsWidget();
+                      else if (
+                        builderWidgetType === "summary" ||
+                        builderWidgetType === "workload"
+                      )
+                        addGroupedAggregateWidget();
+                      else if (builderIsDateSeries) addLineChart();
+                      else addGroupedChart();
+                    }}
                     disabled={
-                      !builderIsDateSeries
-                        ? !builderModuleId ||
-                          !builderFields.some(
-                            (field) => field.id === builderDimensionId,
-                          ) ||
-                          !builderMeasureValid ||
-                          draftWidgets.length >= 12 ||
-                          savePending ||
-                          Boolean(restorePendingId)
-                        : !builderModuleId ||
-                          !builderDateField ||
-                          !builderDateRangeValid ||
-                          !builderMeasureValid ||
-                          draftWidgets.length >= 12 ||
-                          savePending ||
-                          Boolean(restorePendingId)
+                      !builderCanAddWidget ||
+                      duplicatePending ||
+                      draftWidgets.length >= 12 ||
+                      savePending ||
+                      Boolean(restorePendingId)
                     }
                   >
-                    {builderIsDateSeries
-                      ? "Add line chart widget"
-                      : builderChartType === "pie"
-                        ? "Add pie chart widget"
-                        : "Add chart widget"}
+                    {builderWidgetType === "summary"
+                      ? "Add summary widget"
+                      : builderWidgetType === "workload"
+                        ? "Add workload widget"
+                        : builderWidgetType === "records"
+                          ? "Add records widget"
+                          : builderIsDateSeries
+                            ? "Add line chart widget"
+                            : builderChartType === "pie"
+                              ? "Add pie chart widget"
+                              : "Add chart widget"}
                   </Button>
                 </div>
               ) : (
                 <p className="text-muted-foreground text-sm">
-                  Restore this Dashboard before editing its chart widgets.
+                  Restore this Dashboard before editing its widgets.
                 </p>
               )}
               {catalogSourcesHasMore ? (
@@ -1728,6 +2265,7 @@ export default function ServerBackedDashboards() {
                     const persisted = selectedDashboard?.widgets.some(
                       (candidate) => candidate.id === widget.key,
                     );
+                    const label = `${widget.widgetType} ${index + 1}`;
                     return (
                       <li
                         key={widget.key}
@@ -1745,8 +2283,8 @@ export default function ServerBackedDashboards() {
                           onClick={() => setActiveWidgetKey(widget.key)}
                         >
                           {persisted
-                            ? `View chart ${index + 1}: ${title}`
-                            : `Chart ${index + 1}: ${title}`}
+                            ? `View ${label}: ${title}`
+                            : `${label}: ${title}`}
                         </Button>
                         <Button
                           type="button"
@@ -1755,11 +2293,12 @@ export default function ServerBackedDashboards() {
                           disabled={
                             index === 0 ||
                             savePending ||
+                            duplicatePending ||
                             archivePending ||
                             Boolean(restorePendingId)
                           }
                           onClick={() => moveWidget(widget.key, -1)}
-                          aria-label={`Move chart ${index + 1} up`}
+                          aria-label={`Move ${label} up`}
                         >
                           Move up
                         </Button>
@@ -1770,11 +2309,12 @@ export default function ServerBackedDashboards() {
                           disabled={
                             index === draftWidgets.length - 1 ||
                             savePending ||
+                            duplicatePending ||
                             archivePending ||
                             Boolean(restorePendingId)
                           }
                           onClick={() => moveWidget(widget.key, 1)}
-                          aria-label={`Move chart ${index + 1} down`}
+                          aria-label={`Move ${label} down`}
                         >
                           Move down
                         </Button>
@@ -1784,12 +2324,13 @@ export default function ServerBackedDashboards() {
                           className="min-h-11"
                           disabled={
                             savePending ||
+                            duplicatePending ||
                             archivePending ||
                             Boolean(restorePendingId) ||
                             selectedDashboard?.isDeleted
                           }
                           onClick={() => removeWidget(widget.key)}
-                          aria-label={`Remove chart ${index + 1}`}
+                          aria-label={`Remove ${label}`}
                         >
                           Remove
                         </Button>
@@ -1799,29 +2340,31 @@ export default function ServerBackedDashboards() {
                 </ol>
               ) : (
                 <p className="text-muted-foreground text-sm">
-                  Add a chart widget to this Dashboard. No sample records are
-                  copied.
+                  Add a widget to this Dashboard. The saved definition contains
+                  query rules, not a copy of sample records.
                 </p>
               )}
             </section>
 
             {activeWidget ? (
               <section
-                aria-labelledby="dashboard-chart-preview"
+                aria-labelledby="dashboard-widget-preview"
                 className="border-border flex min-w-0 flex-col gap-4 border-t pt-5"
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h2
-                      id="dashboard-chart-preview"
+                      id="dashboard-widget-preview"
                       className="text-lg font-semibold"
                     >
                       {activeTitle}
                     </h2>
                     <p className="text-muted-foreground text-sm">
                       {activePersistedWidget
-                        ? "One authorized complete aggregate snapshot for the selected widget."
-                        : "Save this Dashboard to load a live snapshot for the widget."}
+                        ? activeWidget.widgetType === "records"
+                          ? "Current records are loaded through the authorized query endpoint."
+                          : "Current aggregate values are loaded through the authorized snapshot endpoint."
+                        : "Save this Dashboard to load live data for the widget."}
                     </p>
                   </div>
                   {activePersistedWidget ? (
@@ -1839,20 +2382,166 @@ export default function ServerBackedDashboards() {
                   <Alert role="alert" variant="destructive">
                     {snapshotError}
                     {visibleSnapshot
-                      ? " The last successful snapshot remains visible."
-                      : " Retry when the service is available."}
+                      ? " The last successful data remains visible."
+                      : " Retry when access is available."}
                     {activePersistedWidget && !snapshotLoading ? (
                       <Button
                         className="mt-3 min-h-11"
                         variant="outline"
                         onClick={refreshActiveSnapshot}
                       >
-                        Retry chart
+                        Retry widget
                       </Button>
                     ) : null}
                   </Alert>
                 ) : null}
-                {visibleSnapshot ? (
+                {visibleSnapshot &&
+                visibleSnapshot.data.kind === "aggregate" &&
+                activeWidget.widgetType === "summary" ? (
+                  <Card className="max-w-xl">
+                    <CardContent className="flex flex-col gap-2 pt-6">
+                      <p className="text-muted-foreground text-sm">
+                        Total records across{" "}
+                        {aggregateSnapshot?.items.length ?? 0} groups
+                      </p>
+                      <p className="text-3xl font-semibold">
+                        Total records: {summaryTotalRecords}
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : visibleSnapshot &&
+                  visibleSnapshot.data.kind === "aggregate" &&
+                  activeWidget.widgetType === "workload" ? (
+                  <div className="flex min-w-0 flex-col gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="font-semibold">Workload breakdown</h3>
+                        <p
+                          role="status"
+                          className="text-muted-foreground text-sm"
+                        >
+                          {snapshotRows.length
+                            ? `${firstRowIndex + 1}–${Math.min(firstRowIndex + PAGE_SIZE, snapshotRows.length)} of ${snapshotRows.length} groups`
+                            : "0 groups"}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          className="min-h-11"
+                          disabled={boundedTablePage === 0}
+                          onClick={() =>
+                            setTablePage((page) => Math.max(0, page - 1))
+                          }
+                        >
+                          Previous data page
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="min-h-11"
+                          disabled={boundedTablePage + 1 >= tablePageCount}
+                          onClick={() =>
+                            setTablePage((page) =>
+                              Math.min(tablePageCount - 1, page + 1),
+                            )
+                          }
+                        >
+                          Next data page
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="min-w-0 overflow-x-auto">
+                      <Table aria-label="Workload breakdown">
+                        <TableCaption>
+                          Group values and record counts from the current query.
+                        </TableCaption>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Group</TableHead>
+                            <TableHead>Aggregate value</TableHead>
+                            <TableHead>Record count</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {visibleRows.map((item, index) => (
+                            <TableRow
+                              key={`${item.key ?? item.label}-${firstRowIndex + index}`}
+                            >
+                              <TableCell>{item.label}</TableCell>
+                              <TableCell>{String(item.value)}</TableCell>
+                              <TableCell>{item.recordCount}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                ) : visibleSnapshot &&
+                  visibleSnapshot.data.kind === "records" &&
+                  activeWidget.widgetType === "records" ? (
+                  <div className="flex min-w-0 flex-col gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p
+                        role="status"
+                        className="text-muted-foreground text-sm"
+                      >
+                        {recordsPagination?.count
+                          ? `${recordsPagination.offset + 1}–${recordsPagination.offset + recordsPagination.count} of ${recordsPagination.total} records`
+                          : `${recordsPagination?.total ?? 0} records`}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          className="min-h-11"
+                          disabled={
+                            !recordsPagination || recordsPagination.offset === 0
+                          }
+                          onClick={() =>
+                            setTablePage((page) => Math.max(0, page - 1))
+                          }
+                        >
+                          Previous records
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="min-h-11"
+                          disabled={!recordsPagination?.hasMore}
+                          onClick={() => setTablePage((page) => page + 1)}
+                        >
+                          Next records
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="min-w-0 overflow-x-auto">
+                      <Table aria-label="Live records">
+                        <TableCaption>
+                          Current authorized records. Each page contains up to{" "}
+                          {PAGE_SIZE} rows.
+                        </TableCaption>
+                        <TableHeader>
+                          <TableRow>
+                            {recordsFields.map((field) => (
+                              <TableHead key={field.id}>{field.name}</TableHead>
+                            ))}
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {recordsSnapshot?.items.map((record) => (
+                            <TableRow key={record.id}>
+                              {recordsFields.map((field) => (
+                                <TableCell key={field.id}>
+                                  {displayRecordValue(record.data[field.id])}
+                                </TableCell>
+                              ))}
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                ) : visibleSnapshot &&
+                  visibleSnapshot.data.kind === "aggregate" &&
+                  activeWidget.widgetType === "chart" ? (
                   <>
                     <p role="status" className="text-muted-foreground text-sm">
                       {activeIsDateSeries
@@ -1953,11 +2642,15 @@ export default function ServerBackedDashboards() {
                   </>
                 ) : snapshotLoading ? (
                   <p role="status" className="text-muted-foreground text-sm">
-                    Loading the selected chart snapshot…
+                    Loading the selected widget data…
                   </p>
                 ) : activePersistedWidget && !snapshotError ? (
                   <p className="text-muted-foreground text-sm">
-                    No aggregate data is available yet.
+                    {activeWidget.widgetType === "records"
+                      ? "No matching records were found."
+                      : activeWidget.widgetType === "summary"
+                        ? "No matching records were found for this summary."
+                        : "No aggregate data is available yet."}
                   </p>
                 ) : null}
               </section>
@@ -1968,7 +2661,13 @@ export default function ServerBackedDashboards() {
       <AlertDialog
         open={pendingNavigation !== null}
         onOpenChange={(open) => {
-          if (!open && !savePending && !archivePending && !restorePendingId)
+          if (
+            !open &&
+            !savePending &&
+            !duplicatePending &&
+            !archivePending &&
+            !restorePendingId
+          )
             setPendingNavigation(null);
         }}
       >
@@ -1988,7 +2687,10 @@ export default function ServerBackedDashboards() {
               variant="outline"
               className="min-h-11"
               disabled={
-                savePending || archivePending || Boolean(restorePendingId)
+                savePending ||
+                duplicatePending ||
+                archivePending ||
+                Boolean(restorePendingId)
               }
               onClick={() => setPendingNavigation(null)}
             >
@@ -1999,7 +2701,10 @@ export default function ServerBackedDashboards() {
               variant="destructive"
               className="min-h-11"
               disabled={
-                savePending || archivePending || Boolean(restorePendingId)
+                savePending ||
+                duplicatePending ||
+                archivePending ||
+                Boolean(restorePendingId)
               }
               onClick={() => {
                 const transition = pendingNavigation;

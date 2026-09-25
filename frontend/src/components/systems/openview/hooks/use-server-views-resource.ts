@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ApiError } from "@/lib/api";
+import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
 import {
   listOpenViewAudienceOptions,
   listOpenViewDataSourceFields,
@@ -62,6 +64,18 @@ function messageFor(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function isAuthorizationDenied(error: unknown): boolean {
+  return error instanceof ApiError && [401, 403].includes(error.status);
+}
+
+const CATALOG_ENTITIES = new Set([
+  "departments",
+  "fields",
+  "modules",
+  "workspace_profiles",
+]);
+const VIEW_METADATA_ENTITIES = new Set(["saved_views", "saved_view_defaults"]);
+
 export function useServerViewsResource(requestedModule: string | null) {
   const [catalog, setCatalog] = useState<OpenViewDataSource[] | null>(null);
   const [catalogHasMore, setCatalogHasMore] = useState(false);
@@ -84,8 +98,53 @@ export function useServerViewsResource(requestedModule: string | null) {
   const [metadataRetryTarget, setMetadataRetryTarget] = useState<
     "catalog" | "module" | "audience" | null
   >(null);
+  const [recordInvalidation, setRecordInvalidation] = useState(0);
+  const [authorizationDenied, setAuthorizationDenied] = useState(false);
   const catalogRequest = useRef(0);
   const moduleRequest = useRef(0);
+
+  const markAuthorizationDenied = useCallback(() => {
+    catalogRequest.current += 1;
+    moduleRequest.current += 1;
+    setAuthorizationDenied(true);
+    setCatalog(null);
+    setCatalogLoading(false);
+    setCatalogHasMore(false);
+    setCatalogNextOffset(0);
+    setAudiences([]);
+    setModuleWorkspace(null);
+    setModuleLoading(false);
+    setCatalogError(
+      "OpenView data is unavailable. Sign in or ask for access, then retry.",
+    );
+    setModuleError(
+      "OpenView data is unavailable. Sign in or ask for access, then retry.",
+    );
+  }, []);
+
+  useEffect(
+    () =>
+      subscribeOpenViewInvalidations((event) => {
+        if (event.type === "resync") {
+          setRecordInvalidation((value) => value + 1);
+          setCatalogRetry((value) => value + 1);
+          setModuleRetry((value) => value + 1);
+          return;
+        }
+        if (event.entity === "records" || event.entity === "relationships") {
+          setRecordInvalidation((value) => value + 1);
+        }
+        if (CATALOG_ENTITIES.has(event.entity)) {
+          setRecordInvalidation((value) => value + 1);
+          setCatalogRetry((value) => value + 1);
+          setModuleRetry((value) => value + 1);
+          return;
+        }
+        if (VIEW_METADATA_ENTITIES.has(event.entity))
+          setModuleRetry((value) => value + 1);
+      }),
+    [],
+  );
 
   useEffect(() => {
     const request = ++catalogRequest.current;
@@ -98,6 +157,17 @@ export function useServerViewsResource(requestedModule: string | null) {
     ])
       .then((results) => {
         if (request !== catalogRequest.current) return;
+        if (
+          results.some(
+            (result) =>
+              result.status === "rejected" &&
+              isAuthorizationDenied(result.reason),
+          )
+        ) {
+          markAuthorizationDenied();
+          return;
+        }
+        setAuthorizationDenied(false);
         const [sources, roles, people] = results;
         if (sources.status === "fulfilled") {
           setCatalog(sources.value.items);
@@ -136,7 +206,7 @@ export function useServerViewsResource(requestedModule: string | null) {
     return () => {
       catalogRequest.current += 1;
     };
-  }, [catalogRetry]);
+  }, [catalogRetry, markAuthorizationDenied]);
 
   const moduleId = useMemo(() => {
     if (!catalog?.length) return undefined;
@@ -161,6 +231,7 @@ export function useServerViewsResource(requestedModule: string | null) {
     ])
       .then(([fields, views, defaults]) => {
         if (request !== moduleRequest.current) return;
+        setAuthorizationDenied(false);
         setModuleWorkspace({
           moduleId,
           fields: fields.items,
@@ -176,6 +247,10 @@ export function useServerViewsResource(requestedModule: string | null) {
       })
       .catch((error: unknown) => {
         if (request !== moduleRequest.current) return;
+        if (isAuthorizationDenied(error)) {
+          markAuthorizationDenied();
+          return;
+        }
         setModuleError(
           messageFor(error, "The data source could not be loaded."),
         );
@@ -186,7 +261,7 @@ export function useServerViewsResource(requestedModule: string | null) {
     return () => {
       moduleRequest.current += 1;
     };
-  }, [moduleId, moduleRetry]);
+  }, [markAuthorizationDenied, moduleId, moduleRetry]);
 
   const loadMoreCatalog = useCallback(async () => {
     if (!catalogHasMore || metadataLoadingMore) return;
@@ -374,5 +449,8 @@ export function useServerViewsResource(requestedModule: string | null) {
     loadMoreAudienceOptions,
     refreshModule,
     retryCatalog,
+    recordInvalidation,
+    authorizationDenied,
+    markAuthorizationDenied,
   };
 }

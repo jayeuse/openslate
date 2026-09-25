@@ -104,6 +104,42 @@ def _chart(module: Module, dimension: Field) -> dict[str, object]:
     return {"widget_type": "chart", "config": _chart_config(module, dimension)}
 
 
+def _aggregate_widget(
+    widget_type: str, module: Module, dimension: Field
+) -> dict[str, object]:
+    return {
+        "widget_type": widget_type,
+        "config": {
+            "version": 1,
+            "query": {
+                "module_id": str(module.id),
+                "definition": {"version": 1, "columns": []},
+                "mode": "groups",
+                "dimension": {"field_id": str(dimension.id), "expected_type": "text"},
+                "aggregation": "count",
+            },
+        },
+    }
+
+
+def _records_widget(module: Module, field: Field) -> dict[str, object]:
+    return {
+        "widget_type": "records",
+        "config": {
+            "version": 1,
+            "query": {
+                "module_id": str(module.id),
+                "definition": {
+                    "version": 1,
+                    "columns": [
+                        {"field_id": str(field.id), "expected_type": "text"},
+                    ],
+                },
+            },
+        },
+    }
+
+
 def _dashboard_audit_rows(db: Session, dashboard_id: UUID) -> list[AuditLog]:
     return list(
         db.scalars(
@@ -132,6 +168,7 @@ def test_owner_can_create_page_revision_update_archive_and_restore_dashboard_dra
         dashboard_id = UUID(created.json()["id"])
         assert created.headers["location"] == f"/api/dashboards/{dashboard_id}"
         assert created.json()["name"] == "Operations"
+        assert created.json()["refresh_cadence"] == "manual"
         assert created.json()["owner_id"] == str(owner.id)
         assert created.json()["revision"] == 1
         assert created.json()["widgets"][0]["position"] == 0
@@ -152,10 +189,15 @@ def test_owner_can_create_page_revision_update_archive_and_restore_dashboard_dra
 
         renamed = client.patch(
             f"/api/dashboards/{dashboard_id}",
-            json={"revision": 1, "name": "Operations team"},
+            json={
+                "revision": 1,
+                "name": "Operations team",
+                "refresh_cadence": "one-minute",
+            },
         )
         assert renamed.status_code == 200
         assert renamed.json()["revision"] == 2
+        assert renamed.json()["refresh_cadence"] == "one-minute"
         assert renamed.json()["widgets"] == created.json()["widgets"]
 
         stale = client.patch(
@@ -208,6 +250,159 @@ def test_owner_can_create_page_revision_update_archive_and_restore_dashboard_dra
         ).all()
     )
     assert widget_rows == []
+
+
+def test_dashboard_persists_summary_workload_record_and_chart_widgets(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    owner = _actor(db, capabilities={"records.read": True, "records.write": True})
+    module, dimension = _module(db, name="Live Dashboard widgets")
+    set_audit_actor(db, owner.id)
+    widgets = [
+        _aggregate_widget("summary", module, dimension),
+        _aggregate_widget("workload", module, dimension),
+        _records_widget(module, dimension),
+        _chart(module, dimension),
+    ]
+
+    with _client(db, owner) as client:
+        created = client.post(
+            "/api/dashboards",
+            json={
+                "name": "Operations",
+                "refresh_cadence": "one-minute",
+                "widgets": widgets,
+            },
+        )
+        assert created.status_code == 201, created.text
+        dashboard_id = UUID(created.json()["id"])
+        assert created.json()["refresh_cadence"] == "one-minute"
+        assert [widget["widget_type"] for widget in created.json()["widgets"]] == [
+            "summary",
+            "workload",
+            "records",
+            "chart",
+        ]
+        db.expire_all()
+        persisted = db.get(Dashboard, dashboard_id)
+        assert persisted is not None
+        assert persisted.refresh_cadence == "one-minute"
+        persisted_widgets = list(
+            db.scalars(
+                select(DashboardWidget)
+                .where(
+                    DashboardWidget.dashboard_id == dashboard_id,
+                    DashboardWidget.is_deleted.is_(False),
+                )
+                .order_by(DashboardWidget.position)
+            ).all()
+        )
+        assert [widget.widget_type for widget in persisted_widgets] == [
+            "summary",
+            "workload",
+            "records",
+            "chart",
+        ]
+        assert [widget.position for widget in persisted_widgets] == [0, 1, 2, 3]
+        assert [widget.config for widget in persisted_widgets] == [
+            widget["config"] for widget in created.json()["widgets"]
+        ]
+        updated = client.patch(
+            f"/api/dashboards/{dashboard_id}",
+            json={"revision": 1, "refresh_cadence": "five-minutes"},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["revision"] == 2
+        assert updated.json()["refresh_cadence"] == "five-minutes"
+        db.expire_all()
+        persisted = db.get(Dashboard, dashboard_id)
+        assert persisted is not None
+        assert persisted.refresh_cadence == "five-minutes"
+
+
+def test_dashboard_widget_type_change_is_persisted_when_config_is_unchanged(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    owner = _actor(db, capabilities={"records.read": True, "records.write": True})
+    module, dimension = _module(db, name="Dashboard widget type change")
+    set_audit_actor(db, owner.id)
+    summary = _aggregate_widget("summary", module, dimension)
+    workload = _aggregate_widget("workload", module, dimension)
+
+    with _client(db, owner) as client:
+        created = client.post(
+            "/api/dashboards",
+            json={"name": "Operations", "widgets": [summary]},
+        )
+        assert created.status_code == 201, created.text
+        dashboard_id = UUID(created.json()["id"])
+        changed = client.patch(
+            f"/api/dashboards/{dashboard_id}",
+            json={"revision": 1, "widgets": [workload]},
+        )
+
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["revision"] == 2
+    assert [widget["widget_type"] for widget in changed.json()["widgets"]] == [
+        "workload"
+    ]
+
+
+def test_dashboard_rejects_stale_record_widget_fields_without_saving(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    owner = _actor(db, capabilities={"records.read": True, "records.write": True})
+    module, _ = _module(db, name="Dashboard records query")
+    deleted_field = Field(
+        module_id=module.id,
+        name="Deleted field",
+        type=FieldType.TEXT,
+        required=False,
+        position=1,
+        config={},
+        is_deleted=True,
+        deleted_at=datetime.now(UTC),
+    )
+    db.add(deleted_field)
+    db.flush()
+    set_audit_actor(db, owner.id)
+    with _client(db, owner) as client:
+        response = client.post(
+            "/api/dashboards",
+            json={
+                "name": "Invalid list",
+                "widgets": [_records_widget(module, deleted_field)],
+            },
+        )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "dashboard_invalid"
+    assert db.scalar(select(Dashboard).where(Dashboard.owner_id == owner.id)) is None
+
+
+def test_dashboard_rejects_unknown_widget_type_and_refresh_cadence(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    owner = _actor(db, capabilities={"records.read": True, "records.write": True})
+    set_audit_actor(db, owner.id)
+    with _client(db, owner) as client:
+        invalid_widget = client.post(
+            "/api/dashboards",
+            json={
+                "name": "Unknown widget",
+                "widgets": [{"widget_type": "table", "config": {}}],
+            },
+        )
+        invalid_cadence = client.post(
+            "/api/dashboards",
+            json={"name": "Unknown cadence", "refresh_cadence": "hourly"},
+        )
+        assert invalid_widget.status_code == 422
+        assert invalid_cadence.status_code == 422
+    assert db.scalar(select(Dashboard).where(Dashboard.owner_id == owner.id)) is None
 
 
 def test_dashboard_owner_scope_hides_foreign_artifacts_from_users_and_admins(

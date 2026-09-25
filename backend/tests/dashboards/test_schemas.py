@@ -78,6 +78,40 @@ def _date_widget(*, days: int = 366) -> dict[str, object]:
     }
 
 
+def _aggregate_widget(widget_type: str) -> dict[str, object]:
+    return {
+        "widget_type": widget_type,
+        "config": {
+            "version": 1,
+            "query": {
+                "module_id": str(uuid7()),
+                "definition": {"version": 1},
+                "mode": "groups",
+                "dimension": {"field_id": str(uuid7()), "expected_type": "text"},
+                "aggregation": "count",
+            },
+        },
+    }
+
+
+def _records_widget() -> dict[str, object]:
+    return {
+        "widget_type": "records",
+        "config": {
+            "version": 1,
+            "query": {
+                "module_id": str(uuid7()),
+                "definition": {
+                    "version": 1,
+                    "columns": [
+                        {"field_id": str(uuid7()), "expected_type": "text"},
+                    ],
+                },
+            },
+        },
+    }
+
+
 def test_chart_widget_uses_typed_snapshot_query_with_uuid_references_and_filters():
     payload = DashboardWidgetSpec.model_validate(_group_widget())
 
@@ -165,3 +199,30 @@ def test_dashboard_contract_is_private_chart_only_bounded_and_revisioned():
         DashboardUpdate.model_validate({"revision": 0, "name": "Stale"})
     with pytest.raises(ValidationError):
         DashboardUpdate.model_validate({"revision": 2})
+
+
+def test_dashboard_supports_all_live_widget_types_and_persisted_refresh_cadence():
+    widgets = [
+        _aggregate_widget("summary"),
+        _aggregate_widget("workload"),
+        _records_widget(),
+        _group_widget(),
+    ]
+    dashboard = DashboardCreate.model_validate(
+        {"name": "Operations", "refresh_cadence": "one-minute", "widgets": widgets}
+    )
+
+    assert [widget.widget_type for widget in dashboard.widgets] == [
+        "summary",
+        "workload",
+        "records",
+        "chart",
+    ]
+    assert dashboard.refresh_cadence == "one-minute"
+    assert DashboardCreate(name="Manual").refresh_cadence == "manual"
+    assert DashboardUpdate.model_validate(
+        {"revision": 1, "refresh_cadence": "five-minutes"}
+    ).refresh_cadence == "five-minutes"
+
+    with pytest.raises(ValidationError):
+        DashboardCreate.model_validate({"name": "Unknown cadence", "refresh_cadence": "hourly"})

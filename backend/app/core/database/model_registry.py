@@ -44,6 +44,7 @@ from app.systems.boards.reminder_models import BoardEventReminder  # noqa: F401
 from app.systems.boards.template_models import BoardTemplate  # noqa: F401
 from app.systems.manage.audit.models import AuditLog, SecurityEvent  # noqa: F401
 from app.systems.manage.workspace.models import WorkspaceProfile  # noqa: F401
+from app.systems.openview.charts.models import UserChartPreference  # noqa: F401
 from app.systems.openview.dashboards.models import (  # noqa: F401
     Dashboard,
     DashboardDefault,

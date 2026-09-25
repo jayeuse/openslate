@@ -61,30 +61,40 @@ type ChartConfig = {
   chart_type: "bar" | "line" | "pie";
   query: GroupQuery | DateSeriesQuery;
 };
-type WidgetInput = {
-  widget_type: "chart";
-  config: ChartConfig;
+type WidgetInput =
+  | { widget_type: "chart"; config: ChartConfig }
+  | {
+      widget_type: "summary" | "workload";
+      config: { version: 1; query: GroupQuery };
+    }
+  | {
+      widget_type: "records";
+      config: {
+        version: 1;
+        query: { module_id: string; definition: QueryDefinition };
+      };
+    };
+type WidgetWire = WidgetInput & {
+  id: string;
+  position: number;
+  created_at: string;
+  updated_at: string;
 };
 type DashboardWire = {
   id: string;
   owner_id: string;
   name: string;
+  refresh_cadence: "manual" | "one-minute" | "five-minutes";
   revision: number;
   is_deleted: boolean;
   created_at: string;
   updated_at: string;
-  widgets: Array<{
-    id: string;
-    position: number;
-    widget_type: "chart";
-    config: ChartConfig;
-    created_at: string;
-    updated_at: string;
-  }>;
+  widgets: WidgetWire[];
 };
 type DashboardMutation = {
   revision?: number;
   name?: string;
+  refresh_cadence?: "manual" | "one-minute" | "five-minutes";
   widgets?: WidgetInput[];
 };
 type DashboardDefaultMutation = { dashboard_id: string | null };
@@ -120,6 +130,12 @@ type AggregateRequest =
       from_date: string;
       to_date: string;
     };
+type RecordQueryRequest = {
+  module_id: string;
+  definition: QueryDefinition;
+  limit: number;
+  offset: number;
+};
 type RequestGate = {
   started: Promise<void>;
   wait: Promise<void>;
@@ -208,6 +224,7 @@ function dashboard(overrides: Partial<DashboardWire> = {}): DashboardWire {
     id: dashboardId,
     owner_id: userId,
     name: "Operations",
+    refresh_cadence: "manual",
     revision: 1,
     is_deleted: false,
     created_at: timestamp,
@@ -215,6 +232,30 @@ function dashboard(overrides: Partial<DashboardWire> = {}): DashboardWire {
     widgets,
     ...overrides,
   };
+}
+
+function persistedWidgets(widgets: WidgetInput[]): WidgetWire[] {
+  return widgets.map((widget, index) => {
+    const metadata = {
+      id: `00000000-0000-4000-8000-${String(index + 201).padStart(12, "0")}`,
+      position: index,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    switch (widget.widget_type) {
+      case "chart":
+        return { ...metadata, widget_type: "chart", config: widget.config };
+      case "summary":
+      case "workload":
+        return {
+          ...metadata,
+          widget_type: widget.widget_type,
+          config: widget.config,
+        };
+      case "records":
+        return { ...metadata, widget_type: "records", config: widget.config };
+    }
+  });
 }
 
 function dataSourceField(
@@ -282,8 +323,8 @@ async function installDashboardApi(
   let dashboardDefaultId: string | null = null;
   let failDashboardDefaultReads = false;
   let forceConflict = false;
-  let failNextSnapshot = false;
   let snapshotGate: RequestGate | null = null;
+  let snapshotGateStatus: 403 | null = null;
   let snapshotLength = 30;
   let dashboardGetGate: RequestGate | null = null;
   let dashboardDefaultGetGate: RequestGate | null = null;
@@ -293,6 +334,7 @@ async function installDashboardApi(
     gate: RequestGate;
     item: DashboardWire;
   } | null = null;
+  const createdDashboards: DashboardWire[] = [];
   let fieldPages: Record<string, FieldPageFixture> = {};
   let fieldPageGate: {
     moduleId: string;
@@ -309,6 +351,12 @@ async function installDashboardApi(
     dashboardId: string | null;
   }> = [];
   const snapshots: AggregateRequest[] = [];
+  const recordQueries: RecordQueryRequest[] = [];
+  let nextSnapshotErrorStatus: 401 | 403 | 503 | null = null;
+  let snapshotErrorResponsesRemaining = 0;
+  let nextRecordQueryErrorStatus: 401 | 403 | null = null;
+  let recordQueryErrorResponsesRemaining = 0;
+  let recordFieldId = categoryFieldId;
 
   await page.route("**/api/auth/session", async (route) =>
     route.fulfill({
@@ -495,9 +543,9 @@ async function installDashboardApi(
         gate.signalStarted();
         await gate.wait;
       }
-      const selected = [current, alternate].find(
-        (item) => item?.id === dashboardDefaultId,
-      );
+      const selected =
+        [current, alternate].find((item) => item?.id === dashboardDefaultId) ??
+        createdDashboards.find((item) => item.id === dashboardDefaultId);
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
@@ -536,7 +584,7 @@ async function installDashboardApi(
         });
       }
       const archivedOnly = url.searchParams.get("deleted") === "only";
-      const visible = [current, alternate].filter(
+      const visible = [current, alternate, ...createdDashboards].filter(
         (item): item is DashboardWire =>
           item !== null && item.is_deleted === archivedOnly,
       );
@@ -565,7 +613,7 @@ async function installDashboardApi(
         gate.signalStarted();
         await gate.wait;
       }
-      const selected = [current, alternate].find(
+      const selected = [current, alternate, ...createdDashboards].find(
         (item) => item?.id === requestedDashboardId,
       );
       return selected
@@ -582,22 +630,23 @@ async function installDashboardApi(
     if (url.pathname === "/api/dashboards" && method === "POST") {
       const body = route.request().postDataJSON() as DashboardMutation;
       writes.push({ method, body, dashboardId: null });
-      current = dashboard({
+      const created = dashboard({
+        id:
+          current || alternate || createdDashboards.length
+            ? `00000000-0000-4000-8000-${String(1000 + createdDashboards.length).padStart(12, "0")}`
+            : dashboardId,
         name: body.name ?? "",
+        refresh_cadence: body.refresh_cadence ?? "manual",
         revision: 1,
-        widgets: (body.widgets ?? []).map((widget, index) => ({
-          id: `00000000-0000-4000-8000-${String(index + 201).padStart(12, "0")}`,
-          position: index,
-          widget_type: widget.widget_type,
-          config: widget.config,
-          created_at: timestamp,
-          updated_at: timestamp,
-        })),
+        widgets: persistedWidgets(body.widgets ?? []),
       });
+      if (current || alternate || createdDashboards.length)
+        createdDashboards.push(created);
+      else current = created;
       return route.fulfill({
         status: 201,
         contentType: "application/json",
-        body: JSON.stringify(current),
+        body: JSON.stringify(created),
       });
     }
     if (
@@ -625,17 +674,12 @@ async function installDashboardApi(
       current = {
         ...current,
         name: body.name ?? current.name,
+        refresh_cadence: body.refresh_cadence ?? current.refresh_cadence,
         revision: current.revision + 1,
         updated_at: timestamp,
-        widgets:
-          body.widgets?.map((widget, index) => ({
-            id: `00000000-0000-4000-8000-${String(index + 201).padStart(12, "0")}`,
-            position: index,
-            widget_type: widget.widget_type,
-            config: widget.config,
-            created_at: timestamp,
-            updated_at: timestamp,
-          })) ?? current.widgets,
+        widgets: body.widgets
+          ? persistedWidgets(body.widgets)
+          : current.widgets,
       };
       return route.fulfill({
         contentType: "application/json",
@@ -689,22 +733,38 @@ async function installDashboardApi(
     async (route: Route) => {
       const request = route.request().postDataJSON() as AggregateRequest;
       snapshots.push(request);
+      let delayedStatus: 403 | null = null;
       if (snapshotGate) {
         const gate = snapshotGate;
         snapshotGate = null;
+        delayedStatus = snapshotGateStatus;
+        snapshotGateStatus = null;
         gate.signalStarted();
         await gate.wait;
       }
-      if (failNextSnapshot) {
-        failNextSnapshot = false;
+      const status = delayedStatus ?? nextSnapshotErrorStatus;
+      if (status !== null) {
+        if (delayedStatus === null) {
+          snapshotErrorResponsesRemaining -= 1;
+          if (snapshotErrorResponsesRemaining === 0)
+            nextSnapshotErrorStatus = null;
+        }
         return route.fulfill({
-          status: 503,
+          status,
           contentType: "application/problem+json",
           body: JSON.stringify({
             type: "about:blank",
-            title: "Unavailable",
-            status: 503,
-            detail: "The aggregate snapshot is temporarily unavailable.",
+            title:
+              status === 401
+                ? "Unauthorized"
+                : status === 403
+                  ? "Forbidden"
+                  : "Unavailable",
+            status,
+            detail:
+              status === 503
+                ? "The aggregate snapshot is temporarily unavailable."
+                : "The current session cannot read this data.",
           }),
         });
       }
@@ -718,10 +778,66 @@ async function installDashboardApi(
       });
     },
   );
+  await page.route("**/api/records/query", async (route: Route) => {
+    const request = route.request().postDataJSON() as RecordQueryRequest;
+    recordQueries.push(request);
+    if (nextRecordQueryErrorStatus !== null) {
+      const status = nextRecordQueryErrorStatus;
+      recordQueryErrorResponsesRemaining -= 1;
+      if (recordQueryErrorResponsesRemaining === 0)
+        nextRecordQueryErrorStatus = null;
+      return route.fulfill({
+        status,
+        contentType: "application/problem+json",
+        body: JSON.stringify({
+          type: "about:blank",
+          title: status === 401 ? "Unauthorized" : "Forbidden",
+          status,
+          detail: "The current session cannot read these records.",
+        }),
+      });
+    }
+    const items = [
+      {
+        id: "00000000-0000-4000-8000-000000000201",
+        module_id: moduleId,
+        data: { [recordFieldId]: "Repair" },
+        created_at: timestamp,
+        updated_at: timestamp,
+        deleted_at: null,
+        is_deleted: false,
+        performed_by: userId,
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000202",
+        module_id: moduleId,
+        data: { [recordFieldId]: "Inspection" },
+        created_at: timestamp,
+        updated_at: timestamp,
+        deleted_at: null,
+        is_deleted: false,
+        performed_by: userId,
+      },
+    ];
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items,
+        pagination: {
+          limit: request.limit,
+          offset: request.offset,
+          count: items.length,
+          total: items.length,
+          has_more: false,
+        },
+      }),
+    });
+  });
 
   return {
     writes,
     snapshots,
+    recordQueries,
     dashboardReads,
     dashboardDefaultReads,
     dashboardDefaultWrites,
@@ -730,15 +846,28 @@ async function installDashboardApi(
       forceConflict = true;
     },
     failNextSnapshot() {
-      failNextSnapshot = true;
+      nextSnapshotErrorStatus = 503;
+      snapshotErrorResponsesRemaining = 1;
     },
-    holdNextSnapshot() {
+    failNextSnapshotWithStatus(status: 401 | 403) {
+      nextSnapshotErrorStatus = status;
+      snapshotErrorResponsesRemaining = status === 401 ? 2 : 1;
+    },
+    failNextRecordsWithStatus(status: 401 | 403) {
+      nextRecordQueryErrorStatus = status;
+      recordQueryErrorResponsesRemaining = status === 401 ? 2 : 1;
+    },
+    holdNextSnapshot(status: 403 | null = null) {
       const gate = requestGate();
       snapshotGate = gate;
+      snapshotGateStatus = status;
       return { started: gate.started, release: gate.release };
     },
     setSnapshotLength(length: number) {
       snapshotLength = length;
+    },
+    setRecordFieldId(id: string) {
+      recordFieldId = id;
     },
     setDashboardListHasMore(hasMore: boolean) {
       dashboardListHasMore = hasMore;
@@ -748,6 +877,9 @@ async function installDashboardApi(
     },
     setDashboardDefault(id: string | null) {
       dashboardDefaultId = id;
+    },
+    get dashboardDefaultId() {
+      return dashboardDefaultId;
     },
     failDashboardDefaultReads() {
       failDashboardDefaultReads = true;
@@ -803,7 +935,9 @@ async function tabTo(
   target: Locator,
   direction: "forward" | "backward" = "forward",
 ) {
-  const key = direction === "forward" ? "Tab" : "Shift+Tab";
+  const allControlsKey =
+    page.context().browser()?.browserType().name() === "webkit" ? "Alt+" : "";
+  const key = `${allControlsKey}${direction === "forward" ? "Tab" : "Shift+Tab"}`;
   for (let step = 0; step < 100; step += 1) {
     await page.keyboard.press(key);
     if (await target.evaluate((element) => element === document.activeElement))
@@ -850,6 +984,9 @@ test("private Dashboard supports mobile keyboard-only controls and survives relo
   await expect(
     page.getByRole("heading", { name: "Private dashboards" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "Session verification" }),
+  ).not.toBeVisible();
   await expectDashboardMainToFit(page);
 
   const savedDashboard = page.getByRole("button", { name: "Operations" });
@@ -889,7 +1026,7 @@ test("private Dashboard supports mobile keyboard-only controls and survives relo
   await tabTo(page, addChart);
   await expectVisibleKeyboardFocus(addChart);
   await page.keyboard.press("Enter");
-  await expect(page.getByText("1 of 12 chart widgets")).toBeVisible();
+  await expect(page.getByText("1 of 12 widgets")).toBeVisible();
   await expectDashboardMainToFit(page);
 
   const saveDashboard = page.getByRole("button", { name: "Save Dashboard" });
@@ -900,7 +1037,12 @@ test("private Dashboard supports mobile keyboard-only controls and survives relo
   const table = page.getByRole("table", {
     name: "Complete data for Count by Category",
   });
-  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("dashboard"))
+    .toBeTruthy();
+  const savedDashboardId = new URL(page.url()).searchParams.get("dashboard");
+  expect(savedDashboardId).toBeTruthy();
+  expect(savedDashboardId).not.toBe(dashboardId);
   await expect(
     page.getByRole("heading", { name: "Keyboard dashboard" }),
   ).toBeVisible();
@@ -926,7 +1068,7 @@ test("private Dashboard supports mobile keyboard-only controls and survives relo
   await expect
     .poll(() => api.snapshots.length)
     .toBeGreaterThan(snapshotsBeforeReload);
-  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
+  await expect(page).toHaveURL(new RegExp(`dashboard=${savedDashboardId}`));
   await expect(
     page.getByRole("heading", { name: "Keyboard dashboard" }),
   ).toBeVisible();
@@ -953,13 +1095,13 @@ test("private Dashboard saves ordered charts and reloads only the selected compl
   await page.getByRole("button", { name: "Add chart widget" }).click();
   await page.getByLabel("Group records by").selectOption(regionFieldId);
   await page.getByRole("button", { name: "Add chart widget" }).click();
-  await expect(page.getByText("2 of 12 chart widgets")).toBeVisible();
+  await expect(page.getByText("2 of 12 widgets")).toBeVisible();
   await page.getByRole("button", { name: "Move chart 2 up" }).click();
   await page.getByLabel("Group records by").selectOption(categoryFieldId);
   await page.getByRole("button", { name: "Add chart widget" }).click();
-  await expect(page.getByText("3 of 12 chart widgets")).toBeVisible();
+  await expect(page.getByText("3 of 12 widgets")).toBeVisible();
   await page.getByRole("button", { name: "Remove chart 3" }).click();
-  await expect(page.getByText("2 of 12 chart widgets")).toBeVisible();
+  await expect(page.getByText("2 of 12 widgets")).toBeVisible();
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
   await expect(
@@ -972,13 +1114,15 @@ test("private Dashboard saves ordered charts and reloads only the selected compl
   expect(api.writes[0]?.method).toBe("POST");
   expect(
     api.writes[0]?.body?.widgets?.map((widget) =>
-      widget.config.query.mode === "groups"
+      widget.widget_type !== "records" && widget.config.query.mode === "groups"
         ? widget.config.query.dimension.field_id
         : null,
     ),
   ).toEqual([regionFieldId, categoryFieldId]);
   expect(
-    api.writes[0]?.body?.widgets?.map((widget) => widget.config.query.measure),
+    api.writes[0]?.body?.widgets?.map((widget) =>
+      widget.widget_type === "records" ? null : widget.config.query.measure,
+    ),
   ).toEqual([null, null]);
   expect(api.snapshots).toHaveLength(1);
   expect(api.snapshots[0]).toMatchObject({
@@ -1023,7 +1167,7 @@ test("private Dashboard saves ordered charts and reloads only the selected compl
   api.failNextSnapshot();
   await page.getByRole("button", { name: "Refresh now" }).click();
   await expect(
-    page.getByText(/last successful snapshot remains visible/),
+    page.getByText(/last successful data remains visible/),
   ).toBeVisible();
   await expect(
     page
@@ -1091,7 +1235,7 @@ test("private Dashboard builder saves Count over time and reloads the complete d
   await page.getByLabel("End date").fill("2024-03-01");
   await expect(addLineChart).toBeEnabled();
   await addLineChart.click();
-  await expect(page.getByText("1 of 12 chart widgets")).toBeVisible();
+  await expect(page.getByText("1 of 12 widgets")).toBeVisible();
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
@@ -1123,7 +1267,12 @@ test("private Dashboard builder saves Count over time and reloads the complete d
       to_date: "2024-03-01",
     },
   });
-  expect(api.writes[0]?.body?.widgets?.[0]?.config.query.measure).toBeNull();
+  const savedWidget = api.writes[0]?.body?.widgets?.[0];
+  expect(
+    savedWidget && savedWidget.widget_type !== "records"
+      ? savedWidget.config.query.measure
+      : undefined,
+  ).toBeNull();
   expect(api.snapshots[0]).toMatchObject({
     mode: "date_series",
     module_id: moduleId,
@@ -1188,6 +1337,7 @@ test("Dashboard bar builder requires and saves a typed numeric measure for Sum",
   ).toBeVisible();
   expect(api.writes[0]?.body).toEqual({
     name: "Equipment totals",
+    refresh_cadence: "manual",
     widgets: [
       {
         widget_type: "chart",
@@ -1255,6 +1405,7 @@ test("private Dashboard Pie builder saves Sum and reloads its preview and comple
   await expect(table.locator("tbody tr")).toHaveCount(25);
   expect(api.writes[0]?.body).toEqual({
     name: "Equipment distribution",
+    refresh_cadence: "manual",
     widgets: [
       {
         widget_type: "chart",
@@ -1329,6 +1480,7 @@ test("Dashboard line builder requires and saves a typed numeric measure for Aver
   await expect(table.locator("tbody tr")).toHaveCount(2);
   expect(api.writes[0]?.body).toEqual({
     name: "Daily scores",
+    refresh_cadence: "manual",
     widgets: [
       {
         widget_type: "chart",
@@ -1397,7 +1549,7 @@ test("line chart builder blocks missing, reversed, and overlong date ranges", as
   await expect(addLineChart).toBeDisabled();
   await dateField.selectOption("");
   await expect(addLineChart).toBeDisabled();
-  await expect(page.getByText("0 of 12 chart widgets")).toBeVisible();
+  await expect(page.getByText("0 of 12 widgets")).toBeVisible();
   expect(api.writes).toHaveLength(0);
 });
 
@@ -1421,7 +1573,7 @@ test("stale Dashboard save keeps the name and ordered widget draft available", a
   await expect(page.getByLabel("Dashboard name")).toHaveValue(
     "Unsaved operations draft",
   );
-  await expect(page.getByText("1 of 12 chart widgets")).toBeVisible();
+  await expect(page.getByText("1 of 12 widgets")).toBeVisible();
   expect(api.writes).toHaveLength(1);
   expect(api.writes[0]?.method).toBe("PATCH");
 });
@@ -2005,4 +2157,447 @@ test("a delayed field page cannot corrupt pagination after switching modules", a
   } finally {
     gate.release();
   }
+});
+
+test("private Dashboard saves and reloads all four live widget types", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page);
+  await page.goto("/openview?section=dashboards");
+
+  await page.getByLabel("Dashboard name").fill("Live operations");
+  await page.getByLabel("Module").selectOption(moduleId);
+  await page.getByLabel("Refresh cadence").selectOption("one-minute");
+
+  await page.getByLabel("Widget type").selectOption("summary");
+  await page.getByRole("button", { name: "Add summary widget" }).click();
+  await page.getByLabel("Widget type").selectOption("workload");
+  await page.getByLabel("Aggregation").selectOption("sum");
+  await page.getByLabel("Numeric measure").selectOption(amountFieldId);
+  await page.getByLabel("Group records by").selectOption(regionFieldId);
+  await page.getByRole("button", { name: "Add workload widget" }).click();
+  await page.getByLabel("Widget type").selectOption("records");
+  await page.getByLabel("Display field").selectOption(categoryFieldId);
+  await page.getByRole("button", { name: "Add records widget" }).click();
+  await page.getByLabel("Widget type").selectOption("chart");
+  await page.getByLabel("Aggregation").selectOption("count");
+  await page.getByLabel("Group records by").selectOption(categoryFieldId);
+  await page.getByRole("button", { name: "Add chart widget" }).click();
+  await expect(page.getByText("4 of 12 widgets")).toBeVisible();
+  await page.getByRole("button", { name: "Save Dashboard" }).click();
+
+  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
+  expect(api.writes[0]?.body).toMatchObject({
+    name: "Live operations",
+    refresh_cadence: "one-minute",
+    widgets: [
+      { widget_type: "summary" },
+      { widget_type: "workload" },
+      { widget_type: "records" },
+      { widget_type: "chart" },
+    ],
+  });
+  await expect(page.getByText("Total records: 465")).toBeVisible();
+  expect(api.snapshots[0]).toMatchObject({
+    mode: "groups",
+    aggregation: "count",
+    dimension: { field_id: categoryFieldId },
+  });
+
+  await page.reload();
+  await expect(page.getByText("Total records: 465")).toBeVisible();
+  await page.getByRole("button", { name: /View workload 2/ }).click();
+  await expect(
+    page.getByRole("heading", { name: /Workload by Region/ }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: /View records 3/ }).click();
+  const recordsTable = page.getByRole("table", { name: "Live records" });
+  await expect(recordsTable.getByText("Repair")).toBeVisible();
+  await expect(recordsTable.getByText("Inspection")).toBeVisible();
+  expect(api.recordQueries.at(-1)).toMatchObject({
+    module_id: moduleId,
+    definition: {
+      columns: [{ field_id: categoryFieldId, expected_type: "select" }],
+    },
+    limit: 25,
+    offset: 0,
+  });
+  await page.getByRole("button", { name: /View chart 4/ }).click();
+  await expect(
+    page.getByRole("table", { name: "Complete data for Count by Category" }),
+  ).toBeVisible();
+});
+
+test("saved Record widget shows values for a field beyond the first catalog page after reload", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page);
+  const laterFieldId = delayedFieldId;
+  api.setFieldPages({
+    [moduleId]: {
+      firstPage: [
+        dataSourceField(categoryFieldId, moduleId, "Category", 0),
+        ...Array.from({ length: 99 }, (_, index) =>
+          dataSourceField(
+            `00000000-0000-4000-8000-${String(index + 301).padStart(12, "0")}`,
+            moduleId,
+            `Field ${index + 2}`,
+            index + 1,
+          ),
+        ),
+      ],
+      hasMore: true,
+      nextPage: [dataSourceField(laterFieldId, moduleId, "Later field", 100)],
+      nextPageHasMore: false,
+    },
+  });
+  api.setRecordFieldId(laterFieldId);
+  await page.goto("/openview?section=dashboards");
+
+  await page.getByLabel("Dashboard name").fill("Later field records");
+  await page.getByLabel("Module").selectOption(moduleId);
+  await page.getByLabel("Widget type").selectOption("records");
+  await page.getByRole("button", { name: "Load more fields" }).click();
+  await page.getByLabel("Display field").selectOption(laterFieldId);
+  await page.getByRole("button", { name: "Add records widget" }).click();
+  await page.getByRole("button", { name: "Save Dashboard" }).click();
+  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
+  expect(api.writes[0]?.body?.widgets?.[0]).toMatchObject({
+    widget_type: "records",
+    config: {
+      query: {
+        definition: {
+          columns: [{ field_id: laterFieldId, expected_type: "select" }],
+        },
+      },
+    },
+  });
+
+  await page.reload();
+  const recordsTable = page.getByRole("table", { name: "Live records" });
+  await expect(recordsTable).toBeVisible();
+  await expect(recordsTable.getByRole("columnheader")).toHaveCount(1);
+  await expect(
+    recordsTable.getByRole("cell", { name: "Repair" }),
+  ).toBeVisible();
+  await expect(
+    recordsTable.getByRole("cell", { name: "Inspection" }),
+  ).toBeVisible();
+});
+
+for (const status of [401, 403] as const) {
+  test(`clears a cached Dashboard chart after a ${status} refresh denial`, async ({
+    page,
+  }) => {
+    const api = await installDashboardApi(page, dashboard());
+    await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+    const table = page.getByRole("table", {
+      name: "Complete data for Count by Category",
+    });
+    await expect(table).toBeVisible();
+    api.failNextSnapshotWithStatus(status);
+    await page.getByRole("button", { name: "Refresh now" }).click();
+    await expect(table).toHaveCount(0);
+    await expect(
+      page.getByText(/last successful data remains visible/),
+    ).toHaveCount(0);
+  });
+}
+
+test("clears cached Dashboard record rows after a 401 refresh denial", async ({
+  page,
+}) => {
+  const recordWidget: DashboardWire["widgets"][number] = {
+    id: dashboardWidgetId,
+    position: 0,
+    widget_type: "records",
+    config: {
+      version: 1,
+      query: {
+        module_id: moduleId,
+        definition: {
+          ...queryDefinition,
+          columns: [{ field_id: categoryFieldId, expected_type: "select" }],
+        },
+      },
+    },
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  const api = await installDashboardApi(
+    page,
+    dashboard({ widgets: [recordWidget] }),
+  );
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  const table = page.getByRole("table", { name: "Live records" });
+  await expect(table.getByText("Repair")).toBeVisible();
+  api.failNextRecordsWithStatus(401);
+  await page.getByRole("button", { name: "Refresh now" }).click();
+  await expect(table).toHaveCount(0);
+});
+
+test("Dashboard cadence polls only while visible and ignores a hidden in-flight result", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await page.addInitScript(() => {
+    let visibility: DocumentVisibilityState = "visible";
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => visibility,
+    });
+    Object.defineProperty(window, "setTestVisibility", {
+      value: (next: DocumentVisibilityState) => {
+        visibility = next;
+        document.dispatchEvent(new Event("visibilitychange"));
+      },
+    });
+  });
+  const api = await installDashboardApi(
+    page,
+    dashboard({ refresh_cadence: "manual" }),
+  );
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  const table = page.getByRole("table", {
+    name: "Complete data for Count by Category",
+  });
+  await expect(table).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh now" })).toBeEnabled();
+  const stableClockTime = await page.evaluate(() => Date.now() + 60_000);
+  await page.clock.pauseAt(stableClockTime);
+  const manualSnapshotCount = api.snapshots.length;
+  await page.clock.fastForward(300_000);
+  expect(api.snapshots).toHaveLength(manualSnapshotCount);
+
+  await page.getByLabel("Refresh cadence").selectOption("one-minute");
+  await page.getByRole("button", { name: "Save Dashboard" }).click();
+  await expect(table).toBeVisible();
+  await expect(page.getByLabel("Refresh cadence")).toHaveValue("one-minute");
+  await expect(page.getByRole("button", { name: "Refresh now" })).toBeEnabled();
+  await expect
+    .poll(() => api.snapshots.length)
+    .toBeGreaterThan(manualSnapshotCount);
+  const initialSnapshotCount = api.snapshots.length;
+  expect(initialSnapshotCount).toBeGreaterThanOrEqual(1);
+
+  await page.clock.fastForward(59_999);
+  expect(api.snapshots).toHaveLength(initialSnapshotCount);
+  await page.clock.fastForward(1);
+  await expect.poll(() => api.snapshots.length).toBe(initialSnapshotCount + 1);
+  await expect(page.getByRole("button", { name: "Refresh now" })).toBeEnabled();
+  api.setSnapshotLength(2);
+  await page.clock.fastForward(59_999);
+  await page.clock.fastForward(1);
+  await expect.poll(() => api.snapshots.length).toBe(initialSnapshotCount + 2);
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+
+  api.setSnapshotLength(4);
+  const pending = api.holdNextSnapshot();
+  await page.clock.fastForward(60_000);
+  await pending.started;
+  await page.evaluate(() => {
+    const browserWindow = window as unknown as Window & {
+      setTestVisibility: (state: DocumentVisibilityState) => void;
+    };
+    browserWindow.setTestVisibility("hidden");
+  });
+  pending.release();
+  await page.clock.runFor(0);
+  await page.clock.fastForward(120_000);
+  expect(api.snapshots).toHaveLength(initialSnapshotCount + 3);
+
+  await page.evaluate(() => {
+    const browserWindow = window as unknown as Window & {
+      setTestVisibility: (state: DocumentVisibilityState) => void;
+    };
+    browserWindow.setTestVisibility("visible");
+  });
+  await expect(
+    page.getByRole("dialog", { name: "Session verification" }),
+  ).toHaveCount(0);
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  await page.clock.fastForward(59_999);
+  expect(api.snapshots).toHaveLength(initialSnapshotCount + 3);
+  await page.clock.fastForward(1);
+  await expect.poll(() => api.snapshots.length).toBe(initialSnapshotCount + 4);
+  await expect(table.locator("tbody tr")).toHaveCount(4);
+
+  await page.getByLabel("Refresh cadence").selectOption("five-minutes");
+  await page.getByRole("button", { name: "Save Dashboard" }).click();
+  await expect(table).toBeVisible();
+  await expect(page.getByLabel("Refresh cadence")).toHaveValue("five-minutes");
+  await expect(page.getByRole("button", { name: "Refresh now" })).toBeEnabled();
+  const fiveMinuteSnapshotCount = api.snapshots.length;
+  await page.clock.fastForward(299_999);
+  expect(api.snapshots).toHaveLength(fiveMinuteSnapshotCount);
+  await page.clock.fastForward(1);
+  await expect
+    .poll(() => api.snapshots.length)
+    .toBe(fiveMinuteSnapshotCount + 1);
+});
+
+test("a hidden pending Dashboard refresh cannot block a new visible refresh", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    let visibility: DocumentVisibilityState = "visible";
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => visibility,
+    });
+    Object.defineProperty(window, "setTestVisibility", {
+      value: (next: DocumentVisibilityState) => {
+        visibility = next;
+        document.dispatchEvent(new Event("visibilitychange"));
+      },
+    });
+  });
+  const api = await installDashboardApi(page, dashboard());
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  const table = page.getByRole("table", {
+    name: "Complete data for Count by Category",
+  });
+  await expect(table.locator("tbody tr")).toHaveCount(25);
+  const previousCount = api.snapshots.length;
+  const pending = api.holdNextSnapshot();
+
+  try {
+    await page.getByRole("button", { name: "Refresh now" }).click();
+    await pending.started;
+    await page.evaluate(() => {
+      const browserWindow = window as unknown as Window & {
+        setTestVisibility: (state: DocumentVisibilityState) => void;
+      };
+      browserWindow.setTestVisibility("hidden");
+      browserWindow.setTestVisibility("visible");
+    });
+    await expect(
+      page.getByRole("button", { name: "Refresh now" }),
+    ).toBeEnabled();
+    api.setSnapshotLength(2);
+    await page.getByRole("button", { name: "Refresh now" }).click();
+    await expect.poll(() => api.snapshots.length).toBe(previousCount + 2);
+    await expect(table.locator("tbody tr")).toHaveCount(2);
+
+    api.setSnapshotLength(4);
+    pending.release();
+    await expect(table.locator("tbody tr")).toHaveCount(2);
+  } finally {
+    pending.release();
+  }
+});
+
+for (const requestPath of ["initial load", "manual refresh"] as const) {
+  test(`a stale ${requestPath} denial cannot clear a newer Dashboard snapshot`, async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      let visibility: DocumentVisibilityState = "visible";
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => visibility,
+      });
+      Object.defineProperty(window, "setTestVisibility", {
+        value: (next: DocumentVisibilityState) => {
+          visibility = next;
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      });
+    });
+    const api = await installDashboardApi(page, dashboard());
+    let pending =
+      requestPath === "initial load" ? api.holdNextSnapshot(403) : null;
+    await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+    const table = page.getByRole("table", {
+      name: "Complete data for Count by Category",
+    });
+
+    if (requestPath === "manual refresh") {
+      await expect(table.locator("tbody tr")).toHaveCount(25);
+      pending = api.holdNextSnapshot(403);
+      await page.getByRole("button", { name: "Refresh now" }).click();
+    }
+    if (!pending) throw new Error("A stale request gate was not installed.");
+
+    try {
+      await pending.started;
+      await page.evaluate(() => {
+        const browserWindow = window as unknown as Window & {
+          setTestVisibility: (state: DocumentVisibilityState) => void;
+        };
+        browserWindow.setTestVisibility("hidden");
+        browserWindow.setTestVisibility("visible");
+      });
+      await expect(
+        page.getByRole("button", { name: "Refresh now" }),
+      ).toBeEnabled();
+      api.setSnapshotLength(2);
+      await page.getByRole("button", { name: "Refresh now" }).click();
+      await expect(table.locator("tbody tr")).toHaveCount(2);
+
+      const deniedResponse = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname ===
+            "/api/records/aggregate-snapshot" && response.status() === 403,
+      );
+      pending.release();
+      await deniedResponse;
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
+      await expect(table.locator("tbody tr")).toHaveCount(2);
+      await expect(
+        page.getByText("The current session cannot read this data."),
+      ).toHaveCount(0);
+    } finally {
+      pending.release();
+    }
+  });
+}
+
+test("duplicating a Dashboard creates an independent copy and keeps the source default", async ({
+  page,
+}) => {
+  const source = dashboard({ refresh_cadence: "five-minutes" });
+  const api = await installDashboardApi(page, source);
+  api.setDashboardDefault(dashboardId);
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Duplicate Dashboard" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Copy of Operations" }),
+  ).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("dashboard"))
+    .not.toBe(dashboardId);
+  const duplicateId = new URL(page.url()).searchParams.get("dashboard");
+  expect(duplicateId).toBeTruthy();
+  expect(duplicateId).not.toBe(dashboardId);
+  expect(api.writes).toHaveLength(1);
+  expect(api.writes[0]).toMatchObject({
+    method: "POST",
+    dashboardId: null,
+    body: {
+      name: "Copy of Operations",
+      refresh_cadence: "five-minutes",
+      widgets: [{ widget_type: "chart" }],
+    },
+  });
+  expect(api.dashboardDefaultId).toBe(dashboardId);
+  await expect(page.getByText("Default", { exact: true })).toBeVisible();
+
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Copy of Operations" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: /Operations/ })
+    .first()
+    .click();
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
+  expect(api.dashboardDefaultId).toBe(dashboardId);
 });

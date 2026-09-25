@@ -1,4 +1,8 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const moduleId = "00000000-0000-4000-8000-000000000010";
@@ -182,6 +186,7 @@ async function installViewsApi(
     calendarDateTimeValue?: string;
   } = {},
 ) {
+  await installOpenViewEventSource(page);
   let saved = baseView();
   if (options.initialName) saved = { ...saved, name: options.initialName };
   if (options.disableInitialSearch)
@@ -299,6 +304,7 @@ async function installViewsApi(
   }[] = [];
   const windowQueryRequests: Record<string, unknown>[] = [];
   let failNextWindowQuery = false;
+  let denyRecordQueries = false;
   let deniedRecordId: string | null = null;
   let nextRecordLookupBarrier: {
     wait: Promise<void>;
@@ -706,6 +712,13 @@ async function installViewsApi(
       offset?: number;
     };
     recordQueryRequests.push(body);
+    if (denyRecordQueries) {
+      return route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Forbidden" }),
+      });
+    }
     const search = body.definition.search?.toLowerCase() ?? "";
     if (nextRecordLookupBarrier && search.includes("-")) {
       const barrier = nextRecordLookupBarrier;
@@ -918,6 +931,8 @@ async function installViewsApi(
   });
   return {
     requests: apiRequests,
+    triggerInvalidation: (entity: string) =>
+      sendOpenViewEvent(page, "invalidate", { entity }),
     makeNextPatchStale: () => {
       nextPatchIsStale = true;
     },
@@ -937,9 +952,23 @@ async function installViewsApi(
       return { started, release: releasePatch };
     },
     saved: () => saved,
+    changeSavedViewElsewhere: (search: string) => {
+      saved = {
+        ...saved,
+        revision: saved.revision + 1,
+        definition: { ...saved.definition, search },
+        updated_at: new Date().toISOString(),
+      };
+    },
     createdViews: () => createdViews,
     personalDefault: () => personalDefault,
+    changePersonalDefaultElsewhere: (viewId: string) => {
+      personalDefault = viewId;
+    },
     recordQueryRequests,
+    denyRecordQueries() {
+      denyRecordQueries = true;
+    },
     denyRecordId: (id: string) => {
       deniedRecordId = id;
     },
@@ -2192,12 +2221,23 @@ test("Views inspector follows the filtered page in both directions and reopens s
   expect(resultOffsets.at(-1)).toBe(0);
   expect(api.saved().definition.search).toBeNull();
 
-  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], {
-    origin: new URL(page.url()).origin,
+  await page.evaluate(() => {
+    const copiedWindow = window as Window & { copiedSafeLink?: string };
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (value: string) => {
+          copiedWindow.copiedSafeLink = value;
+        },
+      },
+    });
   });
   await inspector.getByRole("button", { name: "Copy safe link" }).click();
-  const copiedLink = await page.evaluate(() => navigator.clipboard.readText());
+  const copiedLink = await page.evaluate(
+    () => (window as Window & { copiedSafeLink?: string }).copiedSafeLink,
+  );
   expect(copiedLink).toBe(page.url());
+  if (!copiedLink) throw new Error("The safe link was not copied");
   const copiedUrl = new URL(copiedLink);
   expect([...copiedUrl.searchParams.keys()]).toEqual([
     "section",
@@ -2359,6 +2399,17 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
   });
   expect(api.recordQueryRequests).toHaveLength(0);
 
+  const groupedRequestsBeforeInvalidation = api.groupedQueryRequests.length;
+  await api.triggerInvalidation("records");
+  await expect
+    .poll(() => api.groupedQueryRequests.length)
+    .toBe(groupedRequestsBeforeInvalidation + 1);
+  expect(api.groupedQueryRequests.at(-1)).toMatchObject({
+    offset: 25,
+    group_offset: 12,
+    selected_group: { kind: "value", value: "In service" },
+  });
+
   const linkedRecordId = "00000000-0000-4000-8000-000000000125";
   const groupedRequestCount = api.groupedQueryRequests.length;
   await laneRecords
@@ -2455,6 +2506,212 @@ test("Calendar displays workspace-local window matches, pages results, and retri
   });
 });
 
+test("saved Calendar range and Month/List scale drive and persist the live layouts", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page, {
+    initialLayout: "calendar",
+    initialPresentation: { date_range: "quarter", scale: null },
+  });
+
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await expect(page.getByLabel("Calendar date range")).toHaveValue("quarter");
+  await expect(page.getByLabel("Calendar scale")).toHaveValue("month");
+  await expect(
+    page.getByRole("region", { name: "Calendar", exact: true }),
+  ).toBeVisible();
+
+  await page.getByLabel("Calendar date range").selectOption("year");
+  await page.getByLabel("Calendar scale").selectOption("list");
+  await expect(
+    page.getByRole("region", { name: "Calendar list view" }),
+  ).toBeVisible();
+  await expect
+    .poll(() => api.windowQueryRequests.at(-1)?.from_date)
+    .toMatch(/^\d{4}-01-01$/);
+  await expect
+    .poll(() => api.windowQueryRequests.at(-1)?.to_date)
+    .toMatch(/^\d{4}-12-31$/);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => api.saved().presentation.date_range).toBe("year");
+  await expect.poll(() => api.saved().presentation.scale).toBe("list");
+
+  await page.reload();
+  await expect(page.getByLabel("Calendar date range")).toHaveValue("year");
+  await expect(page.getByLabel("Calendar scale")).toHaveValue("list");
+  await expect(
+    page.getByRole("region", { name: "Calendar list view" }),
+  ).toBeVisible();
+
+  await page.getByLabel("Calendar scale").selectOption("month");
+  await expect(
+    page.getByRole("region", { name: "Calendar", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => api.saved().presentation.scale).toBe("month");
+  await page.reload();
+  await expect(page.getByLabel("Calendar scale")).toHaveValue("month");
+  await expect(
+    page.getByRole("region", { name: "Calendar", exact: true }),
+  ).toBeVisible();
+});
+
+test("OpenView invalidations refresh Views while preserving dirty edits and clear denied records", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page, { initialLayout: "table" });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+
+  const search = page.getByLabel("Search Equipment");
+  await search.fill("compressor");
+  await expect(page.getByText("Compressor 01")).toBeVisible();
+  await expect
+    .poll(() => api.recordQueryRequests.at(-1)?.definition.search)
+    .toBe("compressor");
+  const viewReadsBefore = api.requests.filter((request) =>
+    request.startsWith("GET /api/views?"),
+  ).length;
+
+  api.saved().name = "Changed in another session";
+  await api.triggerInvalidation("saved_views");
+  await expect
+    .poll(
+      () =>
+        api.requests.filter((request) => request.startsWith("GET /api/views?"))
+          .length,
+    )
+    .toBeGreaterThan(viewReadsBefore);
+  await expect(search).toHaveValue("compressor");
+
+  const recordQueriesBefore = api.recordQueryRequests.length;
+  await api.triggerInvalidation("records");
+  await expect
+    .poll(() => api.recordQueryRequests.length)
+    .toBeGreaterThan(recordQueriesBefore);
+  await expect(search).toHaveValue("compressor");
+
+  const deniedQueriesBefore = api.recordQueryRequests.length;
+  api.denyRecordQueries();
+  await api.triggerInvalidation("records");
+  await expect
+    .poll(() => api.recordQueryRequests.length)
+    .toBeGreaterThan(deniedQueriesBefore);
+  await expect(page.getByText("Compressor 01")).toHaveCount(0);
+  await expect(search).toHaveValue("compressor");
+  await expect(
+    page.getByRole("alert").filter({ hasText: /no longer have access/i }),
+  ).toBeVisible();
+});
+
+test("default invalidation keeps an implicit selected view and its dirty draft anchored", async ({
+  page,
+}) => {
+  const otherView = {
+    ...baseView(),
+    id: secondViewId,
+    name: "Other register",
+    definition: { ...baseView().definition, search: "panel" },
+  };
+  const api = await installViewsApi(page, {
+    initialDefault: true,
+    additionalViews: [otherView],
+  });
+  await page.goto(`/openview?section=views&module=${moduleId}`);
+  const selected = page.getByRole("combobox", { name: "Saved view" });
+  await expect(selected).toHaveValue(viewId);
+  const search = page.getByRole("textbox", { name: "Search Equipment" });
+  await search.fill("compressor");
+  await expect(search).toHaveValue("compressor");
+
+  api.changePersonalDefaultElsewhere(secondViewId);
+  const defaultsReadCount = api.requests.filter((request) =>
+    request.startsWith("GET /api/views/defaults"),
+  ).length;
+  await api.triggerInvalidation("saved_view_defaults");
+  await expect
+    .poll(
+      () =>
+        api.requests.filter((request) =>
+          request.startsWith("GET /api/views/defaults"),
+        ).length,
+    )
+    .toBeGreaterThan(defaultsReadCount);
+  await expect(
+    selected.locator(`option[value="${secondViewId}"]`),
+  ).toContainText("default");
+  await expect(selected).toHaveValue(viewId);
+  await expect(search).toHaveValue("compressor");
+  await expect(
+    page.getByRole("button", { name: "Save changes" }),
+  ).toBeEnabled();
+  await expect(page).not.toHaveURL(new RegExp(`[?&]view=${secondViewId}`));
+});
+
+test("default invalidation follows the new default after an implicit draft is reverted", async ({
+  page,
+}) => {
+  const otherView = {
+    ...baseView(),
+    id: secondViewId,
+    name: "Other register",
+    definition: { ...baseView().definition, search: "panel" },
+  };
+  const api = await installViewsApi(page, {
+    initialDefault: true,
+    additionalViews: [otherView],
+  });
+  await page.goto(`/openview?section=views&module=${moduleId}`);
+  const selected = page.getByRole("combobox", { name: "Saved view" });
+  const search = page.getByRole("textbox", { name: "Search Equipment" });
+  await expect(selected).toHaveValue(viewId);
+  await search.fill("compressor");
+  await search.fill("pump");
+  await expect(search).toHaveValue("pump");
+
+  api.changePersonalDefaultElsewhere(secondViewId);
+  await api.triggerInvalidation("saved_view_defaults");
+  await expect(
+    selected.locator(`option[value="${secondViewId}"]`),
+  ).toContainText("default");
+  await expect(selected).toHaveValue(secondViewId);
+  await expect(search).toHaveValue("panel");
+});
+
+for (const localAction of ["revert", "save"] as const) {
+  test(`same-view invalidation refreshes a clean implicit editor after local ${localAction}`, async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, { initialDefault: true });
+    await page.goto(`/openview?section=views&module=${moduleId}`);
+    const selected = page.getByRole("combobox", { name: "Saved view" });
+    const search = page.getByRole("textbox", { name: "Search Equipment" });
+    await expect(selected).toHaveValue(viewId);
+    await search.fill("compressor");
+    if (localAction === "revert") {
+      await search.fill("pump");
+    } else {
+      await page.getByRole("button", { name: "Save changes" }).click();
+      await expect.poll(() => api.saved().definition.search).toBe("compressor");
+    }
+    await expect(
+      page.getByRole("button", { name: "Save changes" }),
+    ).toHaveCount(0);
+
+    api.changeSavedViewElsewhere("panel");
+    await api.triggerInvalidation("saved_views");
+    await expect(selected).toHaveValue(viewId);
+    await expect(search).toHaveValue("panel");
+    await expect(page.getByText("Cooling panel 02")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Save changes" }),
+    ).toHaveCount(0);
+    await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+    await expect(
+      page.getByText(`Revision ${api.saved().revision}`),
+    ).toBeVisible();
+  });
+}
+
 test.describe("Calendar DATETIME rendering in a non-UTC browser timezone", () => {
   test.use({ timezoneId: "America/Los_Angeles" });
 
@@ -2474,7 +2731,9 @@ test.describe("Calendar DATETIME rendering in a non-UTC browser timezone", () =>
     await expect(
       page.getByRole("heading", { name: "Sep 1, 2026" }).first(),
     ).toBeVisible();
-    await expect(page.getByText("Sep 1, 2026, 6:00 PM").first()).toBeVisible();
+    await expect(
+      page.getByText(/Sep 1, 2026(?:,| at) 6:00 PM/).first(),
+    ).toBeVisible();
     expect(api.windowQueryRequests.at(-1)).toMatchObject({
       mode: "calendar",
       scope: "window",
@@ -2559,6 +2818,16 @@ test("Timeline renders complete intervals and keeps unscheduled records separate
     mode: "timeline",
     scope: "unscheduled",
   });
+  const timelineRequestsBeforeInvalidation = api.windowQueryRequests.length;
+  await api.triggerInvalidation("records");
+  await expect
+    .poll(() => api.windowQueryRequests.length)
+    .toBe(timelineRequestsBeforeInvalidation + 1);
+  expect(api.windowQueryRequests.at(-1)).toMatchObject({
+    mode: "timeline",
+    scope: "unscheduled",
+  });
+  await expect(openRecord).toBeVisible();
   await openRecord.click();
   await expect(page).toHaveURL(new RegExp(`record=${recordTwoId}`));
   await expect(page.getByText("Showing this linked record.")).toBeVisible();
@@ -2583,7 +2852,7 @@ test("Timeline accepts a DATETIME deadline alongside DATE interval fields", asyn
       .filter({ hasText: "“Equipment register” was saved." }),
   ).toBeVisible();
   await expect(
-    page.getByText("Deadline: Sep 7, 2026, 2:30 AM").first(),
+    page.getByText(/Deadline: Sep 7, 2026(?:,| at) 2:30 AM/).first(),
   ).toBeVisible();
   expect(api.saved().presentation).toMatchObject({
     timeline_start_field_id: timelineStartFieldId,

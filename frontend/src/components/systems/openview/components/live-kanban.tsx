@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ApiError } from "@/lib/api";
 import {
   queryOpenViewGroupedRecords,
   type OpenViewGroupSelector,
@@ -20,6 +21,7 @@ type GroupedPage = Awaited<ReturnType<typeof queryOpenViewGroupedRecords>>;
 type LiveKanbanProps = {
   moduleId: string;
   definition: OpenViewQueryDefinition;
+  refreshKey?: number;
   groupByFieldId: string;
   groupByFieldType: OpenViewDataSourceField["type"];
   fields: readonly OpenViewDataSourceField[];
@@ -206,6 +208,7 @@ function LinkedRecordSummary({
 export function LiveKanban({
   moduleId,
   definition,
+  refreshKey = 0,
   groupByFieldId,
   groupByFieldType,
   fields,
@@ -236,6 +239,7 @@ export function LiveKanban({
         selectedGroup: groupKey(selectedGroup),
         recordOffset,
         retry,
+        refreshKey,
       }),
     [
       definition,
@@ -244,6 +248,7 @@ export function LiveKanban({
       groupOffset,
       moduleId,
       recordOffset,
+      refreshKey,
       retry,
       selectedGroup,
     ],
@@ -270,12 +275,16 @@ export function LiveKanban({
       })
       .catch((error: unknown) => {
         if (request !== requestSequence.current) return;
+        const denied =
+          error instanceof ApiError && [401, 403].includes(error.status);
+        if (denied) lastGoodPage.current = null;
         setSnapshot({
           key: requestKey,
-          page: lastGoodPage.current,
+          page: denied ? null : lastGoodPage.current,
           loading: false,
-          error:
-            error instanceof Error && error.message
+          error: denied
+            ? "You no longer have access to these records. Sign in or ask for access, then retry."
+            : error instanceof Error && error.message
               ? error.message
               : "Kanban lanes could not be loaded.",
         });
@@ -290,6 +299,7 @@ export function LiveKanban({
     groupOffset,
     moduleId,
     recordOffset,
+    refreshKey,
     requestKey,
     selectedGroup,
   ]);

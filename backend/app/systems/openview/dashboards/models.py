@@ -28,6 +28,10 @@ class Dashboard(BaseModel):
     __table_args__ = (
         CheckConstraint("length(btrim(name)) > 0", name="ck_dashboards_name_nonempty"),
         CheckConstraint("revision > 0", name="ck_dashboards_revision_positive"),
+        CheckConstraint(
+            "refresh_cadence IN ('manual', 'one-minute', 'five-minutes')",
+            name="ck_dashboards_refresh_cadence",
+        ),
         UniqueConstraint("id", "owner_id", name="uq_dashboards_id_owner"),
         Index("ix_dashboards_owner_id", "owner_id"),
     )
@@ -36,6 +40,9 @@ class Dashboard(BaseModel):
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    refresh_cadence: Mapped[str] = mapped_column(
+        String(20), default="manual", server_default=text("'manual'"), nullable=False
+    )
     revision: Mapped[int] = mapped_column(
         Integer, default=1, server_default=text("1"), nullable=False
     )
@@ -52,7 +59,10 @@ class DashboardWidget(BaseModel):
     __tablename__ = "dashboard_widgets"
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"config"})
     __table_args__ = (
-        CheckConstraint("widget_type = 'chart'", name="ck_dashboard_widgets_type"),
+        CheckConstraint(
+            "widget_type IN ('summary', 'workload', 'records', 'chart')",
+            name="ck_dashboard_widgets_type",
+        ),
         CheckConstraint(
             "position >= 0 AND position < 12", name="ck_dashboard_widgets_position"
         ),

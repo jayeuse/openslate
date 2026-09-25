@@ -1,7 +1,13 @@
 "use client";
 
 import { Download, Printer } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +17,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldDescription,
@@ -19,6 +26,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   Table,
@@ -30,6 +38,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { serializeCsv } from "@/lib/csv";
+import {
+  getOpenViewChartPreferences,
+  putOpenViewChartPreferences,
+  type OpenViewChartPreferenceConfig,
+} from "../adapters/chart-preferences-api";
+import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
 import {
   queryOpenViewAggregateSnapshot,
   type OpenViewAggregateSnapshotRequest,
@@ -47,6 +61,7 @@ import { OpenViewChartPreview } from "./chart-preview";
 
 type ChartType = "bar" | "line" | "pie";
 type Aggregation = OpenViewAggregateSnapshotRequest["aggregation"];
+type FilterLogic = OpenViewChartPreferenceConfig["filterLogic"];
 type FilterOperator = OpenViewQueryDefinition["filters"][number]["operator"];
 type FilterDraft = {
   id: number;
@@ -56,6 +71,7 @@ type FilterDraft = {
 };
 type AppliedSnapshot = {
   result: OpenViewAggregateSnapshotResult;
+  request: OpenViewAggregateSnapshotRequest;
   sourceName: string;
   chartType: ChartType;
   labelName: string;
@@ -93,6 +109,13 @@ const COMMON_FILTER_OPERATORS: FilterOperator[] = [
 function messageFor(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
+
+function isAuthorizationDenied(error: unknown): boolean {
+  return error instanceof ApiError && [401, 403].includes(error.status);
+}
+
+const AUTHORIZATION_ERROR =
+  "Chart data is unavailable. Sign in or ask for access, then retry.";
 
 function isNumericField(field: OpenViewDataSourceField): boolean {
   return NUMERIC_TYPES.has(field.type);
@@ -266,6 +289,16 @@ export default function ServerBackedCharts() {
   const [fieldsHasMore, setFieldsHasMore] = useState(false);
   const [fieldsNextOffset, setFieldsNextOffset] = useState(0);
   const [fieldsRetry, setFieldsRetry] = useState(0);
+  const [preferenceConfig, setPreferenceConfig] =
+    useState<OpenViewChartPreferenceConfig | null>(null);
+  const [preferencesLoading, setPreferencesLoading] = useState(true);
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
+  const [preferencesRetry, setPreferencesRetry] = useState(0);
+  const [preferencesError, setPreferencesError] = useState("");
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [preferencesNotice, setPreferencesNotice] = useState("");
+  const [settingsDenied, setSettingsDenied] = useState(false);
+  const [invalidationRevision, setInvalidationRevision] = useState(0);
   const [chartType, setChartType] = useState<ChartType>("bar");
   const [dimensionId, setDimensionId] = useState("");
   const [dateFieldId, setDateFieldId] = useState("");
@@ -275,11 +308,133 @@ export default function ServerBackedCharts() {
   const [toDate, setToDate] = useState("");
   const [top, setTop] = useState("");
   const [filters, setFilters] = useState<FilterDraft[]>([]);
+  const [filterLogic, setFilterLogic] = useState<FilterLogic>("and");
+  const [showLegend, setShowLegend] = useState(true);
+  const [showValues, setShowValues] = useState(true);
   const [filterSequence, setFilterSequence] = useState(0);
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryError, setQueryError] = useState("");
   const [applied, setApplied] = useState<AppliedSnapshot | null>(null);
   const [tablePage, setTablePage] = useState(0);
+  const appliedRef = useRef<AppliedSnapshot | null>(null);
+  const appliedRequestSequence = useRef(0);
+  const consumedInvalidationRevision = useRef(0);
+  const hydratedPreferenceKey = useRef("");
+  const preferredSourceResolved = useRef(false);
+
+  useEffect(() => {
+    appliedRef.current = applied;
+  }, [applied]);
+
+  useEffect(() => {
+    let active = true;
+    setPreferencesLoading(true);
+    setPreferencesError("");
+    void getOpenViewChartPreferences()
+      .then(({ config }) => {
+        if (!active) return;
+        setPreferencesLoaded(true);
+        setPreferenceConfig(config);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setPreferencesLoaded(false);
+        if (isAuthorizationDenied(error)) {
+          setSettingsDenied(true);
+          setApplied(null);
+          appliedRef.current = null;
+          setQueryError(AUTHORIZATION_ERROR);
+          setPreferencesError(
+            "Chart settings are unavailable. Sign in or ask for access, then retry.",
+          );
+        } else {
+          setPreferencesError(
+            formatError(error, "Saved chart settings could not be loaded."),
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setPreferencesLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [preferencesRetry]);
+
+  useEffect(() => {
+    return subscribeOpenViewInvalidations((event) => {
+      const relevant =
+        event.type === "resync" ||
+        [
+          "records",
+          "relationships",
+          "fields",
+          "modules",
+          "departments",
+          "workspace_profiles",
+        ].includes(event.entity);
+      if (!relevant) return;
+      setInvalidationRevision((value) => value + 1);
+      if (
+        event.type === "resync" ||
+        ["fields", "modules", "departments", "workspace_profiles"].includes(
+          event.entity,
+        )
+      ) {
+        setCatalogRetry((value) => value + 1);
+        setFieldsRetry((value) => value + 1);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (preferencesLoading || sourcesLoading || preferredSourceResolved.current)
+      return;
+    preferredSourceResolved.current = true;
+    const preferredSource = preferenceConfig
+      ? sources.find((source) => source.id === preferenceConfig.moduleId)
+      : undefined;
+    if (preferredSource) setModuleId(preferenceConfig!.moduleId);
+    else if (preferenceConfig)
+      setPreferencesError(
+        "Saved chart settings refer to a data source you can no longer access.",
+      );
+  }, [preferenceConfig, preferencesLoading, sources, sourcesLoading]);
+
+  useEffect(() => {
+    if (
+      preferencesLoading ||
+      !preferenceConfig ||
+      preferenceConfig.moduleId !== moduleId ||
+      fieldsForModule !== moduleId
+    )
+      return;
+    const key = JSON.stringify(preferenceConfig);
+    if (hydratedPreferenceKey.current === key) return;
+    hydratedPreferenceKey.current = key;
+    setChartType(preferenceConfig.chartType);
+    setDimensionId(preferenceConfig.dimensionId ?? "");
+    setDateFieldId(preferenceConfig.dateFieldId ?? "");
+    setAggregation(preferenceConfig.aggregation);
+    setMeasureId(preferenceConfig.measureId ?? "");
+    setFilterLogic(preferenceConfig.filterLogic);
+    setFromDate(preferenceConfig.fromDate ?? "");
+    setToDate(preferenceConfig.toDate ?? "");
+    setTop(preferenceConfig.top?.toString() ?? "");
+    setShowLegend(preferenceConfig.showLegend);
+    setShowValues(preferenceConfig.showValues);
+    setFilters(
+      preferenceConfig.filters.map((filter, index) => ({
+        id: index,
+        fieldId: filter.fieldId,
+        operator: filter.operator,
+        value: Array.isArray(filter.value)
+          ? filter.value.join(", ")
+          : String(filter.value ?? ""),
+      })),
+    );
+    setFilterSequence(preferenceConfig.filters.length);
+  }, [fieldsForModule, moduleId, preferenceConfig, preferencesLoading]);
 
   useEffect(() => {
     let active = true;
@@ -298,6 +453,18 @@ export default function ServerBackedCharts() {
         );
       })
       .catch((error: unknown) => {
+        if (active && isAuthorizationDenied(error)) {
+          setSources([]);
+          setSourcesHasMore(false);
+          setSourcesNextOffset(0);
+          setFields([]);
+          setFieldsForModule("");
+          setApplied(null);
+          appliedRef.current = null;
+          setQueryError(AUTHORIZATION_ERROR);
+          setSourcesError(AUTHORIZATION_ERROR);
+          return;
+        }
         if (active)
           setSourcesError(
             formatError(
@@ -337,6 +504,15 @@ export default function ServerBackedCharts() {
         setFieldsNextOffset(page.pagination.count);
       })
       .catch((error: unknown) => {
+        if (active && isAuthorizationDenied(error)) {
+          setFields([]);
+          setFieldsForModule("");
+          setApplied(null);
+          appliedRef.current = null;
+          setQueryError(AUTHORIZATION_ERROR);
+          setFieldsError(AUTHORIZATION_ERROR);
+          return;
+        }
         if (active)
           setFieldsError(
             formatError(error, "The data-source fields could not be loaded."),
@@ -359,16 +535,24 @@ export default function ServerBackedCharts() {
   );
   const numericFields = moduleFields.filter(isNumericField);
   const filterFields = moduleFields;
+  const dateSeries = chartType === "line";
   const selectedDimension =
     categoryFields.find((field) => field.id === dimensionId) ??
     categoryFields[0];
   const selectedDateField =
-    dateFields.find((field) => field.id === dateFieldId) ?? dateFields[0];
+    dateFields.find((field) => field.id === dateFieldId) ??
+    (dateSeries ? dateFields[0] : undefined);
   const selectedMeasure =
     numericFields.find((field) => field.id === measureId) ?? numericFields[0];
-  const dateSeries = chartType === "line";
   const requestedDays = dateWindowDays(fromDate, toDate);
   const dateWindowValid = requestedDays >= 1 && requestedDays <= 366;
+  const categoricalDateWindowSelected = Boolean(
+    !dateSeries && (fromDate || toDate),
+  );
+  const dateWindowReady = dateSeries
+    ? Boolean(selectedDateField && dateWindowValid)
+    : !categoricalDateWindowSelected ||
+      Boolean(selectedDateField && dateWindowValid);
 
   const filterValidation = filters.find((filter) => {
     const field = filterFields.find(
@@ -389,23 +573,77 @@ export default function ServerBackedCharts() {
     !fieldsLoading &&
     !fieldsError &&
     moduleFields.length > 0 &&
-    (dateSeries ? selectedDateField && dateWindowValid : selectedDimension) &&
+    (dateSeries ? selectedDateField && dateWindowReady : selectedDimension) &&
+    dateWindowReady &&
     (aggregation === "count" || selectedMeasure) &&
     !filterValidation &&
     !queryLoading,
   );
 
+  const preferenceConfigDraft: OpenViewChartPreferenceConfig | null =
+    moduleId &&
+    sources.some((source) => source.id === moduleId) &&
+    fieldsForModule === moduleId &&
+    !filterValidation &&
+    dateWindowReady &&
+    (dateSeries ? selectedDateField && dateWindowValid : selectedDimension) &&
+    (aggregation === "count" || selectedMeasure)
+      ? {
+          version: 1,
+          moduleId,
+          chartType,
+          dimensionId: dateSeries ? null : selectedDimension!.id,
+          dateFieldId: selectedDateField?.id ?? null,
+          aggregation,
+          measureId: aggregation === "count" ? null : selectedMeasure!.id,
+          filterLogic,
+          filters: filters.map((filter) => {
+            const field = filterFields.find(
+              (candidate) => candidate.id === filter.fieldId,
+            )!;
+            return {
+              fieldId: field.id,
+              expectedType: field.type,
+              operator: filter.operator,
+              ...(EMPTY_OPERATORS.has(filter.operator)
+                ? {}
+                : { value: scalarForFilter(field, filter.value) }),
+            };
+          }),
+          fromDate:
+            dateSeries || categoricalDateWindowSelected ? fromDate : null,
+          toDate: dateSeries || categoricalDateWindowSelected ? toDate : null,
+          top: dateSeries
+            ? null
+            : top
+              ? (Number(top) as NonNullable<
+                  OpenViewChartPreferenceConfig["top"]
+                >)
+              : null,
+          showLegend,
+          showValues,
+        }
+      : null;
+
   const draftSignature = JSON.stringify({
     moduleId,
     chartType,
     dimensionId: dateSeries ? null : selectedDimension?.id,
-    dateFieldId: dateSeries ? selectedDateField?.id : null,
+    dateFieldId: selectedDateField?.id ?? null,
     aggregation,
     measureId: aggregation === "count" ? null : selectedMeasure?.id,
-    fromDate: dateSeries ? fromDate : null,
-    toDate: dateSeries ? toDate : null,
+    filterLogic,
+    fromDate: dateSeries || categoricalDateWindowSelected ? fromDate : null,
+    toDate: dateSeries || categoricalDateWindowSelected ? toDate : null,
     filters,
+    top: dateSeries ? null : top,
+    showLegend,
+    showValues,
   });
+  const draftSignatureRef = useRef(draftSignature);
+  useLayoutEffect(() => {
+    draftSignatureRef.current = draftSignature;
+  }, [draftSignature]);
 
   async function loadMoreSources() {
     if (metadataLoading || !sourcesHasMore) return;
@@ -421,9 +659,20 @@ export default function ServerBackedCharts() {
       setSourcesHasMore(page.pagination.hasMore);
       setSourcesNextOffset((current) => current + page.pagination.count);
     } catch (error) {
-      setMetadataError(
-        formatError(error, "More data sources could not be loaded."),
-      );
+      if (isAuthorizationDenied(error)) {
+        setSources([]);
+        setSourcesHasMore(false);
+        setFields([]);
+        setFieldsForModule("");
+        setApplied(null);
+        appliedRef.current = null;
+        setQueryError(AUTHORIZATION_ERROR);
+        setSourcesError(AUTHORIZATION_ERROR);
+      } else {
+        setMetadataError(
+          formatError(error, "More data sources could not be loaded."),
+        );
+      }
       setMetadataRetryTarget("sources");
     } finally {
       setMetadataLoading(false);
@@ -444,9 +693,18 @@ export default function ServerBackedCharts() {
       setFieldsHasMore(page.pagination.hasMore);
       setFieldsNextOffset((current) => current + page.pagination.count);
     } catch (error) {
-      setMetadataError(
-        formatError(error, "More data-source fields could not be loaded."),
-      );
+      if (isAuthorizationDenied(error)) {
+        setFields([]);
+        setFieldsForModule("");
+        setApplied(null);
+        appliedRef.current = null;
+        setQueryError(AUTHORIZATION_ERROR);
+        setFieldsError(AUTHORIZATION_ERROR);
+      } else {
+        setMetadataError(
+          formatError(error, "More data-source fields could not be loaded."),
+        );
+      }
       setMetadataRetryTarget("fields");
     } finally {
       setMetadataLoading(false);
@@ -458,7 +716,7 @@ export default function ServerBackedCharts() {
     if (!canRunQuery || !moduleId) return;
     const definition: OpenViewQueryDefinition = {
       version: 1,
-      logic: "and",
+      logic: filterLogic,
       columns: [],
       filters: filters.map((filter) => {
         const field = filterFields.find(
@@ -498,15 +756,24 @@ export default function ServerBackedCharts() {
           definition,
           mode: "groups",
           dimension: fieldReference(selectedDimension!),
+          ...(categoricalDateWindowSelected
+            ? {
+                dateField: fieldReference(selectedDateField!),
+                fromDate,
+                toDate,
+              }
+            : {}),
           aggregation,
           ...(aggregation === "count"
             ? {}
             : { measure: fieldReference(selectedMeasure!) }),
         };
+    const requestSequence = ++appliedRequestSequence.current;
     setQueryLoading(true);
     setQueryError("");
     try {
       const result = await queryOpenViewAggregateSnapshot(request);
+      if (requestSequence !== appliedRequestSequence.current) return;
       const appliedChartType = chartType;
       const labelName = dateSeries
         ? selectedDateField!.name
@@ -515,6 +782,7 @@ export default function ServerBackedCharts() {
         aggregation === "count" ? "Records" : selectedMeasure!.name;
       setApplied({
         result,
+        request,
         sourceName,
         chartType: appliedChartType,
         labelName,
@@ -525,6 +793,13 @@ export default function ServerBackedCharts() {
       });
       setTablePage(0);
     } catch (error) {
+      if (requestSequence !== appliedRequestSequence.current) return;
+      if (isAuthorizationDenied(error)) {
+        setApplied(null);
+        appliedRef.current = null;
+        setQueryError(AUTHORIZATION_ERROR);
+        return;
+      }
       setQueryError(
         formatError(
           error,
@@ -532,7 +807,8 @@ export default function ServerBackedCharts() {
         ),
       );
     } finally {
-      setQueryLoading(false);
+      if (requestSequence === appliedRequestSequence.current)
+        setQueryLoading(false);
     }
   }
 
@@ -546,6 +822,139 @@ export default function ServerBackedCharts() {
     ]);
     setFilterSequence((current) => current + 1);
   }
+
+  async function persistPreference(
+    config: OpenViewChartPreferenceConfig,
+    successMessage: string,
+  ) {
+    if (preferencesSaving) return;
+    const submittedDraftSignature = draftSignatureRef.current;
+    setPreferencesSaving(true);
+    setPreferencesError("");
+    setPreferencesNotice("");
+    try {
+      const response = await putOpenViewChartPreferences(config);
+      const confirmedConfig = response.config ?? config;
+      hydratedPreferenceKey.current =
+        draftSignatureRef.current === submittedDraftSignature
+          ? ""
+          : JSON.stringify(confirmedConfig);
+      setPreferenceConfig(confirmedConfig);
+      setPreferencesLoaded(true);
+      setSettingsDenied(false);
+      setPreferencesNotice(successMessage);
+    } catch (error) {
+      if (isAuthorizationDenied(error)) {
+        setSettingsDenied(true);
+        setApplied(null);
+        appliedRef.current = null;
+        setQueryError(AUTHORIZATION_ERROR);
+        setPreferencesError(
+          "Chart settings could not be saved without current access.",
+        );
+      } else {
+        setPreferencesError(
+          formatError(error, "Chart settings could not be saved."),
+        );
+      }
+    } finally {
+      setPreferencesSaving(false);
+    }
+  }
+
+  async function saveSettings() {
+    if (
+      !preferencesLoaded ||
+      settingsDenied ||
+      preferencesLoading ||
+      !preferenceConfigDraft
+    )
+      return;
+    await persistPreference(
+      preferenceConfigDraft,
+      "Chart settings saved for this account.",
+    );
+  }
+
+  async function resetSettings() {
+    const dimension = categoryFields[0];
+    const dateField = dateFields[0];
+    if (
+      !preferencesLoaded ||
+      settingsDenied ||
+      preferencesLoading ||
+      !moduleId ||
+      (!dimension && !dateField)
+    )
+      return;
+    const today = new Date();
+    const config: OpenViewChartPreferenceConfig = {
+      version: 1,
+      moduleId,
+      chartType: dimension ? "bar" : "line",
+      dimensionId: dimension?.id ?? null,
+      dateFieldId: dimension ? null : (dateField?.id ?? null),
+      aggregation: "count",
+      measureId: null,
+      filterLogic: "and",
+      filters: [],
+      fromDate: dimension
+        ? null
+        : new Date(today.getTime() - 29 * 86_400_000)
+            .toISOString()
+            .slice(0, 10),
+      toDate: dimension ? null : today.toISOString().slice(0, 10),
+      top: null,
+      showLegend: true,
+      showValues: true,
+    };
+    await persistPreference(config, "Chart settings reset for this account.");
+  }
+
+  useEffect(() => {
+    if (
+      invalidationRevision <= consumedInvalidationRevision.current ||
+      queryLoading
+    )
+      return;
+    consumedInvalidationRevision.current = invalidationRevision;
+    const current = appliedRef.current;
+    if (!current) return;
+    const requestSequence = ++appliedRequestSequence.current;
+    setQueryLoading(true);
+    setQueryError("");
+    void queryOpenViewAggregateSnapshot(current.request)
+      .then((result) => {
+        if (requestSequence !== appliedRequestSequence.current) return;
+        if (
+          appliedRef.current?.signature !== current.signature ||
+          appliedRef.current.request !== current.request
+        )
+          return;
+        setApplied((previous) =>
+          previous?.request === current.request
+            ? { ...previous, result }
+            : previous,
+        );
+        setTablePage(0);
+      })
+      .catch((error: unknown) => {
+        if (requestSequence !== appliedRequestSequence.current) return;
+        if (isAuthorizationDenied(error)) {
+          setApplied(null);
+          appliedRef.current = null;
+          setQueryError(AUTHORIZATION_ERROR);
+        } else {
+          setQueryError(
+            "The applied chart could not be refreshed. Showing the last loaded snapshot.",
+          );
+        }
+      })
+      .finally(() => {
+        if (requestSequence === appliedRequestSequence.current)
+          setQueryLoading(false);
+      });
+  }, [invalidationRevision, queryLoading]);
 
   const appliedResult = applied?.result ?? null;
   const allRows = appliedResult?.items ?? [];
@@ -587,6 +996,31 @@ export default function ServerBackedCharts() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {preferencesError ? (
+            <Alert
+              role="alert"
+              variant="warning"
+              className="mb-4 flex flex-wrap items-center justify-between gap-3"
+            >
+              <span>{preferencesError}</span>
+              {!settingsDenied ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={preferencesLoading}
+                  onClick={() => setPreferencesRetry((value) => value + 1)}
+                >
+                  Retry saved settings
+                </Button>
+              ) : null}
+            </Alert>
+          ) : null}
+          {preferencesNotice ? (
+            <p role="status" className="text-muted-foreground mb-4 text-sm">
+              {preferencesNotice}
+            </p>
+          ) : null}
           {sourcesError ? (
             <Alert
               role="alert"
@@ -776,6 +1210,34 @@ export default function ServerBackedCharts() {
                     ) : null}
                   </Field>
                 )}
+                {!dateSeries ? (
+                  <Field>
+                    <FieldLabel htmlFor="chart-date-field">
+                      Chart date field
+                    </FieldLabel>
+                    <Select
+                      id="chart-date-field"
+                      className="min-h-11"
+                      value={dateFieldId}
+                      disabled={
+                        fieldsLoading || !dateFields.length || queryLoading
+                      }
+                      onValueChange={setDateFieldId}
+                    >
+                      <option value="">No date window</option>
+                      {dateFields.map((field) => (
+                        <option key={field.id} value={field.id}>
+                          {field.name}
+                        </option>
+                      ))}
+                    </Select>
+                    {!dateFields.length && !fieldsLoading ? (
+                      <FieldDescription>
+                        No date fields are available.
+                      </FieldDescription>
+                    ) : null}
+                  </Field>
+                ) : null}
                 <Field>
                   <FieldLabel htmlFor="chart-aggregation">
                     Aggregation
@@ -824,11 +1286,11 @@ export default function ServerBackedCharts() {
                     ) : null}
                   </Field>
                 ) : null}
-                {dateSeries ? (
+                {dateSeries || dateFieldId || fromDate || toDate ? (
                   <>
                     <Field>
                       <FieldLabel htmlFor="chart-from-date">
-                        From date
+                        {dateSeries ? "From date" : "Chart from date"}
                       </FieldLabel>
                       <Input
                         id="chart-from-date"
@@ -838,9 +1300,25 @@ export default function ServerBackedCharts() {
                         disabled={queryLoading}
                         onChange={(event) => setFromDate(event.target.value)}
                       />
+                      {!fromDate && !toDate ? (
+                        <FieldDescription>
+                          {dateSeries
+                            ? "Choose both dates for an inclusive window of 1–366 days."
+                            : "Optionally bound grouped results to a date window; it is ANDed with the field filters."}
+                        </FieldDescription>
+                      ) : null}
+                      {(dateSeries || fromDate || toDate) &&
+                      !dateWindowValid ? (
+                        <FieldError>
+                          Choose an inclusive range of 1–366 days, with the
+                          start date on or before the end.
+                        </FieldError>
+                      ) : null}
                     </Field>
                     <Field>
-                      <FieldLabel htmlFor="chart-to-date">To date</FieldLabel>
+                      <FieldLabel htmlFor="chart-to-date">
+                        {dateSeries ? "To date" : "Chart to date"}
+                      </FieldLabel>
                       <Input
                         id="chart-to-date"
                         className="min-h-11"
@@ -849,13 +1327,8 @@ export default function ServerBackedCharts() {
                         disabled={queryLoading}
                         onChange={(event) => setToDate(event.target.value)}
                       />
-                      {!fromDate && !toDate ? (
-                        <FieldDescription>
-                          Choose both dates for an inclusive window of 1–366
-                          days.
-                        </FieldDescription>
-                      ) : null}
-                      {(fromDate || toDate) && !dateWindowValid ? (
+                      {(dateSeries || fromDate || toDate) &&
+                      !dateWindowValid ? (
                         <FieldError>
                           Choose an inclusive range of 1–366 days, with the
                           start date on or before the end.
@@ -863,7 +1336,8 @@ export default function ServerBackedCharts() {
                       ) : null}
                     </Field>
                   </>
-                ) : (
+                ) : null}
+                {!dateSeries ? (
                   <Field>
                     <FieldLabel htmlFor="chart-top">
                       Top groups in chart
@@ -889,7 +1363,7 @@ export default function ServerBackedCharts() {
                       and print retain the full snapshot.
                     </FieldDescription>
                   </Field>
-                )}
+                ) : null}
               </div>
 
               {fieldsHasMore ? (
@@ -912,8 +1386,27 @@ export default function ServerBackedCharts() {
               <fieldset className="flex flex-col gap-3 rounded-[var(--radius)] border p-4">
                 <legend className="px-1 text-sm font-medium">Filters</legend>
                 <p className="text-muted-foreground text-sm">
-                  Combine up to 10 field filters with AND before aggregation.
+                  Combine up to 10 field filters with the selected logic before
+                  aggregation. A separate date window is ANDed with those
+                  filters.
                 </p>
+                <Field className="w-full max-w-56">
+                  <FieldLabel htmlFor="chart-filter-logic">
+                    Chart filter logic
+                  </FieldLabel>
+                  <Select
+                    id="chart-filter-logic"
+                    className="min-h-11"
+                    value={filterLogic}
+                    disabled={queryLoading}
+                    onValueChange={(value) =>
+                      setFilterLogic(value as FilterLogic)
+                    }
+                  >
+                    <option value="and">Match all filters (AND)</option>
+                    <option value="or">Match any filter (OR)</option>
+                  </Select>
+                </Field>
                 {filters.map((filter, index) => {
                   const field = filterFields.find(
                     (candidate) => candidate.id === filter.fieldId,
@@ -1137,7 +1630,76 @@ export default function ServerBackedCharts() {
                 ) : null}
               </fieldset>
 
+              <fieldset className="flex flex-wrap gap-x-6 gap-y-3 rounded-[var(--radius)] border p-4">
+                <legend className="px-1 text-sm font-medium">
+                  Chart display
+                </legend>
+                <Field className="flex-row items-center gap-3">
+                  <Checkbox
+                    id="chart-show-legend"
+                    checked={showLegend}
+                    disabled={queryLoading}
+                    onCheckedChange={(checked) =>
+                      setShowLegend(checked === true)
+                    }
+                  />
+                  <FieldLabel
+                    htmlFor="chart-show-legend"
+                    className="font-normal"
+                  >
+                    Show legend
+                  </FieldLabel>
+                </Field>
+                <Field className="flex-row items-center gap-3">
+                  <Checkbox
+                    id="chart-show-values"
+                    checked={showValues}
+                    disabled={queryLoading}
+                    onCheckedChange={(checked) =>
+                      setShowValues(checked === true)
+                    }
+                  />
+                  <FieldLabel
+                    htmlFor="chart-show-values"
+                    className="font-normal"
+                  >
+                    Show values
+                  </FieldLabel>
+                </Field>
+              </fieldset>
+
               <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={
+                    !preferencesLoaded ||
+                    preferencesLoading ||
+                    preferencesSaving ||
+                    settingsDenied ||
+                    !preferenceConfigDraft
+                  }
+                  onClick={() => void saveSettings()}
+                >
+                  {preferencesSaving ? "Saving settings…" : "Save settings"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={
+                    !preferencesLoaded ||
+                    preferencesLoading ||
+                    preferencesSaving ||
+                    settingsDenied ||
+                    !moduleId ||
+                    (categoryFields.length === 0 && dateFields.length === 0)
+                  }
+                  onClick={() => void resetSettings()}
+                >
+                  Reset settings
+                </Button>
                 <Button
                   type="submit"
                   className="min-h-11"
@@ -1220,6 +1782,14 @@ export default function ServerBackedCharts() {
                 . Chart decimal values are numeric approximations; the table and
                 exports preserve the returned value strings.
               </p>
+              {applied.chartType === "line" &&
+              showValues &&
+              (chart?.data.length ?? 0) > 20 ? (
+                <p className="text-muted-foreground text-sm">
+                  Dense line chart labels are hidden; complete values remain in
+                  the table and CSV.
+                </p>
+              ) : null}
               {chart?.hasUnchartableValue ? (
                 <Alert role="alert" variant="warning">
                   One or more selected values exceed the chart’s numeric range.
@@ -1238,8 +1808,11 @@ export default function ServerBackedCharts() {
                     type={applied.chartType}
                     valueLabel={applied.valueName}
                     allowDecimals={applied.aggregationName === "Average"}
-                    showLabels={chart.data.length <= 20}
-                    showLegend={chart.data.length <= 20}
+                    showLabels={
+                      showValues &&
+                      (applied.chartType !== "line" || chart.data.length <= 20)
+                    }
+                    showLegend={showLegend}
                     className={cn(
                       "border-border/70 bg-muted/15 h-[20rem] w-full min-w-0 rounded-[var(--radius)] border p-3",
                       applied.chartType === "pie" &&
@@ -1252,7 +1825,9 @@ export default function ServerBackedCharts() {
                   No chartable aggregate points are available.
                 </p>
               )}
-              {applied.chartType === "pie" && chart?.displayItems.length ? (
+              {applied.chartType === "pie" &&
+              showValues &&
+              chart?.displayItems.length ? (
                 <ul
                   aria-label="Pie chart categories and values"
                   className="divide-border min-w-0 divide-y sm:hidden"

@@ -70,6 +70,24 @@ def _key(value: Any) -> str | None:
     return str(value)
 
 
+def _date_window_predicates(
+    db: Session, field: Field, from_date: date, to_date: date
+) -> tuple[ColumnElement[bool], ...]:
+    date_expression = field_expression(field)
+    if field.type == FieldType.DATE:
+        return (date_expression >= from_date, date_expression <= to_date)
+
+    timezone_name, workspace_timezone = _workspace_timezone(db)
+    bucket_expression = func.timezone(timezone_name, date_expression).cast(Date())
+    lower = datetime.combine(from_date, time.min, tzinfo=workspace_timezone)
+    if to_date == date.max:
+        return (date_expression >= lower, bucket_expression <= to_date)
+    upper = datetime.combine(
+        to_date + timedelta(days=1), time.min, tzinfo=workspace_timezone
+    )
+    return (date_expression >= lower, date_expression < upper)
+
+
 def _grouped_aggregate(
     db: Session, payload: GroupedAggregateQuery, fields: dict[UUID, Field]
 ) -> AggregateResponse:
@@ -125,23 +143,12 @@ def _date_series_aggregate(
 ) -> AggregateResponse:
     field = fields[payload.date_field.field_id]
     date_expression = field_expression(field)
-    if field.type == FieldType.DATE:
-        bucket_expression = date_expression
-        date_filter = (
-            date_expression >= payload.from_date,
-            date_expression <= payload.to_date,
-        )
-    else:
-        timezone_name, workspace_timezone = _workspace_timezone(db)
-        bucket_expression = func.timezone(timezone_name, date_expression).cast(Date())
-        lower = datetime.combine(payload.from_date, time.min, tzinfo=workspace_timezone)
-        if payload.to_date == date.max:
-            date_filter = (date_expression >= lower, bucket_expression <= payload.to_date)
-        else:
-            upper = datetime.combine(
-                payload.to_date + timedelta(days=1), time.min, tzinfo=workspace_timezone
-            )
-            date_filter = (date_expression >= lower, date_expression < upper)
+    bucket_expression = (
+        date_expression
+        if field.type == FieldType.DATE
+        else func.timezone(_workspace_timezone(db)[0], date_expression).cast(Date())
+    )
+    date_filter = _date_window_predicates(db, field, payload.from_date, payload.to_date)
 
     aggregate_expression = _aggregate_expression(payload.aggregation, payload.measure, fields)
     base_query = (
@@ -215,6 +222,16 @@ def _grouped_aggregate_snapshot(
     aggregate_expression = _aggregate_expression(payload.aggregation, payload.measure, fields)
     count_expression = func.count(Record.id)
     base_query = compile_query(payload.module_id, payload.definition, fields).order_by(None)
+    if payload.date_field is not None:
+        assert payload.from_date is not None and payload.to_date is not None
+        base_query = base_query.where(
+            *_date_window_predicates(
+                db,
+                fields[payload.date_field.field_id],
+                payload.from_date,
+                payload.to_date,
+            )
+        )
     grouped_query = (
         base_query.with_only_columns(
             dimension_expression.label("dimension"),
@@ -276,7 +293,7 @@ def aggregate_snapshot_records(
     db: Session, payload: AggregateSnapshotQuery
 ) -> AggregateSnapshotResponse:
     references = (
-        (payload.dimension, payload.measure)
+        (payload.dimension, payload.measure, payload.date_field)
         if isinstance(payload, GroupedAggregateSnapshotQuery)
         else (payload.date_field, payload.measure)
     )

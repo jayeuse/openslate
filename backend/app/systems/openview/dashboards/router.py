@@ -17,7 +17,6 @@ from app.systems.access.users.models import User, UserStatus
 from app.systems.access.users.permissions import Capability
 from app.systems.openview.dashboards.models import Dashboard, DashboardDefault, DashboardWidget
 from app.systems.openview.dashboards.schemas import (
-    DashboardChartConfig,
     DashboardCreate,
     DashboardDefaultResponse,
     DashboardDefaultSet,
@@ -29,9 +28,7 @@ from app.systems.openview.dashboards.schemas import (
     DashboardWidgetResponse,
     DashboardWidgetSpec,
 )
-from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.records.query import validate_definition
-from app.systems.sandbox.records.query_schemas import GroupedAggregateSnapshotQuery
+from app.systems.openview.dashboards.widget_validation import validate_dashboard_widgets
 
 
 def _private_cache(response: Response) -> None:
@@ -72,7 +69,7 @@ def _conflict(code: str, message: str, **extra: int) -> HTTPException:
 
 
 def _invalid_dashboard() -> HTTPException:
-    return _conflict("dashboard_invalid", "A chart references unavailable or changed fields")
+    return _conflict("dashboard_invalid", "A widget references unavailable or changed fields")
 
 
 def _stale_revision(current_revision: int) -> HTTPException:
@@ -111,64 +108,12 @@ def _dashboard(db: Session, user: User, dashboard_id: UUID, *, lock: bool = Fals
     return dashboard
 
 
-def _validate_widgets(db: Session, widgets: list[DashboardWidgetSpec]) -> None:
-    module_ids = {widget.config.query.module_id for widget in widgets}
-    if not module_ids:
-        return
-    active_module_ids = set(
-        db.scalars(
-            select(Module.id)
-            .where(
-                Module.id.in_(module_ids),
-                Module.is_deleted.is_(False),
-                Module.is_schema_accepted.is_(True),
-            )
-            .order_by(Module.id)
-            .with_for_update()
-        ).all()
-    )
-    if active_module_ids != module_ids:
-        raise _invalid_dashboard()
-
-    for widget in widgets:
-        query = widget.config.query
-        if isinstance(query, GroupedAggregateSnapshotQuery):
-            additional_references = (query.dimension, query.measure)
-        else:
-            additional_references = (query.date_field, query.measure)
-        try:
-            fields = validate_definition(
-                db,
-                query.module_id,
-                query.definition,
-                extra_references=tuple(
-                    reference for reference in additional_references if reference is not None
-                ),
-            )
-        except HTTPException as error:
-            if error.status_code == status.HTTP_409_CONFLICT:
-                raise _invalid_dashboard() from error
-            raise
-        referenced_ids = {
-            reference.field_id
-            for reference in (
-                *query.definition.columns,
-                *query.definition.filters,
-                *query.definition.sort,
-                *query.definition.search_fields,
-                *(reference for reference in additional_references if reference is not None),
-            )
-        }
-        if any(fields[field_id].is_deleted for field_id in referenced_ids):
-            raise _invalid_dashboard()
-
-
 def _widget_response(widget: DashboardWidget) -> DashboardWidgetResponse:
     return DashboardWidgetResponse(
         id=widget.id,
         position=widget.position,
-        widget_type="chart",
-        config=DashboardChartConfig.model_validate(widget.config),
+        widget_type=widget.widget_type,
+        config=widget.config,
         created_at=widget.created_at,
         updated_at=widget.updated_at,
     )
@@ -195,6 +140,7 @@ def _dashboard_responses(db: Session, dashboards: list[Dashboard]) -> list[Dashb
             id=dashboard.id,
             owner_id=dashboard.owner_id,
             name=dashboard.name,
+            refresh_cadence=dashboard.refresh_cadence,
             revision=dashboard.revision,
             is_deleted=dashboard.is_deleted,
             created_at=dashboard.created_at,
@@ -229,12 +175,14 @@ def _replace_widgets(
             .order_by(DashboardWidget.position, DashboardWidget.id)
         ).all()
     )
-    desired = [_stored_config(widget) for widget in widgets]
+    desired = [(widget.widget_type, _stored_config(widget)) for widget in widgets]
     current_by_position = {widget.position: widget for widget in current}
     preserved_positions = {
         position
-        for position, config in enumerate(desired)
-        if position in current_by_position and current_by_position[position].config == config
+        for position, (widget_type, config) in enumerate(desired)
+        if position in current_by_position
+        and current_by_position[position].widget_type == widget_type
+        and current_by_position[position].config == config
     }
     if len(current) == len(desired) == len(preserved_positions):
         return False
@@ -244,14 +192,14 @@ def _replace_widgets(
         db.delete(widget)
     if removed:
         db.flush()
-    for position, config in enumerate(desired):
+    for position, (widget_type, config) in enumerate(desired):
         if position in preserved_positions:
             continue
         db.add(
             DashboardWidget(
                 dashboard_id=dashboard.id,
                 position=position,
-                widget_type="chart",
+                widget_type=widget_type,
                 config=config,
             )
         )
@@ -297,8 +245,12 @@ def create_dashboard(
     db: Database,
     response: Response,
 ) -> DashboardResponse:
-    _validate_widgets(db, payload.widgets)
-    dashboard = Dashboard(owner_id=user.id, name=payload.name)
+    validate_dashboard_widgets(db, payload.widgets)
+    dashboard = Dashboard(
+        owner_id=user.id,
+        name=payload.name,
+        refresh_cadence=payload.refresh_cadence,
+    )
     db.add(dashboard)
     try:
         db.flush()
@@ -395,14 +347,20 @@ def update_dashboard(
         raise _conflict("dashboard_archived", "Restore the Dashboard before editing it")
 
     if payload.widgets is not None:
-        _validate_widgets(db, payload.widgets)
+        validate_dashboard_widgets(db, payload.widgets)
     name_changed = payload.name is not None and payload.name != dashboard.name
+    cadence_changed = (
+        payload.refresh_cadence is not None
+        and payload.refresh_cadence != dashboard.refresh_cadence
+    )
     widgets_changed = (
         _replace_widgets(db, dashboard, payload.widgets) if payload.widgets is not None else False
     )
     if payload.name is not None and name_changed:
         dashboard.name = payload.name
-    if name_changed or widgets_changed:
+    if payload.refresh_cadence is not None and cadence_changed:
+        dashboard.refresh_cadence = payload.refresh_cadence
+    if name_changed or cadence_changed or widgets_changed:
         dashboard.revision += 1
     _commit(db)
     db.refresh(dashboard)

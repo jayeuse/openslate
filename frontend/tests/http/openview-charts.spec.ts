@@ -10,6 +10,10 @@ import {
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const moduleId = "00000000-0000-4000-8000-000000000010";
@@ -88,9 +92,25 @@ function dailyItems(from: string, length: number): AggregateItem[] {
   });
 }
 
-async function installChartsApi(page: Page) {
+async function installChartsApi(
+  page: Page,
+  options: { dateOnly?: boolean } = {},
+) {
   let aggregateHandler: () => AggregateResponse | null = () => snapshot([]);
   const requests: AggregateBody[] = [];
+  const preferenceRequests: Record<string, unknown>[] = [];
+  let savedPreference: Record<string, unknown> | null = null;
+  let failNextPreferenceWrite = false;
+  let nextPreferenceBarrier: {
+    wait: Promise<void>;
+    signalStarted: () => void;
+  } | null = null;
+  let denyAggregates = false;
+  let nextAggregateBarrier: {
+    wait: Promise<void>;
+    signalStarted: () => void;
+  } | null = null;
+  await installOpenViewEventSource(page);
   await page.route("**/api/auth/session", async (route) =>
     route.fulfill({
       contentType: "application/json",
@@ -101,6 +121,37 @@ async function installChartsApi(page: Page) {
       }),
     }),
   );
+  await page.route("**/api/charts/preferences", async (route) => {
+    if (route.request().method() === "GET") {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ config: savedPreference }),
+      });
+    }
+    const body = route.request().postDataJSON() as {
+      config: Record<string, unknown>;
+    };
+    preferenceRequests.push(body.config);
+    if (nextPreferenceBarrier) {
+      const barrier = nextPreferenceBarrier;
+      nextPreferenceBarrier = null;
+      barrier.signalStarted();
+      await barrier.wait;
+    }
+    if (failNextPreferenceWrite) {
+      failNextPreferenceWrite = false;
+      return route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Settings could not be saved." }),
+      });
+    }
+    savedPreference = body.config;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ config: savedPreference }),
+    });
+  });
   await page.route("**/api/views/data-sources**", async (route: Route) => {
     const url = new URL(route.request().url());
     if (url.pathname === "/api/views/data-sources") {
@@ -124,49 +175,61 @@ async function installChartsApi(page: Page) {
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
-          items: [
-            {
-              id: categoryFieldId,
-              module_id: moduleId,
-              name: "Category",
-              type: "select",
-              required: false,
-              position: 0,
-              config: { options: ["In service", "Inspection due"] },
-            },
-            {
-              id: amountFieldId,
-              module_id: moduleId,
-              name: "Amount",
-              type: "decimal",
-              required: false,
-              position: 1,
-              config: {},
-            },
-            {
-              id: dateFieldId,
-              module_id: moduleId,
-              name: "Occurred on",
-              type: "date",
-              required: false,
-              position: 2,
-              config: {},
-            },
-            {
-              id: integerFieldId,
-              module_id: moduleId,
-              name: "Unit count",
-              type: "int",
-              required: false,
-              position: 3,
-              config: {},
-            },
-          ],
+          items: options.dateOnly
+            ? [
+                {
+                  id: dateFieldId,
+                  module_id: moduleId,
+                  name: "Occurred on",
+                  type: "date",
+                  required: false,
+                  position: 0,
+                  config: {},
+                },
+              ]
+            : [
+                {
+                  id: categoryFieldId,
+                  module_id: moduleId,
+                  name: "Category",
+                  type: "select",
+                  required: false,
+                  position: 0,
+                  config: { options: ["In service", "Inspection due"] },
+                },
+                {
+                  id: amountFieldId,
+                  module_id: moduleId,
+                  name: "Amount",
+                  type: "decimal",
+                  required: false,
+                  position: 1,
+                  config: {},
+                },
+                {
+                  id: dateFieldId,
+                  module_id: moduleId,
+                  name: "Occurred on",
+                  type: "date",
+                  required: false,
+                  position: 2,
+                  config: {},
+                },
+                {
+                  id: integerFieldId,
+                  module_id: moduleId,
+                  name: "Unit count",
+                  type: "int",
+                  required: false,
+                  position: 3,
+                  config: {},
+                },
+              ],
           pagination: {
             limit: 100,
             offset: 0,
-            count: 4,
-            total: 4,
+            count: options.dateOnly ? 1 : 4,
+            total: options.dateOnly ? 1 : 4,
             has_more: false,
           },
         }),
@@ -183,6 +246,19 @@ async function installChartsApi(page: Page) {
     async (route: Route) => {
       const body = route.request().postDataJSON() as AggregateBody;
       requests.push(body);
+      const barrier = nextAggregateBarrier;
+      if (barrier) {
+        nextAggregateBarrier = null;
+        barrier.signalStarted();
+        await barrier.wait;
+      }
+      if (denyAggregates) {
+        return route.fulfill({
+          status: 403,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Forbidden" }),
+        });
+      }
       const response = aggregateHandler();
       if (response === null) {
         return route.fulfill({
@@ -203,6 +279,41 @@ async function installChartsApi(page: Page) {
     requests,
     setAggregateHandler(handler: () => AggregateResponse | null) {
       aggregateHandler = handler;
+    },
+    preferenceRequests,
+    savedPreference: () => savedPreference,
+    failNextPreferenceWrite() {
+      failNextPreferenceWrite = true;
+    },
+    pauseNextPreferenceWrite() {
+      let signalStarted: () => void = () => undefined;
+      let release: () => void = () => undefined;
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve;
+      });
+      const wait = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      nextPreferenceBarrier = { wait, signalStarted };
+      return { started, release };
+    },
+    denyAggregates() {
+      denyAggregates = true;
+    },
+    triggerInvalidation(entity: string) {
+      return sendOpenViewEvent(page, "invalidate", { entity });
+    },
+    pauseNextAggregate() {
+      let signalStarted: () => void = () => undefined;
+      let release: () => void = () => undefined;
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve;
+      });
+      const wait = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      nextAggregateBarrier = { wait, signalStarted };
+      return { started, release };
     },
   };
 }
@@ -233,6 +344,7 @@ async function expectNoHorizontalOverflow(page: Page, viewportWidth: number) {
 
 test("live charts remain usable on mobile in dark mode with reduced motion", async ({
   page,
+  browserName,
 }) => {
   const consoleErrors: string[] = [];
   page.on("pageerror", (error) => consoleErrors.push(error.message));
@@ -314,7 +426,9 @@ test("live charts remain usable on mobile in dark mode with reduced motion", asy
   );
 
   await page.getByRole("button", { name: "Print complete table" }).focus();
-  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press(
+    browserName === "webkit" ? "Alt+Shift+Tab" : "Shift+Tab",
+  );
   const downloadButton = page.getByRole("button", {
     name: "Download complete CSV",
   });
@@ -487,6 +601,11 @@ test("date-line charts require and preserve a complete chronological 366-day sna
       .getByRole("img", { name: "Aggregate chart preview" })
       .locator("circle"),
   ).toHaveCount(0);
+  await expect(
+    page.getByText(
+      "Dense line chart labels are hidden; complete values remain in the table and CSV.",
+    ),
+  ).toBeVisible();
 });
 
 test("categorical filters and numeric aggregation are sent with catalog UUIDs", async ({
@@ -522,6 +641,271 @@ test("categorical filters and numeric aggregation are sent with catalog UUIDs", 
       ],
     },
   });
+});
+
+test("categorical Chart controls save, reload, reset, and reapply complete authorized settings", async ({
+  page,
+}) => {
+  const api = await installChartsApi(page);
+  const groups = Array.from({ length: 6 }, (_, index) => ({
+    key: `group-${index}`,
+    label: `Group ${index + 1}`,
+    value: String(10 - index),
+    record_count: index + 1,
+  }));
+  api.setAggregateHandler(() => snapshot(groups));
+  await page.goto("/openview?section=charts");
+
+  await page.getByLabel("Chart type").selectOption("bar");
+  await page.getByLabel("Chart filter logic").selectOption("or");
+  await page.getByLabel("Chart date field").selectOption(dateFieldId);
+  await page.getByLabel("Chart from date").fill("2026-09-01");
+  await page.getByLabel("Chart to date").fill("2026-09-30");
+  await page.getByRole("button", { name: "Add filter" }).click();
+  await page.getByLabel("Filter 1 value").selectOption("In service");
+  await page.getByRole("button", { name: "Add filter" }).click();
+  await page.getByLabel("Filter 2 field").selectOption(amountFieldId);
+  await page.getByLabel("Filter 2 operator").selectOption("gt");
+  await page.getByLabel("Filter 2 value").fill("1");
+  await page.getByLabel("Top groups in chart").selectOption("5");
+  await page.getByRole("checkbox", { name: "Show legend" }).uncheck();
+  await page.getByRole("checkbox", { name: "Show values" }).uncheck();
+
+  await page.getByRole("button", { name: "Apply chart" }).click();
+  await expect(
+    page.getByRole("table", { name: "Complete aggregate data" }),
+  ).toBeVisible();
+  expect(api.requests.at(-1)).toMatchObject({
+    mode: "groups",
+    definition: {
+      logic: "or",
+      filters: [{ value: "In service" }, { operator: "gt" }],
+    },
+    date_field: { field_id: dateFieldId, expected_type: "date" },
+    from_date: "2026-09-01",
+    to_date: "2026-09-30",
+  });
+  expect(api.requests.at(-1)).not.toHaveProperty("top");
+  await expect(
+    page
+      .getByRole("table", { name: "Complete aggregate data" })
+      .locator("tbody tr"),
+  ).toHaveCount(6);
+
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await expect.poll(() => api.preferenceRequests.length).toBe(1);
+  expect(api.savedPreference()).toMatchObject({
+    module_id: moduleId,
+    chart_type: "bar",
+    dimension_id: categoryFieldId,
+    date_field_id: dateFieldId,
+    filter_logic: "or",
+    from_date: "2026-09-01",
+    to_date: "2026-09-30",
+    top: 5,
+    show_legend: false,
+    show_values: false,
+  });
+  await expect(
+    page
+      .getByRole("img", { name: "Aggregate chart preview" })
+      .locator(".recharts-legend-wrapper"),
+  ).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.getByLabel("Chart filter logic")).toHaveValue("or");
+  await expect(page.getByLabel("Chart date field")).toHaveValue(dateFieldId);
+  await expect(page.getByLabel("Chart from date")).toHaveValue("2026-09-01");
+  await expect(page.getByLabel("Top groups in chart")).toHaveValue("5");
+  await expect(
+    page.getByRole("checkbox", { name: "Show legend" }),
+  ).not.toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: "Show values" }),
+  ).not.toBeChecked();
+  await expect(page.getByLabel("Filter 1 value")).toHaveValue("In service");
+  await expect(page.getByLabel("Filter 2 value")).toHaveValue("1");
+
+  await page.getByRole("button", { name: "Reset settings" }).click();
+  await expect.poll(() => api.preferenceRequests.length).toBe(2);
+  expect(api.savedPreference()).toMatchObject({
+    module_id: moduleId,
+    chart_type: "bar",
+    aggregation: "count",
+    filter_logic: "and",
+    filters: [],
+    from_date: null,
+    to_date: null,
+    top: null,
+    show_legend: true,
+    show_values: true,
+  });
+});
+
+test("Chart invalidations refresh the applied snapshot, preserve edits, and clear data on policy denial", async ({
+  page,
+}) => {
+  const api = await installChartsApi(page);
+  api.setAggregateHandler(() =>
+    snapshot([{ key: "open", label: "Open", value: "2", record_count: 2 }]),
+  );
+  await page.goto("/openview?section=charts");
+  await page.getByRole("button", { name: "Apply chart" }).click();
+  const initialRequestCount = api.requests.length;
+  await page.getByLabel("Chart type").selectOption("pie");
+  await api.triggerInvalidation("records");
+  await expect.poll(() => api.requests.length).toBe(initialRequestCount + 1);
+  await expect(page.getByLabel("Chart type")).toHaveValue("pie");
+  await expect(
+    page.getByRole("table", { name: "Complete aggregate data" }),
+  ).toBeVisible();
+
+  api.denyAggregates();
+  await api.triggerInvalidation("records");
+  await expect(
+    page.getByRole("table", { name: "Complete aggregate data" }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Chart type")).toHaveValue("pie");
+  await expect(
+    page.getByRole("alert").filter({ hasText: /access|permission|sign in/i }),
+  ).toContainText(/access|permission|sign in/i);
+});
+
+test("repeated Chart Reset restores edited controls and a failed Reset keeps edits", async ({
+  page,
+}) => {
+  const api = await installChartsApi(page);
+  await page.goto("/openview?section=charts");
+  const top = page.getByLabel("Top groups in chart");
+  const showValues = page.getByRole("checkbox", { name: "Show values" });
+  const reset = page.getByRole("button", { name: "Reset settings" });
+
+  await reset.click();
+  await expect.poll(() => api.preferenceRequests.length).toBe(1);
+  await top.selectOption("5");
+  await showValues.uncheck();
+  await reset.click();
+  await expect.poll(() => api.preferenceRequests.length).toBe(2);
+  await expect(top).toHaveValue("");
+  await expect(showValues).toBeChecked();
+  await expect(page.getByRole("status")).toContainText(
+    "Chart settings reset for this account.",
+  );
+
+  await top.selectOption("10");
+  await showValues.uncheck();
+  api.failNextPreferenceWrite();
+  await reset.click();
+  await expect.poll(() => api.preferenceRequests.length).toBe(3);
+  await expect(top).toHaveValue("10");
+  await expect(showValues).not.toBeChecked();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Settings could not be saved." }),
+  ).toBeVisible();
+});
+
+test("saving Chart settings keeps a newer edit made while the request is pending", async ({
+  page,
+}) => {
+  const api = await installChartsApi(page);
+  await page.goto("/openview?section=charts");
+  const top = page.getByLabel("Top groups in chart");
+  await top.selectOption("5");
+  const pending = api.pauseNextPreferenceWrite();
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await pending.started;
+  await top.selectOption("10");
+  pending.release();
+
+  await expect(page.getByRole("status")).toContainText(
+    "Chart settings saved for this account.",
+  );
+  await expect.poll(() => api.savedPreference()?.top).toBe(5);
+  await expect(top).toHaveValue("10");
+});
+
+test("Show values renders all selected Top 50 groups, including groups beyond 20", async ({
+  page,
+}) => {
+  const api = await installChartsApi(page);
+  api.setAggregateHandler(() =>
+    snapshot(
+      Array.from({ length: 30 }, (_, index) => ({
+        key: `group-${index}`,
+        label: `Group ${index + 1}`,
+        value: String(index + 1),
+        record_count: index + 1,
+      })),
+    ),
+  );
+  await page.goto("/openview?section=charts");
+  await page.getByLabel("Top groups in chart").selectOption("50");
+  await page.getByRole("button", { name: "Apply chart" }).click();
+
+  const preview = page.getByRole("img", { name: "Aggregate chart preview" });
+  await expect(preview.locator(".recharts-label")).toHaveCount(30);
+  await page.getByRole("checkbox", { name: "Show values" }).uncheck();
+  await expect(preview.locator(".recharts-label")).toHaveCount(0);
+  await page.getByRole("checkbox", { name: "Show values" }).check();
+  await expect(preview.locator(".recharts-label")).toHaveCount(30);
+});
+
+test("date-only line Chart settings can be reset to a valid saved preference", async ({
+  page,
+}) => {
+  const api = await installChartsApi(page, { dateOnly: true });
+  await page.goto("/openview?section=charts");
+  await page.getByLabel("Chart type").selectOption("line");
+  await page.getByLabel("From date").fill("2026-09-01");
+  await page.getByLabel("To date").fill("2026-09-30");
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await expect.poll(() => api.preferenceRequests.length).toBe(1);
+
+  await page.getByRole("button", { name: "Reset settings" }).click();
+  await expect.poll(() => api.preferenceRequests.length).toBe(2);
+  expect(api.savedPreference()).toMatchObject({
+    module_id: moduleId,
+    chart_type: "line",
+    dimension_id: null,
+    date_field_id: dateFieldId,
+    aggregation: "count",
+    filter_logic: "and",
+    filters: [],
+    top: null,
+    show_legend: true,
+    show_values: true,
+  });
+  const reset = api.savedPreference()!;
+  expect(Date.parse(String(reset.from_date))).not.toBeNaN();
+  expect(Date.parse(String(reset.to_date))).not.toBeNaN();
+  expect(Date.parse(String(reset.to_date))).toBeGreaterThanOrEqual(
+    Date.parse(String(reset.from_date)),
+  );
+  await page.reload();
+  await expect(page.getByLabel("Chart type")).toHaveValue("line");
+  await expect(page.getByRole("button", { name: "Apply chart" })).toBeEnabled();
+});
+
+test("Chart invalidations are consumed once and a second event during refresh is not lost", async ({
+  page,
+}) => {
+  const api = await installChartsApi(page);
+  api.setAggregateHandler(() =>
+    snapshot([{ key: "open", label: "Open", value: "2", record_count: 2 }]),
+  );
+  await page.goto("/openview?section=charts");
+  await page.getByRole("button", { name: "Apply chart" }).click();
+  await expect(
+    page.getByRole("table", { name: "Complete aggregate data" }),
+  ).toBeVisible();
+
+  const barrier = api.pauseNextAggregate();
+  await api.triggerInvalidation("records");
+  await barrier.started;
+  await api.triggerInvalidation("records");
+  barrier.release();
+  await page.waitForLoadState("networkidle");
+  expect(api.requests).toHaveLength(3);
 });
 
 test("decimal filters preserve canonical precision in the aggregate request", async ({

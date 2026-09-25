@@ -195,6 +195,9 @@ const groupedAggregateSnapshotRequestSchema = aggregateBaseSchema
   .extend({
     mode: z.literal("groups"),
     dimension: fieldReferenceSchema,
+    dateField: fieldReferenceSchema.optional(),
+    fromDate: z.iso.date().optional(),
+    toDate: z.iso.date().optional(),
   })
   .strict();
 const dateSeriesAggregateSnapshotRequestSchema = aggregateBaseSchema
@@ -280,6 +283,38 @@ const aggregateSnapshotRequestSchema = z
       });
     }
 
+    if (request.mode === "groups") {
+      const hasDateWindow =
+        request.dateField !== undefined ||
+        request.fromDate !== undefined ||
+        request.toDate !== undefined;
+      if (hasDateWindow) {
+        if (!request.dateField || !request.fromDate || !request.toDate) {
+          context.addIssue({
+            code: "custom",
+            message:
+              "Grouped date windows require a date field and both bounds",
+          });
+        } else if (
+          request.dateField.expectedType !== "date" &&
+          request.dateField.expectedType !== "datetime"
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "Grouped date windows require a date or datetime field",
+          });
+        } else if (
+          inclusiveDays(request.fromDate, request.toDate) < 1 ||
+          inclusiveDays(request.fromDate, request.toDate) > 366
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "Grouped date windows must contain between 1 and 366 days",
+          });
+        }
+      }
+    }
+
     if (request.mode === "date_series") {
       if (
         request.dateField.expectedType !== "date" &&
@@ -357,6 +392,9 @@ export type OpenViewAggregateSnapshotRequest = OpenViewAggregateRequestBase &
     | {
         mode: "groups";
         dimension: OpenViewQueryFieldReference;
+        dateField?: OpenViewQueryFieldReference;
+        fromDate?: string;
+        toDate?: string;
       }
     | {
         mode: "date_series";
@@ -641,6 +679,11 @@ export async function queryOpenViewAggregateSnapshot(
   }
   if (request.mode === "groups") {
     body.dimension = wireFieldReference(request.dimension);
+    if (request.dateField !== undefined) {
+      body.date_field = wireFieldReference(request.dateField);
+      body.from_date = request.fromDate;
+      body.to_date = request.toDate;
+    }
   } else {
     body.date_field = wireFieldReference(request.dateField);
     body.from_date = request.fromDate;

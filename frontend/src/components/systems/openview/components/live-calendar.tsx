@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ApiError } from "@/lib/api";
 import { queryOpenViewWindowRecords } from "../adapters/window-api";
 import type {
   OpenViewWindowQueryRequest,
@@ -34,6 +35,7 @@ export type LiveWindowBaseProps = {
   moduleId: string;
   definition: OpenViewQueryDefinition;
   dateRange: "week" | "month" | "quarter" | "year";
+  refreshKey?: number;
   onOpenRecord: (recordId: string) => void;
 };
 
@@ -234,13 +236,21 @@ export function useWindowPage(
           error: "",
         });
       })
-      .catch(() => {
+      .catch((caught: unknown) => {
         if (sequence !== requestSequence.current) return;
+        const denied =
+          caught instanceof ApiError && [401, 403].includes(caught.status);
         setState((previous) => ({
           key,
-          result: previous?.key === key ? previous.result : null,
+          result: denied
+            ? null
+            : previous?.key === key
+              ? previous.result
+              : null,
           loading: false,
-          error: "Window records could not be loaded.",
+          error: denied
+            ? "You no longer have access to these records. Sign in or ask for access, then retry."
+            : "Window records could not be loaded.",
         }));
       });
     return () => {
@@ -425,15 +435,19 @@ export function LiveCalendar({
   moduleId,
   definition,
   dateRange,
+  refreshKey = 0,
+  scale: savedScale,
   dateField,
   titleField,
   detailFields,
   onOpenRecord,
 }: LiveWindowBaseProps & {
+  scale?: "month" | "list" | null;
   dateField: CalendarDateField;
   titleField: OpenViewDataSourceField | undefined;
   detailFields: readonly OpenViewDataSourceField[];
 }) {
+  const scale = savedScale ?? "month";
   const [windowDates, setWindowDates] = useState(() =>
     initialDateWindow(dateRange),
   );
@@ -490,7 +504,11 @@ export function LiveCalendar({
     windowDates.end,
     windowDates.start,
   ]);
-  const { result, loading, error } = useWindowPage(request, retry);
+  const { result, loading, error } = useWindowPage(request, retry + refreshKey);
+  useEffect(() => {
+    setWindowDates(initialDateWindow(dateRange));
+    setPagePosition({ key: "", offset: 0 });
+  }, [dateRange]);
   const timezone = result?.timezone ?? null;
   const dateFieldTitle = dateField.name;
   const shownRows = result?.items ?? [];
@@ -506,6 +524,27 @@ export function LiveCalendar({
   const groups = [...groupByDay.entries()].sort(([left], [right]) =>
     left.localeCompare(right),
   );
+  const monthKeys: string[] = [];
+  if (
+    scope === "window" &&
+    validDateWindow(windowDates.start, windowDates.end)
+  ) {
+    const monthStart = new Date(
+      `${windowDates.start.slice(0, 7)}-01T00:00:00.000Z`,
+    );
+    const monthEnd = new Date(
+      `${windowDates.end.slice(0, 7)}-01T00:00:00.000Z`,
+    );
+    for (
+      const cursor = new Date(monthStart);
+      cursor <= monthEnd;
+      cursor.setUTCMonth(cursor.getUTCMonth() + 1)
+    ) {
+      monthKeys.push(
+        `${cursor.getUTCFullYear().toString().padStart(4, "0")}-${(cursor.getUTCMonth() + 1).toString().padStart(2, "0")}`,
+      );
+    }
+  }
   const scopeChange = (nextScope: CalendarWindowScope) => {
     setScope(nextScope);
     setPagePosition({ key: "", offset: 0 });
@@ -522,7 +561,7 @@ export function LiveCalendar({
   return (
     <section
       className="bg-card min-w-0 overflow-hidden rounded-[var(--radius)] border"
-      aria-label="Calendar records"
+      aria-label={scale === "list" ? "Calendar list view" : "Calendar"}
     >
       <header className="border-b px-4 py-3">
         <h2 className="font-medium">Calendar · {dateFieldTitle}</h2>
@@ -552,6 +591,144 @@ export function LiveCalendar({
         onShiftWindow={shiftWindow}
         timezone={timezone}
       />
+      {scope === "window" && scale === "month" ? (
+        <div className="flex min-w-0 flex-col gap-4 p-4">
+          {result && shownRows.length === 0 ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              No scheduled records in this date window.
+            </p>
+          ) : null}
+          {monthKeys.map((monthKey) => {
+            const [yearValue, monthValue] = monthKey.split("-").map(Number);
+            const firstDay = new Date(Date.UTC(yearValue, monthValue - 1, 1));
+            const dayCount = new Date(
+              Date.UTC(yearValue, monthValue, 0),
+            ).getUTCDate();
+            const leadingDays = firstDay.getUTCDay();
+            const monthLabel = new Intl.DateTimeFormat("en", {
+              timeZone: "UTC",
+              month: "long",
+              year: "numeric",
+            }).format(firstDay);
+            const cells: (number | null)[] = [
+              ...Array.from({ length: leadingDays }, () => null),
+              ...Array.from({ length: dayCount }, (_, index) => index + 1),
+            ];
+            return (
+              <section
+                key={monthKey}
+                className="overflow-hidden rounded-md border"
+              >
+                <h3 className="bg-muted/40 px-3 py-2 font-medium">
+                  {monthLabel}
+                </h3>
+                <div
+                  className="overflow-x-auto"
+                  role="region"
+                  aria-label={`${monthLabel} calendar`}
+                  tabIndex={0}
+                >
+                  <div className="min-w-[46rem]">
+                    <div className="bg-muted/25 grid grid-cols-7 border-b">
+                      {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
+                        (day) => (
+                          <div
+                            key={day}
+                            className="text-muted-foreground px-2 py-2 text-center text-xs font-medium"
+                          >
+                            {day}
+                          </div>
+                        ),
+                      )}
+                    </div>
+                    <div className="grid grid-cols-7">
+                      {cells.map((day, index) => {
+                        if (day === null) {
+                          return (
+                            <div
+                              key={`blank-${index}`}
+                              className="bg-muted/10 min-h-24 border-r border-b"
+                              aria-hidden="true"
+                            />
+                          );
+                        }
+                        const date = `${monthKey}-${String(day).padStart(2, "0")}`;
+                        const inWindow =
+                          date >= windowDates.start && date <= windowDates.end;
+                        const rows = groupByDay.get(date) ?? [];
+                        return (
+                          <div
+                            key={date}
+                            aria-disabled={!inWindow}
+                            className={`min-h-24 border-r border-b p-1.5 ${inWindow ? "" : "bg-muted/10 text-muted-foreground/60"}`}
+                            title={
+                              inWindow
+                                ? undefined
+                                : "Outside the selected date range"
+                            }
+                          >
+                            <p className="text-muted-foreground mb-1 px-1 text-xs tabular-nums">
+                              {day}
+                            </p>
+                            {rows[0] ? (
+                              <h4 className="text-muted-foreground mb-1 px-1 text-[0.6875rem] font-medium">
+                                {formatWindowDate(
+                                  rows[0].data[dateField.id],
+                                  dateField.type,
+                                  timezone,
+                                )}
+                              </h4>
+                            ) : null}
+                            <ul className="flex min-w-0 flex-col gap-1">
+                              {rows.map((row) => {
+                                const title = titleField
+                                  ? recordText(row.data[titleField.id])
+                                  : `Record ${row.id.slice(0, 8)}`;
+                                return (
+                                  <li key={row.id}>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      className="h-auto min-h-11 w-full justify-start border px-2 py-1.5 text-left text-xs whitespace-normal"
+                                      aria-label={`Open record: ${title}`}
+                                      onClick={() => onOpenRecord(row.id)}
+                                    >
+                                      <span className="line-clamp-2 break-words">
+                                        {title}
+                                      </span>
+                                      {detailFields.length ? (
+                                        <span className="text-muted-foreground mt-1 block text-left text-[0.6875rem]">
+                                          {detailFields
+                                            .slice(0, 2)
+                                            .map((field) =>
+                                              recordText(row.data[field.id]),
+                                            )
+                                            .join(" · ")}
+                                        </span>
+                                      ) : null}
+                                      <span className="text-muted-foreground mt-1 block text-left text-[0.625rem]">
+                                        {formatWindowDate(
+                                          row.data[dateField.id],
+                                          dateField.type,
+                                          timezone,
+                                        )}
+                                      </span>
+                                    </Button>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      ) : null}
       {loading && result ? (
         <p
           role="status"
@@ -601,7 +778,9 @@ export function LiveCalendar({
           Select a valid window of up to 366 days to load Calendar records.
         </p>
       ) : null}
-      {result && shownRows.length === 0 ? (
+      {result &&
+      shownRows.length === 0 &&
+      (scale === "list" || scope !== "window") ? (
         <Empty>
           <EmptyHeader>
             <EmptyTitle>
@@ -617,7 +796,9 @@ export function LiveCalendar({
           </EmptyHeader>
         </Empty>
       ) : null}
-      {result && shownRows.length > 0 ? (
+      {result &&
+      shownRows.length > 0 &&
+      (scale === "list" || scope !== "window") ? (
         <div className="divide-y">
           {groups.map(([day, rows]) => (
             <section

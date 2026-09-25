@@ -86,6 +86,7 @@ export function LiveTimeline({
   moduleId,
   definition,
   dateRange,
+  refreshKey = 0,
   startField,
   endField,
   deadlineField,
@@ -168,7 +169,7 @@ export function LiveTimeline({
     windowDates.end,
     windowDates.start,
   ]);
-  const { result, loading, error } = useWindowPage(request, retry);
+  const { result, loading, error } = useWindowPage(request, retry + refreshKey);
   const timezone = result?.timezone ?? null;
   const changeScope = (next: TimelineScope) => {
     setScope(next);

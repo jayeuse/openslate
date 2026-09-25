@@ -264,6 +264,25 @@ class DateSeriesAggregateQuery(AggregateRequest):
 class GroupedAggregateSnapshotQuery(AggregateRequest):
     mode: Literal["groups"] = "groups"
     dimension: FieldReference
+    date_field: FieldReference | None = None
+    from_date: date | None = None
+    to_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_date_window(self) -> Self:
+        if (self.date_field is None) != (self.from_date is None):
+            raise ValueError("Grouped date windows require a date field and both bounds")
+        if (self.from_date is None) != (self.to_date is None):
+            raise ValueError("Grouped date windows require both bounds")
+        if self.date_field is None:
+            return self
+        if self.date_field.expected_type not in {FieldType.DATE, FieldType.DATETIME}:
+            raise ValueError("Grouped date windows require a date or datetime field")
+        assert self.from_date is not None and self.to_date is not None
+        days = (self.to_date - self.from_date).days + 1
+        if days < 1 or days > 366:
+            raise ValueError("Grouped date windows must contain between 1 and 366 days")
+        return self
 
 
 AggregateSnapshotQuery = Annotated[

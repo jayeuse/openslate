@@ -194,10 +194,31 @@ const wireGroupQuerySchema = z
     aggregation: z.enum(["count", "sum", "average"]),
     measure: wireQueryFieldReferenceSchema.nullable(),
     dimension: wireQueryFieldReferenceSchema,
+    date_field: wireQueryFieldReferenceSchema.nullish(),
+    from_date: z.iso.date().nullish(),
+    to_date: z.iso.date().nullish(),
   })
   .strict()
   .superRefine((query, context) => {
     validateMeasure(query.aggregation, query.measure, context);
+    const hasDateWindow =
+      query.date_field != null ||
+      query.from_date != null ||
+      query.to_date != null;
+    if (!hasDateWindow) return;
+    if (
+      !query.date_field ||
+      !["date", "datetime"].includes(query.date_field.expectedType) ||
+      !query.from_date ||
+      !query.to_date ||
+      query.to_date < query.from_date ||
+      inclusiveDays(query.from_date, query.to_date) > 366
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["date_field"],
+        message: "Dashboard grouped date window is invalid",
+      });
   })
   .transform((query) => ({
     mode: query.mode,
@@ -206,6 +227,13 @@ const wireGroupQuerySchema = z
     aggregation: query.aggregation,
     ...(query.measure === null ? {} : { measure: query.measure }),
     dimension: query.dimension,
+    ...(query.date_field && query.from_date && query.to_date
+      ? {
+          dateField: query.date_field,
+          fromDate: query.from_date,
+          toDate: query.to_date,
+        }
+      : {}),
   }));
 
 const wireSnapshotQuerySchema = z.discriminatedUnion("mode", [
@@ -235,6 +263,27 @@ const wireChartConfigSchema = z
     chartType: chart_type,
     query,
   }));
+const wireAggregateConfigSchema = z
+  .object({
+    version: z.literal(1),
+    query: wireGroupQuerySchema,
+  })
+  .strict();
+const wireRecordsConfigSchema = z
+  .object({
+    version: z.literal(1),
+    query: z
+      .object({
+        module_id: uuidSchema,
+        definition: wireQueryDefinitionSchema,
+      })
+      .strict()
+      .transform(({ module_id, definition }) => ({
+        moduleId: module_id,
+        definition,
+      })),
+  })
+  .strict();
 
 const queryBaseInputShape = {
   moduleId: uuidSchema,
@@ -247,10 +296,31 @@ const groupQueryInputSchema = z
     ...queryBaseInputShape,
     mode: z.literal("groups"),
     dimension: queryFieldReferenceSchema,
+    dateField: queryFieldReferenceSchema.optional(),
+    fromDate: z.iso.date().optional(),
+    toDate: z.iso.date().optional(),
   })
   .strict()
   .superRefine((query, context) => {
     validateMeasure(query.aggregation, query.measure, context);
+    const hasDateWindow =
+      query.dateField !== undefined ||
+      query.fromDate !== undefined ||
+      query.toDate !== undefined;
+    if (!hasDateWindow) return;
+    if (
+      !query.dateField ||
+      !["date", "datetime"].includes(query.dateField.expectedType) ||
+      !query.fromDate ||
+      !query.toDate ||
+      query.toDate < query.fromDate ||
+      inclusiveDays(query.fromDate, query.toDate) > 366
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["dateField"],
+        message: "Dashboard grouped date window is invalid",
+      });
   });
 const dateSeriesQueryInputSchema = z
   .object({
@@ -300,16 +370,64 @@ const chartConfigInputSchema = z
       });
     }
   });
-
-const dashboardWidgetInputSchema = z
+const aggregateConfigInputSchema = z
   .object({
-    widgetType: z.literal("chart"),
-    config: chartConfigInputSchema,
+    version: z.literal(1),
+    query: groupQueryInputSchema,
   })
   .strict();
+const recordsConfigInputSchema = z
+  .object({
+    version: z.literal(1),
+    query: z
+      .object({
+        moduleId: uuidSchema,
+        definition: z.unknown(),
+      })
+      .strict()
+      .superRefine((query, context) => {
+        try {
+          serializeOpenViewQueryDefinition(
+            query.definition as OpenViewQueryDefinition,
+          );
+        } catch {
+          context.addIssue({
+            code: "custom",
+            path: ["definition"],
+            message: "Dashboard record query is invalid",
+          });
+        }
+      }),
+  })
+  .strict();
+const dashboardWidgetInputSchema = z.discriminatedUnion("widgetType", [
+  z
+    .object({ widgetType: z.literal("chart"), config: chartConfigInputSchema })
+    .strict(),
+  z
+    .object({
+      widgetType: z.literal("summary"),
+      config: aggregateConfigInputSchema,
+    })
+    .strict(),
+  z
+    .object({
+      widgetType: z.literal("workload"),
+      config: aggregateConfigInputSchema,
+    })
+    .strict(),
+  z
+    .object({
+      widgetType: z.literal("records"),
+      config: recordsConfigInputSchema,
+    })
+    .strict(),
+]);
+const refreshCadenceSchema = z.enum(["manual", "one-minute", "five-minutes"]);
 const dashboardCreateSchema = z
   .object({
     name: z.string().trim().min(1).max(200),
+    refreshCadence: refreshCadenceSchema.default("manual"),
     widgets: z.array(dashboardWidgetInputSchema).max(12).default([]),
   })
   .strict();
@@ -318,11 +436,16 @@ const dashboardUpdateSchema = z
     id: uuidSchema,
     revision: z.number().int().min(1),
     name: z.string().trim().min(1).max(200).optional(),
+    refreshCadence: refreshCadenceSchema.optional(),
     widgets: z.array(dashboardWidgetInputSchema).max(12).optional(),
   })
   .strict()
-  .superRefine(({ name, widgets }, context) => {
-    if (name === undefined && widgets === undefined) {
+  .superRefine(({ name, refreshCadence, widgets }, context) => {
+    if (
+      name === undefined &&
+      refreshCadence === undefined &&
+      widgets === undefined
+    ) {
       context.addIssue({
         code: "custom",
         message: "At least one Dashboard change is required",
@@ -346,27 +469,69 @@ const paginationSchema = z
     ...pagination,
     hasMore: has_more,
   }));
-const wireWidgetSchema = z
-  .object({
-    id: uuidSchema,
-    position: z.number().int().min(0).max(11),
-    widget_type: z.literal("chart"),
-    config: wireChartConfigSchema,
-    created_at: timestampSchema,
-    updated_at: timestampSchema,
-  })
-  .strict()
-  .transform(({ widget_type, created_at, updated_at, ...widget }) => ({
-    ...widget,
-    widgetType: widget_type,
+const wireWidgetBaseShape = {
+  id: uuidSchema,
+  position: z.number().int().min(0).max(11),
+  created_at: timestampSchema,
+  updated_at: timestampSchema,
+};
+function transformWireWidget<
+  Widget extends {
+    widget_type: "summary" | "workload" | "records" | "chart";
+    created_at: string;
+    updated_at: string;
+  },
+  WidgetType extends "summary" | "workload" | "records" | "chart",
+>(widget: Widget, widgetType: WidgetType) {
+  const { widget_type, created_at, updated_at, ...rest } = widget;
+  void widget_type;
+  return {
+    ...rest,
+    widgetType,
     createdAt: created_at,
     updatedAt: updated_at,
-  }));
+  };
+}
+const wireWidgetSchema = z.discriminatedUnion("widget_type", [
+  z
+    .object({
+      ...wireWidgetBaseShape,
+      widget_type: z.literal("chart"),
+      config: wireChartConfigSchema,
+    })
+    .strict()
+    .transform((widget) => transformWireWidget(widget, "chart")),
+  z
+    .object({
+      ...wireWidgetBaseShape,
+      widget_type: z.literal("summary"),
+      config: wireAggregateConfigSchema,
+    })
+    .strict()
+    .transform((widget) => transformWireWidget(widget, "summary")),
+  z
+    .object({
+      ...wireWidgetBaseShape,
+      widget_type: z.literal("workload"),
+      config: wireAggregateConfigSchema,
+    })
+    .strict()
+    .transform((widget) => transformWireWidget(widget, "workload")),
+  z
+    .object({
+      ...wireWidgetBaseShape,
+      widget_type: z.literal("records"),
+      config: wireRecordsConfigSchema,
+    })
+    .strict()
+    .transform((widget) => transformWireWidget(widget, "records")),
+]);
 const dashboardSchema = z
   .object({
     id: uuidSchema,
     owner_id: uuidSchema,
     name: z.string().min(1).max(200),
+    refresh_cadence: refreshCadenceSchema,
     revision: z.number().int().min(1),
     is_deleted: z.boolean(),
     created_at: timestampSchema,
@@ -380,18 +545,26 @@ const dashboardSchema = z
         context.addIssue({
           code: "custom",
           path: ["widgets", index, "position"],
-          message: "Dashboard chart positions must be complete and ordered",
+          message: "Dashboard widget positions must be complete and ordered",
         });
       }
     });
   })
   .transform(
-    ({ owner_id, is_deleted, created_at, updated_at, ...dashboard }) => ({
+    ({
+      owner_id,
+      is_deleted,
+      created_at,
+      updated_at,
+      refresh_cadence,
+      ...dashboard
+    }) => ({
       ...dashboard,
       ownerId: owner_id,
       isDeleted: is_deleted,
       createdAt: created_at,
       updatedAt: updated_at,
+      refreshCadence: refresh_cadence,
     }),
   );
 const dashboardListResponseSchema = z
@@ -423,18 +596,60 @@ export type OpenViewDashboardChartConfig = {
   chartType: "bar" | "line" | "pie";
   query: OpenViewDashboardChartQuery;
 };
-export type OpenViewDashboardWidget = {
+export type OpenViewDashboardAggregateConfig = {
+  version: 1;
+  query: OpenViewDashboardGroupQuery;
+};
+export type OpenViewDashboardGroupQuery = {
+  mode: "groups";
+  moduleId: string;
+  definition: OpenViewQueryDefinition;
+  aggregation: "count" | "sum" | "average";
+  measure?: OpenViewQueryFieldReference;
+  dimension: OpenViewQueryFieldReference;
+  dateField?: OpenViewQueryFieldReference;
+  fromDate?: string;
+  toDate?: string;
+};
+export type OpenViewDashboardRecordsConfig = {
+  version: 1;
+  query: {
+    moduleId: string;
+    definition: OpenViewQueryDefinition;
+  };
+};
+export type OpenViewDashboardWidgetType =
+  "summary" | "workload" | "records" | "chart";
+export type OpenViewDashboardWidgetConfig =
+  | OpenViewDashboardChartConfig
+  | OpenViewDashboardAggregateConfig
+  | OpenViewDashboardRecordsConfig;
+export type OpenViewDashboardRefreshCadence =
+  "manual" | "one-minute" | "five-minutes";
+type OpenViewDashboardWidgetBase = {
   id: string;
   position: number;
-  widgetType: "chart";
-  config: OpenViewDashboardChartConfig;
   createdAt: string;
   updatedAt: string;
 };
+export type OpenViewDashboardWidget =
+  | (OpenViewDashboardWidgetBase & {
+      widgetType: "chart";
+      config: OpenViewDashboardChartConfig;
+    })
+  | (OpenViewDashboardWidgetBase & {
+      widgetType: "summary" | "workload";
+      config: OpenViewDashboardAggregateConfig;
+    })
+  | (OpenViewDashboardWidgetBase & {
+      widgetType: "records";
+      config: OpenViewDashboardRecordsConfig;
+    });
 export type OpenViewDashboard = {
   id: string;
   ownerId: string;
   name: string;
+  refreshCadence: OpenViewDashboardRefreshCadence;
   revision: number;
   isDeleted: boolean;
   createdAt: string;
@@ -452,19 +667,30 @@ export type OpenViewDashboardPage = {
   };
 };
 export type OpenViewDashboardDefault = { dashboardId: string | null };
-export type OpenViewDashboardWidgetInput = {
-  widgetType: "chart";
-  config: OpenViewDashboardChartConfig;
-};
+export type OpenViewDashboardWidgetInput =
+  | {
+      widgetType: "chart";
+      config: OpenViewDashboardChartConfig;
+    }
+  | {
+      widgetType: "summary" | "workload";
+      config: OpenViewDashboardAggregateConfig;
+    }
+  | {
+      widgetType: "records";
+      config: OpenViewDashboardRecordsConfig;
+    };
 export type OpenViewDashboardCreateInput = {
   name: string;
+  refreshCadence?: OpenViewDashboardRefreshCadence;
   widgets?: OpenViewDashboardWidgetInput[];
 };
 export type OpenViewDashboardUpdateInput = {
   id: string;
   revision: number;
   name?: string;
-  /** Replaces the complete ordered chart widget list. */
+  refreshCadence?: OpenViewDashboardRefreshCadence;
+  /** Replaces the complete ordered widget list. */
   widgets?: OpenViewDashboardWidgetInput[];
 };
 export type OpenViewDashboardListOptions = {
@@ -518,10 +744,18 @@ function validateMeasure(
   }
 }
 
-function serializeChartConfig(config: unknown) {
-  const parsed = chartConfigInputSchema.parse(config);
-  const query = parsed.query;
-  const wireDefinition = serializeOpenViewQueryDefinition(query.definition);
+function serializeSnapshotQuery(
+  query: {
+    mode: "groups" | "date_series";
+    moduleId: string;
+    definition: unknown;
+    aggregation: "count" | "sum" | "average";
+    measure?: OpenViewQueryFieldReference;
+  } & Record<string, unknown>,
+) {
+  const wireDefinition = serializeOpenViewQueryDefinition(
+    query.definition as OpenViewQueryDefinition,
+  );
   const common = {
     module_id: query.moduleId,
     definition: wireDefinition,
@@ -533,31 +767,91 @@ function serializeChartConfig(config: unknown) {
         }
       : null,
   };
-  const wireQuery =
-    query.mode === "groups"
-      ? {
-          ...common,
-          mode: query.mode,
-          dimension: {
-            field_id: query.dimension.fieldId,
-            expected_type: query.dimension.expectedType,
-          },
-        }
-      : {
-          ...common,
-          mode: query.mode,
-          date_field: {
-            field_id: query.dateField.fieldId,
-            expected_type: query.dateField.expectedType,
-          },
-          from_date: query.fromDate,
-          to_date: query.toDate,
-        };
+  if (query.mode === "groups") {
+    const group = query as typeof query & {
+      dimension: OpenViewQueryFieldReference;
+      dateField?: OpenViewQueryFieldReference;
+      fromDate?: string;
+      toDate?: string;
+    };
+    return {
+      ...common,
+      mode: query.mode,
+      dimension: {
+        field_id: group.dimension.fieldId,
+        expected_type: group.dimension.expectedType,
+      },
+      ...(group.dateField && group.fromDate && group.toDate
+        ? {
+            date_field: {
+              field_id: group.dateField.fieldId,
+              expected_type: group.dateField.expectedType,
+            },
+            from_date: group.fromDate,
+            to_date: group.toDate,
+          }
+        : {}),
+    };
+  }
+  const date = query as typeof query & {
+    dateField: OpenViewQueryFieldReference;
+    fromDate: string;
+    toDate: string;
+  };
+  return {
+    ...common,
+    mode: query.mode,
+    date_field: {
+      field_id: date.dateField.fieldId,
+      expected_type: date.dateField.expectedType,
+    },
+    from_date: date.fromDate,
+    to_date: date.toDate,
+  };
+}
+
+function serializeChartConfig(config: unknown) {
+  const parsed = chartConfigInputSchema.parse(config);
   return {
     version: parsed.version,
     chart_type: parsed.chartType,
-    query: wireQuery,
+    query: serializeSnapshotQuery(parsed.query),
   };
+}
+
+function serializeAggregateConfig(config: unknown) {
+  const parsed = aggregateConfigInputSchema.parse(config);
+  return {
+    version: parsed.version,
+    query: serializeSnapshotQuery(parsed.query),
+  };
+}
+
+function serializeRecordsConfig(config: unknown) {
+  const parsed = recordsConfigInputSchema.parse(config);
+  return {
+    version: parsed.version,
+    query: {
+      module_id: parsed.query.moduleId,
+      definition: serializeOpenViewQueryDefinition(
+        parsed.query.definition as OpenViewQueryDefinition,
+      ),
+    },
+  };
+}
+
+function serializeWidgetConfig(
+  widget: z.output<typeof dashboardWidgetInputSchema>,
+) {
+  switch (widget.widgetType) {
+    case "chart":
+      return serializeChartConfig(widget.config);
+    case "summary":
+    case "workload":
+      return serializeAggregateConfig(widget.config);
+    case "records":
+      return serializeRecordsConfig(widget.config);
+  }
 }
 
 function serializeWidgets(
@@ -565,7 +859,7 @@ function serializeWidgets(
 ) {
   return widgets.map((widget) => ({
     widget_type: widget.widgetType,
-    config: serializeChartConfig(widget.config),
+    config: serializeWidgetConfig(widget),
   }));
 }
 
@@ -656,6 +950,7 @@ export async function createOpenViewDashboard(
     cache: "no-store",
     body: JSON.stringify({
       name: input.name,
+      refresh_cadence: input.refreshCadence,
       widgets: serializeWidgets(input.widgets),
     }),
   });
@@ -667,6 +962,8 @@ export async function updateOpenViewDashboard(
   const input = dashboardUpdateSchema.parse(raw);
   const body: Record<string, unknown> = { revision: input.revision };
   if (input.name !== undefined) body.name = input.name;
+  if (input.refreshCadence !== undefined)
+    body.refresh_cadence = input.refreshCadence;
   if (input.widgets !== undefined)
     body.widgets = serializeWidgets(input.widgets);
   return apiFetch(

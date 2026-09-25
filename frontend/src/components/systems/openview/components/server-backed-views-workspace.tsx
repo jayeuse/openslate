@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
 import { ArrowDown, ArrowUp } from "lucide-react";
+import { ApiError } from "@/lib/api";
 import {
   queryOpenViewGroupedRecords,
   type OpenViewGroupSelector,
@@ -197,6 +198,10 @@ function groupName(value: string | null, label: string): string {
 function messageFor(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return error.message;
   return fallback;
+}
+
+function isAuthorizationDenied(error: unknown): boolean {
+  return error instanceof ApiError && [401, 403].includes(error.status);
 }
 
 function emptyDefinition(
@@ -461,6 +466,7 @@ export default function ServerBackedViewsWorkspace({
     loadMoreAudienceOptions,
     refreshModule,
     retryCatalog,
+    recordInvalidation,
   } = resource;
   const [recordPage, setRecordPage] = useState<RecordPageState | null>(null);
   const [recordRetry, setRecordRetry] = useState(0);
@@ -548,8 +554,38 @@ export default function ServerBackedViewsWorkspace({
   const explicitUnsavedSelection = Boolean(
     moduleId && explicitUnsavedModules.has(moduleId),
   );
+  const implicitDraftSelection =
+    !routedView && moduleId && draftState?.key.startsWith(`${moduleId}:`)
+      ? draftState.key.slice(moduleId.length + 1)
+      : undefined;
+  const implicitSavedView = moduleViews.find(
+    (view) => view.id === implicitDraftSelection && !view.isDeleted,
+  );
+  const implicitBaseDraft =
+    implicitDraftSelection === undefined
+      ? null
+      : implicitDraftSelection === ""
+        ? {
+            name: "",
+            audience: { kind: "private" },
+            definition: emptyDefinition(fields),
+            presentation: emptyPresentation(fields),
+          }
+        : implicitSavedView
+          ? draftForView(implicitSavedView)
+          : null;
+  const preserveImplicitDraft =
+    implicitDraftSelection !== undefined &&
+    (implicitBaseDraft === null ||
+      JSON.stringify(draftState?.value) !== JSON.stringify(implicitBaseDraft));
   const selectedViewId =
-    routedView ?? (explicitUnsavedSelection ? undefined : defaultViewId) ?? "";
+    routedView ??
+    (explicitUnsavedSelection
+      ? undefined
+      : preserveImplicitDraft
+        ? implicitDraftSelection
+        : defaultViewId) ??
+    "";
   const draftKey = `${moduleId ?? ""}:${selectedViewId}`;
   const [recordPagePosition, setRecordPagePosition] = useState(() => ({
     key: draftKey,
@@ -766,6 +802,25 @@ export default function ServerBackedViewsWorkspace({
       })
       .catch((error: unknown) => {
         if (request !== recordRequest.current) return;
+        if (isAuthorizationDenied(error)) {
+          inspectionRequest.current += 1;
+          setInspectionContext(null);
+          setInspectionError(
+            "This record is no longer available with your current access.",
+          );
+          setRecordPage({
+            moduleId,
+            queryKey,
+            rows: [],
+            offset: 0,
+            total: 0,
+            hasMore: false,
+            loading: false,
+            error:
+              "You no longer have access to these records. Sign in or ask for access, then retry.",
+          });
+          return;
+        }
         setRecordPage((previous) => ({
           moduleId,
           queryKey,
@@ -788,6 +843,7 @@ export default function ServerBackedViewsWorkspace({
     presentationLayout,
     queryKey,
     recordOffset,
+    recordInvalidation,
     recordRetry,
     requestDefinition,
     requestedRecord,
@@ -860,6 +916,7 @@ export default function ServerBackedViewsWorkspace({
     moduleId,
     normalizedDraftDefinition,
     recordOffset,
+    recordInvalidation,
   ]);
 
   const ordinaryRecordPage =
@@ -1074,6 +1131,12 @@ export default function ServerBackedViewsWorkspace({
             ? requestedRecord
             : undefined,
       });
+      if (
+        replace &&
+        typeof window !== "undefined" &&
+        target === `${window.location.pathname}${window.location.search}`
+      )
+        return;
       if (replace) router.replace(target as Route, { scroll: false });
       else router.push(target as Route, { scroll: false });
     },
@@ -1383,8 +1446,9 @@ export default function ServerBackedViewsWorkspace({
     }
     editRevision.current += 1;
     draftRef.current = next;
-    dirtyRef.current = JSON.stringify(next) !== JSON.stringify(baseDraft);
-    setDraftState({ key: draftKey, value: next });
+    const nextDirty = JSON.stringify(next) !== JSON.stringify(baseDraft);
+    dirtyRef.current = nextDirty;
+    setDraftState(nextDirty ? { key: draftKey, value: next } : null);
     setNotice("");
     setActionError("");
   };
@@ -1590,15 +1654,23 @@ export default function ServerBackedViewsWorkspace({
       acceptSavedView(saved, !changedDuringSave);
       setSaveConflict(null);
       if (!changedDuringSave) {
-        setDraftState({
-          key: `${saved.moduleId}:${saved.id}`,
-          value: draftForView(saved),
-        });
+        draftRef.current = draftForView(saved);
+        dirtyRef.current = false;
+        setDraftState(null);
         setSaveOpen(false);
         setNotice(`“${saved.name}” was saved.`);
       } else {
+        const latestDraft = draftRef.current;
+        const newerEditsRemain =
+          JSON.stringify(latestDraft) !== JSON.stringify(draftForView(saved));
+        dirtyRef.current = newerEditsRemain;
+        setDraftState(
+          newerEditsRemain ? { key: draftKey, value: latestDraft } : null,
+        );
         setNotice(
-          `“${saved.name}” was saved. Your newer edits remain open as an unsaved draft.`,
+          newerEditsRemain
+            ? `“${saved.name}” was saved. Your newer edits remain open as an unsaved draft.`
+            : `“${saved.name}” was saved.`,
         );
       }
     } catch (error) {
@@ -1666,10 +1738,7 @@ export default function ServerBackedViewsWorkspace({
     if (!saveConflict) return;
     const { latest } = saveConflict;
     const latestDraft = draftForView(latest);
-    setDraftState({
-      key: `${latest.moduleId}:${latest.id}`,
-      value: latestDraft,
-    });
+    setDraftState(null);
     draftRef.current = latestDraft;
     dirtyRef.current = false;
     setDeepLinkView(latest);
@@ -1873,13 +1942,15 @@ export default function ServerBackedViewsWorkspace({
       const nextDraft = changedDuringDuplicate
         ? draftRef.current
         : draftForView(duplicated);
-      setDraftState({
-        key: `${duplicated.moduleId}:${duplicated.id}`,
-        value: nextDraft,
-      });
       draftRef.current = nextDraft;
-      dirtyRef.current =
+      const newerEditsRemain =
         JSON.stringify(nextDraft) !== JSON.stringify(draftForView(duplicated));
+      dirtyRef.current = newerEditsRemain;
+      setDraftState(
+        newerEditsRemain
+          ? { key: `${duplicated.moduleId}:${duplicated.id}`, value: nextDraft }
+          : null,
+      );
       setRoute(
         { module: duplicated.moduleId, view: duplicated.id, record: undefined },
         true,
@@ -2223,7 +2294,10 @@ export default function ServerBackedViewsWorkspace({
           className="flex flex-wrap items-center justify-between gap-3"
         >
           <span>
-            {rowError} The last successful record page remains visible.
+            {rowError}{" "}
+            {pageRows.length
+              ? "The last successful record page remains visible."
+              : "No record rows remain displayed."}
           </span>
           <Button
             type="button"
@@ -2984,9 +3058,50 @@ export default function ServerBackedViewsWorkspace({
                     ))}
                   </Select>
                 </Field>
+                <Field className="w-full max-w-56">
+                  <FieldLabel htmlFor="openview-calendar-date-range">
+                    Calendar date range
+                  </FieldLabel>
+                  <Select
+                    id="openview-calendar-date-range"
+                    className="min-h-11"
+                    value={draft.presentation.dateRange}
+                    onValueChange={(value) =>
+                      updatePresentation((current) => ({
+                        ...current,
+                        dateRange:
+                          value as OpenViewSavedView["presentation"]["dateRange"],
+                      }))
+                    }
+                  >
+                    <option value="week">Week</option>
+                    <option value="month">Month</option>
+                    <option value="quarter">Quarter</option>
+                    <option value="year">Year</option>
+                  </Select>
+                </Field>
+                <Field className="w-full max-w-56">
+                  <FieldLabel htmlFor="openview-calendar-scale">
+                    Calendar scale
+                  </FieldLabel>
+                  <Select
+                    id="openview-calendar-scale"
+                    className="min-h-11"
+                    value={draft.presentation.scale ?? "month"}
+                    onValueChange={(value) =>
+                      updatePresentation((current) => ({
+                        ...current,
+                        scale: value as "month" | "list",
+                      }))
+                    }
+                  >
+                    <option value="month">Month</option>
+                    <option value="list">List</option>
+                  </Select>
+                </Field>
                 <p className="text-muted-foreground max-w-prose text-sm">
-                  Calendar dates are queried as workspace-local days. Choose an
-                  active date or datetime field in this view.
+                  Choose an active date or datetime field. The range and Month
+                  or List layout are saved with this view.
                 </p>
               </div>
             ) : null}
@@ -3627,6 +3742,7 @@ export default function ServerBackedViewsWorkspace({
                   key={`${moduleId}:${JSON.stringify(normalizedDraftDefinition)}:${groupByField.id}`}
                   moduleId={moduleId}
                   definition={normalizedDraftDefinition}
+                  refreshKey={recordInvalidation}
                   groupByFieldId={groupByField.id}
                   groupByFieldType={groupByField.type}
                   fields={cardFields}
@@ -3655,6 +3771,8 @@ export default function ServerBackedViewsWorkspace({
                   moduleId={moduleId}
                   definition={normalizedDraftDefinition}
                   dateRange={draft.presentation.dateRange}
+                  refreshKey={recordInvalidation}
+                  scale={draft.presentation.scale}
                   dateField={calendarDateField}
                   titleField={liveTitleField}
                   detailFields={liveDetailFields}
@@ -3676,6 +3794,7 @@ export default function ServerBackedViewsWorkspace({
                   moduleId={moduleId}
                   definition={normalizedDraftDefinition}
                   dateRange={draft.presentation.dateRange}
+                  refreshKey={recordInvalidation}
                   startField={timelineStartField}
                   endField={timelineEndField}
                   deadlineField={timelineDeadlineField}

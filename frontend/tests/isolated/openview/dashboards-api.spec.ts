@@ -86,6 +86,17 @@ const wireGroupQuery = {
   aggregation: "count",
   measure: null,
   dimension: { field_id: dimensionId, expected_type: "text" },
+  date_field: null,
+  from_date: null,
+  to_date: null,
+};
+const wireGroupRequest = {
+  mode: wireGroupQuery.mode,
+  module_id: wireGroupQuery.module_id,
+  definition: wireGroupQuery.definition,
+  aggregation: wireGroupQuery.aggregation,
+  measure: wireGroupQuery.measure,
+  dimension: wireGroupQuery.dimension,
 };
 
 const wireWidget = {
@@ -96,12 +107,40 @@ const wireWidget = {
   created_at: timestamp,
   updated_at: timestamp,
 };
+const wireLiveWidgets = [
+  wireWidget,
+  {
+    ...wireWidget,
+    id: "00000000-0000-4000-8000-000000000008",
+    position: 1,
+    widget_type: "summary",
+    config: { version: 1, query: wireGroupQuery },
+  },
+  {
+    ...wireWidget,
+    id: "00000000-0000-4000-8000-000000000009",
+    position: 2,
+    widget_type: "workload",
+    config: { version: 1, query: wireGroupQuery },
+  },
+  {
+    ...wireWidget,
+    id: "00000000-0000-4000-8000-000000000010",
+    position: 3,
+    widget_type: "records",
+    config: {
+      version: 1,
+      query: { module_id: moduleId, definition: wireDefinition },
+    },
+  },
+];
 
 function dashboardResponse(overrides: Record<string, unknown> = {}) {
   return {
     id: dashboardId,
     owner_id: userId,
     name: "Operations",
+    refresh_cadence: "manual",
     revision: 2,
     is_deleted: false,
     created_at: timestamp,
@@ -124,6 +163,7 @@ function expectedDashboard(): OpenViewDashboard {
     id: dashboardId,
     ownerId: userId,
     name: "Operations",
+    refreshCadence: "manual",
     revision: 2,
     isDeleted: false,
     createdAt: timestamp,
@@ -263,10 +303,11 @@ test("creates and replaces the complete ordered chart list using the strict wire
     expect(createRequest?.init?.method).toBe("POST");
     expect(JSON.parse(String(createRequest?.init?.body))).toEqual({
       name: "Operations",
+      refresh_cadence: "manual",
       widgets: [
         {
           widget_type: "chart",
-          config: { version: 1, chart_type: "bar", query: wireGroupQuery },
+          config: { version: 1, chart_type: "bar", query: wireGroupRequest },
         },
       ],
     });
@@ -285,6 +326,92 @@ test("creates and replaces the complete ordered chart list using the strict wire
     expect(JSON.parse(String(updateRequest?.init?.body))).toEqual({
       revision: 2,
       widgets: [],
+    });
+  } finally {
+    fetch.restore();
+  }
+});
+
+test("maps all live widget types and persists the visible refresh cadence", async () => {
+  const saved = dashboardResponse({
+    refresh_cadence: "one-minute",
+    widgets: wireLiveWidgets.map((widget) => ({
+      ...widget,
+      id: widget.id === widgetId ? widgetId : widget.id,
+    })),
+  });
+  const fetch = installFetch((_input, init) =>
+    jsonResponse(saved, init?.method === "POST" ? 201 : 200),
+  );
+  const widgets = [
+    {
+      widgetType: "chart" as const,
+      config: {
+        version: 1 as const,
+        chartType: "bar" as const,
+        query: groupQuery,
+      },
+    },
+    {
+      widgetType: "summary" as const,
+      config: { version: 1 as const, query: groupQuery },
+    },
+    {
+      widgetType: "workload" as const,
+      config: { version: 1 as const, query: groupQuery },
+    },
+    {
+      widgetType: "records" as const,
+      config: { version: 1 as const, query: { moduleId, definition } },
+    },
+  ];
+  try {
+    const created = await createOpenViewDashboard({
+      name: "Operations",
+      refreshCadence: "one-minute",
+      widgets,
+    });
+    expect(created.refreshCadence).toBe("one-minute");
+    expect(created.widgets.map((widget) => widget.widgetType)).toEqual([
+      "chart",
+      "summary",
+      "workload",
+      "records",
+    ]);
+    expect(JSON.parse(String(fetch.requests[0]?.init?.body))).toEqual({
+      name: "Operations",
+      refresh_cadence: "one-minute",
+      widgets: [
+        {
+          widget_type: "chart",
+          config: { version: 1, chart_type: "bar", query: wireGroupRequest },
+        },
+        {
+          widget_type: "summary",
+          config: { version: 1, query: wireGroupRequest },
+        },
+        {
+          widget_type: "workload",
+          config: { version: 1, query: wireGroupRequest },
+        },
+        {
+          widget_type: "records",
+          config: {
+            version: 1,
+            query: { module_id: moduleId, definition: wireDefinition },
+          },
+        },
+      ],
+    });
+
+    await updateOpenViewDashboard({
+      id: dashboardId,
+      revision: 2,
+      refreshCadence: "five-minutes",
+    });
+    expect(JSON.parse(String(fetch.requests[1]?.init?.body))).toEqual({
+      revision: 2,
+      refresh_cadence: "five-minutes",
     });
   } finally {
     fetch.restore();
