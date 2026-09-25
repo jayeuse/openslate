@@ -10,6 +10,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # Frontend Engineering Rules
 
+## Maintainability and file size
+
+- Use approximately 500 lines as a review signal for logic-heavy modules, not a hard limit or CI failure. TSX presentation, cohesive forms and tables may remain longer.
+- Extract a module only when it separates a real responsibility: domain rules, transport, lifecycle coordination, or a focused editor/view. Do not replace a large component with a large hook or context containing the entire feature.
+- Keep one owner for each draft, selection, pending operation, subscription, and transaction. Preserve component keys, provider placement, mount behavior, effect cleanup, and existing contracts during extraction.
+- Organize tests by observable behavior and fixtures/templates/CSS by ownership and purpose; do not split them solely for length. Generated files, dependencies, build output, and lockfiles are outside this guidance.
+- Measure refactoring success through clearer dependencies and verified behavior, not line-count reductions. Do not remove functionality, compress formatting, or add forwarding layers merely to shorten files.
+
 ## Core React rules
 
 - Keep TypeScript strict: no `any`; accept external data as `unknown` and narrow/validate at the boundary.
