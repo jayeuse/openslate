@@ -1,7 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AlertTriangle, ChevronDown, Lock, Search, Unlock } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  Lock,
+  Settings2,
+  Unlock,
+  X,
+} from "lucide-react";
 
 import {
   AlertDialog,
@@ -23,12 +30,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import {
@@ -36,6 +38,8 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import { PaginationControls } from "@/components/ui/pagination-controls";
+import { AccessSearchToolbar } from "./access-search-toolbar";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
@@ -128,160 +132,106 @@ function dateTimeValue(value: string): string | undefined {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : value;
 }
 
-function groupByProduct<T extends { product: string }>(items: readonly T[]) {
-  const groups = new Map<string, T[]>();
-  for (const item of items) {
-    const group = groups.get(item.product) ?? [];
-    group.push(item);
-    groups.set(item.product, group);
-  }
-  return groups;
-}
-
-function PermissionDetails({ permission }: { permission: Permission }) {
-  return (
-    <details className="group mt-2 rounded-md border">
-      <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2">
-        Technical details
-        <ChevronDown
-          aria-hidden="true"
-          className="size-4 transition-transform group-open:rotate-180 motion-reduce:transition-none"
-        />
-      </summary>
-      <p className="text-muted-foreground border-t px-3 py-2 text-xs">
-        Permission ID: <code className="font-mono">{permission.id}</code>
-      </p>
-    </details>
-  );
-}
-
-function permissionColumns(
-  ruleFor: (permissionId: string) => AccessRule,
-  onChange: (rule: AccessRule) => void,
-): DataTableColumn<Permission>[] {
-  return [
-    {
-      id: "permission",
-      header: "Permission",
-      cell: ({ row }) => {
-        const permission = row.original;
-        return (
-          <div>
-            <p className="font-medium">{permission.name}</p>
-            <Badge variant="secondary" className="mt-2">
-              {permission.product}
-            </Badge>
-            <PermissionDetails permission={permission} />
-          </div>
-        );
-      },
-    },
-    {
-      id: "decision",
-      header: "Decision and conditions",
-      cell: ({ row }) => {
-        const permission = row.original;
-        return (
-          <RuleControls
-            rule={ruleFor(permission.id)}
-            permissionName={permission.name}
-            idSuffix="desktop"
-            onChange={onChange}
-          />
-        );
-      },
-    },
-  ];
-}
-
-function RuleControls({
+function RuleDecision({
   rule,
   permissionName,
-  idSuffix,
   onChange,
 }: {
   rule: AccessRule;
   permissionName: string;
-  idSuffix: "desktop" | "mobile";
   onChange: (rule: AccessRule) => void;
 }) {
-  const startsId = `${rule.id}-${idSuffix}-starts`;
-  const endsId = `${rule.id}-${idSuffix}-ends`;
   return (
-    <FieldGroup className="gap-3">
-      <ToggleGroup
-        aria-label={`${permissionName} decision`}
-        value={[rule.decision]}
-        onValueChange={(values) => {
-          const decision = values[0] as AccessDecision | undefined;
-          if (decision) onChange({ ...rule, decision });
-        }}
-        variant="outline"
-        spacing={0}
-        className="w-full [&>button]:min-h-11 [&>button]:flex-1"
-      >
-        <ToggleGroupItem value="inherit">Use existing access</ToggleGroupItem>
-        <ToggleGroupItem value="allow">Allow</ToggleGroupItem>
-        <ToggleGroupItem value="deny">Deny</ToggleGroupItem>
-      </ToggleGroup>
-      <p className="text-muted-foreground text-xs">
-        Use existing access follows broader or default access. A scope lock can
-        still block more specific rules.
-      </p>
-      <details className="rounded-md border">
-        <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2">
-          Conditions and scope lock
-        </summary>
-        <div className="space-y-3 border-t p-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor={startsId}>Starts</FieldLabel>
-              <Input
-                id={startsId}
-                className="min-h-11"
-                type="datetime-local"
-                value={localDateTime(rule.startsAt)}
-                onChange={(event) =>
-                  onChange({
-                    ...rule,
-                    startsAt: dateTimeValue(event.target.value),
-                  })
-                }
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={endsId}>Ends</FieldLabel>
-              <Input
-                id={endsId}
-                className="min-h-11"
-                type="datetime-local"
-                value={localDateTime(rule.endsAt)}
-                onChange={(event) =>
-                  onChange({
-                    ...rule,
-                    endsAt: dateTimeValue(event.target.value),
-                  })
-                }
-              />
-            </Field>
-          </div>
+    <ToggleGroup
+      aria-label={`${permissionName} decision`}
+      value={[rule.decision]}
+      onValueChange={(values) => {
+        const decision = values[0] as AccessDecision | undefined;
+        if (decision) onChange({ ...rule, decision });
+      }}
+      variant="outline"
+      spacing={0}
+      className="w-full min-w-0 [&>button]:min-h-11 [&>button]:flex-1 [&>button]:px-2 [&>button]:whitespace-normal [&>button:first-child]:flex-[1.6]"
+    >
+      <ToggleGroupItem value="inherit">Use existing access</ToggleGroupItem>
+      <ToggleGroupItem value="allow">Allow</ToggleGroupItem>
+      <ToggleGroupItem value="deny">Deny</ToggleGroupItem>
+    </ToggleGroup>
+  );
+}
+function RuleTimeWindow({
+  rule,
+  permissionName,
+  idSuffix,
+  onChange,
+  onAdvanced,
+}: {
+  rule: AccessRule;
+  permissionName: string;
+  idSuffix: string;
+  onChange: (rule: AccessRule) => void;
+  onAdvanced: (triggerId: string) => void;
+}) {
+  const id = `rule-${rule.permissionId}-${idSuffix}`;
+  return (
+    <div
+      id={`${id}-options`}
+      role="region"
+      aria-label={`${permissionName} options`}
+      className="bg-muted/20 p-4 text-left sm:p-5"
+    >
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm font-medium">
+            Time window{" "}
+            <span className="text-muted-foreground font-normal">
+              (optional)
+            </span>
+          </p>
           <Button
-            type="button"
+            id={`${id}-advanced`}
             variant="outline"
-            className="min-h-11 w-full sm:w-auto"
-            aria-pressed={rule.locked === true}
-            onClick={() => onChange({ ...rule, locked: !rule.locked })}
+            className="min-h-11"
+            onClick={() => onAdvanced(`${id}-advanced`)}
           >
-            {rule.locked ? (
-              <Lock aria-hidden="true" data-icon="inline-start" />
-            ) : (
-              <Unlock aria-hidden="true" data-icon="inline-start" />
-            )}
-            {rule.locked ? "Locked at this scope" : "Lock at this scope"}
+            <Settings2 aria-hidden="true" />
+            Advanced rule setup
           </Button>
         </div>
-      </details>
-    </FieldGroup>
+        <div className="grid max-w-3xl gap-3 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor={`${id}-starts`}>Starts</FieldLabel>
+            <Input
+              id={`${id}-starts`}
+              className="min-h-11 min-w-0"
+              type="datetime-local"
+              value={localDateTime(rule.startsAt)}
+              onChange={(event) =>
+                onChange({
+                  ...rule,
+                  startsAt: dateTimeValue(event.target.value),
+                })
+              }
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`${id}-ends`}>Ends</FieldLabel>
+            <Input
+              id={`${id}-ends`}
+              className="min-h-11 min-w-0"
+              type="datetime-local"
+              value={localDateTime(rule.endsAt)}
+              onChange={(event) =>
+                onChange({ ...rule, endsAt: dateTimeValue(event.target.value) })
+              }
+            />
+          </Field>
+        </div>
+        <p className="text-muted-foreground text-xs">
+          Leave blank for no time limit.
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -310,6 +260,15 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
     Record<string, ConflictResolution>
   >({});
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<"name" | "name-desc">("name");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [setupTab, setSetupTab] = useState<"context" | "advanced">("context");
+  const [setupPermissionId, setSetupPermissionId] = useState<string | null>(
+    null,
+  );
+  const [resumeSetup, setResumeSetup] = useState(false);
+  const setupTriggerId = useRef("rules-title");
   const [modifiedOnly, setModifiedOnly] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [impactOpen, setImpactOpen] = useState(false);
@@ -487,21 +446,27 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
         !permissionCatalog.some((permission) => permission.id === permissionId),
     );
   const normalizedQuery = query.trim().toLowerCase();
-  const filteredPermissions = permissionCatalog.filter((permission) => {
-    if (
-      !selectedScopeEntry ||
-      permission.product !== selectedScopeEntry.product
-    )
-      return false;
-    const matches = `${permission.name} ${permission.product} ${permission.id}`
-      .toLowerCase()
-      .includes(normalizedQuery);
-    return (
-      matches &&
-      (!modifiedOnly ||
-        Boolean(drafts[permission.id] || baseByPermission.has(permission.id)))
+  const filteredPermissions = permissionCatalog
+    .filter((permission) => {
+      if (
+        !selectedScopeEntry ||
+        permission.product !== selectedScopeEntry.product
+      )
+        return false;
+      const matches =
+        `${permission.name} ${permission.product} ${permission.id}`
+          .toLowerCase()
+          .includes(normalizedQuery);
+      return (
+        matches &&
+        (!modifiedOnly ||
+          Boolean(drafts[permission.id] || baseByPermission.has(permission.id)))
+      );
+    })
+    .sort(
+      (left, right) =>
+        (sort === "name" ? 1 : -1) * left.name.localeCompare(right.name),
     );
-  });
   const pageResult = pageCollection(
     completeCollection(
       filteredPermissions,
@@ -515,6 +480,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
         selection.scope.id,
         normalizedQuery,
         modifiedOnly,
+        sort,
       ]),
     ),
     pageIndex * PAGE_SIZE,
@@ -523,7 +489,106 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   const pageCount = Math.max(1, Math.ceil(pageResult.total / pageResult.limit));
   const safePageIndex = pageResult.offset / pageResult.limit;
   const visiblePermissions = [...pageResult.items];
-  const grouped = groupByProduct(visiblePermissions);
+  const editingDisabled =
+    !journalReady ||
+    uncertainDraft ||
+    controller.isPending() ||
+    !controller.availability.rules;
+  const subjectName =
+    selection.subject.kind === "everyone"
+      ? "Everyone"
+      : (subjectOptions.find(
+          (item) =>
+            item.id ===
+            (selection.subject.kind !== "everyone" ? selection.subject.id : ""),
+        )?.name ?? "Unavailable subject");
+  const setupPermission = permissionCatalog.find(
+    (item) =>
+      item.id === setupPermissionId &&
+      item.product === selectedScopeEntry?.product,
+  );
+  function openSetup(
+    tab: "context" | "advanced",
+    permissionId: string | null = null,
+    triggerId = "rules-title",
+  ) {
+    setupTriggerId.current = triggerId;
+    setSetupPermissionId(permissionId);
+    setSetupTab(tab);
+    setSetupOpen(true);
+  }
+  function renderOptions(permission: Permission, suffix: string) {
+    return (
+      <RuleTimeWindow
+        rule={ruleFor(permission.id)}
+        permissionName={permission.name}
+        idSuffix={suffix}
+        onChange={stage}
+        onAdvanced={(triggerId) =>
+          openSetup("advanced", permission.id, triggerId)
+        }
+      />
+    );
+  }
+  function optionsButton(permission: Permission, suffix: string) {
+    return (
+      <Button
+        variant="ghost"
+        className="min-h-11"
+        aria-label={`${permission.name} options`}
+        aria-expanded={expandedId === permission.id}
+        aria-controls={
+          expandedId === permission.id
+            ? `rule-${permission.id}-${suffix}-options`
+            : undefined
+        }
+        onClick={() =>
+          setExpandedId((current) =>
+            current === permission.id ? null : permission.id,
+          )
+        }
+      >
+        Options{" "}
+        <ChevronDown
+          aria-hidden="true"
+          className={expandedId === permission.id ? "rotate-180" : ""}
+        />
+      </Button>
+    );
+  }
+  const columns: DataTableColumn<Permission>[] = [
+    {
+      id: "permission",
+      header: "Permission",
+      cell: ({ row }) => (
+        <div className="space-y-1">
+          <p className="font-medium">{row.original.name}</p>
+          <p className="text-muted-foreground text-xs">
+            {row.original.product}
+          </p>
+          {drafts[row.original.id] && <Badge variant="outline">Staged</Badge>}
+        </div>
+      ),
+    },
+    {
+      id: "decision",
+      header: "Decision",
+      cell: ({ row }) => (
+        <div className="max-w-lg min-w-80">
+          <RuleDecision
+            rule={ruleFor(row.original.id)}
+            permissionName={row.original.name}
+            onChange={stage}
+          />
+        </div>
+      ),
+    },
+    {
+      id: "options",
+      header: "Options",
+      cell: ({ row }) => optionsButton(row.original, "desktop"),
+    },
+  ];
 
   function ruleFor(permissionId: string): AccessRule {
     return (
@@ -539,7 +604,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   }
 
   function stage(rule: AccessRule) {
-    if (uncertainDraft) return;
+    if (editingDisabled) return;
     const nextBaselines = Object.hasOwn(baselines, rule.permissionId)
       ? { ...baselines }
       : {
@@ -581,11 +646,17 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
 
   function requestSelection(next: Selection) {
     if (dirty) {
+      if (setupOpen) {
+        setResumeSetup(true);
+        setSetupOpen(false);
+      }
       setPendingSelection(next);
       setDiscardOpen(true);
       return;
     }
     setSelection(next);
+    setExpandedId(null);
+    setSetupPermissionId(null);
     setPageIndex(0);
   }
 
@@ -710,35 +781,26 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   }
 
   return (
-    <section aria-labelledby="rules-title" className="flex flex-col gap-3">
-      <fieldset
-        disabled={
-          !journalReady ||
-          uncertainDraft ||
-          controller.isPending() ||
-          !controller.availability.rules
-        }
-        className="contents"
-      >
+    <section
+      aria-labelledby="rules-title"
+      className="flex min-w-0 flex-col gap-3"
+    >
+      <fieldset disabled={editingDisabled} className="contents">
         <div>
-          <h2 id="rules-title" className="text-xl font-semibold tracking-tight">
-            Access rules
+          <h2
+            id="rules-title"
+            tabIndex={-1}
+            className="text-xl font-semibold tracking-tight"
+          >
+            Detailed rules
           </h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            Edit one subject and one resource scope at a time. Changes remain
-            staged until you review their impact.
+            Set permissions, then review your changes.
           </p>
         </div>
 
         {notice ? <Alert variant="success">{notice}</Alert> : null}
-        <Alert>
-          Workspace-wide rules apply to Sandbox data and related files and
-          automations, including Record values queried through OpenView or
-          Boards and delivered in Report output. Rules for individual
-          departments are not active yet. Board grants and content audiences
-          remain separate. Service identities can store intended rules but
-          cannot sign in yet.
-        </Alert>
+
         {error ? (
           <Alert role="alert" variant="destructive">
             {error}
@@ -757,240 +819,399 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
           </Alert>
         ) : null}
 
-        <Card>
-          <CardContent className="p-3">
-            <FieldGroup className="grid gap-3 md:grid-cols-2 xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(12rem,1.5fr)_auto]">
-              <Field>
-                <FieldLabel htmlFor="rule-subject-kind">
-                  Who gets this?
-                </FieldLabel>
-                <FieldDescription>
-                  Choose everyone, a role, a group, a person, or a service.
-                </FieldDescription>
-                <NativeSelect
-                  id="rule-subject-kind"
-                  className="w-full [&>select]:min-h-11"
-                  value={selection.subject.kind}
-                  onChange={(event) => {
-                    const kind = event.target.value as AccessSubjectRef["kind"];
-                    const firstId =
-                      kind === "role"
-                        ? state.roles[0]?.id
-                        : kind === "group"
-                          ? state.groups[0]?.id
-                          : kind === "identity"
-                            ? state.identities[0]?.id
-                            : undefined;
-                    if (kind !== "everyone" && !firstId) return;
-                    if (kind === "everyone") {
-                      requestSelection({ ...selection, subject: { kind } });
-                    } else if (firstId) {
-                      requestSelection({
-                        ...selection,
-                        subject: { kind, id: firstId },
-                      });
-                    }
-                  }}
-                >
-                  {subjectKinds.map((kind) => (
-                    <NativeSelectOption key={kind} value={kind}>
-                      {kind === "identity" ? "Person or service" : title(kind)}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="rule-subject">Choose who</FieldLabel>
-                <NativeSelect
-                  id="rule-subject"
-                  className="w-full [&>select]:min-h-11"
-                  disabled={selection.subject.kind === "everyone"}
-                  value={
-                    selection.subject.kind === "everyone"
-                      ? "everyone"
-                      : selection.subject.id
-                  }
-                  onChange={(event) => {
-                    if (selection.subject.kind === "everyone") return;
-                    requestSelection({
-                      ...selection,
-                      subject: {
-                        kind: selection.subject.kind,
-                        id: event.target.value,
-                      },
-                    });
-                  }}
-                >
-                  {selection.subject.kind === "everyone" ? (
-                    <NativeSelectOption value="everyone">
-                      Everyone
-                    </NativeSelectOption>
-                  ) : (
-                    subjectOptions.map((item) => (
-                      <NativeSelectOption key={item.id} value={item.id}>
-                        {"kind" in item
-                          ? item.kind === "service"
-                            ? `Service: ${item.name}`
-                            : item.kind === "guest"
-                              ? `Guest: ${item.name}`
-                              : item.name
-                          : item.name}
-                      </NativeSelectOption>
-                    ))
-                  )}
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="rule-scope-kind">
-                  Where does it apply?
-                </FieldLabel>
-                <FieldDescription>
-                  Choose the type of workspace area.
-                </FieldDescription>
-                <NativeSelect
-                  id="rule-scope-kind"
-                  className="w-full [&>select]:min-h-11"
-                  value={selection.scope.kind}
-                  onChange={(event) => {
-                    const kind = event.target.value as AccessScopeKind;
-                    const first = scopeCatalog.find(
-                      (scope) => scope.kind === kind,
-                    );
-                    if (!first) return;
-                    requestSelection({
-                      ...selection,
-                      scope: { kind, id: first.id },
-                    });
-                  }}
-                >
-                  {availableScopeKinds.map((kind) => (
-                    <NativeSelectOption key={kind} value={kind}>
-                      {title(kind)}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="rule-scope">
-                  Choose the specific area
-                </FieldLabel>
-                <NativeSelect
-                  id="rule-scope"
-                  className="w-full [&>select]:min-h-11"
-                  value={selection.scope.id}
-                  onChange={(event) =>
-                    requestSelection({
-                      ...selection,
-                      scope: {
-                        kind: selection.scope.kind,
-                        id: event.target.value,
-                      },
-                    })
-                  }
-                >
-                  {scopesForKind.map((scope) => (
-                    <NativeSelectOption key={scope.id} value={scope.id}>
-                      {scope.name}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="rule-search">What can they do?</FieldLabel>
-                <FieldDescription>Find the action to set.</FieldDescription>
-                <div className="relative">
-                  <Search
-                    aria-hidden="true"
-                    className="text-muted-foreground absolute top-3.5 left-3 size-4"
+        <AccessSearchToolbar
+          searchLabel="What can they do?"
+          placeholder="Search actions or technical ID"
+          query={query}
+          onQueryChange={(value) => {
+            setQuery(value);
+            setPageIndex(0);
+          }}
+          sort={sort}
+          sortOptions={[
+            { value: "name", label: "Name (A–Z)" },
+            { value: "name-desc", label: "Name (Z–A)" },
+          ]}
+          onSortChange={(value) => {
+            setSort(value);
+            setPageIndex(0);
+          }}
+          activeFilterCount={modifiedOnly ? 1 : 0}
+        >
+          <Field className="flex-row items-center justify-between gap-3">
+            <div>
+              <FieldLabel htmlFor="modified-rules">Modified only</FieldLabel>
+              <FieldDescription>
+                Show explicit rules and staged changes.
+              </FieldDescription>
+            </div>
+            <Switch
+              id="modified-rules"
+              checked={modifiedOnly}
+              onCheckedChange={(checked) => {
+                setModifiedOnly(checked);
+                setPageIndex(0);
+              }}
+            />
+          </Field>
+        </AccessSearchToolbar>
+        <p className="text-muted-foreground text-xs">
+          Use existing access follows broader or default access. A scope lock
+          can still block more specific rules.
+        </p>
+        <div className="min-w-0 overflow-hidden rounded-lg border">
+          <div className="hidden lg:block">
+            <DataTable
+              ariaLabel="Workspace permissions"
+              className="w-full table-fixed [&_td:last-child]:text-right [&_th:first-child]:w-[30%] [&_th:last-child]:w-[15%] [&_th:last-child]:text-right [&_th:nth-child(2)]:w-[55%]"
+              cellClassName="p-4 whitespace-normal"
+              columns={columns}
+              data={visiblePermissions}
+              getRowId={(permission) => permission.id}
+              renderExpandedRow={(permission) =>
+                expandedId === permission.id
+                  ? renderOptions(permission, "desktop")
+                  : null
+              }
+              emptyState={
+                <p className="text-muted-foreground py-8 text-center">
+                  No permissions match these filters.
+                </p>
+              }
+            />
+          </div>
+          <div className="divide-y lg:hidden">
+            {!visiblePermissions.length && (
+              <p className="text-muted-foreground p-8 text-center">
+                No permissions match these filters.
+              </p>
+            )}
+            {visiblePermissions.map((permission) => (
+              <article key={permission.id} className="min-w-0">
+                <div className="space-y-3 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="font-medium">{permission.name}</h3>
+                    {drafts[permission.id] && (
+                      <Badge variant="outline">Staged</Badge>
+                    )}
+                  </div>
+                  <RuleDecision
+                    rule={ruleFor(permission.id)}
+                    permissionName={permission.name}
+                    onChange={stage}
                   />
-                  <Input
-                    id="rule-search"
-                    className="min-h-11 pl-9"
-                    value={query}
-                    onChange={(event) => {
-                      setQuery(event.target.value);
-                      setPageIndex(0);
-                    }}
-                    placeholder="Search actions or technical ID"
-                  />
+                  {optionsButton(permission, "mobile")}
                 </div>
-              </Field>
-              <Field className="flex-row items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                <div>
-                  <FieldLabel htmlFor="modified-rules">
-                    Modified only
-                  </FieldLabel>
-                  <FieldDescription>Hide inherited</FieldDescription>
-                </div>
-                <Switch
-                  id="modified-rules"
-                  className="after:-inset-y-3.5"
-                  checked={modifiedOnly}
-                  onCheckedChange={(checked) => {
-                    setModifiedOnly(checked);
-                    setPageIndex(0);
-                  }}
-                />
-              </Field>
-            </FieldGroup>
-          </CardContent>
-        </Card>
-
-        {!visiblePermissions.length ? (
-          <Card>
-            <CardContent className="text-muted-foreground py-10 text-center text-sm">
-              No permissions match these filters.
-            </CardContent>
-          </Card>
-        ) : (
-          [...grouped.entries()].map(([product, entries]) => (
-            <Card key={product}>
-              <CardContent className="p-0">
-                <div className="hidden lg:block">
-                  <DataTable
-                    ariaLabel={`${product} permissions`}
-                    cellClassName="p-4 whitespace-normal"
-                    columns={permissionColumns(ruleFor, stage)}
-                    data={entries}
-                    getRowId={(permission) => permission.id}
-                  />
-                </div>
-                <div className="divide-y lg:hidden">
-                  {entries.map((permission) => {
-                    const rule = ruleFor(permission.id);
-                    return (
-                      <article
-                        key={permission.id}
-                        className="flex flex-col gap-4 p-4"
+                {expandedId === permission.id &&
+                  renderOptions(permission, "mobile")}
+              </article>
+            ))}
+          </div>
+          <div className="bg-card flex flex-wrap items-center justify-between gap-3 border-t p-3">
+            <p className="text-muted-foreground text-sm">
+              Showing {pageResult.total ? pageResult.offset + 1 : 0}–
+              {pageResult.offset + visiblePermissions.length} of{" "}
+              {pageResult.total}
+            </p>
+            <PaginationControls
+              ariaLabel="Permission pages"
+              className="w-auto justify-end"
+              pageCount={pageCount}
+              pageIndex={safePageIndex}
+              onPageIndexChange={setPageIndex}
+            />
+          </div>
+        </div>
+        <Dialog open={setupOpen} onOpenChange={setSetupOpen}>
+          <DialogContent
+            className="max-w-2xl p-5 sm:p-6"
+            finalFocus={() =>
+              document.getElementById(setupTriggerId.current) ??
+              document.getElementById("rules-title")
+            }
+          >
+            <DialogHeader>
+              <div className="flex items-center justify-between gap-3">
+                <DialogTitle>Rule setup</DialogTitle>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Close rule setup"
+                  onClick={() => setSetupOpen(false)}
+                >
+                  <X aria-hidden="true" />
+                </Button>
+              </div>
+              <DialogDescription>
+                Choose the rule context or adjust a permission’s advanced
+                settings. Changes stay staged until Review impact.
+              </DialogDescription>
+            </DialogHeader>
+            <Tabs
+              value={setupTab}
+              onValueChange={(value) =>
+                setSetupTab(value === "advanced" ? "advanced" : "context")
+              }
+              className="mt-4"
+            >
+              <TabsList
+                aria-label="Rule setup sections"
+                className="grid w-full grid-cols-2"
+              >
+                <TabsTrigger value="context">Context</TabsTrigger>
+                <TabsTrigger value="advanced">Advanced</TabsTrigger>
+              </TabsList>
+              <TabsContent value="context">
+                <fieldset disabled={editingDisabled} className="space-y-6">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field>
+                      <FieldLabel htmlFor="rule-subject-kind">
+                        Who gets this?
+                      </FieldLabel>
+                      <NativeSelect
+                        id="rule-subject-kind"
+                        className="w-full [&>select]:min-h-11"
+                        value={selection.subject.kind}
+                        onChange={(event) => {
+                          const kind = event.target
+                            .value as AccessSubjectRef["kind"];
+                          const firstId =
+                            kind === "role"
+                              ? state.roles[0]?.id
+                              : kind === "group"
+                                ? state.groups[0]?.id
+                                : kind === "identity"
+                                  ? state.identities[0]?.id
+                                  : undefined;
+                          if (kind !== "everyone" && !firstId) return;
+                          if (kind === "everyone") {
+                            requestSelection({
+                              ...selection,
+                              subject: { kind },
+                            });
+                          } else if (firstId) {
+                            requestSelection({
+                              ...selection,
+                              subject: { kind, id: firstId },
+                            });
+                          }
+                        }}
                       >
-                        <div>
-                          <h3 className="font-medium">{permission.name}</h3>
-                          <Badge variant="secondary" className="mt-2">
-                            {product}
-                          </Badge>
-                          <PermissionDetails permission={permission} />
+                        {subjectKinds.map((kind) => (
+                          <NativeSelectOption key={kind} value={kind}>
+                            {kind === "identity"
+                              ? "Person or service"
+                              : title(kind)}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="rule-subject">Choose who</FieldLabel>
+                      <NativeSelect
+                        id="rule-subject"
+                        className="w-full [&>select]:min-h-11"
+                        disabled={selection.subject.kind === "everyone"}
+                        value={
+                          selection.subject.kind === "everyone"
+                            ? "everyone"
+                            : selection.subject.id
+                        }
+                        onChange={(event) => {
+                          if (selection.subject.kind === "everyone") return;
+                          requestSelection({
+                            ...selection,
+                            subject: {
+                              kind: selection.subject.kind,
+                              id: event.target.value,
+                            },
+                          });
+                        }}
+                      >
+                        {selection.subject.kind === "everyone" ? (
+                          <NativeSelectOption value="everyone">
+                            Everyone
+                          </NativeSelectOption>
+                        ) : (
+                          subjectOptions.map((item) => (
+                            <NativeSelectOption key={item.id} value={item.id}>
+                              {"kind" in item
+                                ? item.kind === "service"
+                                  ? `Service: ${item.name}`
+                                  : item.kind === "guest"
+                                    ? `Guest: ${item.name}`
+                                    : item.name
+                                : item.name}
+                            </NativeSelectOption>
+                          ))
+                        )}
+                      </NativeSelect>
+                    </Field>
+                    <p className="text-muted-foreground text-sm sm:col-span-2">
+                      Choose everyone, a role, a group, a person, or a service.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 border-t pt-5 sm:grid-cols-2">
+                    <Field>
+                      <FieldLabel htmlFor="rule-scope-kind">
+                        Where does it apply?
+                      </FieldLabel>
+                      <NativeSelect
+                        id="rule-scope-kind"
+                        className="w-full [&>select]:min-h-11"
+                        value={selection.scope.kind}
+                        onChange={(event) => {
+                          const kind = event.target.value as AccessScopeKind;
+                          const first = scopeCatalog.find(
+                            (scope) => scope.kind === kind,
+                          );
+                          if (!first) return;
+                          requestSelection({
+                            ...selection,
+                            scope: { kind, id: first.id },
+                          });
+                        }}
+                      >
+                        {availableScopeKinds.map((kind) => (
+                          <NativeSelectOption key={kind} value={kind}>
+                            {title(kind)}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="rule-scope">
+                        Choose the specific area
+                      </FieldLabel>
+                      <NativeSelect
+                        id="rule-scope"
+                        className="w-full [&>select]:min-h-11"
+                        value={selection.scope.id}
+                        onChange={(event) =>
+                          requestSelection({
+                            ...selection,
+                            scope: {
+                              kind: selection.scope.kind,
+                              id: event.target.value,
+                            },
+                          })
+                        }
+                      >
+                        {scopesForKind.map((scope) => (
+                          <NativeSelectOption key={scope.id} value={scope.id}>
+                            {scope.name}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </Field>
+                    <p className="text-muted-foreground text-sm sm:col-span-2">
+                      Choose the type of workspace area and its specific scope.
+                    </p>
+                  </div>
+                </fieldset>
+              </TabsContent>
+              <TabsContent value="advanced">
+                <fieldset disabled={editingDisabled} className="space-y-4">
+                  {setupPermission ? (
+                    <>
+                      <div className="space-y-1">
+                        <h3 className="text-base font-semibold">
+                          {setupPermission.name}
+                        </h3>
+                        <p className="text-muted-foreground text-sm">
+                          {subjectName} ·{" "}
+                          {selectedScopeEntry?.name ?? "Unavailable area"}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-y py-4 text-sm">
+                        <span>Decision</span>
+                        <Badge variant="outline">
+                          {ruleFor(setupPermission.id).decision === "inherit"
+                            ? "Use existing access"
+                            : title(ruleFor(setupPermission.id).decision)}
+                        </Badge>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-4 py-1">
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium">Scope lock</p>
+                          <p className="text-muted-foreground text-sm">
+                            Block overrides in more specific areas.
+                          </p>
                         </div>
-                        <RuleControls
-                          rule={rule}
-                          permissionName={permission.name}
-                          idSuffix="mobile"
-                          onChange={stage}
-                        />
-                      </article>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
-
-        <PaginationControls
-          ariaLabel="Permission pages"
-          pageCount={pageCount}
-          pageIndex={safePageIndex}
-          onPageIndexChange={setPageIndex}
-        />
+                        <Button
+                          variant="outline"
+                          className="min-h-11 w-fit"
+                          aria-pressed={
+                            ruleFor(setupPermission.id).locked === true
+                          }
+                          onClick={() =>
+                            stage({
+                              ...ruleFor(setupPermission.id),
+                              locked: !ruleFor(setupPermission.id).locked,
+                            })
+                          }
+                        >
+                          {ruleFor(setupPermission.id).locked ? (
+                            <Lock aria-hidden="true" />
+                          ) : (
+                            <Unlock aria-hidden="true" />
+                          )}
+                          {ruleFor(setupPermission.id).locked
+                            ? "Locked at this scope"
+                            : "Lock at this scope"}
+                        </Button>
+                      </div>
+                      <details className="border-t">
+                        <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
+                          Technical details
+                        </summary>
+                        <p className="text-muted-foreground bg-muted/30 rounded-md px-3 py-3 text-sm break-all">
+                          Permission ID: <code>{setupPermission.id}</code>
+                        </p>
+                      </details>
+                    </>
+                  ) : (
+                    <p className="text-muted-foreground text-sm">
+                      Open a permission’s Options, then choose Advanced rule
+                      setup to adjust its scope lock and view technical details.
+                    </p>
+                  )}
+                </fieldset>
+              </TabsContent>
+            </Tabs>
+            <details className="mt-5 border-t">
+              <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
+                About rule coverage
+              </summary>
+              <div
+                className="text-muted-foreground space-y-3 pb-2 text-sm leading-relaxed"
+                role="status"
+              >
+                <p>
+                  Workspace-wide rules apply to Sandbox data and related files
+                  and automations, including Record values queried through
+                  OpenView or Boards and delivered in Report output.
+                </p>
+                <ul className="list-disc space-y-2 pl-4">
+                  <li>Rules for individual departments are not active yet.</li>
+                  <li>Board grants and content audiences remain separate.</li>
+                  <li>
+                    Service identities can store intended rules but cannot sign
+                    in yet.
+                  </li>
+                </ul>
+              </div>
+            </details>
+            <DialogFooter className="mt-5 items-center border-t pt-4">
+              <p className="text-muted-foreground mr-auto text-xs">
+                Changes are not applied yet.
+              </p>
+              <Button onClick={() => setSetupOpen(false)} className="min-h-11">
+                Done
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {dirty ? (
           <div className="bg-card/95 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 shadow-sm backdrop-blur sm:sticky sm:bottom-3">
@@ -1151,7 +1372,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                         }}
                         variant="outline"
                         spacing={0}
-                        className="w-full [&>button]:min-h-11 [&>button]:flex-1"
+                        className="w-full [&>button]:min-h-11 [&>button]:flex-1 [&>button]:px-2 [&>button]:whitespace-normal [&>button:first-child]:flex-[1.6]"
                       >
                         <ToggleGroupItem value="current">
                           Keep current
@@ -1234,7 +1455,16 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
           </AlertDialogContent>
         </AlertDialog>
 
-        <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
+        <AlertDialog
+          open={discardOpen}
+          onOpenChange={(open) => {
+            setDiscardOpen(open);
+            if (!open && resumeSetup) {
+              setResumeSetup(false);
+              setSetupOpen(true);
+            }
+          }}
+        >
           <AlertDialogContent>
             <AlertDialogTitle>Discard staged changes?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -1252,8 +1482,17 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
                 disabled={controller.isPending()}
                 onClick={() => {
                   if (!clearDraftState()) return;
-                  if (pendingSelection) setSelection(pendingSelection);
+                  if (pendingSelection) {
+                    setSelection(pendingSelection);
+                    setExpandedId(null);
+                    setSetupPermissionId(null);
+                  }
                   setPageIndex(0);
+                  if (resumeSetup) {
+                    setResumeSetup(false);
+                    setSetupTab("context");
+                    setSetupOpen(true);
+                  }
                 }}
               >
                 Discard changes

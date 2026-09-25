@@ -1679,11 +1679,16 @@ test("an accepted reload restores the Rules draft without submitting it", async 
     name: "Read records decision",
   });
   await decision.getByRole("button", { name: "Allow" }).click();
-  await pageUnderTest.getByText("Conditions and scope lock").first().click();
+  const readOptionsButton = pageUnderTest.getByRole("button", {
+    name: "Read records options",
+  });
+  await readOptionsButton.click();
   await pageUnderTest
-    .getByRole("button", { name: "Lock at this scope" })
-    .first()
+    .getByRole("button", { name: "Advanced rule setup" })
     .click();
+  const setupDialog = pageUnderTest.getByRole("dialog", { name: "Rule setup" });
+  await setupDialog.getByRole("button", { name: "Lock at this scope" }).click();
+  await setupDialog.getByRole("button", { name: "Done" }).click();
   await expect(pageUnderTest.getByText("1 staged change")).toBeVisible();
   const ruleWrites: string[] = [];
   pageUnderTest.on("request", (request) => {
@@ -1704,10 +1709,21 @@ test("an accepted reload restores the Rules draft without submitting it", async 
     "aria-pressed",
     "true",
   );
-  await pageUnderTest.getByText("Conditions and scope lock").first().click();
+  await pageUnderTest
+    .getByRole("button", { name: "Read records options" })
+    .click();
+  await pageUnderTest
+    .getByRole("button", { name: "Advanced rule setup" })
+    .click();
   await expect(
-    pageUnderTest.getByRole("button", { name: "Locked at this scope" }).first(),
+    pageUnderTest
+      .getByRole("dialog", { name: "Rule setup" })
+      .getByRole("button", { name: "Locked at this scope" }),
   ).toBeVisible();
+  await pageUnderTest
+    .getByRole("dialog", { name: "Rule setup" })
+    .getByRole("button", { name: "Done" })
+    .click();
   await expect(pageUnderTest.getByText("1 staged change")).toBeVisible();
   expect(ruleWrites).toEqual([]);
 });

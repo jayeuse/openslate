@@ -96,8 +96,15 @@ test("Access explains where its detailed rules currently apply", async ({
 
   await page.goto("/access?view=rules");
   await expect(
-    page.getByRole("heading", { name: "Access rules", exact: true }),
+    page.getByRole("heading", { name: "Detailed rules", exact: true }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Read records options", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Advanced rule setup", exact: true })
+    .click();
+  await page.getByText("About rule coverage", { exact: true }).click();
   await expect(
     page.getByText(
       /Workspace-wide rules apply to Sandbox data and related files and automations, including Record values queried through OpenView or Boards and delivered in Report output\./,
