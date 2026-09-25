@@ -5,8 +5,6 @@ import {
   ArrowDownAZ,
   Bot,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Search,
   UserRound,
   UserRoundPlus,
@@ -47,11 +45,7 @@ import {
 } from "@/components/ui/native-select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-} from "@/components/ui/pagination";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import { toast } from "@/components/ui/toast";
 import {
   completeCollection,
@@ -968,54 +962,13 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                       ))}
                     </NativeSelect>
                   </div>
-                  <Pagination
-                    className="mx-0 w-auto"
-                    aria-label="Identity pages"
-                  >
-                    <PaginationContent className="gap-2">
-                      <PaginationItem>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="icon"
-                          aria-label="Go to previous page"
-                          disabled={safePageIndex === 0}
-                          className="size-11"
-                          onClick={() => {
-                            if (safePageIndex > 0)
-                              setPageIndex(safePageIndex - 1);
-                          }}
-                        >
-                          <ChevronLeft aria-hidden="true" />
-                        </Button>
-                      </PaginationItem>
-                      <PaginationItem>
-                        <span
-                          aria-current="page"
-                          aria-label={`Page ${safePageIndex + 1} of ${pageCount}`}
-                          className="bg-muted flex size-11 items-center justify-center rounded-[var(--radius)] text-sm font-medium tabular-nums"
-                        >
-                          {safePageIndex + 1}
-                        </span>
-                      </PaginationItem>
-                      <PaginationItem>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="icon"
-                          aria-label="Go to next page"
-                          disabled={safePageIndex === pageCount - 1}
-                          className="size-11"
-                          onClick={() => {
-                            if (safePageIndex < pageCount - 1)
-                              setPageIndex(safePageIndex + 1);
-                          }}
-                        >
-                          <ChevronRight aria-hidden="true" />
-                        </Button>
-                      </PaginationItem>
-                    </PaginationContent>
-                  </Pagination>
+                  <PaginationControls
+                    ariaLabel="Identity pages"
+                    className="w-auto"
+                    pageCount={pageCount}
+                    pageIndex={safePageIndex}
+                    onPageIndexChange={setPageIndex}
+                  />
                 </div>
               </div>
             </div>

@@ -503,21 +503,18 @@ export default function ManageAudit({ entries: source }: ManageAuditProps) {
               />
             </div>
           </CardContent>
-          {pageCount > 1 ? (
-            <CardFooter className="flex-wrap justify-between gap-2 p-2.5">
-              <p className="text-muted-foreground text-xs">
-                Page {safePageIndex + 1} of {pageCount}
-              </p>
-              <PaginationControls
-                ariaLabel="Activity pages"
-                className="w-auto sm:justify-end"
-                pageCount={pageCount}
-                pageIndex={safePageIndex}
-                onPageIndexChange={setPageIndex}
-                variant="compact"
-              />
-            </CardFooter>
-          ) : null}
+          <CardFooter className="flex-wrap justify-between gap-2 p-2.5">
+            <p className="text-muted-foreground text-xs">
+              Page {safePageIndex + 1} of {pageCount}
+            </p>
+            <PaginationControls
+              ariaLabel="Activity pages"
+              className="w-auto sm:justify-end"
+              pageCount={pageCount}
+              pageIndex={safePageIndex}
+              onPageIndexChange={setPageIndex}
+            />
+          </CardFooter>
         </Card>
       )}
 

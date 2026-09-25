@@ -287,6 +287,66 @@ async function mockAccessApi(
   });
 }
 
+test("shared directory pagination shows current page and respects boundaries", async ({
+  page,
+}) => {
+  const extraRoles = Array.from({ length: 6 }, (_, index) => ({
+    ...roles[0]!,
+    id: `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`,
+    role: `role-${index}`,
+  }));
+  const extraGroups = Array.from({ length: 6 }, (_, index) => ({
+    ...group,
+    id: `00000000-0000-4000-8000-${String(index + 200).padStart(12, "0")}`,
+    name: `Group ${index}`,
+  }));
+  await mockAccessApi(
+    page,
+    () => true,
+    () => [],
+    () => [],
+    () => extraRoles,
+    () => extraGroups,
+  );
+  for (const [view, label] of [
+    ["roles", "Role pages"],
+    ["groups", "Group pages"],
+  ]) {
+    await page.goto(`/access?view=${view}`);
+    const navigation = page.getByRole("navigation", { name: label });
+    await expect(
+      navigation.getByLabel("Page 1 of 2", { exact: true }),
+    ).toHaveText("1");
+    await expect(
+      navigation.getByRole("button", { name: "Go to previous page" }),
+    ).toBeDisabled();
+    await navigation.getByRole("button", { name: "Go to next page" }).click();
+    await expect(
+      navigation.getByLabel("Page 2 of 2", { exact: true }),
+    ).toHaveText("2");
+    await expect(
+      navigation.getByRole("button", { name: "Go to next page" }),
+    ).toBeDisabled();
+    await navigation
+      .getByRole("button", { name: "Go to previous page" })
+      .click();
+    await expect(
+      navigation.getByLabel("Page 1 of 2", { exact: true }),
+    ).toHaveText("1");
+  }
+  await page.goto("/access?view=rules");
+  const navigation = page.getByRole("navigation", { name: "Permission pages" });
+  await expect(
+    navigation.getByLabel("Page 1 of 1", { exact: true }),
+  ).toHaveText("1");
+  await expect(
+    navigation.getByRole("button", { name: "Go to previous page" }),
+  ).toBeDisabled();
+  await expect(
+    navigation.getByRole("button", { name: "Go to next page" }),
+  ).toBeDisabled();
+});
+
 test("Access overview quick actions open all four destinations", async ({
   page: pageUnderTest,
 }) => {

@@ -985,14 +985,12 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
           ))
         )}
 
-        {pageCount > 1 ? (
-          <PaginationControls
-            ariaLabel="Permission pages"
-            pageCount={pageCount}
-            pageIndex={safePageIndex}
-            onPageIndexChange={setPageIndex}
-          />
-        ) : null}
+        <PaginationControls
+          ariaLabel="Permission pages"
+          pageCount={pageCount}
+          pageIndex={safePageIndex}
+          onPageIndexChange={setPageIndex}
+        />
 
         {dirty ? (
           <div className="bg-card/95 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 shadow-sm backdrop-blur sm:sticky sm:bottom-3">

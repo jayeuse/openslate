@@ -615,14 +615,12 @@ export function RolesView({ controller }: RolesViewProps) {
         </>
       )}
 
-      {pageCount > 1 && (
-        <PaginationControls
-          ariaLabel="Role pages"
-          pageCount={pageCount}
-          pageIndex={currentPage}
-          onPageIndexChange={setPage}
-        />
-      )}
+      <PaginationControls
+        ariaLabel="Role pages"
+        pageCount={pageCount}
+        pageIndex={currentPage}
+        onPageIndexChange={setPage}
+      />
 
       <Dialog open={templateOpen} onOpenChange={setTemplateOpen}>
         <DialogContent className="max-w-2xl">

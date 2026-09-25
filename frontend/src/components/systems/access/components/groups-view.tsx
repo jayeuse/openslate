@@ -392,14 +392,12 @@ export function GroupsView({
             </>
           )}
 
-          {pageCount > 1 && (
-            <PaginationControls
-              ariaLabel="Group pages"
-              pageCount={pageCount}
-              pageIndex={currentPage}
-              onPageIndexChange={setPage}
-            />
-          )}
+          <PaginationControls
+            ariaLabel="Group pages"
+            pageCount={pageCount}
+            pageIndex={currentPage}
+            onPageIndexChange={setPage}
+          />
         </TabsContent>
 
         <TabsContent value="organization">
