@@ -904,7 +904,8 @@ test("Chart invalidations are consumed once and a second event during refresh is
   await barrier.started;
   await api.triggerInvalidation("records");
   barrier.release();
-  await page.waitForLoadState("networkidle");
+  await expect.poll(() => api.requests.length).toBe(3);
+  await expect(page.getByRole("button", { name: "Apply chart" })).toBeEnabled();
   expect(api.requests).toHaveLength(3);
 });
 

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
-import { ArrowDown, ArrowUp } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import {
   queryOpenViewGroupedRecords,
@@ -20,7 +19,6 @@ import {
   setOpenViewPersonalDefault,
   unsetOpenViewPersonalDefault,
   updateOpenViewSavedView,
-  type OpenViewDataSourceField,
   type OpenViewQueryDefinition,
   type OpenViewQueryFieldType,
   type OpenViewRecord,
@@ -41,7 +39,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -62,50 +59,36 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import { serializeOpenViewUrl, type AudienceRef } from "../domain/model";
+import {
+  audienceValue,
+  changedSavedViewFields,
+  draftForView,
+  duplicateViewName,
+  emptyDefinition,
+  emptyPresentation,
+  hasUnsafeIntegerFilter,
+  isFilterReady,
+  normalizeFilterValues,
+  parseAudience,
+  upsertSavedView,
+} from "../domain/server-view-draft";
+import type { SavedDraft } from "../domain/server-view-draft";
 import { useServerViewsResource } from "../hooks/use-server-views-resource";
-import { LiveRecordCards } from "./live-record-cards";
+import { LiveGroupedResults } from "./live-grouped-results";
+import { LiveRecordInspector } from "./live-record-inspector";
+import { LiveRecordResults } from "./live-record-results";
+import { SavedViewFilterControls } from "./saved-view-filter-controls";
+import { SavedViewAdvancedControls } from "./saved-view-advanced-controls";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SEARCHABLE_TYPES = new Set<OpenViewQueryFieldType>([
-  "text",
-  "long_text",
-  "email",
-  "url",
-  "select",
-]);
-const EMPTY_OPERATORS = new Set(["empty", "not_empty", "blank", "not_blank"]);
-const OPERATOR_LABELS: Record<OpenViewFilterOperator, string> = {
-  eq: "is",
-  neq: "is not",
-  lt: "is before / less than",
-  lte: "is on or before / at most",
-  gt: "is after / greater than",
-  gte: "is on or after / at least",
-  contains: "contains",
-  prefix: "starts with",
-  suffix: "ends with",
-  in: "is one of",
-  empty: "is empty",
-  not_empty: "is not empty",
-  blank: "is blank",
-  not_blank: "is not blank",
-};
-
-type SavedDraft = {
-  name: string;
-  audience: AudienceRef;
-  definition: OpenViewQueryDefinition;
-  presentation: OpenViewSavedView["presentation"];
-};
 type SaveConflict = {
   base: OpenViewSavedView;
   latest: OpenViewSavedView;
   local: SavedDraft;
 };
-type OpenViewFilterOperator =
-  OpenViewQueryDefinition["filters"][number]["operator"];
 type SavedViewLayout = OpenViewSavedView["presentation"]["layout"];
+type GeneralGroupedLayout = "table" | "grid" | "gallery";
 type LiveRecordLayout =
   "table" | "grid" | "gallery" | "kanban" | "calendar" | "timeline";
 
@@ -117,8 +100,6 @@ const SAVED_VIEW_LAYOUT_LABELS: Record<SavedViewLayout, string> = {
   calendar: "Calendar",
   timeline: "Timeline",
 };
-const UNSAFE_INTEGER_FILTER_ERROR =
-  "Enter a whole number from -9007199254740991 to 9007199254740991.";
 const GROUP_PAGE_SIZE = 12;
 const GROUP_MEMBER_PAGE_SIZE = 25;
 
@@ -176,7 +157,9 @@ function isLiveRecordLayout(value: string): value is LiveRecordLayout {
   );
 }
 
-function isGeneralGroupedLayout(layout: SavedViewLayout): boolean {
+function isGeneralGroupedLayout(
+  layout: SavedViewLayout,
+): layout is GeneralGroupedLayout {
   return layout === "table" || layout === "grid" || layout === "gallery";
 }
 
@@ -202,236 +185,6 @@ function messageFor(error: unknown, fallback: string): string {
 
 function isAuthorizationDenied(error: unknown): boolean {
   return error instanceof ApiError && [401, 403].includes(error.status);
-}
-
-function emptyDefinition(
-  fields: readonly OpenViewDataSourceField[],
-): OpenViewQueryDefinition {
-  const columns = fields.slice(0, 100).map(({ id, type }) => ({
-    fieldId: id,
-    expectedType: type,
-  }));
-  return {
-    version: 1,
-    logic: "and",
-    columns,
-    filters: [],
-    sort: [],
-    deleted: "exclude",
-    search: null,
-    searchFields: fields
-      .filter((field) => SEARCHABLE_TYPES.has(field.type))
-      .slice(0, 100)
-      .map(({ id, type }) => ({ fieldId: id, expectedType: type })),
-  };
-}
-
-function emptyPresentation(
-  fields: readonly OpenViewDataSourceField[],
-): OpenViewSavedView["presentation"] {
-  const columns = fields.slice(0, 8).map((field) => field.id);
-  return {
-    version: 1,
-    layout: "table",
-    columnFieldIds: columns,
-    pinnedFieldIds: columns.slice(0, 1),
-    density: "comfortable",
-    wrap: false,
-    cardSize: "comfortable",
-    primaryFieldId: columns[0] ?? null,
-    secondaryFieldId: columns[1] ?? null,
-    dateFieldId: null,
-    groupByFieldId: null,
-    dateRange: "month",
-    scale: null,
-  };
-}
-
-function draftForView(view: OpenViewSavedView): SavedDraft {
-  return {
-    name: view.name,
-    audience: view.audience,
-    definition: view.definition,
-    presentation: view.presentation,
-  };
-}
-
-function upsertSavedView(
-  views: OpenViewSavedView[],
-  view: OpenViewSavedView,
-): OpenViewSavedView[] {
-  return [...views.filter((item) => item.id !== view.id), view];
-}
-
-function duplicateViewName(
-  name: string,
-  views: readonly OpenViewSavedView[],
-): string {
-  const nameCharacters = Array.from(name.trim() || "View");
-  const existingNames = new Set(views.map((view) => view.name.toLowerCase()));
-  for (let copyNumber = 1; ; copyNumber += 1) {
-    const suffix = copyNumber === 1 ? " (copy)" : ` (copy ${copyNumber})`;
-    let base = "";
-    for (const character of nameCharacters) {
-      if (base.length + character.length > 200 - suffix.length) break;
-      base += character;
-    }
-    const candidate = `${base}${suffix}`;
-    if (!existingNames.has(candidate.toLowerCase())) return candidate;
-  }
-}
-
-function changedSavedViewFields(
-  base: OpenViewSavedView,
-  latest: OpenViewSavedView,
-): string[] {
-  const changed: string[] = [];
-  if (base.name !== latest.name) changed.push("Name");
-  if (JSON.stringify(base.audience) !== JSON.stringify(latest.audience))
-    changed.push("Audience");
-  if (JSON.stringify(base.definition) !== JSON.stringify(latest.definition))
-    changed.push("Query, filters, or sort");
-  if (
-    base.presentation.layout !== latest.presentation.layout ||
-    JSON.stringify(base.presentation.columnFieldIds) !==
-      JSON.stringify(latest.presentation.columnFieldIds)
-  )
-    changed.push("Layout or columns");
-  if (
-    JSON.stringify(base.presentation) !== JSON.stringify(latest.presentation) &&
-    !changed.includes("Layout or columns")
-  )
-    changed.push("Other presentation settings");
-  return changed.length
-    ? changed
-    : ["Revision changed without visible field changes"];
-}
-
-function operatorChoices(
-  type: OpenViewQueryFieldType,
-): OpenViewFilterOperator[] {
-  const common: OpenViewFilterOperator[] = [
-    "eq",
-    "neq",
-    "empty",
-    "not_empty",
-    "blank",
-    "not_blank",
-  ];
-  if (SEARCHABLE_TYPES.has(type)) {
-    return type === "select"
-      ? [...common, "contains", "in"]
-      : [...common, "contains", "prefix", "suffix"];
-  }
-  if (["number", "decimal", "int", "date", "datetime"].includes(type))
-    return [...common, "lt", "lte", "gt", "gte"];
-  return common;
-}
-
-function isFilterOperator(
-  value: string,
-  type: OpenViewQueryFieldType,
-): value is OpenViewFilterOperator {
-  return operatorChoices(type).some((operator) => operator === value);
-}
-
-function filterValueForType(
-  type: OpenViewQueryFieldType,
-  value: string,
-): string | number | boolean | null {
-  if (type === "boolean") return value === "true";
-  if (type === "decimal") return value;
-  if (type === "int") {
-    if (value === "") return value;
-    const raw = value.trim();
-    if (!/^[+-]?\d+$/.test(raw)) return value;
-    const significantDigits = raw.replace(/^[+-]?0*/, "");
-    if (significantDigits.length > 16) return value;
-    const integerValue = Number(raw);
-    return Number.isSafeInteger(integerValue) ? integerValue : value;
-  }
-  if (type === "number") {
-    if (value === "") return value;
-    const numberValue = Number(value);
-    return Number.isFinite(numberValue) ? numberValue : value;
-  }
-  return value;
-}
-
-function membershipFilterValues(
-  value: OpenViewQueryDefinition["filters"][number]["value"],
-): string[] {
-  if (Array.isArray(value))
-    return value.filter((item): item is string => typeof item === "string");
-  if (typeof value !== "string") return [];
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function normalizeFilterValues(
-  definition: OpenViewQueryDefinition,
-): OpenViewQueryDefinition {
-  return {
-    ...definition,
-    filters: definition.filters.map((filter) =>
-      filter.operator === "in"
-        ? { ...filter, value: membershipFilterValues(filter.value) }
-        : filter,
-    ),
-  };
-}
-
-function filterInputValue(
-  filter: OpenViewQueryDefinition["filters"][number],
-): string {
-  if (filter.operator === "in" && Array.isArray(filter.value))
-    return membershipFilterValues(filter.value).join(", ");
-  return String(filter.value ?? "");
-}
-
-function hasUnsafeIntegerFilter(
-  filter: OpenViewQueryDefinition["filters"][number],
-): boolean {
-  if (filter.expectedType !== "int") return false;
-  const value = filter.value;
-  if (value === null || value === undefined || value === "") return false;
-  return typeof value !== "number" || !Number.isSafeInteger(value);
-}
-
-function isFilterReady(
-  filter: OpenViewQueryDefinition["filters"][number],
-): boolean {
-  if (EMPTY_OPERATORS.has(filter.operator)) return true;
-  if (filter.operator === "in")
-    return membershipFilterValues(filter.value).length > 0;
-  if (Array.isArray(filter.value)) return false;
-  return (
-    filter.value !== null && filter.value !== undefined && filter.value !== ""
-  );
-}
-
-function recordValue(value: unknown): string {
-  if (typeof value === "string" || typeof value === "number")
-    return String(value);
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  return "—";
-}
-
-function audienceValue(audience: AudienceRef): string {
-  if (audience.kind === "private" || audience.kind === "everyone")
-    return audience.kind;
-  return `${audience.kind}:${audience.id}`;
-}
-
-function parseAudience(value: string): AudienceRef {
-  if (value === "everyone") return { kind: "everyone" };
-  if (value.startsWith("role:"))
-    return { kind: "role", id: value.slice("role:".length) };
-  if (value.startsWith("identity:"))
-    return { kind: "identity", id: value.slice("identity:".length) };
-  return { kind: "private" };
 }
 
 export default function ServerBackedViewsWorkspace({
@@ -953,6 +706,18 @@ export default function ServerBackedViewsWorkspace({
     : generalGroupLoading
       ? "Loading groups…"
       : "Groups unavailable";
+  const groupOptions =
+    currentGeneralGroupPage?.groups.map((group) => {
+      const selector = groupSelectorForValue(group.value);
+      const key = groupSelectorKey(selector);
+      return {
+        key,
+        label: groupName(group.value, group.label),
+        count: group.count,
+        selected: key === groupSelectorKey(generalSelectedGroup),
+        selector,
+      };
+    }) ?? [];
   const selectedGeneralGroupPage =
     currentGeneralGroupPage &&
     groupSelectorKey(currentGeneralGroupPage.selectedGroup) ===
@@ -1492,6 +1257,54 @@ export default function ServerBackedViewsWorkspace({
       setFilterRowKeyState({ draftKey, keys });
       return updated;
     });
+
+  const updateFilter = (
+    index: number,
+    update: (
+      filter: OpenViewQueryDefinition["filters"][number],
+    ) => OpenViewQueryDefinition["filters"][number],
+  ) =>
+    updateDefinition((current) => ({
+      ...current,
+      filters: updateFilterAtIndex(current.filters, index, update),
+    }));
+
+  const removeFilter = (index: number) =>
+    updateDefinition((current) => {
+      const keys = new Map<object, string>();
+      current.filters.forEach((item, itemIndex) => {
+        if (itemIndex !== index)
+          keys.set(item, filterRowKeyFor(item, itemIndex));
+      });
+      setFilterRowKeyState({ draftKey, keys });
+      return {
+        ...current,
+        filters: current.filters.filter((_, itemIndex) => itemIndex !== index),
+      };
+    });
+
+  const addFilter = () => {
+    const field = fields[0];
+    if (!field) return;
+    updateDefinition((current) => {
+      const newFilter: OpenViewQueryDefinition["filters"][number] = {
+        fieldId: field.id,
+        expectedType: field.type,
+        operator: "eq",
+        value: "",
+      };
+      const keys = new Map<object, string>();
+      current.filters.forEach((item, itemIndex) => {
+        keys.set(item, filterRowKeyFor(item, itemIndex));
+      });
+      keys.set(
+        newFilter,
+        `${draftKey}:new-filter:${nextFilterRowKey.current++}`,
+      );
+      setFilterRowKeyState({ draftKey, keys });
+      return { ...current, filters: [...current.filters, newFilter] };
+    });
+  };
 
   const updatePresentation = (
     update: (
@@ -2051,64 +1864,18 @@ export default function ServerBackedViewsWorkspace({
     </div>
   ) : null;
   const linkedRecordPreview = isUuid(requestedRecord) ? (
-    <section
-      aria-label="Linked record"
-      className="bg-card min-w-0 overflow-hidden rounded-[var(--radius)] border"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-        <h2 className="font-medium">Linked record</h2>
-        {inspectionActions}
-      </div>
-      {inspectionLoading ? (
-        <p role="status" className="text-muted-foreground px-4 py-2 text-sm">
-          Loading adjacent records…
-        </p>
-      ) : null}
-      {inspectionError ? (
-        <p role="alert" className="text-destructive px-4 py-2 text-sm">
-          {inspectionError}
-        </p>
-      ) : null}
-      {linkedRecord ? (
-        <LiveRecordCards
-          layout="gallery"
-          rows={[linkedRecord]}
-          fields={cardFields}
-          primaryFieldId={draft.presentation.primaryFieldId}
-          secondaryFieldId={draft.presentation.secondaryFieldId}
-          cardSize={draft.presentation.cardSize}
-          wrap={draft.presentation.wrap}
-          onOpenRecord={(recordId) => setRoute({ record: recordId })}
-        />
-      ) : rowError ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 p-4">
-          <p role="alert" className="text-destructive text-sm">
-            {rowError}
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={() => setRecordRetry((value) => value + 1)}
-          >
-            Retry linked record
-          </Button>
-        </div>
-      ) : linkedRecordLoading ? (
-        <p role="status" className="text-muted-foreground px-4 py-6 text-sm">
-          Loading linked record…
-        </p>
-      ) : (
-        <Empty>
-          <EmptyHeader>
-            <EmptyTitle>This record is unavailable</EmptyTitle>
-            <EmptyDescription>
-              The record may have been removed or may not be visible to you.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      )}
-    </section>
+    <LiveRecordInspector
+      actions={inspectionActions}
+      record={linkedRecord}
+      recordLoading={linkedRecordLoading}
+      recordError={rowError}
+      inspectionLoading={inspectionLoading}
+      inspectionError={inspectionError}
+      fields={cardFields}
+      presentation={draft.presentation}
+      onOpenRecord={(recordId) => setRoute({ record: recordId })}
+      onRetryRecord={() => setRecordRetry((value) => value + 1)}
+    />
   ) : null;
 
   return (
@@ -2542,1000 +2309,51 @@ export default function ServerBackedViewsWorkspace({
               </p>
             </div>
 
-            <details className="rounded-md border p-3">
-              <summary className="min-h-11 cursor-pointer py-2 font-medium">
-                Advanced query settings
-              </summary>
-              <div className="flex flex-col gap-4 border-t pt-4">
-                {isGeneralGroupedLayout(presentationLayout) ? (
-                  <section
-                    aria-labelledby="openview-presentation-fields-heading"
-                    className="flex min-w-0 flex-col gap-3"
-                  >
-                    <div>
-                      <h3
-                        id="openview-presentation-fields-heading"
-                        className="font-medium"
-                      >
-                        {presentationLayout === "table"
-                          ? "Visible columns and order"
-                          : "Card detail fields"}
-                      </h3>
-                      <p className="text-muted-foreground text-sm">
-                        {presentationLayout === "table"
-                          ? "Choose the table columns and order. Keep one visible; a pinned column stays first while you scroll horizontally."
-                          : "Choose the extra fields shown on cards and their order. The primary and secondary fields stay in the card heading."}
-                      </p>
-                    </div>
-                    {presentationSettingsFields.length ? (
-                      <div className="divide-y rounded-[var(--radius)] border">
-                        {presentationSettingsFields.map((field) => {
-                          const visible = presentationVisibleFieldIds.has(
-                            field.id,
-                          );
-                          const index = presentationVisibleFields.findIndex(
-                            (candidate) => candidate.id === field.id,
-                          );
-                          const pinnedIndex = pinnedField
-                            ? presentationVisibleFields.findIndex(
-                                (candidate) => candidate.id === pinnedField.id,
-                              )
-                            : -1;
-                          const cannotMoveUp =
-                            presentationLayout === "table" &&
-                            pinnedField !== undefined &&
-                            pinnedIndex >= 0 &&
-                            field.id !== pinnedField.id &&
-                            index - 1 === pinnedIndex;
-                          const cannotMoveDown =
-                            presentationLayout === "table" &&
-                            pinnedIndex >= 0 &&
-                            (field.id === pinnedField?.id ||
-                              index + 1 === pinnedIndex);
-                          return (
-                            <div
-                              key={field.id}
-                              className="grid min-w-0 gap-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto] sm:items-center"
-                            >
-                              <Field className="min-h-11 flex-row items-center gap-3">
-                                <Checkbox
-                                  id={`openview-column-${field.id}`}
-                                  checked={visible}
-                                  disabled={
-                                    (presentationLayout === "table" &&
-                                      visible &&
-                                      presentationVisibleFields.length <= 1) ||
-                                    (!visible && visibleFields.length >= 20)
-                                  }
-                                  onCheckedChange={(checked) =>
-                                    updatePresentationFieldVisibility(
-                                      field.id,
-                                      checked === true,
-                                    )
-                                  }
-                                />
-                                <FieldLabel
-                                  htmlFor={`openview-column-${field.id}`}
-                                  className="font-normal"
-                                >
-                                  Show {field.name}
-                                </FieldLabel>
-                              </Field>
-                              {presentationLayout === "table" ? (
-                                <Field className="min-h-11 flex-row items-center gap-3">
-                                  <Checkbox
-                                    id={`openview-pin-${field.id}`}
-                                    checked={draft.presentation.pinnedFieldIds.includes(
-                                      field.id,
-                                    )}
-                                    disabled={!visible}
-                                    onCheckedChange={(checked) =>
-                                      updatePinnedField(
-                                        field.id,
-                                        checked === true,
-                                      )
-                                    }
-                                  />
-                                  <FieldLabel
-                                    htmlFor={`openview-pin-${field.id}`}
-                                    className="font-normal"
-                                  >
-                                    Pin {field.name}
-                                  </FieldLabel>
-                                </Field>
-                              ) : null}
-                              <div className="flex items-center gap-1">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-11"
-                                  disabled={
-                                    !visible || index <= 0 || cannotMoveUp
-                                  }
-                                  aria-label={`Move ${field.name} up`}
-                                  onClick={() =>
-                                    movePresentationField(field.id, -1)
-                                  }
-                                >
-                                  <ArrowUp aria-hidden="true" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-11"
-                                  disabled={
-                                    !visible ||
-                                    index ===
-                                      presentationVisibleFields.length - 1 ||
-                                    cannotMoveDown
-                                  }
-                                  aria-label={`Move ${field.name} down`}
-                                  onClick={() =>
-                                    movePresentationField(field.id, 1)
-                                  }
-                                >
-                                  <ArrowDown aria-hidden="true" />
-                                </Button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <p role="note" className="text-muted-foreground text-sm">
-                        Add fields to the view query before configuring its
-                        columns or card details.
-                      </p>
-                    )}
+            <SavedViewAdvancedControls
+              model={{
+                draft,
+                layout: presentationLayout,
+                layoutLabel: presentationLayoutLabel,
+                fields: {
+                  all: fields,
+                  queried: queriedFields,
+                  columnSettings: presentationSettingsFields,
+                  presentationVisible: presentationVisibleFields,
+                  visible: visibleFields,
+                  visibleIds: presentationVisibleFieldIds,
+                  pinnedField,
+                  groupByField,
+                  dates: dateFields,
+                  calendarDateField,
+                  timelineStartField,
+                  timelineEndField,
+                  timelineDeadlineField,
+                  timelineProgressField,
+                },
+                incompletePresentation,
+              }}
+              actions={{
+                updateDefinition,
+                updatePresentation,
+                updatePresentationFieldVisibility,
+                updatePinnedField,
+                movePresentationField,
+              }}
+            />
 
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {presentationLayout === "table" ? (
-                        <Field className="w-full max-w-72">
-                          <FieldLabel htmlFor="openview-row-density">
-                            Row density
-                          </FieldLabel>
-                          <Select
-                            id="openview-row-density"
-                            className="min-h-11"
-                            value={draft.presentation.density}
-                            onValueChange={(density) => {
-                              if (
-                                density === "comfortable" ||
-                                density === "compact"
-                              )
-                                updatePresentation((current) => ({
-                                  ...current,
-                                  density,
-                                }));
-                            }}
-                          >
-                            <option value="comfortable">Comfortable</option>
-                            <option value="compact">Compact</option>
-                          </Select>
-                        </Field>
-                      ) : (
-                        <Field className="w-full max-w-72">
-                          <FieldLabel htmlFor="openview-card-size">
-                            Card size
-                          </FieldLabel>
-                          <Select
-                            id="openview-card-size"
-                            className="min-h-11"
-                            value={draft.presentation.cardSize}
-                            onValueChange={(cardSize) => {
-                              if (
-                                cardSize === "comfortable" ||
-                                cardSize === "compact"
-                              )
-                                updatePresentation((current) => ({
-                                  ...current,
-                                  cardSize,
-                                }));
-                            }}
-                          >
-                            <option value="comfortable">Comfortable</option>
-                            <option value="compact">Compact</option>
-                          </Select>
-                        </Field>
-                      )}
-                      <Field className="min-h-11 flex-row items-center justify-between gap-3">
-                        <div className="flex flex-col gap-1">
-                          <FieldLabel htmlFor="openview-wrap-long-text">
-                            Wrap long text
-                          </FieldLabel>
-                          <p
-                            id="openview-wrap-long-text-help"
-                            className="text-muted-foreground text-sm"
-                          >
-                            Keep full values visible when space is tight.
-                          </p>
-                        </div>
-                        <Checkbox
-                          id="openview-wrap-long-text"
-                          aria-describedby="openview-wrap-long-text-help"
-                          checked={draft.presentation.wrap}
-                          onCheckedChange={(checked) =>
-                            updatePresentation((current) => ({
-                              ...current,
-                              wrap: checked === true,
-                            }))
-                          }
-                        />
-                      </Field>
-                    </div>
-                  </section>
-                ) : null}
-
-                <div className="flex flex-col gap-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 className="font-medium">Sort order</h3>
-                      <p className="text-muted-foreground text-xs">
-                        The first rule has the highest priority. Use up to three
-                        rules.
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={
-                        draft.definition.sort.length >= 3 ||
-                        fields.every((field) =>
-                          draft.definition.sort.some(
-                            (sort) => sort.fieldId === field.id,
-                          ),
-                        )
-                      }
-                      onClick={() => {
-                        const unused = fields.find(
-                          (field) =>
-                            !draft.definition.sort.some(
-                              (sort) => sort.fieldId === field.id,
-                            ),
-                        );
-                        if (!unused || draft.definition.sort.length >= 3)
-                          return;
-                        updateDefinition((current) => ({
-                          ...current,
-                          sort: [
-                            ...current.sort,
-                            {
-                              fieldId: unused.id,
-                              expectedType: unused.type,
-                              direction: "asc",
-                            },
-                          ],
-                        }));
-                      }}
-                    >
-                      Add sort rule
-                    </Button>
-                  </div>
-                  {draft.definition.sort.length === 0 ? (
-                    <p className="text-muted-foreground text-sm">
-                      Records keep their source order.
-                    </p>
-                  ) : null}
-                  {draft.definition.sort.map((sort, index) => (
-                    <div
-                      key={`${sort.fieldId}:${index}`}
-                      className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto] sm:items-end"
-                    >
-                      <Field>
-                        <FieldLabel htmlFor={`openview-sort-field-${index}`}>
-                          Sort field {index + 1}
-                        </FieldLabel>
-                        <Select
-                          id={`openview-sort-field-${index}`}
-                          className="min-h-11"
-                          value={sort.fieldId}
-                          onValueChange={(fieldId) => {
-                            const field = fields.find(
-                              (candidate) => candidate.id === fieldId,
-                            );
-                            if (
-                              !field ||
-                              draft.definition.sort.some(
-                                (entry, entryIndex) =>
-                                  entryIndex !== index &&
-                                  entry.fieldId === field.id,
-                              )
-                            )
-                              return;
-                            updateDefinition((current) => ({
-                              ...current,
-                              sort: current.sort.map((entry, entryIndex) =>
-                                entryIndex === index
-                                  ? {
-                                      ...entry,
-                                      fieldId: field.id,
-                                      expectedType: field.type,
-                                    }
-                                  : entry,
-                              ),
-                            }));
-                          }}
-                        >
-                          {!fields.some(
-                            (field) => field.id === sort.fieldId,
-                          ) ? (
-                            <option value={sort.fieldId} disabled>
-                              Saved sort field unavailable
-                            </option>
-                          ) : null}
-                          {fields.map((field) => (
-                            <option
-                              key={field.id}
-                              value={field.id}
-                              disabled={draft.definition.sort.some(
-                                (entry, entryIndex) =>
-                                  entryIndex !== index &&
-                                  entry.fieldId === field.id,
-                              )}
-                            >
-                              {field.name}
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                      <Field>
-                        <FieldLabel
-                          htmlFor={`openview-sort-direction-${index}`}
-                        >
-                          Sort direction {index + 1}
-                        </FieldLabel>
-                        <Select
-                          id={`openview-sort-direction-${index}`}
-                          className="min-h-11"
-                          value={sort.direction}
-                          onValueChange={(direction) => {
-                            if (direction !== "asc" && direction !== "desc")
-                              return;
-                            updateDefinition((current) => ({
-                              ...current,
-                              sort: current.sort.map((entry, entryIndex) =>
-                                entryIndex === index
-                                  ? { ...entry, direction }
-                                  : entry,
-                              ),
-                            }));
-                          }}
-                        >
-                          <option value="asc">Ascending (A → Z)</option>
-                          <option value="desc">Descending (Z → A)</option>
-                        </Select>
-                      </Field>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="size-11"
-                        aria-label={`Remove sort rule ${index + 1}`}
-                        onClick={() =>
-                          updateDefinition((current) => ({
-                            ...current,
-                            sort: current.sort.filter(
-                              (_, entryIndex) => entryIndex !== index,
-                            ),
-                          }))
-                        }
-                      >
-                        ×
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-
-                {isGeneralGroupedLayout(presentationLayout) ? (
-                  <div className="flex flex-wrap items-end gap-3">
-                    <Field className="w-full max-w-72">
-                      <FieldLabel htmlFor="openview-general-group-field">
-                        Group records by
-                      </FieldLabel>
-                      <Select
-                        id="openview-general-group-field"
-                        className="min-h-11"
-                        value={draft.presentation.groupByFieldId ?? ""}
-                        onValueChange={(value) =>
-                          updatePresentation((current) => ({
-                            ...current,
-                            groupByFieldId: value || null,
-                          }))
-                        }
-                      >
-                        {draft.presentation.groupByFieldId && !groupByField ? (
-                          <option
-                            value={draft.presentation.groupByFieldId}
-                            disabled
-                          >
-                            Saved field unavailable
-                          </option>
-                        ) : null}
-                        <option value="">No grouping</option>
-                        {queriedFields.map((field) => (
-                          <option key={field.id} value={field.id}>
-                            {field.name}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <p className="text-muted-foreground max-w-prose text-sm">
-                      Counts come from the server. Select a group to load its
-                      paged records.
-                    </p>
-                    {draft.presentation.groupByFieldId && !groupByField ? (
-                      <p role="note" className="text-muted-foreground text-sm">
-                        The saved grouping field is unavailable; records are
-                        shown without grouping.
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
-                {(presentationLayout === "calendar" ||
-                  presentationLayout === "timeline") &&
-                draft.presentation.groupByFieldId ? (
-                  <p role="note" className="text-muted-foreground text-sm">
-                    General grouping is inactive in {presentationLayoutLabel};
-                    the saved group field is preserved.
-                  </p>
-                ) : null}
-              </div>
-            </details>
-
-            {presentationLayout === "kanban" ? (
-              <div className="flex flex-wrap items-end gap-3">
-                <Field className="w-full max-w-72">
-                  <FieldLabel htmlFor="openview-kanban-group-field">
-                    Group lanes by
-                  </FieldLabel>
-                  <Select
-                    id="openview-kanban-group-field"
-                    className="min-h-11"
-                    value={draft.presentation.groupByFieldId ?? ""}
-                    aria-describedby="openview-kanban-group-field-help"
-                    onValueChange={(value) =>
-                      updatePresentation((current) => ({
-                        ...current,
-                        groupByFieldId: value || null,
-                      }))
-                    }
-                  >
-                    {draft.presentation.groupByFieldId && !groupByField ? (
-                      <option
-                        value={draft.presentation.groupByFieldId}
-                        disabled
-                      >
-                        Saved field unavailable
-                      </option>
-                    ) : null}
-                    <option value="">Choose a queried field</option>
-                    {queriedFields.map((field) => (
-                      <option key={field.id} value={field.id}>
-                        {field.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <p
-                  id="openview-kanban-group-field-help"
-                  className="text-muted-foreground max-w-prose text-sm"
-                >
-                  Lane counts are server-provided. Only one lane’s bounded page
-                  of records is loaded at a time.
-                </p>
-              </div>
-            ) : null}
-            {presentationLayout === "calendar" ? (
-              <div className="flex flex-wrap items-end gap-3">
-                <Field className="w-full max-w-72">
-                  <FieldLabel htmlFor="openview-calendar-date-field">
-                    Calendar date field
-                  </FieldLabel>
-                  <Select
-                    id="openview-calendar-date-field"
-                    className="min-h-11"
-                    value={draft.presentation.dateFieldId ?? ""}
-                    onValueChange={(value) =>
-                      updatePresentation((current) => ({
-                        ...current,
-                        dateFieldId: value || null,
-                      }))
-                    }
-                  >
-                    {draft.presentation.dateFieldId && !calendarDateField ? (
-                      <option value={draft.presentation.dateFieldId} disabled>
-                        Saved date field unavailable
-                      </option>
-                    ) : null}
-                    <option value="">Choose a queried date field</option>
-                    {dateFields.map((field) => (
-                      <option key={field.id} value={field.id}>
-                        {field.name} · {field.type}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field className="w-full max-w-56">
-                  <FieldLabel htmlFor="openview-calendar-date-range">
-                    Calendar date range
-                  </FieldLabel>
-                  <Select
-                    id="openview-calendar-date-range"
-                    className="min-h-11"
-                    value={draft.presentation.dateRange}
-                    onValueChange={(value) =>
-                      updatePresentation((current) => ({
-                        ...current,
-                        dateRange:
-                          value as OpenViewSavedView["presentation"]["dateRange"],
-                      }))
-                    }
-                  >
-                    <option value="week">Week</option>
-                    <option value="month">Month</option>
-                    <option value="quarter">Quarter</option>
-                    <option value="year">Year</option>
-                  </Select>
-                </Field>
-                <Field className="w-full max-w-56">
-                  <FieldLabel htmlFor="openview-calendar-scale">
-                    Calendar scale
-                  </FieldLabel>
-                  <Select
-                    id="openview-calendar-scale"
-                    className="min-h-11"
-                    value={draft.presentation.scale ?? "month"}
-                    onValueChange={(value) =>
-                      updatePresentation((current) => ({
-                        ...current,
-                        scale: value as "month" | "list",
-                      }))
-                    }
-                  >
-                    <option value="month">Month</option>
-                    <option value="list">List</option>
-                  </Select>
-                </Field>
-                <p className="text-muted-foreground max-w-prose text-sm">
-                  Choose an active date or datetime field. The range and Month
-                  or List layout are saved with this view.
-                </p>
-              </div>
-            ) : null}
-            {presentationLayout === "timeline" ? (
-              <div className="flex flex-wrap items-end gap-3">
-                <Field className="w-full max-w-72">
-                  <FieldLabel htmlFor="openview-timeline-start-field">
-                    Timeline start field
-                  </FieldLabel>
-                  <Select
-                    id="openview-timeline-start-field"
-                    className="min-h-11"
-                    value={draft.presentation.timelineStartFieldId ?? ""}
-                    onValueChange={(value) =>
-                      updatePresentation((current) => ({
-                        ...current,
-                        timelineStartFieldId: value || null,
-                      }))
-                    }
-                  >
-                    {draft.presentation.timelineStartFieldId &&
-                    !timelineStartField ? (
-                      <option
-                        value={draft.presentation.timelineStartFieldId}
-                        disabled
-                      >
-                        Saved start field unavailable
-                      </option>
-                    ) : null}
-                    <option value="">Choose a queried date field</option>
-                    {dateFields.map((field) => (
-                      <option key={field.id} value={field.id}>
-                        {field.name} · {field.type}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field className="w-full max-w-72">
-                  <FieldLabel htmlFor="openview-timeline-end-field">
-                    Timeline end field
-                  </FieldLabel>
-                  <Select
-                    id="openview-timeline-end-field"
-                    className="min-h-11"
-                    value={draft.presentation.timelineEndFieldId ?? ""}
-                    onValueChange={(value) =>
-                      updatePresentation((current) => ({
-                        ...current,
-                        timelineEndFieldId: value || null,
-                      }))
-                    }
-                  >
-                    {draft.presentation.timelineEndFieldId &&
-                    !timelineEndField ? (
-                      <option
-                        value={draft.presentation.timelineEndFieldId}
-                        disabled
-                      >
-                        Saved end field unavailable
-                      </option>
-                    ) : null}
-                    <option value="">Choose a queried date field</option>
-                    {dateFields.map((field) => (
-                      <option key={field.id} value={field.id}>
-                        {field.name} · {field.type}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field className="w-full max-w-72">
-                  <FieldLabel htmlFor="openview-timeline-deadline-field">
-                    Deadline field (optional)
-                  </FieldLabel>
-                  <Select
-                    id="openview-timeline-deadline-field"
-                    className="min-h-11"
-                    value={draft.presentation.timelineDeadlineFieldId ?? ""}
-                    onValueChange={(value) =>
-                      updatePresentation((current) => ({
-                        ...current,
-                        timelineDeadlineFieldId: value || null,
-                      }))
-                    }
-                  >
-                    {draft.presentation.timelineDeadlineFieldId &&
-                    !timelineDeadlineField ? (
-                      <option
-                        value={draft.presentation.timelineDeadlineFieldId}
-                        disabled
-                      >
-                        Saved deadline field unavailable
-                      </option>
-                    ) : null}
-                    <option value="">No deadline</option>
-                    {dateFields.map((field) => (
-                      <option key={field.id} value={field.id}>
-                        {field.name} · {field.type}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field className="w-full max-w-72">
-                  <FieldLabel htmlFor="openview-timeline-progress-field">
-                    Progress field (optional)
-                  </FieldLabel>
-                  <Select
-                    id="openview-timeline-progress-field"
-                    className="min-h-11"
-                    value={draft.presentation.timelineProgressFieldId ?? ""}
-                    onValueChange={(value) =>
-                      updatePresentation((current) => ({
-                        ...current,
-                        timelineProgressFieldId: value || null,
-                      }))
-                    }
-                  >
-                    {draft.presentation.timelineProgressFieldId &&
-                    !timelineProgressField ? (
-                      <option
-                        value={draft.presentation.timelineProgressFieldId}
-                        disabled
-                      >
-                        Saved progress field unavailable
-                      </option>
-                    ) : null}
-                    <option value="">No progress</option>
-                    {queriedFields
-                      .filter((field) =>
-                        ["number", "decimal", "int"].includes(field.type),
-                      )
-                      .map((field) => (
-                        <option key={field.id} value={field.id}>
-                          {field.name} · {field.type}
-                        </option>
-                      ))}
-                  </Select>
-                </Field>
-                <p className="text-muted-foreground max-w-prose text-sm">
-                  Timeline bars use the complete start/end interval. The visible
-                  window only clips the bar and filters matching intervals.
-                </p>
-              </div>
-            ) : null}
-            {incompletePresentation ? (
-              <Alert role="note">
-                {presentationLayout === "kanban"
-                  ? "Choose an active queried field for Kanban lanes before saving this presentation."
-                  : presentationLayout === "calendar"
-                    ? "Choose an active queried date or datetime field before saving this Calendar presentation."
-                    : presentationLayout === "timeline"
-                      ? "Choose active queried start and end date fields, and clear any unavailable optional fields, before saving this Timeline presentation."
-                      : "Complete the saved presentation fields before saving."}
-              </Alert>
-            ) : null}
-
-            <details className="rounded-md border p-3">
-              <summary className="min-h-11 cursor-pointer py-2 font-medium">
-                Filters ({draft.definition.filters.length})
-              </summary>
-              <div className="flex flex-col gap-4 border-t pt-4">
-                <Field className="max-w-xs">
-                  <FieldLabel htmlFor="openview-filter-logic">
-                    Match filters
-                  </FieldLabel>
-                  <Select
-                    id="openview-filter-logic"
-                    className="min-h-11"
-                    value={draft.definition.logic}
-                    onValueChange={(value) => {
-                      if (value === "and" || value === "or")
-                        updateDefinition((current) => ({
-                          ...current,
-                          logic: value,
-                        }));
-                    }}
-                  >
-                    <option value="and">All conditions (AND)</option>
-                    <option value="or">Any condition (OR)</option>
-                  </Select>
-                </Field>
-                {draft.definition.filters.map((filter, index) => {
-                  const field = activeFields.get(filter.fieldId);
-                  const operators = operatorChoices(filter.expectedType);
-                  const needsValue = !EMPTY_OPERATORS.has(filter.operator);
-                  const unsafeIntegerValue = hasUnsafeIntegerFilter(filter);
-                  const valueErrorId = `openview-filter-value-error-${index}`;
-                  return (
-                    <div
-                      key={filterRowKeyFor(filter, index)}
-                      className="bg-muted/40 grid min-w-0 gap-3 rounded-md p-3 sm:grid-cols-[minmax(8rem,1fr)_minmax(9rem,1fr)_minmax(8rem,1fr)_auto]"
-                    >
-                      <Field>
-                        <FieldLabel htmlFor={`openview-filter-field-${index}`}>
-                          Field
-                        </FieldLabel>
-                        <Select
-                          id={`openview-filter-field-${index}`}
-                          className="min-h-11"
-                          value={filter.fieldId}
-                          onValueChange={(fieldId) => {
-                            const nextField = activeFields.get(fieldId);
-                            if (!nextField) return;
-                            const expectedType = nextField.type;
-                            const nextOperator =
-                              operatorChoices(expectedType)[0] ?? "eq";
-                            updateDefinition((current) => ({
-                              ...current,
-                              filters: updateFilterAtIndex(
-                                current.filters,
-                                index,
-                                () => ({
-                                  fieldId,
-                                  expectedType,
-                                  operator: nextOperator,
-                                  value: EMPTY_OPERATORS.has(nextOperator)
-                                    ? null
-                                    : "",
-                                }),
-                              ),
-                            }));
-                          }}
-                        >
-                          {fields.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.name}
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                      <Field>
-                        <FieldLabel
-                          htmlFor={`openview-filter-operator-${index}`}
-                        >
-                          Condition
-                        </FieldLabel>
-                        <Select
-                          id={`openview-filter-operator-${index}`}
-                          className="min-h-11"
-                          value={filter.operator}
-                          onValueChange={(operator) => {
-                            if (
-                              !isFilterOperator(operator, filter.expectedType)
-                            )
-                              return;
-                            updateDefinition((current) => ({
-                              ...current,
-                              filters: updateFilterAtIndex(
-                                current.filters,
-                                index,
-                                (item) => ({
-                                  ...item,
-                                  operator,
-                                  value: EMPTY_OPERATORS.has(operator)
-                                    ? null
-                                    : operator === "in" ||
-                                        item.operator === "in"
-                                      ? ""
-                                      : (item.value ?? ""),
-                                }),
-                              ),
-                            }));
-                          }}
-                        >
-                          {operators.map((operator) => (
-                            <option key={operator} value={operator}>
-                              {OPERATOR_LABELS[operator] ?? operator}
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                      {needsValue ? (
-                        <Field>
-                          <FieldLabel
-                            htmlFor={`openview-filter-value-${index}`}
-                          >
-                            Value
-                          </FieldLabel>
-                          {filter.expectedType === "boolean" ? (
-                            <Select
-                              id={`openview-filter-value-${index}`}
-                              className="min-h-11"
-                              value={String(filter.value ?? "")}
-                              onValueChange={(value) =>
-                                updateDefinition((current) => ({
-                                  ...current,
-                                  filters: updateFilterAtIndex(
-                                    current.filters,
-                                    index,
-                                    (item) => ({
-                                      ...item,
-                                      value:
-                                        value === "" ? "" : value === "true",
-                                    }),
-                                  ),
-                                }))
-                              }
-                            >
-                              <option value="">Choose…</option>
-                              <option value="true">True</option>
-                              <option value="false">False</option>
-                            </Select>
-                          ) : (
-                            <>
-                              <Input
-                                id={`openview-filter-value-${index}`}
-                                className="min-h-11"
-                                aria-invalid={unsafeIntegerValue || undefined}
-                                aria-describedby={
-                                  unsafeIntegerValue ? valueErrorId : undefined
-                                }
-                                type={
-                                  filter.expectedType === "date"
-                                    ? "date"
-                                    : ["number", "decimal", "int"].includes(
-                                          filter.expectedType,
-                                        )
-                                      ? "number"
-                                      : "text"
-                                }
-                                value={filterInputValue(filter)}
-                                onChange={(event) =>
-                                  updateDefinition((current) => ({
-                                    ...current,
-                                    filters: updateFilterAtIndex(
-                                      current.filters,
-                                      index,
-                                      (item) => ({
-                                        ...item,
-                                        value:
-                                          item.operator === "in"
-                                            ? event.target.value
-                                            : filterValueForType(
-                                                item.expectedType,
-                                                event.target.value,
-                                              ),
-                                      }),
-                                    ),
-                                  }))
-                                }
-                              />
-                              {unsafeIntegerValue ? (
-                                <p
-                                  id={valueErrorId}
-                                  role="alert"
-                                  className="text-destructive text-sm"
-                                >
-                                  {UNSAFE_INTEGER_FILTER_ERROR}
-                                </p>
-                              ) : null}
-                            </>
-                          )}
-                        </Field>
-                      ) : (
-                        <div aria-hidden="true" />
-                      )}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11 self-end"
-                        aria-label={`Remove filter ${index + 1}`}
-                        onClick={() =>
-                          updateDefinition((current) => {
-                            const keys = new Map<object, string>();
-                            current.filters.forEach((item, itemIndex) => {
-                              if (itemIndex !== index)
-                                keys.set(
-                                  item,
-                                  filterRowKeyFor(item, itemIndex),
-                                );
-                            });
-                            setFilterRowKeyState({ draftKey, keys });
-                            return {
-                              ...current,
-                              filters: current.filters.filter(
-                                (_, itemIndex) => itemIndex !== index,
-                              ),
-                            };
-                          })
-                        }
-                      >
-                        Remove
-                      </Button>
-                      {!isFilterReady(filter) ? (
-                        <p className="text-destructive col-span-full text-sm">
-                          Complete this condition or remove it before saving.
-                        </p>
-                      ) : null}
-                      {!field ? (
-                        <p className="text-destructive col-span-full text-sm">
-                          This saved filter refers to an unavailable field.
-                          Remove it before saving.
-                        </p>
-                      ) : null}
-                    </div>
-                  );
-                })}
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11 self-start"
-                  disabled={
-                    fields.length === 0 || draft.definition.filters.length >= 10
-                  }
-                  onClick={() => {
-                    const field = fields[0];
-                    if (!field) return;
-                    updateDefinition((current) => {
-                      const newFilter: OpenViewQueryDefinition["filters"][number] =
-                        {
-                          fieldId: field.id,
-                          expectedType: field.type,
-                          operator: "eq",
-                          value: "",
-                        };
-                      const keys = new Map<object, string>();
-                      current.filters.forEach((item, itemIndex) => {
-                        keys.set(item, filterRowKeyFor(item, itemIndex));
-                      });
-                      keys.set(
-                        newFilter,
-                        `${draftKey}:new-filter:${nextFilterRowKey.current++}`,
-                      );
-                      setFilterRowKeyState({ draftKey, keys });
-                      return {
-                        ...current,
-                        filters: [...current.filters, newFilter],
-                      };
-                    });
-                  }}
-                >
-                  Add filter
-                </Button>
-              </div>
-            </details>
+            <SavedViewFilterControls
+              logic={draft.definition.logic}
+              filters={draft.definition.filters}
+              fields={fields}
+              activeFields={activeFields}
+              rowKeyFor={filterRowKeyFor}
+              onLogicChange={(logic) =>
+                updateDefinition((current) => ({ ...current, logic }))
+              }
+              onUpdateFilter={updateFilter}
+              onRemoveFilter={removeFilter}
+              onAddFilter={addFilter}
+            />
 
             {!isLiveRecordLayout(presentationLayout) ? (
               <Alert role="note">
@@ -3573,140 +2391,36 @@ export default function ServerBackedViewsWorkspace({
           ) : null}
 
           {generalGroupedView && !incompleteFilters ? (
-            <section
-              aria-label="Grouping results"
-              className="bg-card min-w-0 overflow-hidden rounded-[var(--radius)] border"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
-                <div>
-                  <h2 className="font-medium">
-                    Groups by {groupByField?.name}
-                  </h2>
-                  <p className="text-muted-foreground text-sm">
-                    Counts include all matching records. Only the selected
-                    group’s page of records is loaded.
-                  </p>
-                </div>
-                <p aria-live="polite" className="text-muted-foreground text-sm">
-                  {generalGroupLoading ? "Loading groups…" : groupRange}
-                </p>
-              </div>
-
-              {generalGroupError ? (
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-                  <p role="alert">{generalGroupError}</p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={generalGroupLoading || Boolean(pendingAction)}
-                    onClick={() => setGeneralGroupRetry((retry) => retry + 1)}
-                  >
-                    {generalSelectedGroup
-                      ? "Retry group records"
-                      : "Retry groups"}
-                  </Button>
-                </div>
-              ) : null}
-
-              {generalGroupLoading && !currentGeneralGroupPage ? (
-                <p
-                  role="status"
-                  className="text-muted-foreground px-4 py-8 text-center"
-                >
-                  Loading groups…
-                </p>
-              ) : currentGeneralGroupPage?.groups.length ? (
-                <ul
-                  aria-label="View groups"
-                  className="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-                >
-                  {currentGeneralGroupPage.groups.map((group) => {
-                    const selector = groupSelectorForValue(group.value);
-                    const label = groupName(group.value, group.label);
-                    const selected =
-                      groupSelectorKey(selector) ===
-                      groupSelectorKey(generalSelectedGroup);
-                    return (
-                      <li key={groupSelectorKey(selector)} className="min-w-0">
-                        <button
-                          type="button"
-                          aria-pressed={selected}
-                          aria-label={`${label}, ${group.count} records`}
-                          className={`focus-visible:ring-ring flex min-h-11 w-full min-w-0 items-center justify-between gap-3 rounded-[var(--radius)] border px-3 py-2 text-left focus-visible:ring-2 ${selected ? "border-primary bg-primary/5" : "bg-background hover:bg-muted/50"}`}
-                          disabled={Boolean(pendingAction)}
-                          onClick={() => {
-                            setGeneralSelectedGroup(selector);
-                            setRecordOffset(0);
-                          }}
-                        >
-                          <span className="truncate font-medium">{label}</span>
-                          <span className="text-muted-foreground shrink-0 text-sm">
-                            {group.count}
-                          </span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : currentGeneralGroupPage ? (
-                <p className="text-muted-foreground px-4 py-8 text-center">
-                  No groups match this view.
-                </p>
-              ) : null}
-
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
-                <p aria-live="polite" className="text-muted-foreground text-sm">
-                  {groupRange}
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={
-                      !groupPagination ||
-                      groupPagination.offset === 0 ||
-                      generalGroupLoading ||
-                      Boolean(generalGroupError) ||
-                      Boolean(pendingAction)
-                    }
-                    onClick={() => {
-                      setGeneralGroupOffset(
-                        Math.max(
-                          0,
-                          (groupPagination?.offset ?? 0) - GROUP_PAGE_SIZE,
-                        ),
-                      );
-                      setGeneralSelectedGroup(null);
-                      setRecordOffset(0);
-                    }}
-                  >
-                    Previous groups
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={
-                      !groupPagination?.hasMore ||
-                      generalGroupLoading ||
-                      Boolean(generalGroupError) ||
-                      Boolean(pendingAction)
-                    }
-                    onClick={() => {
-                      setGeneralGroupOffset(
-                        (groupPagination?.offset ?? 0) + GROUP_PAGE_SIZE,
-                      );
-                      setGeneralSelectedGroup(null);
-                      setRecordOffset(0);
-                    }}
-                  >
-                    Next groups
-                  </Button>
-                </div>
-              </div>
-            </section>
+            <LiveGroupedResults
+              fieldName={groupByField?.name ?? ""}
+              range={groupRange}
+              loading={generalGroupLoading}
+              error={generalGroupError}
+              hasPage={currentGeneralGroupPage !== null}
+              groups={groupOptions}
+              pagination={groupPagination ?? null}
+              selectedGroup={generalSelectedGroup}
+              pending={Boolean(pendingAction)}
+              onRetry={() => setGeneralGroupRetry((retry) => retry + 1)}
+              onSelectGroup={(group) => {
+                setGeneralSelectedGroup(group);
+                setRecordOffset(0);
+              }}
+              onPreviousPage={() => {
+                setGeneralGroupOffset(
+                  Math.max(0, (groupPagination?.offset ?? 0) - GROUP_PAGE_SIZE),
+                );
+                setGeneralSelectedGroup(null);
+                setRecordOffset(0);
+              }}
+              onNextPage={() => {
+                setGeneralGroupOffset(
+                  (groupPagination?.offset ?? 0) + GROUP_PAGE_SIZE,
+                );
+                setGeneralSelectedGroup(null);
+                setRecordOffset(0);
+              }}
+            />
           ) : null}
 
           {isUuid(requestedRecord) &&
@@ -3874,145 +2588,39 @@ export default function ServerBackedViewsWorkspace({
               </EmptyHeader>
             </Empty>
           ) : (
-            <section
-              className="bg-card min-w-0 overflow-hidden rounded-[var(--radius)] border"
-              aria-label="Record results"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-                <div>
-                  <h2 className="font-medium">
-                    {activeSaved?.name ?? "Unsaved view"}
-                  </h2>
-                  <p className="text-muted-foreground text-sm">
-                    {currentRecordPage?.total ?? pageRows.length}{" "}
-                    {generalGroupedView && generalSelectedGroup
-                      ? "records in selected group"
-                      : "matching records"}{" "}
-                    · live workspace data
-                  </p>
-                </div>
-                <p className="text-muted-foreground text-xs">
-                  {cardLayout
-                    ? `${presentationLayoutLabel} layout`
-                    : isLiveRecordLayout(presentationLayout)
-                      ? "Table layout"
-                      : `${presentationLayoutLabel} rendering pending · Table preview`}
-                </p>
-              </div>
-              {rowPageLoading && pageRows.length > 0 ? (
-                <p
-                  role="status"
-                  className="text-muted-foreground border-b px-4 py-2 text-sm"
-                >
-                  Updating matching records. The last loaded page remains
-                  visible.
-                </p>
-              ) : null}
-              <div className="overflow-x-auto">
-                {cardLayout ? (
-                  <LiveRecordCards
-                    layout={cardLayout}
-                    rows={pageRows}
-                    fields={cardFields}
-                    primaryFieldId={draft.presentation.primaryFieldId}
-                    secondaryFieldId={draft.presentation.secondaryFieldId}
-                    cardSize={draft.presentation.cardSize}
-                    wrap={draft.presentation.wrap}
-                    onOpenRecord={openRecordFromResults}
-                  />
-                ) : (
-                  <table className="w-full min-w-[36rem] text-left text-sm">
-                    <thead className="bg-muted/50 text-muted-foreground">
-                      <tr>
-                        {tableFields.map((field) => (
-                          <th
-                            key={field.id}
-                            scope="col"
-                            className={`px-4 py-3 font-medium ${field.id === pinnedField?.id ? "bg-muted/50 sticky left-0 z-20" : ""}`}
-                          >
-                            {field.name}
-                          </th>
-                        ))}
-                        <th scope="col" className="px-4 py-3 font-medium">
-                          Updated
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {pageRows.map((row) => (
-                        <tr key={row.id}>
-                          {tableFields.map((field, index) => (
-                            <td
-                              key={field.id}
-                              className={`max-w-80 px-4 align-top ${draft.presentation.density === "compact" ? "py-1.5" : "py-3"} ${draft.presentation.wrap ? "break-words whitespace-normal" : "whitespace-nowrap"} ${field.id === pinnedField?.id ? "bg-card sticky left-0 z-10" : ""}`}
-                            >
-                              {index === 0 ? (
-                                <button
-                                  type="button"
-                                  className="text-primary focus-visible:ring-ring min-h-11 text-left font-medium underline-offset-4 hover:underline focus-visible:ring-2"
-                                  onClick={() => openRecordFromResults(row.id)}
-                                >
-                                  {recordValue(row.data[field.id])}
-                                </button>
-                              ) : (
-                                recordValue(row.data[field.id])
-                              )}
-                            </td>
-                          ))}
-                          <td
-                            className={`text-muted-foreground px-4 align-top ${draft.presentation.density === "compact" ? "py-1.5" : "py-3"}`}
-                          >
-                            {new Intl.DateTimeFormat("en", {
-                              dateStyle: "medium",
-                            }).format(new Date(row.updatedAt))}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
-                <p aria-live="polite" className="text-muted-foreground text-sm">
-                  Showing {renderedRecordOffset + 1}–
-                  {renderedRecordOffset + pageRows.length} of{" "}
-                  {currentRecordPage?.total ?? pageRows.length}{" "}
-                  {generalGroupedView && generalSelectedGroup
-                    ? "records in selected group"
-                    : "matching records"}
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={
-                      renderedRecordOffset === 0 ||
-                      rowPageLoading ||
-                      Boolean(pendingAction)
-                    }
-                    onClick={() =>
-                      setRecordOffset(Math.max(0, renderedRecordOffset - 25))
-                    }
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={
-                      !currentRecordPage?.hasMore ||
-                      rowPageLoading ||
-                      Boolean(pendingAction)
-                    }
-                    onClick={() => setRecordOffset(renderedRecordOffset + 25)}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            </section>
+            <LiveRecordResults
+              title={activeSaved?.name ?? "Unsaved view"}
+              scopeLabel={
+                generalGroupedView && generalSelectedGroup
+                  ? "records in selected group"
+                  : "matching records"
+              }
+              layoutDescription={
+                cardLayout
+                  ? `${presentationLayoutLabel} layout`
+                  : isLiveRecordLayout(presentationLayout)
+                    ? "Table layout"
+                    : `${presentationLayoutLabel} rendering pending · Table preview`
+              }
+              page={{
+                rows: pageRows,
+                offset: renderedRecordOffset,
+                total: currentRecordPage?.total ?? pageRows.length,
+                hasMore: currentRecordPage?.hasMore ?? false,
+                loading: rowPageLoading,
+              }}
+              cardLayout={cardLayout}
+              cardFields={cardFields}
+              tableFields={tableFields}
+              pinnedFieldId={pinnedField?.id ?? null}
+              presentation={draft.presentation}
+              pending={Boolean(pendingAction)}
+              onOpenRecord={openRecordFromResults}
+              onPreviousPage={() =>
+                setRecordOffset(Math.max(0, renderedRecordOffset - 25))
+              }
+              onNextPage={() => setRecordOffset(renderedRecordOffset + 25)}
+            />
           )}
         </>
       )}
