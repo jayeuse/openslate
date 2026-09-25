@@ -1538,3 +1538,406 @@ test("Test comparisons use saved inputs, preserve typed values, and distinguish 
     comparison.getByRole("row", { name: /Needs review/ }),
   ).toContainText("Yes");
 });
+
+function historyVersionFixture(
+  index: number,
+  label: string,
+  kind = "checkpoint",
+  note: string | null = null,
+) {
+  return {
+    id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    sequence: index,
+    kind,
+    label,
+    note,
+    sourceDocumentRevision: 1,
+    sourceVersionId: null,
+    contentHash: "c".repeat(64),
+    byteCount: 321,
+    metadataRevision: 1,
+    createdAt: `2026-09-${20 + index}T10:00:00Z`,
+    performedBy: null,
+    isDeleted: false,
+    deletedAt: null,
+  };
+}
+
+test("History timeline filters preserve the selected action target and published protections", async ({
+  page,
+}) => {
+  const versions = [
+    historyVersionFixture(1, "Published structure", "published"),
+    historyVersionFixture(
+      2,
+      "Release snapshot 1",
+      "checkpoint",
+      "Supplier setup",
+    ),
+    historyVersionFixture(3, "Before import"),
+  ];
+  // API history is returned newest first.
+  versions.sort((a, b) => b.sequence - a.sequence);
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const timeline = page.getByRole("region", {
+    name: "Version timeline",
+    exact: true,
+  });
+  const inspector = page.getByRole("region", {
+    name: "Selected version",
+    exact: true,
+  });
+  await expect(
+    inspector.getByRole("heading", { name: "Before import", exact: true }),
+  ).toBeVisible();
+  await expect(
+    timeline.getByRole("button", { name: /^View / }).first(),
+  ).toHaveAccessibleName("View Before import");
+  await timeline
+    .getByRole("button", { name: "View Release snapshot 1", exact: true })
+    .click();
+  await expect(
+    inspector.getByRole("heading", { name: "Release snapshot 1", exact: true }),
+  ).toBeVisible();
+  await timeline.getByLabel("Find a version").fill("Supplier");
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Release snapshot 1",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    timeline.getByRole("button", { name: "View Before import", exact: true }),
+  ).toHaveCount(0);
+  await timeline.getByLabel("Find a version").fill("no matching version");
+  await expect(
+    inspector.getByRole("heading", { name: "Release snapshot 1", exact: true }),
+  ).toBeVisible();
+  await inspector
+    .getByRole("button", { name: "Restore version", exact: true })
+    .click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "Restore Release snapshot 1?",
+  );
+  await page
+    .getByRole("button", { name: "Cancel restore", exact: true })
+    .click();
+  await expect(
+    inspector.getByRole("button", { name: "Restore version", exact: true }),
+  ).toBeFocused();
+  await timeline.getByLabel("Find a version").fill("");
+  await timeline
+    .getByRole("button", { name: "Published versions", exact: true })
+    .click();
+  await expect(
+    timeline.getByRole("button", { name: "View Before import", exact: true }),
+  ).toHaveCount(0);
+  await timeline
+    .getByRole("button", { name: "View Published structure", exact: true })
+    .click();
+  await expect(
+    inspector.getByRole("button", { name: "Delete version", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    inspector.getByRole("button", {
+      name: "Edit checkpoint label",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await timeline
+    .getByRole("button", { name: "All versions", exact: true })
+    .click();
+  await timeline
+    .getByRole("button", { name: "View Release snapshot 1", exact: true })
+    .click();
+  await inspector
+    .getByRole("button", { name: "Edit checkpoint label", exact: true })
+    .click();
+  await inspector
+    .getByLabel("Checkpoint label", { exact: true })
+    .fill("Unsaved label");
+  await expect(
+    timeline.getByRole("button", { name: "View Before import", exact: true }),
+  ).toBeDisabled();
+  await inspector
+    .getByRole("button", { name: "Cancel label edit", exact: true })
+    .click();
+});
+
+test("History comparison stays tied to compared versions while inspecting another timeline entry", async ({
+  page,
+}) => {
+  const versions = [
+    historyVersionFixture(1, "Published structure", "published"),
+    historyVersionFixture(
+      2,
+      "Release snapshot 1",
+      "checkpoint",
+      "Supplier setup",
+    ),
+    historyVersionFixture(3, "Before import"),
+  ];
+  const before = migrateSandboxFileV1({
+    kind: "openslate-sandbox",
+    schemaVersion: 1,
+    design: structuredClone(configuredSandboxDesign),
+  });
+  const after = structuredClone(before);
+  after.design.modules[0].name = "Updated requests";
+  let reads = 0;
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  await page.route("**/api/sandbox/versions/*", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    reads++;
+    const id = new URL(route.request().url()).pathname.split("/").at(-1);
+    const version = versions.find((item) => item.id === id)!;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...version,
+        document: id === versions[1].id ? after : before,
+      }),
+    });
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  await page.getByLabel("Compare first version").selectOption(versions[0].id);
+  await page.getByLabel("Compare second version").selectOption(versions[1].id);
+  expect(reads).toBe(0);
+  await page
+    .getByRole("button", { name: "Compare versions", exact: true })
+    .click();
+  const comparison = page.getByRole("region", {
+    name: "Version comparison",
+    exact: true,
+  });
+  await expect(comparison).toContainText("Updated requests");
+  const savedComparison = await comparison.innerText();
+  await page
+    .getByRole("button", { name: "View Before import", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Selected version", exact: true }),
+  ).toContainText("Before import");
+  expect(await comparison.innerText()).toBe(savedComparison);
+  expect(reads).toBe(2);
+  if (process.env.HISTORY_LAYOUT_SCREENSHOTS) {
+    const output = resolve(process.env.HISTORY_LAYOUT_SCREENSHOTS);
+    await mkdir(output, { recursive: true });
+    await page
+      .getByRole("button", { name: "View Release snapshot 1", exact: true })
+      .click();
+    for (const view of [
+      { width: 1920, height: 1000 },
+      { width: 1440, height: 768 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(view);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              document.documentElement.scrollWidth -
+              document.documentElement.clientWidth,
+          ),
+        )
+        .toBeLessThanOrEqual(1);
+      if (view.width >= 1440) {
+        await expect
+          .poll(() =>
+            page.evaluate(() => {
+              const root = document.scrollingElement!;
+              const main = document.querySelector("main")!;
+              return Math.max(
+                root.scrollHeight - root.clientHeight,
+                main.scrollHeight - main.clientHeight,
+              );
+            }),
+          )
+          .toBeLessThanOrEqual(1);
+      }
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate((value) => {
+          document.documentElement.classList.toggle("dark", value === "dark");
+          window.scrollTo(0, 0);
+        }, theme);
+        await page.screenshot({
+          path: join(output, `history-${view.width}-${theme}.png`),
+          fullPage: true,
+          animations: "disabled",
+        });
+      }
+    }
+  }
+});
+
+test("History deletion failure retains its target and successful deletion selects an available version", async ({
+  page,
+}) => {
+  const published = historyVersionFixture(
+    1,
+    "Published structure",
+    "published",
+  );
+  const checkpoint = historyVersionFixture(2, "Disposable checkpoint");
+  let versions = [published, checkpoint];
+  let deleteAttempts = 0;
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  await page.route("**/api/sandbox/versions?*", async (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: versions,
+        limit: 50,
+        offset: 0,
+        count: versions.length,
+        total: versions.length,
+        hasMore: false,
+      }),
+    }),
+  );
+  await page.route("**/api/sandbox/versions/*", async (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    expect(new URL(route.request().url()).pathname).toContain(checkpoint.id);
+    deleteAttempts++;
+    if (deleteAttempts === 1)
+      return route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Try deletion again." }),
+      });
+    versions = [published];
+    return route.fulfill({ status: 204 });
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  await page
+    .getByRole("button", { name: "View Disposable checkpoint", exact: true })
+    .click();
+  const inspector = page.getByRole("region", {
+    name: "Selected version",
+    exact: true,
+  });
+  await inspector
+    .getByRole("button", { name: "Delete version", exact: true })
+    .click();
+  const dialog = page.getByRole("alertdialog");
+  await dialog
+    .getByRole("button", { name: "Delete Disposable checkpoint", exact: true })
+    .click();
+  await expect.poll(() => deleteAttempts).toBe(1);
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole("button", {
+      name: "Delete Disposable checkpoint",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await dialog
+    .getByRole("button", { name: "Delete Disposable checkpoint", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByRole("button", {
+      name: "View Disposable checkpoint",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    inspector.getByRole("heading", {
+      name: "Published structure",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    inspector.getByRole("button", { name: "Delete version", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("heading", { name: "History", exact: true }),
+  ).toBeFocused();
+});
+
+test("History change groups keep large comparisons scannable without hiding access to any entry", async ({
+  page,
+}) => {
+  const first = historyVersionFixture(1, "Full setup", "published");
+  const second = historyVersionFixture(2, "Empty checkpoint");
+  const before = migrateSandboxFileV1({
+    kind: "openslate-sandbox",
+    schemaVersion: 1,
+    design: structuredClone(configuredSandboxDesign),
+  });
+  const after = structuredClone(before);
+  after.design.modules = [];
+  after.design.departments = [];
+  after.design.relationships = [];
+  after.automations = [];
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    versions: [second, first],
+  });
+  await page.route("**/api/sandbox/versions/*", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const isFirst = new URL(route.request().url()).pathname.endsWith(first.id);
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...(isFirst ? first : second),
+        document: isFirst ? before : after,
+      }),
+    });
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  await page.getByLabel("Compare first version").selectOption(first.id);
+  await page.getByLabel("Compare second version").selectOption(second.id);
+  await page
+    .getByRole("button", { name: "Compare versions", exact: true })
+    .click();
+  const comparison = page.getByRole("region", {
+    name: "Version comparison",
+    exact: true,
+  });
+  const fields = comparison.getByRole("button", {
+    name: "Fields, 12 change entries",
+    exact: true,
+  });
+  await expect(fields).toBeVisible();
+  await expect(
+    comparison.getByText("Field removed: Service requests · Request number", {
+      exact: true,
+    }),
+  ).toBeHidden();
+  await fields.click();
+  await expect(
+    comparison.getByText("Field removed: Service requests · Request number", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    comparison.getByText("Field removed: Customers · Email", { exact: true }),
+  ).toBeVisible();
+  await expect(comparison.getByRole("row", { name: /Fields/ })).toContainText(
+    "12",
+  );
+  await fields.click();
+  await expect(
+    comparison.getByText("Field removed: Customers · Email", { exact: true }),
+  ).toBeHidden();
+  if (process.env.HISTORY_LAYOUT_SCREENSHOTS) {
+    const output = resolve(process.env.HISTORY_LAYOUT_SCREENSHOTS);
+    await mkdir(output, { recursive: true });
+    for (const width of [1920, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.evaluate(() => {
+        document.documentElement.classList.add("dark");
+        window.scrollTo(0, 0);
+      });
+      await comparison.evaluate((element) => {
+        element.scrollTop = 0;
+      });
+      await page.screenshot({
+        path: join(output, `history-change-review-${width}.png`),
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
+  }
+});
