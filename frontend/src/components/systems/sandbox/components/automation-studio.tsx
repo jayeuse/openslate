@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "@/components/ui/collapsible";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -664,37 +669,39 @@ function ValueEditor({
           </NativeSelect>
         </Field>
       )}
-      <details className="min-w-0 self-end">
-        <summary className="text-muted-foreground focus-visible:outline-ring flex min-h-11 cursor-pointer items-center gap-2 text-xs focus-visible:outline-2">
+      <Collapsible className="min-w-0 self-end">
+        <CollapsibleTrigger className="text-muted-foreground focus-visible:outline-ring flex min-h-11 cursor-pointer items-center gap-2 text-xs focus-visible:outline-2">
           <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
           Value options ·{" "}
           {value.kind === "field-reference" ? "Field reference" : "Fixed value"}
-        </summary>
-        <Field>
-          <FieldLabel htmlFor={sourceId}>Value source</FieldLabel>
-          <NativeSelect
-            id={sourceId}
-            value={value.kind}
-            onChange={(event) =>
-              onChange(
-                event.target.value === "field-reference" && references[0]
-                  ? { kind: "field-reference", ...references[0].reference }
-                  : defaultLiteral(target),
-              )
-            }
-          >
-            <NativeSelectOption value="literal">
-              Literal value
-            </NativeSelectOption>
-            <NativeSelectOption
-              value="field-reference"
-              disabled={!references.length}
+        </CollapsibleTrigger>
+        <CollapsibleContent keepMounted>
+          <Field>
+            <FieldLabel htmlFor={sourceId}>Value source</FieldLabel>
+            <NativeSelect
+              id={sourceId}
+              value={value.kind}
+              onChange={(event) =>
+                onChange(
+                  event.target.value === "field-reference" && references[0]
+                    ? { kind: "field-reference", ...references[0].reference }
+                    : defaultLiteral(target),
+                )
+              }
             >
-              Field reference
-            </NativeSelectOption>
-          </NativeSelect>
-        </Field>
-      </details>
+              <NativeSelectOption value="literal">
+                Literal value
+              </NativeSelectOption>
+              <NativeSelectOption
+                value="field-reference"
+                disabled={!references.length}
+              >
+                Field reference
+              </NativeSelectOption>
+            </NativeSelect>
+          </Field>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }
@@ -932,77 +939,85 @@ export function AutomationStudio({
                   actions.
                 </p>
               )}
-              <details className="border-border mt-6 border-t pt-4">
-                <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center justify-between text-sm font-medium focus-visible:outline-2">
-                  <h3>Recent activity</h3>
-                  <ChevronDown className="size-4" aria-hidden="true" />
-                </summary>
-                <section
-                  aria-label="Recent activity details"
-                  className="mt-4 grid gap-3"
-                >
-                  <div>
-                    <p className="text-muted-foreground mt-1 text-sm">
-                      See what published automations did in the live workspace.
-                    </p>
-                    <Button
-                      variant="outline"
-                      className="mt-2 min-h-11"
-                      disabled={activity.loading}
-                      onClick={() => void onRefreshActivity()}
-                    >
-                      {activity.loading ? "Refreshing…" : "Refresh activity"}
-                    </Button>
-                  </div>
-                  {activity.error ? (
-                    <Alert variant="destructive">
-                      {activity.error}{" "}
+              <Collapsible className="border-border mt-6 border-t pt-4">
+                <h3>
+                  <CollapsibleTrigger className="focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center justify-between text-sm font-medium focus-visible:outline-2">
+                    Recent activity
+                    <ChevronDown className="size-4" aria-hidden="true" />
+                  </CollapsibleTrigger>
+                </h3>
+                <CollapsibleContent keepMounted>
+                  <section
+                    aria-label="Recent activity details"
+                    className="mt-4 grid gap-3"
+                  >
+                    <div>
+                      <p className="text-muted-foreground mt-1 text-sm">
+                        See what published automations did in the live
+                        workspace.
+                      </p>
                       <Button
                         variant="outline"
-                        size="sm"
-                        className="min-h-11"
+                        className="mt-2 min-h-11"
+                        disabled={activity.loading}
                         onClick={() => void onRefreshActivity()}
                       >
-                        Retry
+                        {activity.loading ? "Refreshing…" : "Refresh activity"}
                       </Button>
-                    </Alert>
-                  ) : null}
-                  {runs.length ? (
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                      {runs.map((run) => (
-                        <Card key={run.id}>
-                          <CardHeader className="gap-1">
-                            <CardTitle className="text-base">
-                              {run.automationName}
-                            </CardTitle>
-                            <p className="text-muted-foreground text-xs">
-                              <time dateTime={run.createdAt}>
-                                {new Date(run.createdAt).toLocaleString()}
-                              </time>
-                            </p>
-                          </CardHeader>
-                          <CardContent className="grid gap-1 text-sm">
-                            <p className="font-medium">
-                              {automationRunStatus(run)}
-                            </p>
-                            <p className="text-muted-foreground">
-                              {runDetail(run)}
-                            </p>
-                          </CardContent>
-                        </Card>
-                      ))}
                     </div>
-                  ) : activity.loading ? (
-                    <p className="text-muted-foreground text-sm" role="status">
-                      Loading recent activity…
-                    </p>
-                  ) : activity.error ? null : (
-                    <p className="text-muted-foreground text-sm">
-                      No published automation activity yet.
-                    </p>
-                  )}
-                </section>
-              </details>
+                    {activity.error ? (
+                      <Alert variant="destructive">
+                        {activity.error}{" "}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="min-h-11"
+                          onClick={() => void onRefreshActivity()}
+                        >
+                          Retry
+                        </Button>
+                      </Alert>
+                    ) : null}
+                    {runs.length ? (
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        {runs.map((run) => (
+                          <Card key={run.id}>
+                            <CardHeader className="gap-1">
+                              <CardTitle className="text-base">
+                                {run.automationName}
+                              </CardTitle>
+                              <p className="text-muted-foreground text-xs">
+                                <time dateTime={run.createdAt}>
+                                  {new Date(run.createdAt).toLocaleString()}
+                                </time>
+                              </p>
+                            </CardHeader>
+                            <CardContent className="grid gap-1 text-sm">
+                              <p className="font-medium">
+                                {automationRunStatus(run)}
+                              </p>
+                              <p className="text-muted-foreground">
+                                {runDetail(run)}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    ) : activity.loading ? (
+                      <p
+                        className="text-muted-foreground text-sm"
+                        role="status"
+                      >
+                        Loading recent activity…
+                      </p>
+                    ) : activity.error ? null : (
+                      <p className="text-muted-foreground text-sm">
+                        No published automation activity yet.
+                      </p>
+                    )}
+                  </section>
+                </CollapsibleContent>
+              </Collapsible>
             </div>
           </ResizablePanel>
           {wide && (

@@ -3,6 +3,9 @@
 import { useId, useRef, useState, type ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
 import { VersionComparison } from "./version-comparison";
+import { SearchField } from "@/components/ui/search-field";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -323,53 +326,49 @@ export function VersionsWorkspace({
             </div>
 
             <div className="grid gap-3">
-              <LabeledField label="Find a version">
-                {(controlId) => (
-                  <Input
-                    id={controlId}
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search labels and notes"
-                    autoComplete="off"
-                  />
-                )}
-              </LabeledField>
-              <div
-                role="group"
+              <SearchField
+                label="Find a version"
+                value={search}
+                onValueChange={setSearch}
+                placeholder="Search labels and notes"
+                autoComplete="off"
+              />
+              <ToggleGroup
                 aria-label="Filter versions"
-                className="bg-muted grid grid-cols-3 gap-1 rounded-lg p-1"
+                value={[filter]}
+                onValueChange={(values) => {
+                  const next = values[0];
+                  if (
+                    next === "all" ||
+                    next === "checkpoint" ||
+                    next === "published"
+                  )
+                    setFilter(next);
+                }}
+                className="bg-muted grid w-full grid-cols-3 gap-1 rounded-lg p-1"
               >
-                <Button
-                  size="sm"
-                  variant={filter === "all" ? "secondary" : "ghost"}
+                <ToggleGroupItem
+                  value="all"
                   aria-label="All versions"
-                  aria-pressed={filter === "all"}
-                  className="h-auto min-h-9 px-1 py-2 text-xs leading-tight whitespace-normal"
-                  onClick={() => setFilter("all")}
+                  className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal"
                 >
                   All
-                </Button>
-                <Button
-                  size="sm"
-                  variant={filter === "checkpoint" ? "secondary" : "ghost"}
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="checkpoint"
                   aria-label="Checkpoints"
-                  aria-pressed={filter === "checkpoint"}
-                  className="h-auto min-h-9 px-1 py-2 text-xs leading-tight whitespace-normal"
-                  onClick={() => setFilter("checkpoint")}
+                  className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal"
                 >
                   Checkpoints
-                </Button>
-                <Button
-                  size="sm"
-                  variant={filter === "published" ? "secondary" : "ghost"}
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="published"
                   aria-label="Published versions"
-                  aria-pressed={filter === "published"}
-                  className="h-auto min-h-9 px-1 py-2 text-xs leading-tight whitespace-normal"
-                  onClick={() => setFilter("published")}
+                  className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal"
                 >
                   Published
-                </Button>
-              </div>
+                </ToggleGroupItem>
+              </ToggleGroup>
             </div>
 
             {versions.length === 0 ? (
@@ -436,9 +435,12 @@ export function VersionsWorkspace({
                                         B
                                       </span>
                                     ) : null}
-                                    <span className="text-muted-foreground shrink-0 text-[10px] font-medium tracking-wide uppercase">
+                                    <Badge
+                                      variant="outline"
+                                      className="shrink-0 px-1 py-0 text-[10px]"
+                                    >
                                       {versionKindLabel(version)}
-                                    </span>
+                                    </Badge>
                                   </span>
                                   <span
                                     id={detailId}

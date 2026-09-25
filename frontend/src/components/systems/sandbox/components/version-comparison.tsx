@@ -17,6 +17,21 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
+import {
+  Table,
+  TableCaption,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "@/components/ui/collapsible";
+import { Badge } from "@/components/ui/badge";
 import { projectSandboxDocument } from "../domain/document-bridge";
 import type { SandboxVersionDetail } from "../state/api";
 
@@ -90,41 +105,44 @@ export function VersionComparison({
         ))}
       </div>
       <div className="border-border mt-5 overflow-hidden rounded-xl border">
-        <table className="w-full table-fixed text-left text-sm">
-          <caption className="sr-only">
+        <Table className="w-full table-fixed text-left text-sm [&_td]:whitespace-normal [&_th]:whitespace-normal">
+          <TableCaption className="sr-only">
             Structure counts for the saved comparison
-          </caption>
+          </TableCaption>
           <colgroup>
             <col className="w-[38%]" />
             <col className="w-[15%]" />
             <col className="w-[15%]" />
             <col className="w-[32%]" />
           </colgroup>
-          <thead className="bg-muted/60 text-muted-foreground text-xs">
-            <tr>
-              <th scope="col" className="px-3 py-3 font-medium">
+          <TableHeader className="bg-muted/60 text-muted-foreground text-xs">
+            <TableRow>
+              <TableHead scope="col" className="px-3 py-3 font-medium">
                 Structure
-              </th>
-              <th
+              </TableHead>
+              <TableHead
                 scope="col"
                 aria-label={`Before: ${first.label}`}
                 className="px-1 py-3 text-center font-medium"
               >
                 Before
-              </th>
-              <th
+              </TableHead>
+              <TableHead
                 scope="col"
                 aria-label={`After: ${second.label}`}
                 className="px-1 py-3 text-center font-medium"
               >
                 After
-              </th>
-              <th scope="col" className="px-2 py-3 text-right font-medium">
+              </TableHead>
+              <TableHead
+                scope="col"
+                className="px-2 py-3 text-right font-medium"
+              >
                 Difference
-              </th>
-            </tr>
-          </thead>
-          <tbody>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {areas.slice(0, 5).map(({ label, icon: Icon }, index) => {
               const delta = after[index] - before[index];
               const Direction =
@@ -136,11 +154,14 @@ export function VersionComparison({
                     ? "text-destructive"
                     : "text-muted-foreground";
               return (
-                <tr
+                <TableRow
                   key={label}
                   className={`border-border border-t ${delta > 0 ? "bg-success/5" : delta < 0 ? "bg-destructive/5" : "bg-card/30"}`}
                 >
-                  <th scope="row" className="px-3 py-4 font-medium break-words">
+                  <TableHead
+                    scope="row"
+                    className="px-3 py-4 font-medium break-words"
+                  >
                     <span className="flex items-center gap-2">
                       <Icon
                         aria-hidden="true"
@@ -148,14 +169,14 @@ export function VersionComparison({
                       />
                       {label}
                     </span>
-                  </th>
-                  <td className="text-muted-foreground px-1 py-4 text-center tabular-nums">
+                  </TableHead>
+                  <TableCell className="text-muted-foreground px-1 py-4 text-center tabular-nums">
                     {before[index]}
-                  </td>
-                  <td className="px-1 py-4 text-center text-base font-semibold tabular-nums">
+                  </TableCell>
+                  <TableCell className="px-1 py-4 text-center text-base font-semibold tabular-nums">
                     {after[index]}
-                  </td>
-                  <td className={`px-2 py-4 text-right text-xs ${tone}`}>
+                  </TableCell>
+                  <TableCell className={`px-2 py-4 text-right text-xs ${tone}`}>
                     <span className="inline-flex max-w-full flex-wrap items-center justify-end gap-1">
                       <Direction
                         aria-hidden="true"
@@ -167,12 +188,12 @@ export function VersionComparison({
                           : `${Math.abs(delta)} ${delta > 0 ? "more" : "fewer"}`}
                       </span>
                     </span>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               );
             })}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
       <p className="text-muted-foreground mt-3 text-xs leading-relaxed">
         {changedAreas
@@ -184,9 +205,9 @@ export function VersionComparison({
       <section aria-label="Change details" className="mt-7">
         <div className="flex items-center justify-between gap-3">
           <h3 className="font-semibold">What changed</h3>
-          <span className="bg-muted text-muted-foreground rounded-md px-2 py-1 text-xs tabular-nums">
+          <Badge variant="secondary" className="px-2 py-1 tabular-nums">
             {changes.length} {changes.length === 1 ? "entry" : "entries"}
-          </span>
+          </Badge>
         </div>
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
           Grouped by area. Open a section to review its changes.
@@ -194,14 +215,13 @@ export function VersionComparison({
         {groups.length ? (
           <div className="border-border mt-4 divide-y rounded-xl border">
             {groups.map(({ prefix, label, icon: Icon, entries }) => (
-              <details
+              <Collapsible
                 key={`${first.id}-${second.id}-${prefix}`}
                 className="group border-border"
               >
-                <summary
-                  role="button"
+                <CollapsibleTrigger
                   aria-label={`${label}, ${entries.length} change entries`}
-                  className="hover:bg-muted/50 focus-visible:outline-ring flex min-h-16 cursor-pointer list-none items-center gap-3 px-4 py-3 outline-offset-2 focus-visible:outline-2 [&::-webkit-details-marker]:hidden"
+                  className="hover:bg-muted/50 focus-visible:outline-ring flex min-h-16 w-full cursor-pointer list-none items-center gap-3 px-4 py-3 text-left outline-offset-2 focus-visible:outline-2 [&::-webkit-details-marker]:hidden"
                 >
                   <Icon
                     aria-hidden="true"
@@ -215,35 +235,37 @@ export function VersionComparison({
                   </span>
                   <ChevronDown
                     aria-hidden="true"
-                    className="text-muted-foreground size-4 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+                    className="text-muted-foreground size-4 shrink-0 transition-transform group-data-[open]:rotate-180 motion-reduce:transition-none"
                   />
-                </summary>
-                <ul className="border-border bg-muted/20 space-y-3 border-t px-4 py-4">
-                  {entries.map((change, index) => {
-                    const operation = change.match(
-                      /^[A-Za-z]+ (added|removed):/,
-                    )?.[1];
-                    const Mark =
-                      operation === "added"
-                        ? Plus
-                        : operation === "removed"
-                          ? Minus
-                          : SlidersHorizontal;
-                    return (
-                      <li
-                        key={`${change}-${index}`}
-                        className="flex items-start gap-3 text-sm leading-relaxed [overflow-wrap:anywhere]"
-                      >
-                        <Mark
-                          aria-hidden="true"
-                          className={`mt-1 size-3.5 shrink-0 ${operation === "added" ? "text-success" : operation === "removed" ? "text-destructive" : "text-muted-foreground"}`}
-                        />
-                        <span className="min-w-0">{change}</span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </details>
+                </CollapsibleTrigger>
+                <CollapsibleContent keepMounted>
+                  <ul className="border-border bg-muted/20 space-y-3 border-t px-4 py-4">
+                    {entries.map((change, index) => {
+                      const operation = change.match(
+                        /^[A-Za-z]+ (added|removed):/,
+                      )?.[1];
+                      const Mark =
+                        operation === "added"
+                          ? Plus
+                          : operation === "removed"
+                            ? Minus
+                            : SlidersHorizontal;
+                      return (
+                        <li
+                          key={`${change}-${index}`}
+                          className="flex items-start gap-3 text-sm leading-relaxed [overflow-wrap:anywhere]"
+                        >
+                          <Mark
+                            aria-hidden="true"
+                            className={`mt-1 size-3.5 shrink-0 ${operation === "added" ? "text-success" : operation === "removed" ? "text-destructive" : "text-muted-foreground"}`}
+                          />
+                          <span className="min-w-0">{change}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </CollapsibleContent>
+              </Collapsible>
             ))}
           </div>
         ) : (

@@ -4,12 +4,28 @@ import { useState, type ReactNode } from "react";
 import {
   ArrowDown,
   Check,
+  ChevronDown,
   FileInput,
   GitBranch,
   ListChecks,
 } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type {
   SandboxDocumentDesign,
   SandboxFieldValue,
@@ -275,19 +291,32 @@ export function TestOutcome({
         </p>
       </div>
       {run.result.routes.length > 0 && (
-        <details className="border-border mt-5 border-t pt-3">
-          <summary className="focus-visible:outline-ring min-h-11 cursor-pointer text-sm font-medium focus-visible:outline-2">
+        <Collapsible className="group border-border mt-5 border-t pt-3">
+          <CollapsibleTrigger
+            render={
+              <Button
+                variant="ghost"
+                className="h-auto min-h-11 w-full justify-between px-0 text-left text-sm font-medium hover:bg-transparent"
+              />
+            }
+          >
             Relationship routing
-          </summary>
-          <ul className="text-muted-foreground space-y-2 text-sm">
-            {run.result.routes.map((route, index) => (
-              <li key={index}>
-                <span className="font-medium">{route.label}</span>
-                {route.detail ? `: ${route.detail}` : ""}
-              </li>
-            ))}
-          </ul>
-        </details>
+            <ChevronDown
+              aria-hidden="true"
+              className="size-4 transition-transform group-data-open:rotate-180 motion-reduce:transition-none"
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent keepMounted>
+            <ul className="text-muted-foreground space-y-2 text-sm">
+              {run.result.routes.map((route, index) => (
+                <li key={index}>
+                  <span className="font-medium">{route.label}</span>
+                  {route.detail ? `: ${route.detail}` : ""}
+                </li>
+              ))}
+            </ul>
+          </CollapsibleContent>
+        </Collapsible>
       )}
     </section>
   );
@@ -321,61 +350,74 @@ export function TestComparison({
         </p>
       ) : (
         <>
-          <div
-            role="group"
+          <ToggleGroup
             aria-label="Result fields"
-            className="bg-muted mt-5 flex flex-wrap gap-1 rounded-lg p-1"
+            multiple={false}
+            value={[showAll ? "all" : "changed"]}
+            onValueChange={(selection) => {
+              const selected = selection[0];
+              if (selected === "all") setShowAll(true);
+              if (selected === "changed") setShowAll(false);
+              setLimit(12);
+            }}
+            className="bg-muted mt-5 flex w-full flex-wrap gap-1 rounded-lg p-1"
           >
-            <Button
+            <ToggleGroupItem
+              value="changed"
               aria-label="Changed fields"
-              aria-pressed={!showAll}
-              variant={!showAll ? "secondary" : "ghost"}
-              className="h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal"
-              onClick={() => {
-                setShowAll(false);
-                setLimit(12);
-              }}
+              className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal"
             >
               Changed ({changed.length})
-            </Button>
-            <Button
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="all"
               aria-label="All result fields"
-              aria-pressed={showAll}
-              variant={showAll ? "secondary" : "ghost"}
-              className="h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal"
-              onClick={() => {
-                setShowAll(true);
-                setLimit(12);
-              }}
+              className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal"
             >
               All fields ({rows.length})
-            </Button>
-          </div>
+            </ToggleGroupItem>
+          </ToggleGroup>
           {visible.length ? (
-            <table className="mt-4 w-full table-fixed text-left text-sm [overflow-wrap:anywhere]">
-              <caption className="sr-only">
+            <Table className="mt-4 table-fixed text-left [overflow-wrap:anywhere]">
+              <TableCaption className="sr-only mt-0">
                 Saved test input and returned values
-              </caption>
-              <thead className="border-border text-muted-foreground border-b">
-                <tr>
-                  <th scope="col" className="w-[40%] py-3 pr-2 font-medium">
-                    Field
-                  </th>
-                  <th scope="col" className="w-[30%] px-1 py-3 font-medium">
-                    Before
-                  </th>
-                  <th scope="col" className="w-[30%] py-3 pl-1 font-medium">
-                    After
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.slice(0, limit).map((row) => (
-                  <tr
-                    key={row.id}
-                    className={`border-border border-b ${row.changed ? "bg-success/5" : ""}`}
+              </TableCaption>
+              <TableHeader className="border-border text-muted-foreground border-b">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead
+                    scope="col"
+                    className="h-auto w-[40%] px-0 py-3 pr-2 whitespace-normal"
                   >
-                    <th scope="row" className="py-3 pr-2 align-top font-medium">
+                    Field
+                  </TableHead>
+                  <TableHead
+                    scope="col"
+                    className="h-auto w-[30%] px-1 py-3 whitespace-normal"
+                  >
+                    Before
+                  </TableHead>
+                  <TableHead
+                    scope="col"
+                    className="h-auto w-[30%] py-3 pr-0 pl-1 whitespace-normal"
+                  >
+                    After
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className="[&_tr:last-child]:border-b">
+                {visible.slice(0, limit).map((row) => (
+                  <TableRow
+                    key={row.id}
+                    className={
+                      row.changed
+                        ? "bg-success/5 hover:bg-success/5"
+                        : "hover:bg-transparent"
+                    }
+                  >
+                    <TableHead
+                      scope="row"
+                      className="h-auto px-0 py-3 pr-2 align-top whitespace-normal"
+                    >
                       {fieldName(design, run.input.moduleId, row.id)}
                       <span
                         className={`mt-1 block text-xs font-normal ${row.changed ? "text-success" : "text-muted-foreground"}`}
@@ -386,17 +428,17 @@ export function TestComparison({
                             ? "Changed"
                             : "Unchanged"}
                       </span>
-                    </th>
-                    <td className="px-1 py-3 align-top whitespace-pre-wrap">
+                    </TableHead>
+                    <TableCell className="h-auto px-1 py-3 align-top whitespace-pre-wrap">
                       {displayValue(row.before, "Not provided")}
-                    </td>
-                    <td className="py-3 pl-1 align-top whitespace-pre-wrap">
+                    </TableCell>
+                    <TableCell className="h-auto py-3 pr-0 pl-1 align-top whitespace-pre-wrap">
                       {displayValue(row.after, "Not returned")}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           ) : (
             <p className="text-muted-foreground my-6 text-sm">
               {showAll
@@ -428,27 +470,40 @@ export function TestComparison({
             aria-label="Inputs used for this result"
             className="border-border mt-6 border-t pt-4"
           >
-            <details>
-              <summary className="focus-visible:outline-ring min-h-11 cursor-pointer text-sm font-medium focus-visible:outline-2">
+            <Collapsible className="group">
+              <CollapsibleTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    className="h-auto min-h-11 w-full justify-between px-0 text-left text-sm font-medium hover:bg-transparent"
+                  />
+                }
+              >
                 Inputs used for this result
-              </summary>
-              <p className="text-muted-foreground mb-3 text-sm">
-                {moduleName(design, run.input.moduleId)} ·{" "}
-                {eventDescription(design, run)}
-              </p>
-              <dl className="max-h-72 space-y-3 overflow-y-auto text-sm [overflow-wrap:anywhere]">
-                {Object.entries(run.input.values).map(([id, value]) => (
-                  <div key={id}>
-                    <dt className="text-muted-foreground">
-                      {fieldName(design, run.input.moduleId, id)}
-                    </dt>
-                    <dd className="mt-1 whitespace-pre-wrap">
-                      {displayValue(value, "Not provided")}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </details>
+                <ChevronDown
+                  aria-hidden="true"
+                  className="size-4 transition-transform group-data-open:rotate-180 motion-reduce:transition-none"
+                />
+              </CollapsibleTrigger>
+              <CollapsibleContent keepMounted>
+                <p className="text-muted-foreground mb-3 text-sm">
+                  {moduleName(design, run.input.moduleId)} ·{" "}
+                  {eventDescription(design, run)}
+                </p>
+                <dl className="max-h-72 space-y-3 overflow-y-auto text-sm [overflow-wrap:anywhere]">
+                  {Object.entries(run.input.values).map(([id, value]) => (
+                    <div key={id}>
+                      <dt className="text-muted-foreground">
+                        {fieldName(design, run.input.moduleId, id)}
+                      </dt>
+                      <dd className="mt-1 whitespace-pre-wrap">
+                        {displayValue(value, "Not provided")}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </CollapsibleContent>
+            </Collapsible>
           </section>
           <p className="text-muted-foreground mt-4 text-xs">
             Field names reflect the current setup. This result belongs to draft

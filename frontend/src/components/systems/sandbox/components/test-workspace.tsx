@@ -12,6 +12,8 @@ import { TestComparison, TestOutcome } from "./test-run-result";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { SearchField } from "@/components/ui/search-field";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -504,23 +506,39 @@ export function TestWorkspace({
                     selected event, automations, or mappings. Hidden inputs keep
                     their values.
                   </p>
-                  <Input
-                    aria-label="Find a field"
+                  <SearchField
+                    label="Find a field"
                     placeholder="Find a field…"
                     value={search}
-                    onChange={(event) => {
-                      setSearch(event.target.value);
+                    onValueChange={(value) => {
+                      setSearch(value);
                       setLimit(12);
                     }}
+                    className="w-full"
                   />
-                  <div
-                    role="group"
+                  <ToggleGroup
                     aria-label="Input fields"
-                    className="bg-muted flex flex-wrap gap-1 rounded-lg p-1"
+                    multiple={false}
+                    disabled={pending || clearing}
+                    value={[filter]}
+                    onValueChange={(selection) => {
+                      const selected = selection[0];
+                      if (
+                        selected === "relevant" ||
+                        selected === "all" ||
+                        selected === "edited"
+                      ) {
+                        setFilter(selected);
+                      }
+                      setSearch("");
+                      setLimit(12);
+                    }}
+                    className="bg-muted flex w-full flex-wrap gap-1 rounded-lg p-1"
                   >
                     {(["relevant", "all", "edited"] as const).map((item) => (
-                      <Button
+                      <ToggleGroupItem
                         key={item}
+                        value={item}
                         aria-label={
                           item === "all"
                             ? "All input fields"
@@ -528,14 +546,7 @@ export function TestWorkspace({
                               ? "Edited fields"
                               : "Relevant fields"
                         }
-                        aria-pressed={filter === item}
-                        variant={filter === item ? "secondary" : "ghost"}
-                        className="min-h-11 flex-1 px-2 text-xs"
-                        onClick={() => {
-                          setFilter(item);
-                          setSearch("");
-                          setLimit(12);
-                        }}
+                        className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal"
                       >
                         {item === "relevant"
                           ? "Relevant"
@@ -551,9 +562,9 @@ export function TestWorkspace({
                                 relevantIds.has(field.id),
                               ).length}
                         )
-                      </Button>
+                      </ToggleGroupItem>
                     ))}
-                  </div>
+                  </ToggleGroup>
                   {matchingFields.length === 0 && (
                     <p className="text-muted-foreground text-sm">
                       {search
