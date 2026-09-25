@@ -1,15 +1,10 @@
 "use client";
 
+import { AccessSearchToolbar } from "./access-search-toolbar";
+
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Building2,
-  ChevronRight,
-  Network,
-  Plus,
-  Search,
-  Users,
-} from "lucide-react";
+import { ChevronRight, Network, Plus, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -30,9 +25,9 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { PaginationControls } from "@/components/ui/pagination-controls";
+import { Select, SelectItem } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   completeCollection,
@@ -40,13 +35,14 @@ import {
 } from "../../shared/helpers/sample-collections";
 import type { AccessController } from "../state/controller";
 import type { EditorIntent } from "../helpers/editor-helpers";
-import type { AccessGroup, InternalIdentity } from "../domain/policy";
+import type { AccessGroup } from "../domain/policy";
 import { GroupEditor } from "./role-group-editors";
 import {
   readAccessGroupDraft,
   type AccessGroupDraft,
 } from "../state/draft-journal";
 import { useVerifiedWorkspaceUserId } from "../../shared/runtime/workspace-identity";
+import { OrganizationChart } from "./organization-chart";
 
 export type GroupsViewProps = {
   controller: AccessController;
@@ -54,93 +50,16 @@ export type GroupsViewProps = {
 };
 const PAGE_SIZE = 5;
 
-function OrganizationChart({ controller }: GroupsViewProps) {
-  const internal = controller.state.identities.filter(
-    (identity): identity is InternalIdentity => identity.kind === "internal",
-  );
-  const departmentIds = [
-    ...new Set(internal.flatMap((identity) => identity.departmentIds)),
-  ].sort((left, right) =>
-    (
-      controller.departmentCatalog.find((item) => item.id === left)?.name ??
-      left
-    ).localeCompare(
-      controller.departmentCatalog.find((item) => item.id === right)?.name ??
-        right,
-    ),
-  );
-
-  return (
-    <div className="flex flex-col gap-4">
-      <Card className="w-full">
-        <CardHeader className="items-center text-center">
-          <div className="bg-muted flex size-11 items-center justify-center rounded-lg">
-            <Building2 aria-hidden />
-          </div>
-          <CardTitle>Organization</CardTitle>
-          <CardDescription>
-            {internal.length} internal identities across {departmentIds.length}{" "}
-            departments
-          </CardDescription>
-        </CardHeader>
-      </Card>
-      <section
-        aria-label="Department organization chart"
-        className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"
-      >
-        {departmentIds.map((departmentId) => {
-          const members = internal.filter((identity) =>
-            identity.departmentIds.includes(departmentId),
-          );
-          return (
-            <Card key={departmentId} className="w-full">
-              <CardHeader>
-                <div className="flex items-center justify-between gap-3">
-                  <CardTitle>
-                    {controller.departmentCatalog.find(
-                      (item) => item.id === departmentId,
-                    )?.name ?? "Unknown department"}
-                  </CardTitle>
-                  <Badge variant="secondary">{members.length}</Badge>
-                </div>
-                <CardDescription>Department membership</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ul className="flex flex-col gap-2">
-                  {members.map((identity) => (
-                    <li
-                      key={identity.id}
-                      className="bg-muted/50 flex min-h-11 items-center justify-between gap-3 rounded-md px-3 py-2 text-sm"
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate font-medium">
-                          {identity.name}
-                        </span>
-                        <span className="text-muted-foreground block truncate text-xs">
-                          {identity.title || "No title"}
-                        </span>
-                      </span>
-                      {identity.primaryDepartmentId === departmentId && (
-                        <Badge variant="outline">Primary</Badge>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </section>
-    </div>
-  );
-}
-
 export function GroupsView({
   controller,
   onOpenRulesForGroup,
 }: GroupsViewProps) {
   const userId = useVerifiedWorkspaceUserId();
   const [query, setQuery] = useState("");
+  const [membershipFilter, setMembershipFilter] = useState<
+    "all" | "with-members" | "empty"
+  >("all");
+  const [sortOrder, setSortOrder] = useState<"name" | "members">("name");
   const [page, setPage] = useState(0);
   const [draft, setDraft] = useState<AccessGroup | null>(null);
   const [draftIntent, setDraftIntent] = useState<EditorIntent>("edit");
@@ -150,6 +69,19 @@ export function GroupsView({
   const [restoredUncertain, setRestoredUncertain] = useState(false);
   const [journalIssue, setJournalIssue] = useState("");
   const restoredUserId = useRef<string | null>(null);
+  const groupEditorFocusTarget = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (draft !== null || !groupEditorFocusTarget.current) return;
+    const targetId = groupEditorFocusTarget.current;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(targetId);
+      const fallback = document.getElementById("create-group-button");
+      (target ?? fallback)?.focus();
+      groupEditorFocusTarget.current = null;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [draft]);
 
   useEffect(() => {
     if (restoredUserId.current === userId) return;
@@ -170,17 +102,37 @@ export function GroupsView({
         "A saved group draft could not be safely restored. It was not applied.",
       );
   }, [userId]);
+  const withMembersCount = controller.state.groups.filter(
+    (group) => group.memberIds.length > 0,
+  ).length;
+  const emptyGroupCount = controller.state.groups.length - withMembersCount;
   const filtered = controller.state.groups
     .filter((group) =>
       `${group.name} ${group.description}`
         .toLowerCase()
         .includes(query.trim().toLowerCase()),
     )
-    .sort((left, right) => left.name.localeCompare(right.name));
+    .filter((group) => {
+      if (membershipFilter === "with-members")
+        return group.memberIds.length > 0;
+      if (membershipFilter === "empty") return group.memberIds.length === 0;
+      return true;
+    })
+    .sort((left, right) =>
+      sortOrder === "members"
+        ? right.memberIds.length - left.memberIds.length ||
+          left.name.localeCompare(right.name)
+        : left.name.localeCompare(right.name),
+    );
   const pageResult = pageCollection(
     completeCollection(
       filtered,
-      JSON.stringify(["groups", query.trim().toLowerCase()]),
+      JSON.stringify([
+        "groups",
+        query.trim().toLowerCase(),
+        membershipFilter,
+        sortOrder,
+      ]),
     ),
     page * PAGE_SIZE,
     PAGE_SIZE,
@@ -192,8 +144,12 @@ export function GroupsView({
     controller.state.identities.find((identity) => identity.id === id)?.name ??
     "Unknown identity";
 
-  function editGroup(group: AccessGroup) {
+  function editGroup(
+    group: AccessGroup,
+    focusTargetId = `group-edit-table-${group.id}`,
+  ) {
     if (restoredUncertain) return;
+    groupEditorFocusTarget.current = focusTargetId;
     setRestoredValues(null);
     setDraftIntent("edit");
     setDraft({ ...group, memberIds: [...group.memberIds] });
@@ -201,6 +157,7 @@ export function GroupsView({
 
   function createGroup() {
     if (restoredUncertain) return;
+    groupEditorFocusTarget.current = "create-group-button";
     setRestoredValues(null);
     setDraftIntent("create");
     setDraft({
@@ -223,8 +180,9 @@ export function GroupsView({
           const group = row.original;
           return (
             <button
+              id={`group-name-table-${group.id}`}
               className="focus-visible:outline-ring min-h-11 max-w-md rounded-sm text-left outline-none focus-visible:outline-2"
-              onClick={() => editGroup(group)}
+              onClick={() => editGroup(group, `group-name-table-${group.id}`)}
             >
               <span className="block font-medium">{group.name}</span>
               <span className="text-muted-foreground block max-w-md truncate text-xs">
@@ -239,13 +197,23 @@ export function GroupsView({
         header: "Members",
         cell: ({ row }) => {
           const group = row.original;
+          const memberNames = group.memberIds.slice(0, 2).map(identityName);
+          const remainingMembers = group.memberIds.length - memberNames.length;
           return (
             <>
-              <span className="block">{group.memberIds.length}</span>
-              <span className="text-muted-foreground block max-w-48 truncate text-xs">
-                {group.memberIds.slice(0, 2).map(identityName).join(", ") ||
-                  "No members"}
+              <span className="block tabular-nums">
+                {group.memberIds.length}
               </span>
+              {memberNames.length ? (
+                <span className="text-muted-foreground block max-w-56 text-xs">
+                  {memberNames.join(", ")}
+                  {remainingMembers > 0 ? ` +${remainingMembers} more` : ""}
+                </span>
+              ) : (
+                <span className="text-muted-foreground block text-xs">
+                  No members yet
+                </span>
+              )}
             </>
           );
         },
@@ -257,13 +225,14 @@ export function GroupsView({
       },
       {
         id: "actions",
-        header: () => <span className="sr-only">Actions</span>,
+        header: "Actions",
         cell: ({ row }) => {
           const group = row.original;
           return (
             <div className="flex justify-end gap-1">
               <RulesShortcut groupId={group.id} onOpen={onOpenRulesForGroup} />
               <Button
+                id={`group-edit-table-${group.id}`}
                 variant="outline"
                 className="min-h-11"
                 onClick={() => editGroup(group)}
@@ -297,6 +266,7 @@ export function GroupsView({
           </p>
         </div>
         <Button
+          id="create-group-button"
           className="min-h-11"
           disabled={controller.isPending() || restoredUncertain}
           onClick={createGroup}
@@ -325,25 +295,66 @@ export function GroupsView({
         </TabsList>
 
         <TabsContent value="groups" className="flex flex-col gap-4">
-          <Field className="w-full sm:max-w-sm">
-            <FieldLabel htmlFor="group-search">Search groups</FieldLabel>
-            <div className="relative">
-              <Search
-                aria-hidden
-                className="text-muted-foreground pointer-events-none absolute top-3 left-3 size-4"
-              />
-              <Input
-                id="group-search"
-                className="min-h-11 pl-9"
-                value={query}
-                placeholder="Name or description"
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  setPage(0);
+          <div className="bg-muted/40 flex items-start gap-3 rounded-md border p-3">
+            <Users
+              aria-hidden="true"
+              className="text-muted-foreground mt-0.5 size-4 shrink-0"
+            />
+            <p className="text-muted-foreground text-sm">
+              Manual groups gather internal people and guests so scoped rules
+              can target them. Department membership is shown separately in the
+              Organization chart.
+            </p>
+          </div>
+
+          <AccessSearchToolbar
+            searchLabel="Search groups"
+            placeholder="Name or description"
+            query={query}
+            onQueryChange={(value) => {
+              setQuery(value);
+              setPage(0);
+            }}
+            sortLabel="Sort groups"
+            sort={sortOrder}
+            sortOptions={[
+              { value: "name", label: "Name (A–Z)" },
+              { value: "members", label: "Most members" },
+            ]}
+            onSortChange={(value) => {
+              setSortOrder(value);
+              setPage(0);
+            }}
+            activeFilterCount={membershipFilter === "all" ? 0 : 1}
+          >
+            <Field className="min-w-0">
+              <FieldLabel htmlFor="group-membership-filter">
+                Membership
+              </FieldLabel>
+              <Select
+                id="group-membership-filter"
+                value={membershipFilter}
+                onValueChange={(value) => {
+                  if (
+                    value === "all" ||
+                    value === "with-members" ||
+                    value === "empty"
+                  ) {
+                    setMembershipFilter(value);
+                    setPage(0);
+                  }
                 }}
-              />
-            </div>
-          </Field>
+              >
+                <SelectItem value="all">
+                  All groups ({controller.state.groups.length})
+                </SelectItem>
+                <SelectItem value="with-members">
+                  With members ({withMembersCount})
+                </SelectItem>
+                <SelectItem value="empty">Empty ({emptyGroupCount})</SelectItem>
+              </Select>
+            </Field>
+          </AccessSearchToolbar>
 
           {visible.length === 0 ? (
             <Empty className="border">
@@ -351,24 +362,37 @@ export function GroupsView({
                 <EmptyMedia variant="icon">
                   <Users />
                 </EmptyMedia>
-                <EmptyTitle>No groups found</EmptyTitle>
+                <EmptyTitle>
+                  {controller.state.groups.length
+                    ? "No matching groups"
+                    : "No manual groups yet"}
+                </EmptyTitle>
                 <EmptyDescription>
-                  Create a manual group or adjust the search.
+                  {controller.state.groups.length
+                    ? "Adjust the search or choose a different membership filter."
+                    : "Create a manual group to target people with scoped rules."}
                 </EmptyDescription>
               </EmptyHeader>
-              <EmptyContent>
-                <Button
-                  className="min-h-11"
-                  disabled={controller.isPending() || restoredUncertain}
-                  onClick={createGroup}
-                >
-                  Create group
-                </Button>
-              </EmptyContent>
+              {controller.state.groups.length > 0 &&
+              (query || membershipFilter !== "all") ? (
+                <EmptyContent>
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => {
+                      setQuery("");
+                      setMembershipFilter("all");
+                      setPage(0);
+                    }}
+                  >
+                    Clear search and filters
+                  </Button>
+                </EmptyContent>
+              ) : null}
             </Empty>
           ) : (
-            <>
-              <div className="hidden overflow-hidden rounded-lg border md:block">
+            <div className="bg-card overflow-hidden rounded-lg border">
+              <div className="hidden md:block">
                 <DataTable
                   ariaLabel="Groups directory"
                   columns={groupColumns}
@@ -377,7 +401,7 @@ export function GroupsView({
                 />
               </div>
 
-              <div className="grid gap-3 md:hidden">
+              <div className="grid gap-3 p-3 md:hidden">
                 {visible.map((group) => (
                   <GroupCard
                     key={group.id}
@@ -385,19 +409,32 @@ export function GroupsView({
                     ruleCount={ruleCount(group.id)}
                     memberNames={group.memberIds.map(identityName)}
                     onOpenRules={onOpenRulesForGroup}
-                    onEdit={() => editGroup(group)}
+                    onEdit={() =>
+                      editGroup(group, `group-edit-card-${group.id}`)
+                    }
+                    editFocusId={`group-edit-card-${group.id}`}
                   />
                 ))}
               </div>
-            </>
+              <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-muted-foreground text-sm" aria-live="polite">
+                  Showing {pageResult.total === 0 ? 0 : pageResult.offset + 1}–
+                  {Math.min(
+                    pageResult.offset + pageResult.limit,
+                    pageResult.total,
+                  )}{" "}
+                  of {pageResult.total} groups
+                </p>
+                <PaginationControls
+                  ariaLabel="Group pages"
+                  className="w-auto"
+                  pageCount={pageCount}
+                  pageIndex={currentPage}
+                  onPageIndexChange={setPage}
+                />
+              </div>
+            </div>
           )}
-
-          <PaginationControls
-            ariaLabel="Group pages"
-            pageCount={pageCount}
-            pageIndex={currentPage}
-            onPageIndexChange={setPage}
-          />
         </TabsContent>
 
         <TabsContent value="organization">
@@ -428,12 +465,14 @@ function GroupCard({
   memberNames,
   onOpenRules,
   onEdit,
+  editFocusId,
 }: {
   group: AccessGroup;
   ruleCount: number;
   memberNames: string[];
   onOpenRules?: (groupId: string) => void;
   onEdit: () => void;
+  editFocusId: string;
 }) {
   return (
     <Card>
@@ -465,7 +504,12 @@ function GroupCard({
         </div>
       </CardContent>
       <CardFooter className="justify-between">
-        <Button variant="outline" className="min-h-11" onClick={onEdit}>
+        <Button
+          id={editFocusId}
+          variant="outline"
+          className="min-h-11"
+          onClick={onEdit}
+        >
           Edit group
         </Button>
         <RulesShortcut groupId={group.id} onOpen={onOpenRules} showIcon />

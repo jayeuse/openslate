@@ -60,7 +60,7 @@ const group = {
   name: "Operations",
   description: "Operations team.",
   revision: 1,
-  member_ids: [],
+  member_ids: [] as string[],
   created_at: timestamp,
   updated_at: timestamp,
   deleted_at: null,
@@ -347,6 +347,146 @@ test("shared directory pagination shows current page and respects boundaries", a
   ).toBeDisabled();
 });
 
+test("manual groups can be filtered, sorted, and searched while editing membership", async ({
+  page: pageUnderTest,
+}) => {
+  const morgan = {
+    ...person,
+    id: "00000000-0000-4000-8000-000000000021",
+    email: "morgan@example.test",
+    username: "morgan",
+    display_name: "Morgan Guest",
+    identity_kind: "guest" as const,
+    job_title: null,
+    sponsor_user_id: ids.person,
+    expires_at: "2026-10-25T16:00:00Z",
+  };
+  const groups = [
+    {
+      ...group,
+      id: "00000000-0000-4000-8000-000000000031",
+      name: "Operations",
+      description: "Late shift coverage.",
+      member_ids: [person.id],
+    },
+    {
+      ...group,
+      id: "00000000-0000-4000-8000-000000000032",
+      name: "Analytics",
+      description: "Metrics review.",
+      member_ids: [],
+    },
+    {
+      ...group,
+      id: "00000000-0000-4000-8000-000000000033",
+      name: "Support",
+      description: "Help desk rotation.",
+      member_ids: [person.id, morgan.id],
+    },
+  ];
+  await mockAccessApi(
+    pageUnderTest,
+    undefined,
+    undefined,
+    () => [person, morgan],
+    undefined,
+    () => groups,
+  );
+
+  await pageUnderTest.setViewportSize({ width: 1280, height: 900 });
+  await pageUnderTest.goto("/access?view=groups");
+  const table = pageUnderTest.getByRole("table", { name: "Groups directory" });
+  const membership = pageUnderTest.getByLabel("Membership");
+  const sort = pageUnderTest.getByLabel("Sort groups");
+  const moreFilters = pageUnderTest.getByRole("button", {
+    name: "More filters",
+    exact: true,
+  });
+  await expect(moreFilters).toHaveAttribute("aria-expanded", "false");
+  await moreFilters.click();
+  await expect(moreFilters).toHaveAttribute("aria-expanded", "true");
+
+  await expect(table.getByRole("row").nth(1)).toContainText("Analytics");
+  await membership.selectOption("with-members");
+  await expect(table.getByRole("row")).toHaveCount(3);
+  await expect(table).not.toContainText("Analytics");
+  await expect(
+    pageUnderTest.getByText("Showing 1–2 of 2 groups"),
+  ).toBeVisible();
+
+  await membership.selectOption("empty");
+  await expect(table.getByRole("row")).toHaveCount(2);
+  await expect(table).toContainText("Analytics");
+  await expect(table).not.toContainText("Operations");
+
+  await membership.selectOption("all");
+  await sort.selectOption("members");
+  await expect(table.getByRole("row").nth(1)).toContainText("Support");
+  await expect(table.getByRole("row").nth(2)).toContainText("Operations");
+
+  await pageUnderTest.getByRole("button", { name: "Create group" }).click();
+  const editor = pageUnderTest.getByRole("dialog", { name: "Create group" });
+  await expect(editor.getByText("0 selected")).toBeVisible();
+  await expect(
+    editor.getByText(
+      "Manual groups do not nest. Service identities cannot join.",
+    ),
+  ).toBeVisible();
+  await expect(
+    editor.getByRole("checkbox", { name: /Alex Ops/ }),
+  ).toBeVisible();
+  await expect(
+    editor.getByRole("checkbox", { name: /Morgan Guest/ }),
+  ).toBeVisible();
+
+  const memberSearch = editor.getByLabel("Search members");
+  await memberSearch.fill("morgan");
+  await expect(
+    editor.getByRole("checkbox", { name: /Morgan Guest/ }),
+  ).toBeVisible();
+  await expect(editor.getByRole("checkbox", { name: /Alex Ops/ })).toHaveCount(
+    0,
+  );
+  await memberSearch.fill("alex@example.test");
+  await expect(
+    editor.getByRole("checkbox", { name: /Alex Ops/ }),
+  ).toBeVisible();
+  await expect(
+    editor.getByRole("checkbox", { name: /Morgan Guest/ }),
+  ).toHaveCount(0);
+  await memberSearch.clear();
+  await editor.getByRole("checkbox", { name: /Alex Ops/ }).check();
+  await expect(editor.getByText("1 selected")).toBeVisible();
+  await memberSearch.fill("morgan");
+  await expect(editor.getByText("1 selected")).toBeVisible();
+
+  await editor.getByRole("button", { name: "Cancel" }).click();
+  await pageUnderTest.getByRole("button", { name: "Discard changes" }).click();
+  await expect(editor).not.toBeVisible();
+  const createButton = pageUnderTest.locator("#create-group-button");
+  await expect(createButton).toBeFocused();
+  await pageUnderTest.getByRole("button", { name: "Create group" }).click();
+  const freshEditor = pageUnderTest.getByRole("dialog", {
+    name: "Create group",
+  });
+  await expect(freshEditor.getByLabel("Search members")).toHaveValue("");
+  await freshEditor.getByRole("button", { name: "Cancel" }).click();
+  await pageUnderTest.getByRole("button", { name: "Discard changes" }).click();
+  await expect(createButton).toBeFocused();
+
+  const supportRow = table.getByRole("row").filter({ hasText: "Support" });
+  const supportEdit = supportRow.getByRole("button", {
+    name: "Edit",
+    exact: true,
+  });
+  await supportEdit.click();
+  const supportEditor = pageUnderTest.getByRole("dialog", {
+    name: "Edit Support",
+  });
+  await supportEditor.getByRole("button", { name: "Cancel" }).click();
+  await expect(supportEdit).toBeFocused();
+});
+
 test("Access overview quick actions open all four destinations", async ({
   page: pageUnderTest,
 }) => {
@@ -427,7 +567,9 @@ test("People & services keeps kind filters, advanced filters, and pagination tog
   ).toHaveText("1");
 
   await pageUnderTest.getByRole("tab", { name: "Internal 2" }).click();
-  await pageUnderTest.getByText("More filters", { exact: true }).click();
+  await pageUnderTest
+    .getByRole("button", { name: "More filters", exact: true })
+    .click();
   await pageUnderTest.getByLabel("Role").selectOption(ids.adminRole);
   await expect(pageUnderTest.getByText("Showing 1–1 of 1")).toBeVisible();
   await expect(
@@ -2017,7 +2159,16 @@ test("role directory keeps its controls clear and compares baselines across page
       "The last active Administrator cannot be reassigned or disabled.",
     ),
   ).toBeVisible();
-  await expect(pageUnderTest.getByLabel("Search roles")).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("searchbox", { name: "Search roles", exact: true }),
+  ).toBeVisible();
+  const moreFilters = pageUnderTest.getByRole("button", {
+    name: "More filters",
+    exact: true,
+  });
+  await expect(moreFilters).toHaveAttribute("aria-expanded", "false");
+  await moreFilters.click();
+  await expect(moreFilters).toHaveAttribute("aria-expanded", "true");
   const filters = pageUnderTest.getByRole("group", { name: "Filter roles" });
   await expect(filters.getByRole("button", { name: "All 6" })).toBeVisible();
   await expect(
