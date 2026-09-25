@@ -15,8 +15,22 @@ const sessionResponse = z.discriminatedUnion("authenticated", [
   }),
   z.object({ authenticated: z.literal(false) }),
 ]);
+const authMeResponse = z.object({
+  id: z.string().uuid(),
+  role_id: z.string().uuid(),
+});
 
 export type SessionStatus = z.output<typeof sessionResponse>;
+export type AuthMe = { id: string; roleId: string };
+
+export async function getAuthMe(signal?: AbortSignal): Promise<AuthMe> {
+  const current = await apiFetch("/auth/me", authMeResponse, {
+    cache: "no-store",
+    signal,
+    refreshOnUnauthorized: false,
+  });
+  return { id: current.id, roleId: current.role_id };
+}
 
 export async function signIn(identifier: string, password: string) {
   return apiFetch("/auth/login", authenticatedResponse, {

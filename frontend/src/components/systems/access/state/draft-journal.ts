@@ -13,6 +13,7 @@ import type { Role } from "../domain/model";
 export const ACCESS_DRAFT_STORAGE_PREFIX = "openslate.access.draft.v1.";
 const MAX_RECORD_LENGTH = 32_768;
 type AccessDraftOwner = "rules" | "identity" | "role" | "group" | "defaults";
+const submissionsBegunInDocument = new Set<string>();
 
 export type AccessDraftStorage = Pick<
   Storage,
@@ -311,7 +312,7 @@ export function editableAccessDefaults(
 }
 
 type ReadResult<T> = {
-  status: "ready" | "invalid" | "unavailable";
+  status: "ready" | "uncertain" | "invalid" | "unavailable";
   value: T | null;
 };
 
@@ -329,6 +330,13 @@ export function accessDraftStorageKey(
   owner: AccessDraftOwner,
 ): string {
   return `${userStoragePrefix(userId)}${owner}`;
+}
+
+export function accessDraftSubmissionNeedsReload(
+  userId: string,
+  owner: AccessDraftOwner,
+): boolean {
+  return submissionsBegunInDocument.has(accessDraftStorageKey(userId, owner));
 }
 
 function userStoragePrefix(userId: string): string {
@@ -386,6 +394,7 @@ function readDraft<T>(
         userId: identifier,
         owner: z.literal(owner),
         target: z.string().min(1).max(600),
+        state: z.literal("uncertain").optional(),
         payload: schema,
       })
       .strict()
@@ -396,7 +405,10 @@ function readDraft<T>(
       record.data.target !== target(record.data.payload)
     )
       return { status: "invalid", value: null };
-    return { status: "ready", value: record.data.payload };
+    return {
+      status: record.data.state === "uncertain" ? "uncertain" : "ready",
+      value: record.data.payload,
+    };
   } catch {
     return { status: "invalid", value: null };
   }
@@ -413,6 +425,9 @@ function writeDraft<T>(
   if (!storage) return false;
   const parsed = schema.safeParse(payload);
   if (!identifier.safeParse(userId).success || !parsed.success) return false;
+  const current = readDraft(userId, owner, schema, target, storage);
+  if (current.status === "uncertain" || current.status === "unavailable")
+    return false;
   const raw = JSON.stringify({
     version: 1,
     userId,
@@ -429,12 +444,55 @@ function writeDraft<T>(
   }
 }
 
-function clearDraft(
+function beginDraftSubmission<T>(
   userId: string,
   owner: AccessDraftOwner,
+  payload: T,
+  schema: z.ZodType<T>,
+  target: (value: T) => string,
   storage: AccessDraftStorage | undefined,
 ): boolean {
   if (!storage) return false;
+  const parsed = schema.safeParse(payload);
+  if (!identifier.safeParse(userId).success || !parsed.success) return false;
+  if (readDraft(userId, owner, schema, target, storage).status !== "ready")
+    return false;
+  const key = accessDraftStorageKey(userId, owner);
+  const raw = JSON.stringify({
+    version: 1,
+    userId,
+    owner,
+    target: target(parsed.data),
+    state: "uncertain",
+    payload: parsed.data,
+  });
+  if (raw.length > MAX_RECORD_LENGTH) return false;
+  try {
+    storage.setItem(key, raw);
+    if (storage.getItem(key) !== raw) return false;
+    submissionsBegunInDocument.add(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearDraft<T>(
+  userId: string,
+  owner: AccessDraftOwner,
+  schema: z.ZodType<T>,
+  target: (value: T) => string,
+  storage: AccessDraftStorage | undefined,
+  onlyUncertain = false,
+): boolean {
+  if (!storage) return false;
+  const current = readDraft(userId, owner, schema, target, storage);
+  if (
+    onlyUncertain
+      ? current.status !== "uncertain"
+      : current.status === "uncertain" || current.status === "unavailable"
+  )
+    return false;
   const key = accessDraftStorageKey(userId, owner);
   let retired = false;
   try {
@@ -458,6 +516,21 @@ function clearDraft(
   } catch {
     return retired;
   }
+}
+
+function finishUncertainDraft<T>(
+  userId: string,
+  owner: AccessDraftOwner,
+  schema: z.ZodType<T>,
+  target: (value: T) => string,
+  storage: AccessDraftStorage | undefined,
+  confirmed: boolean,
+): boolean {
+  const key = accessDraftStorageKey(userId, owner);
+  if (!confirmed && submissionsBegunInDocument.has(key)) return false;
+  if (!clearDraft(userId, owner, schema, target, storage, true)) return false;
+  if (confirmed) submissionsBegunInDocument.delete(key);
+  return true;
 }
 
 export function readAccessRulesDraft(
@@ -492,7 +565,56 @@ export function clearAccessRulesDraft(
   userId: string,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): boolean {
-  return clearDraft(userId, "rules", storage);
+  return clearDraft(
+    userId,
+    "rules",
+    rulesPayloadSchema,
+    (value) => rulesTarget(value.selection),
+    storage,
+  );
+}
+
+export function beginAccessRulesDraftSubmission(
+  userId: string,
+  payload: AccessRulesDraft,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return beginDraftSubmission(
+    userId,
+    "rules",
+    payload,
+    rulesPayloadSchema,
+    (value) => rulesTarget(value.selection),
+    storage,
+  );
+}
+
+export function completeAccessRulesDraftSubmission(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return finishUncertainDraft(
+    userId,
+    "rules",
+    rulesPayloadSchema,
+    (value) => rulesTarget(value.selection),
+    storage,
+    true,
+  );
+}
+
+export function discardUncertainAccessRulesDraft(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return finishUncertainDraft(
+    userId,
+    "rules",
+    rulesPayloadSchema,
+    (value) => rulesTarget(value.selection),
+    storage,
+    false,
+  );
 }
 
 export function readAccessDefaultsDraft(
@@ -527,7 +649,56 @@ export function clearAccessDefaultsDraft(
   userId: string,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): boolean {
-  return clearDraft(userId, "defaults", storage);
+  return clearDraft(
+    userId,
+    "defaults",
+    defaultsPayloadSchema,
+    () => "workspace-defaults",
+    storage,
+  );
+}
+
+export function beginAccessDefaultsDraftSubmission(
+  userId: string,
+  payload: AccessDefaultsDraft,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return beginDraftSubmission(
+    userId,
+    "defaults",
+    payload,
+    defaultsPayloadSchema,
+    () => "workspace-defaults",
+    storage,
+  );
+}
+
+export function completeAccessDefaultsDraftSubmission(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return finishUncertainDraft(
+    userId,
+    "defaults",
+    defaultsPayloadSchema,
+    () => "workspace-defaults",
+    storage,
+    true,
+  );
+}
+
+export function discardUncertainAccessDefaultsDraft(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return finishUncertainDraft(
+    userId,
+    "defaults",
+    defaultsPayloadSchema,
+    () => "workspace-defaults",
+    storage,
+    false,
+  );
 }
 
 export function readAccessRoleDraft(
@@ -562,7 +733,56 @@ export function clearAccessRoleDraft(
   userId: string,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): boolean {
-  return clearDraft(userId, "role", storage);
+  return clearDraft(
+    userId,
+    "role",
+    rolePayloadSchema,
+    (value) => `${value.intent}:${value.baseline.id}`,
+    storage,
+  );
+}
+
+export function beginAccessRoleDraftSubmission(
+  userId: string,
+  payload: AccessRoleDraft,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return beginDraftSubmission(
+    userId,
+    "role",
+    payload,
+    rolePayloadSchema,
+    (value) => `${value.intent}:${value.baseline.id}`,
+    storage,
+  );
+}
+
+export function completeAccessRoleDraftSubmission(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return finishUncertainDraft(
+    userId,
+    "role",
+    rolePayloadSchema,
+    (value) => `${value.intent}:${value.baseline.id}`,
+    storage,
+    true,
+  );
+}
+
+export function discardUncertainAccessRoleDraft(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return finishUncertainDraft(
+    userId,
+    "role",
+    rolePayloadSchema,
+    (value) => `${value.intent}:${value.baseline.id}`,
+    storage,
+    false,
+  );
 }
 
 export function readAccessGroupDraft(
@@ -597,7 +817,56 @@ export function clearAccessGroupDraft(
   userId: string,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): boolean {
-  return clearDraft(userId, "group", storage);
+  return clearDraft(
+    userId,
+    "group",
+    groupPayloadSchema,
+    (value) => `${value.intent}:${value.baseline.id}`,
+    storage,
+  );
+}
+
+export function beginAccessGroupDraftSubmission(
+  userId: string,
+  payload: AccessGroupDraft,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return beginDraftSubmission(
+    userId,
+    "group",
+    payload,
+    groupPayloadSchema,
+    (value) => `${value.intent}:${value.baseline.id}`,
+    storage,
+  );
+}
+
+export function completeAccessGroupDraftSubmission(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return finishUncertainDraft(
+    userId,
+    "group",
+    groupPayloadSchema,
+    (value) => `${value.intent}:${value.baseline.id}`,
+    storage,
+    true,
+  );
+}
+
+export function discardUncertainAccessGroupDraft(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return finishUncertainDraft(
+    userId,
+    "group",
+    groupPayloadSchema,
+    (value) => `${value.intent}:${value.baseline.id}`,
+    storage,
+    false,
+  );
 }
 
 export function readAccessIdentityDraft(
@@ -636,7 +905,60 @@ export function clearAccessIdentityDraft(
   userId: string,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): boolean {
-  return clearDraft(userId, "identity", storage);
+  return clearDraft(
+    userId,
+    "identity",
+    identityPayloadSchema,
+    (value) => `${value.mode}:${value.baseline.id}`,
+    storage,
+  );
+}
+
+export function beginAccessIdentityDraftSubmission(
+  userId: string,
+  payload: AccessIdentityDraft,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return beginDraftSubmission(
+    userId,
+    "identity",
+    {
+      mode: payload.mode,
+      baseline: editableAccessIdentity(payload.baseline),
+      draft: editableAccessIdentity(payload.draft),
+    },
+    identityPayloadSchema,
+    (value) => `${value.mode}:${value.baseline.id}`,
+    storage,
+  );
+}
+
+export function completeAccessIdentityDraftSubmission(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return finishUncertainDraft(
+    userId,
+    "identity",
+    identityPayloadSchema,
+    (value) => `${value.mode}:${value.baseline.id}`,
+    storage,
+    true,
+  );
+}
+
+export function discardUncertainAccessIdentityDraft(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return finishUncertainDraft(
+    userId,
+    "identity",
+    identityPayloadSchema,
+    (value) => `${value.mode}:${value.baseline.id}`,
+    storage,
+    false,
+  );
 }
 
 function clearKeys(
@@ -650,7 +972,10 @@ function clearKeys(
       const key = storage.key(index);
       if (key && shouldClear(key)) keys.push(key);
     }
-    for (const key of keys) storage.removeItem(key);
+    for (const key of keys) {
+      storage.removeItem(key);
+      submissionsBegunInDocument.delete(key);
+    }
     return true;
   } catch {
     return false;

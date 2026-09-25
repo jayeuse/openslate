@@ -106,6 +106,7 @@ async function mockAccessApi(
   currentRules: () => unknown[] = () => [],
   currentUsers: () => unknown[] = () => [],
   currentRoles: () => unknown[] = () => roles,
+  currentGroups: () => (typeof group)[] = () => (groupPresent() ? [group] : []),
 ) {
   await pageUnderTest.route("**/api/**", async (route) => {
     const { pathname } = new URL(route.request().url());
@@ -160,15 +161,22 @@ async function mockAccessApi(
     if (pathname === "/api/access/groups") {
       await route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(page(groupPresent() ? [group] : [])),
+        body: JSON.stringify(page(currentGroups())),
       });
       return;
     }
-    if (pathname === `/api/access/groups/${ids.group}`) {
+    if (pathname.startsWith("/api/access/groups/")) {
+      const currentGroup = currentGroups().find(
+        (item) => item.id === pathname.slice("/api/access/groups/".length),
+      );
+      if (!currentGroup) {
+        await route.fulfill({ status: 404, body: "Group not found" });
+        return;
+      }
       await route.fulfill({
         contentType: "application/json",
-        headers: { ETag: '"group-1"' },
-        body: JSON.stringify(group),
+        headers: { ETag: `"group-${currentGroup.revision}"` },
+        body: JSON.stringify(currentGroup),
       });
       return;
     }
@@ -484,7 +492,172 @@ test("a saved role cannot reopen for duplicate submission when draft removal fai
   expect(creates).toBe(1);
 });
 
-test("a rejected role creation keeps its editable draft through accepted reload", async ({
+test("an accepted role stays locked after both draft cleanup operations fail", async ({
+  page: pageUnderTest,
+}) => {
+  let currentRoles: Array<
+    Omit<(typeof roles)[number], "permissions"> & {
+      permissions: Record<string, boolean | undefined>;
+    }
+  > = [...roles];
+  let creates = 0;
+  await mockAccessApi(
+    pageUnderTest,
+    undefined,
+    undefined,
+    undefined,
+    () => currentRoles,
+  );
+  await pageUnderTest.route("**/api/access/capabilities", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [
+          {
+            id: "records.read",
+            label: "Read records",
+            description: "Read workspace records.",
+            group: "Records",
+          },
+          {
+            id: "records.write",
+            label: "Update records",
+            description: "Update workspace records.",
+            group: "Records",
+          },
+        ],
+      }),
+    });
+  });
+  await pageUnderTest.route("**/api/roles", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(page(currentRoles)),
+      });
+      return;
+    }
+    creates += 1;
+    const input = route.request().postDataJSON() as {
+      role: string;
+      description: string;
+      permissions: Record<string, boolean>;
+    };
+    const created = {
+      ...roles[0],
+      id: "00000000-0000-4000-8000-000000000021",
+      role: input.role,
+      description: input.description ?? null,
+      permissions: input.permissions,
+    };
+    currentRoles = [
+      ...currentRoles,
+      {
+        ...created,
+        description: "Current approved duties.",
+        permissions: { "records.write": true },
+      },
+    ];
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify(created),
+    });
+  });
+  await pageUnderTest.addInitScript(() => {
+    const set = Storage.prototype.setItem;
+    const remove = Storage.prototype.removeItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (
+        key.startsWith("openslate.access.draft.v1.") &&
+        key.endsWith(".role") &&
+        JSON.parse(value).state === "retired" &&
+        sessionStorage.getItem("test.allowAccessCleanup") !== "1"
+      )
+        throw new Error("Access role retirement blocked");
+      return set.call(this, key, value);
+    };
+    Storage.prototype.removeItem = function (key) {
+      if (
+        key.startsWith("openslate.access.draft.v1.") &&
+        key.endsWith(".role") &&
+        sessionStorage.getItem("test.allowAccessCleanup") !== "1"
+      )
+        throw new Error("Access role removal blocked");
+      return remove.call(this, key);
+    };
+  });
+
+  await pageUnderTest.goto("/access?view=roles");
+  await pageUnderTest
+    .getByRole("button", { name: "Create role" })
+    .first()
+    .click();
+  await pageUnderTest.getByLabel("Role name").fill(" Shift lead ");
+  await pageUnderTest.getByLabel("Description").fill("Draft night duties.");
+  await pageUnderTest.getByRole("checkbox", { name: "Read records" }).check();
+  await pageUnderTest.getByRole("button", { name: "Save role" }).click();
+  await pageUnderTest.getByRole("button", { name: "Apply changes" }).click();
+  expect(creates).toBe(1);
+
+  pageUnderTest.once("dialog", (dialog) => dialog.accept());
+  await pageUnderTest.reload();
+  await expect(pageUnderTest.getByLabel("Role name")).toHaveValue(
+    " Shift lead ",
+  );
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Save role" }),
+  ).toBeDisabled();
+  await expect(
+    pageUnderTest.getByText(
+      "Current Access role: Shift lead; 1 baseline grants.",
+    ),
+  ).toBeVisible();
+  const savedRole = pageUnderTest.getByRole("region", {
+    name: "Saved role draft",
+  });
+  const freshRole = pageUnderTest.getByRole("region", {
+    name: "Current Access role",
+  });
+  await expect(savedRole.getByText("Draft night duties.")).toBeVisible();
+  await expect(savedRole.getByText("Read records")).toBeVisible();
+  await expect(freshRole.getByText("Current approved duties.")).toBeVisible();
+  await expect(freshRole.getByText("Update records")).toBeVisible();
+  await expect(
+    pageUnderTest.getByText("This role change may have completed."),
+  ).toBeVisible();
+  expect(creates).toBe(1);
+
+  await pageUnderTest
+    .getByRole("button", { name: "Discard after review" })
+    .click();
+  await pageUnderTest
+    .getByRole("button", { name: "Discard and start fresh" })
+    .click();
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Save role" }),
+  ).toBeDisabled();
+  await expect(
+    pageUnderTest.getByText(
+      "The browser could not discard this role draft. It remains locked.",
+    ),
+  ).toBeVisible();
+  await pageUnderTest.evaluate(() => {
+    sessionStorage.setItem("test.allowAccessCleanup", "1");
+  });
+  await pageUnderTest
+    .getByRole("button", { name: "Discard after review" })
+    .click();
+  await pageUnderTest
+    .getByRole("button", { name: "Discard and start fresh" })
+    .click();
+  await expect(
+    pageUnderTest.getByRole("dialog", { name: "Create role" }),
+  ).not.toBeVisible();
+  expect(creates).toBe(1);
+});
+
+test("an unconfirmed role creation keeps its values locked through accepted reload", async ({
   page: pageUnderTest,
 }) => {
   let attempts = 0;
@@ -525,6 +698,12 @@ test("a rejected role creation keeps its editable draft through accepted reload"
     pageUnderTest.getByRole("dialog", { name: "Create role" }),
   ).toBeVisible();
   await expect(pageUnderTest.getByLabel("Role name")).toHaveValue("Shift lead");
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Save role" }),
+  ).toBeDisabled();
+  await expect(
+    pageUnderTest.getByText("This role change may have completed."),
+  ).toBeVisible();
   expect(attempts).toBe(1);
 });
 
@@ -640,6 +819,139 @@ test("an accepted reload restores an unsaved group name and description", async 
   await expect(
     pageUnderTest.getByRole("dialog", { name: "Create group" }),
   ).not.toBeVisible();
+});
+
+test("a group save sends no request when its safety state cannot be stored", async ({
+  page: pageUnderTest,
+}) => {
+  let creates = 0;
+  await mockAccessApi(pageUnderTest);
+  await pageUnderTest.route("**/api/access/groups", async (route) => {
+    if (route.request().method() === "POST") creates += 1;
+    await route.fulfill({
+      status: route.request().method() === "POST" ? 500 : 200,
+      contentType: "application/json",
+      body: JSON.stringify(page([group])),
+    });
+  });
+  await pageUnderTest.addInitScript(() => {
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (
+        key.startsWith("openslate.access.draft.v1.") &&
+        key.endsWith(".group") &&
+        JSON.parse(value).state === "uncertain"
+      )
+        throw new Error("Access group safety state blocked");
+      return set.call(this, key, value);
+    };
+  });
+
+  await pageUnderTest.goto("/access?view=groups");
+  await pageUnderTest
+    .getByRole("button", { name: "Create group" })
+    .first()
+    .click();
+  await pageUnderTest.getByLabel("Group name").fill("Night operations");
+  await pageUnderTest.getByRole("button", { name: "Save group" }).click();
+  await pageUnderTest.getByRole("button", { name: "Apply changes" }).click();
+  expect(creates).toBe(0);
+  await expect(
+    pageUnderTest.getByText(
+      "Browser draft storage is unavailable. Save was not sent.",
+    ),
+  ).toBeVisible();
+});
+
+test("an uncertain group shows saved and current membership before discard", async ({
+  page: pageUnderTest,
+}) => {
+  const otherPerson = {
+    ...person,
+    id: "00000000-0000-4000-8000-000000000026",
+    email: "morgan@example.test",
+    username: "morgan",
+    display_name: "Morgan Oncall",
+  };
+  let currentGroups: Array<
+    Omit<typeof group, "member_ids"> & { member_ids: string[] }
+  > = [group];
+  let creates = 0;
+  await mockAccessApi(pageUnderTest, undefined, undefined, () => [
+    person,
+    otherPerson,
+  ]);
+  await pageUnderTest.route(
+    /\/api\/access\/groups(?:\?.*)?$/,
+    async (route) => {
+      if (route.request().method() === "POST") {
+        creates += 1;
+        currentGroups = [
+          ...currentGroups,
+          {
+            ...group,
+            id: "00000000-0000-4000-8000-000000000027",
+            name: "Night operations",
+            description: "Current approved team.",
+            member_ids: [otherPerson.id],
+          },
+        ];
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({
+            detail: "The outcome could not be confirmed",
+          }),
+        });
+        return;
+      }
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(page(currentGroups)),
+      });
+    },
+  );
+  await pageUnderTest.route(
+    "**/api/access/groups/00000000-0000-4000-8000-000000000027",
+    async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        headers: { ETag: '"group-1"' },
+        body: JSON.stringify(currentGroups[1]),
+      });
+    },
+  );
+
+  await pageUnderTest.goto("/access?view=groups");
+  await pageUnderTest
+    .getByRole("button", { name: "Create group" })
+    .first()
+    .click();
+  await pageUnderTest.getByLabel("Group name").fill("Night operations");
+  await pageUnderTest
+    .getByLabel("Description")
+    .fill("Draft overnight handoffs.");
+  await pageUnderTest.getByRole("checkbox", { name: /Alex Ops/ }).check();
+  await pageUnderTest.getByRole("button", { name: "Save group" }).click();
+  await pageUnderTest.getByRole("button", { name: "Apply changes" }).click();
+  expect(creates).toBe(1);
+
+  pageUnderTest.once("dialog", (dialog) => dialog.accept());
+  await pageUnderTest.reload();
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Save group" }),
+  ).toBeDisabled();
+  const savedGroup = pageUnderTest.getByRole("region", {
+    name: "Saved group draft",
+  });
+  const freshGroup = pageUnderTest.getByRole("region", {
+    name: "Current Access group",
+  });
+  await expect(savedGroup.getByText("Draft overnight handoffs.")).toBeVisible();
+  await expect(savedGroup.getByText("Alex Ops")).toBeVisible();
+  await expect(freshGroup.getByText("Current approved team.")).toBeVisible();
+  await expect(freshGroup.getByText("Morgan Oncall")).toBeVisible();
+  expect(creates).toBe(1);
 });
 
 test("an accepted reload restores an unsaved internal identity", async ({
@@ -1008,6 +1320,121 @@ test("Rules restore keeps the opening baseline when live policy changes", async 
   await expect(
     pageUnderTest.getByRole("button", { name: "Resolve 1 conflict" }),
   ).toBeDisabled();
+});
+
+test("an uncertain edited role does not review a recreated role with the same name", async ({
+  page: pageUnderTest,
+}) => {
+  const previousRoleId = "00000000-0000-4000-8000-000000000030";
+  const recreatedRole = {
+    ...roles[0],
+    id: "00000000-0000-4000-8000-000000000031",
+    role: "Field dispatch",
+    description: "Unrelated replacement role.",
+  };
+  await mockAccessApi(pageUnderTest, undefined, undefined, undefined, () => [
+    ...roles,
+    recreatedRole,
+  ]);
+  await pageUnderTest.addInitScript((targetId) => {
+    sessionStorage.setItem(
+      "openslate.access.draft.v1.00000000-0000-4000-8000-000000000010.role",
+      JSON.stringify({
+        version: 1,
+        userId: "00000000-0000-4000-8000-000000000010",
+        owner: "role",
+        target: `edit:${targetId}`,
+        state: "uncertain",
+        payload: {
+          intent: "edit",
+          baseline: {
+            id: targetId,
+            name: "Field dispatch",
+            description: "Original role.",
+            builtin: false,
+            grants: ["records.read"],
+          },
+          values: {
+            name: "Field dispatch",
+            description: "Saved uncertain edit.",
+            grants: ["records.read"],
+          },
+        },
+      }),
+    );
+  }, previousRoleId);
+
+  await pageUnderTest.goto("/access?view=roles");
+
+  const currentRole = pageUnderTest.getByRole("region", {
+    name: "Current Access role",
+  });
+  await expect(
+    currentRole.getByText("No matching role is present in current Access."),
+  ).toBeVisible();
+  await expect(currentRole).not.toContainText("Unrelated replacement role.");
+  await expect(
+    pageUnderTest.getByRole("region", { name: "Saved role draft" }),
+  ).toContainText("Saved uncertain edit.");
+});
+
+test("an uncertain edited group does not review a recreated group with the same name", async ({
+  page: pageUnderTest,
+}) => {
+  const previousGroupId = "00000000-0000-4000-8000-000000000032";
+  const recreatedGroup = {
+    ...group,
+    id: "00000000-0000-4000-8000-000000000033",
+    name: "Field dispatch",
+    description: "Unrelated replacement group.",
+  };
+  await mockAccessApi(
+    pageUnderTest,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    () => [recreatedGroup],
+  );
+  await pageUnderTest.addInitScript((targetId) => {
+    sessionStorage.setItem(
+      "openslate.access.draft.v1.00000000-0000-4000-8000-000000000010.group",
+      JSON.stringify({
+        version: 1,
+        userId: "00000000-0000-4000-8000-000000000010",
+        owner: "group",
+        target: `edit:${targetId}`,
+        state: "uncertain",
+        payload: {
+          intent: "edit",
+          baseline: {
+            id: targetId,
+            name: "Field dispatch",
+            description: "Original group.",
+            memberIds: [],
+          },
+          values: {
+            name: "Field dispatch",
+            description: "Saved uncertain edit.",
+            memberIds: [],
+          },
+        },
+      }),
+    );
+  }, previousGroupId);
+
+  await pageUnderTest.goto("/access?view=groups");
+
+  const currentGroup = pageUnderTest.getByRole("region", {
+    name: "Current Access group",
+  });
+  await expect(
+    currentGroup.getByText("No matching group is present in current Access."),
+  ).toBeVisible();
+  await expect(currentGroup).not.toContainText("Unrelated replacement group.");
+  await expect(
+    pageUnderTest.getByRole("region", { name: "Saved group draft" }),
+  ).toContainText("Saved uncertain edit.");
 });
 
 test("Rules warns when tab storage cannot protect a new change", async ({

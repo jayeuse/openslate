@@ -1,7 +1,13 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  accessDraftSubmissionNeedsReload,
   accessDraftStorageKey,
+  beginAccessDefaultsDraftSubmission,
+  beginAccessGroupDraftSubmission,
+  beginAccessIdentityDraftSubmission,
+  beginAccessRoleDraftSubmission,
+  beginAccessRulesDraftSubmission,
   clearAccessDraftStorageExcept,
   clearAccessDraftStorageForUser,
   clearAccessDefaultsDraft,
@@ -9,6 +15,12 @@ import {
   clearAccessIdentityDraft,
   clearAccessRoleDraft,
   clearAccessRulesDraft,
+  completeAccessDefaultsDraftSubmission,
+  completeAccessGroupDraftSubmission,
+  completeAccessIdentityDraftSubmission,
+  completeAccessRoleDraftSubmission,
+  completeAccessRulesDraftSubmission,
+  discardUncertainAccessRoleDraft,
   readAccessDefaultsDraft,
   readAccessGroupDraft,
   readAccessIdentityDraft,
@@ -159,6 +171,53 @@ test("Access draft cleanup keeps only the active user and reports blocked storag
     },
   };
   expect(writeAccessRulesDraft("user-c", payload, blocked)).toBe(false);
+});
+
+test("account cleanup releases only current-document guards whose keys were removed", () => {
+  const storage = memoryStorage();
+  const departingUser = "boundary-guard-departing";
+  const activeUser = "boundary-guard-active";
+  const roleDraft = {
+    intent: "create" as const,
+    baseline: {
+      id: "draft:new-role",
+      name: "",
+      description: "",
+      builtin: false,
+      grants: [],
+    },
+    values: { name: "Shift lead", description: "", grants: [] },
+  };
+  expect(beginAccessRulesDraftSubmission(departingUser, payload, storage)).toBe(
+    true,
+  );
+  expect(
+    beginAccessRoleDraftSubmission(departingUser, roleDraft, storage),
+  ).toBe(true);
+  expect(beginAccessRoleDraftSubmission(activeUser, roleDraft, storage)).toBe(
+    true,
+  );
+
+  const partiallyBlocked: AccessDraftStorage = {
+    ...storage,
+    removeItem: (key) => {
+      if (key === accessDraftStorageKey(departingUser, "role"))
+        throw new Error("role removal blocked");
+      storage.removeItem(key);
+    },
+  };
+  expect(clearAccessDraftStorageForUser(departingUser, partiallyBlocked)).toBe(
+    false,
+  );
+  expect(accessDraftSubmissionNeedsReload(departingUser, "rules")).toBe(false);
+  expect(accessDraftSubmissionNeedsReload(departingUser, "role")).toBe(true);
+  expect(accessDraftSubmissionNeedsReload(activeUser, "role")).toBe(true);
+
+  expect(clearAccessDraftStorageExcept(activeUser, storage)).toBe(true);
+  expect(accessDraftSubmissionNeedsReload(departingUser, "role")).toBe(false);
+  expect(accessDraftSubmissionNeedsReload(activeUser, "role")).toBe(true);
+  expect(clearAccessDraftStorageForUser(activeUser, storage)).toBe(true);
+  expect(accessDraftSubmissionNeedsReload(activeUser, "role")).toBe(false);
 });
 
 test("Defaults journal preserves editable settings and their opening baseline only", () => {
@@ -446,4 +505,327 @@ test("a completed draft cannot replay when removal fails but a tombstone can be 
   };
   expect(clearAccessRoleDraft("user-a", fullyBlocked)).toBe(false);
   expect(readAccessRoleDraft("user-a", storage).value).toEqual(roleDraft);
+});
+
+test("an uncertain role submission stays readable but cannot become an editable draft", () => {
+  const storage = memoryStorage();
+  const roleDraft = {
+    intent: "create" as const,
+    baseline: {
+      id: "draft:new-role",
+      name: "",
+      description: "",
+      builtin: false,
+      grants: [],
+    },
+    values: {
+      name: "Shift lead",
+      description: "Night shift",
+      grants: ["records.read"],
+    },
+  };
+  const key = accessDraftStorageKey("user-a", "role");
+  storage.setItem(
+    key,
+    JSON.stringify({
+      version: 1,
+      userId: "user-a",
+      owner: "role",
+      target: "create:draft:new-role",
+      state: "uncertain",
+      payload: roleDraft,
+    }),
+  );
+
+  expect(readAccessRoleDraft("user-a", storage)).toEqual({
+    status: "uncertain",
+    value: roleDraft,
+  });
+  expect(
+    writeAccessRoleDraft(
+      "user-a",
+      { ...roleDraft, values: { ...roleDraft.values, name: "Another role" } },
+      storage,
+    ),
+  ).toBe(false);
+  expect(clearAccessRoleDraft("user-a", storage)).toBe(false);
+  expect(readAccessRoleDraft("user-a", storage).status).toBe("uncertain");
+
+  const marker = JSON.parse(storage.getItem(key) ?? "") as Record<
+    string,
+    unknown
+  >;
+  for (const tampered of [
+    { ...marker, userId: "user-b" },
+    { ...marker, owner: "group" },
+    { ...marker, target: "create:other-role" },
+    { ...marker, state: "ready" },
+    { ...marker, payload: { ...roleDraft, password: "secret" } },
+  ]) {
+    storage.setItem(key, JSON.stringify(tampered));
+    expect(readAccessRoleDraft("user-a", storage)).toEqual({
+      status: "invalid",
+      value: null,
+    });
+  }
+});
+
+test("submission preparation verifies its same-key uncertain record before mutation", () => {
+  const storage = memoryStorage();
+  const roleDraft = {
+    intent: "create" as const,
+    baseline: {
+      id: "draft:new-role",
+      name: "",
+      description: "",
+      builtin: false,
+      grants: [],
+    },
+    values: { name: "Shift lead", description: "", grants: [] },
+  };
+  expect(writeAccessRoleDraft("user-a", roleDraft, storage)).toBe(true);
+
+  const writeBlocked: AccessDraftStorage = {
+    ...storage,
+    setItem: () => {
+      throw new Error("write blocked");
+    },
+  };
+  expect(
+    beginAccessRoleDraftSubmission("user-a", roleDraft, writeBlocked),
+  ).toBe(false);
+  expect(readAccessRoleDraft("user-a", storage).status).toBe("ready");
+
+  const ignoredWrite: AccessDraftStorage = {
+    ...storage,
+    setItem: () => {},
+  };
+  expect(
+    beginAccessRoleDraftSubmission("user-a", roleDraft, ignoredWrite),
+  ).toBe(false);
+  expect(readAccessRoleDraft("user-a", storage).status).toBe("ready");
+
+  expect(beginAccessRoleDraftSubmission("user-a", roleDraft, storage)).toBe(
+    true,
+  );
+  expect(readAccessRoleDraft("user-a", storage)).toEqual({
+    status: "uncertain",
+    value: roleDraft,
+  });
+  expect(beginAccessRoleDraftSubmission("user-a", roleDraft, storage)).toBe(
+    false,
+  );
+
+  const fullyBlocked: AccessDraftStorage = {
+    ...storage,
+    setItem: () => {
+      throw new Error("write blocked");
+    },
+    removeItem: () => {
+      throw new Error("removal blocked");
+    },
+  };
+  expect(completeAccessRoleDraftSubmission("user-a", fullyBlocked)).toBe(false);
+  expect(discardUncertainAccessRoleDraft("user-a", fullyBlocked)).toBe(false);
+  expect(readAccessRoleDraft("user-a", storage).status).toBe("uncertain");
+
+  expect(discardUncertainAccessRoleDraft("user-a", storage)).toBe(false);
+  expect(completeAccessRoleDraftSubmission("user-a", storage)).toBe(true);
+  expect(readAccessRoleDraft("user-a", storage)).toEqual({
+    status: "ready",
+    value: null,
+  });
+  expect(completeAccessRoleDraftSubmission("user-a", storage)).toBe(false);
+
+  expect(beginAccessRoleDraftSubmission("user-a", roleDraft, storage)).toBe(
+    true,
+  );
+  const removeBlocked: AccessDraftStorage = {
+    ...storage,
+    removeItem: () => {
+      throw new Error("removal blocked");
+    },
+  };
+  expect(completeAccessRoleDraftSubmission("user-a", removeBlocked)).toBe(true);
+  expect(readAccessRoleDraft("user-a", storage)).toEqual({
+    status: "ready",
+    value: null,
+  });
+});
+
+test("same-document remount cannot discard a dispatched uncertain role submission", () => {
+  const storage = memoryStorage();
+  const userId = "same-document-user";
+  const roleDraft = {
+    intent: "create" as const,
+    baseline: {
+      id: "draft:new-role",
+      name: "",
+      description: "",
+      builtin: false,
+      grants: [],
+    },
+    values: { name: "Shift lead", description: "", grants: [] },
+  };
+
+  expect(beginAccessRoleDraftSubmission(userId, roleDraft, storage)).toBe(true);
+  expect(discardUncertainAccessRoleDraft(userId, storage)).toBe(false);
+  expect(readAccessRoleDraft(userId, storage).status).toBe("uncertain");
+  expect(accessDraftSubmissionNeedsReload(userId, "role")).toBe(true);
+  expect(accessDraftSubmissionNeedsReload(userId, "group")).toBe(false);
+
+  const fullyBlocked: AccessDraftStorage = {
+    ...storage,
+    setItem: () => {
+      throw new Error("write blocked");
+    },
+    removeItem: () => {
+      throw new Error("removal blocked");
+    },
+  };
+  expect(completeAccessRoleDraftSubmission(userId, fullyBlocked)).toBe(false);
+  expect(accessDraftSubmissionNeedsReload(userId, "role")).toBe(true);
+
+  expect(completeAccessRoleDraftSubmission(userId, storage)).toBe(true);
+  expect(accessDraftSubmissionNeedsReload(userId, "role")).toBe(false);
+});
+
+test("an uncertain marker from a previous document can be explicitly discarded", () => {
+  const storage = memoryStorage();
+  const userId = "previous-document-user";
+  const roleDraft = {
+    intent: "create" as const,
+    baseline: {
+      id: "draft:new-role",
+      name: "",
+      description: "",
+      builtin: false,
+      grants: [],
+    },
+    values: { name: "Shift lead", description: "", grants: [] },
+  };
+  storage.setItem(
+    accessDraftStorageKey(userId, "role"),
+    JSON.stringify({
+      version: 1,
+      userId,
+      owner: "role",
+      target: "create:draft:new-role",
+      state: "uncertain",
+      payload: roleDraft,
+    }),
+  );
+
+  expect(accessDraftSubmissionNeedsReload(userId, "role")).toBe(false);
+  expect(discardUncertainAccessRoleDraft(userId, storage)).toBe(true);
+  expect(readAccessRoleDraft(userId, storage)).toEqual({
+    status: "ready",
+    value: null,
+  });
+});
+
+test("all Access owners preserve validated payloads during uncertain submission", () => {
+  const storage = memoryStorage();
+  const defaultsBaseline = {
+    defaultRoleId: "member-role",
+    defaultDepartmentIds: [],
+    defaultGroupIds: [],
+    invitationExpiryDays: 14,
+    guestDurationDays: 30,
+    serviceDurationDays: 90,
+  };
+  const defaults = {
+    baseline: defaultsBaseline,
+    draft: { ...defaultsBaseline, invitationExpiryDays: 21 },
+  };
+  const role = {
+    intent: "create" as const,
+    baseline: {
+      id: "draft:new-role",
+      name: "",
+      description: "",
+      builtin: false,
+      grants: [],
+    },
+    values: { name: "Shift lead", description: "", grants: [] },
+  };
+  const group = {
+    intent: "create" as const,
+    baseline: {
+      id: "draft:new-group",
+      name: "",
+      description: "",
+      memberIds: [],
+    },
+    values: { name: "Shift team", description: "", memberIds: [] },
+  };
+  const identityBaseline = {
+    kind: "internal" as const,
+    id: "draft",
+    name: "",
+    status: "active" as const,
+    roleId: "member-role",
+    groupIds: [],
+    email: "",
+    departmentIds: [],
+    primaryDepartmentId: "",
+    title: "",
+  };
+  const identity = {
+    mode: "create" as const,
+    baseline: identityBaseline,
+    draft: { ...identityBaseline, name: "Shift operator" },
+  };
+
+  expect(beginAccessRulesDraftSubmission("user-a", payload, storage)).toBe(
+    true,
+  );
+  expect(beginAccessDefaultsDraftSubmission("user-a", defaults, storage)).toBe(
+    true,
+  );
+  expect(beginAccessRoleDraftSubmission("user-a", role, storage)).toBe(true);
+  expect(beginAccessGroupDraftSubmission("user-a", group, storage)).toBe(true);
+  expect(beginAccessIdentityDraftSubmission("user-a", identity, storage)).toBe(
+    true,
+  );
+
+  expect(readAccessRulesDraft("user-a", storage)).toEqual({
+    status: "uncertain",
+    value: payload,
+  });
+  expect(readAccessDefaultsDraft("user-a", storage)).toEqual({
+    status: "uncertain",
+    value: defaults,
+  });
+  expect(readAccessRoleDraft("user-a", storage)).toEqual({
+    status: "uncertain",
+    value: role,
+  });
+  expect(readAccessGroupDraft("user-a", storage)).toEqual({
+    status: "uncertain",
+    value: group,
+  });
+  expect(readAccessIdentityDraft("user-a", storage)).toEqual({
+    status: "uncertain",
+    value: identity,
+  });
+
+  expect(
+    storage.getItem(accessDraftStorageKey("user-a", "identity")),
+  ).not.toContain("credentialState");
+
+  expect(completeAccessRulesDraftSubmission("user-a", storage)).toBe(true);
+  expect(completeAccessDefaultsDraftSubmission("user-a", storage)).toBe(true);
+  expect(completeAccessRoleDraftSubmission("user-a", storage)).toBe(true);
+  expect(completeAccessGroupDraftSubmission("user-a", storage)).toBe(true);
+  expect(completeAccessIdentityDraftSubmission("user-a", storage)).toBe(true);
+  for (const read of [
+    readAccessRulesDraft,
+    readAccessDefaultsDraft,
+    readAccessRoleDraft,
+    readAccessGroupDraft,
+    readAccessIdentityDraft,
+  ]) {
+    expect(read("user-a", storage)).toEqual({ status: "ready", value: null });
+  }
 });

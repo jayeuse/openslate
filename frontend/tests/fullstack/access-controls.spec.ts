@@ -109,3 +109,53 @@ test("Access keeps seven views usable at 390px and only offers truthful director
     filters.getByLabel("Sort").locator('option[value="activity"]'),
   ).toHaveCount(0);
 });
+
+test("duplicating Administrator persists its ten effective data grants", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/access?view=roles");
+  const administrator = page.getByRole("row").filter({
+    has: page.getByRole("button", { name: /^admin\b/i }),
+  });
+  await administrator.getByRole("button", { name: "Duplicate" }).click();
+  await expect(page.getByText("Duplicated admin.")).toBeVisible();
+
+  await page.reload();
+  const persisted = await page.evaluate(async () => {
+    const listResponse = await fetch("/api/roles?limit=100&offset=0", {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!listResponse.ok)
+      throw new Error(`Role list returned ${listResponse.status}`);
+    const list = (await listResponse.json()) as {
+      items: Array<{ id: string; role: string }>;
+    };
+    const copy = list.items.find((role) => role.role === "admin copy");
+    if (!copy) throw new Error("Duplicated admin role was not persisted");
+    const response = await fetch(`/api/roles/${copy.id}`, {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!response.ok)
+      throw new Error(`Role reload returned ${response.status}`);
+    return (await response.json()) as {
+      role: string;
+      permissions: Record<string, boolean>;
+    };
+  });
+  expect(persisted.role).toBe("admin copy");
+  expect(persisted.permissions).toEqual({
+    "departments.read": true,
+    "departments.write": true,
+    "modules.read": true,
+    "modules.write": true,
+    "fields.read": true,
+    "fields.write": true,
+    "records.read": true,
+    "records.write": true,
+    "relationships.read": true,
+    "relationships.write": true,
+  });
+});

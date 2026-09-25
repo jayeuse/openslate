@@ -4,6 +4,7 @@ import {
   changePassword,
   completeRecovery,
   completeInvitation,
+  getAuthMe,
   getSessionStatus,
   requestRecovery,
   signIn,
@@ -11,6 +12,31 @@ import {
 } from "../../../src/lib/auth-api";
 
 const userId = "2cb24e31-8b78-4ec2-b33a-807a14b1f9e8";
+const roleId = "b4f0b2e8-16da-4d91-aef2-57ff72b19f90";
+
+test("loads only the authenticated user's identity and current role ID", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => {
+    requests.push({ input, init });
+    return Response.json({
+      id: userId,
+      role_id: roleId,
+      role: "member",
+      permissions: ["records.read"],
+    });
+  };
+  try {
+    await expect(getAuthMe()).resolves.toEqual({ id: userId, roleId });
+    expect(requests.map(({ input }) => input)).toEqual(["/api/auth/me"]);
+    expect(requests[0]?.init?.cache).toBe("no-store");
+    expect(
+      new Headers(requests[0]?.init?.headers).get("Authorization"),
+    ).toBeNull();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("authentication actions use direct FastAPI routes without browser tokens", async () => {
   const originalFetch = globalThis.fetch;

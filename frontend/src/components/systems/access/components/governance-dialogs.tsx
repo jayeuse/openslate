@@ -41,7 +41,11 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { AccessController } from "../state/controller";
 import { useAccessDraftRegistration } from "../state/draft-navigation";
 import {
+  accessDraftSubmissionNeedsReload,
+  beginAccessDefaultsDraftSubmission,
   clearAccessDefaultsDraft,
+  completeAccessDefaultsDraftSubmission,
+  discardUncertainAccessDefaultsDraft,
   editableAccessDefaults,
   readAccessDefaultsDraft,
   writeAccessDefaultsDraft,
@@ -89,6 +93,8 @@ export function GovernanceDialogs({
   const [defaultsBaseline, setDefaultsBaseline] =
     useState<EditableAccessDefaults | null>(null);
   const [journalIssue, setJournalIssue] = useState("");
+  const [uncertainDefaults, setUncertainDefaults] = useState(false);
+  const [uncertainDiscardOpen, setUncertainDiscardOpen] = useState(false);
   const restoredUserId = useRef<string | null>(null);
   const [defaultsDiscardOpen, setDefaultsDiscardOpen] = useState(false);
   const [importText, setImportText] = useState("");
@@ -111,7 +117,12 @@ export function GovernanceDialogs({
       if (controlledDialog === undefined) setLocalDialog("defaults");
       onDialogChange?.("defaults");
     }
-    if (stored.status === "unavailable")
+    if (stored.status === "uncertain") {
+      setUncertainDefaults(true);
+      setJournalIssue(
+        "This defaults change may have completed. Review current defaults and the saved values before discarding this locked draft.",
+      );
+    } else if (stored.status === "unavailable")
       setJournalIssue(
         "Browser draft storage is unavailable. Defaults changes may not survive reload.",
       );
@@ -125,6 +136,55 @@ export function GovernanceDialogs({
   const activeDialog =
     controlledDialog === undefined ? localDialog : controlledDialog;
   const displayedDefaults = defaultsDraft ?? state.defaults;
+  const recoveryNeedsReload =
+    uncertainDefaults && accessDraftSubmissionNeedsReload(userId, "defaults");
+  const roleName = (id: string) =>
+    state.roles.find((role) => role.id === id)?.name ?? id;
+  const groupNames = (ids: string[]) =>
+    ids
+      .map((id) => state.groups.find((group) => group.id === id)?.name ?? id)
+      .join(", ") || "None";
+  const departmentNames = (ids: string[]) =>
+    ids
+      .map(
+        (id) =>
+          controller.departmentCatalog.find(
+            (department) => department.id === id,
+          )?.name ?? id,
+      )
+      .join(", ") || "None";
+  const defaultsReviewRows = [
+    [
+      "Default role",
+      roleName(state.defaults.defaultRoleId),
+      roleName(displayedDefaults.defaultRoleId),
+    ],
+    [
+      "Default groups",
+      groupNames(state.defaults.defaultGroupIds),
+      groupNames(displayedDefaults.defaultGroupIds),
+    ],
+    [
+      "Default departments",
+      departmentNames(state.defaults.defaultDepartmentIds),
+      departmentNames(displayedDefaults.defaultDepartmentIds),
+    ],
+    [
+      "Invitation expiry",
+      `${state.defaults.invitationExpiryDays} days`,
+      `${displayedDefaults.invitationExpiryDays} days`,
+    ],
+    [
+      "Guest duration",
+      `${state.defaults.guestDurationDays} days`,
+      `${displayedDefaults.guestDurationDays} days`,
+    ],
+    [
+      "Service duration",
+      `${state.defaults.serviceDurationDays} days`,
+      `${displayedDefaults.serviceDurationDays} days`,
+    ],
+  ];
   const defaultsStale =
     defaultsBaseline !== null &&
     JSON.stringify(defaultsBaseline) !==
@@ -154,8 +214,15 @@ export function GovernanceDialogs({
 
   useAccessDraftRegistration(
     "governance-dialogs",
-    (activeDialog === "defaults" && defaultsDirty) || importDirty,
+    (activeDialog === "defaults" && (defaultsDirty || uncertainDefaults)) ||
+      importDirty,
     () => {
+      if (uncertainDefaults) {
+        setJournalIssue(
+          "This defaults change may have completed. Review the current settings before discarding this locked draft.",
+        );
+        return false;
+      }
       if (
         activeDialog === "defaults" &&
         defaultsDirty &&
@@ -199,6 +266,7 @@ export function GovernanceDialogs({
   }
 
   function updateDefaultsDraft(patch: Partial<EditableAccessDefaults>) {
+    if (uncertainDefaults) return;
     const baseline = defaultsBaseline ?? editableAccessDefaults(state.defaults);
     const next = { ...displayedDefaults, ...patch };
     const editable = editableAccessDefaults(next);
@@ -220,6 +288,12 @@ export function GovernanceDialogs({
   }
 
   function requestDefaultsClose() {
+    if (uncertainDefaults) {
+      setJournalIssue(
+        "Review and discard the uncertain defaults draft before closing this dialog.",
+      );
+      return;
+    }
     if (controller.isPending()) {
       setError("Finish the Access change before closing this dialog.");
       return;
@@ -233,6 +307,12 @@ export function GovernanceDialogs({
   }
 
   function discardDefaultsDraft() {
+    if (uncertainDefaults) {
+      setJournalIssue(
+        "Use Review and discard locked draft after checking current defaults.",
+      );
+      return;
+    }
     if (controller.isPending()) {
       setError("Finish the Access change before discarding this draft.");
       return;
@@ -251,6 +331,12 @@ export function GovernanceDialogs({
   }
 
   async function saveDefaults() {
+    if (uncertainDefaults) {
+      setError(
+        "Review the uncertain defaults change before starting another one.",
+      );
+      return;
+    }
     if (defaultsTargetMissing) {
       setError(
         "This defaults draft refers to a role, group, or department that is no longer available. Discard it and review the current settings.",
@@ -269,23 +355,73 @@ export function GovernanceDialogs({
       );
       return;
     }
+    if (
+      !beginAccessDefaultsDraftSubmission(userId, {
+        baseline: defaultsBaseline ?? editableAccessDefaults(state.defaults),
+        draft: editableAccessDefaults(displayedDefaults),
+      })
+    ) {
+      setError(
+        "The browser could not protect your defaults draft before saving. No defaults request was sent; check browser storage and try again.",
+      );
+      return;
+    }
+    setUncertainDefaults(true);
     const result = await actions.updateDefaults(displayedDefaults);
     if (!result.ok) {
       setError(result.error);
+      setJournalIssue(
+        "This defaults change may have completed. Review current defaults before discarding this locked draft.",
+      );
       return;
     }
-    if (!clearAccessDefaultsDraft(userId)) {
+    if (!completeAccessDefaultsDraftSubmission(userId)) {
       setJournalIssue(
-        "Defaults were saved, but the browser could not clear its saved draft. Clear this site's browser data before leaving.",
+        "Defaults were saved, but browser cleanup failed. This draft remains locked until you review current defaults and discard it.",
       );
       setNotice("Access defaults updated.");
       return;
     }
+    setUncertainDefaults(false);
     setActiveDialog(null);
     setDefaultsDraft(null);
     setDefaultsBaseline(null);
     setError("");
     setNotice("Access defaults updated.");
+  }
+
+  function discardUncertainDefaultsDraft() {
+    if (accessDraftSubmissionNeedsReload(userId, "defaults")) {
+      setUncertainDiscardOpen(false);
+      setJournalIssue(
+        "Reload Access and review current defaults before discarding this uncertain draft.",
+      );
+      return;
+    }
+    if (
+      controller.resource.status !== "ready" ||
+      controller.resource.refreshing ||
+      controller.resource.error
+    ) {
+      setJournalIssue(
+        "Refresh Access successfully before discarding this uncertain defaults draft.",
+      );
+      return;
+    }
+    if (!discardUncertainAccessDefaultsDraft(userId)) {
+      setUncertainDiscardOpen(false);
+      setJournalIssue(
+        "The browser could not clear the uncertain defaults draft. It remains locked; try again when browser storage works.",
+      );
+      return;
+    }
+    setUncertainDefaults(false);
+    setUncertainDiscardOpen(false);
+    setDefaultsDraft(null);
+    setDefaultsBaseline(null);
+    setJournalIssue("");
+    setError("");
+    setActiveDialog(null);
   }
 
   function exportPolicy() {
@@ -452,164 +588,218 @@ export function GovernanceDialogs({
               unchanged.
             </DialogDescription>
           </DialogHeader>
-          <FieldGroup className="grid gap-4 py-2 sm:grid-cols-2">
-            <Field className="sm:col-span-2">
-              <FieldLabel htmlFor="default-role">Default role</FieldLabel>
-              <NativeSelect
-                id="default-role"
-                className="w-full [&>select]:min-h-11"
-                value={displayedDefaults.defaultRoleId}
-                onChange={(event) =>
-                  updateDefaultsDraft({ defaultRoleId: event.target.value })
-                }
-              >
-                {state.roles
-                  .filter((role) => role.name !== "admin")
-                  .map((role) => (
-                    <NativeSelectOption key={role.id} value={role.id}>
-                      {role.name}
-                    </NativeSelectOption>
-                  ))}
-              </NativeSelect>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="invitation-days">
-                Invitation expiry days
-              </FieldLabel>
-              <Input
-                id="invitation-days"
-                type="number"
-                min={1}
-                max={365}
-                className="min-h-11"
-                value={displayedDefaults.invitationExpiryDays}
-                onChange={(event) =>
-                  updateDefaultsDraft({
-                    invitationExpiryDays: Number(event.target.value),
-                  })
-                }
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="guest-days">Guest duration days</FieldLabel>
-              <Input
-                id="guest-days"
-                type="number"
-                min={1}
-                max={365}
-                className="min-h-11"
-                value={displayedDefaults.guestDurationDays}
-                onChange={(event) =>
-                  updateDefaultsDraft({
-                    guestDurationDays: Number(event.target.value),
-                  })
-                }
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="service-days">
-                Service duration days
-              </FieldLabel>
-              <Input
-                id="service-days"
-                type="number"
-                min={1}
-                max={365}
-                className="min-h-11"
-                value={displayedDefaults.serviceDurationDays}
-                onChange={(event) =>
-                  updateDefaultsDraft({
-                    serviceDurationDays: Number(event.target.value),
-                  })
-                }
-              />
-            </Field>
-            <div className="flex flex-wrap content-end gap-2">
-              <Badge variant="outline">Default deny · required</Badge>
-              <Badge variant="outline">Guest sponsor · required</Badge>
-              <Badge variant="outline">Service owner · required</Badge>
+          {uncertainDefaults ? (
+            <div className="space-y-2 rounded-md border p-3">
+              <h3 className="font-semibold">
+                Current defaults and saved draft
+              </h3>
+              <p className="text-muted-foreground text-sm">
+                {recoveryNeedsReload
+                  ? "Reload Access to compare against the latest defaults."
+                  : "Current defaults were loaded from Access."}{" "}
+                The saved values have not been submitted again.
+              </p>
+              <dl className="max-h-44 space-y-2 overflow-y-auto text-sm">
+                {defaultsReviewRows.map(([label, current, saved]) => (
+                  <div key={label} className="rounded-md border p-2">
+                    <dt className="font-medium">{label}</dt>
+                    <dd>Current: {current}</dd>
+                    <dd>Saved: {saved}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
-            <Field className="sm:col-span-2">
-              <FieldLabel>Default departments</FieldLabel>
-              <ToggleGroup
-                aria-label="Default departments"
-                multiple
-                value={displayedDefaults.defaultDepartmentIds}
-                onValueChange={(values) =>
-                  updateDefaultsDraft({ defaultDepartmentIds: values })
-                }
-                variant="outline"
-                className="flex w-full flex-wrap justify-start"
-              >
-                {controller.departmentCatalog.map((department) => (
-                  <ToggleGroupItem
-                    key={department.id}
-                    value={department.id}
-                    className="min-h-11"
-                  >
-                    {department.name}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-              <FieldDescription>
-                Choose zero or more starting departments.
-              </FieldDescription>
-            </Field>
-            <Field className="sm:col-span-2">
-              <FieldLabel>Default groups</FieldLabel>
-              <ToggleGroup
-                aria-label="Default groups"
-                multiple
-                value={displayedDefaults.defaultGroupIds}
-                onValueChange={(values) =>
-                  updateDefaultsDraft({ defaultGroupIds: values })
-                }
-                variant="outline"
-                className="flex w-full flex-wrap justify-start"
-              >
-                {state.groups.map((group) => (
-                  <ToggleGroupItem
-                    key={group.id}
-                    value={group.id}
-                    className="min-h-11"
-                  >
-                    {group.name}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-            </Field>
-            {error ? (
-              <Alert
-                role="alert"
-                className="sm:col-span-2"
-                variant="destructive"
-              >
-                {error}
-              </Alert>
-            ) : null}
-            {journalIssue ? (
-              <Alert role="alert" variant="warning" className="sm:col-span-2">
-                {journalIssue}
-              </Alert>
-            ) : null}
-            {defaultsStale ? (
-              <Alert role="alert" variant="warning" className="sm:col-span-2">
-                Defaults changed after this draft was opened. This draft cannot
-                be saved until you discard it and review the current settings.
-              </Alert>
-            ) : null}
-            {defaultsTargetMissing ? (
-              <Alert role="alert" variant="warning" className="sm:col-span-2">
-                This defaults draft refers to a role, group, or department that
-                is no longer available. It cannot be saved.
-              </Alert>
-            ) : null}
-          </FieldGroup>
+          ) : null}
+          <fieldset disabled={uncertainDefaults} className="contents">
+            <FieldGroup className="grid gap-4 py-2 sm:grid-cols-2">
+              <Field className="sm:col-span-2">
+                <FieldLabel htmlFor="default-role">Default role</FieldLabel>
+                <NativeSelect
+                  id="default-role"
+                  className="w-full [&>select]:min-h-11"
+                  value={displayedDefaults.defaultRoleId}
+                  onChange={(event) =>
+                    updateDefaultsDraft({ defaultRoleId: event.target.value })
+                  }
+                >
+                  {state.roles
+                    .filter((role) => role.name !== "admin")
+                    .map((role) => (
+                      <NativeSelectOption key={role.id} value={role.id}>
+                        {role.name}
+                      </NativeSelectOption>
+                    ))}
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="invitation-days">
+                  Invitation expiry days
+                </FieldLabel>
+                <Input
+                  id="invitation-days"
+                  type="number"
+                  min={1}
+                  max={365}
+                  className="min-h-11"
+                  value={displayedDefaults.invitationExpiryDays}
+                  onChange={(event) =>
+                    updateDefaultsDraft({
+                      invitationExpiryDays: Number(event.target.value),
+                    })
+                  }
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="guest-days">
+                  Guest duration days
+                </FieldLabel>
+                <Input
+                  id="guest-days"
+                  type="number"
+                  min={1}
+                  max={365}
+                  className="min-h-11"
+                  value={displayedDefaults.guestDurationDays}
+                  onChange={(event) =>
+                    updateDefaultsDraft({
+                      guestDurationDays: Number(event.target.value),
+                    })
+                  }
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="service-days">
+                  Service duration days
+                </FieldLabel>
+                <Input
+                  id="service-days"
+                  type="number"
+                  min={1}
+                  max={365}
+                  className="min-h-11"
+                  value={displayedDefaults.serviceDurationDays}
+                  onChange={(event) =>
+                    updateDefaultsDraft({
+                      serviceDurationDays: Number(event.target.value),
+                    })
+                  }
+                />
+              </Field>
+              <div className="flex flex-wrap content-end gap-2">
+                <Badge variant="outline">Default deny · required</Badge>
+                <Badge variant="outline">Guest sponsor · required</Badge>
+                <Badge variant="outline">Service owner · required</Badge>
+              </div>
+              <Field className="sm:col-span-2">
+                <FieldLabel>Default departments</FieldLabel>
+                <ToggleGroup
+                  aria-label="Default departments"
+                  multiple
+                  value={displayedDefaults.defaultDepartmentIds}
+                  onValueChange={(values) =>
+                    updateDefaultsDraft({ defaultDepartmentIds: values })
+                  }
+                  variant="outline"
+                  className="flex w-full flex-wrap justify-start"
+                >
+                  {controller.departmentCatalog.map((department) => (
+                    <ToggleGroupItem
+                      key={department.id}
+                      value={department.id}
+                      className="min-h-11"
+                    >
+                      {department.name}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+                <FieldDescription>
+                  Choose zero or more starting departments.
+                </FieldDescription>
+              </Field>
+              <Field className="sm:col-span-2">
+                <FieldLabel>Default groups</FieldLabel>
+                <ToggleGroup
+                  aria-label="Default groups"
+                  multiple
+                  value={displayedDefaults.defaultGroupIds}
+                  onValueChange={(values) =>
+                    updateDefaultsDraft({ defaultGroupIds: values })
+                  }
+                  variant="outline"
+                  className="flex w-full flex-wrap justify-start"
+                >
+                  {state.groups.map((group) => (
+                    <ToggleGroupItem
+                      key={group.id}
+                      value={group.id}
+                      className="min-h-11"
+                    >
+                      {group.name}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </Field>
+              {error ? (
+                <Alert
+                  role="alert"
+                  className="sm:col-span-2"
+                  variant="destructive"
+                >
+                  {error}
+                </Alert>
+              ) : null}
+              {journalIssue ? (
+                <Alert role="alert" variant="warning" className="sm:col-span-2">
+                  {journalIssue}
+                </Alert>
+              ) : null}
+              {defaultsStale ? (
+                <Alert role="alert" variant="warning" className="sm:col-span-2">
+                  Defaults changed after this draft was opened. This draft
+                  cannot be saved until you discard it and review the current
+                  settings.
+                </Alert>
+              ) : null}
+              {defaultsTargetMissing ? (
+                <Alert role="alert" variant="warning" className="sm:col-span-2">
+                  This defaults draft refers to a role, group, or department
+                  that is no longer available. It cannot be saved.
+                </Alert>
+              ) : null}
+            </FieldGroup>
+          </fieldset>
+          {uncertainDefaults ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 self-start"
+              disabled={
+                recoveryNeedsReload ||
+                controller.resource.status !== "ready" ||
+                controller.resource.refreshing ||
+                Boolean(controller.resource.error)
+              }
+              onClick={() => setUncertainDiscardOpen(true)}
+            >
+              Review and discard locked defaults draft
+            </Button>
+          ) : null}
+          {recoveryNeedsReload ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 self-start"
+              onClick={() => window.location.reload()}
+            >
+              Reload Access before recovery
+            </Button>
+          ) : null}
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
               className="min-h-11"
+              disabled={uncertainDefaults}
               onClick={requestDefaultsClose}
             >
               Cancel
@@ -618,7 +808,10 @@ export function GovernanceDialogs({
               type="button"
               className="min-h-11"
               disabled={
-                controller.isPending() || defaultsStale || defaultsTargetMissing
+                uncertainDefaults ||
+                controller.isPending() ||
+                defaultsStale ||
+                defaultsTargetMissing
               }
               onClick={saveDefaults}
             >
@@ -660,6 +853,36 @@ export function GovernanceDialogs({
               onClick={discardDefaultsDraft}
             >
               Discard changes
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={uncertainDiscardOpen}
+        onOpenChange={setUncertainDiscardOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Discard uncertain defaults draft?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              The earlier defaults change may have completed. Review the current
+              settings and your saved values before starting a new draft.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="min-h-11">
+              Keep reviewing
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              className="min-h-11"
+              onClick={discardUncertainDefaultsDraft}
+            >
+              Discard locked draft
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

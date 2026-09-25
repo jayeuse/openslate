@@ -101,6 +101,7 @@ export function RolesView({ controller }: RolesViewProps) {
   const [restoredValues, setRestoredValues] = useState<
     AccessRoleDraft["values"] | null
   >(null);
+  const [restoredUncertain, setRestoredUncertain] = useState(false);
   const [journalIssue, setJournalIssue] = useState("");
   const restoredUserId = useRef<string | null>(null);
   const [templateOpen, setTemplateOpen] = useState(false);
@@ -124,6 +125,7 @@ export function RolesView({ controller }: RolesViewProps) {
       setDraftIntent(stored.value.intent);
       setRestoredValues(stored.value.values);
     }
+    setRestoredUncertain(stored.status === "uncertain");
     if (stored.status === "unavailable")
       setJournalIssue(
         "Browser draft storage is unavailable. Role changes may not survive reload.",
@@ -207,18 +209,21 @@ export function RolesView({ controller }: RolesViewProps) {
   }
 
   function editRole(role: Role) {
+    if (restoredUncertain) return;
     setRestoredValues(null);
     setDraftIntent("edit");
     setDraft({ ...role, grants: [...role.grants] });
   }
 
   function createRoleFromTemplate(template: Role) {
+    if (restoredUncertain) return;
     setRestoredValues(null);
     setDraftIntent("create");
     setDraft(template);
   }
 
   function startCreateRole() {
+    if (restoredUncertain) return;
     if (controller.state.templates.length) {
       setTemplateOpen(true);
       return;
@@ -369,7 +374,7 @@ export function RolesView({ controller }: RolesViewProps) {
           ) : null}
           <Button
             className="min-h-11"
-            disabled={controller.isPending()}
+            disabled={controller.isPending() || restoredUncertain}
             onClick={startCreateRole}
           >
             <Plus data-icon="inline-start" />
@@ -525,7 +530,7 @@ export function RolesView({ controller }: RolesViewProps) {
           <EmptyContent>
             <Button
               className="min-h-11"
-              disabled={controller.isPending()}
+              disabled={controller.isPending() || restoredUncertain}
               onClick={startCreateRole}
             >
               Create role
@@ -715,9 +720,11 @@ export function RolesView({ controller }: RolesViewProps) {
         draft={draft}
         intent={draftIntent}
         restoredValues={restoredValues}
+        restoredUncertain={restoredUncertain}
         onClose={() => {
           setDraft(null);
           setRestoredValues(null);
+          setRestoredUncertain(false);
         }}
       />
     </section>

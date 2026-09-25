@@ -282,6 +282,33 @@ def test_built_in_role_cannot_be_renamed() -> None:
     db.commit.assert_not_called()
 
 
+@pytest.mark.parametrize("builtin_role", [UserRole.ADMIN, UserRole.MEMBER])
+@pytest.mark.parametrize(
+    "patch",
+    [
+        pytest.param({"role": "renamed"}, id="name"),
+        pytest.param({"description": "Changed description"}, id="description"),
+        pytest.param({"permissions": {"records.read": False}}, id="permissions"),
+    ],
+)
+def test_every_builtin_role_patch_is_rejected_without_changes(
+    builtin_role: UserRole, patch: dict[str, object]
+) -> None:
+    admin_role = _role(UserRole.ADMIN)
+    admin = _user(admin_role)
+    target = admin_role if builtin_role is UserRole.ADMIN else _role(UserRole.MEMBER)
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [admin_role, admin, target]
+    before = (target.role, target.description, dict(target.permissions))
+
+    with pytest.raises(HTTPException) as error:
+        update_role(target.id, RoleUpdate(**patch), admin, db)
+
+    assert error.value.status_code == 403
+    assert (target.role, target.description, dict(target.permissions)) == before
+    db.commit.assert_not_called()
+
+
 def test_empty_user_or_role_patch_is_rejected_before_database_work() -> None:
     db = Mock(spec=Session)
 

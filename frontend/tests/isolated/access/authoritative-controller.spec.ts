@@ -15,6 +15,7 @@ import type { AuthoritativeAccessSnapshot } from "../../../src/components/system
 import type {
   AccessCheckRequest,
   AccessCheckResponse,
+  AccessCapabilityId,
 } from "../../../src/components/systems/access/state/api";
 
 const ids = {
@@ -22,6 +23,7 @@ const ids = {
   role: "00000000-0000-4000-8000-000000000002",
   group: "00000000-0000-4000-8000-000000000003",
   service: "00000000-0000-4000-8000-000000000004",
+  adminRole: "00000000-0000-4000-8000-000000000005",
 };
 const timestamp = "2026-09-23T00:00:00Z";
 
@@ -249,6 +251,76 @@ test("keeps API capability IDs in roles and gives controls authoritative labels"
       product: "Sandbox/core",
     },
   ]);
+});
+
+test("duplicating Administrator copies its effective grants into a custom role", async () => {
+  const current = snapshot();
+  const effectivePermissions = {
+    "departments.read": true,
+    "departments.write": true,
+    "modules.read": true,
+    "modules.write": true,
+    "fields.read": true,
+    "fields.write": true,
+    "records.read": true,
+    "records.write": true,
+    "relationships.read": true,
+    "relationships.write": true,
+  };
+  const effectiveGrants = Object.keys(
+    effectivePermissions,
+  ) as AccessCapabilityId[];
+  current.capabilities = effectiveGrants.map((id) => ({
+    id,
+    label: `Capability ${id}`,
+    description: `Access to ${id}.`,
+    group: "Access",
+  }));
+  current.snapshot.roles.push({
+    id: ids.adminRole,
+    name: "admin",
+    description: "Protected administration.",
+    builtin: true,
+    grants: effectiveGrants,
+  });
+  const administrator = {
+    id: ids.adminRole,
+    role: "admin",
+    description: "Protected administration.",
+    permissions: {},
+    created_at: timestamp,
+    updated_at: timestamp,
+    deleted_at: null,
+    is_deleted: false,
+    performed_by: null,
+  };
+  const created: Parameters<
+    AuthoritativeAccessCommandAdapters["createRole"]
+  >[0][] = [];
+
+  const result = await executeAuthoritativeAccessCommand(
+    current,
+    { type: "duplicate-role", roleId: ids.adminRole },
+    adapters({
+      getRole: async () => administrator,
+      createRole: async (request) => {
+        created.push(request);
+        return {
+          ...administrator,
+          role: request.role,
+          permissions: request.permissions ?? {},
+        };
+      },
+    }),
+  );
+
+  expect(result).toEqual({ ok: true, summary: "Role duplicated." });
+  expect(created).toHaveLength(1);
+  expect(created[0]).toMatchObject({
+    role: "admin copy",
+    description: "Protected administration.",
+  });
+  expect(created[0]?.permissions).toEqual(effectivePermissions);
 });
 
 test("uses the authoritative administrator role and paginates sessions only on demand", async () => {

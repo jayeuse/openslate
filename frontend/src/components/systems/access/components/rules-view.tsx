@@ -46,7 +46,11 @@ import {
 import type { AccessController } from "../state/controller";
 import { useAccessDraftRegistration } from "../state/draft-navigation";
 import {
+  accessDraftSubmissionNeedsReload,
+  beginAccessRulesDraftSubmission,
   clearAccessRulesDraft,
+  completeAccessRulesDraftSubmission,
+  discardUncertainAccessRulesDraft,
   readAccessRulesDraft,
   writeAccessRulesDraft,
 } from "../state/draft-journal";
@@ -210,12 +214,7 @@ function RuleControls({
         value={[rule.decision]}
         onValueChange={(values) => {
           const decision = values[0] as AccessDecision | undefined;
-          if (decision)
-            onChange({
-              ...rule,
-              decision,
-              locked: decision === "inherit" ? false : rule.locked,
-            });
+          if (decision) onChange({ ...rule, decision });
         }}
         variant="outline"
         spacing={0}
@@ -305,6 +304,8 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   );
   const [journalReady, setJournalReady] = useState(false);
   const [journalIssue, setJournalIssue] = useState("");
+  const [uncertainDraft, setUncertainDraft] = useState(false);
+  const [uncertainDiscardOpen, setUncertainDiscardOpen] = useState(false);
   const [conflictResolutions, setConflictResolutions] = useState<
     Record<string, ConflictResolution>
   >({});
@@ -319,6 +320,8 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   );
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const recoveryNeedsReload =
+    uncertainDraft && accessDraftSubmissionNeedsReload(userId, "rules");
 
   useEffect(() => {
     const stored = readAccessRulesDraft(userId);
@@ -330,7 +333,12 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
       setDrafts(restoredDrafts);
       setBaselines(stored.value.baselines);
     }
-    if (stored.status === "unavailable")
+    if (stored.status === "uncertain") {
+      setUncertainDraft(true);
+      setJournalIssue(
+        "This Rules change may have completed. Review the current policy and the saved choices before discarding this locked draft.",
+      );
+    } else if (stored.status === "unavailable")
       setJournalIssue(
         "Browser draft storage is unavailable. Keep this tab open and save your Rules changes; they may not survive reload.",
       );
@@ -342,12 +350,23 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   }, [userId]);
 
   function clearDraftState(): boolean {
+    if (uncertainDraft) {
+      setJournalIssue(
+        "This Rules change may have completed. Review the current policy before discarding this locked draft.",
+      );
+      return false;
+    }
     if (!clearAccessRulesDraft(userId)) {
       setJournalIssue(
         "The browser could not clear your saved Rules draft. Keep editing or clear this site's browser data before leaving.",
       );
       return false;
     }
+    resetDraftState();
+    return true;
+  }
+
+  function resetDraftState() {
     setDrafts({});
     setBaselines({});
     setConflictResolutions({});
@@ -356,7 +375,36 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
     setImpactOpen(false);
     setConfirmOpen(false);
     setJournalIssue("");
-    return true;
+    setUncertainDiscardOpen(false);
+  }
+
+  function discardUncertainDraft() {
+    if (accessDraftSubmissionNeedsReload(userId, "rules")) {
+      setUncertainDiscardOpen(false);
+      setJournalIssue(
+        "Reload Access and review current policy before discarding this uncertain Rules draft.",
+      );
+      return;
+    }
+    if (
+      controller.resource.status !== "ready" ||
+      controller.resource.refreshing ||
+      controller.resource.error
+    ) {
+      setJournalIssue(
+        "Refresh Access successfully before discarding this uncertain Rules draft.",
+      );
+      return;
+    }
+    if (!discardUncertainAccessRulesDraft(userId)) {
+      setUncertainDiscardOpen(false);
+      setJournalIssue(
+        "The browser could not clear the uncertain Rules draft. It remains locked; try again when browser storage works.",
+      );
+      return;
+    }
+    setUncertainDraft(false);
+    resetDraftState();
   }
 
   const selectedRules = state.rules.filter(
@@ -372,7 +420,11 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
     return !current || !sameRule(current, rule);
   });
   const dirty = pending.length > 0;
-  useAccessDraftRegistration("rules-view", dirty, clearDraftState);
+  useAccessDraftRegistration(
+    "rules-view",
+    dirty || uncertainDraft,
+    clearDraftState,
+  );
   const conflicts = pending.filter((rule) => {
     if (!Object.hasOwn(baselines, rule.permissionId)) return false;
     const baseline = baselines[rule.permissionId];
@@ -487,6 +539,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   }
 
   function stage(rule: AccessRule) {
+    if (uncertainDraft) return;
     const nextBaselines = Object.hasOwn(baselines, rule.permissionId)
       ? { ...baselines }
       : {
@@ -537,6 +590,12 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   }
 
   async function applyChanges() {
+    if (uncertainDraft) {
+      setError(
+        "Review the uncertain Rules change before starting another one.",
+      );
+      return;
+    }
     if (targetMissing) {
       setError(
         "This Rules draft refers to a person, group, role, area, or permission that is no longer available. Discard it and start again.",
@@ -550,24 +609,51 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
       return;
     }
     if (rulesToApply.length) {
+      if (
+        !beginAccessRulesDraftSubmission(userId, {
+          selection,
+          drafts: Object.values(drafts),
+          baselines,
+        })
+      ) {
+        setError(
+          "The browser could not protect your Rules draft before saving. No policy request was sent; check browser storage and try again.",
+        );
+        setImpactOpen(false);
+        setConfirmOpen(false);
+        return;
+      }
+      setUncertainDraft(true);
       const result = await actions.upsertRules(rulesToApply);
       if (!result.ok) {
         setError(result.error);
+        setJournalIssue(
+          "This Rules change may have completed. Review the current policy before discarding this locked draft.",
+        );
+        setImpactOpen(false);
+        setConfirmOpen(false);
         return;
       }
-    }
-    setImpactOpen(false);
-    setConfirmOpen(false);
-    if (!clearDraftState()) {
+      if (!completeAccessRulesDraftSubmission(userId)) {
+        setImpactOpen(false);
+        setConfirmOpen(false);
+        setJournalIssue(
+          "The policy change was applied, but browser cleanup failed. This Rules draft remains locked until you review current policy and discard it.",
+        );
+        return;
+      }
+      setUncertainDraft(false);
+      resetDraftState();
       setNotice(
-        "The policy change was applied, but this browser could not clear its saved draft.",
+        `${rulesToApply.length} policy change${rulesToApply.length === 1 ? "" : "s"} applied.`,
       );
       return;
     }
+    setImpactOpen(false);
+    setConfirmOpen(false);
+    if (!clearDraftState()) return;
     setNotice(
-      rulesToApply.length
-        ? `${rulesToApply.length} policy change${rulesToApply.length === 1 ? "" : "s"} applied.`
-        : "Current policy was kept for every conflict; no draft rules were applied.",
+      "Current policy was kept for every conflict; no draft rules were applied.",
     );
   }
 
@@ -628,6 +714,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
       <fieldset
         disabled={
           !journalReady ||
+          uncertainDraft ||
           controller.isPending() ||
           !controller.availability.rules
         }
@@ -646,9 +733,11 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
         {notice ? <Alert variant="success">{notice}</Alert> : null}
         <Alert>
           Workspace-wide rules apply to Sandbox data and related files and
-          automations. Rules for individual departments are not active yet.
-          These rules do not change access in OpenView, Boards, or OpenComms.
-          Service identities can store intended rules but cannot sign in yet.
+          automations, including Record values queried through OpenView or
+          Boards and delivered in Report output. Rules for individual
+          departments are not active yet. Board grants and content audiences
+          remain separate. Service identities can store intended rules but
+          cannot sign in yet.
         </Alert>
         {error ? (
           <Alert role="alert" variant="destructive">
@@ -1175,6 +1264,102 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
           </AlertDialogContent>
         </AlertDialog>
       </fieldset>
+      {uncertainDraft ? (
+        <Card>
+          <CardContent className="space-y-3 p-3">
+            <h3 className="font-semibold">
+              Current policy and saved Rules choices
+            </h3>
+            <p className="text-muted-foreground text-sm">
+              {recoveryNeedsReload
+                ? "Reload Access to compare against the latest policy."
+                : "Current policy was loaded from Access."}{" "}
+              The saved choices have not been submitted again.
+            </p>
+            <ul className="max-h-64 space-y-2 overflow-y-auto">
+              {Object.values(drafts).map((rule) => {
+                const current = baseByPermission.get(rule.permissionId);
+                const permission = permissionCatalog.find(
+                  (item) => item.id === rule.permissionId,
+                );
+                return (
+                  <li
+                    key={rule.permissionId}
+                    className="rounded-md border p-2 text-sm"
+                  >
+                    <p className="font-medium">
+                      {permission?.name ?? rule.permissionId}
+                    </p>
+                    <p>Current: {current?.decision ?? "inherit"}</p>
+                    <p>Saved: {rule.decision}</p>
+                    <p className="text-muted-foreground">
+                      Current scope lock: {current?.locked ? "On" : "Off"}.
+                      Current window: {current?.startsAt ?? "Any start"} to{" "}
+                      {current?.endsAt ?? "Any end"}.
+                    </p>
+                    <p className="text-muted-foreground">
+                      Saved scope lock: {rule.locked ? "On" : "Off"}. Saved
+                      window: {rule.startsAt ?? "Any start"} to{" "}
+                      {rule.endsAt ?? "Any end"}.
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
+      {uncertainDraft ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 self-start"
+          disabled={
+            recoveryNeedsReload ||
+            controller.resource.status !== "ready" ||
+            controller.resource.refreshing ||
+            Boolean(controller.resource.error)
+          }
+          onClick={() => setUncertainDiscardOpen(true)}
+        >
+          Review and discard locked Rules draft
+        </Button>
+      ) : null}
+      {recoveryNeedsReload ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 self-start"
+          onClick={() => window.location.reload()}
+        >
+          Reload Access before recovery
+        </Button>
+      ) : null}
+      <AlertDialog
+        open={uncertainDiscardOpen}
+        onOpenChange={setUncertainDiscardOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogTitle>Discard uncertain Rules draft?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The earlier policy change may have completed. Review the current
+            policy and your saved choices before starting a new draft.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="min-h-11">
+              Keep reviewing
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              className="min-h-11"
+              onClick={discardUncertainDraft}
+            >
+              Discard locked draft
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

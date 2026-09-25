@@ -132,7 +132,7 @@ def update_role(
     _require_role_patch(payload)
     require_fresh_exact_admin(db, admin.id)
     role = lock_active_role(db, role_id)
-    if is_built_in(role) and "role" in payload.model_fields_set:
+    if is_built_in(role):
         raise forbidden("Built-in roles are protected")
     if payload.role in BUILT_IN_ROLES:
         raise conflict("Built-in roles are protected")

@@ -100,7 +100,7 @@ test("Access explains where its detailed rules currently apply", async ({
   ).toBeVisible();
   await expect(
     page.getByText(
-      "These rules do not change access in OpenView, Boards, or OpenComms.",
+      /Workspace-wide rules apply to Sandbox data and related files and automations, including Record values queried through OpenView or Boards and delivered in Report output\./,
     ),
   ).toBeVisible();
 

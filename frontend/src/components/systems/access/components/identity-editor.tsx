@@ -70,7 +70,11 @@ import type {
 } from "../state/controller";
 import { useAccessDraftRegistration } from "../state/draft-navigation";
 import {
+  accessDraftSubmissionNeedsReload,
+  beginAccessIdentityDraftSubmission,
   clearAccessIdentityDraft,
+  completeAccessIdentityDraftSubmission,
+  discardUncertainAccessIdentityDraft,
   editableAccessIdentity,
   readAccessIdentityDraft,
   writeAccessIdentityDraft,
@@ -283,6 +287,102 @@ const fieldLabels: Record<EditableField, string> = {
   purpose: "Purpose",
 };
 
+function comparisonFields(kind: AccessIdentity["kind"]): EditableField[] {
+  const common: EditableField[] = [
+    "name",
+    "status",
+    "roleId",
+    "groupIds",
+    "expiresAt",
+  ];
+  if (kind === "internal")
+    return [
+      ...common,
+      "email",
+      "departmentIds",
+      "primaryDepartmentId",
+      "title",
+    ];
+  if (kind === "guest") return [...common, "email", "sponsorId"];
+  return [...common, "ownerId", "purpose"];
+}
+
+function comparisonValue(
+  identity: AccessIdentity | null,
+  field: EditableField,
+  controller: AccessController,
+): string {
+  if (!identity) return "No matching identity";
+  const roleName = (id: string) =>
+    controller.state.roles.find((role) => role.id === id)?.name ?? id;
+  const groupName = (id: string) =>
+    controller.state.groups.find((group) => group.id === id)?.name ?? id;
+  const departmentName = (id: string) => {
+    const active = controller.departmentCatalog.find(
+      (department) => department.id === id,
+    );
+    if (active) return active.name;
+    for (const person of controller.state.people) {
+      const index = person.departmentIds?.indexOf(id) ?? -1;
+      if (index >= 0) return person.departments[index] ?? id;
+    }
+    return id;
+  };
+  const identityName = (id: string) =>
+    [
+      ...controller.state.identities,
+      ...controller.state.deletedIdentities.map((item) => item.identity),
+    ].find((item) => item.id === id)?.name ?? id;
+  const list = (values: string[]) => values.join(", ") || "None";
+
+  switch (field) {
+    case "name":
+      return identity.name || "None";
+    case "status":
+      return statusLabels[identity.status];
+    case "roleId":
+      return roleName(identity.roleId);
+    case "groupIds":
+      return list(identity.groupIds.map(groupName));
+    case "expiresAt":
+      return identity.expiresAt
+        ? new Date(identity.expiresAt).toLocaleString()
+        : "None";
+    case "email":
+      return identity.kind === "service" ? "Not applicable" : identity.email;
+    case "departmentIds":
+      return identity.kind === "internal"
+        ? list(identity.departmentIds.map(departmentName))
+        : "Not applicable";
+    case "primaryDepartmentId":
+      return identity.kind === "internal"
+        ? identity.primaryDepartmentId
+          ? departmentName(identity.primaryDepartmentId)
+          : "None"
+        : "Not applicable";
+    case "title":
+      return identity.kind === "internal"
+        ? identity.title || "None"
+        : "Not applicable";
+    case "sponsorId":
+      return identity.kind === "guest"
+        ? identity.sponsorId
+          ? identityName(identity.sponsorId)
+          : "None"
+        : "Not applicable";
+    case "ownerId":
+      return identity.kind === "service"
+        ? identity.ownerId
+          ? identityName(identity.ownerId)
+          : "None"
+        : "Not applicable";
+    case "purpose":
+      return identity.kind === "service"
+        ? identity.purpose || "None"
+        : "Not applicable";
+  }
+}
+
 const reviewedActionLabels: Record<ReviewedAction["type"], string> = {
   enable: "Enable identity",
   disable: "Disable identity",
@@ -419,7 +519,8 @@ export function IdentityEditor({
   const [baseline, setBaseline] = useState<AccessIdentity | null>(null);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [journalIssue, setJournalIssue] = useState("");
-  const [savedButUncleared, setSavedButUncleared] = useState(false);
+  const [uncertain, setUncertain] = useState(false);
+  const [confirmUncertainDiscard, setConfirmUncertainDiscard] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmationMode, setConfirmationMode] =
@@ -466,8 +567,10 @@ export function IdentityEditor({
     setDraft(next);
     setBaseline(restored?.baseline ?? (next ? copyIdentity(next) : null));
     setLoadedKey(effectiveKey);
-    setSavedButUncleared(false);
-    if (stored.status === "unavailable")
+    setUncertain(stored.status === "uncertain");
+    setConfirmUncertainDiscard(false);
+    if (stored.status === "uncertain") setJournalIssue("");
+    else if (stored.status === "unavailable")
       setJournalIssue(
         "Browser draft storage is unavailable. Identity changes may not survive reload.",
       );
@@ -487,21 +590,87 @@ export function IdentityEditor({
 
   const dirty =
     draft !== null && baseline !== null && !sameValue(draft, baseline);
-  function closeEditor(): boolean {
-    if (!clearAccessIdentityDraft(userId)) {
-      setJournalIssue(
-        "The browser could not clear your saved identity draft. Keep editing or clear this site's browser data.",
-      );
-      return false;
-    }
+  const freshAccessState =
+    controller.resource.status === "ready" &&
+    controller.resource.error === null &&
+    !controller.resource.refreshing;
+  const needsReload =
+    uncertain && accessDraftSubmissionNeedsReload(userId, "identity");
+  const comparisonFresh = freshAccessState && !needsReload;
+  const currentMatches = draft
+    ? draft.id !== "draft"
+      ? [
+          ...controller.state.identities,
+          ...controller.state.deletedIdentities.map((item) => item.identity),
+        ].filter((identity) => identity.id === draft.id)
+      : controller.state.identities.filter(
+          (identity) =>
+            identity.kind === draft.kind &&
+            (identity.kind === "service" && draft.kind === "service"
+              ? identity.name === draft.name &&
+                identity.ownerId === draft.ownerId
+              : (identity.kind === "internal" || identity.kind === "guest") &&
+                (draft.kind === "internal" || draft.kind === "guest") &&
+                identity.email.toLowerCase() === draft.email.toLowerCase()),
+        )
+    : [];
+  function closeAfterClearing() {
+    setConfirmUncertainDiscard(false);
+    setUncertain(false);
+    setJournalIssue("");
     setConfirmClose(false);
+    setConfirmationMode(null);
+    setConfirmationName("");
+    setPendingReview(null);
+    setPendingPatch(null);
+    setPendingCreateIdentity(null);
+    setPendingDestructiveAction(null);
     setDraft(null);
     setBaseline(null);
     setLoadedKey(null);
     onOpenChange(false);
+  }
+
+  function closeEditor(): boolean {
+    if (uncertain || !clearAccessIdentityDraft(userId)) {
+      setJournalIssue(
+        uncertain
+          ? "Review the current Access state before discarding this uncertain identity change."
+          : "The browser could not clear your saved identity draft. Keep editing or clear this site's browser data.",
+      );
+      return false;
+    }
+    closeAfterClearing();
     return true;
   }
-  useAccessDraftRegistration("identity-editor", open && dirty, closeEditor);
+  useAccessDraftRegistration(
+    "identity-editor",
+    open && dirty && !uncertain,
+    closeEditor,
+  );
+
+  function completeSubmission(): boolean {
+    if (!completeAccessIdentityDraftSubmission(userId)) {
+      setJournalIssue(
+        "The browser could not clear the saved identity change. Review the current Access state, then discard it when browser storage works again.",
+      );
+      return false;
+    }
+    closeAfterClearing();
+    return true;
+  }
+
+  function discardUncertainDraft() {
+    if (needsReload || !freshAccessState) return;
+    if (!discardUncertainAccessIdentityDraft(userId)) {
+      setJournalIssue(
+        "The browser could not discard this uncertain identity change. It remains locked; try again when browser storage works.",
+      );
+      setConfirmUncertainDiscard(false);
+      return;
+    }
+    closeAfterClearing();
+  }
   const targetMissing =
     (identityId !== null && !existing) ||
     (draft !== null &&
@@ -586,6 +755,12 @@ export function IdentityEditor({
       );
       return;
     }
+    if (uncertain) {
+      setJournalIssue(
+        "Review the current Access state, then discard this uncertain identity change to continue.",
+      );
+      return;
+    }
     if (dirty) {
       setConfirmClose(true);
       return;
@@ -594,7 +769,7 @@ export function IdentityEditor({
   }
 
   function update(patch: Partial<AccessIdentity>) {
-    if (!draft || !baseline) return;
+    if (!draft || !baseline || uncertain) return;
     const next = { ...draft, ...patch } as AccessIdentity;
     const changed = !sameValue(
       editableAccessIdentity(next),
@@ -638,6 +813,33 @@ export function IdentityEditor({
     return true;
   }
 
+  async function submitDraftMutation(
+    action: () => Promise<ControllerMutationResult>,
+  ) {
+    if (!draft || !baseline || uncertain) return;
+    if (
+      !beginAccessIdentityDraftSubmission(userId, {
+        mode: identityId === null ? "create" : "edit",
+        baseline,
+        draft,
+      })
+    ) {
+      setPendingReview(null);
+      setConfirmationMode(null);
+      if (readAccessIdentityDraft(userId).status === "uncertain")
+        setUncertain(true);
+      showError(
+        "The browser cannot safely submit this identity change because it could not save its safety state. Try again when browser draft storage works.",
+      );
+      return;
+    }
+    setUncertain(true);
+    setPendingReview(null);
+    setConfirmationMode(null);
+    const accepted = await report(action());
+    if (accepted) completeSubmission();
+  }
+
   function stageUpdate(patch: UpdateIdentityPatch) {
     if (!existing) return;
     setPendingReview({
@@ -650,9 +852,9 @@ export function IdentityEditor({
 
   function persist() {
     if (!draft) return;
-    if (savedButUncleared) {
+    if (uncertain) {
       showError(
-        "This change was already applied. Clear the saved browser draft before editing again.",
+        "This identity change may have completed. Review the current Access state before discarding the saved draft.",
       );
       return;
     }
@@ -735,7 +937,7 @@ export function IdentityEditor({
   }
 
   async function confirmReview() {
-    if (!pendingReview) return;
+    if (!pendingReview || uncertain) return;
     if (controller.isPending()) {
       showError(
         "Another Access change is already in progress. Try again shortly.",
@@ -779,15 +981,11 @@ export function IdentityEditor({
         setConfirmationName("");
         return;
       }
-      const accepted = await report(
+      await submitDraftMutation(() =>
         controller.actions.createIdentity(
           identityToCreateInput(pendingReview.identity),
         ),
       );
-      if (accepted) {
-        setPendingReview(null);
-        if (!closeEditor()) setSavedButUncleared(true);
-      }
       return;
     }
     const changesAdministratorAccess =
@@ -802,20 +1000,16 @@ export function IdentityEditor({
       setConfirmationName("");
       return;
     }
-    if (
-      await report(
-        controller.actions.updateIdentity(
-          pendingReview.before.id,
-          pendingReview.patch,
-        ),
-      )
-    ) {
-      setPendingReview(null);
-      if (!closeEditor()) setSavedButUncleared(true);
-    }
+    await submitDraftMutation(() =>
+      controller.actions.updateIdentity(
+        pendingReview.before.id,
+        pendingReview.patch,
+      ),
+    );
   }
 
   async function confirmSensitiveAction() {
+    if (uncertain) return;
     const confirmationTarget = existing ?? pendingCreateIdentity;
     if (!confirmationTarget || confirmationName !== confirmationTarget.name)
       return;
@@ -826,7 +1020,7 @@ export function IdentityEditor({
       return;
     }
     if (confirmationMode === "admin-change") {
-      const accepted = await report(
+      await submitDraftMutation(() =>
         pendingCreateIdentity
           ? controller.actions.createIdentity(
               identityToCreateInput(pendingCreateIdentity),
@@ -836,29 +1030,18 @@ export function IdentityEditor({
               pendingPatch ?? {},
             ),
       );
-      if (accepted) {
-        setConfirmationMode(null);
-        setPendingCreateIdentity(null);
-        setPendingPatch(null);
-        if (!closeEditor()) setSavedButUncleared(true);
-      }
       return;
     }
     if (!existing) return;
-    const result =
+    await submitDraftMutation(() =>
       pendingDestructiveAction?.type === "disable"
         ? controller.actions.disableIdentity(existing.id)
         : pendingDestructiveAction?.type === "enable"
           ? controller.actions.setIdentityStatus(existing.id, "active")
           : pendingDestructiveAction?.type === "revoke-invite"
             ? controller.actions.revokeInvite(existing.id)
-            : controller.actions.deleteIdentity(existing.id);
-    if (await report(result)) {
-      setConfirmationMode(null);
-      setConfirmationName("");
-      setPendingDestructiveAction(null);
-      if (!closeEditor()) setSavedButUncleared(true);
-    }
+            : controller.actions.deleteIdentity(existing.id),
+    );
   }
 
   function disableExistingIdentity() {
@@ -936,10 +1119,127 @@ export function IdentityEditor({
           </SheetHeader>
 
           <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
-            <fieldset
-              disabled={pending || savedButUncleared}
-              className="contents"
-            >
+            {uncertain && (
+              <div className="mx-5 mt-4 max-h-[55vh] space-y-3 overflow-y-auto overscroll-contain">
+                <Alert role="alert" variant="warning">
+                  <p className="font-medium">
+                    This identity change may have completed.
+                  </p>
+                  <p className="mt-1">
+                    {needsReload
+                      ? "Reload Access before reviewing the current state and discarding this saved draft."
+                      : freshAccessState
+                        ? "Compare the saved values below with the current Access state. Editing and submission are locked until you discard this saved draft."
+                        : "Access has not finished a fresh read. Retry the refresh before discarding this saved draft."}
+                  </p>
+                </Alert>
+                <section
+                  aria-label="Identity recovery comparison"
+                  className="rounded-md border p-3 text-sm"
+                >
+                  <p className="font-medium">
+                    {comparisonFresh
+                      ? "Current Access directory"
+                      : "Last available Access directory"}
+                  </p>
+                  {currentMatches.length > 1 && (
+                    <p className="mt-1">
+                      Several possible matches are visible. Compare each entry
+                      before discarding the saved draft.
+                    </p>
+                  )}
+                  {(currentMatches.length ? currentMatches : [null]).map(
+                    (current, index) => (
+                      <div key={current?.id ?? "no-match"} className="mt-2">
+                        {currentMatches.length > 1 && (
+                          <p className="font-medium">
+                            Possible match {index + 1}: {current?.name}
+                          </p>
+                        )}
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[27rem] border-collapse text-left text-xs">
+                            <caption className="sr-only">
+                              Saved and current identity values
+                            </caption>
+                            <thead>
+                              <tr className="border-b">
+                                <th scope="col" className="py-2 pr-2">
+                                  Field
+                                </th>
+                                <th scope="col" className="px-2 py-2">
+                                  Saved draft
+                                </th>
+                                <th scope="col" className="py-2 pl-2">
+                                  {comparisonFresh
+                                    ? "Current Access"
+                                    : "Last available Access"}
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {comparisonFields(draft.kind).map((field) => (
+                                <tr
+                                  key={field}
+                                  className="border-b last:border-0"
+                                >
+                                  <th
+                                    scope="row"
+                                    className="py-2 pr-2 align-top font-medium"
+                                  >
+                                    {fieldLabels[field]}
+                                  </th>
+                                  <td className="px-2 py-2 align-top break-words">
+                                    {comparisonValue(draft, field, controller)}
+                                  </td>
+                                  <td className="py-2 pl-2 align-top break-words">
+                                    {comparisonValue(
+                                      current,
+                                      field,
+                                      controller,
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ),
+                  )}
+                </section>
+                {needsReload ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-3 min-h-11"
+                    onClick={() => window.location.reload()}
+                  >
+                    Reload Access
+                  </Button>
+                ) : !freshAccessState ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-3 min-h-11"
+                    disabled={pending || controller.resource.refreshing}
+                    onClick={() => void controller.resource.reload()}
+                  >
+                    Retry Access refresh
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-3 min-h-11"
+                    disabled={pending || !freshAccessState}
+                    onClick={() => setConfirmUncertainDiscard(true)}
+                  >
+                    Discard saved draft
+                  </Button>
+                )}
+              </div>
+            )}
+            <fieldset disabled={pending || uncertain} className="contents">
               <div className="flex-1 space-y-6 overflow-y-auto p-5">
                 {journalIssue ? (
                   <Alert role="alert" variant="warning">
@@ -1516,7 +1816,7 @@ export function IdentityEditor({
                 <Button
                   type="submit"
                   className="min-h-11"
-                  disabled={pending || savedButUncleared || targetMissing}
+                  disabled={pending || uncertain || targetMissing}
                 >
                   {identityId ? "Save changes" : "Add identity"}
                 </Button>
@@ -1525,6 +1825,38 @@ export function IdentityEditor({
           </form>
         </SheetContent>
       </Sheet>
+
+      <AlertDialog
+        open={confirmUncertainDiscard}
+        onOpenChange={setConfirmUncertainDiscard}
+      >
+        <AlertDialogContent>
+          <AlertDialogTitle>
+            Discard uncertain identity change?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            The earlier change may have completed. Review the current Access
+            state before discarding these saved values. Discarding starts a new
+            draft; it does not undo a server change.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              render={<Button variant="outline" className="min-h-11" />}
+            >
+              Keep reviewing
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              className="min-h-11"
+              disabled={pending || needsReload || !freshAccessState}
+              onClick={discardUncertainDraft}
+            >
+              Discard saved draft
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog
         open={pendingReview !== null}

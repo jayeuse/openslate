@@ -1284,15 +1284,26 @@ export async function executeAuthoritativeAccessCommand(
       return accepted("Role updated.");
     }
     case "duplicate-role": {
-      if (!current.snapshot.roles.some((role) => role.id === command.roleId))
+      const displayedRole = current.snapshot.roles.find(
+        (role) => role.id === command.roleId,
+      );
+      if (!displayedRole)
         return rejected(
           "This role is unavailable. Reload Access and try again.",
         );
       const source = await adapters.getRole(command.roleId, { signal });
+      const permissions =
+        displayedRole.builtin && displayedRole.name === "admin"
+          ? capabilityPermissions(displayedRole.grants)
+          : source.permissions;
+      if (!permissions)
+        return rejected(
+          "This role includes permissions that the server does not support.",
+        );
       await adapters.createRole({
         role: command.name ?? `${source.role} copy`,
         ...(source.description ? { description: source.description } : {}),
-        permissions: source.permissions,
+        permissions,
         signal,
       });
       return accepted("Role duplicated.");
