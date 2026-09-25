@@ -6,10 +6,8 @@ import type { Person } from "../../access/domain/model";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Action, Choice, Panel } from "../../shared/components/ui";
-import type {
-  PlatformCommandResult,
-  PlatformImportRow,
-} from "../adapters/runtime";
+import type { PlatformCommandResult } from "../adapters/runtime";
+import type { PlatformImportRow } from "../domain/model";
 
 const EXAMPLE = [
   { task: "Inspect emergency pump", client: "Riverside Industrial" },

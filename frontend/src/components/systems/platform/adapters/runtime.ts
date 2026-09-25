@@ -12,151 +12,51 @@ import {
   type SampleRecord,
 } from "../../shared/data/sample-data";
 import {
-  MESSAGES,
-  type Message,
   type RecordThread,
   type SampleNotification,
 } from "../../comms/domain/model";
-import {
-  normalizeCommsConfiguration,
-  type CommsConfiguration,
-} from "../../comms/domain/configuration";
+import { normalizeCommsConfiguration } from "../../comms/domain/configuration";
 import { stageRecordDiscussion } from "../../comms/state/runtime";
 import { previewCommsNotification } from "../../comms/domain/notification-policy";
 import {
-  completeCollection,
-  pageCollection,
-  type CompleteCollection,
-  type PageResult,
-} from "../../shared/helpers/sample-collections";
+  INITIAL_PLATFORM_ACCOUNT,
+  INITIAL_PLATFORM_PREFERENCES,
+  INITIAL_PLATFORM_SESSIONS,
+  type PlatformAccount,
+  type PlatformNotificationPreferences,
+  type PlatformSession,
+  type PlatformImportRow,
+} from "../domain/model";
+import {
+  completePlatformExport,
+  normalizePlatformImportRows,
+} from "../domain/records";
 
-export type PlatformNotificationPreferences = {
-  threads: boolean;
-  records: boolean;
-  digest: boolean;
-};
-
-export const INITIAL_PLATFORM_PREFERENCES: PlatformNotificationPreferences = {
-  threads: true,
-  records: true,
-  digest: false,
-};
-
-export type PlatformAccount = {
-  language: string;
-  theme: string;
-  presence: string;
-  passwordChanged: boolean;
-  signedOut: boolean;
-};
-
-export const INITIAL_PLATFORM_ACCOUNT: PlatformAccount = {
-  language: "English",
-  theme: "Light",
-  presence: "Available",
-  passwordChanged: false,
-  signedOut: false,
-};
-
-export type PlatformSession = {
-  id: string;
-  device: string;
-  current: boolean;
-};
-
-export const INITIAL_PLATFORM_SESSIONS: PlatformSession[] = [
-  { id: "sample-current", device: "This browser", current: true },
-  { id: "sample-tablet", device: "Workshop tablet", current: false },
-];
-
-export const PLATFORM_FILES = [
-  {
-    id: "sample-file-checklist",
-    name: "Inspection checklist.pdf",
-    recordId: "sample-sr-1004",
-    type: "PDF",
-    size: "142 KB",
-  },
-  {
-    id: "sample-file-workshop",
-    name: "Workshop photo.jpg",
-    recordId: "sample-sr-1005",
-    type: "Image",
-    size: "840 KB",
-  },
-  {
-    id: "sample-file-report",
-    name: "Service report.xlsx",
-    recordId: "sample-sr-1006",
-    type: "Spreadsheet",
-    size: "28 KB",
-  },
-] as const;
-
-export type PlatformFile = (typeof PLATFORM_FILES)[number];
-
-export const PLATFORM_OWNER_KEYS = [
-  "access-people",
-  "records",
-  "commsMessages",
-  "comms-configuration",
-  "platformNotifications",
-  "platformNotificationPreferences",
-  "platformFollowedRecords",
-  "commsRecordThreads",
-  "platformAccount",
-  "platformSessions",
-] as const;
-
-export type PlatformReader = <T>(key: string, initial: T) => T;
-
-export type PlatformSnapshot = {
-  people: Person[];
-  records: SampleRecord[];
-  messages: Message[];
-  commsConfiguration: CommsConfiguration;
-  notifications: SampleNotification[];
-  preferences: PlatformNotificationPreferences;
-  followed: string[];
-  recordThreads: RecordThread[];
-  account: PlatformAccount;
-  sessions: PlatformSession[];
-  files: readonly PlatformFile[];
-};
-
-export function readPlatformSnapshot(read: PlatformReader): PlatformSnapshot {
-  return {
-    people: structuredClone(read("access-people", initialPeople)),
-    records: structuredClone(read("records", INITIAL_RECORDS)),
-    messages: structuredClone(read("commsMessages", MESSAGES)),
-    commsConfiguration: normalizeCommsConfiguration(
-      read<unknown>("comms-configuration", null),
-    ),
-    notifications: structuredClone(read("platformNotifications", [])),
-    preferences: structuredClone(
-      read("platformNotificationPreferences", INITIAL_PLATFORM_PREFERENCES),
-    ),
-    followed: structuredClone(read("platformFollowedRecords", [])),
-    recordThreads: structuredClone(read("commsRecordThreads", [])),
-    account: structuredClone(read("platformAccount", INITIAL_PLATFORM_ACCOUNT)),
-    sessions: structuredClone(
-      read("platformSessions", INITIAL_PLATFORM_SESSIONS),
-    ),
-    files: PLATFORM_FILES,
-  };
-}
+export {
+  INITIAL_PLATFORM_ACCOUNT,
+  INITIAL_PLATFORM_PREFERENCES,
+  INITIAL_PLATFORM_SESSIONS,
+  PLATFORM_FILES,
+} from "../domain/model";
+export type {
+  PlatformAccount,
+  PlatformFile,
+  PlatformImportRow,
+  PlatformNotificationPreferences,
+  PlatformSession,
+} from "../domain/model";
+export {
+  completePlatformExport,
+  normalizePlatformImportRows,
+  pagePlatformSearch,
+} from "../domain/records";
+export { PLATFORM_OWNER_KEYS, readPlatformSnapshot } from "./snapshot";
+export type { PlatformReader, PlatformSnapshot } from "./snapshot";
 
 export type PlatformCommandFailure = { ok: false; error: string };
 export type PlatformCommandSuccess<T> = { ok: true; value: T };
 export type PlatformCommandResult<T> =
   PlatformCommandSuccess<T> | PlatformCommandFailure;
-
-export type PlatformImportRow = {
-  title: string;
-  customer: string;
-  assignee: string;
-  dueDate: string;
-};
 
 function reject(draft: SampleTransactionDraft, error: string): never {
   return draft.reject<PlatformCommandFailure>({ ok: false, error });
@@ -164,47 +64,6 @@ function reject(draft: SampleTransactionDraft, error: string): never {
 
 function accepted<T>(value: T): PlatformCommandSuccess<T> {
   return { ok: true, value };
-}
-
-export function normalizePlatformImportRows(
-  rows: readonly PlatformImportRow[],
-) {
-  return rows
-    .map((row) => ({
-      title: row.title.trim(),
-      customer: row.customer.trim(),
-      assignee: row.assignee.trim() || "Unassigned",
-      dueDate: row.dueDate.trim(),
-    }))
-    .filter((row) => row.title.length > 0);
-}
-
-export function pagePlatformSearch<T extends { title: string }>(
-  items: readonly T[],
-  query: string,
-  queryKey: string,
-  limit = 8,
-): { complete: CompleteCollection<T>; page: PageResult<T> } {
-  const normalized = query.trim().toLowerCase();
-  const complete = completeCollection(
-    items
-      .map((item, index) => ({ item, index }))
-      .filter(({ item }) => item.title.toLowerCase().includes(normalized))
-      .sort(
-        (left, right) =>
-          left.item.title.localeCompare(right.item.title) ||
-          left.index - right.index,
-      )
-      .map(({ item }) => item),
-    queryKey,
-  );
-  return { complete, page: pageCollection(complete, 0, limit) };
-}
-
-export function completePlatformExport(
-  records: readonly SampleRecord[],
-): CompleteCollection<SampleRecord> {
-  return completeCollection(records, "platform:records:export");
 }
 
 /**
