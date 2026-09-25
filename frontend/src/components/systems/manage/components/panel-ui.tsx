@@ -1,5 +1,5 @@
 "use client";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CardFooter } from "@/components/ui/card";
@@ -32,21 +32,6 @@ import {
   type ManageSettings,
   type ManageSnapshotDiff,
 } from "../state/state";
-export type ConfirmState = {
-  title: string;
-  description: string;
-  confirmLabel: string;
-  requiresDraftAck?: boolean;
-  body?: ReactNode;
-  action: () => Promise<boolean>;
-};
-
-export type PreviewState = {
-  title: string;
-  description?: string;
-  body?: ReactNode;
-};
-
 export function SettingSelect({
   id,
   label,

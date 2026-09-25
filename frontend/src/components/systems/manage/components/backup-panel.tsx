@@ -53,10 +53,9 @@ import {
   SettingSelect,
   SettingActions,
   SectionHeading,
-  type ConfirmState,
-  type PreviewState,
   type SettingsPanelForm,
 } from "./panel-ui";
+import type { ConfirmState, PreviewState } from "./manage-dialogs";
 type BackupPanelProps = {
   form: SettingsPanelForm;
   panelClass: string;
