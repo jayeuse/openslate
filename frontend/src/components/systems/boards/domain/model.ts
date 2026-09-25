@@ -3,247 +3,48 @@ import {
   OPENVIEW_MODULE_IDS,
   decodeAudienceRef,
   getModuleDefinition,
-  type AudienceRef,
   type FilterClause,
   type FilterGroup,
+  type AudienceRef,
   type OpenViewModuleId,
   type OpenViewWidget,
 } from "../../openview/domain/model";
+import { defaultWidget } from "./defaults";
 
-/**
- * Boards is still a local synthetic sample, but its stored shape is designed
- * around the same stable identifiers and explicit lifecycle fields that the
- * connected screen will eventually consume.
- */
-export const DEFAULT_BOARD_ID = "sample-board-organization";
-export const BOARD_SNAPSHOT_DATE = "2026-09-14";
-export const BOARD_TIMEZONE = "Asia/Manila";
-export const BOARD_DEFAULT_RECURRENCE_END_DATE = "2026-12-31";
-export const BOARD_UNRESOLVED_PREFIX = "unresolved-board:";
+import {
+  DEFAULT_BOARD_ID,
+  BOARD_SNAPSHOT_DATE,
+  BOARD_TIMEZONE,
+  BOARD_DEFAULT_RECURRENCE_END_DATE,
+  BOARD_UNRESOLVED_PREFIX,
+  BOARD_ATTACHMENT_TYPES,
+  BOARD_INPUT_LIMITS,
+} from "./model-types";
+import type {
+  BoardSection,
+  BoardStatus,
+  BoardRecurrence,
+  BoardAnnouncementStatus,
+  BoardAudience,
+  BoardAudienceLookup,
+  BoardWidget,
+  SampleBoard,
+  BoardAttachment,
+  BoardLink,
+  BoardEvent,
+  BoardAnnouncementRevision,
+  BoardAnnouncement,
+  BoardRecordPlacement,
+  BoardReminder,
+  BoardPersonalState,
+  BoardActivityEntry,
+  BoardTemplate,
+  BoardReference,
+  BoardDecodeOptions,
+} from "./model-types";
 
-export const BOARD_SECTIONS = [
-  "overview",
-  "calendar",
-  "announcements",
-] as const;
-export type BoardSection = (typeof BOARD_SECTIONS)[number];
-export type BoardStatus = "active" | "archived";
-export type BoardRecurrence = "none" | "daily" | "weekly" | "monthly";
-export type BoardAnnouncementStatus =
-  "draft" | "published" | "scheduled" | "archived";
-export type BoardCalendarView = "agenda" | "month";
-
-export type BoardAudience = AudienceRef | { kind: "department"; id: string };
-export type BoardAudienceLookup = {
-  roles?: readonly { id: string; name: string }[];
-  identities?: readonly {
-    id: string;
-    name: string;
-    active?: boolean;
-  }[];
-  departments?: readonly { id: string; name: string }[];
-};
-
-export type BoardWidget = OpenViewWidget & {
-  /** Legacy Boards and Access projections still read this alias. */
-  permission: string;
-};
-
-export type Board = {
-  id: string;
-  name: string;
-  description: string;
-  department: string;
-  status: BoardStatus;
-  defaultSection: BoardSection;
-  visibleRoleIds: string[];
-  widgets: BoardWidget[];
-  createdAt: string;
-  updatedAt: string;
-  /** Compatibility aliases for the pre-model Boards and Access screens. */
-  roles?: string[];
-  permission?: string;
-};
-
-/**
- * A fully decoded Board includes the old aliases so legacy Access consumers
- * can continue to inspect a model snapshot during the migration.
- */
-export type SampleBoard = Board & {
-  roles: string[];
-  permission: string;
-};
-
-export type BoardAttachment = {
-  id: string;
-  name: string;
-  size: number;
-  type: string;
-};
-
-export type BoardLink = {
-  id: string;
-  url: string;
-  label: string;
-  recordId?: string;
-};
-
-export type BoardEvent = {
-  id: string;
-  boardId: string;
-  authorId: string;
-  title: string;
-  details: string;
-  location: string;
-  start: string;
-  end: string;
-  allDay: boolean;
-  timezone: string;
-  audience: BoardAudience;
-  recurrence: BoardRecurrence;
-  endDate: string | null;
-  attachments: BoardAttachment[];
-  links: BoardLink[];
-  archived: boolean;
-  createdAt: string;
-  updatedAt: string;
-  /** Legacy Calendar editor aliases. */
-  date?: string;
-  visibility?: string;
-  recordId?: string;
-};
-
-export type BoardAnnouncementRevision = {
-  id: string;
-  authorId: string;
-  title: string;
-  body: string;
-  audience: BoardAudience;
-  expiresAt: string | null;
-  publishedAt: string;
-  createdAt: string;
-  updatedAt: string;
-  attachments: BoardAttachment[];
-  links: BoardLink[];
-};
-
-export type BoardAnnouncement = {
-  id: string;
-  boardId: string;
-  authorId: string;
-  title: string;
-  body: string;
-  audience: BoardAudience;
-  status: BoardAnnouncementStatus;
-  publishAt: string | null;
-  expiresAt: string | null;
-  pinned: boolean;
-  attachments: BoardAttachment[];
-  links: BoardLink[];
-  createdAt: string;
-  updatedAt: string;
-  publishedRevision: BoardAnnouncementRevision | null;
-  /** Legacy announcement editor aliases. */
-  expires?: string;
-  draft?: boolean;
-  published?: boolean;
-};
-
-/** The old module called this value Announcement; keep that import stable. */
-export type Announcement = BoardAnnouncement;
-
-export type BoardRecordPlacement = {
-  id: string;
-  boardId: string;
-  recordId: string;
-  moduleId: OpenViewModuleId;
-  position: number;
-  pinned: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type BoardReminder = {
-  id: string;
-  eventId: string;
-  identityId: string;
-  occurrenceStart: string;
-  dueAt: string;
-  status: "pending" | "dismissed" | "fired";
-  createdAt: string;
-};
-
-export type BoardPersonalState = {
-  identityId: string;
-  favoriteBoardIds: string[];
-  homeBoardId: string | null;
-  calendarView: BoardCalendarView;
-  readAnnouncementIds: string[];
-  bookmarkedAnnouncementIds: string[];
-  reminders: BoardReminder[];
-};
-
-export type BoardActivityEntry = {
-  id: string;
-  boardId: string;
-  actorId: string;
-  action: string;
-  targetType: "board" | "widget" | "event" | "announcement" | "placement";
-  targetId: string;
-  detail: string;
-  createdAt: string;
-};
-
-export type BoardTemplate = {
-  id: string;
-  name: string;
-  description: string;
-  department: string;
-  defaultSection: BoardSection;
-  widgets: BoardWidget[];
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type BoardReference = Pick<Board, "id" | "name">;
-export type BoardDecodeOptions = {
-  boards?: readonly BoardReference[];
-  audienceLookup?: BoardAudienceLookup;
-};
-
-export const BOARD_ATTACHMENT_TYPES = [
-  "application/pdf",
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "text/plain",
-  "text/csv",
-] as const;
-
-export const BOARD_INPUT_LIMITS = {
-  maxBoards: 50,
-  maxBoardName: 80,
-  maxBoardDescription: 240,
-  maxWidgets: 12,
-  maxWidgetName: 80,
-  maxWidgetFields: 24,
-  maxFilterClauses: 8,
-  maxEvents: 500,
-  maxEventTitle: 100,
-  maxEventDetails: 4000,
-  maxAnnouncements: 500,
-  maxAnnouncementTitle: 100,
-  maxAnnouncementBody: 2000,
-  maxAttachments: 5,
-  maxAttachmentBytes: 10 * 1024 * 1024,
-  maxLinks: 20,
-  maxActivity: 100,
-  maxTemplates: 50,
-  maxTemplateName: 80,
-} as const;
-
-/** Alias used by callers that describe these as model limits. */
-export const BOARD_LIMITS = BOARD_INPUT_LIMITS;
+export * from "./model-types";
+export * from "./defaults";
 
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
@@ -1362,139 +1163,3 @@ export function decodeBoardTemplates(
     }),
   ).slice(0, BOARD_INPUT_LIMITS.maxTemplates);
 }
-
-function defaultWidget(
-  id: string,
-  type: OpenViewWidget["type"],
-  size: OpenViewWidget["size"],
-  pinned: boolean,
-): BoardWidget {
-  const moduleDefinition = getModuleDefinition("service-requests");
-  return {
-    id,
-    name:
-      type === "summary"
-        ? "Request summary"
-        : type === "workload"
-          ? "Team workload"
-          : type === "records"
-            ? "OpenView records"
-            : "Operations chart",
-    type,
-    moduleId: "service-requests",
-    size,
-    audience: { kind: "everyone" },
-    refresh: "manual",
-    pinned,
-    fields: moduleDefinition.fields.slice(0, 3).map((field) => field.id),
-    filters: { logic: "and", clauses: [] },
-    metric: "count",
-    visualization: "bar",
-    permission: "Everyone",
-  };
-}
-
-export const INITIAL_BOARDS: SampleBoard[] = [
-  {
-    id: DEFAULT_BOARD_ID,
-    name: "Organization board",
-    description: "A shared view of priorities, work, and important updates.",
-    department: "Organization",
-    status: "active",
-    defaultSection: "overview",
-    visibleRoleIds: ["sample-admin", "sample-member"],
-    roles: ["Administrator", "Member"],
-    permission: "Members can view",
-    widgets: [
-      defaultWidget("sample-board-summary", "summary", "half", true),
-      defaultWidget("sample-board-workload", "workload", "half", false),
-    ],
-    createdAt: timestampFallback,
-    updatedAt: timestampFallback,
-  },
-];
-
-export const INITIAL_EVENTS: BoardEvent[] = [
-  {
-    id: "sample-event-briefing",
-    boardId: DEFAULT_BOARD_ID,
-    authorId: "sample-mara",
-    title: "Operations weekly briefing",
-    details: "Review open work and the next handoff.",
-    location: "Operations room",
-    start: BOARD_SNAPSHOT_DATE,
-    end: BOARD_SNAPSHOT_DATE,
-    allDay: true,
-    timezone: BOARD_TIMEZONE,
-    audience: { kind: "everyone" },
-    recurrence: "weekly",
-    endDate: BOARD_DEFAULT_RECURRENCE_END_DATE,
-    attachments: [],
-    links: [],
-    archived: false,
-    createdAt: timestampFallback,
-    updatedAt: timestampFallback,
-    date: BOARD_SNAPSHOT_DATE,
-    visibility: "Organization",
-  },
-];
-
-const initialAnnouncementRevision: BoardAnnouncementRevision = {
-  id: "sample-announcement-welcome:published",
-  authorId: "sample-mara",
-  title: "Review request owners before the weekly briefing",
-  body: "Request owners: Check your assigned requests in Overview. Confirm the owner and due date for each item, then raise blocked handoffs with your team before the next operations briefing.",
-  audience: { kind: "everyone" },
-  expiresAt: null,
-  publishedAt: timestampFallback,
-  createdAt: timestampFallback,
-  updatedAt: timestampFallback,
-  attachments: [],
-  links: [],
-};
-
-export const INITIAL_ANNOUNCEMENTS: BoardAnnouncement[] = [
-  {
-    id: "sample-announcement-welcome",
-    boardId: DEFAULT_BOARD_ID,
-    authorId: "sample-mara",
-    title: initialAnnouncementRevision.title,
-    body: initialAnnouncementRevision.body,
-    audience: { kind: "everyone" },
-    status: "published",
-    publishAt: timestampFallback,
-    expiresAt: null,
-    pinned: true,
-    attachments: [],
-    links: [],
-    createdAt: timestampFallback,
-    updatedAt: timestampFallback,
-    publishedRevision: initialAnnouncementRevision,
-    expires: "",
-    draft: false,
-    published: true,
-  },
-];
-
-export const INITIAL_RECORD_PLACEMENTS: BoardRecordPlacement[] = [];
-export const INITIAL_PERSONAL_STATE: BoardPersonalState = {
-  identityId: "sample-mara",
-  favoriteBoardIds: [],
-  homeBoardId: null,
-  calendarView: "month",
-  readAnnouncementIds: [],
-  bookmarkedAnnouncementIds: [],
-  reminders: [],
-};
-export const INITIAL_BOARD_ACTIVITY: BoardActivityEntry[] = [];
-export const INITIAL_BOARD_TEMPLATES: BoardTemplate[] = [];
-
-// Lowercase aliases follow existing sample-model naming while uppercase
-// exports make the defaults easy to discover from adapters and tests.
-export const initialBoards = INITIAL_BOARDS;
-export const initialEvents = INITIAL_EVENTS;
-export const initialAnnouncements = INITIAL_ANNOUNCEMENTS;
-export const initialRecordPlacements = INITIAL_RECORD_PLACEMENTS;
-export const initialPersonalState = INITIAL_PERSONAL_STATE;
-export const initialBoardActivity = INITIAL_BOARD_ACTIVITY;
-export const initialBoardTemplates = INITIAL_BOARD_TEMPLATES;

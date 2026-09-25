@@ -1,12 +1,6 @@
 "use client";
 import { useSearchParams } from "next/navigation";
-import {
-  AlertTriangle,
-  Check,
-  CheckCircle2,
-  ChevronRight,
-  RotateCcw,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle2, RotateCcw } from "lucide-react";
 import {
   Suspense,
   useRef,
@@ -15,27 +9,7 @@ import {
   type MouseEvent,
 } from "react";
 import { Alert } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import {
@@ -54,11 +28,16 @@ import {
   type ManageSnapshot,
 } from "./state/state";
 import type { ManageSession } from "./state/sessions";
+import { SettingsChanges } from "./components/panel-ui";
 import {
-  SettingsChanges,
+  ManageMfaDialog,
+  ManagePreviewDialog,
+  ManageSnapshotCompareDialog,
+  ManageSnapshotRenameDialog,
+  ManageConfirmationDialog,
   type ConfirmState,
   type PreviewState,
-} from "./components/panel-ui";
+} from "./components/manage-dialogs";
 import { OrganizationPanel } from "./components/organization-panel";
 import { SecurityPanel } from "./components/security-panel";
 import { BackupPanel } from "./components/backup-panel";
@@ -438,6 +417,21 @@ function ManageContent() {
     setNotice(`Downloaded ${snapshot.name}.`);
   }
 
+  async function submitSnapshotRename(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!renameTarget || !renameValue.trim() || manage.pending) return;
+    const result = await manage.renameSnapshot(
+      renameTarget.id,
+      renameValue.trim(),
+    );
+    if (!result.ok) {
+      setRenameError(result.message);
+      return;
+    }
+    setRenameTarget(null);
+    setNotice(result.message);
+  }
+
   const panelClass =
     "min-w-0 w-full rounded-[var(--radius)] border-border bg-card md:[&>div]:gap-1 md:[&>div]:p-3";
 
@@ -658,304 +652,42 @@ function ManageContent() {
           ) : null}
         </div>
       </fieldset>
-      <Dialog open={mfaOpen} onOpenChange={setMfaOpen}>
-        <DialogContent
-          className="max-w-lg"
-          finalFocus={() =>
-            mfaOpener.current?.isConnected ? mfaOpener.current : false
-          }
-        >
-          <DialogHeader>
-            <DialogTitle>MFA enrollment</DialogTitle>
-            <DialogDescription>
-              Step {mfaStep + 1} of 3 · This walkthrough does not enroll a
-              factor or generate recovery codes.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-4 py-2">
-            <Progress
-              value={mfaStep + 1}
-              max={3}
-              aria-label="MFA walkthrough progress"
-            />
-            {mfaStep === 0 ? (
-              <div className="flex flex-col gap-2">
-                <h3 className="font-semibold">Choose a factor</h3>
-                <p className="text-muted-foreground text-sm">
-                  Choose an authenticator app or security key.
-                </p>
-              </div>
-            ) : null}
-            {mfaStep === 1 ? (
-              <div className="flex flex-col gap-2">
-                <h3 className="font-semibold">Verify the factor</h3>
-                <p className="text-muted-foreground text-sm">
-                  This walkthrough stops before any code or credential is
-                  entered.
-                </p>
-              </div>
-            ) : null}
-            {mfaStep === 2 ? (
-              <div className="flex flex-col gap-2">
-                <h3 className="font-semibold">Review recovery options</h3>
-                <p className="text-muted-foreground text-sm">
-                  Recovery options are stored securely by the account system.
-                </p>
-              </div>
-            ) : null}
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={() => setMfaOpen(false)}
-            >
-              Close
-            </Button>
-            {mfaStep > 0 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                className="min-h-11"
-                onClick={() => setMfaStep((step) => step - 1)}
-              >
-                Back
-              </Button>
-            ) : null}
-            {mfaStep < 2 ? (
-              <Button
-                type="button"
-                className="min-h-11"
-                onClick={() => setMfaStep((step) => step + 1)}
-              >
-                Continue <ChevronRight data-icon="inline-end" />
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                className="min-h-11"
-                onClick={() => setMfaOpen(false)}
-              >
-                Done <Check data-icon="inline-end" />
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
+      <ManageMfaDialog
+        open={mfaOpen}
+        step={mfaStep}
+        opener={mfaOpener}
+        onOpenChange={setMfaOpen}
+        onBack={() => setMfaStep((step) => step - 1)}
+        onNext={() => setMfaStep((step) => step + 1)}
+      />
+      <ManageSnapshotRenameDialog
         open={renameTarget !== null}
-        onOpenChange={(open) => {
-          if (!open && !manage.pending) setRenameTarget(null);
-        }}
-      >
-        <DialogContent
-          finalFocus={() =>
-            renameOpener.current?.isConnected
-              ? renameOpener.current
-              : headingRef.current
-          }
-        >
-          <DialogHeader>
-            <DialogTitle>Rename snapshot</DialogTitle>
-            <DialogDescription>
-              Give this configuration snapshot a recognizable name.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            className="flex flex-col gap-4"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              if (!renameTarget || !renameValue.trim() || manage.pending)
-                return;
-              const result = await manage.renameSnapshot(
-                renameTarget.id,
-                renameValue.trim(),
-              );
-              if (!result.ok) {
-                setRenameError(result.message);
-                return;
-              }
-              setRenameTarget(null);
-              setNotice(result.message);
-            }}
-          >
-            <Field data-invalid={Boolean(renameError)}>
-              <FieldLabel htmlFor="rename-snapshot">Snapshot name</FieldLabel>
-              <Input
-                id="rename-snapshot"
-                disabled={manage.pending}
-                value={renameValue}
-                onChange={(event) => {
-                  setRenameValue(event.target.value);
-                  setRenameError("");
-                }}
-                aria-invalid={Boolean(renameError)}
-                aria-describedby={
-                  renameError ? "rename-snapshot-error" : undefined
-                }
-                className="min-h-11"
-                autoFocus
-              />
-              <FieldError id="rename-snapshot-error">{renameError}</FieldError>
-            </Field>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                disabled={manage.pending}
-                onClick={() => setRenameTarget(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                className="min-h-11"
-                disabled={manage.pending || !renameValue.trim()}
-              >
-                {manage.pending ? "Renaming…" : "Rename snapshot"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={compareTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setCompareTarget(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Compare snapshot</DialogTitle>
-            <DialogDescription>
-              {compareTarget?.name} · saved Manage settings only
-            </DialogDescription>
-          </DialogHeader>
-          {compareTarget ? (
-            <SettingsChanges
-              differences={manage.snapshotDiff(compareTarget.id)}
-            />
-          ) : null}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={() => setCompareTarget(null)}
-            >
-              Close comparison
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={preview !== null}
-        onOpenChange={(open) => {
-          if (!open) setPreview(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{preview?.title ?? "Details"}</DialogTitle>
-            <DialogDescription>
-              {preview?.description ?? "Details"}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[55dvh] overflow-y-auto py-2">
-            {preview?.body}
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={() => setPreview(null)}
-            >
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <AlertDialog
-        open={confirm !== null}
-        onOpenChange={(open) => {
-          if (!open && !manage.pending) setConfirm(null);
-        }}
-      >
-        <AlertDialogContent
-          finalFocus={() =>
-            confirmOpener.current?.isConnected
-              ? confirmOpener.current
-              : headingRef.current
-          }
-        >
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {confirm?.title ?? "Confirm action"}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {confirm?.description}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {error ? (
-            <Alert role="alert" variant="destructive">
-              {error}
-            </Alert>
-          ) : null}
-          {manage.pending ? <p role="status">Saving changes…</p> : null}
-          {confirm?.body}
-          {confirm?.requiresDraftAck ? (
-            <Field className="mt-4 flex-row items-center gap-3">
-              <Checkbox
-                id="discard-affected-drafts"
-                disabled={manage.pending}
-                checked={draftAcknowledged}
-                onCheckedChange={(checked) =>
-                  setDraftAcknowledged(checked === true)
-                }
-              />
-              <FieldLabel
-                htmlFor="discard-affected-drafts"
-                className="font-normal"
-              >
-                Discard affected unsaved drafts
-              </FieldLabel>
-            </Field>
-          ) : null}
-          <AlertDialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              disabled={manage.pending}
-              onClick={() => setConfirm(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              className="min-h-11"
-              disabled={Boolean(
-                manage.pending ||
-                (confirm?.requiresDraftAck && !draftAcknowledged),
-              )}
-              onClick={async () => {
-                if (!confirm || manage.pending) return;
-                if (await confirm.action()) setConfirm(null);
-              }}
-            >
-              {confirm?.confirmLabel ?? "Confirm"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        pending={manage.pending}
+        value={renameValue}
+        error={renameError}
+        opener={renameOpener}
+        headingRef={headingRef}
+        onValueChange={setRenameValue}
+        onErrorClear={() => setRenameError("")}
+        onCancel={() => setRenameTarget(null)}
+        onSubmit={submitSnapshotRename}
+      />
+      <ManageSnapshotCompareDialog
+        target={compareTarget}
+        differences={compareTarget ? manage.snapshotDiff(compareTarget.id) : []}
+        onClose={() => setCompareTarget(null)}
+      />
+      <ManagePreviewDialog preview={preview} onClose={() => setPreview(null)} />
+      <ManageConfirmationDialog
+        confirm={confirm}
+        pending={manage.pending}
+        error={error}
+        draftAcknowledged={draftAcknowledged}
+        confirmOpener={confirmOpener}
+        headingRef={headingRef}
+        onClose={() => setConfirm(null)}
+        onDraftAcknowledgedChange={setDraftAcknowledged}
+      />
     </div>
   );
 }

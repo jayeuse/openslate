@@ -9,7 +9,7 @@ import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
-import type { SandboxCanvasLayout } from "@/components/sandbox/sandbox-canvas";
+import type { SandboxCanvasLayout } from "@/lib/sandbox/model";
 import {
   counts,
   initialDesign,

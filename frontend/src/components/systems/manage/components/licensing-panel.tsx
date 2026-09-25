@@ -14,7 +14,8 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { type ManageSettings } from "../state/state";
-import { SettingSelect, SectionHeading, type PreviewState } from "./panel-ui";
+import type { PreviewState } from "./manage-dialogs";
+import { SettingSelect, SectionHeading } from "./panel-ui";
 type LicensingPanelProps = {
   panelClass: string;
   settings: ManageSettings;

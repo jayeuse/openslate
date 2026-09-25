@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, Plus, Printer, RefreshCw } from "lucide-react";
+import { Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -10,7 +10,6 @@ import {
 } from "react";
 import { ApiError } from "@/lib/api";
 import { getAuthMe, type AuthMe } from "@/lib/auth-api";
-import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -19,24 +18,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { Select } from "@/components/ui/select";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import {
   archiveOpenViewReport,
@@ -71,20 +53,19 @@ import {
 } from "./report-draft";
 import { ReportRecipeEditor } from "./report-recipe-editor";
 import { ReportScheduleControls } from "./report-schedule-controls";
+import {
+  AvailableReportRunsPanel,
+  SavedReportRunsPanel,
+  formatReportRunDate,
+  type ReportOutputAction,
+} from "./report-run-panels";
+import { SavedReportsPanel } from "./saved-reports-panel";
 
 const PAGE_SIZE = 25;
 const CATALOG_PAGE_SIZE = 100;
-type OutputAction = "download" | "print";
 
 function safeMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
-}
-
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
 }
 
 function printFrozenCsv(printWindow: Window, csv: string, title: string): void {
@@ -728,7 +709,7 @@ export default function ServerBackedReports() {
   async function outputRun(
     run: OpenViewReportRun | OpenViewSharedReportRun,
     reportName: string,
-    action: OutputAction,
+    action: ReportOutputAction,
   ): Promise<void> {
     if (!beginAction(`${action}:${run.id}`)) return;
     const isSharedRun = "reportName" in run;
@@ -748,7 +729,7 @@ export default function ServerBackedReports() {
         printFrozenCsv(
           printWindow!,
           await blob.text(),
-          `${reportName} — ${formatDate(run.createdAt)}`,
+          `${reportName} — ${formatReportRunDate(run.createdAt)}`,
         );
       } else {
         const url = URL.createObjectURL(blob);
@@ -813,260 +794,64 @@ export default function ServerBackedReports() {
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)]">
         <div className="flex min-w-0 flex-col gap-6">
-          <Card className="min-w-0 self-start">
-            <CardHeader>
-              <CardTitle>Saved Reports</CardTitle>
-              <CardDescription>
-                Only Reports you own appear here.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <Field className="min-h-11 flex-row items-center gap-3">
-                  <Checkbox
-                    id="reports-show-archived"
-                    checked={showArchived}
-                    onCheckedChange={(value) => {
-                      setShowArchived(Boolean(value));
-                      setListOffset(0);
-                      setListLoading(true);
-                    }}
-                  />
-                  <FieldLabel htmlFor="reports-show-archived">
-                    Show archived
-                  </FieldLabel>
-                </Field>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="ml-auto min-h-11 min-w-11"
-                  aria-label="Refresh Reports"
-                  onClick={() => {
-                    setListOffset(0);
-                    setListLoading(true);
-                    setListRefresh((current) => current + 1);
-                  }}
-                >
-                  <RefreshCw />
-                </Button>
-              </div>
-              {listError ? (
-                <Alert role="alert" variant="destructive">
-                  {listError}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="ml-3 min-h-11"
-                    onClick={() => {
-                      setListLoading(true);
-                      setListRefresh((current) => current + 1);
-                    }}
-                  >
-                    Retry
-                  </Button>
-                </Alert>
-              ) : null}
-              {listLoading && reports.length === 0 ? (
-                <p role="status" className="text-muted-foreground text-sm">
-                  Loading Reports…
-                </p>
-              ) : null}
-              {!listLoading && reports.length === 0 && !listError ? (
-                <Empty>
-                  <EmptyHeader>
-                    <EmptyTitle>No saved Reports</EmptyTitle>
-                    <EmptyDescription>
-                      Choose a data source and fields to create your first
-                      Report.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              ) : null}
-              <ul className="flex min-w-0 flex-col gap-2">
-                {reports.map((report) => (
-                  <li key={report.id} className="flex min-w-0 gap-2">
-                    <Button
-                      type="button"
-                      variant={
-                        baselineReport?.id === report.id
-                          ? "secondary"
-                          : "outline"
-                      }
-                      className="min-h-11 min-w-0 flex-1 justify-start text-left"
-                      disabled={Boolean(actionPending)}
-                      onClick={() => openReport(report)}
-                    >
-                      <span className="min-w-0 truncate">{report.name}</span>
-                      {report.isDeleted ? (
-                        <Badge variant="outline" className="ml-auto">
-                          Archived
-                        </Badge>
-                      ) : null}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={Boolean(actionPending) || report.isDeleted}
-                      onClick={() => void startFromSavedReport(report.id)}
-                    >
-                      Duplicate
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-              {!showArchived && reports.length > 0 ? (
-                <div className="flex flex-wrap items-end gap-2">
-                  <Field className="min-w-48 flex-1">
-                    <FieldLabel htmlFor="report-template-source">
-                      Start from saved Report
-                    </FieldLabel>
-                    <Select
-                      id="report-template-source"
-                      value={templateReportId}
-                      onValueChange={setTemplateReportId}
-                      placeholder="Choose a saved Report"
-                      disabled={Boolean(actionPending)}
-                    >
-                      {reports
-                        .filter((report) => !report.isDeleted)
-                        .map((report) => (
-                          <option key={report.id} value={report.id}>
-                            {report.name}
-                          </option>
-                        ))}
-                    </Select>
-                  </Field>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={!templateReportId || Boolean(actionPending)}
-                    onClick={() => void startFromSavedReport(templateReportId)}
-                  >
-                    Start from saved Report
-                  </Button>
-                </div>
-              ) : null}
-              {listHasMore ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={listLoading}
-                  onClick={() => {
-                    setListLoading(true);
-                    setListOffset(reports.length);
-                  }}
-                >
-                  Load more Reports
-                </Button>
-              ) : null}
-            </CardContent>
-          </Card>
+          <SavedReportsPanel
+            reports={reports}
+            showArchived={showArchived}
+            selectedReportId={baselineReport?.id}
+            templateReportId={templateReportId}
+            actionPending={actionPending}
+            loading={listLoading}
+            error={listError}
+            hasMore={listHasMore}
+            onShowArchivedChange={(show) => {
+              setShowArchived(show);
+              setListOffset(0);
+              setListLoading(true);
+            }}
+            onRefresh={() => {
+              setListOffset(0);
+              setListLoading(true);
+              setListRefresh((current) => current + 1);
+            }}
+            onRetry={() => {
+              setListLoading(true);
+              setListRefresh((current) => current + 1);
+            }}
+            onOpenReport={openReport}
+            onDuplicateReport={(reportId) => {
+              void startFromSavedReport(reportId);
+            }}
+            onTemplateReportChange={setTemplateReportId}
+            onStartFromTemplate={() => {
+              void startFromSavedReport(templateReportId);
+            }}
+            onLoadMore={() => {
+              setListLoading(true);
+              setListOffset(reports.length);
+            }}
+          />
 
-          <Card className="min-w-0">
-            <CardHeader>
-              <CardTitle>Available runs</CardTitle>
-              <CardDescription>
-                Saved outputs you are eligible to open, including your own.
-                Recipe editing stays with the owner.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex min-w-0 flex-col gap-4">
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11 self-start"
-                disabled={sharedLoading}
-                onClick={() => {
-                  setSharedOffset(0);
-                  setSharedLoading(true);
-                  setSharedRefresh((current) => current + 1);
-                }}
-              >
-                Refresh available runs
-              </Button>
-              {sharedError ? (
-                <Alert role="alert" variant="destructive">
-                  {sharedError}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="ml-3 min-h-11"
-                    onClick={() => {
-                      setSharedLoading(true);
-                      setSharedRefresh((current) => current + 1);
-                    }}
-                  >
-                    Retry
-                  </Button>
-                </Alert>
-              ) : null}
-              {sharedLoading && sharedRuns.length === 0 ? (
-                <p role="status" className="text-muted-foreground text-sm">
-                  Loading available runs…
-                </p>
-              ) : null}
-              {!sharedLoading && sharedRuns.length === 0 && !sharedError ? (
-                <p className="text-muted-foreground text-sm">
-                  No runs available to this account.
-                </p>
-              ) : null}
-              <ul className="flex min-w-0 flex-col gap-3">
-                {sharedRuns.map((run) => (
-                  <li
-                    key={run.id}
-                    className="border-border rounded-lg border p-3"
-                  >
-                    <p className="font-medium break-words">{run.reportName}</p>
-                    <p className="text-muted-foreground text-sm">
-                      {formatDate(run.createdAt)} · {run.rowCount}{" "}
-                      {run.rowCount === 1 ? "row" : "rows"} · Recipe revision{" "}
-                      {run.recipeRevision}
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={Boolean(actionPending)}
-                        onClick={() =>
-                          void outputRun(run, run.reportName, "download")
-                        }
-                      >
-                        <Download data-icon="inline-start" /> CSV
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={Boolean(actionPending)}
-                        onClick={() =>
-                          void outputRun(run, run.reportName, "print")
-                        }
-                      >
-                        <Printer data-icon="inline-start" /> Print
-                      </Button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              {sharedHasMore ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={sharedLoading}
-                  onClick={() => {
-                    setSharedLoading(true);
-                    setSharedOffset(sharedRuns.length);
-                  }}
-                >
-                  Load more available runs
-                </Button>
-              ) : null}
-            </CardContent>
-          </Card>
+          <AvailableReportRunsPanel
+            runs={sharedRuns}
+            loading={sharedLoading}
+            error={sharedError}
+            hasMore={sharedHasMore}
+            actionPending={actionPending}
+            onRefresh={() => {
+              setSharedOffset(0);
+              setSharedLoading(true);
+              setSharedRefresh((current) => current + 1);
+            }}
+            onRetry={() => {
+              setSharedLoading(true);
+              setSharedRefresh((current) => current + 1);
+            }}
+            onLoadMore={() => {
+              setSharedLoading(true);
+              setSharedOffset(sharedRuns.length);
+            }}
+            onOutputRun={outputRun}
+          />
         </div>
 
         <div className="flex min-w-0 flex-col gap-6">
@@ -1121,142 +906,34 @@ export default function ServerBackedReports() {
           ) : null}
 
           {baselineReport && !baselineReport.isDeleted ? (
-            <Card className="min-w-0">
-              <CardHeader>
-                <CardTitle>Saved runs</CardTitle>
-                <CardDescription>
-                  Each run keeps its own output. CSV and Print use the same
-                  frozen bytes.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                {currentIdentityError ? (
-                  <Alert role="alert" variant="destructive">
-                    {currentIdentityError}
-                  </Alert>
-                ) : null}
-                {ownerExcludedFromAudience ? (
-                  <p role="status" className="text-muted-foreground text-sm">
-                    Your account is not included in this Report audience, so you
-                    cannot run it. Scheduled runs remain available for eligible
-                    recipients.
-                  </p>
-                ) : null}
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    className="min-h-11"
-                    disabled={
-                      Boolean(actionPending) ||
-                      dirty ||
-                      currentIdentityLoading ||
-                      !currentIdentity ||
-                      ownerExcludedFromAudience
-                    }
-                    onClick={() => void runReport()}
-                  >
-                    {actionPending === "run" ? "Running…" : "Run now"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={runsLoading}
-                    onClick={() => {
-                      setRunsOffset(0);
-                      setRunsLoading(true);
-                      setRunsRefresh((current) => current + 1);
-                    }}
-                  >
-                    Refresh history
-                  </Button>
-                </div>
-                {runsError ? (
-                  <Alert role="alert" variant="destructive">
-                    {runsError}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="ml-3 min-h-11"
-                      onClick={() => {
-                        setRunsLoading(true);
-                        setRunsRefresh((current) => current + 1);
-                      }}
-                    >
-                      Retry
-                    </Button>
-                  </Alert>
-                ) : null}
-                {runsLoading && runs.length === 0 ? (
-                  <p role="status" className="text-muted-foreground text-sm">
-                    Loading saved runs…
-                  </p>
-                ) : null}
-                {!runsLoading && runs.length === 0 && !runsError ? (
-                  <Empty>
-                    <EmptyHeader>
-                      <EmptyTitle>No runs yet</EmptyTitle>
-                      <EmptyDescription>
-                        Run this Report to save its first snapshot.
-                      </EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                ) : null}
-                <ul className="flex flex-col gap-3">
-                  {runs.map((run) => (
-                    <li
-                      key={run.id}
-                      className="border-border flex flex-wrap items-center gap-3 rounded-lg border p-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium">
-                          {formatDate(run.createdAt)}
-                        </p>
-                        <p className="text-muted-foreground text-sm">
-                          {run.rowCount} {run.rowCount === 1 ? "row" : "rows"} ·
-                          Recipe revision {run.recipeRevision}
-                        </p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={Boolean(actionPending)}
-                        onClick={() =>
-                          void outputRun(run, baselineReport.name, "download")
-                        }
-                      >
-                        <Download data-icon="inline-start" /> CSV
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={Boolean(actionPending)}
-                        onClick={() =>
-                          void outputRun(run, baselineReport.name, "print")
-                        }
-                      >
-                        <Printer data-icon="inline-start" /> Print
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-                {runsHasMore ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={runsLoading}
-                    onClick={() => {
-                      setRunsLoading(true);
-                      setRunsOffset(runs.length);
-                    }}
-                  >
-                    Load more runs
-                  </Button>
-                ) : null}
-              </CardContent>
-            </Card>
+            <SavedReportRunsPanel
+              report={baselineReport}
+              currentIdentityError={currentIdentityError}
+              currentIdentityLoading={currentIdentityLoading}
+              hasCurrentIdentity={Boolean(currentIdentity)}
+              ownerExcludedFromAudience={ownerExcludedFromAudience}
+              dirty={dirty}
+              actionPending={actionPending}
+              runs={runs}
+              loading={runsLoading}
+              error={runsError}
+              hasMore={runsHasMore}
+              onRun={runReport}
+              onRefresh={() => {
+                setRunsOffset(0);
+                setRunsLoading(true);
+                setRunsRefresh((current) => current + 1);
+              }}
+              onRetry={() => {
+                setRunsLoading(true);
+                setRunsRefresh((current) => current + 1);
+              }}
+              onLoadMore={() => {
+                setRunsLoading(true);
+                setRunsOffset(runs.length);
+              }}
+              onOutputRun={outputRun}
+            />
           ) : null}
         </div>
       </div>

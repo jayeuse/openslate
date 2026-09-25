@@ -2,11 +2,8 @@
 import { useEffect, useState } from "react";
 import { sampleOperationMessage } from "../../shared/runtime/sample-async";
 import { Action, Choice, Panel } from "../../shared/components/ui";
-import type {
-  PlatformAccount,
-  PlatformCommandResult,
-  PlatformSession,
-} from "../adapters/runtime";
+import type { PlatformCommandResult } from "../adapters/runtime";
+import type { PlatformAccount, PlatformSession } from "../domain/model";
 
 type AccountProps = {
   preferences: PlatformAccount;

@@ -19,13 +19,8 @@ import {
   useServerBoardAnnouncementEditor,
   validAnnouncementLinks,
 } from "../hooks/use-server-board-announcement-editor";
-
-export type AnnouncementEditorForm = {
-  title: string;
-  body: string;
-  links: BoardAnnouncement["links"];
-  audience: BoardContentAudienceSelection;
-};
+import type { AnnouncementEditorForm } from "../hooks/announcement-editor-state";
+export type { AnnouncementEditorForm };
 
 export type AnnouncementEditorView = {
   status: "loading" | "ready" | "error" | "denied";

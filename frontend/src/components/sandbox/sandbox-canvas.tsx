@@ -8,19 +8,11 @@ import {
   type MutableRefObject,
 } from "react";
 
-import {
-  Graph,
-  History,
-  Selection,
-  Snapline,
-  Point,
-  routerPresets,
-  type Node,
-} from "@antv/x6";
+import type { Graph, History, Node } from "@antv/x6";
 
 import {
   FIELD_TYPE_META,
-  fieldsForModule,
+  type SandboxCanvasLayout,
   type SandboxFieldType,
   type SandboxState,
   type UpdateSandboxFieldPatch,
@@ -30,16 +22,26 @@ import {
   MODULE_TABLE,
   SANDBOX_GRID_MAJOR_SIZE,
   SANDBOX_GRID_SIZE,
-  getModulePorts,
-  graphOptions,
-  relationshipLineAttrs,
-  moduleTableAttrs,
-  moduleTableHeight,
-  moduleTableMarkup,
   snapSandboxPosition,
-  toCells,
 } from "@/lib/sandbox/x6-adapter";
 import type { SandboxCommandResult } from "@/components/systems/sandbox/state/commands";
+import {
+  dragKindFromTransfer,
+  fitDepartmentFrames,
+  isFieldType,
+  nodeKindOf,
+  readLayout,
+  resolveDrop,
+  rowFieldAt,
+  selectNodeOrField,
+  type CanvasPosition,
+  type SandboxDropKind,
+  FIELD_TYPES,
+} from "./sandbox-canvas-graph";
+import { synchronizeSandboxCanvas } from "./sandbox-canvas-sync";
+import { createSandboxCanvasRuntime } from "./sandbox-canvas-runtime";
+import { bindSandboxCanvasPortInteractions } from "./sandbox-canvas-ports";
+import { bindSandboxCanvasResizeInteractions } from "./sandbox-canvas-resize";
 
 type SandboxCommand =
   | void
@@ -52,10 +54,7 @@ function commandFailed(
   return result?.ok === false;
 }
 
-export type SandboxCanvasLayout = Record<
-  string,
-  { x: number; y: number; width: number; height: number }
->;
+export type { SandboxCanvasLayout } from "@/lib/sandbox/model";
 
 export interface SandboxCanvasViewState {
   zoom: number;
@@ -75,7 +74,7 @@ export interface SandboxCanvasApi {
   placeNode: (nodeId: string, position: { x: number; y: number }) => void;
 }
 
-export type SandboxDropKind = "department" | "module" | "field";
+export type { SandboxDropKind } from "./sandbox-canvas-graph";
 
 export interface SandboxCanvasProps {
   state: SandboxState;
@@ -122,45 +121,10 @@ interface SandboxCanvasCallbacks {
   onMove: (nodeId: string, parentId: string | null) => void;
 }
 
-const DROP_KINDS: readonly SandboxDropKind[] = [
-  "department",
-  "module",
-  "field",
-];
-
-const FIELD_TYPES = Object.keys(FIELD_TYPE_META) as SandboxFieldType[];
-
-const DEPARTMENT_WIDTH = 680;
-const DEPARTMENT_COLUMN_WIDTH = 760;
-const DEPARTMENT_ORIGIN = 48;
-const MODULE_GUTTER = 32;
-const MODULE_COLUMN_GAP = 80;
-const MODULE_TOP_OFFSET = 56;
-const MODULE_SIDE_OFFSET = 42;
-const MODULE_COLUMNS = 2;
-
-interface CanvasPosition {
-  x: number;
-  y: number;
-}
-
-type CanvasFeedback = "drop" | "moving" | null;
-
-interface DropResolution {
-  parentId: string | null;
-  targetId: string | null;
-  error: string | null;
-}
-
 const CANVAS_BACKGROUND =
   "var(--canvas-background, var(--background, #ffffff))";
 const CANVAS_GRID = "var(--canvas-grid, #d8dde5)";
 const CANVAS_GRID_MAJOR = "var(--canvas-grid-major, #bac3cf)";
-const CANVAS_NODE_BORDER = "var(--sandbox-node-border, #a8b2c1)";
-const CANVAS_NODE_TEXT = "var(--muted-foreground, #68707d)";
-const CANVAS_NODE_SELECTED = "var(--accent, #f5f9ff)";
-const CANVAS_NODE_ACTIVE = "var(--primary, #3b82f6)";
-const CANVAS_NODE_MOVING = "var(--canvas-moving, #fff8eb)";
 
 interface CanvasEditor {
   target: "department" | "module" | "field";
@@ -170,309 +134,6 @@ interface CanvasEditor {
   left: number;
   top: number;
   width: number;
-}
-
-function isDropKind(value: string): value is SandboxDropKind {
-  return (DROP_KINDS as readonly string[]).includes(value);
-}
-
-function dragKindFromTransfer(
-  dataTransfer: DataTransfer,
-): SandboxDropKind | null {
-  const directKind = dataTransfer.getData("application/x-sandbox-kind");
-  if (isDropKind(directKind)) {
-    return directKind;
-  }
-  const transferTypes = new Set(Array.from(dataTransfer.types));
-  for (const kind of DROP_KINDS) {
-    if (
-      transferTypes.has(`application/x-sandbox-kind-${kind}`) ||
-      transferTypes.has(`application/x-sandbox-${kind}`)
-    ) {
-      return kind;
-    }
-  }
-  return null;
-}
-
-function isFieldType(value: string): value is SandboxFieldType {
-  return (FIELD_TYPES as readonly string[]).includes(value);
-}
-
-function truncateLabel(value: string, maxLength: number): string {
-  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
-}
-
-function departmentNodeAttrs(
-  name: string,
-  moduleCount: number,
-  height: number,
-  selected: boolean,
-  feedback: CanvasFeedback,
-) {
-  const moving = feedback === "moving";
-  const dropTarget = feedback === "drop";
-  return {
-    text: { refX: 0, refY: 0 },
-    rect: { stroke: "none", strokeWidth: 0 },
-    body: {
-      "data-sandbox-body": "true",
-      width: DEPARTMENT_WIDTH,
-      height,
-      fill: moving
-        ? CANVAS_NODE_MOVING
-        : dropTarget
-          ? "var(--canvas-drop, #eff6ff)"
-          : selected
-            ? CANVAS_NODE_SELECTED
-            : "var(--card, #e9edf2)",
-      stroke: moving
-        ? "var(--warning, #f59e0b)"
-        : dropTarget || selected
-          ? CANVAS_NODE_ACTIVE
-          : CANVAS_NODE_BORDER,
-      strokeWidth: moving || dropTarget || selected ? 2 : 1,
-      strokeDasharray: "",
-      rx: 8,
-      ry: 8,
-      "data-selected": selected ? "true" : "false",
-      "data-feedback": feedback ?? "",
-    },
-    heading: {
-      x: 12,
-      y: 18,
-      textAnchor: "start",
-      textVerticalAnchor: "middle",
-      fontSize: 11,
-      fontWeight: 600,
-      fill: moving
-        ? "var(--warning, #b45309)"
-        : dropTarget || selected
-          ? CANVAS_NODE_ACTIVE
-          : CANVAS_NODE_TEXT,
-      text: truncateLabel(name, 30),
-    },
-    resizeGrip: {
-      width: 24,
-      height: 24,
-      rx: 4,
-      fill: "transparent",
-      stroke: "none",
-      cursor: "nwse-resize",
-      tabindex: selected ? 0 : -1,
-      visibility: selected ? "visible" : "hidden",
-      role: "button",
-      "aria-label": "Resize department",
-      "data-department-resize": "true",
-      style: { touchAction: "none" },
-    },
-    resizeLines: {
-      stroke: CANVAS_NODE_ACTIVE,
-      strokeWidth: 2,
-      fill: "none",
-      pointerEvents: "none",
-      visibility: selected ? "visible" : "hidden",
-    },
-    subheading: {
-      x: DEPARTMENT_WIDTH - 12,
-      y: 18,
-      textAnchor: "end",
-      textVerticalAnchor: "middle",
-      fontSize: 10,
-      fill: "var(--muted-foreground, #9aa1ac)",
-      text: `${moduleCount} ${moduleCount === 1 ? "module" : "modules"}`,
-    },
-  };
-}
-
-/** Grow frames only as needed; never reflow or move their children. */
-function fitDepartmentFrames(graph: Graph): void {
-  for (const department of graph.getNodes()) {
-    if (nodeKindOf(department) !== "department") continue;
-    const boxes = (department.getChildren() ?? []).flatMap((cell) =>
-      cell.isNode() && nodeKindOf(cell) === "module" ? [cell.getBBox()] : [],
-    );
-    const position = department.getPosition();
-    const size = department.getSize();
-    const x = Math.min(position.x, ...boxes.map((box) => box.x - 24));
-    const y = Math.min(position.y, ...boxes.map((box) => box.y - 48));
-    const width = Math.max(
-      336,
-      position.x + size.width - x,
-      ...boxes.map((box) => box.right - x + 24),
-    );
-    const height = Math.max(
-      144,
-      position.y + size.height - y,
-      ...boxes.map((box) => box.bottom - y + 24),
-    );
-    if (position.x !== x || position.y !== y)
-      department.setPosition(x, y, { deep: false });
-    if (size.width !== width || size.height !== height)
-      department.setSize(width, height);
-    updateDepartmentSizeAttrs(department);
-  }
-}
-
-function updateDepartmentSizeAttrs(node: Node): void {
-  const { width, height } = node.getSize();
-  node.setAttrs({
-    body: { width, height },
-    subheading: { x: width - 12 },
-    resizeGrip: { x: width - 24, y: height - 24 },
-    resizeLines: {
-      d: `M${width - 17} ${height - 7}l10 -10 M${width - 11} ${height - 7}l4 -4`,
-    },
-  });
-}
-
-function readLayout(graph: Graph): SandboxCanvasLayout {
-  return Object.fromEntries(
-    graph
-      .getNodes()
-      .map((node) => [node.id, { ...node.getPosition(), ...node.getSize() }]),
-  );
-}
-
-function nodeKindOf(node: Node): string | null {
-  const data = node.getData() as { kind?: unknown };
-  return typeof data.kind === "string" ? data.kind : null;
-}
-
-function departmentHeight(moduleHeights: number[]): number {
-  const rowHeights: number[] = [];
-  for (let index = 0; index < moduleHeights.length; index += MODULE_COLUMNS) {
-    rowHeights.push(
-      Math.max(moduleHeights[index] ?? 0, moduleHeights[index + 1] ?? 0),
-    );
-  }
-  return Math.max(
-    180,
-    MODULE_TOP_OFFSET +
-      rowHeights.reduce((total, value) => total + value, 0) +
-      MODULE_GUTTER * Math.max(rowHeights.length - 1, 0) +
-      34,
-  );
-}
-
-function departmentPosition(index: number): CanvasPosition {
-  return {
-    x: DEPARTMENT_ORIGIN + index * DEPARTMENT_COLUMN_WIDTH,
-    y: DEPARTMENT_ORIGIN,
-  };
-}
-
-function modulePosition(
-  department: Node,
-  index: number,
-  moduleHeights: number[],
-): CanvasPosition {
-  const departmentPosition = department.getPosition();
-  const row = Math.floor(index / MODULE_COLUMNS);
-  const column = index % MODULE_COLUMNS;
-  const rowHeights: number[] = [];
-  for (
-    let rowIndex = 0;
-    rowIndex < moduleHeights.length;
-    rowIndex += MODULE_COLUMNS
-  ) {
-    rowHeights.push(
-      Math.max(moduleHeights[rowIndex] ?? 0, moduleHeights[rowIndex + 1] ?? 0),
-    );
-  }
-  const y =
-    departmentPosition.y +
-    MODULE_TOP_OFFSET +
-    rowHeights
-      .slice(0, row)
-      .reduce((total, value) => total + value + MODULE_GUTTER, 0);
-  return {
-    x:
-      departmentPosition.x +
-      MODULE_SIDE_OFFSET +
-      column * (MODULE_TABLE.width + MODULE_COLUMN_GAP),
-    y: y + (column === 0 ? 0 : Math.min(moduleHeights[index] / 4, 14)),
-  };
-}
-
-function rowFieldAt(node: Node, y: number, state: SandboxState): string | null {
-  if (nodeKindOf(node) !== "module") {
-    return null;
-  }
-  const moduleId = node.id;
-  const sandboxModule = state.modules.find((item) => item.id === moduleId);
-  if (sandboxModule === undefined) {
-    return null;
-  }
-  const row = Math.floor(
-    (y - node.getBBox().y - MODULE_TABLE.headerHeight) / MODULE_TABLE.rowHeight,
-  );
-  if (row < 0 || row >= sandboxModule.fieldIds.length) {
-    return null;
-  }
-  return sandboxModule.fieldIds[row] ?? null;
-}
-
-function selectNodeOrField(
-  node: Node,
-  y: number,
-  state: SandboxState,
-  callbacks: SandboxCanvasCallbacks,
-): void {
-  callbacks.onSelect(rowFieldAt(node, y, state) ?? node.id);
-}
-
-/**
- * Resolve a palette drop against the existing containment rules. The target
- * id is kept separate from the parent id so a valid drop can highlight the
- * object receiving the new child while the page receives the domain parent.
- */
-function resolveDrop(
-  graph: Graph,
-  kind: SandboxDropKind,
-  point: { x: number; y: number },
-): DropResolution {
-  const nodes = graph.getNodes();
-  for (const node of nodes) {
-    if (
-      nodeKindOf(node) === "module" &&
-      node.getBBox().containsPoint(point.x, point.y)
-    ) {
-      if (kind === "department") {
-        return { parentId: null, targetId: null, error: null };
-      }
-      if (kind === "field") {
-        return { parentId: node.id, targetId: node.id, error: null };
-      }
-      const parent = node.getParent();
-      return {
-        parentId: parent ? parent.id : null,
-        targetId: parent?.id ?? null,
-        error:
-          kind === "module" && parent === null
-            ? "Modules must be added inside a department."
-            : null,
-      };
-    }
-  }
-  for (const node of nodes) {
-    if (
-      nodeKindOf(node) === "department" &&
-      node.getBBox().containsPoint(point.x, point.y)
-    ) {
-      if (kind === "module") {
-        return { parentId: node.id, targetId: node.id, error: null };
-      }
-      if (kind === "field") {
-        return {
-          parentId: null,
-          targetId: node.id,
-          error: "Fields can only be added inside a module.",
-        };
-      }
-    }
-  }
-  return { parentId: null, targetId: null, error: null };
 }
 
 export function SandboxCanvas({
@@ -567,16 +228,12 @@ export function SandboxCanvas({
     if (container === null) {
       return;
     }
-    const graph = new Graph({
+    const { graph, history } = createSandboxCanvasRuntime(
       container,
-      ...graphOptions(snapEnabledRef.current ? SANDBOX_GRID_SIZE : 1),
-    });
+      snapEnabledRef.current ? SANDBOX_GRID_SIZE : 1,
+    );
     if (gridRef.current)
       gridRef.current.dataset.snapSize = `${graph.getGridSize()}`;
-    graph.use(new Selection({ enabled: true }));
-    graph.use(new Snapline());
-    const history = new History();
-    graph.use(history);
     runtimeRef.current = { graph, history };
     appliedLayoutRef.current = undefined;
     let layoutQueue = Promise.resolve();
@@ -838,199 +495,21 @@ export function SandboxCanvas({
       };
     }
 
-    let connectingPorts = false;
-    const portSelected = (node: Node): boolean =>
-      stateRef.current.selectedCellId === node.id ||
-      stateRef.current.fields.some(
-        (field) =>
-          field.moduleId === node.id &&
-          field.id === stateRef.current.selectedCellId,
-      );
-    const revealPorts = (node: Node, visible: boolean): void => {
-      const enabled = history.isEnabled();
-      history.disable();
-      try {
-        for (const port of node.getPorts()) {
-          if (port.id !== undefined)
-            node.setPortProp(
-              port.id,
-              ["attrs", "circle", "opacity"],
-              visible ? 1 : 0,
-            );
-        }
-      } finally {
-        if (enabled) history.enable();
-      }
-    };
-    const beginConnection = (event: PointerEvent): void => {
-      if (
-        !(event.target instanceof Element) ||
-        event.target.closest('[magnet="true"]') === null
-      )
-        return;
-      connectingPorts = true;
-      for (const node of graph.getNodes()) revealPorts(node, true);
-    };
-    const endConnection = (): void => {
-      if (!connectingPorts) return;
-      connectingPorts = false;
-      for (const node of graph.getNodes())
-        revealPorts(node, portSelected(node));
-    };
-    container.addEventListener("pointerdown", beginConnection, true);
-    window.addEventListener("pointerup", endConnection);
-    window.addEventListener("pointercancel", endConnection);
-    graph.on("node:mouseenter", ({ node }) => revealPorts(node, true));
-    graph.on("node:mouseleave", ({ node }) =>
-      revealPorts(node, connectingPorts || portSelected(node)),
-    );
+    const cleanupPortInteractions = bindSandboxCanvasPortInteractions({
+      graph,
+      history,
+      container,
+      state: stateRef,
+    });
 
-    let resizeGesture: {
-      node: Node;
-      pointerId: number;
-      startX: number;
-      startY: number;
-      width: number;
-      height: number;
-    } | null = null;
-    const resizeDepartment = (
-      node: Node,
-      width: number,
-      height: number,
-      free: boolean,
-    ): void => {
-      const origin = node.getPosition();
-      const boxes = (node.getChildren() ?? []).flatMap((child) =>
-        child.isNode() ? [child.getBBox()] : [],
-      );
-      const minimumWidth = Math.max(
-        336,
-        ...boxes.map((box) => box.right - origin.x + 24),
-      );
-      const minimumHeight = Math.max(
-        144,
-        ...boxes.map((box) => box.bottom - origin.y + 24),
-      );
-      node.setSize(
-        Math.max(
-          minimumWidth,
-          free
-            ? width
-            : Math.round(width / SANDBOX_GRID_SIZE) * SANDBOX_GRID_SIZE,
-        ),
-        Math.max(
-          minimumHeight,
-          free
-            ? height
-            : Math.round(height / SANDBOX_GRID_SIZE) * SANDBOX_GRID_SIZE,
-        ),
-      );
-    };
-    const refreshSize = ({ node }: { node: Node }): void => {
-      if (nodeKindOf(node) !== "department") return;
-      const enabled = history.isEnabled();
-      history.disable();
-      updateDepartmentSizeAttrs(node);
-      if (enabled) history.enable();
-    };
-    graph.on("node:change:size", refreshSize);
-    const resizePointerDown = (event: PointerEvent): void => {
-      if (
-        !(event.target instanceof Element) ||
-        !event.target.closest("[data-department-resize]")
-      )
-        return;
-      const view = graph.findViewByElem(event.target);
-      if (!view?.cell.isNode() || nodeKindOf(view.cell) !== "department")
-        return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      const point = graph.clientToLocal(event.clientX, event.clientY);
-      resizeGesture = {
-        node: view.cell,
-        pointerId: event.pointerId,
-        startX: point.x,
-        startY: point.y,
-        ...view.cell.getSize(),
-      };
-      graph.startBatch("department-resize");
-      event.target.setPointerCapture(event.pointerId);
-      (event.target as SVGElement).focus();
-    };
-    const resizePointerMove = (event: PointerEvent): void => {
-      if (!resizeGesture || resizeGesture.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      const point = graph.clientToLocal(event.clientX, event.clientY);
-      resizeDepartment(
-        resizeGesture.node,
-        resizeGesture.width + point.x - resizeGesture.startX,
-        resizeGesture.height + point.y - resizeGesture.startY,
-        event.altKey,
-      );
-    };
-    const resizePointerEnd = (event: PointerEvent): void => {
-      if (!resizeGesture || resizeGesture.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (event.type === "pointercancel")
-        resizeGesture.node.setSize(resizeGesture.width, resizeGesture.height);
-      resizeGesture = null;
-      graph.stopBatch("department-resize");
-      void emitLayout();
-    };
-    const resizeKeyDown = (event: KeyboardEvent): void => {
-      if (
-        !(event.target instanceof Element) ||
-        !event.target.closest("[data-department-resize]")
-      )
-        return;
-      if (
-        !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
-      )
-        return;
-      const view = graph.findViewByElem(event.target);
-      if (!view?.cell.isNode()) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      const size = view.cell.getSize();
-      const step =
-        event.altKey || !snapEnabledRef.current ? 1 : SANDBOX_GRID_SIZE;
-      resizeDepartment(
-        view.cell,
-        size.width +
-          (event.key === "ArrowRight"
-            ? step
-            : event.key === "ArrowLeft"
-              ? -step
-              : 0),
-        size.height +
-          (event.key === "ArrowDown"
-            ? step
-            : event.key === "ArrowUp"
-              ? -step
-              : 0),
-        // Keyboard deltas are exact; only pointer resizing snaps to the grid.
-        true,
-      );
-      void emitLayout();
-    };
-    const swallowResizeMouse = (event: MouseEvent): void => {
-      if (
-        event.target instanceof Element &&
-        event.target.closest("[data-department-resize]")
-      ) {
-        event.stopImmediatePropagation();
-      }
-    };
-    container.addEventListener("pointerdown", resizePointerDown, true);
-    window.addEventListener("pointermove", resizePointerMove, true);
-    window.addEventListener("pointerup", resizePointerEnd, true);
-    window.addEventListener("pointercancel", resizePointerEnd, true);
-    container.addEventListener("keydown", resizeKeyDown, true);
-    container.addEventListener("mousedown", swallowResizeMouse, true);
-    container.addEventListener("click", swallowResizeMouse, true);
-    container.addEventListener("dblclick", swallowResizeMouse, true);
+    const cleanupResizeInteractions = bindSandboxCanvasResizeInteractions({
+      graph,
+      history,
+      container,
+      snapEnabled: snapEnabledRef,
+      emitLayout,
+    });
+
     const feedbackTimers = new Map<Element, ReturnType<typeof setTimeout>>();
     const showPressed = (element: Element): void => {
       clearTimeout(feedbackTimers.get(element));
@@ -1270,17 +749,8 @@ export function SandboxCanvas({
     return () => {
       observer.disconnect();
       for (const timer of feedbackTimers.values()) clearTimeout(timer);
-      container.removeEventListener("pointerdown", resizePointerDown, true);
-      window.removeEventListener("pointermove", resizePointerMove, true);
-      window.removeEventListener("pointerup", resizePointerEnd, true);
-      window.removeEventListener("pointercancel", resizePointerEnd, true);
-      container.removeEventListener("keydown", resizeKeyDown, true);
-      container.removeEventListener("mousedown", swallowResizeMouse, true);
-      container.removeEventListener("click", swallowResizeMouse, true);
-      container.removeEventListener("dblclick", swallowResizeMouse, true);
-      container.removeEventListener("pointerdown", beginConnection, true);
-      window.removeEventListener("pointerup", endConnection);
-      window.removeEventListener("pointercancel", endConnection);
+      cleanupResizeInteractions();
+      cleanupPortInteractions();
       container.removeEventListener("mousedown", preparePointer, true);
       window.removeEventListener("keydown", updateModifier);
       window.removeEventListener("keyup", updateModifier);
@@ -1294,344 +764,22 @@ export function SandboxCanvas({
     };
   }, [graphRef]);
 
-  // Synchronize descriptors by id. Positions live in the X6 graph for this
-  // session, so a rename, field update, or selection change never lays nodes
-  // out again or clears the movement history.
+  // The canvas component remains the sole graph lifecycle owner; this focused
+  // sync function reconciles the current graph with the authoritative state.
   useEffect(() => {
     const runtime = runtimeRef.current;
-    if (runtime === null) {
-      return;
-    }
-    const { graph, history } = runtime;
-    const fieldsById = new Map(state.fields.map((field) => [field.id, field]));
-
-    syncingRef.current = true;
-    history.disable();
-    try {
-      graph.options.interacting = { edgeLabelMovable: false };
-
-      const descriptors = toCells(state);
-      const descriptorIds = new Set(descriptors.map((cell) => cell.id));
-      for (const edge of graph.getEdges()) {
-        if (!descriptorIds.has(edge.id)) {
-          edge.remove();
-        }
-      }
-      for (const node of graph.getNodes()) {
-        if (!descriptorIds.has(node.id)) {
-          node.remove();
-        }
-      }
-
-      const departmentNodes = new Map<string, Node>();
-      const moduleNodes = new Map<string, Node>();
-      for (const [index, department] of state.departments.entries()) {
-        const departmentModules = state.modules.filter(
-          (sandboxModule) => sandboxModule.departmentId === department.id,
-        );
-        const moduleHeights = departmentModules.map((sandboxModule) =>
-          moduleTableHeight(sandboxModule.fieldIds.length),
-        );
-        const height =
-          departmentModules.length === 0
-            ? 144
-            : departmentHeight(moduleHeights);
-        const departmentFeedback: CanvasFeedback =
-          movingNodeId === department.id
-            ? "moving"
-            : dropTargetId === department.id
-              ? "drop"
-              : null;
-        const departmentSelected = state.selectedCellId === department.id;
-        const departmentAttrs = departmentNodeAttrs(
-          department.name,
-          department.moduleIds.length,
-          height,
-          departmentSelected,
-          departmentFeedback,
-        );
-        const existing = graph.getCellById(department.id);
-        const departmentNode =
-          existing !== null && existing.isNode()
-            ? existing
-            : graph.addNode({
-                id: department.id,
-                shape: "rect",
-                ...(pendingPositionsRef.current.get(department.id) ??
-                  departmentPosition(index)),
-                width: departmentModules.length === 0 ? 336 : DEPARTMENT_WIDTH,
-                height,
-                markup: [
-                  { tagName: "rect", selector: "body" },
-                  { tagName: "text", selector: "heading" },
-                  { tagName: "text", selector: "subheading" },
-                  { tagName: "rect", selector: "resizeGrip" },
-                  { tagName: "path", selector: "resizeLines" },
-                ],
-                attrs: departmentAttrs,
-                data: { kind: "department", departmentId: department.id },
-              });
-
-        if (existing !== null && !existing.isNode()) {
-          existing.remove();
-        }
-        pendingPositionsRef.current.delete(department.id);
-
-        const frameSize = departmentNode.getSize();
-        departmentNode.setAttrs({
-          ...departmentAttrs,
-          body: { ...departmentAttrs.body, ...frameSize },
-          subheading: {
-            ...departmentAttrs.subheading,
-            x: frameSize.width - 12,
-          },
-        });
-        departmentNode.setData({
-          kind: "department",
-          departmentId: department.id,
-        });
-        departmentNodes.set(department.id, departmentNode);
-      }
-
-      for (const department of state.departments) {
-        const departmentNode = departmentNodes.get(department.id);
-        if (departmentNode === undefined) {
-          continue;
-        }
-        const departmentModules = state.modules.filter(
-          (sandboxModule) => sandboxModule.departmentId === department.id,
-        );
-        for (const [index, sandboxModule] of departmentModules.entries()) {
-          const moduleFields = fieldsForModule(
-            sandboxModule.id,
-            sandboxModule.fieldIds,
-            fieldsById,
-          );
-          const moduleHeight = moduleTableHeight(moduleFields.length);
-          const existing = graph.getCellById(sandboxModule.id);
-          let moduleNode: Node;
-          if (existing !== null && existing.isNode()) {
-            moduleNode = existing;
-          } else {
-            if (existing !== null) {
-              existing.remove();
-            }
-            const pendingPosition = pendingPositionsRef.current.get(
-              sandboxModule.id,
-            );
-            moduleNode = graph.addNode({
-              id: sandboxModule.id,
-              shape: "rect",
-              ...(pendingPosition ??
-                modulePosition(
-                  departmentNode,
-                  index,
-                  departmentModules.map((item) =>
-                    moduleTableHeight(item.fieldIds.length),
-                  ),
-                )),
-              width: MODULE_TABLE.width,
-              height: moduleHeight,
-              markup: moduleTableMarkup(moduleFields.length),
-              attrs: moduleTableAttrs(
-                sandboxModule.name,
-                moduleFields,
-                state.selectedCellId,
-                state.selectedCellId === sandboxModule.id,
-                movingNodeId === sandboxModule.id
-                  ? "moving"
-                  : dropTargetId === sandboxModule.id
-                    ? "drop"
-                    : null,
-              ),
-              ports: {
-                ...getModulePorts(state.selectedCellId === sandboxModule.id),
-                items: [
-                  { id: `${sandboxModule.id}-in`, group: "in" },
-                  { id: `${sandboxModule.id}-out`, group: "out" },
-                ],
-              },
-              data: {
-                kind: "module",
-                moduleId: sandboxModule.id,
-                departmentId: sandboxModule.departmentId,
-              },
-            });
-            pendingPositionsRef.current.delete(sandboxModule.id);
-          }
-
-          const parent = moduleNode.getParent();
-          if (parent?.id !== departmentNode.id) {
-            const position = moduleNode.getPosition();
-            departmentNode.addChild(moduleNode, { ui: true });
-            moduleNode.setPosition(position);
-          }
-          moduleNode.setSize(MODULE_TABLE.width, moduleHeight);
-          moduleNode.setMarkup(moduleTableMarkup(moduleFields.length));
-          moduleNode.setAttrs(
-            moduleTableAttrs(
-              sandboxModule.name,
-              moduleFields,
-              state.selectedCellId,
-              state.selectedCellId === sandboxModule.id,
-              movingNodeId === sandboxModule.id
-                ? "moving"
-                : dropTargetId === sandboxModule.id
-                  ? "drop"
-                  : null,
-            ),
-          );
-          moduleNode.setData({
-            kind: "module",
-            moduleId: sandboxModule.id,
-            departmentId: sandboxModule.departmentId,
-          });
-          for (const portId of [
-            `${sandboxModule.id}-in`,
-            `${sandboxModule.id}-out`,
-          ]) {
-            if (!moduleNode.hasPort(portId)) {
-              moduleNode.addPort({
-                id: portId,
-                group: portId.endsWith("-in") ? "in" : "out",
-              });
-            }
-            moduleNode.setPortProp(portId, ["attrs", "circle", "magnet"], true);
-            moduleNode.setPortProp(
-              portId,
-              ["attrs", "circle", "opacity"],
-              state.selectedCellId === sandboxModule.id ||
-                moduleFields.some((field) => field.id === state.selectedCellId)
-                ? 1
-                : 0,
-            );
-          }
-          moduleNodes.set(sandboxModule.id, moduleNode);
-        }
-      }
-
-      // Apply external restores once. Selection/rename and in-flight drag
-      // feedback must never reset a node to the last persisted coordinates.
-      if (layout !== undefined && layout !== appliedLayoutRef.current) {
-        for (const [id, box] of Object.entries(layout)) {
-          const node = graph.getCellById(id);
-          if (!node?.isNode()) continue;
-          // Child positions are absolute, so restore frames without translating children.
-          node.setPosition(box.x, box.y, { deep: false });
-          if (nodeKindOf(node) === "department")
-            node.setSize(box.width, box.height);
-        }
-        appliedLayoutRef.current = layout;
-      }
-      if (movingNodeId === null) fitDepartmentFrames(graph);
-
-      for (const link of state.links) {
-        const sourceNode = moduleNodes.get(link.sourceModuleId);
-        const targetNode = moduleNodes.get(link.targetModuleId);
-        if (sourceNode === undefined || targetNode === undefined) {
-          continue;
-        }
-        const relationshipRouter = {
-          name: "manhattan",
-          args: {
-            // A 24px halo on both cards closes the compact 48px corridor.
-            padding: 12,
-            startDirections: ["right"],
-            endDirections: ["left"],
-            excludeNodes: state.departments.map((department) => department.id),
-            // Overlapping cards have no obstacle-free route. X6's route-level
-            // fallback handles that normal editing state before its warning.
-            fallbackRoute: () => {
-              const view = graph.findViewByCell(link.id);
-              if (!view?.isEdgeView()) return [];
-              return routerPresets.orth
-                .call(view, [], { padding: 12 }, view)
-                .map((point) => Point.create(point));
-            },
-          },
-        };
-        const source = {
-          cell: link.sourceModuleId,
-          port: `${link.sourceModuleId}-out`,
-        };
-        const target = {
-          cell: link.targetModuleId,
-          port: `${link.targetModuleId}-in`,
-        };
-        const linkAttrs = {
-          line: relationshipLineAttrs(state.selectedCellId === link.id),
-        };
-        const linkLabels =
-          link.label.trim() === ""
-            ? []
-            : [
-                {
-                  markup: [
-                    { tagName: "rect", selector: "body" },
-                    { tagName: "text", selector: "label" },
-                  ],
-                  attrs: {
-                    label: {
-                      fontSize: 10,
-                      fill: "var(--card-foreground, #20242c)",
-                      pointerEvents: "none",
-                      text: link.label,
-                    },
-                    body: {
-                      ref: "label",
-                      fill: "var(--card, #ffffff)",
-                      stroke: "var(--border, #e4e7ec)",
-                      strokeWidth: 1,
-                      rx: 3,
-                      ry: 3,
-                      refWidth: 10,
-                      refHeight: 6,
-                      refX: -5,
-                      refY: -3,
-                    },
-                  },
-                },
-              ];
-        const existing = graph.getCellById(link.id);
-        const edge =
-          existing !== null && existing.isEdge()
-            ? existing
-            : graph.addEdge({
-                id: link.id,
-                source,
-                target,
-                router: relationshipRouter,
-                connector: { name: "normal" },
-                attrs: linkAttrs,
-                labels: linkLabels,
-                data: { kind: "link", linkId: link.id },
-              });
-        if (existing !== null && !existing.isEdge()) {
-          existing.remove();
-        }
-        edge.setSource(source);
-        edge.setTarget(target);
-        edge.setRouter(relationshipRouter);
-        edge.setConnector({ name: "normal" });
-        edge.setAttrs(linkAttrs);
-        edge.setLabels(linkLabels);
-        edge.setData({ kind: "link", linkId: link.id });
-      }
-
-      graph.cleanSelection();
-      if (state.selectedCellId === null) {
-        graph.cleanSelection();
-      } else {
-        const selectedField = fieldsById.get(state.selectedCellId);
-        const selectedId = selectedField?.moduleId ?? state.selectedCellId;
-        if (graph.getCellById(selectedId) !== null) {
-          graph.select(selectedId);
-        }
-      }
-    } finally {
-      history.enable();
-      syncingRef.current = false;
-    }
+    if (runtime === null) return;
+    synchronizeSandboxCanvas({
+      graph: runtime.graph,
+      history: runtime.history,
+      state,
+      layout,
+      movingNodeId,
+      dropTargetId,
+      pendingPositions: pendingPositionsRef,
+      appliedLayout: appliedLayoutRef,
+      syncing: syncingRef,
+    });
   }, [dropTargetId, layout, movingNodeId, state]);
 
   async function commitEditor(value: string): Promise<void> {
