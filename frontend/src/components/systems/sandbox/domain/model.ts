@@ -1,4 +1,4 @@
-import type { SandboxCanvasLayout } from "@/components/sandbox/sandbox-canvas";
+import type { SandboxCanvasLayout } from "@/lib/sandbox/model";
 import { dateRangeFits } from "./date-values";
 
 export const FIELD_TYPES = [
@@ -37,6 +37,10 @@ export type FieldConfig =
   | { kind: "checkbox"; defaultValue: boolean }
   | { kind: "select"; defaultValue: string | null; options: string[] };
 
+export type SandboxDesignTarget = {
+  kind: "department" | "module" | "field" | "link";
+  id: string;
+};
 export type Field = {
   id: string;
   name: string;

@@ -4,6 +4,11 @@
  * Pure data + pure reducers. No backend, no API calls, no X6 imports.
  */
 
+export type SandboxCanvasLayout = Record<
+  string,
+  { x: number; y: number; width: number; height: number }
+>;
+
 export type SandboxFieldType =
   | "text"
   | "long-text"

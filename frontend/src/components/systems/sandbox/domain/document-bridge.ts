@@ -1,4 +1,4 @@
-import type { SandboxCanvasLayout } from "@/components/sandbox/sandbox-canvas";
+import type { SandboxCanvasLayout } from "@/lib/sandbox/model";
 import {
   canonicalFieldType,
   normalizeField,
