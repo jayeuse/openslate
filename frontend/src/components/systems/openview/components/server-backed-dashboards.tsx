@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
+import { ChevronDown, MoreHorizontal, Plus, RefreshCw } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -14,16 +15,24 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import { ApiError } from "@/lib/api";
 import {
@@ -84,6 +93,7 @@ type PendingNavigation = {
   href: string;
   resume: () => void;
 } | null;
+type DashboardDialogKind = "new" | "settings" | null;
 
 function safeMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -93,7 +103,15 @@ function widgetTitle(
   widget: OpenViewDashboardWidget | DraftWidget,
   fieldsByModule: Record<string, OpenViewDataSourceField[]>,
 ): string {
-  if (widget.widgetType === "records") return "Live records";
+  if (widget.widgetType === "records") {
+    const fieldId = widget.config.query.definition.columns[0]?.fieldId;
+    const field = fieldId
+      ? fieldsByModule[widget.config.query.moduleId]?.find(
+          (candidate) => candidate.id === fieldId,
+        )
+      : undefined;
+    return field ? `Records showing ${field.name}` : "Live records";
+  }
   if (widget.widgetType === "summary" || widget.widgetType === "workload") {
     const { query } = widget.config;
     const field = fieldsByModule[query.moduleId]?.find(
@@ -207,6 +225,9 @@ export default function ServerBackedDashboards() {
     useState<PendingNavigation>(null);
   const [selectedDashboard, setSelectedDashboard] =
     useState<OpenViewDashboard | null>(null);
+  const [dashboardDialogKind, setDashboardDialogKind] =
+    useState<DashboardDialogKind>(null);
+  const [widgetDialogOpen, setWidgetDialogOpen] = useState(false);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [routeClearPending, setRouteClearPending] = useState(false);
   const [dashboardError, setDashboardError] = useState("");
@@ -528,12 +549,18 @@ export default function ServerBackedDashboards() {
     (href: string, resume: () => void) => {
       if (savePending || duplicatePending || archivePending || restorePendingId)
         return false;
-      if (!draftDirty) return true;
+      if (!draftDirty) {
+        setDashboardDialogKind(null);
+        setWidgetDialogOpen(false);
+        return true;
+      }
       if (
         typeof window !== "undefined" &&
         new URL(href, window.location.origin).href === window.location.href
       )
         return true;
+      setDashboardDialogKind(null);
+      setWidgetDialogOpen(false);
       setPendingNavigation({ href, resume });
       return false;
     },
@@ -809,20 +836,48 @@ export default function ServerBackedDashboards() {
 
   function beginNewDashboard() {
     suppressInitialDefaultSelection();
-    if (draftDirty) {
+    if (selectedDashboard && draftDirty) {
       setNotice("Save this Dashboard before switching to a new one.");
       return;
     }
-    routeLoadSequence.current += 1;
-    setSelectedDashboard(null);
-    setDashboardName("");
-    setRefreshCadence("manual");
-    setDraftWidgets([]);
-    setActiveWidgetKey("");
-    lastGoodSnapshotRef.current = null;
-    setLastGoodSnapshot(null);
-    setSnapshotError("");
-    updateDashboardUrl();
+    if (selectedDashboard || routeDashboardId) {
+      routeLoadSequence.current += 1;
+      setSelectedDashboard(null);
+      setDashboardName("");
+      setRefreshCadence("manual");
+      setDraftWidgets([]);
+      setActiveWidgetKey("");
+      lastGoodSnapshotRef.current = null;
+      setLastGoodSnapshot(null);
+      setSnapshotError("");
+      updateDashboardUrl();
+    }
+    setNotice("");
+    setDashboardDialogKind("new");
+  }
+
+  function chooseDashboard(dashboardId: string) {
+    if (!dashboardId || dashboardId === selectedDashboard?.id) return;
+    suppressInitialDefaultSelection();
+    if (draftDirty) {
+      setNotice("Save this Dashboard before switching to another one.");
+      return;
+    }
+    setNotice("");
+    updateDashboardUrl(dashboardId);
+  }
+
+  function submitBuilderWidget() {
+    if (!builderCanAddWidget || draftWidgets.length >= 12) return;
+    if (builderWidgetType === "records") addRecordsWidget();
+    else if (
+      builderWidgetType === "summary" ||
+      builderWidgetType === "workload"
+    )
+      addGroupedAggregateWidget();
+    else if (builderIsDateSeries) addLineChart();
+    else addGroupedChart();
+    setWidgetDialogOpen(false);
   }
 
   function toggleArchivedList() {
@@ -1424,17 +1479,27 @@ export default function ServerBackedDashboards() {
     snapshotLoading,
   ]);
 
+  const dashboardChoices =
+    selectedDashboard &&
+    !dashboards.some((item) => item.id === selectedDashboard.id)
+      ? [selectedDashboard, ...dashboards]
+      : dashboards;
+  const cadenceDescription =
+    refreshCadence === "manual"
+      ? "Manual refresh"
+      : refreshCadence === "one-minute"
+        ? "Every minute while this page is open"
+        : "Every five minutes while this page is open";
+
   return (
-    <div className="flex min-w-0 flex-col gap-6">
+    <div className="flex min-w-0 flex-col gap-5">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <p className="text-muted-foreground text-sm">OpenView / Dashboards</p>
-          <h1 id="dashboard-page-title" className="mt-1 text-2xl font-semibold">
+          <h1 id="dashboard-page-title" className="text-2xl font-semibold">
             Private dashboards
           </h1>
-          <p className="text-muted-foreground mt-2 max-w-3xl text-sm">
-            Save private summaries, workload views, record lists, and charts.
-            Each widget reads current data through the existing OpenView APIs.
+          <p className="text-muted-foreground mt-1 max-w-3xl text-sm">
+            Keep useful live results together. Each Dashboard is private to you.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1488,248 +1553,190 @@ export default function ServerBackedDashboards() {
           </Button>
         </Alert>
       ) : null}
+      {dashboardListError ? (
+        <Alert role="alert" variant="destructive">
+          {dashboardListError}
+          <Button
+            className="mt-3 min-h-11"
+            variant="outline"
+            onClick={refreshDashboardList}
+          >
+            Retry Dashboard list
+          </Button>
+        </Alert>
+      ) : null}
 
-      <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(15rem,0.7fr)_minmax(0,1.7fr)]">
-        <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle>
+      <section
+        aria-label="Dashboard context"
+        className="border-border bg-card grid min-w-0 gap-4 rounded-[var(--radius)] border p-4 lg:grid-cols-[minmax(0,1fr)_auto]"
+      >
+        <div className="grid min-w-0 gap-4 sm:grid-cols-[minmax(13rem,0.8fr)_minmax(0,1fr)] sm:items-end">
+          <div className="min-w-0">
+            <h2 className="mb-1 text-sm font-medium">
               {showArchived ? "Archived dashboards" : "Your dashboards"}
-            </CardTitle>
-            <CardDescription>
-              Only you can view these Dashboards.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            {dashboardListLoading ? (
-              <p role="status" className="text-muted-foreground text-sm">
-                Loading Dashboards…
-              </p>
-            ) : null}
-            {dashboardListError ? (
-              <Alert role="alert" variant="destructive">
-                {dashboardListError}
-                <Button
-                  className="mt-3 min-h-11"
-                  variant="outline"
-                  onClick={refreshDashboardList}
-                >
-                  Retry Dashboard list
-                </Button>
-              </Alert>
-            ) : null}
-            {!dashboardListLoading &&
-            !dashboardListError &&
-            dashboards.length === 0 ? (
-              <p className="text-muted-foreground text-sm">
-                {showArchived
-                  ? "No archived Dashboards."
-                  : "No Dashboards yet. Create one to get started."}
-              </p>
-            ) : null}
-            <ul className="flex flex-col gap-2">
-              {dashboards.map((dashboard) => (
-                <li
-                  key={dashboard.id}
-                  className="flex flex-wrap items-center gap-2"
-                >
-                  <Button
-                    variant={
-                      selectedDashboard?.id === dashboard.id
-                        ? "secondary"
-                        : "outline"
-                    }
-                    className="min-h-11 min-w-0 flex-1 justify-start text-left"
-                    disabled={
-                      dashboardLoading ||
-                      routeClearPending ||
-                      savePending ||
-                      duplicatePending ||
-                      archivePending ||
-                      dashboardDefaultPending ||
-                      Boolean(restorePendingId)
-                    }
-                    aria-current={
-                      selectedDashboard?.id === dashboard.id
-                        ? "page"
-                        : undefined
-                    }
-                    onClick={() => {
-                      if (
-                        draftDirty &&
-                        selectedDashboard?.id !== dashboard.id
-                      ) {
-                        setNotice(
-                          "Save this Dashboard before switching to another one.",
-                        );
-                        return;
-                      }
-                      setNotice("");
-                      updateDashboardUrl(dashboard.id);
-                    }}
-                  >
-                    <span className="truncate">{dashboard.name}</span>
-                  </Button>
-                  {dashboardDefaultId === dashboard.id ? (
-                    <Badge variant="secondary">Default</Badge>
-                  ) : null}
-                  {dashboard.isDeleted ? (
-                    <Button
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={
-                        draftDirty ||
-                        routeClearPending ||
-                        savePending ||
-                        archivePending ||
-                        Boolean(restorePendingId)
-                      }
-                      aria-busy={restorePendingId === dashboard.id}
-                      onClick={() => void restoreDashboard(dashboard)}
-                    >
-                      Restore {dashboard.name}
-                    </Button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-            {dashboardListHasMore ? (
-              <Button
-                variant="outline"
-                className="min-h-11"
-                disabled={dashboardListLoadingMore}
-                onClick={() => void loadMoreDashboards()}
-              >
-                {dashboardListLoadingMore ? "Loading…" : "Load more Dashboards"}
-              </Button>
-            ) : null}
-          </CardContent>
-        </Card>
-
-        <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle>
-              {selectedDashboard?.name ?? "Create a private Dashboard"}
-            </CardTitle>
-            <CardDescription>
-              {selectedDashboard
-                ? `Revision ${selectedDashboard.revision} · private to your account`
-                : "Only you can view this Dashboard."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex min-w-0 flex-col gap-6">
-            {dashboardLoading ? (
-              <p role="status" className="text-muted-foreground text-sm">
-                Loading Dashboard…
-              </p>
-            ) : null}
-            <div className="flex flex-wrap items-end gap-3">
-              <Field className="min-w-56 flex-1">
-                <FieldLabel htmlFor="dashboard-name">Dashboard name</FieldLabel>
-                <Input
-                  id="dashboard-name"
-                  maxLength={200}
-                  value={dashboardName}
-                  onChange={(event) => {
-                    suppressInitialDefaultSelection();
-                    setDashboardName(event.target.value);
-                  }}
-                  disabled={
-                    selectedDashboard?.isDeleted ||
-                    savePending ||
-                    archivePending ||
-                    Boolean(restorePendingId)
-                  }
-                />
-                <FieldDescription>Private to your account.</FieldDescription>
-              </Field>
-              <Field className="min-w-48">
-                <FieldLabel htmlFor="dashboard-refresh-cadence">
-                  Refresh cadence
-                </FieldLabel>
-                <Select
-                  id="dashboard-refresh-cadence"
-                  className="min-h-11 w-full"
-                  value={refreshCadence}
-                  disabled={
-                    selectedDashboard?.isDeleted ||
-                    savePending ||
-                    duplicatePending ||
-                    archivePending ||
-                    Boolean(restorePendingId)
-                  }
-                  onValueChange={(value) => {
-                    suppressInitialDefaultSelection();
-                    setRefreshCadence(value as OpenViewDashboardRefreshCadence);
-                  }}
-                >
-                  <option value="manual">Manual</option>
-                  <option value="one-minute">Every minute</option>
-                  <option value="five-minutes">Every five minutes</option>
-                </Select>
-                <FieldDescription>
-                  Automatic refresh runs only while this page is visible.
-                </FieldDescription>
-              </Field>
-              <Button
-                className="min-h-11"
-                onClick={() => void saveDashboard()}
+            </h2>
+            <Field className="min-w-0">
+              <FieldLabel htmlFor="dashboard-context">Dashboard</FieldLabel>
+              <Select
+                id="dashboard-context"
+                className="min-h-11 w-full"
+                value={selectedDashboard?.id ?? ""}
                 disabled={
-                  savePending ||
-                  duplicatePending ||
+                  dashboardListLoading ||
+                  dashboardLoading ||
                   routeClearPending ||
+                  savePending ||
                   archivePending ||
-                  Boolean(restorePendingId) ||
-                  !dashboardName.trim() ||
-                  !draftDirty ||
-                  selectedDashboard?.isDeleted
+                  Boolean(restorePendingId)
                 }
+                onValueChange={chooseDashboard}
               >
-                {savePending ? "Saving…" : "Save Dashboard"}
-              </Button>
+                <option value="">
+                  {showArchived
+                    ? "Choose an archived Dashboard"
+                    : "Choose a Dashboard"}
+                </option>
+                {dashboardChoices.map((dashboard) => (
+                  <option key={dashboard.id} value={dashboard.id}>
+                    {dashboard.name}
+                    {dashboardDefaultId === dashboard.id ? " · Default" : ""}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="truncate text-base font-semibold">
+                {selectedDashboard
+                  ? dashboardName || selectedDashboard.name
+                  : dashboardName || "No dashboard selected"}
+              </h2>
               {selectedDashboard ? (
                 <>
-                  {!selectedDashboard.isDeleted ? (
-                    <Button
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={
-                        draftDirty ||
-                        duplicatePending ||
-                        savePending ||
-                        archivePending ||
-                        Boolean(restorePendingId)
-                      }
-                      aria-busy={duplicatePending}
-                      onClick={() => void duplicateDashboard()}
-                    >
-                      {duplicatePending
-                        ? "Duplicating…"
-                        : "Duplicate Dashboard"}
-                    </Button>
+                  <Badge variant="outline">Only you</Badge>
+                  {dashboardDefaultId === selectedDashboard.id ? (
+                    <Badge variant="secondary">Default</Badge>
                   ) : null}
-                  {!selectedDashboard.isDeleted ? (
-                    <Button
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={
-                        dashboardDefaultLoading ||
-                        dashboardDefaultPending ||
-                        duplicatePending ||
-                        archivePending ||
-                        Boolean(restorePendingId)
-                      }
-                      aria-busy={dashboardDefaultPending}
-                      onClick={() => void toggleDashboardDefault()}
-                    >
-                      {dashboardDefaultPending
-                        ? "Updating default…"
-                        : dashboardDefaultId === selectedDashboard.id
-                          ? "Clear default"
-                          : "Set as default"}
-                    </Button>
+                  {selectedDashboard.isDeleted ? (
+                    <Badge variant="outline">Archived</Badge>
                   ) : null}
-                  <Button
-                    variant="outline"
+                </>
+              ) : null}
+              {draftDirty ? (
+                <span
+                  role="status"
+                  className="text-muted-foreground text-sm font-medium"
+                >
+                  Unsaved changes
+                </span>
+              ) : null}
+            </div>
+            <p className="text-muted-foreground mt-1 text-sm">
+              {selectedDashboard
+                ? "Revision " +
+                  selectedDashboard.revision +
+                  " · " +
+                  cadenceDescription +
+                  ". Only you can view these Dashboards."
+                : dashboardName || draftWidgets.length
+                  ? "Private draft · " + cadenceDescription
+                  : "Choose a private Dashboard or create one."}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex min-w-0 flex-wrap items-end gap-2">
+          {activePersistedWidget && !selectedDashboard?.isDeleted ? (
+            <Button
+              variant="outline"
+              className="min-h-11"
+              disabled={snapshotLoading}
+              onClick={refreshActiveSnapshot}
+            >
+              <RefreshCw data-icon="inline-start" aria-hidden="true" />
+              {snapshotLoading ? "Refreshing…" : "Refresh now"}
+            </Button>
+          ) : null}
+          {draftDirty ? (
+            <Button
+              className="min-h-11"
+              onClick={() => void saveDashboard()}
+              disabled={
+                savePending ||
+                duplicatePending ||
+                routeClearPending ||
+                archivePending ||
+                Boolean(restorePendingId) ||
+                !dashboardName.trim() ||
+                selectedDashboard?.isDeleted
+              }
+            >
+              {savePending ? "Saving…" : "Save Dashboard"}
+            </Button>
+          ) : null}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  aria-label="Dashboard options"
+                />
+              }
+            >
+              Dashboard options{" "}
+              <ChevronDown data-icon="inline-end" aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-56">
+              <DropdownMenuItem
+                className="min-h-11"
+                disabled={
+                  !selectedDashboard ||
+                  selectedDashboard.isDeleted ||
+                  savePending ||
+                  archivePending ||
+                  Boolean(restorePendingId)
+                }
+                onClick={() => setDashboardDialogKind("settings")}
+              >
+                Dashboard settings
+              </DropdownMenuItem>
+              {selectedDashboard ? <DropdownMenuSeparator /> : null}
+              {selectedDashboard && !selectedDashboard.isDeleted ? (
+                <>
+                  <DropdownMenuItem
+                    className="min-h-11"
+                    disabled={
+                      draftDirty ||
+                      duplicatePending ||
+                      savePending ||
+                      archivePending ||
+                      Boolean(restorePendingId)
+                    }
+                    onClick={() => void duplicateDashboard()}
+                  >
+                    {duplicatePending ? "Duplicating…" : "Duplicate Dashboard"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="min-h-11"
+                    disabled={
+                      dashboardDefaultLoading ||
+                      dashboardDefaultPending ||
+                      duplicatePending ||
+                      archivePending ||
+                      Boolean(restorePendingId)
+                    }
+                    onClick={() => void toggleDashboardDefault()}
+                  >
+                    {dashboardDefaultPending
+                      ? "Updating default…"
+                      : dashboardDefaultId === selectedDashboard.id
+                        ? "Clear default"
+                        : "Set as default"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
                     className="min-h-11"
                     disabled={dashboardLoading || duplicatePending}
                     onClick={() => void reloadSelectedDashboard(draftDirty)}
@@ -1737,495 +1744,722 @@ export default function ServerBackedDashboards() {
                     {draftDirty
                       ? "Discard draft and reload"
                       : "Reload saved Dashboard"}
-                  </Button>
-                  {selectedDashboard.isDeleted ? (
-                    <Button
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={
-                        draftDirty ||
-                        archivePending ||
-                        duplicatePending ||
-                        Boolean(restorePendingId)
-                      }
-                      aria-busy={restorePendingId === selectedDashboard.id}
-                      onClick={() => void restoreDashboard(selectedDashboard)}
-                    >
-                      Restore Dashboard
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={
-                        archivePending ||
-                        duplicatePending ||
-                        draftDirty ||
-                        dashboardDefaultPending
-                      }
-                      onClick={() => void archiveDashboard()}
-                    >
-                      {archivePending ? "Archiving…" : "Archive Dashboard"}
-                    </Button>
-                  )}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="min-h-11"
+                    disabled={
+                      archivePending ||
+                      duplicatePending ||
+                      draftDirty ||
+                      dashboardDefaultPending
+                    }
+                    onClick={() => void archiveDashboard()}
+                  >
+                    {archivePending ? "Archiving…" : "Archive Dashboard"}
+                  </DropdownMenuItem>
                 </>
               ) : null}
-            </div>
+              {selectedDashboard?.isDeleted ? (
+                <DropdownMenuItem
+                  className="min-h-11"
+                  disabled={
+                    draftDirty ||
+                    archivePending ||
+                    duplicatePending ||
+                    Boolean(restorePendingId)
+                  }
+                  onClick={() => void restoreDashboard(selectedDashboard)}
+                >
+                  Restore Dashboard
+                </DropdownMenuItem>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        {showArchived && dashboards.length ? (
+          <ul className="border-border flex min-w-0 flex-wrap gap-2 border-t pt-3 lg:col-span-2">
+            {dashboards.map((dashboard) => (
+              <li
+                key={dashboard.id}
+                className="flex min-w-0 flex-wrap items-center gap-2"
+              >
+                <Button
+                  variant={
+                    selectedDashboard?.id === dashboard.id
+                      ? "secondary"
+                      : "outline"
+                  }
+                  className="min-h-11 min-w-0 justify-start text-left"
+                  disabled={
+                    dashboardLoading ||
+                    draftDirty ||
+                    savePending ||
+                    duplicatePending ||
+                    archivePending ||
+                    dashboardDefaultPending ||
+                    Boolean(restorePendingId)
+                  }
+                  onClick={() => chooseDashboard(dashboard.id)}
+                >
+                  {dashboard.name}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={
+                    draftDirty ||
+                    routeClearPending ||
+                    savePending ||
+                    archivePending ||
+                    Boolean(restorePendingId)
+                  }
+                  aria-busy={restorePendingId === dashboard.id}
+                  onClick={() => void restoreDashboard(dashboard)}
+                >
+                  Restore {dashboard.name}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
 
-            <section
-              aria-labelledby="dashboard-widgets"
-              className="flex min-w-0 flex-col gap-4"
-            >
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 id="dashboard-widgets" className="text-lg font-semibold">
-                  Dashboard widgets
-                </h2>
-                <p role="status" className="text-muted-foreground text-sm">
-                  {draftWidgets.length} of 12 widgets
-                </p>
-              </div>
-              {!selectedDashboard?.isDeleted ? (
-                <div className="grid min-w-0 gap-3 md:grid-cols-2 md:items-end xl:grid-cols-4">
-                  <Field className="min-w-0">
-                    <FieldLabel htmlFor="dashboard-module">Module</FieldLabel>
-                    <Select
-                      id="dashboard-module"
-                      className="min-h-11 w-full"
-                      value={builderModuleId}
-                      disabled={duplicatePending}
-                      onValueChange={(value) => {
-                        suppressInitialDefaultSelection();
-                        selectBuilderModule(value);
-                        setBuilderDateFieldId("");
-                        setBuilderMeasureId("");
-                      }}
-                    >
-                      <option value="">Choose a module</option>
-                      {catalogSources.map((source) => (
-                        <option key={source.id} value={source.id}>
-                          {source.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                  <Field className="min-w-0">
-                    <FieldLabel htmlFor="dashboard-widget-type">
-                      Widget type
-                    </FieldLabel>
-                    <Select
-                      id="dashboard-widget-type"
-                      className="min-h-11 w-full"
-                      value={builderWidgetType}
-                      disabled={duplicatePending}
-                      onValueChange={(value) => {
-                        suppressInitialDefaultSelection();
-                        const nextType = value as OpenViewDashboardWidgetType;
-                        setBuilderWidgetType(nextType);
-                        if (nextType === "summary")
-                          setBuilderAggregation("count");
-                      }}
-                    >
-                      <option value="summary">Summary</option>
-                      <option value="workload">Workload</option>
-                      <option value="records">Record list</option>
-                      <option value="chart">Chart</option>
-                    </Select>
-                  </Field>
-                  {builderWidgetType === "chart" ? (
-                    <Field className="min-w-0">
-                      <FieldLabel htmlFor="dashboard-chart-type">
-                        Chart type
-                      </FieldLabel>
-                      <Select
-                        id="dashboard-chart-type"
-                        className="min-h-11 w-full"
-                        value={builderChartType}
-                        disabled={duplicatePending}
-                        onValueChange={(value) => {
-                          suppressInitialDefaultSelection();
-                          setBuilderChartType(value as BuilderChartType);
-                        }}
-                      >
-                        <option value="bar">By category (bar)</option>
-                        <option value="pie">By category (pie)</option>
-                        <option value="line">Over time (line)</option>
-                      </Select>
-                    </Field>
-                  ) : null}
-                  {builderWidgetType === "chart" ||
-                  builderWidgetType === "workload" ? (
-                    <Field className="min-w-0">
-                      <FieldLabel htmlFor="dashboard-aggregation">
-                        Aggregation
-                      </FieldLabel>
-                      <Select
-                        id="dashboard-aggregation"
-                        className="min-h-11 w-full"
-                        value={builderAggregation}
-                        disabled={duplicatePending}
-                        onValueChange={(value) => {
-                          suppressInitialDefaultSelection();
-                          setBuilderAggregation(value as BuilderAggregation);
-                        }}
-                      >
-                        <option value="count">Count</option>
-                        <option value="sum">Sum</option>
-                        <option value="average">Average</option>
-                      </Select>
-                    </Field>
-                  ) : null}
-                  {(builderWidgetType === "chart" ||
-                    builderWidgetType === "workload") &&
-                  builderAggregation !== "count" ? (
-                    <Field className="min-w-0">
-                      <FieldLabel htmlFor="dashboard-measure">
-                        Numeric measure
-                      </FieldLabel>
-                      <Select
-                        id="dashboard-measure"
-                        className="min-h-11 w-full"
-                        value={builderMeasureId}
-                        disabled={
-                          duplicatePending ||
-                          !builderModuleId ||
-                          !builderNumericFields.length
-                        }
-                        onValueChange={(value) => {
-                          suppressInitialDefaultSelection();
-                          setBuilderMeasureId(value);
-                        }}
-                      >
-                        <option value="">Choose a numeric field</option>
-                        {builderNumericFields.map((field) => (
-                          <option key={field.id} value={field.id}>
-                            {field.name}
-                          </option>
-                        ))}
-                      </Select>
-                      {!builderNumericFields.length ? (
-                        <FieldDescription>
-                          Sum and average require a numeric field.
-                        </FieldDescription>
-                      ) : null}
-                    </Field>
-                  ) : null}
-                  {builderWidgetType === "records" ? (
-                    <Field className="min-w-0">
-                      <FieldLabel htmlFor="dashboard-record-field">
-                        Display field
-                      </FieldLabel>
-                      <Select
-                        id="dashboard-record-field"
-                        className="min-h-11 w-full"
-                        value={builderRecordFieldId}
-                        disabled={
-                          duplicatePending ||
-                          !builderModuleId ||
-                          !builderRecordFields.length
-                        }
-                        onValueChange={(value) => {
-                          suppressInitialDefaultSelection();
-                          setBuilderRecordFieldId(value);
-                        }}
-                      >
-                        <option value="">Choose a field</option>
-                        {builderRecordFields.map((field) => (
-                          <option key={field.id} value={field.id}>
-                            {field.name}
-                          </option>
-                        ))}
-                      </Select>
-                      <FieldDescription>
-                        The saved widget stores the query, then loads current
-                        rows.
-                      </FieldDescription>
-                    </Field>
-                  ) : !builderIsDateSeries ? (
-                    <Field className="min-w-0">
-                      <FieldLabel htmlFor="dashboard-dimension">
-                        Group records by
-                      </FieldLabel>
-                      <Select
-                        id="dashboard-dimension"
-                        className="min-h-11 w-full"
-                        value={builderDimensionId}
-                        disabled={
-                          duplicatePending ||
-                          !builderModuleId ||
-                          !builderFields.length
-                        }
-                        onValueChange={(value) => {
-                          suppressInitialDefaultSelection();
-                          setBuilderDimensionId(value);
-                        }}
-                      >
-                        <option value="">Choose a field</option>
-                        {builderFields.map((field) => (
-                          <option key={field.id} value={field.id}>
-                            {field.name}
-                          </option>
-                        ))}
-                      </Select>
-                      <FieldDescription>
-                        {builderWidgetType === "summary"
-                          ? "Counts matching records across the selected groups."
-                          : builderWidgetType === "workload"
-                            ? "Compares the selected aggregate across live record groups."
-                            : "Creates a categorical chart from live records."}
-                      </FieldDescription>
-                    </Field>
-                  ) : null}
-                  {builderIsDateSeries ? (
-                    <>
-                      <Field className="min-w-0">
-                        <FieldLabel htmlFor="dashboard-date-field">
-                          Date field
-                        </FieldLabel>
-                        <Select
-                          id="dashboard-date-field"
-                          className="min-h-11 w-full"
-                          value={builderDateFieldId}
-                          disabled={
-                            duplicatePending ||
-                            !builderModuleId ||
-                            !builderDateFields.length
-                          }
-                          onValueChange={(value) => {
-                            suppressInitialDefaultSelection();
-                            setBuilderDateFieldId(value);
-                          }}
-                        >
-                          <option value="">Choose a date field</option>
-                          {builderDateFields.map((field) => (
-                            <option key={field.id} value={field.id}>
-                              {field.name}
-                            </option>
-                          ))}
-                        </Select>
-                        <FieldDescription>
-                          Date fields create daily aggregate values.
-                        </FieldDescription>
-                      </Field>
-                      <Field className="min-w-0">
-                        <FieldLabel htmlFor="dashboard-from-date">
-                          Start date
-                        </FieldLabel>
-                        <Input
-                          id="dashboard-from-date"
-                          type="date"
-                          required
-                          disabled={duplicatePending}
-                          className="min-h-11 w-full"
-                          value={builderFromDate}
-                          aria-describedby="dashboard-date-range-description"
-                          onChange={(event) => {
-                            suppressInitialDefaultSelection();
-                            setBuilderFromDate(event.target.value);
-                          }}
-                        />
-                      </Field>
-                      <Field className="min-w-0">
-                        <FieldLabel htmlFor="dashboard-to-date">
-                          End date
-                        </FieldLabel>
-                        <Input
-                          id="dashboard-to-date"
-                          type="date"
-                          required
-                          disabled={duplicatePending}
-                          className="min-h-11 w-full"
-                          value={builderToDate}
-                          aria-describedby="dashboard-date-range-description"
-                          onChange={(event) => {
-                            suppressInitialDefaultSelection();
-                            setBuilderToDate(event.target.value);
-                          }}
-                        />
-                        <FieldDescription id="dashboard-date-range-description">
-                          {builderDateRangeDescription}
-                        </FieldDescription>
-                      </Field>
-                    </>
-                  ) : null}
-                  <Button
-                    variant="outline"
-                    className="min-h-11"
-                    onClick={() => {
-                      if (builderWidgetType === "records") addRecordsWidget();
-                      else if (
-                        builderWidgetType === "summary" ||
-                        builderWidgetType === "workload"
-                      )
-                        addGroupedAggregateWidget();
-                      else if (builderIsDateSeries) addLineChart();
-                      else addGroupedChart();
-                    }}
-                    disabled={
-                      !builderCanAddWidget ||
-                      duplicatePending ||
-                      draftWidgets.length >= 12 ||
-                      savePending ||
-                      Boolean(restorePendingId)
+      {dashboardListLoading ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          Loading Dashboards…
+        </p>
+      ) : null}
+      {!dashboardListLoading &&
+      !dashboardListError &&
+      dashboards.length === 0 ? (
+        <p className="text-muted-foreground text-sm">
+          {showArchived
+            ? "No archived Dashboards."
+            : "No Dashboards yet. Create one to get started."}
+        </p>
+      ) : null}
+      {dashboardListHasMore ? (
+        <Button
+          variant="outline"
+          className="min-h-11 self-start"
+          disabled={dashboardListLoadingMore}
+          onClick={() => void loadMoreDashboards()}
+        >
+          {dashboardListLoadingMore ? "Loading…" : "Load more Dashboards"}
+        </Button>
+      ) : null}
+
+      <div className="border-border bg-card grid min-w-0 grid-cols-1 overflow-hidden rounded-[var(--radius)] border lg:grid-cols-[minmax(15rem,0.72fr)_minmax(0,1.8fr)]">
+        <aside
+          aria-labelledby="dashboard-widgets"
+          className="border-border flex min-w-0 flex-col gap-3 p-4 lg:border-r"
+        >
+          <div className="flex items-baseline justify-between gap-2">
+            <h2 id="dashboard-widgets" className="text-lg font-semibold">
+              Widgets
+            </h2>
+            <p role="status" className="text-muted-foreground text-sm">
+              {draftWidgets.length} of 12 widgets
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            className="min-h-11 w-full"
+            disabled={
+              selectedDashboard?.isDeleted ||
+              draftWidgets.length >= 12 ||
+              duplicatePending ||
+              savePending ||
+              Boolean(restorePendingId)
+            }
+            onClick={() => setWidgetDialogOpen(true)}
+          >
+            <Plus data-icon="inline-start" aria-hidden="true" />
+            Add widget
+          </Button>
+
+          {draftWidgets.length ? (
+            <ol className="flex min-w-0 flex-col gap-2">
+              {draftWidgets.map((widget, index) => {
+                const title = widgetTitle(widget, fieldsByModule);
+                const kind =
+                  widget.widgetType === "chart"
+                    ? (widget.config.chartType === "line"
+                        ? "Line"
+                        : widget.config.chartType === "pie"
+                          ? "Pie"
+                          : "Bar") + " chart"
+                    : widget.widgetType === "summary"
+                      ? "Summary"
+                      : widget.widgetType === "workload"
+                        ? "Workload"
+                        : "Records";
+                const viewLabel =
+                  widget.widgetType === "chart"
+                    ? "chart"
+                    : widget.widgetType === "records"
+                      ? "records"
+                      : widget.widgetType;
+                const persisted = selectedDashboard?.widgets.some(
+                  (candidate) => candidate.id === widget.key,
+                );
+                const unavailable =
+                  savePending ||
+                  duplicatePending ||
+                  archivePending ||
+                  Boolean(restorePendingId) ||
+                  Boolean(selectedDashboard?.isDeleted);
+                return (
+                  <li
+                    key={widget.key}
+                    className={
+                      activeWidgetKey === widget.key
+                        ? "bg-accent/50 flex min-w-0 items-start gap-1 rounded-[var(--radius)] p-1"
+                        : "flex min-w-0 items-start gap-1 rounded-[var(--radius)] p-1"
                     }
                   >
-                    {builderWidgetType === "summary"
-                      ? "Add summary widget"
-                      : builderWidgetType === "workload"
-                        ? "Add workload widget"
-                        : builderWidgetType === "records"
-                          ? "Add records widget"
-                          : builderIsDateSeries
-                            ? "Add line chart widget"
-                            : builderChartType === "pie"
-                              ? "Add pie chart widget"
-                              : "Add chart widget"}
-                  </Button>
-                </div>
-              ) : (
-                <p className="text-muted-foreground text-sm">
-                  Restore this Dashboard before editing its widgets.
-                </p>
-              )}
-              {catalogSourcesHasMore ? (
-                <Button
-                  variant="outline"
-                  className="min-h-11 self-start"
-                  disabled={catalogLoadingMore}
-                  onClick={() => void loadMoreSources()}
-                >
-                  {catalogLoadingMore
-                    ? "Loading modules…"
-                    : "Load more modules"}
-                </Button>
-              ) : null}
-              {fieldsHasMore ? (
-                <Button
-                  variant="outline"
-                  className="min-h-11 self-start"
-                  disabled={fieldsLoadingMore}
-                  onClick={() => void loadMoreFields()}
-                >
-                  {fieldsLoadingMore ? "Loading fields…" : "Load more fields"}
-                </Button>
-              ) : null}
-              {catalogError ? (
-                <Alert role="alert" variant="destructive">
-                  {catalogError}
-                  <Button
-                    className="mt-3 min-h-11"
-                    variant="outline"
-                    onClick={retryCatalog}
-                  >
-                    Retry catalog
-                  </Button>
-                </Alert>
-              ) : null}
-
-              {draftWidgets.length ? (
-                <ol className="flex min-w-0 flex-col gap-3">
-                  {draftWidgets.map((widget, index) => {
-                    const title = widgetTitle(widget, fieldsByModule);
-                    const persisted = selectedDashboard?.widgets.some(
-                      (candidate) => candidate.id === widget.key,
-                    );
-                    const label = `${widget.widgetType} ${index + 1}`;
-                    return (
-                      <li
-                        key={widget.key}
-                        className="border-border flex min-w-0 flex-wrap items-center gap-2 rounded-[var(--radius)] border p-3"
+                    <Button
+                      type="button"
+                      variant={
+                        activeWidgetKey === widget.key ? "secondary" : "ghost"
+                      }
+                      className="min-h-12 min-w-0 flex-1 flex-col items-start justify-center gap-0.5 overflow-hidden text-left"
+                      aria-label={
+                        "View " + viewLabel + " " + (index + 1) + ": " + title
+                      }
+                      aria-pressed={activeWidgetKey === widget.key}
+                      onClick={() => setActiveWidgetKey(widget.key)}
+                    >
+                      <span className="w-full truncate">{title}</span>
+                      <span className="text-muted-foreground w-full truncate text-xs">
+                        {persisted ? kind : kind + " · Unsaved"}
+                      </span>
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-11 shrink-0"
+                            aria-label={"Widget options: " + title}
+                            disabled={unavailable}
+                          />
+                        }
                       >
-                        <Button
-                          type="button"
-                          variant={
-                            activeWidgetKey === widget.key
-                              ? "secondary"
-                              : "outline"
-                          }
-                          className="min-h-11 min-w-0 flex-1 justify-start text-left"
-                          aria-pressed={activeWidgetKey === widget.key}
-                          onClick={() => setActiveWidgetKey(widget.key)}
-                        >
-                          {persisted
-                            ? `View ${label}: ${title}`
-                            : `${label}: ${title}`}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
+                        <MoreHorizontal aria-hidden="true" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
                           className="min-h-11"
-                          disabled={
-                            index === 0 ||
-                            savePending ||
-                            duplicatePending ||
-                            archivePending ||
-                            Boolean(restorePendingId)
-                          }
+                          disabled={index === 0 || unavailable}
                           onClick={() => moveWidget(widget.key, -1)}
-                          aria-label={`Move ${label} up`}
                         >
                           Move up
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
                           className="min-h-11"
                           disabled={
-                            index === draftWidgets.length - 1 ||
-                            savePending ||
-                            duplicatePending ||
-                            archivePending ||
-                            Boolean(restorePendingId)
+                            index === draftWidgets.length - 1 || unavailable
                           }
                           onClick={() => moveWidget(widget.key, 1)}
-                          aria-label={`Move ${label} down`}
                         >
                           Move down
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
                           className="min-h-11"
-                          disabled={
-                            savePending ||
-                            duplicatePending ||
-                            archivePending ||
-                            Boolean(restorePendingId) ||
-                            selectedDashboard?.isDeleted
-                          }
+                          variant="destructive"
+                          disabled={unavailable}
                           onClick={() => removeWidget(widget.key)}
-                          aria-label={`Remove ${label}`}
                         >
-                          Remove
-                        </Button>
-                      </li>
-                    );
-                  })}
-                </ol>
-              ) : (
-                <p className="text-muted-foreground text-sm">
-                  Add a widget to this Dashboard. The saved definition contains
-                  query rules, not a copy of sample records.
-                </p>
-              )}
-            </section>
+                          Remove widget
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <p className="text-muted-foreground py-2 text-sm">
+              Add a widget to see one current result at a time. New widgets load
+              after you save this Dashboard.
+            </p>
+          )}
+        </aside>
 
-            {activeWidget ? (
-              <DashboardWidgetResults
-                widget={activeWidget}
-                title={activeTitle}
-                persisted={Boolean(activePersistedWidget)}
-                snapshot={visibleSnapshot}
-                snapshotLoading={snapshotLoading}
-                snapshotError={snapshotError}
-                tablePage={tablePage}
-                fieldsByModule={fieldsByModule}
-                onRefresh={refreshActiveSnapshot}
-                setTablePage={setTablePage}
-              />
-            ) : null}
-          </CardContent>
-        </Card>
+        <div className="min-w-0 p-4 sm:p-5">
+          {dashboardLoading ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              Loading Dashboard…
+            </p>
+          ) : activeWidget ? (
+            <DashboardWidgetResults
+              widget={activeWidget}
+              title={activeTitle}
+              persisted={Boolean(activePersistedWidget)}
+              snapshot={visibleSnapshot}
+              snapshotLoading={snapshotLoading}
+              snapshotError={snapshotError}
+              tablePage={tablePage}
+              fieldsByModule={fieldsByModule}
+              onRefresh={refreshActiveSnapshot}
+              setTablePage={setTablePage}
+            />
+          ) : (
+            <section className="flex min-h-64 min-w-0 flex-col justify-center gap-2">
+              <h2 className="text-lg font-semibold">
+                {selectedDashboard
+                  ? "No widgets in this Dashboard"
+                  : "Select a Dashboard to begin"}
+              </h2>
+              <p className="text-muted-foreground max-w-xl text-sm">
+                {selectedDashboard
+                  ? selectedDashboard.isDeleted
+                    ? "Restore this Dashboard to add or change widgets."
+                    : "Add a widget to load its current result from OpenView."
+                  : "Choose one from your private Dashboards or create a new one."}
+              </p>
+            </section>
+          )}
+        </div>
       </div>
+
+      <Dialog
+        open={dashboardDialogKind !== null}
+        onOpenChange={(open) => {
+          if (!open) setDashboardDialogKind(null);
+        }}
+      >
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>
+              {dashboardDialogKind === "new"
+                ? "New Dashboard"
+                : "Dashboard settings"}
+            </DialogTitle>
+            <DialogDescription>
+              The name and refresh cadence stay in your draft until you save
+              this private Dashboard.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field className="min-w-0 sm:col-span-2">
+              <FieldLabel htmlFor="dashboard-name">Dashboard name</FieldLabel>
+              <Input
+                id="dashboard-name"
+                maxLength={200}
+                value={dashboardName}
+                onChange={(event) => {
+                  suppressInitialDefaultSelection();
+                  setDashboardName(event.target.value);
+                }}
+                disabled={
+                  selectedDashboard?.isDeleted ||
+                  savePending ||
+                  archivePending ||
+                  Boolean(restorePendingId)
+                }
+              />
+              <FieldDescription>Private to your account.</FieldDescription>
+            </Field>
+            <Field className="min-w-0 sm:col-span-2">
+              <FieldLabel htmlFor="dashboard-refresh-cadence">
+                Refresh cadence
+              </FieldLabel>
+              <Select
+                id="dashboard-refresh-cadence"
+                className="min-h-11 w-full"
+                value={refreshCadence}
+                disabled={
+                  selectedDashboard?.isDeleted ||
+                  savePending ||
+                  duplicatePending ||
+                  archivePending ||
+                  Boolean(restorePendingId)
+                }
+                onValueChange={(value) => {
+                  suppressInitialDefaultSelection();
+                  setRefreshCadence(value as OpenViewDashboardRefreshCadence);
+                }}
+              >
+                <option value="manual">Manual</option>
+                <option value="one-minute">Every minute</option>
+                <option value="five-minutes">Every five minutes</option>
+              </Select>
+              <FieldDescription>
+                Automatic refresh runs only while this page is visible and this
+                Dashboard has no unsaved changes.
+              </FieldDescription>
+            </Field>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setDashboardDialogKind(null)}
+            >
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={widgetDialogOpen} onOpenChange={setWidgetDialogOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Add widget</DialogTitle>
+            <DialogDescription>
+              Choose one live result. A new widget loads only after you save the
+              Dashboard.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+            <Field className="min-w-0 sm:col-span-2">
+              <FieldLabel htmlFor="dashboard-module">Data source</FieldLabel>
+              <Select
+                id="dashboard-module"
+                className="min-h-11 w-full"
+                value={builderModuleId}
+                disabled={duplicatePending}
+                onValueChange={(value) => {
+                  suppressInitialDefaultSelection();
+                  selectBuilderModule(value);
+                  setBuilderDateFieldId("");
+                  setBuilderMeasureId("");
+                }}
+              >
+                <option value="">Choose a data source</option>
+                {catalogSources.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name}
+                  </option>
+                ))}
+              </Select>
+              {!catalogSources.length && !catalogError ? (
+                <FieldDescription>
+                  No data sources are available yet. Retry the catalog if this
+                  persists.
+                </FieldDescription>
+              ) : null}
+            </Field>
+            <Field className="min-w-0">
+              <FieldLabel htmlFor="dashboard-widget-type">
+                Widget type
+              </FieldLabel>
+              <Select
+                id="dashboard-widget-type"
+                className="min-h-11 w-full"
+                value={builderWidgetType}
+                disabled={duplicatePending}
+                onValueChange={(value) => {
+                  suppressInitialDefaultSelection();
+                  const nextType = value as OpenViewDashboardWidgetType;
+                  setBuilderWidgetType(nextType);
+                  if (nextType === "summary") setBuilderAggregation("count");
+                }}
+              >
+                <option value="summary">Summary</option>
+                <option value="workload">Workload</option>
+                <option value="records">Record list</option>
+                <option value="chart">Chart</option>
+              </Select>
+            </Field>
+
+            {builderWidgetType === "chart" ? (
+              <Field className="min-w-0">
+                <FieldLabel htmlFor="dashboard-chart-type">
+                  Chart type
+                </FieldLabel>
+                <Select
+                  id="dashboard-chart-type"
+                  className="min-h-11 w-full"
+                  value={builderChartType}
+                  disabled={duplicatePending}
+                  onValueChange={(value) => {
+                    suppressInitialDefaultSelection();
+                    setBuilderChartType(value as BuilderChartType);
+                  }}
+                >
+                  <option value="bar">By category (bar)</option>
+                  <option value="pie">By category (pie)</option>
+                  <option value="line">Over time (line)</option>
+                </Select>
+              </Field>
+            ) : null}
+
+            {builderWidgetType === "chart" ||
+            builderWidgetType === "workload" ? (
+              <Field className="min-w-0">
+                <FieldLabel htmlFor="dashboard-aggregation">
+                  Aggregation
+                </FieldLabel>
+                <Select
+                  id="dashboard-aggregation"
+                  className="min-h-11 w-full"
+                  value={builderAggregation}
+                  disabled={duplicatePending}
+                  onValueChange={(value) => {
+                    suppressInitialDefaultSelection();
+                    setBuilderAggregation(value as BuilderAggregation);
+                  }}
+                >
+                  <option value="count">Count</option>
+                  <option value="sum">Sum</option>
+                  <option value="average">Average</option>
+                </Select>
+              </Field>
+            ) : null}
+
+            {(builderWidgetType === "chart" ||
+              builderWidgetType === "workload") &&
+            builderAggregation !== "count" ? (
+              <Field className="min-w-0">
+                <FieldLabel htmlFor="dashboard-measure">
+                  Numeric measure
+                </FieldLabel>
+                <Select
+                  id="dashboard-measure"
+                  className="min-h-11 w-full"
+                  value={builderMeasureId}
+                  disabled={
+                    duplicatePending ||
+                    !builderModuleId ||
+                    !builderNumericFields.length
+                  }
+                  onValueChange={(value) => {
+                    suppressInitialDefaultSelection();
+                    setBuilderMeasureId(value);
+                  }}
+                >
+                  <option value="">Choose a numeric field</option>
+                  {builderNumericFields.map((field) => (
+                    <option key={field.id} value={field.id}>
+                      {field.name}
+                    </option>
+                  ))}
+                </Select>
+                {!builderNumericFields.length ? (
+                  <FieldDescription>
+                    Sum and average require a numeric field in this data source.
+                  </FieldDescription>
+                ) : null}
+              </Field>
+            ) : null}
+
+            {builderWidgetType === "records" ? (
+              <Field className="min-w-0">
+                <FieldLabel htmlFor="dashboard-record-field">
+                  Display field
+                </FieldLabel>
+                <Select
+                  id="dashboard-record-field"
+                  className="min-h-11 w-full"
+                  value={builderRecordFieldId}
+                  disabled={
+                    duplicatePending ||
+                    !builderModuleId ||
+                    !builderRecordFields.length
+                  }
+                  onValueChange={(value) => {
+                    suppressInitialDefaultSelection();
+                    setBuilderRecordFieldId(value);
+                  }}
+                >
+                  <option value="">Choose a field</option>
+                  {builderRecordFields.map((field) => (
+                    <option key={field.id} value={field.id}>
+                      {field.name}
+                    </option>
+                  ))}
+                </Select>
+                <FieldDescription>
+                  The saved query uses this field to display live rows.
+                </FieldDescription>
+              </Field>
+            ) : !builderIsDateSeries ? (
+              <Field className="min-w-0">
+                <FieldLabel htmlFor="dashboard-dimension">
+                  Group records by
+                </FieldLabel>
+                <Select
+                  id="dashboard-dimension"
+                  className="min-h-11 w-full"
+                  value={builderDimensionId}
+                  disabled={
+                    duplicatePending ||
+                    !builderModuleId ||
+                    !builderFields.length
+                  }
+                  onValueChange={(value) => {
+                    suppressInitialDefaultSelection();
+                    setBuilderDimensionId(value);
+                  }}
+                >
+                  <option value="">Choose a field</option>
+                  {builderFields.map((field) => (
+                    <option key={field.id} value={field.id}>
+                      {field.name}
+                    </option>
+                  ))}
+                </Select>
+                <FieldDescription>
+                  {builderWidgetType === "summary"
+                    ? "Counts matching records across the selected groups."
+                    : builderWidgetType === "workload"
+                      ? "Compares the selected aggregate across live record groups."
+                      : "Creates a categorical chart from live records."}
+                </FieldDescription>
+                {builderModuleId && !builderFields.length ? (
+                  <FieldDescription>
+                    This data source has no active categorical fields.
+                  </FieldDescription>
+                ) : null}
+              </Field>
+            ) : null}
+
+            {builderIsDateSeries ? (
+              <>
+                <Field className="min-w-0">
+                  <FieldLabel htmlFor="dashboard-date-field">
+                    Date field
+                  </FieldLabel>
+                  <Select
+                    id="dashboard-date-field"
+                    className="min-h-11 w-full"
+                    value={builderDateFieldId}
+                    disabled={
+                      duplicatePending ||
+                      !builderModuleId ||
+                      !builderDateFields.length
+                    }
+                    onValueChange={(value) => {
+                      suppressInitialDefaultSelection();
+                      setBuilderDateFieldId(value);
+                    }}
+                  >
+                    <option value="">Choose a date field</option>
+                    {builderDateFields.map((field) => (
+                      <option key={field.id} value={field.id}>
+                        {field.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <FieldDescription>
+                    Date fields create daily aggregate values.
+                  </FieldDescription>
+                  {builderModuleId && !builderDateFields.length ? (
+                    <FieldDescription>
+                      This data source has no active date or datetime fields.
+                    </FieldDescription>
+                  ) : null}
+                </Field>
+                <Field className="min-w-0">
+                  <FieldLabel htmlFor="dashboard-from-date">
+                    Start date
+                  </FieldLabel>
+                  <Input
+                    id="dashboard-from-date"
+                    type="date"
+                    required
+                    disabled={duplicatePending}
+                    className="min-h-11 w-full"
+                    value={builderFromDate}
+                    aria-describedby="dashboard-date-range-description"
+                    onChange={(event) => {
+                      suppressInitialDefaultSelection();
+                      setBuilderFromDate(event.target.value);
+                    }}
+                  />
+                </Field>
+                <Field className="min-w-0">
+                  <FieldLabel htmlFor="dashboard-to-date">End date</FieldLabel>
+                  <Input
+                    id="dashboard-to-date"
+                    type="date"
+                    required
+                    disabled={duplicatePending}
+                    className="min-h-11 w-full"
+                    value={builderToDate}
+                    aria-describedby="dashboard-date-range-description"
+                    onChange={(event) => {
+                      suppressInitialDefaultSelection();
+                      setBuilderToDate(event.target.value);
+                    }}
+                  />
+                  <FieldDescription id="dashboard-date-range-description">
+                    {builderDateRangeDescription}
+                  </FieldDescription>
+                </Field>
+              </>
+            ) : null}
+          </div>
+
+          {catalogSourcesHasMore ? (
+            <Button
+              variant="outline"
+              className="min-h-11 self-start"
+              disabled={catalogLoadingMore}
+              onClick={() => void loadMoreSources()}
+            >
+              {catalogLoadingMore
+                ? "Loading data sources…"
+                : "Load more data sources"}
+            </Button>
+          ) : null}
+          {fieldsHasMore ? (
+            <Button
+              variant="outline"
+              className="min-h-11 self-start"
+              disabled={fieldsLoadingMore}
+              onClick={() => void loadMoreFields()}
+            >
+              {fieldsLoadingMore ? "Loading fields…" : "Load more fields"}
+            </Button>
+          ) : null}
+          {catalogError ? (
+            <Alert role="alert" variant="destructive">
+              {catalogError}
+              <Button
+                className="mt-3 min-h-11"
+                variant="outline"
+                onClick={retryCatalog}
+              >
+                Retry catalog
+              </Button>
+            </Alert>
+          ) : null}
+          <p role="status" className="text-muted-foreground text-sm">
+            {draftWidgets.length} of 12 widgets used.
+          </p>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setWidgetDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="min-h-11"
+              onClick={submitBuilderWidget}
+              disabled={
+                !builderCanAddWidget ||
+                draftWidgets.length >= 12 ||
+                duplicatePending ||
+                savePending ||
+                Boolean(restorePendingId)
+              }
+            >
+              Add widget
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog
         open={pendingNavigation !== null}
         onOpenChange={(open) => {
@@ -2245,13 +2479,12 @@ export default function ServerBackedDashboards() {
               Discard unsaved Dashboard changes?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Your current Dashboard draft has unsaved changes. Continuing will
-              discard them.
+              You are moving away from this Dashboard while there are unsaved
+              changes.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <Button
-              type="button"
               variant="outline"
               className="min-h-11"
               disabled={
@@ -2265,7 +2498,6 @@ export default function ServerBackedDashboards() {
               Keep editing
             </Button>
             <Button
-              type="button"
               variant="destructive"
               className="min-h-11"
               disabled={
@@ -2275,10 +2507,20 @@ export default function ServerBackedDashboards() {
                 Boolean(restorePendingId)
               }
               onClick={() => {
-                const transition = pendingNavigation;
-                if (!transition) return;
+                const navigation = pendingNavigation;
                 setPendingNavigation(null);
-                transition.resume();
+                if (!navigation) return;
+                setDashboardDialogKind(null);
+                setWidgetDialogOpen(false);
+                setSelectedDashboard(null);
+                setDashboardName("");
+                setRefreshCadence("manual");
+                setDraftWidgets([]);
+                setActiveWidgetKey("");
+                lastGoodSnapshotRef.current = null;
+                setLastGoodSnapshot(null);
+                setSnapshotError("");
+                navigation.resume();
               }}
             >
               Discard and continue

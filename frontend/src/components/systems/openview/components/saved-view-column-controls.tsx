@@ -10,7 +10,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Select } from "@/components/ui/select";
 
-type ColumnLayout = "table" | "grid" | "gallery";
+type ColumnLayout =
+  "table" | "grid" | "gallery" | "kanban" | "calendar" | "timeline";
 type ColumnPresentation = Pick<
   OpenViewPresentation,
   "pinnedFieldIds" | "density" | "cardSize" | "wrap"
@@ -47,6 +48,8 @@ export function SavedViewColumnControls({
   onCardSizeChange,
   onWrapChange,
 }: SavedViewColumnControlsProps) {
+  const isTable = layout === "table";
+  const hasCardSettings = layout === "grid" || layout === "gallery";
   const pinnedIndex = pinnedFieldId
     ? visibleFields.findIndex((field) => field.id === pinnedFieldId)
     : -1;
@@ -58,14 +61,18 @@ export function SavedViewColumnControls({
     >
       <div>
         <h3 id="openview-presentation-fields-heading" className="font-medium">
-          {layout === "table"
+          {isTable
             ? "Visible columns and order"
-            : "Card detail fields"}
+            : hasCardSettings
+              ? "Card detail fields"
+              : "Record detail fields"}
         </h3>
         <p className="text-muted-foreground text-sm">
-          {layout === "table"
+          {isTable
             ? "Choose the table columns and order. Keep one visible; a pinned column stays first while you scroll horizontally."
-            : "Choose the extra fields shown on cards and their order. The primary and secondary fields stay in the card heading."}
+            : hasCardSettings
+              ? "Choose the extra fields shown on cards and their order. The primary and secondary fields stay in the card heading."
+              : "Choose the additional fields shown with each record. The primary and secondary fields stay in the record heading."}
         </p>
       </div>
       {fields.length ? (
@@ -77,29 +84,27 @@ export function SavedViewColumnControls({
             );
             const isPinned = field.id === pinnedFieldId;
             const cannotMoveUp =
-              layout === "table" &&
+              isTable &&
               pinnedFieldId !== null &&
               pinnedIndex >= 0 &&
               !isPinned &&
               index - 1 === pinnedIndex;
             const cannotMoveDown =
-              layout === "table" &&
+              isTable &&
               pinnedIndex >= 0 &&
               (isPinned || index + 1 === pinnedIndex);
 
             return (
               <div
                 key={field.id}
-                className="grid min-w-0 gap-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto] sm:items-center"
+                className={`grid min-w-0 gap-2 px-3 py-2 sm:items-center ${isTable ? "sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto]" : "sm:grid-cols-[minmax(0,1fr)_auto]"}`}
               >
                 <Field className="min-h-11 flex-row items-center gap-3">
                   <Checkbox
                     id={`openview-column-${field.id}`}
                     checked={visible}
                     disabled={
-                      (layout === "table" &&
-                        visible &&
-                        visibleFields.length <= 1) ||
+                      (isTable && visible && visibleFields.length <= 1) ||
                       (!visible && selectedVisibleFieldCount >= 20)
                     }
                     onCheckedChange={(checked) =>
@@ -113,7 +118,7 @@ export function SavedViewColumnControls({
                     Show {field.name}
                   </FieldLabel>
                 </Field>
-                {layout === "table" ? (
+                {isTable ? (
                   <Field className="min-h-11 flex-row items-center gap-3">
                     <Checkbox
                       id={`openview-pin-${field.id}`}
@@ -170,60 +175,66 @@ export function SavedViewColumnControls({
         </p>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        {layout === "table" ? (
-          <Field className="w-full max-w-72">
-            <FieldLabel htmlFor="openview-row-density">Row density</FieldLabel>
-            <Select
-              id="openview-row-density"
-              className="min-h-11"
-              value={presentation.density}
-              onValueChange={(density) => {
-                if (density === "comfortable" || density === "compact")
-                  onDensityChange(density);
-              }}
-            >
-              <option value="comfortable">Comfortable</option>
-              <option value="compact">Compact</option>
-            </Select>
-          </Field>
-        ) : (
-          <Field className="w-full max-w-72">
-            <FieldLabel htmlFor="openview-card-size">Card size</FieldLabel>
-            <Select
-              id="openview-card-size"
-              className="min-h-11"
-              value={presentation.cardSize}
-              onValueChange={(cardSize) => {
-                if (cardSize === "comfortable" || cardSize === "compact")
-                  onCardSizeChange(cardSize);
-              }}
-            >
-              <option value="comfortable">Comfortable</option>
-              <option value="compact">Compact</option>
-            </Select>
-          </Field>
-        )}
-        <Field className="min-h-11 flex-row items-center justify-between gap-3">
-          <div className="flex flex-col gap-1">
-            <FieldLabel htmlFor="openview-wrap-long-text">
-              Wrap long text
-            </FieldLabel>
-            <p
-              id="openview-wrap-long-text-help"
-              className="text-muted-foreground text-sm"
-            >
-              Keep full values visible when space is tight.
-            </p>
-          </div>
-          <Checkbox
-            id="openview-wrap-long-text"
-            aria-describedby="openview-wrap-long-text-help"
-            checked={presentation.wrap}
-            onCheckedChange={(checked) => onWrapChange(checked === true)}
-          />
-        </Field>
-      </div>
+      {isTable || hasCardSettings ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {isTable ? (
+            <Field className="w-full max-w-72">
+              <FieldLabel htmlFor="openview-row-density">
+                Row density
+              </FieldLabel>
+              <Select
+                id="openview-row-density"
+                className="min-h-11"
+                value={presentation.density}
+                onValueChange={(density) => {
+                  if (density === "comfortable" || density === "compact")
+                    onDensityChange(density);
+                }}
+              >
+                <option value="comfortable">Comfortable</option>
+                <option value="compact">Compact</option>
+              </Select>
+            </Field>
+          ) : hasCardSettings ? (
+            <Field className="w-full max-w-72">
+              <FieldLabel htmlFor="openview-card-size">Card size</FieldLabel>
+              <Select
+                id="openview-card-size"
+                className="min-h-11"
+                value={presentation.cardSize}
+                onValueChange={(cardSize) => {
+                  if (cardSize === "comfortable" || cardSize === "compact")
+                    onCardSizeChange(cardSize);
+                }}
+              >
+                <option value="comfortable">Comfortable</option>
+                <option value="compact">Compact</option>
+              </Select>
+            </Field>
+          ) : null}
+          {isTable || hasCardSettings ? (
+            <Field className="min-h-11 flex-row items-center justify-between gap-3">
+              <div className="flex flex-col gap-1">
+                <FieldLabel htmlFor="openview-wrap-long-text">
+                  Wrap long text
+                </FieldLabel>
+                <p
+                  id="openview-wrap-long-text-help"
+                  className="text-muted-foreground text-sm"
+                >
+                  Keep full values visible when space is tight.
+                </p>
+              </div>
+              <Checkbox
+                id="openview-wrap-long-text"
+                aria-describedby="openview-wrap-long-text-help"
+                checked={presentation.wrap}
+                onCheckedChange={(checked) => onWrapChange(checked === true)}
+              />
+            </Field>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
 import { ApiError } from "@/lib/api";
+import { Columns3, Filter, MoreHorizontal, Settings2, X } from "lucide-react";
 import {
   queryOpenViewGroupedRecords,
   type OpenViewGroupSelector,
@@ -19,11 +20,12 @@ import {
   setOpenViewPersonalDefault,
   unsetOpenViewPersonalDefault,
   updateOpenViewSavedView,
+  type OpenViewDataSourceField,
   type OpenViewQueryDefinition,
-  type OpenViewQueryFieldType,
   type OpenViewRecord,
   type OpenViewSavedView,
 } from "../adapters/views-api";
+import { queryOpenViewWindowRecords } from "../adapters/window-api";
 import { isCalendarDateField } from "./live-calendar";
 import { LiveKanban } from "./live-kanban";
 import { LiveCalendar } from "./live-calendar";
@@ -41,6 +43,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -57,6 +60,15 @@ import {
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import { serializeOpenViewUrl, type AudienceRef } from "../domain/model";
 import {
@@ -69,14 +81,20 @@ import {
   hasUnsafeIntegerFilter,
   isFilterReady,
   normalizeFilterValues,
+  OPERATOR_LABELS,
   parseAudience,
   upsertSavedView,
 } from "../domain/server-view-draft";
 import type { SavedDraft } from "../domain/server-view-draft";
 import { useServerViewsResource } from "../hooks/use-server-views-resource";
 import { LiveGroupedResults } from "./live-grouped-results";
-import { LiveRecordInspector } from "./live-record-inspector";
+import {
+  LiveRecordInspector,
+  type RecordInspectionContext,
+  type RecordInspectionPage,
+} from "./live-record-inspector";
 import { LiveRecordResults } from "./live-record-results";
+import { SavedViewColumnControls } from "./saved-view-column-controls";
 import { SavedViewFilterControls } from "./saved-view-filter-controls";
 import { SavedViewAdvancedControls } from "./saved-view-advanced-controls";
 
@@ -112,21 +130,6 @@ type RecordPageState = {
   hasMore: boolean;
   loading: boolean;
   error: string;
-};
-
-type RecordInspectionContext = {
-  key: string;
-  recordId: string;
-  rows: OpenViewRecord[];
-  offset: number;
-  total: number;
-  definition: OpenViewQueryDefinition;
-  group: {
-    fieldId: string;
-    fieldType: OpenViewQueryFieldType;
-    selected: OpenViewGroupSelector;
-    offset: number;
-  } | null;
 };
 
 type GroupedRecordSnapshot = {
@@ -176,6 +179,41 @@ function groupName(value: string | null, label: string): string {
   if (value === null) return "Unspecified";
   if (value === "") return "Blank value";
   return label;
+}
+
+function filterSummary(
+  filter: OpenViewQueryDefinition["filters"][number],
+  fieldName: string,
+): string {
+  const label = OPERATOR_LABELS[filter.operator];
+  if (filter.value === null || filter.value === undefined)
+    return `${fieldName} ${label}`;
+  const value = Array.isArray(filter.value)
+    ? filter.value.join(", ")
+    : typeof filter.value === "boolean"
+      ? filter.value
+        ? "Yes"
+        : "No"
+      : String(filter.value);
+  return value ? `${fieldName} ${label} ${value}` : `${fieldName} ${label}`;
+}
+
+function quickSortLabel(
+  field: OpenViewDataSourceField,
+  direction: "asc" | "desc",
+) {
+  const order = ["date", "datetime"].includes(field.type)
+    ? direction === "desc"
+      ? "Newest"
+      : "Oldest"
+    : ["number", "decimal", "int"].includes(field.type)
+      ? direction === "desc"
+        ? "High to low"
+        : "Low to high"
+      : direction === "desc"
+        ? "Z to A"
+        : "A to Z";
+  return `${field.name} · ${order}`;
 }
 
 function messageFor(error: unknown, fallback: string): string {
@@ -247,6 +285,9 @@ export default function ServerBackedViewsWorkspace({
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
   const [saveOpen, setSaveOpen] = useState(false);
+  const [openViewPanel, setOpenViewPanel] = useState<
+    "filters" | "columns" | "layout" | null
+  >(null);
   const [saveName, setSaveName] = useState("");
   const [saveAudience, setSaveAudience] = useState("private");
   const [saveError, setSaveError] = useState("");
@@ -853,6 +894,9 @@ export default function ServerBackedViewsWorkspace({
       field.id !== draft.presentation.secondaryFieldId,
   );
   const presentationLayoutLabel = SAVED_VIEW_LAYOUT_LABELS[presentationLayout];
+  const activeLayout: LiveRecordLayout = isLiveRecordLayout(presentationLayout)
+    ? presentationLayout
+    : "table";
   const cardLayout =
     presentationLayout === "grid" || presentationLayout === "gallery"
       ? presentationLayout
@@ -869,6 +913,36 @@ export default function ServerBackedViewsWorkspace({
           !timelineProgressField)));
   const currentDefault = defaultViewId === activeSaved?.id;
   const canEditSaved = Boolean(activeSaved?.canEdit);
+  const quickSortFields = fields.filter((field) => queryFieldIds.has(field.id));
+  const firstSort = draft.definition.sort[0];
+  const quickSortValue = firstSort
+    ? `${firstSort.fieldId}:${firstSort.direction}`
+    : "";
+  const changeLayout = (value: string) => {
+    if (!isLiveRecordLayout(value)) return;
+    updatePresentation((current) => ({ ...current, layout: value }));
+  };
+  const changeQuickSort = (value: string) => {
+    if (!value) {
+      updateDefinition((current) => ({
+        ...current,
+        sort: [],
+      }));
+      return;
+    }
+    const separator = value.lastIndexOf(":");
+    const fieldId = value.slice(0, separator);
+    const direction = value.slice(separator + 1);
+    const field = quickSortFields.find((candidate) => candidate.id === fieldId);
+    if (!field || (direction !== "asc" && direction !== "desc")) return;
+    updateDefinition((current) => ({
+      ...current,
+      sort: [
+        { fieldId: field.id, expectedType: field.type, direction },
+        ...current.sort.filter((sort) => sort.fieldId !== field.id).slice(0, 2),
+      ],
+    }));
+  };
   const archivedViews = moduleViews.filter(
     (view) => view.isDeleted && view.canEdit,
   );
@@ -908,33 +982,40 @@ export default function ServerBackedViewsWorkspace({
     [moduleId, requestedRecord, router, selectedViewId],
   );
 
-  const openRecordFromResults = (recordId: string) => {
+  const openRecordFromResults = (
+    recordId: string,
+    pageContext?: RecordInspectionPage,
+  ) => {
+    const sourcePage = pageContext ?? currentRecordPage;
     if (
       moduleId &&
-      currentRecordPage &&
-      !currentRecordPage.loading &&
-      !currentRecordPage.error &&
-      currentRecordPage.rows.some((row) => row.id === recordId)
+      sourcePage &&
+      (pageContext ||
+        (!currentRecordPage?.loading && !currentRecordPage?.error)) &&
+      sourcePage.rows.some((row) => row.id === recordId)
     ) {
       setInspectionContext({
         key: inspectionKey,
         recordId,
-        rows: currentRecordPage.rows,
-        offset: currentRecordPage.offset,
-        total: currentRecordPage.total,
+        rows: [...sourcePage.rows],
+        offset: sourcePage.offset,
+        total: sourcePage.total,
         definition: normalizedDraftDefinition,
-        group:
-          generalGroupedView &&
-          groupByFieldId &&
-          groupByFieldType &&
-          generalSelectedGroup
-            ? {
-                fieldId: groupByFieldId,
-                fieldType: groupByFieldType,
-                selected: generalSelectedGroup,
-                offset: generalGroupOffset,
-              }
-            : null,
+        source: pageContext?.source ?? {
+          kind: "records",
+          group:
+            generalGroupedView &&
+            groupByFieldId &&
+            groupByFieldType &&
+            generalSelectedGroup
+              ? {
+                  fieldId: groupByFieldId,
+                  fieldType: groupByFieldType,
+                  selected: generalSelectedGroup,
+                  offset: generalGroupOffset,
+                }
+              : null,
+        },
       });
     } else {
       setInspectionContext(null);
@@ -967,31 +1048,43 @@ export default function ServerBackedViewsWorkspace({
         location.searchParams.get("record") === context.recordId
       );
     };
+    const pageSize =
+      context.source.kind === "window"
+        ? (context.source.request.limit ?? 25)
+        : 25;
     const offset =
-      direction > 0 ? context.offset + 25 : Math.max(0, context.offset - 25);
+      direction > 0
+        ? context.offset + pageSize
+        : Math.max(0, context.offset - pageSize);
     setInspectionLoading(true);
     setInspectionError("");
     try {
-      const page = context.group
-        ? await queryOpenViewGroupedRecords({
-            moduleId,
-            definition: context.definition,
-            groupBy: {
-              fieldId: context.group.fieldId,
-              expectedType: context.group.fieldType,
-            },
-            selectedGroup: context.group.selected,
-            groupLimit: GROUP_PAGE_SIZE,
-            groupOffset: context.group.offset,
-            limit: GROUP_MEMBER_PAGE_SIZE,
-            offset,
-          })
-        : await queryOpenViewRecords({
-            moduleId,
-            definition: context.definition,
-            limit: 25,
-            offset,
-          });
+      const page =
+        context.source.kind === "window"
+          ? await queryOpenViewWindowRecords({
+              ...context.source.request,
+              offset,
+            })
+          : context.source.group
+            ? await queryOpenViewGroupedRecords({
+                moduleId,
+                definition: context.definition,
+                groupBy: {
+                  fieldId: context.source.group.fieldId,
+                  expectedType: context.source.group.fieldType,
+                },
+                selectedGroup: context.source.group.selected,
+                groupLimit: GROUP_PAGE_SIZE,
+                groupOffset: context.source.group.offset,
+                limit: GROUP_MEMBER_PAGE_SIZE,
+                offset,
+              })
+            : await queryOpenViewRecords({
+                moduleId,
+                definition: context.definition,
+                limit: GROUP_MEMBER_PAGE_SIZE,
+                offset,
+              });
       if (request !== inspectionRequest.current || !stillInspecting()) return;
       const rows = page.items;
       const adjacent = rows[direction > 0 ? 0 : rows.length - 1];
@@ -1036,8 +1129,14 @@ export default function ServerBackedViewsWorkspace({
   };
 
   const returnToResults = () => {
-    if (activeInspectionContext)
+    inspectionRequest.current += 1;
+    setInspectionLoading(false);
+    if (activeInspectionContext) {
       setRecordOffset(activeInspectionContext.offset);
+      activeInspectionContext.source.returnToPage?.(
+        activeInspectionContext.offset,
+      );
+    }
     setInspectionContext(null);
     setInspectionError("");
     setRoute({ record: undefined });
@@ -1818,8 +1917,12 @@ export default function ServerBackedViewsWorkspace({
     (!ordinaryRecordPage || ordinaryRecordPage.loading),
   );
   const linkedRecord =
-    isUuid(requestedRecord) && !linkedRecordLoading && !rowError
-      ? (pageRows.find((row) => row.id === requestedRecord) ?? null)
+    isUuid(requestedRecord) &&
+    !linkedRecordLoading &&
+    ordinaryRecordPage &&
+    !ordinaryRecordPage.error
+      ? (ordinaryRecordPage.rows.find((row) => row.id === requestedRecord) ??
+        null)
       : null;
   const inspectionActions = linkedRecord ? (
     <div className="flex flex-wrap items-center gap-2">
@@ -1853,31 +1956,8 @@ export default function ServerBackedViewsWorkspace({
       >
         Copy safe link
       </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        className="min-h-11"
-        onClick={returnToResults}
-      >
-        Return to results
-      </Button>
     </div>
   ) : null;
-  const linkedRecordPreview = isUuid(requestedRecord) ? (
-    <LiveRecordInspector
-      actions={inspectionActions}
-      record={linkedRecord}
-      recordLoading={linkedRecordLoading}
-      recordError={rowError}
-      inspectionLoading={inspectionLoading}
-      inspectionError={inspectionError}
-      fields={cardFields}
-      presentation={draft.presentation}
-      onOpenRecord={(recordId) => setRoute({ record: recordId })}
-      onRetryRecord={() => setRecordRetry((value) => value + 1)}
-    />
-  ) : null;
-
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <OpenViewHeader />
@@ -2147,7 +2227,126 @@ export default function ServerBackedViewsWorkspace({
             className="bg-card flex min-w-0 flex-col gap-4 rounded-[var(--radius)] border p-4 sm:p-5"
             aria-label="View controls"
           >
-            <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(14rem,1fr)_minmax(0,2fr)]">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="truncate text-lg font-semibold">
+                  {activeSaved?.name ?? "Unsaved view"}
+                </span>
+                {activeSaved ? (
+                  <Badge variant="outline">
+                    Revision {activeSaved.revision}
+                  </Badge>
+                ) : null}
+                {dirty ? (
+                  <Badge variant="outline">Unsaved changes</Badge>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {dirty ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={Boolean(pendingAction) || Boolean(saveConflict)}
+                    onClick={resetChanges}
+                  >
+                    Reset changes
+                  </Button>
+                ) : null}
+                {canEditSaved && dirty ? (
+                  <Button
+                    type="button"
+                    className="min-h-11"
+                    disabled={
+                      Boolean(pendingAction) ||
+                      incompleteFilters ||
+                      incompletePresentation ||
+                      Boolean(saveConflict)
+                    }
+                    onClick={saveChanges}
+                  >
+                    Save changes
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant={canEditSaved && dirty ? "outline" : "default"}
+                  className="min-h-11"
+                  disabled={
+                    Boolean(pendingAction) ||
+                    incompleteFilters ||
+                    incompletePresentation
+                  }
+                  onClick={openSaveDialog}
+                >
+                  {saveTarget ? "Save view" : "Save view as"}
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="min-h-11"
+                        aria-label="View actions"
+                      />
+                    }
+                  >
+                    <MoreHorizontal aria-hidden="true" />
+                    View actions
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-56">
+                    <DropdownMenuGroup>
+                      {activeSaved ? (
+                        <DropdownMenuItem
+                          className="min-h-11"
+                          disabled={
+                            Boolean(pendingAction) ||
+                            Boolean(saveConflict) ||
+                            incompleteFilters ||
+                            incompletePresentation
+                          }
+                          onClick={() => void duplicateActiveView()}
+                        >
+                          Duplicate view
+                        </DropdownMenuItem>
+                      ) : null}
+                      {activeSaved ? (
+                        <DropdownMenuItem
+                          className="min-h-11"
+                          disabled={Boolean(pendingAction)}
+                          onClick={() => {
+                            if (currentDefault && !routedView)
+                              confirmDraftDiscard(() => void setDefault());
+                            else void setDefault();
+                          }}
+                        >
+                          {currentDefault
+                            ? "Clear my default"
+                            : "Set as my default"}
+                        </DropdownMenuItem>
+                      ) : null}
+                    </DropdownMenuGroup>
+                    {canEditSaved ? (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuGroup>
+                          <DropdownMenuItem
+                            className="min-h-11"
+                            disabled={Boolean(pendingAction)}
+                            onClick={() => setArchiveOpen(true)}
+                          >
+                            Archive view
+                          </DropdownMenuItem>
+                        </DropdownMenuGroup>
+                      </>
+                    ) : null}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+
+            <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(14rem,1fr)_minmax(12rem,0.65fr)_auto] lg:items-end">
               <Field>
                 <FieldLabel htmlFor="openview-search">
                   Search {moduleName}
@@ -2156,7 +2355,7 @@ export default function ServerBackedViewsWorkspace({
                   id="openview-search"
                   className="min-h-11"
                   maxLength={240}
-                  placeholder={`Search ${moduleName.toLowerCase()}…`}
+                  placeholder={"Search " + moduleName.toLowerCase() + "…"}
                   value={draft.definition.search ?? ""}
                   onChange={(event) =>
                     updateDefinition((current) => ({
@@ -2166,132 +2365,164 @@ export default function ServerBackedViewsWorkspace({
                   }
                 />
               </Field>
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary">
-                    {presentationLayoutLabel} layout
-                    {!isLiveRecordLayout(presentationLayout) ? " pending" : ""}
-                  </Badge>
-                  {activeSaved ? (
-                    <Badge variant="outline">
-                      Revision {activeSaved.revision}
+              <Field>
+                <FieldLabel htmlFor="openview-quick-sort">Sort</FieldLabel>
+                <Select
+                  id="openview-quick-sort"
+                  aria-label="Sort"
+                  className="min-h-11"
+                  value={quickSortValue}
+                  disabled={Boolean(pendingAction)}
+                  onValueChange={changeQuickSort}
+                >
+                  {!quickSortFields.some(
+                    (field) => field.id === firstSort?.fieldId,
+                  ) && firstSort ? (
+                    <option value={quickSortValue} disabled>
+                      Saved sort field unavailable
+                    </option>
+                  ) : null}
+                  <option value="">Default order</option>
+                  {quickSortFields.flatMap((field) => [
+                    <option key={field.id + ":asc"} value={field.id + ":asc"}>
+                      {quickSortLabel(field, "asc")}
+                    </option>,
+                    <option key={field.id + ":desc"} value={field.id + ":desc"}>
+                      {quickSortLabel(field, "desc")}
+                    </option>,
+                  ])}
+                </Select>
+              </Field>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  aria-label={
+                    draft.definition.filters.length
+                      ? "More filters, " +
+                        draft.definition.filters.length +
+                        " active"
+                      : "More filters"
+                  }
+                  disabled={Boolean(pendingAction)}
+                  onClick={() => setOpenViewPanel("filters")}
+                >
+                  <Filter aria-hidden="true" />
+                  More filters
+                  {draft.definition.filters.length ? (
+                    <Badge variant="secondary" className="ml-1">
+                      {draft.definition.filters.length}
                     </Badge>
                   ) : null}
-                  {dirty ? (
-                    <Badge variant="outline">Unsaved changes</Badge>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {dirty ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={Boolean(pendingAction) || Boolean(saveConflict)}
-                      onClick={resetChanges}
-                    >
-                      Reset changes
-                    </Button>
-                  ) : null}
-                  {canEditSaved && dirty ? (
-                    <Button
-                      type="button"
-                      className="min-h-11"
-                      disabled={
-                        Boolean(pendingAction) ||
-                        incompleteFilters ||
-                        incompletePresentation ||
-                        Boolean(saveConflict)
-                      }
-                      onClick={saveChanges}
-                    >
-                      Save changes
-                    </Button>
-                  ) : null}
-                  <Button
-                    type="button"
-                    variant={canEditSaved && dirty ? "outline" : "default"}
-                    className="min-h-11"
-                    disabled={
-                      Boolean(pendingAction) ||
-                      incompleteFilters ||
-                      incompletePresentation
-                    }
-                    onClick={openSaveDialog}
-                  >
-                    {saveTarget ? "Save view" : "Save view as"}
-                  </Button>
-                  {activeSaved ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={
-                        Boolean(pendingAction) ||
-                        Boolean(saveConflict) ||
-                        incompleteFilters ||
-                        incompletePresentation
-                      }
-                      onClick={() => void duplicateActiveView()}
-                    >
-                      Duplicate view
-                    </Button>
-                  ) : null}
-                  {activeSaved ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={Boolean(pendingAction)}
-                      onClick={() => {
-                        if (currentDefault && !routedView)
-                          confirmDraftDiscard(() => void setDefault());
-                        else void setDefault();
-                      }}
-                    >
-                      {currentDefault
-                        ? "Clear my default"
-                        : "Set as my default"}
-                    </Button>
-                  ) : null}
-                  {canEditSaved ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={Boolean(pendingAction)}
-                      onClick={() => setArchiveOpen(true)}
-                    >
-                      Archive view
-                    </Button>
-                  ) : null}
-                </div>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={Boolean(pendingAction)}
+                  onClick={() => setOpenViewPanel("columns")}
+                >
+                  <Columns3 aria-hidden="true" />
+                  Columns
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={Boolean(pendingAction)}
+                  onClick={() => setOpenViewPanel("layout")}
+                >
+                  <Settings2 aria-hidden="true" />
+                  Layout settings
+                </Button>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <Field className="w-full max-w-56">
-                <FieldLabel htmlFor="openview-presentation-layout">
-                  Presentation layout
-                </FieldLabel>
+            {draft.definition.filters.length ? (
+              <div
+                aria-label="Active filters"
+                className="flex flex-wrap items-center gap-2"
+              >
+                <span className="text-muted-foreground text-sm">
+                  Active filters
+                </span>
+                {draft.definition.filters.map((filter, index) => {
+                  const summary = filterSummary(
+                    filter,
+                    activeFields.get(filter.fieldId)?.name ??
+                      "Unavailable field",
+                  );
+                  return (
+                    <Button
+                      key={filterRowKeyFor(filter, index)}
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 max-w-full justify-start whitespace-normal"
+                      aria-label={
+                        "Remove filter " + (index + 1) + ": " + summary
+                      }
+                      onClick={() => removeFilter(index)}
+                    >
+                      <span className="text-left break-words">{summary}</span>
+                      <X aria-hidden="true" />
+                    </Button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-sm">No active filters</p>
+            )}
+
+            {!isLiveRecordLayout(presentationLayout) ? (
+              <Alert role="note">
+                <p className="font-medium">
+                  {presentationLayoutLabel} layout is saved
+                </p>
+                <p className="mt-1">
+                  This layout is not available yet. Records are shown in a Table
+                  preview while the saved presentation stays intact.
+                </p>
+              </Alert>
+            ) : null}
+
+            <Tabs
+              value={activeLayout}
+              onValueChange={changeLayout}
+              className="min-w-0"
+            >
+              <TabsList
+                aria-label="View layouts"
+                className="hidden w-full grid-cols-6 sm:grid"
+              >
+                <TabsTrigger value="table" className="min-h-11">
+                  Table
+                </TabsTrigger>
+                <TabsTrigger value="grid" className="min-h-11">
+                  Grid
+                </TabsTrigger>
+                <TabsTrigger value="gallery" className="min-h-11">
+                  Gallery
+                </TabsTrigger>
+                <TabsTrigger value="kanban" className="min-h-11">
+                  Kanban
+                </TabsTrigger>
+                <TabsTrigger value="calendar" className="min-h-11">
+                  Calendar
+                </TabsTrigger>
+                <TabsTrigger value="timeline" className="min-h-11">
+                  Timeline
+                </TabsTrigger>
+              </TabsList>
+              <Field className="sm:hidden">
+                <FieldLabel htmlFor="openview-mobile-layout">Layout</FieldLabel>
                 <Select
-                  id="openview-presentation-layout"
+                  id="openview-mobile-layout"
+                  aria-label="Layout"
                   className="min-h-11"
-                  value={presentationLayout}
-                  aria-describedby="openview-presentation-layout-help"
-                  onValueChange={(value) => {
-                    if (!isLiveRecordLayout(value)) return;
-                    updatePresentation((current) => ({
-                      ...current,
-                      layout: value,
-                    }));
-                  }}
+                  value={activeLayout}
+                  onValueChange={changeLayout}
                 >
-                  {!isLiveRecordLayout(presentationLayout) ? (
-                    <option value={presentationLayout} disabled>
-                      {presentationLayoutLabel} (pending)
-                    </option>
-                  ) : null}
                   <option value="table">Table</option>
                   <option value="grid">Grid</option>
                   <option value="gallery">Gallery</option>
@@ -2300,328 +2531,375 @@ export default function ServerBackedViewsWorkspace({
                   <option value="timeline">Timeline</option>
                 </Select>
               </Field>
-              <p
-                id="openview-presentation-layout-help"
-                className="text-muted-foreground max-w-prose text-sm"
-              >
-                Table, Grid, Gallery, Kanban, Calendar, and Timeline load
-                authorized server records.
-              </p>
-            </div>
 
-            <SavedViewAdvancedControls
-              model={{
-                draft,
-                layout: presentationLayout,
-                layoutLabel: presentationLayoutLabel,
-                fields: {
-                  all: fields,
-                  queried: queriedFields,
-                  columnSettings: presentationSettingsFields,
-                  presentationVisible: presentationVisibleFields,
-                  visible: visibleFields,
-                  visibleIds: presentationVisibleFieldIds,
-                  pinnedField,
-                  groupByField,
-                  dates: dateFields,
-                  calendarDateField,
-                  timelineStartField,
-                  timelineEndField,
-                  timelineDeadlineField,
-                  timelineProgressField,
-                },
-                incompletePresentation,
-              }}
-              actions={{
-                updateDefinition,
-                updatePresentation,
-                updatePresentationFieldVisibility,
-                updatePinnedField,
-                movePresentationField,
-              }}
-            />
+              <TabsContent value={activeLayout} className="mt-0">
+                {generalGroupedView && !incompleteFilters ? (
+                  <LiveGroupedResults
+                    fieldName={groupByField?.name ?? ""}
+                    range={groupRange}
+                    loading={generalGroupLoading}
+                    error={generalGroupError}
+                    hasPage={currentGeneralGroupPage !== null}
+                    groups={groupOptions}
+                    pagination={groupPagination ?? null}
+                    selectedGroup={generalSelectedGroup}
+                    pending={Boolean(pendingAction)}
+                    onRetry={() => setGeneralGroupRetry((retry) => retry + 1)}
+                    onSelectGroup={(group) => {
+                      setGeneralSelectedGroup(group);
+                      setRecordOffset(0);
+                    }}
+                    onPreviousPage={() => {
+                      setGeneralGroupOffset(
+                        Math.max(
+                          0,
+                          (groupPagination?.offset ?? 0) - GROUP_PAGE_SIZE,
+                        ),
+                      );
+                      setGeneralSelectedGroup(null);
+                      setRecordOffset(0);
+                    }}
+                    onNextPage={() => {
+                      setGeneralGroupOffset(
+                        (groupPagination?.offset ?? 0) + GROUP_PAGE_SIZE,
+                      );
+                      setGeneralSelectedGroup(null);
+                      setRecordOffset(0);
+                    }}
+                  />
+                ) : null}
 
-            <SavedViewFilterControls
-              logic={draft.definition.logic}
-              filters={draft.definition.filters}
-              fields={fields}
-              activeFields={activeFields}
-              rowKeyFor={filterRowKeyFor}
-              onLogicChange={(logic) =>
-                updateDefinition((current) => ({ ...current, logic }))
-              }
-              onUpdateFilter={updateFilter}
-              onRemoveFilter={removeFilter}
-              onAddFilter={addFilter}
-            />
-
-            {!isLiveRecordLayout(presentationLayout) ? (
-              <Alert role="note">
-                <p className="font-medium">
-                  {presentationLayoutLabel} layout is saved
-                </p>
-                <p className="mt-1">
-                  {presentationLayoutLabel} rendering is pending. The saved
-                  presentation stays intact; records appear in a Table preview
-                  until a supported layout is selected.
-                </p>
-              </Alert>
-            ) : null}
+                {incompleteFilters ? (
+                  <Alert role="alert" variant="warning">
+                    {draftHasUnsafeIntegerFilter
+                      ? "Correct the integer condition in More filters before loading matching records."
+                      : "Complete the condition in More filters before loading matching records."}
+                  </Alert>
+                ) : generalGroupedView && generalGroupError ? (
+                  <Alert role="status">
+                    Grouped results are unavailable. Use the retry action above.
+                  </Alert>
+                ) : generalGroupedView && !generalSelectedGroup ? (
+                  <Alert role="note">Select a group to load its records.</Alert>
+                ) : activeLayout === "kanban" ? (
+                  groupByField && moduleId ? (
+                    <LiveKanban
+                      key={
+                        moduleId +
+                        ":" +
+                        JSON.stringify(normalizedDraftDefinition) +
+                        ":" +
+                        groupByField.id
+                      }
+                      moduleId={moduleId}
+                      definition={normalizedDraftDefinition}
+                      refreshKey={recordInvalidation}
+                      groupByFieldId={groupByField.id}
+                      groupByFieldType={groupByField.type}
+                      fields={cardFields}
+                      primaryFieldId={draft.presentation.primaryFieldId}
+                      secondaryFieldId={draft.presentation.secondaryFieldId}
+                      onOpenRecord={openRecordFromResults}
+                    />
+                  ) : (
+                    <Alert role="note">
+                      Choose an active queried field to load Kanban lane counts.
+                    </Alert>
+                  )
+                ) : activeLayout === "calendar" ? (
+                  moduleId && calendarDateField ? (
+                    <LiveCalendar
+                      key={moduleId + ":" + selectedViewId + ":calendar"}
+                      moduleId={moduleId}
+                      definition={normalizedDraftDefinition}
+                      dateRange={draft.presentation.dateRange}
+                      refreshKey={recordInvalidation}
+                      scale={draft.presentation.scale}
+                      dateField={calendarDateField}
+                      titleField={liveTitleField}
+                      detailFields={liveDetailFields}
+                      onOpenRecord={openRecordFromResults}
+                    />
+                  ) : (
+                    <Alert role="note">
+                      Choose an active queried DATE or DATETIME field to load
+                      Calendar records.
+                    </Alert>
+                  )
+                ) : activeLayout === "timeline" ? (
+                  moduleId && timelineStartField && timelineEndField ? (
+                    <LiveTimeline
+                      key={moduleId + ":" + selectedViewId + ":timeline"}
+                      moduleId={moduleId}
+                      definition={normalizedDraftDefinition}
+                      dateRange={draft.presentation.dateRange}
+                      refreshKey={recordInvalidation}
+                      startField={timelineStartField}
+                      endField={timelineEndField}
+                      deadlineField={timelineDeadlineField}
+                      progressField={timelineProgressField}
+                      titleField={liveTitleField}
+                      detailFields={liveDetailFields}
+                      onOpenRecord={openRecordFromResults}
+                    />
+                  ) : (
+                    <Alert role="note">
+                      Choose active queried start and end DATE or DATETIME
+                      fields to load Timeline records.
+                    </Alert>
+                  )
+                ) : rowError && pageRows.length === 0 ? (
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyTitle>Records could not be loaded</EmptyTitle>
+                      <EmptyDescription>{rowError}</EmptyDescription>
+                    </EmptyHeader>
+                    <EmptyContent>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="min-h-11"
+                        onClick={() => setRecordRetry((value) => value + 1)}
+                      >
+                        Retry records
+                      </Button>
+                    </EmptyContent>
+                  </Empty>
+                ) : rowPageLoading && pageRows.length === 0 ? (
+                  <div
+                    role="status"
+                    className="text-muted-foreground rounded-[var(--radius)] border px-4 py-12 text-center"
+                  >
+                    {generalGroupedView
+                      ? "Loading records in the selected group…"
+                      : "Loading matching records…"}
+                  </div>
+                ) : pageRows.length === 0 ? (
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyTitle>No records match this view</EmptyTitle>
+                      <EmptyDescription>
+                        Try a broader search or remove one of the active
+                        filters.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : fields.length === 0 ? (
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyTitle>No active fields</EmptyTitle>
+                      <EmptyDescription>
+                        This data source has records but no active fields to
+                        display.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : (
+                  <LiveRecordResults
+                    title={activeSaved?.name ?? "Unsaved view"}
+                    scopeLabel={
+                      generalGroupedView && generalSelectedGroup
+                        ? "records in selected group"
+                        : "matching records"
+                    }
+                    layoutDescription={
+                      cardLayout ? activeLayout + " layout" : "Table layout"
+                    }
+                    page={{
+                      rows: pageRows,
+                      offset: renderedRecordOffset,
+                      total: currentRecordPage?.total ?? pageRows.length,
+                      hasMore: currentRecordPage?.hasMore ?? false,
+                      loading: rowPageLoading,
+                    }}
+                    cardLayout={
+                      activeLayout === "grid" || activeLayout === "gallery"
+                        ? activeLayout
+                        : null
+                    }
+                    cardFields={cardFields}
+                    tableFields={tableFields}
+                    pinnedFieldId={pinnedField?.id ?? null}
+                    presentation={draft.presentation}
+                    pending={Boolean(pendingAction)}
+                    onOpenRecord={openRecordFromResults}
+                    onPreviousPage={() =>
+                      setRecordOffset(Math.max(0, renderedRecordOffset - 25))
+                    }
+                    onNextPage={() =>
+                      setRecordOffset(renderedRecordOffset + 25)
+                    }
+                  />
+                )}
+              </TabsContent>
+            </Tabs>
           </section>
 
-          {isUuid(requestedRecord) ? (
-            <Alert
-              role="status"
-              className="flex flex-wrap items-center justify-between gap-3"
-            >
-              <span>
-                {presentationLayout === "kanban"
-                  ? "This linked record is shown separately; Kanban lanes and counts continue to use the saved view query."
-                  : "Showing this linked record. The saved view query remains unchanged."}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                onClick={returnToResults}
-              >
-                Return to results
-              </Button>
-            </Alert>
-          ) : null}
+          <Dialog
+            open={openViewPanel !== null}
+            onOpenChange={(open) => {
+              if (!open) setOpenViewPanel(null);
+            }}
+          >
+            <DialogContent className="max-w-5xl">
+              <DialogHeader>
+                <DialogTitle>
+                  {openViewPanel === "filters"
+                    ? "More filters"
+                    : openViewPanel === "columns"
+                      ? "Columns"
+                      : "Layout settings"}
+                </DialogTitle>
+                <DialogDescription>
+                  Changes are kept in this view draft until you save them.
+                </DialogDescription>
+              </DialogHeader>
 
-          {generalGroupedView && !incompleteFilters ? (
-            <LiveGroupedResults
-              fieldName={groupByField?.name ?? ""}
-              range={groupRange}
-              loading={generalGroupLoading}
-              error={generalGroupError}
-              hasPage={currentGeneralGroupPage !== null}
-              groups={groupOptions}
-              pagination={groupPagination ?? null}
-              selectedGroup={generalSelectedGroup}
-              pending={Boolean(pendingAction)}
-              onRetry={() => setGeneralGroupRetry((retry) => retry + 1)}
-              onSelectGroup={(group) => {
-                setGeneralSelectedGroup(group);
-                setRecordOffset(0);
-              }}
-              onPreviousPage={() => {
-                setGeneralGroupOffset(
-                  Math.max(0, (groupPagination?.offset ?? 0) - GROUP_PAGE_SIZE),
-                );
-                setGeneralSelectedGroup(null);
-                setRecordOffset(0);
-              }}
-              onNextPage={() => {
-                setGeneralGroupOffset(
-                  (groupPagination?.offset ?? 0) + GROUP_PAGE_SIZE,
-                );
-                setGeneralSelectedGroup(null);
-                setRecordOffset(0);
-              }}
-            />
-          ) : null}
+              {openViewPanel === "filters" ? (
+                <SavedViewFilterControls
+                  logic={draft.definition.logic}
+                  filters={draft.definition.filters}
+                  fields={fields}
+                  activeFields={activeFields}
+                  rowKeyFor={filterRowKeyFor}
+                  onLogicChange={(logic) =>
+                    updateDefinition((current) => ({ ...current, logic }))
+                  }
+                  onUpdateFilter={updateFilter}
+                  onRemoveFilter={removeFilter}
+                  onAddFilter={addFilter}
+                />
+              ) : null}
 
-          {isUuid(requestedRecord) &&
-          presentationLayout !== "kanban" &&
-          presentationLayout !== "calendar" &&
-          presentationLayout !== "timeline" ? (
-            linkedRecordPreview
-          ) : incompleteFilters ? (
-            isUuid(requestedRecord) ? (
-              linkedRecordPreview
-            ) : (
-              <Alert role="alert" variant="warning">
-                {draftHasUnsafeIntegerFilter
-                  ? "Correct the integer filter above before loading matching records."
-                  : "Complete the filter above before loading matching records."}
-              </Alert>
-            )
-          ) : generalGroupedView && generalGroupError ? (
-            <Alert role="status">
-              Grouped results are unavailable. Use the retry action above.
-            </Alert>
-          ) : generalGroupedView && !generalSelectedGroup ? (
-            <Alert role="note">Select a group to load its records.</Alert>
-          ) : presentationLayout === "kanban" ? (
-            groupByField && moduleId ? (
-              <>
-                {inspectionActions ? (
-                  <div className="bg-card rounded-[var(--radius)] border p-3">
-                    {inspectionActions}
-                  </div>
-                ) : null}
-                <LiveKanban
-                  key={`${moduleId}:${JSON.stringify(normalizedDraftDefinition)}:${groupByField.id}`}
-                  moduleId={moduleId}
-                  definition={normalizedDraftDefinition}
-                  refreshKey={recordInvalidation}
-                  groupByFieldId={groupByField.id}
-                  groupByFieldType={groupByField.type}
-                  fields={cardFields}
-                  primaryFieldId={draft.presentation.primaryFieldId}
-                  secondaryFieldId={draft.presentation.secondaryFieldId}
-                  linkedRecordRequested={isUuid(requestedRecord)}
-                  linkedRecord={linkedRecord}
-                  linkedRecordLoading={linkedRecordLoading}
-                  linkedRecordError={isUuid(requestedRecord) ? rowError : ""}
-                  onOpenRecord={(recordId) => setRoute({ record: recordId })}
-                  onRetryLinkedRecord={() =>
-                    setRecordRetry((value) => value + 1)
+              {openViewPanel === "columns" ? (
+                <SavedViewColumnControls
+                  layout={activeLayout}
+                  fields={presentationSettingsFields}
+                  visibleFields={presentationVisibleFields}
+                  selectedVisibleFieldCount={presentationVisibleFields.length}
+                  visibleFieldIds={presentationVisibleFieldIds}
+                  pinnedFieldId={pinnedField?.id ?? null}
+                  presentation={draft.presentation}
+                  onToggleVisibility={updatePresentationFieldVisibility}
+                  onTogglePinned={updatePinnedField}
+                  onMove={movePresentationField}
+                  onDensityChange={(density) =>
+                    updatePresentation((current) => ({ ...current, density }))
+                  }
+                  onCardSizeChange={(cardSize) =>
+                    updatePresentation((current) => ({ ...current, cardSize }))
+                  }
+                  onWrapChange={(wrap) =>
+                    updatePresentation((current) => ({ ...current, wrap }))
                   }
                 />
-              </>
-            ) : (
-              <Alert role="note">
-                Choose an active queried field to load Kanban lane counts.
-              </Alert>
-            )
-          ) : presentationLayout === "calendar" ? (
-            <>
-              {moduleId && calendarDateField ? (
-                <LiveCalendar
-                  key={`${moduleId}:${selectedViewId}:calendar`}
-                  moduleId={moduleId}
-                  definition={normalizedDraftDefinition}
-                  dateRange={draft.presentation.dateRange}
-                  refreshKey={recordInvalidation}
-                  scale={draft.presentation.scale}
-                  dateField={calendarDateField}
-                  titleField={liveTitleField}
-                  detailFields={liveDetailFields}
-                  onOpenRecord={(recordId) => setRoute({ record: recordId })}
-                />
-              ) : (
-                <Alert role="note">
-                  Choose an active queried DATE or DATETIME field to load
-                  Calendar records.
-                </Alert>
-              )}
-              {linkedRecordPreview}
-            </>
-          ) : presentationLayout === "timeline" ? (
-            <>
-              {moduleId && timelineStartField && timelineEndField ? (
-                <LiveTimeline
-                  key={`${moduleId}:${selectedViewId}:timeline`}
-                  moduleId={moduleId}
-                  definition={normalizedDraftDefinition}
-                  dateRange={draft.presentation.dateRange}
-                  refreshKey={recordInvalidation}
-                  startField={timelineStartField}
-                  endField={timelineEndField}
-                  deadlineField={timelineDeadlineField}
-                  progressField={timelineProgressField}
-                  titleField={liveTitleField}
-                  detailFields={liveDetailFields}
-                  onOpenRecord={(recordId) => setRoute({ record: recordId })}
-                />
-              ) : (
-                <Alert role="note">
-                  Choose active queried start and end DATE or DATETIME fields to
-                  load Timeline records.
-                </Alert>
-              )}
-              {linkedRecordPreview}
-            </>
-          ) : rowError && pageRows.length === 0 ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>Records could not be loaded</EmptyTitle>
-                <EmptyDescription>{rowError}</EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  onClick={() => setRecordRetry((value) => value + 1)}
-                >
-                  Retry records
-                </Button>
-              </EmptyContent>
-            </Empty>
-          ) : rowPageLoading && pageRows.length === 0 ? (
-            <div
-              role="status"
-              className="text-muted-foreground rounded-[var(--radius)] border px-4 py-12 text-center"
-            >
-              {generalGroupedView
-                ? "Loading records in the selected group…"
-                : "Loading matching records…"}
-            </div>
-          ) : pageRows.length === 0 ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>
-                  {isUuid(requestedRecord)
-                    ? "This record is unavailable"
-                    : "No records match this view"}
-                </EmptyTitle>
-                <EmptyDescription>
-                  {isUuid(requestedRecord)
-                    ? "The record may have been removed or may not be visible to you."
-                    : "Try a broader search or remove one of the active filters."}
-                </EmptyDescription>
-              </EmptyHeader>
-              {isUuid(requestedRecord) ? (
-                <EmptyContent>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    onClick={recoverLink}
-                  >
-                    Return to workspace
-                  </Button>
-                </EmptyContent>
               ) : null}
-            </Empty>
-          ) : fields.length === 0 ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>No active fields</EmptyTitle>
-                <EmptyDescription>
-                  This data source has records but no active fields to display.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : (
-            <LiveRecordResults
-              title={activeSaved?.name ?? "Unsaved view"}
-              scopeLabel={
-                generalGroupedView && generalSelectedGroup
-                  ? "records in selected group"
-                  : "matching records"
-              }
-              layoutDescription={
-                cardLayout
-                  ? `${presentationLayoutLabel} layout`
-                  : isLiveRecordLayout(presentationLayout)
-                    ? "Table layout"
-                    : `${presentationLayoutLabel} rendering pending · Table preview`
-              }
-              page={{
-                rows: pageRows,
-                offset: renderedRecordOffset,
-                total: currentRecordPage?.total ?? pageRows.length,
-                hasMore: currentRecordPage?.hasMore ?? false,
-                loading: rowPageLoading,
-              }}
-              cardLayout={cardLayout}
-              cardFields={cardFields}
-              tableFields={tableFields}
-              pinnedFieldId={pinnedField?.id ?? null}
-              presentation={draft.presentation}
-              pending={Boolean(pendingAction)}
-              onOpenRecord={openRecordFromResults}
-              onPreviousPage={() =>
-                setRecordOffset(Math.max(0, renderedRecordOffset - 25))
-              }
-              onNextPage={() => setRecordOffset(renderedRecordOffset + 25)}
-            />
-          )}
+
+              {openViewPanel === "layout" ? (
+                <div className="flex flex-col gap-6">
+                  <Field className="max-w-sm">
+                    <FieldLabel htmlFor="openview-presentation-layout">
+                      Presentation layout
+                    </FieldLabel>
+                    <Select
+                      id="openview-presentation-layout"
+                      className="min-h-11"
+                      value={presentationLayout}
+                      onValueChange={changeLayout}
+                    >
+                      {!isLiveRecordLayout(presentationLayout) ? (
+                        <option value={presentationLayout} disabled>
+                          {presentationLayoutLabel} (not available)
+                        </option>
+                      ) : null}
+                      <option value="table">Table</option>
+                      <option value="grid">Grid</option>
+                      <option value="gallery">Gallery</option>
+                      <option value="kanban">Kanban</option>
+                      <option value="calendar">Calendar</option>
+                      <option value="timeline">Timeline</option>
+                    </Select>
+                  </Field>
+                  <SavedViewAdvancedControls
+                    model={{
+                      draft,
+                      layout: presentationLayout,
+                      layoutLabel: presentationLayoutLabel,
+                      fields: {
+                        all: fields,
+                        queried: queriedFields,
+                        groupByField,
+                        dates: dateFields,
+                        calendarDateField,
+                        timelineStartField,
+                        timelineEndField,
+                        timelineDeadlineField,
+                        timelineProgressField,
+                      },
+                      incompletePresentation,
+                    }}
+                    actions={{ updateDefinition, updatePresentation }}
+                  />
+                </div>
+              ) : null}
+
+              <DialogFooter>
+                <DialogClose
+                  render={<Button variant="outline" className="min-h-11" />}
+                >
+                  Close
+                </DialogClose>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog
+            open={isUuid(requestedRecord)}
+            onOpenChange={(open) => {
+              if (!open && isUuid(requestedRecord)) returnToResults();
+            }}
+          >
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Record details</DialogTitle>
+                <DialogDescription className="space-y-1">
+                  <span className="block">
+                    Showing this linked record. The saved view query remains
+                    unchanged.
+                  </span>
+                  {activeLayout === "kanban" ? (
+                    <span className="block">
+                      Kanban lanes and counts continue to use the saved view
+                      query.
+                    </span>
+                  ) : null}
+                  <span className="block">
+                    Read-only details show fields selected in this view.
+                  </span>
+                </DialogDescription>
+              </DialogHeader>
+              <div className="max-h-[calc(90dvh-10rem)] overflow-y-auto">
+                <LiveRecordInspector
+                  actions={inspectionActions}
+                  record={linkedRecord}
+                  recordLoading={linkedRecordLoading}
+                  recordError={ordinaryRecordPage?.error ?? ""}
+                  inspectionLoading={inspectionLoading}
+                  inspectionError={inspectionError}
+                  fields={queriedFields}
+                  primaryFieldId={draft.presentation.primaryFieldId}
+                  onRetryRecord={() => setRecordRetry((value) => value + 1)}
+                />
+              </div>
+              <DialogFooter>
+                <DialogClose
+                  render={<Button variant="outline" className="min-h-11" />}
+                >
+                  Close
+                </DialogClose>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </>
       )}
 
@@ -2955,7 +3233,7 @@ function OpenViewHeader() {
     <header className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
       <div className="min-w-0">
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          OpenView
+          Views
         </h1>
         <p className="text-muted-foreground mt-2 max-w-2xl text-sm">
           Explore operational records, compose reusable views, and prepare

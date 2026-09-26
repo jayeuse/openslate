@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import { ApiError } from "@/lib/api";
 import {
   queryOpenViewGroupedRecords,
@@ -12,6 +13,7 @@ import type {
   OpenViewQueryDefinition,
   OpenViewRecord,
 } from "../adapters/views-api";
+import type { RecordInspectionPage } from "./live-record-inspector";
 
 const GROUP_PAGE_SIZE = 12;
 const RECORD_PAGE_SIZE = 25;
@@ -27,12 +29,7 @@ type LiveKanbanProps = {
   fields: readonly OpenViewDataSourceField[];
   primaryFieldId: string | null;
   secondaryFieldId: string | null;
-  linkedRecordRequested: boolean;
-  linkedRecord: OpenViewRecord | null;
-  linkedRecordLoading: boolean;
-  linkedRecordError: string;
-  onOpenRecord: (recordId: string) => void;
-  onRetryLinkedRecord: () => void;
+  onOpenRecord: (recordId: string, page: RecordInspectionPage) => void;
 };
 
 type RequestSnapshot = {
@@ -150,61 +147,6 @@ function KanbanMemberCards({
   );
 }
 
-function LinkedRecordSummary({
-  record,
-  fields,
-  primaryFieldId,
-  secondaryFieldId,
-}: {
-  record: OpenViewRecord;
-  fields: readonly OpenViewDataSourceField[];
-  primaryFieldId: string | null;
-  secondaryFieldId: string | null;
-}) {
-  const primaryField =
-    fields.find((field) => field.id === primaryFieldId) ?? fields[0];
-  const secondaryField = fields.find(
-    (field) => field.id === secondaryFieldId && field.id !== primaryField?.id,
-  );
-  const detailFields = fields.filter(
-    (field) => field.id !== primaryField?.id && field.id !== secondaryField?.id,
-  );
-
-  return (
-    <section aria-label="Linked record" className="border-t px-4 py-3">
-      <h2 className="font-medium">Linked record</h2>
-      <article className="bg-background mt-3 min-w-0 rounded-[var(--radius)] border p-4">
-        <h3 className="font-semibold">
-          {primaryField
-            ? valueText(record.data[primaryField.id])
-            : "Untitled record"}
-        </h3>
-        {secondaryField ? (
-          <p className="text-muted-foreground mt-1 text-sm break-words">
-            {secondaryField.name}: {valueText(record.data[secondaryField.id])}
-          </p>
-        ) : null}
-        {detailFields.length ? (
-          <dl className="mt-3 grid min-w-0 gap-3 text-sm sm:grid-cols-2">
-            {detailFields.map((field) => (
-              <div key={field.id} className="min-w-0">
-                <dt className="text-muted-foreground truncate">{field.name}</dt>
-                <dd className="break-words">
-                  {valueText(record.data[field.id])}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        ) : null}
-        <p className="text-muted-foreground mt-3 text-xs">
-          Updated{" "}
-          <time dateTime={record.updatedAt}>{dateText(record.updatedAt)}</time>
-        </p>
-      </article>
-    </section>
-  );
-}
-
 export function LiveKanban({
   moduleId,
   definition,
@@ -214,12 +156,7 @@ export function LiveKanban({
   fields,
   primaryFieldId,
   secondaryFieldId,
-  linkedRecordRequested,
-  linkedRecord,
-  linkedRecordLoading,
-  linkedRecordError,
   onOpenRecord,
-  onRetryLinkedRecord,
 }: LiveKanbanProps) {
   const [groupOffset, setGroupOffset] = useState(0);
   const [selectedGroup, setSelectedGroup] =
@@ -366,37 +303,6 @@ export function LiveKanban({
         </p>
       </div>
 
-      {linkedRecordRequested ? (
-        linkedRecord ? (
-          <LinkedRecordSummary
-            record={linkedRecord}
-            fields={fields}
-            primaryFieldId={primaryFieldId}
-            secondaryFieldId={secondaryFieldId}
-          />
-        ) : linkedRecordError ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
-            <p role="alert">{linkedRecordError}</p>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={onRetryLinkedRecord}
-            >
-              Retry linked record
-            </Button>
-          </div>
-        ) : linkedRecordLoading ? (
-          <p role="status" className="text-muted-foreground border-t px-4 py-3">
-            Loading linked record…
-          </p>
-        ) : (
-          <p role="status" className="text-muted-foreground border-t px-4 py-3">
-            This linked record is unavailable.
-          </p>
-        )
-      ) : null}
-
       {requestError ? (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
           <p role="alert">
@@ -466,45 +372,28 @@ export function LiveKanban({
         <p aria-live="polite" className="text-muted-foreground text-sm">
           {groupRange}
         </p>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            aria-label="Previous lanes"
-            disabled={
-              !groupPagination ||
-              groupPagination.offset === 0 ||
-              loading ||
-              Boolean(requestError)
-            }
-            onClick={() => {
-              setGroupOffset(
-                Math.max(0, (groupPagination?.offset ?? 0) - GROUP_PAGE_SIZE),
+        {!loading && !requestError && groupPagination ? (
+          <PaginationControls
+            ariaLabel="Kanban lane pages"
+            className="w-auto justify-end"
+            pageCount={Math.max(
+              1,
+              Math.ceil(groupPagination.total / groupPagination.limit),
+            )}
+            pageIndex={Math.floor(
+              groupPagination.offset / groupPagination.limit,
+            )}
+            onPageIndexChange={(nextPage) => {
+              const pageIndex = Math.floor(
+                groupPagination.offset / groupPagination.limit,
               );
+              if (nextPage === pageIndex) return;
+              setGroupOffset(nextPage * groupPagination.limit);
               setSelectedGroup(null);
               setRecordOffset(0);
             }}
-          >
-            Previous lanes
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            aria-label="Next lanes"
-            disabled={
-              !groupPagination?.hasMore || loading || Boolean(requestError)
-            }
-            onClick={() => {
-              setGroupOffset((groupPagination?.offset ?? 0) + GROUP_PAGE_SIZE);
-              setSelectedGroup(null);
-              setRecordOffset(0);
-            }}
-          >
-            Next lanes
-          </Button>
-        </div>
+          />
+        ) : null}
       </div>
 
       {selectedGroup ? (
@@ -563,7 +452,24 @@ export function LiveKanban({
                   fields={fields}
                   primaryFieldId={primaryFieldId}
                   secondaryFieldId={secondaryFieldId}
-                  onOpenRecord={onOpenRecord}
+                  onOpenRecord={(recordId) => {
+                    if (!recordPagination || !selectedGroup) return;
+                    onOpenRecord(recordId, {
+                      rows: memberPage.items,
+                      offset: recordPagination.offset,
+                      total: recordPagination.total,
+                      source: {
+                        kind: "records",
+                        group: {
+                          fieldId: groupByFieldId,
+                          fieldType: groupByFieldType,
+                          selected: selectedGroup,
+                          offset: groupOffset,
+                        },
+                        returnToPage: setRecordOffset,
+                      },
+                    });
+                  }}
                 />
               ) : (
                 <p className="text-muted-foreground px-4 py-8 text-center">
@@ -577,42 +483,22 @@ export function LiveKanban({
             <p aria-live="polite" className="text-muted-foreground text-sm">
               {recordRange}
             </p>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                aria-label="Previous lane records"
-                disabled={
-                  !recordPagination ||
-                  recordPagination.offset === 0 ||
-                  loading ||
-                  Boolean(requestError)
-                }
-                onClick={() =>
-                  setRecordOffset(
-                    Math.max(
-                      0,
-                      (recordPagination?.offset ?? 0) - RECORD_PAGE_SIZE,
-                    ),
-                  )
-                }
-              >
-                Previous records
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                aria-label="Next lane records"
-                disabled={
-                  !recordPagination?.hasMore || loading || Boolean(requestError)
-                }
-                onClick={() => setRecordOffset(recordOffset + RECORD_PAGE_SIZE)}
-              >
-                Next records
-              </Button>
-            </div>
+            {!loading && !requestError && recordPagination ? (
+              <PaginationControls
+                ariaLabel="Kanban lane record pages"
+                className="w-auto justify-end"
+                pageCount={Math.max(
+                  1,
+                  Math.ceil(recordPagination.total / recordPagination.limit),
+                )}
+                pageIndex={Math.floor(
+                  recordPagination.offset / recordPagination.limit,
+                )}
+                onPageIndexChange={(nextPage) => {
+                  setRecordOffset(nextPage * recordPagination.limit);
+                }}
+              />
+            ) : null}
           </div>
         </section>
       ) : null}

@@ -1,17 +1,22 @@
 "use client";
 
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
-import { type Dispatch, type FormEvent, type SetStateAction } from "react";
+import { ArrowDown, ArrowUp, Plus, Trash2, X } from "lucide-react";
+import {
+  type Dispatch,
+  type FormEvent,
+  type SetStateAction,
+  useState,
+} from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Field,
   FieldDescription,
@@ -22,6 +27,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   OpenViewReport,
   OpenViewReportRecipe,
@@ -81,6 +87,8 @@ function operatorsFor(type: OpenViewDataSourceField["type"]): FilterOperator[] {
 }
 
 export type ReportRecipeEditorProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   baselineReport: OpenViewReport | null;
   draft: ReportDraft;
   setDraft: Dispatch<SetStateAction<ReportDraft>>;
@@ -103,7 +111,6 @@ export type ReportRecipeEditorProps = {
   loadMoreSources: () => Promise<void>;
   loadMoreFields: () => Promise<void>;
   saveReport: (event: FormEvent<HTMLFormElement>) => Promise<void>;
-  archiveOrRestore: () => Promise<void>;
   reloadLatest: () => Promise<void>;
   changeModule: (moduleId: string) => void;
   updateFilter: (key: string, change: Partial<ReportFilterDraft>) => void;
@@ -111,6 +118,8 @@ export type ReportRecipeEditorProps = {
 };
 
 export function ReportRecipeEditor({
+  open,
+  onOpenChange,
   baselineReport,
   draft,
   setDraft,
@@ -133,268 +142,306 @@ export function ReportRecipeEditor({
   loadMoreSources,
   loadMoreFields,
   saveReport,
-  archiveOrRestore,
   reloadLatest,
   changeModule,
   updateFilter,
   resetDraft,
 }: ReportRecipeEditorProps) {
+  const [activeTab, setActiveTab] = useState("basics");
   const canEdit = !baselineReport?.isDeleted && !actionPending;
   const moduleFields = fieldsForModule === draft.moduleId ? fields : [];
   const selectedSource = sources.find((source) => source.id === draft.moduleId);
   return (
-    <Card className="min-w-0">
-      <CardHeader>
-        <CardTitle>
-          {baselineReport ? baselineReport.name : "New Report"}
-        </CardTitle>
-        <CardDescription>
-          {baselineReport?.isDeleted
-            ? "Archived. Restore to edit or read runs."
-            : "Choose a source and the columns your saved output should contain."}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-5">
-        {error ? (
-          <Alert role="alert" variant="destructive">
-            {error}
-            {stale ? (
-              <Button
-                type="button"
-                variant="outline"
-                className="ml-3 min-h-11"
-                onClick={() => void reloadLatest()}
-              >
-                Reload latest
-              </Button>
-            ) : null}
-          </Alert>
-        ) : null}
-        {notice ? <Alert variant="success">{notice}</Alert> : null}
-        <form onSubmit={(event) => void saveReport(event)}>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="report-source">Data source</FieldLabel>
-              <Select
-                id="report-source"
-                className="min-h-11"
-                value={draft.moduleId}
-                onValueChange={changeModule}
-                disabled={!canEdit || (sourcesLoading && sources.length === 0)}
-              >
-                <option value="">Choose a data source</option>
-                {draft.moduleId && !selectedSource ? (
-                  <option value={draft.moduleId}>Current source</option>
-                ) : null}
-                {sources.map((source) => (
-                  <option key={source.id} value={source.id}>
-                    {source.name}
-                  </option>
-                ))}
-              </Select>
-              <FieldDescription>
-                Reports use records from one source.
-              </FieldDescription>
-            </Field>
-            {sourcesError ? (
-              <Alert role="alert" variant="destructive">
-                {sourcesError}
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl gap-0 p-0">
+        <DialogHeader className="border-border bg-card sticky top-0 z-10 flex-row items-start justify-between gap-4 border-b p-5">
+          <div className="min-w-0">
+            <DialogTitle>
+              {baselineReport ? "Edit report" : "New report"}
+            </DialogTitle>
+            <DialogDescription className="mt-1">
+              Choose one data source, then shape the saved output and who can
+              open it.
+            </DialogDescription>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="min-h-11 min-w-11 shrink-0"
+            aria-label="Close editor"
+            onClick={() => onOpenChange(false)}
+          >
+            <X aria-hidden="true" />
+          </Button>
+        </DialogHeader>
+        <form
+          onSubmit={(event) => void saveReport(event)}
+          className="flex flex-col gap-5 p-5"
+        >
+          {error ? (
+            <Alert role="alert" variant="destructive">
+              {error}
+              {stale ? (
                 <Button
                   type="button"
                   variant="outline"
                   className="ml-3 min-h-11"
-                  onClick={onRetrySources}
+                  onClick={() => void reloadLatest()}
                 >
-                  Retry
+                  Reload latest
                 </Button>
-              </Alert>
-            ) : null}
-            {sourcesHasMore ? (
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11 self-start"
-                disabled={sourcesLoading}
-                onClick={() => void loadMoreSources()}
-              >
-                Load more data sources
-              </Button>
-            ) : null}
-            <Field>
-              <FieldLabel htmlFor="report-name">Report name</FieldLabel>
-              <Input
-                id="report-name"
-                className="min-h-11"
-                maxLength={80}
-                value={draft.name}
-                disabled={!canEdit}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    name: event.target.value,
-                  }))
-                }
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="report-subtitle">Subtitle</FieldLabel>
-              <Input
-                id="report-subtitle"
-                className="min-h-11"
-                maxLength={160}
-                value={draft.subtitle}
-                disabled={!canEdit}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    subtitle: event.target.value,
-                  }))
-                }
-              />
-              <FieldDescription>Optional context for readers.</FieldDescription>
-            </Field>
-            <ReportAudienceSelector
-              audience={draft.audience}
-              onChange={(audience) =>
-                setDraft((current) => ({ ...current, audience }))
-              }
-              disabled={!canEdit}
-            />
-            <FieldSet>
-              <FieldLegend>Columns</FieldLegend>
-              <p className="text-muted-foreground text-sm">
-                Select at least one field. Use the arrows to set output order.
-              </p>
-              {fieldsError ? (
-                <Alert role="alert" variant="destructive">
-                  {fieldsError}
+              ) : null}
+            </Alert>
+          ) : null}
+          {notice ? <Alert variant="success">{notice}</Alert> : null}
+          <Tabs
+            value={activeTab}
+            onValueChange={setActiveTab}
+            className="min-w-0"
+          >
+            <TabsList
+              aria-label="Report recipe sections"
+              className="grid w-full grid-cols-2 sm:grid-cols-4"
+            >
+              <TabsTrigger value="basics" className="min-h-11">
+                Basics
+              </TabsTrigger>
+              <TabsTrigger value="columns" className="min-h-11">
+                Columns
+              </TabsTrigger>
+              <TabsTrigger value="advanced" className="min-h-11">
+                Advanced
+              </TabsTrigger>
+              <TabsTrigger value="audience" className="min-h-11">
+                Audience
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="basics" keepMounted className="mt-4">
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="report-source">Data source</FieldLabel>
+                  <Select
+                    id="report-source"
+                    className="min-h-11"
+                    value={draft.moduleId}
+                    onValueChange={changeModule}
+                    disabled={
+                      !canEdit || (sourcesLoading && sources.length === 0)
+                    }
+                  >
+                    <option value="">Choose a data source</option>
+                    {draft.moduleId && !selectedSource ? (
+                      <option value={draft.moduleId}>Current source</option>
+                    ) : null}
+                    {sources.map((source) => (
+                      <option key={source.id} value={source.id}>
+                        {source.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <FieldDescription>
+                    Reports use records from one source.
+                  </FieldDescription>
+                </Field>
+                {sourcesError ? (
+                  <Alert role="alert" variant="destructive">
+                    {sourcesError}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="ml-3 min-h-11"
+                      onClick={onRetrySources}
+                    >
+                      Retry
+                    </Button>
+                  </Alert>
+                ) : null}
+                {sourcesHasMore ? (
                   <Button
                     type="button"
                     variant="outline"
-                    className="ml-3 min-h-11"
-                    onClick={onRetryFields}
+                    className="min-h-11 self-start"
+                    disabled={sourcesLoading}
+                    onClick={() => void loadMoreSources()}
                   >
-                    Retry
+                    Load more data sources
                   </Button>
-                </Alert>
-              ) : null}
-              {fieldsLoading && moduleFields.length === 0 ? (
-                <p role="status" className="text-muted-foreground text-sm">
-                  Loading fields…
-                </p>
-              ) : null}
-              {!fieldsLoading &&
-              draft.moduleId &&
-              moduleFields.length === 0 &&
-              !fieldsError ? (
-                <p className="text-muted-foreground text-sm">
-                  No available fields for this source.
-                </p>
-              ) : null}
-              <FieldGroup>
-                {moduleFields.map((field) => {
-                  const position = draft.fields.findIndex(
-                    (entry) => entry.fieldId === field.id,
-                  );
-                  return (
-                    <Field
-                      key={field.id}
-                      className="min-h-11 flex-row items-center gap-3"
-                    >
-                      <Checkbox
-                        id={`report-field-${field.id}`}
-                        checked={position >= 0}
-                        disabled={!canEdit}
-                        onCheckedChange={(checked) =>
-                          setDraft((current) => ({
-                            ...current,
-                            fields: checked
-                              ? [...current.fields, fieldReference(field)]
-                              : current.fields.filter(
-                                  (entry) => entry.fieldId !== field.id,
-                                ),
-                          }))
-                        }
-                      />
-                      <FieldLabel htmlFor={`report-field-${field.id}`}>
-                        {field.name}
-                      </FieldLabel>
-                      {position >= 0 ? (
-                        <span className="ml-auto flex gap-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="min-h-11 min-w-11"
-                            aria-label={`Move ${field.name} up`}
-                            disabled={!canEdit || position === 0}
-                            onClick={() =>
-                              setDraft((current) => {
-                                const entries = [...current.fields];
-                                [entries[position - 1], entries[position]] = [
-                                  entries[position]!,
-                                  entries[position - 1]!,
-                                ];
-                                return { ...current, fields: entries };
-                              })
-                            }
-                          >
-                            <ArrowUp />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="min-h-11 min-w-11"
-                            aria-label={`Move ${field.name} down`}
-                            disabled={
-                              !canEdit || position === draft.fields.length - 1
-                            }
-                            onClick={() =>
-                              setDraft((current) => {
-                                const entries = [...current.fields];
-                                [entries[position], entries[position + 1]] = [
-                                  entries[position + 1]!,
-                                  entries[position]!,
-                                ];
-                                return { ...current, fields: entries };
-                              })
-                            }
-                          >
-                            <ArrowDown />
-                          </Button>
-                        </span>
-                      ) : null}
-                    </Field>
-                  );
-                })}
+                ) : null}
+                <Field>
+                  <FieldLabel htmlFor="report-name">Report name</FieldLabel>
+                  <Input
+                    id="report-name"
+                    className="min-h-11"
+                    maxLength={80}
+                    value={draft.name}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        name: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="report-subtitle">Subtitle</FieldLabel>
+                  <Input
+                    id="report-subtitle"
+                    className="min-h-11"
+                    maxLength={160}
+                    value={draft.subtitle}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        subtitle: event.target.value,
+                      }))
+                    }
+                  />
+                  <FieldDescription>
+                    Optional context for readers.
+                  </FieldDescription>
+                </Field>
               </FieldGroup>
-              {draft.fields.some(
-                (entry) =>
-                  !moduleFields.some((field) => field.id === entry.fieldId),
-              ) ? (
+            </TabsContent>
+            <TabsContent value="columns" keepMounted className="mt-4">
+              <FieldSet>
+                <FieldLegend>Columns</FieldLegend>
                 <p className="text-muted-foreground text-sm">
-                  Some selected columns are not on this field page. Load more
-                  fields to inspect them.
+                  Select at least one field. Use the arrows to set output order.
                 </p>
-              ) : null}
-              {fieldsHasMore ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11 self-start"
-                  disabled={fieldsLoading}
-                  onClick={() => void loadMoreFields()}
-                >
-                  Load more fields
-                </Button>
-              ) : null}
-            </FieldSet>
-            <details className="border-border rounded-lg border p-4">
-              <summary className="focus-visible:ring-ring cursor-pointer rounded-sm font-medium focus-visible:ring-2">
-                Filters, sorting, and grouping
-              </summary>
-              <div className="mt-4 flex flex-col gap-5">
+                {fieldsError ? (
+                  <Alert role="alert" variant="destructive">
+                    {fieldsError}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="ml-3 min-h-11"
+                      onClick={onRetryFields}
+                    >
+                      Retry
+                    </Button>
+                  </Alert>
+                ) : null}
+                {fieldsLoading && moduleFields.length === 0 ? (
+                  <p role="status" className="text-muted-foreground text-sm">
+                    Loading fields…
+                  </p>
+                ) : null}
+                {!fieldsLoading &&
+                draft.moduleId &&
+                moduleFields.length === 0 &&
+                !fieldsError ? (
+                  <p className="text-muted-foreground text-sm">
+                    No available fields for this source.
+                  </p>
+                ) : null}
+                <FieldGroup>
+                  {moduleFields.map((field) => {
+                    const position = draft.fields.findIndex(
+                      (entry) => entry.fieldId === field.id,
+                    );
+                    return (
+                      <Field
+                        key={field.id}
+                        className="min-h-11 flex-row items-center gap-3"
+                      >
+                        <Checkbox
+                          id={`report-field-${field.id}`}
+                          checked={position >= 0}
+                          disabled={!canEdit}
+                          onCheckedChange={(checked) =>
+                            setDraft((current) => ({
+                              ...current,
+                              fields: checked
+                                ? [...current.fields, fieldReference(field)]
+                                : current.fields.filter(
+                                    (entry) => entry.fieldId !== field.id,
+                                  ),
+                            }))
+                          }
+                        />
+                        <FieldLabel htmlFor={`report-field-${field.id}`}>
+                          {field.name}
+                        </FieldLabel>
+                        {position >= 0 ? (
+                          <span className="ml-auto flex gap-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="min-h-11 min-w-11"
+                              aria-label={`Move ${field.name} up`}
+                              disabled={!canEdit || position === 0}
+                              onClick={() =>
+                                setDraft((current) => {
+                                  const entries = [...current.fields];
+                                  [entries[position - 1], entries[position]] = [
+                                    entries[position]!,
+                                    entries[position - 1]!,
+                                  ];
+                                  return { ...current, fields: entries };
+                                })
+                              }
+                            >
+                              <ArrowUp />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="min-h-11 min-w-11"
+                              aria-label={`Move ${field.name} down`}
+                              disabled={
+                                !canEdit || position === draft.fields.length - 1
+                              }
+                              onClick={() =>
+                                setDraft((current) => {
+                                  const entries = [...current.fields];
+                                  [entries[position], entries[position + 1]] = [
+                                    entries[position + 1]!,
+                                    entries[position]!,
+                                  ];
+                                  return { ...current, fields: entries };
+                                })
+                              }
+                            >
+                              <ArrowDown />
+                            </Button>
+                          </span>
+                        ) : null}
+                      </Field>
+                    );
+                  })}
+                </FieldGroup>
+                {draft.fields.some(
+                  (entry) =>
+                    !moduleFields.some((field) => field.id === entry.fieldId),
+                ) ? (
+                  <p className="text-muted-foreground text-sm">
+                    Some selected columns are not on this field page. Load more
+                    fields to inspect them.
+                  </p>
+                ) : null}
+                {fieldsHasMore ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 self-start"
+                    disabled={fieldsLoading}
+                    onClick={() => void loadMoreFields()}
+                  >
+                    Load more fields
+                  </Button>
+                ) : null}
+              </FieldSet>
+            </TabsContent>
+            <TabsContent value="advanced" keepMounted className="mt-4">
+              <div className="flex flex-col gap-5">
+                <h3 className="text-sm font-semibold">
+                  Filters, sorting, and grouping
+                </h3>
                 <FieldSet>
                   <FieldLegend>Filters</FieldLegend>
                   <p className="text-muted-foreground text-sm">
@@ -781,52 +828,56 @@ export function ReportRecipeEditor({
                   </FieldLabel>
                 </Field>
               </div>
-            </details>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="submit"
-                className="min-h-11"
-                disabled={
-                  !canEdit || !dirty || fieldsLoading || Boolean(fieldsError)
+            </TabsContent>
+            <TabsContent value="audience" keepMounted className="mt-4">
+              <ReportAudienceSelector
+                audience={draft.audience}
+                onChange={(audience) =>
+                  setDraft((current) => ({ ...current, audience }))
                 }
-              >
-                {actionPending === "save"
-                  ? "Saving…"
-                  : baselineReport
-                    ? "Save changes"
-                    : "Create Report"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                disabled={!canEdit || !dirty}
-                onClick={resetDraft}
-              >
-                Reset draft
-              </Button>
-              {baselineReport ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={Boolean(actionPending) || dirty}
-                  onClick={() => void archiveOrRestore()}
-                >
-                  {baselineReport.isDeleted
-                    ? "Restore Report"
-                    : "Archive Report"}
-                </Button>
-              ) : null}
-            </div>
-            {dirty ? (
-              <p role="status" className="text-muted-foreground text-sm">
-                Unsaved changes. Save or reset before running or archiving.
-              </p>
-            ) : null}
-          </FieldGroup>
+                disabled={!canEdit}
+              />
+            </TabsContent>
+          </Tabs>
+          <div className="border-border bg-card sticky bottom-0 z-10 flex flex-wrap items-center gap-2 border-t py-3">
+            <Button
+              type="submit"
+              className="min-h-11"
+              disabled={
+                !canEdit || !dirty || fieldsLoading || Boolean(fieldsError)
+              }
+            >
+              {actionPending === "save"
+                ? "Saving…"
+                : baselineReport
+                  ? "Save changes"
+                  : "Create Report"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              disabled={!canEdit || !dirty}
+              onClick={resetDraft}
+            >
+              Reset draft
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 sm:ml-auto"
+              onClick={() => onOpenChange(false)}
+            >
+              Close
+            </Button>
+          </div>
+          {dirty ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              Unsaved changes. Save or reset before running or archiving.
+            </p>
+          ) : null}
         </form>
-      </CardContent>
-    </Card>
+      </DialogContent>
+    </Dialog>
   );
 }

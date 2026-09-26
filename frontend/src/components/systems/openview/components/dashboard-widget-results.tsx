@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import {
   Table,
   TableBody,
@@ -112,6 +113,13 @@ export function DashboardWidgetResults({
       0,
     ) ?? 0;
   const recordsPagination = recordsSnapshot?.pagination;
+  const recordsPageCount = Math.max(
+    1,
+    Math.ceil(
+      (recordsPagination?.total ?? 0) /
+        (recordsPagination?.limit ?? DASHBOARD_PAGE_SIZE),
+    ),
+  );
 
   return (
     <section
@@ -126,21 +134,11 @@ export function DashboardWidgetResults({
           <p className="text-muted-foreground text-sm">
             {persisted
               ? widget.widgetType === "records"
-                ? "Current records are loaded through the authorized query endpoint."
-                : "Current aggregate values are loaded through the authorized snapshot endpoint."
+                ? "Current records from the selected data source."
+                : "Current results from the selected data source."
               : "Save this Dashboard to load live data for the widget."}
           </p>
         </div>
-        {persisted ? (
-          <Button
-            variant="outline"
-            className="min-h-11"
-            disabled={snapshotLoading}
-            onClick={onRefresh}
-          >
-            {snapshotLoading ? "Refreshing…" : "Refresh now"}
-          </Button>
-        ) : null}
       </div>
       {snapshotError ? (
         <Alert role="alert" variant="destructive">
@@ -159,6 +157,11 @@ export function DashboardWidgetResults({
           ) : null}
         </Alert>
       ) : null}
+      {snapshotLoading && !snapshot ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          Loading current data…
+        </p>
+      ) : null}
       {snapshot &&
       snapshot.data.kind === "aggregate" &&
       widget.widgetType === "summary" ? (
@@ -176,40 +179,11 @@ export function DashboardWidgetResults({
         snapshot.data.kind === "aggregate" &&
         widget.widgetType === "workload" ? (
         <div className="flex min-w-0 flex-col gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="font-semibold">Workload breakdown</h3>
-              <p role="status" className="text-muted-foreground text-sm">
-                {snapshotRows.length
-                  ? `${firstRowIndex + 1}–${Math.min(firstRowIndex + DASHBOARD_PAGE_SIZE, snapshotRows.length)} of ${snapshotRows.length} groups`
-                  : "0 groups"}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                className="min-h-11"
-                disabled={boundedTablePage === 0}
-                onClick={() => setTablePage((page) => Math.max(0, page - 1))}
-              >
-                Previous data page
-              </Button>
-              <Button
-                variant="outline"
-                className="min-h-11"
-                disabled={boundedTablePage + 1 >= tablePageCount}
-                onClick={() =>
-                  setTablePage((page) => Math.min(tablePageCount - 1, page + 1))
-                }
-              >
-                Next data page
-              </Button>
-            </div>
-          </div>
+          <h3 className="font-semibold">Workload breakdown</h3>
           <div className="min-w-0 overflow-x-auto">
             <Table aria-label="Workload breakdown">
               <TableCaption>
-                Group values and record counts from the current query.
+                Group values and record counts for this Dashboard.
               </TableCaption>
               <TableHeader>
                 <TableRow>
@@ -231,40 +205,29 @@ export function DashboardWidgetResults({
               </TableBody>
             </Table>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+            <p role="status" className="text-muted-foreground text-sm">
+              {snapshotRows.length
+                ? `${firstRowIndex + 1}–${Math.min(firstRowIndex + DASHBOARD_PAGE_SIZE, snapshotRows.length)} of ${snapshotRows.length} groups`
+                : "0 groups"}
+            </p>
+            <PaginationControls
+              ariaLabel="Dashboard result pages"
+              className="w-auto sm:justify-end"
+              pageCount={tablePageCount}
+              pageIndex={boundedTablePage}
+              onPageIndexChange={setTablePage}
+            />
+          </div>
         </div>
       ) : snapshot &&
         snapshot.data.kind === "records" &&
         widget.widgetType === "records" ? (
         <div className="flex min-w-0 flex-col gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p role="status" className="text-muted-foreground text-sm">
-              {recordsPagination?.count
-                ? `${recordsPagination.offset + 1}–${recordsPagination.offset + recordsPagination.count} of ${recordsPagination.total} records`
-                : `${recordsPagination?.total ?? 0} records`}
-            </p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                className="min-h-11"
-                disabled={!recordsPagination || recordsPagination.offset === 0}
-                onClick={() => setTablePage((page) => Math.max(0, page - 1))}
-              >
-                Previous records
-              </Button>
-              <Button
-                variant="outline"
-                className="min-h-11"
-                disabled={!recordsPagination?.hasMore}
-                onClick={() => setTablePage((page) => page + 1)}
-              >
-                Next records
-              </Button>
-            </div>
-          </div>
           <div className="min-w-0 overflow-x-auto">
             <Table aria-label="Live records">
               <TableCaption>
-                Current authorized records. Each page contains up to{" "}
+                Current records from this Dashboard. Each page contains up to{" "}
                 {DASHBOARD_PAGE_SIZE} rows.
               </TableCaption>
               <TableHeader>
@@ -286,6 +249,20 @@ export function DashboardWidgetResults({
                 ))}
               </TableBody>
             </Table>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+            <p role="status" className="text-muted-foreground text-sm">
+              {recordsPagination?.count
+                ? `${recordsPagination.offset + 1}–${recordsPagination.offset + recordsPagination.count} of ${recordsPagination.total} records`
+                : `${recordsPagination?.total ?? 0} records`}
+            </p>
+            <PaginationControls
+              ariaLabel="Dashboard result pages"
+              className="w-auto sm:justify-end"
+              pageCount={recordsPageCount}
+              pageIndex={tablePage}
+              onPageIndexChange={setTablePage}
+            />
           </div>
         </div>
       ) : snapshot &&
@@ -312,51 +289,19 @@ export function DashboardWidgetResults({
               showLabels={false}
               showLegend={false}
               allowDecimals={widget.config.query.aggregation !== "count"}
-              className="border-border/70 bg-muted/15 h-[18rem] w-full rounded-[var(--radius)] border p-3"
+              className="border-border/70 bg-muted/15 [&_.recharts-cartesian-axis-tick-value]:fill-muted-foreground [&_.recharts-label]:fill-foreground h-[18rem] w-full rounded-[var(--radius)] border p-3"
             />
           </div>
           <div className="flex min-w-0 flex-col gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h3 className="font-semibold">
-                  {activeIsDateSeries
-                    ? "Complete date series data"
-                    : "Complete aggregate data"}
-                </h3>
-                <p role="status" className="text-muted-foreground text-sm">
-                  {snapshotRows.length
-                    ? `${firstRowIndex + 1}–${Math.min(firstRowIndex + DASHBOARD_PAGE_SIZE, snapshotRows.length)} of ${snapshotRows.length} ${activeIsDateSeries ? "daily values" : "aggregate groups"}`
-                    : `0 ${activeIsDateSeries ? "daily values" : "aggregate groups"}`}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={boundedTablePage === 0}
-                  onClick={() => setTablePage((page) => Math.max(0, page - 1))}
-                >
-                  Previous data page
-                </Button>
-                <Button
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={boundedTablePage + 1 >= tablePageCount}
-                  onClick={() =>
-                    setTablePage((page) =>
-                      Math.min(tablePageCount - 1, page + 1),
-                    )
-                  }
-                >
-                  Next data page
-                </Button>
-              </div>
-            </div>
+            <h3 className="font-semibold">
+              {activeIsDateSeries
+                ? "Complete date series data"
+                : "Complete aggregate data"}
+            </h3>
             <div className="min-w-0 overflow-x-auto">
               <Table aria-label={`Complete data for ${title}`}>
                 <TableCaption>
-                  Page {boundedTablePage + 1} of {tablePageCount}. The table
-                  pages the complete authorized snapshot.
+                  Complete results for the current Dashboard widget.
                 </TableCaption>
                 <TableHeader>
                   <TableRow>
@@ -380,12 +325,22 @@ export function DashboardWidgetResults({
                 </TableBody>
               </Table>
             </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+              <p role="status" className="text-muted-foreground text-sm">
+                {snapshotRows.length
+                  ? `${firstRowIndex + 1}–${Math.min(firstRowIndex + DASHBOARD_PAGE_SIZE, snapshotRows.length)} of ${snapshotRows.length} ${activeIsDateSeries ? "daily values" : "aggregate groups"}`
+                  : `0 ${activeIsDateSeries ? "daily values" : "aggregate groups"}`}
+              </p>
+              <PaginationControls
+                ariaLabel="Dashboard result pages"
+                className="w-auto sm:justify-end"
+                pageCount={tablePageCount}
+                pageIndex={boundedTablePage}
+                onPageIndexChange={setTablePage}
+              />
+            </div>
           </div>
         </>
-      ) : snapshotLoading ? (
-        <p role="status" className="text-muted-foreground text-sm">
-          Loading the selected widget data…
-        </p>
       ) : persisted && !snapshotError ? (
         <p className="text-muted-foreground text-sm">
           {widget.widgetType === "records"

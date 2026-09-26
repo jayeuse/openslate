@@ -1,4 +1,10 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type Route,
+} from "@playwright/test";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";
@@ -11,15 +17,15 @@ const runId = "00000000-0000-4000-8000-000000000106";
 const scheduleId = "00000000-0000-4000-8000-000000000107";
 const timestamp = "2026-09-24T00:00:00Z";
 
-function pageOf<T>(items: T[], limit = 25) {
+function pageOf<T>(items: T[], limit = 25, offset = 0, total = items.length) {
   return {
     items,
     pagination: {
       limit,
-      offset: 0,
+      offset,
       count: items.length,
-      total: items.length,
-      has_more: false,
+      total,
+      has_more: offset + items.length < total,
     },
   };
 }
@@ -45,7 +51,8 @@ const report = {
   created_at: timestamp,
   updated_at: timestamp,
 };
-type ReportFixture = Omit<typeof report, "audience"> & {
+type ReportFixture = Omit<typeof report, "audience" | "subtitle"> & {
+  subtitle: string | null;
   audience: { kind: string; role_id: string | null; user_id: string | null };
 };
 const run = {
@@ -56,20 +63,51 @@ const run = {
   headings: ["Asset"],
   created_at: timestamp,
 };
+const newRunId = "00000000-0000-4000-8000-000000000900";
 
 async function installReportsApi(
   page: Page,
   sharedOnly = false,
   initialReport: ReportFixture = report,
+  options: {
+    ownerRunCount?: number;
+    sharedRunCount?: number;
+    failOwnedSecondPage?: boolean;
+    failSharedSecondPage?: boolean;
+    distinctNewRun?: boolean;
+    failFirstHistoryAfterRun?: boolean;
+  } = {},
 ) {
-  const sourceReport = initialReport;
+  let currentReport = initialReport;
   let copiedReport: Record<string, unknown> | null = null;
   let manualRuns = 0;
   let scheduleWrites = 0;
   let csvReads = 0;
   let reportCreates = 0;
   let reportUpdates = 0;
+  let failOwnedSecondPage = options.failOwnedSecondPage ?? false;
+  let failSharedSecondPage = options.failSharedSecondPage ?? false;
+  let failFirstHistoryAfterRun = options.failFirstHistoryAfterRun ?? false;
+  const newRun = {
+    ...run,
+    id: newRunId,
+    recipe_revision: 99,
+    created_at: "2026-09-26T00:00:00Z",
+  };
   const createdReports: Array<{ request: unknown; response: unknown }> = [];
+  const sharedRunCount = options.sharedRunCount ?? (sharedOnly ? 26 : 0);
+  const sharedRuns = Array.from({ length: sharedRunCount }, (_, index) => ({
+    ...run,
+    id:
+      index === 0
+        ? run.id
+        : `00000000-0000-4000-8000-${String(200 + index).padStart(12, "0")}`,
+    recipe_revision: index + 1,
+    row_count: index + 1,
+    created_at: index === 0 ? timestamp : "2026-09-25T00:00:00Z",
+    report_name: "Shared operations review",
+    status: "succeeded",
+  }));
   await page.route("**/api/auth/session", (route) =>
     route.fulfill({
       contentType: "application/json",
@@ -158,7 +196,7 @@ async function installReportsApi(
     if (path === `/api/reports/${reportId}` && method === "GET")
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(sourceReport),
+        body: JSON.stringify(currentReport),
       });
     if (
       path === `/api/reports/${duplicateReportId}` &&
@@ -171,28 +209,41 @@ async function installReportsApi(
       });
     if (path === `/api/reports/${reportId}` && method === "PATCH") {
       reportUpdates += 1;
+      const body = request.postDataJSON() as Record<string, unknown>;
+      currentReport = {
+        ...currentReport,
+        module_id: body.module_id as string,
+        name: body.name as string,
+        subtitle: body.subtitle as string | null,
+        recipe: body.recipe as typeof currentReport.recipe,
+        audience: body.audience as ReportFixture["audience"],
+        revision: currentReport.revision + 1,
+      };
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify({ ...sourceReport, revision: 2 }),
+        body: JSON.stringify(currentReport),
       });
     }
-    if (path === "/api/reports/shared-runs")
+    if (path === "/api/reports/shared-runs") {
+      const url = new URL(request.url());
+      const limit = Number(url.searchParams.get("limit") ?? 25);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      if (offset === 25 && failSharedSecondPage) {
+        failSharedSecondPage = false;
+        return route.fulfill({ status: 503, body: "{}" });
+      }
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
           pageOf(
-            sharedOnly
-              ? [
-                  {
-                    ...run,
-                    report_name: "Shared operations review",
-                    status: "succeeded",
-                  },
-                ]
-              : [],
+            sharedRuns.slice(offset, offset + limit),
+            limit,
+            offset,
+            sharedRuns.length,
           ),
         ),
       });
+    }
     if (path === "/api/reports" && method === "GET")
       return route.fulfill({
         contentType: "application/json",
@@ -201,8 +252,8 @@ async function installReportsApi(
             sharedOnly
               ? []
               : copiedReport
-                ? [sourceReport, copiedReport]
-                : [sourceReport],
+                ? [currentReport, copiedReport]
+                : [currentReport],
           ),
         ),
       });
@@ -234,17 +285,52 @@ async function installReportsApi(
         }),
       });
     }
-    if (path === `/api/reports/${reportId}/runs` && method === "GET")
+    if (path === `/api/reports/${reportId}/runs` && method === "GET") {
+      const url = new URL(request.url());
+      const limit = Number(url.searchParams.get("limit") ?? 25);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      if (manualRuns > 0 && offset === 0 && failFirstHistoryAfterRun) {
+        failFirstHistoryAfterRun = false;
+        return route.fulfill({ status: 503, body: "{}" });
+      }
+      if (offset === 25 && failOwnedSecondPage) {
+        failOwnedSecondPage = false;
+        return route.fulfill({ status: 503, body: "{}" });
+      }
+      const ownerRuns = options.ownerRunCount
+        ? [
+            ...(manualRuns && options.distinctNewRun ? [newRun] : []),
+            ...Array.from({ length: options.ownerRunCount }, (_, index) => ({
+              ...run,
+              id:
+                index === 0
+                  ? run.id
+                  : `00000000-0000-4000-8000-${String(500 + index).padStart(12, "0")}`,
+              recipe_revision: index + 1,
+              row_count: index + 1,
+            })),
+          ]
+        : manualRuns
+          ? [run]
+          : [];
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(pageOf(manualRuns ? [run] : [])),
+        body: JSON.stringify(
+          pageOf(
+            ownerRuns.slice(offset, offset + limit),
+            limit,
+            offset,
+            ownerRuns.length,
+          ),
+        ),
       });
+    }
     if (path === `/api/reports/${reportId}/runs` && method === "POST") {
       manualRuns += 1;
       return route.fulfill({
         status: 201,
         contentType: "application/json",
-        body: JSON.stringify(run),
+        body: JSON.stringify(options.distinctNewRun ? newRun : run),
       });
     }
     if (path === `/api/reports/${reportId}/runs/${runId}/csv`) {
@@ -267,27 +353,65 @@ async function installReportsApi(
   };
 }
 
-test("connected Reports let an owner run, schedule, and export a saved recipe", async ({
-  page,
-}) => {
-  const api = await installReportsApi(page);
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Operations review" }).click();
-  await expect(page.getByRole("button", { name: "Run now" })).toBeVisible();
-  await page.getByRole("button", { name: "Run now" }).click();
-  await expect(page.getByText("Report run saved with 1 row.")).toBeVisible();
-  await expect(page.getByText("Recipe revision 1")).toBeVisible();
-  await page.getByRole("checkbox", { name: "Enable scheduled runs" }).check();
-  await page.getByRole("textbox", { name: "Timezone" }).fill("Asia/Manila");
-  await page.getByRole("button", { name: "Create schedule" }).click();
-  await expect(page.getByText("Schedule saved and enabled.")).toBeVisible();
-  const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "CSV", exact: true }).click();
-  expect((await download).suggestedFilename()).toBe(`report-${runId}.csv`);
-  expect(api.counts()).toEqual({
-    manualRuns: 1,
-    scheduleWrites: 1,
-    csvReads: 1,
+async function expectWithinMobileWidth(control: Locator) {
+  await expect
+    .poll(async () => {
+      const bounds = await control.boundingBox();
+      return bounds !== null && bounds.x >= 0 && bounds.x + bounds.width <= 390;
+    })
+    .toBe(true);
+}
+
+test.describe("Reports in a non-UTC browser timezone", () => {
+  test.use({ timezoneId: "America/Los_Angeles" });
+
+  test("connected Reports let an owner run, schedule, and export a saved recipe", async ({
+    page,
+  }) => {
+    const api = await installReportsApi(page);
+    await page.goto("/openview?section=reports");
+    await page.getByRole("button", { name: "Operations review" }).click();
+    await expect(page.getByRole("button", { name: "Run now" })).toBeVisible();
+    await expect(
+      page.getByRole("tab", { name: "Saved outputs" }),
+    ).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Schedule" })).toBeVisible();
+    await page.getByRole("button", { name: "Run now" }).click();
+    await expect(page.getByText("Report run saved with 1 row.")).toBeVisible();
+    await expect(page.getByText(/Recipe version 1/)).toBeVisible();
+    await expect(
+      page
+        .getByRole("table", { name: "Saved outputs" })
+        .getByText(/Sep 24, 2026.*12:00 AM UTC/),
+    ).toBeVisible();
+    await page.getByRole("tab", { name: "Schedule" }).click();
+    await page.getByRole("checkbox", { name: "Enable scheduled runs" }).check();
+    await page.getByLabel("Repeat").selectOption("weekly");
+    await page.getByLabel("Weekday").selectOption("4");
+    await page.getByRole("textbox", { name: "Timezone" }).fill("Asia/Manila");
+    await page.getByLabel("Local time").fill("10:30");
+    await page.getByRole("tab", { name: "Saved outputs" }).click();
+    await page.getByRole("tab", { name: "Schedule" }).click();
+    await expect(
+      page.getByRole("checkbox", { name: "Enable scheduled runs" }),
+    ).toBeChecked();
+    await expect(page.getByLabel("Repeat")).toHaveValue("weekly");
+    await expect(page.getByLabel("Weekday")).toHaveValue("4");
+    await expect(page.getByLabel("Local time")).toHaveValue("10:30");
+    await expect(page.getByRole("textbox", { name: "Timezone" })).toHaveValue(
+      "Asia/Manila",
+    );
+    await page.getByRole("button", { name: "Create schedule" }).click();
+    await expect(page.getByText("Schedule saved and enabled.")).toBeVisible();
+    await page.getByRole("tab", { name: "Saved outputs" }).click();
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: /Download CSV/ }).click();
+    expect((await download).suggestedFilename()).toBe(`report-${runId}.csv`);
+    expect(api.counts()).toEqual({
+      manualRuns: 1,
+      scheduleWrites: 1,
+      csvReads: 1,
+    });
   });
 });
 
@@ -296,16 +420,185 @@ test("connected Reports expose only authorized shared-run metadata to a reader",
 }) => {
   const api = await installReportsApi(page, true);
   await page.goto("/openview?section=reports");
-  await expect(page.getByText("Shared operations review")).toBeVisible();
+  await page.getByRole("button", { name: "Available outputs" }).click();
+  const outputs = page.getByRole("dialog", { name: "Available outputs" });
+  await expect(outputs).toBeVisible();
+  await expect(
+    outputs.getByRole("cell", { name: "Shared operations review" }).first(),
+  ).toBeVisible();
   await expect(page.getByText("No saved Reports")).toBeVisible();
   const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "CSV", exact: true }).click();
+  await outputs
+    .getByRole("button", { name: /Download CSV/ })
+    .first()
+    .click();
   expect((await download).suggestedFilename()).toBe(`report-${runId}.csv`);
+  await outputs.getByRole("button", { name: "Go to next page" }).click();
+  await expect(outputs.getByLabel("Page 2 of 2")).toBeVisible();
+  await expect(
+    outputs.getByRole("row").filter({ hasText: "26" }),
+  ).toBeVisible();
   expect(api.counts()).toEqual({
     manualRuns: 0,
     scheduleWrites: 0,
     csvReads: 1,
   });
+});
+
+test("failed owned output page does not relabel old results or leave their actions available", async ({
+  page,
+}) => {
+  await installReportsApi(page, false, report, {
+    ownerRunCount: 26,
+    failOwnedSecondPage: true,
+  });
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "Operations review" }).click();
+  await expect(
+    page.getByRole("table", { name: "Saved outputs" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Recipe version 1", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Saved output pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Report history could not be loaded" }),
+  ).toBeVisible();
+  await expect(page.getByText("Recipe version 1", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("button", { name: /Download CSV/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: /Print output from/ }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(page.getByText("Recipe version 26")).toBeVisible();
+});
+
+test("a confirmed new run keeps the 25-row first page accurate when history refresh fails", async ({
+  page,
+}) => {
+  await installReportsApi(page, false, report, {
+    ownerRunCount: 25,
+    distinctNewRun: true,
+    failFirstHistoryAfterRun: true,
+  });
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "Operations review" }).click();
+  const outputs = page.getByRole("table", { name: "Saved outputs" });
+  await expect(outputs.getByRole("row")).toHaveCount(26);
+  await expect(
+    outputs.getByRole("cell", { name: "Recipe version 25" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Run now" }).click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Report history could not be loaded" }),
+  ).toBeVisible();
+  await expect(outputs.getByRole("row")).toHaveCount(26);
+  await expect(
+    outputs.getByRole("cell", { name: "Recipe version 99" }),
+  ).toBeVisible();
+  await expect(
+    outputs.getByRole("cell", { name: "Recipe version 25" }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Showing 1–25 of 26")).toBeVisible();
+
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(outputs.getByRole("row")).toHaveCount(26);
+  await page
+    .getByRole("navigation", { name: "Saved output pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
+  await expect(
+    outputs.getByRole("cell", { name: "Recipe version 25" }),
+  ).toBeVisible();
+  await expect(page.getByText("Showing 26–26 of 26")).toBeVisible();
+});
+
+test("failed available output page does not relabel old results or leave their actions available", async ({
+  page,
+}) => {
+  await installReportsApi(page, true, report, { failSharedSecondPage: true });
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "Available outputs" }).click();
+  const outputs = page.getByRole("dialog", { name: "Available outputs" });
+  await expect(
+    outputs.getByText("Recipe version 1", { exact: true }),
+  ).toBeVisible();
+  await outputs
+    .getByRole("navigation", { name: "Available output pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
+  await expect(
+    outputs
+      .getByRole("alert")
+      .filter({ hasText: "Available runs could not be loaded" }),
+  ).toBeVisible();
+  await expect(
+    outputs.getByText("Recipe version 1", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    outputs.getByRole("button", { name: /Download CSV/ }),
+  ).toHaveCount(0);
+  await expect(
+    outputs.getByRole("button", { name: /Print output from/ }),
+  ).toHaveCount(0);
+  await outputs.getByRole("button", { name: "Retry" }).click();
+  await expect(outputs.getByText("Recipe version 26")).toBeVisible();
+});
+
+test("saved and available output actions fit a narrow viewport", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installReportsApi(page, false, report, {
+    ownerRunCount: 1,
+    sharedRunCount: 1,
+  });
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "Operations review" }).click();
+  const savedOutput = page
+    .getByRole("list", { name: "Saved outputs" })
+    .getByRole("listitem")
+    .first();
+  await expect(savedOutput.getByText("Recipe version")).toBeVisible();
+  await expect(savedOutput.getByText("Rows")).toBeVisible();
+  await expect(savedOutput.locator("time")).toBeVisible();
+  await expectWithinMobileWidth(
+    page.getByRole("button", { name: /Download CSV/ }),
+  );
+  await expectWithinMobileWidth(
+    page.getByRole("button", { name: /Print output from/ }),
+  );
+
+  await page.getByRole("button", { name: "Available outputs" }).click();
+  const outputs = page.getByRole("dialog", { name: "Available outputs" });
+  const sharedOutput = outputs
+    .getByRole("list", { name: "Available outputs" })
+    .getByRole("listitem")
+    .first();
+  await expect(
+    sharedOutput.getByText("Shared operations review"),
+  ).toBeVisible();
+  await expect(sharedOutput.getByText("Recipe version")).toBeVisible();
+  await expect(sharedOutput.getByText("Rows")).toBeVisible();
+  await expect(sharedOutput.locator("time")).toBeVisible();
+  await expectWithinMobileWidth(
+    outputs.getByRole("button", { name: /Download CSV/ }),
+  );
+  await expectWithinMobileWidth(
+    outputs.getByRole("button", { name: /Print output from/ }),
+  );
 });
 
 test("excluded Report owner cannot run it while eligible scheduling stays available", async ({
@@ -325,6 +618,7 @@ test("excluded Report owner cannot run it while eligible scheduling stays availa
       .getByRole("status")
       .filter({ hasText: "not included in this Report audience" }),
   ).toBeVisible();
+  await page.getByRole("tab", { name: "Schedule" }).click();
   await expect(
     page.getByRole("checkbox", { name: "Enable scheduled runs" }),
   ).toBeEnabled();
@@ -348,7 +642,9 @@ test("duplicating a saved Report creates a separate draft on its first Save", as
   expect(api.reportCreates()).toBe(0);
 
   await page.getByRole("button", { name: "Create Report" }).click();
-  await expect(page.getByText("Report created.")).toBeVisible();
+  await expect(
+    page.locator("#main-content").getByText("Report created."),
+  ).toBeVisible();
   expect(api.reportCreates()).toBe(1);
   expect(api.reportUpdates()).toBe(0);
   expect(api.createdReports()[0]?.response).toMatchObject({
@@ -362,12 +658,15 @@ test("duplicating a saved Report creates a separate draft on its first Save", as
   await page
     .getByRole("button", { name: "Operations review", exact: true })
     .click();
+  await page.getByRole("button", { name: "Edit report" }).click();
   await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
     "Operations review",
   );
+  await page.getByRole("button", { name: "Close editor" }).click();
   await page
     .getByRole("button", { name: "Copy of Operations review", exact: true })
     .click();
+  await page.getByRole("button", { name: "Edit report" }).click();
   await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
     "Copy of Operations review",
   );
@@ -387,7 +686,9 @@ test("a saved Report can start an independent new Report through the template ch
   expect(api.reportCreates()).toBe(0);
   expect(api.reportUpdates()).toBe(0);
   await page.getByRole("button", { name: "Create Report" }).click();
-  await expect(page.getByText("Report created.")).toBeVisible();
+  await expect(
+    page.locator("#main-content").getByText("Report created."),
+  ).toBeVisible();
   expect(api.reportCreates()).toBe(1);
   expect(api.reportUpdates()).toBe(0);
   expect(api.createdReports()[0]?.request).toMatchObject({
@@ -408,12 +709,18 @@ test("a saved Report can start an independent new Report through the template ch
 });
 
 test("unsaved Report edits guard workspace navigation", async ({ page }) => {
-  await installReportsApi(page);
+  const api = await installReportsApi(page);
   await page.goto("/openview?section=reports");
   await page.getByRole("button", { name: "Operations review" }).click();
-  await page
+  await page.getByRole("button", { name: "Edit report" }).click();
+  const editor = page.getByRole("dialog", { name: "Edit report" });
+  await editor
     .getByRole("textbox", { name: "Report name" })
     .fill("Unsaved review");
+  await editor.getByRole("button", { name: "Close editor" }).click();
+  await expect(
+    page.locator("#main-content").getByText(/Unsaved changes/),
+  ).toBeVisible();
   await page.getByRole("link", { name: "Search workspace" }).click();
   const dialog = page.getByRole("alertdialog", {
     name: "Discard unsaved Report changes?",
@@ -421,10 +728,91 @@ test("unsaved Report edits guard workspace navigation", async ({ page }) => {
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Keep editing" }).click();
   await expect(page).toHaveURL("/openview?section=reports");
-  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
-    "Unsaved review",
-  );
+  await page.getByRole("button", { name: "Edit report" }).click();
+  await expect(
+    editor.getByRole("textbox", { name: "Report name" }),
+  ).toHaveValue("Unsaved review");
+  await editor.getByRole("button", { name: "Close editor" }).click();
   await page.getByRole("link", { name: "Search workspace" }).click();
   await dialog.getByRole("button", { name: "Discard and continue" }).click();
   await expect(page).toHaveURL("/platform");
+
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "Operations review" }).click();
+  await page.getByRole("button", { name: "Edit report" }).click();
+  await page
+    .getByRole("dialog", { name: "Edit report" })
+    .getByRole("textbox", { name: "Report name" })
+    .fill("Saved review");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(
+    page.locator("#main-content").getByText("Report saved."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Saved review" }),
+  ).toBeVisible();
+  expect(api.reportUpdates()).toBe(1);
+});
+
+test("Report recipes open on demand and preserve cross-tab drafts when closed", async ({
+  page,
+}) => {
+  const api = await installReportsApi(page);
+  await page.goto("/openview?section=reports");
+
+  await expect(page.getByRole("button", { name: "New Report" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "New Report" }).click();
+  const editor = page.getByRole("dialog", { name: "New report" });
+  await expect(editor).toBeVisible();
+  for (const tab of ["Basics", "Columns", "Advanced", "Audience"]) {
+    await expect(editor.getByRole("tab", { name: tab })).toBeVisible();
+  }
+  await expect(
+    editor.getByText("Reports use records from one source."),
+  ).toBeVisible();
+
+  await editor.getByLabel("Data source").selectOption(moduleId);
+  await editor.getByLabel("Report name").fill("Quarterly review");
+  await editor.getByRole("tab", { name: "Columns" }).click();
+  await editor.getByRole("checkbox", { name: "Asset" }).check();
+  await editor.getByRole("tab", { name: "Advanced" }).click();
+  await expect(
+    editor.getByRole("button", { name: "Add filter" }),
+  ).toBeVisible();
+  await editor.getByRole("tab", { name: "Audience" }).click();
+  await expect(editor.getByLabel("Who can open saved runs?")).toHaveValue(
+    "private",
+  );
+  await editor.getByRole("tab", { name: "Basics" }).click();
+  await editor.getByRole("button", { name: "Close editor" }).click();
+
+  await expect(
+    page.locator("#main-content").getByText(/Unsaved changes/),
+  ).toBeVisible();
+  expect(api.reportCreates()).toBe(0);
+  await page.getByRole("button", { name: "Edit report" }).click();
+  await expect(editor).toBeVisible();
+  await expect(editor.getByLabel("Report name")).toHaveValue(
+    "Quarterly review",
+  );
+  await editor.getByRole("tab", { name: "Columns" }).click();
+  await expect(editor.getByRole("checkbox", { name: "Asset" })).toBeChecked();
+  await editor.getByRole("button", { name: "Create Report" }).click();
+
+  await expect(editor).not.toBeVisible();
+  await expect(
+    page.locator("#main-content").getByText("Report created."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Quarterly review" }),
+  ).toBeVisible();
+  expect(api.reportCreates()).toBe(1);
+  expect(api.createdReports()[0]?.request).toMatchObject({
+    module_id: moduleId,
+    name: "Quarterly review",
+    recipe: { fields: [{ field_id: fieldId, expected_type: "text" }] },
+  });
 });

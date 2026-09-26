@@ -5,6 +5,7 @@ import type {
   OpenViewGroupSelector,
 } from "../adapters/analytics-api";
 import { Button } from "@/components/ui/button";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 
 type GroupOption = {
   key: string;
@@ -21,7 +22,10 @@ type LiveGroupedResultsProps = {
   error: string;
   hasPage: boolean;
   groups: readonly GroupOption[];
-  pagination: Pick<OpenViewAnalyticsPagination, "offset" | "hasMore"> | null;
+  pagination: Pick<
+    OpenViewAnalyticsPagination,
+    "offset" | "hasMore" | "limit" | "total"
+  > | null;
   selectedGroup: OpenViewGroupSelector | null;
   pending: boolean;
   onRetry: () => void;
@@ -118,34 +122,26 @@ export function LiveGroupedResults({
         <p aria-live="polite" className="text-muted-foreground text-sm">
           {range}
         </p>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={
-              !pagination ||
-              pagination.offset === 0 ||
-              loading ||
-              Boolean(error) ||
-              pending
-            }
-            onClick={onPreviousPage}
-          >
-            Previous groups
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={
-              !pagination?.hasMore || loading || Boolean(error) || pending
-            }
-            onClick={onNextPage}
-          >
-            Next groups
-          </Button>
-        </div>
+        {pagination ? (
+          <PaginationControls
+            ariaLabel="Group result pages"
+            className="w-auto justify-end"
+            pageCount={Math.max(
+              1,
+              Math.ceil(pagination.total / pagination.limit),
+            )}
+            pageIndex={Math.floor(pagination.offset / pagination.limit)}
+            onPageIndexChange={(nextPage) => {
+              if (loading || error || pending) return;
+              if (nextPage < Math.floor(pagination.offset / pagination.limit))
+                onPreviousPage();
+              else if (
+                nextPage > Math.floor(pagination.offset / pagination.limit)
+              )
+                onNextPage();
+            }}
+          />
+        ) : null}
       </div>
     </section>
   );

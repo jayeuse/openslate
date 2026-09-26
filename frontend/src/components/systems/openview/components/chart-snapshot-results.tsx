@@ -6,15 +6,16 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import {
   Table,
   TableBody,
-  TableCaption,
   TableCell,
   TableHead,
   TableHeader,
@@ -132,7 +133,7 @@ export function ChartSnapshotResults({
 }: ChartSnapshotResultsProps) {
   if (!applied) {
     return (
-      <Card className="print:hidden">
+      <Card className="w-full min-w-0 print:hidden">
         <CardHeader>
           <CardTitle>Chart results</CardTitle>
           <CardDescription>
@@ -232,7 +233,9 @@ export function ChartSnapshotResults({
                 }
                 showLegend={showLegend}
                 className={cn(
-                  "border-border/70 bg-muted/15 h-[20rem] w-full min-w-0 rounded-[var(--radius)] border p-3",
+                  "border-border/70 bg-muted/15 h-[22rem] w-full min-w-0 rounded-[var(--radius)] border p-3 sm:h-[26rem]",
+                  "[&_.recharts-cartesian-axis-tick-value]:fill-muted-foreground",
+                  "[&_.recharts-label]:fill-foreground",
                   applied.chartType === "pie" &&
                     "max-sm:[&_.recharts-legend-wrapper]:hidden max-sm:[&_.recharts-pie-label-text]:hidden",
                 )}
@@ -263,6 +266,18 @@ export function ChartSnapshotResults({
               ))}
             </ul>
           ) : null}
+          <details className="border-border rounded-md border px-3">
+            <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
+              How to read this chart
+            </summary>
+            <p className="text-muted-foreground pb-3 text-sm">
+              {applied.chartType === "line"
+                ? "Each point represents the selected measure for one day in the applied date window."
+                : `Each bar or slice represents a ${applied.labelName.toLowerCase()} group.`}{" "}
+              The preview may be limited or approximate. The complete table and
+              exports below preserve every returned value and record count.
+            </p>
+          </details>
         </CardContent>
       </Card>
 
@@ -300,52 +315,8 @@ export function ChartSnapshotResults({
           </div>
         </CardHeader>
         <CardContent className="flex min-w-0 flex-col gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p role="status" className="text-muted-foreground text-sm">
-              {allRows.length
-                ? `${firstRowNumber}–${lastRowNumber} of ${allRows.length} ${applied.chartType === "line" ? "daily values" : "aggregate groups"}`
-                : `0 ${applied.chartType === "line" ? "daily values" : "aggregate groups"}`}
-            </p>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                aria-label="Previous data table page"
-                disabled={tablePage <= 0}
-                onClick={() =>
-                  setTablePage((current) => Math.max(0, current - 1))
-                }
-              >
-                Previous
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                aria-label="Next data table page"
-                disabled={tablePage + 1 >= pageCount}
-                onClick={() =>
-                  setTablePage((current) =>
-                    Math.min(pageCount - 1, current + 1),
-                  )
-                }
-              >
-                Next
-              </Button>
-            </div>
-          </div>
           <div className="min-w-0 print:hidden">
             <Table aria-label="Complete aggregate data">
-              <TableCaption>
-                Page {Math.min(tablePage + 1, Math.max(1, pageCount))} of{" "}
-                {Math.max(1, pageCount)}. The complete authorized snapshot
-                contains {allRows.length}{" "}
-                {applied.chartType === "line"
-                  ? "daily values"
-                  : "aggregate groups"}
-                .
-              </TableCaption>
               <TableHeader>
                 <TableRow>
                   <TableHead>
@@ -379,6 +350,20 @@ export function ChartSnapshotResults({
             </Table>
           </div>
         </CardContent>
+        <CardFooter className="flex flex-wrap items-center justify-between gap-3">
+          <p role="status" className="text-muted-foreground text-sm">
+            {allRows.length
+              ? `Showing ${firstRowNumber}–${lastRowNumber} of ${allRows.length} ${applied.chartType === "line" ? "daily values" : "aggregate groups"}`
+              : `Showing 0 of 0 ${applied.chartType === "line" ? "daily values" : "aggregate groups"}`}
+          </p>
+          <PaginationControls
+            ariaLabel="Complete aggregate data pages"
+            className="w-auto sm:justify-end"
+            pageCount={pageCount}
+            pageIndex={tablePage}
+            onPageIndexChange={setTablePage}
+          />
+        </CardFooter>
       </Card>
       <div className="hidden print:block">
         <h1 className="mb-2 text-xl font-semibold">

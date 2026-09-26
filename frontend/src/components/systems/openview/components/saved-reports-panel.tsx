@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw } from "lucide-react";
+import { ChevronRight, RefreshCw } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,7 @@ type SavedReportsPanelProps = {
   onTemplateReportChange: (reportId: string) => void;
   onStartFromTemplate: () => void;
   onLoadMore: () => void;
+  onOpenAvailableOutputs: () => void;
 };
 
 export function SavedReportsPanel({
@@ -58,6 +59,7 @@ export function SavedReportsPanel({
   onTemplateReportChange,
   onStartFromTemplate,
   onLoadMore,
+  onOpenAvailableOutputs,
 }: SavedReportsPanelProps) {
   return (
     <Card className="min-w-0 self-start">
@@ -190,6 +192,22 @@ export function SavedReportsPanel({
             Load more Reports
           </Button>
         ) : null}
+        <div className="border-border border-t pt-3">
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-12 w-full justify-between px-2 text-left"
+            onClick={onOpenAvailableOutputs}
+          >
+            <span className="flex min-w-0 flex-col items-start">
+              <span className="font-medium">Available outputs</span>
+              <span className="text-muted-foreground text-sm">
+                Saved runs you are eligible to open
+              </span>
+            </span>
+            <ChevronRight aria-hidden="true" />
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
