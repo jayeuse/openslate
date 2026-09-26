@@ -81,8 +81,7 @@ const workspaceNavigationDefinitions = [
       { id: "organization", label: "Organization" },
       { id: "security", label: "Security & recovery" },
       { id: "audit", label: "Audit" },
-      { id: "updates", label: "Updates" },
-      { id: "licensing", label: "Licensing" },
+      { id: "updates", label: "Updates & licensing" },
     ],
   },
   {
@@ -131,6 +130,8 @@ function sectionFor(
       : requested;
   if (definition.id === "manage" && requested?.toLowerCase() === "backup")
     return "security";
+  if (definition.id === "manage" && requested?.toLowerCase() === "licensing")
+    return "updates";
   if (definition.id === "access" && requested === "simulator")
     return "identities";
   if (definition.id === "access" && requested === "reviews") return "overview";

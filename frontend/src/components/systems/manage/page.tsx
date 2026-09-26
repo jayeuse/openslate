@@ -63,10 +63,13 @@ import { OrganizationPanel } from "./components/organization-panel";
 import { SecurityPanel, SecurityPolicyForm } from "./components/security-panel";
 import { BackupPanel, SnapshotScheduleForm } from "./components/backup-panel";
 import { UpdatesPanel } from "./components/updates-panel";
-import { LicensingPanel } from "./components/licensing-panel";
+import {
+  LicensingPanel,
+  LicenseTierComparison,
+} from "./components/licensing-panel";
 
 type ViewTab =
-  "Organization" | "Security" | "Audit" | "Backup" | "Updates" | "Licensing";
+  "Organization" | "Security" | "Audit" | "Backup" | "Updates & licensing";
 
 type Snapshot = ManageSnapshot;
 
@@ -75,12 +78,13 @@ const manageTabs: readonly ViewTab[] = [
   "Security",
   "Audit",
   "Backup",
-  "Updates",
-  "Licensing",
+  "Updates & licensing",
 ];
 
 function manageTabFromQuery(value: string | null): ViewTab {
   const normalized = value?.toLowerCase();
+  if (normalized === "updates" || normalized === "licensing")
+    return "Updates & licensing";
   return (
     manageTabs.find((tab) => tab.toLowerCase() === normalized) ?? "Organization"
   );
@@ -155,9 +159,9 @@ function ManageContent() {
       ? "Make this workspace feel like your organization."
       : tab === "Audit"
         ? "See who changed what, then inspect the details."
-        : recoveryView
-          ? "Review sessions and keep a copy of your workspace settings."
-          : "Configure organization, security, recovery, updates and licensing.";
+        : tab === "Updates & licensing"
+          ? "Your workspace version and plan, together in one place."
+          : "Review sessions and keep a copy of your workspace settings.";
 
   const section = sectionForTab(tab);
   const currentFor = (view: ViewTab): ManageSettings => {
@@ -695,33 +699,42 @@ function ManageContent() {
             />
           ) : null}
 
-          {tab === "Updates" ? (
-            <UpdatesPanel
-              panelClass={panelClass}
-              settings={settings}
-              actions={{
-                manage,
-                setError,
-                setNotice,
-                startUpdate,
-                setShowChangelog,
-                rollbackUpdate,
-              }}
-              updateAvailable={updateAvailable}
-              showChangelog={showChangelog}
-              history={history}
-            />
-          ) : null}
-
-          {tab === "Licensing" ? (
-            <LicensingPanel
-              panelClass={panelClass}
-              settings={settings}
-              activeUsers={activeUsers}
-              seatLimit={seatLimit}
-              actions={{ renewLicense, setPreview }}
-              licenseForm={{ activateLicense, dummyKey, setDummyKey }}
-            />
+          {tab === "Updates & licensing" ? (
+            <div className="min-w-0 space-y-5">
+              <Alert role="note">
+                Preview environment. Version and license changes here are
+                simulated.
+              </Alert>
+              <div className="bg-card grid min-w-0 divide-y overflow-hidden rounded-lg border xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] xl:divide-x xl:divide-y-0">
+                <UpdatesPanel
+                  settings={settings}
+                  actions={{
+                    manage,
+                    setError,
+                    setNotice,
+                    startUpdate,
+                    setShowChangelog,
+                    rollbackUpdate,
+                  }}
+                  updateAvailable={updateAvailable}
+                  showChangelog={showChangelog}
+                  history={history}
+                />
+                <LicensingPanel
+                  settings={settings}
+                  activeUsers={activeUsers}
+                  seatLimit={seatLimit}
+                  actions={{ renewLicense }}
+                  licenseForm={{ activateLicense, dummyKey, setDummyKey }}
+                />
+              </div>
+              <div className="bg-card rounded-lg border">
+                <LicenseTierComparison
+                  settings={settings}
+                  setPreview={setPreview}
+                />
+              </div>
+            </div>
           ) : null}
         </div>
       </fieldset>

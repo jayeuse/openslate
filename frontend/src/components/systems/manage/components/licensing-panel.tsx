@@ -1,136 +1,148 @@
 "use client";
-import { Clock3 } from "lucide-react";
-import { type FormEvent, type MouseEvent } from "react";
+
+import { ChevronDown, Clock3 } from "lucide-react";
+import {
+  type Dispatch,
+  type FormEvent,
+  type MouseEvent,
+  type SetStateAction,
+} from "react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { type ManageSettings } from "../state/state";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import type { ManageSettings } from "../state/state";
 import type { PreviewState } from "./manage-dialogs";
-import { SettingSelect, SectionHeading } from "./panel-ui";
+import { SettingSelect } from "./panel-ui";
+
+type PreviewSetter = Dispatch<SetStateAction<PreviewState | null>>;
+
 type LicensingPanelProps = {
-  panelClass: string;
   settings: ManageSettings;
   activeUsers: number;
   seatLimit: 100 | 25;
   actions: {
     renewLicense: (event: MouseEvent<HTMLElement>) => void;
-    setPreview: import("react").Dispatch<
-      import("react").SetStateAction<PreviewState | null>
-    >;
   };
   licenseForm: {
     activateLicense: (event: FormEvent<HTMLFormElement>) => void;
     dummyKey: string;
-    setDummyKey: import("react").Dispatch<
-      import("react").SetStateAction<string>
-    >;
+    setDummyKey: Dispatch<SetStateAction<string>>;
   };
 };
+
+type LicenseTierComparisonProps = {
+  settings: ManageSettings;
+  setPreview: PreviewSetter;
+};
+
 export function LicensingPanel({
-  panelClass,
   settings,
   activeUsers,
   seatLimit,
   actions,
   licenseForm,
 }: LicensingPanelProps) {
-  const { renewLicense, setPreview } = actions;
+  const { renewLicense } = actions;
   const { activateLicense, dummyKey, setDummyKey } = licenseForm;
+  const storageLimit = settings.tier === "Business" ? 100 : 10;
+
   return (
-    <section
-      className="flex flex-col gap-3"
-      aria-labelledby="manage-licensing-heading"
-    >
-      <SectionHeading
-        title="License & usage"
-        description="Compare bundled tiers and capacity. No payment, subscription or license service is connected."
-      />
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <Card className={panelClass}>
-          <CardHeader>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary">Current plan</Badge>
-              <Badge variant="success">Active</Badge>
+    <section className="min-w-0 p-6" aria-labelledby="manage-licensing-heading">
+      <div className="flex flex-col gap-5">
+        <header className="flex flex-col gap-1">
+          <h2
+            id="manage-licensing-heading"
+            className="text-xl font-semibold tracking-tight"
+          >
+            License &amp; usage
+          </h2>
+          <p className="text-muted-foreground text-sm">
+            Plan status and included capacity.
+          </p>
+        </header>
+
+        <div className="space-y-1">
+          <p className="text-muted-foreground text-sm">Current plan</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <h3 className="text-3xl font-semibold">{settings.tier}</h3>
+            <Badge variant="success">Active · Sample license</Badge>
+          </div>
+          <p className="text-muted-foreground text-sm">
+            Expires {settings.expiry}
+          </p>
+        </div>
+
+        <div className="space-y-5 border-t pt-5">
+          <div className="space-y-2">
+            <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-sm">
+              <h3 className="font-medium">Active users</h3>
+              <span className="font-medium tabular-nums">
+                {activeUsers} / {seatLimit}
+              </span>
             </div>
-            <CardTitle id="manage-licensing-heading" className="text-3xl">
-              {settings.tier}
-            </CardTitle>
-            <CardDescription>Expires {settings.expiry}</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div>
-              <div className="mb-2 flex justify-between text-sm">
-                <span>Active users</span>
-                <span>
-                  {activeUsers} / {seatLimit}
-                </span>
-              </div>
-              <Progress
-                aria-label="User license usage"
-                aria-valuetext={`${activeUsers} active users; ${seatLimit} seats`}
-                value={activeUsers}
-                max={seatLimit}
-              />
-            </div>
-            {activeUsers > seatLimit ? (
-              <Alert variant="warning" role="status">
-                <p className="font-medium">User limit exceeded</p>
-                <p>
-                  {activeUsers} active users exceed the {settings.tier} plan
-                  limit of {seatLimit}. This preview does not restrict access.
-                </p>
-              </Alert>
-            ) : null}
-            <div>
-              <div className="mb-2 flex justify-between text-sm">
-                <span>Storage</span>
-                <span>
-                  1.2 / {settings.tier === "Business" ? "100" : "10"} GB
-                </span>
-              </div>
-              <Progress
-                aria-label="Storage license usage"
-                value={1.2}
-                max={settings.tier === "Business" ? 100 : 10}
-              />
-            </div>
-            <Alert>
-              <p className="font-medium">About these figures</p>
-              <p className="mt-1 text-sm">
-                User usage comes from the Access directory. Storage values are
-                not measured workspace data.
+            <Progress
+              aria-label="User license usage"
+              aria-valuetext={`${activeUsers} active users; ${seatLimit} seats`}
+              value={activeUsers}
+              max={seatLimit}
+            />
+          </div>
+
+          {activeUsers > seatLimit ? (
+            <Alert variant="warning" role="status">
+              <p className="font-medium">User limit exceeded</p>
+              <p>
+                {activeUsers} active users exceed the {settings.tier} plan limit
+                of {seatLimit}. This preview does not restrict access.
               </p>
             </Alert>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11 self-start"
-              onClick={renewLicense}
-            >
-              <Clock3 data-icon="inline-start" /> Renew license
-            </Button>
-          </CardContent>
-        </Card>
-        <div className="flex flex-col gap-3">
-          <Card className={panelClass}>
-            <CardHeader>
-              <CardTitle>Activate a license</CardTitle>
-              <CardDescription>
-                Choose a provided key. This changes the displayed license only;
-                no license service is contacted. Never enter a real key here.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form className="flex flex-col gap-3" onSubmit={activateLicense}>
+          ) : null}
+
+          <div className="space-y-2">
+            <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-sm">
+              <h3 className="font-medium">Storage preview</h3>
+              <span className="font-medium tabular-nums">
+                1.2 / {storageLimit} GB
+              </span>
+            </div>
+            <Progress
+              aria-label="Illustrative storage value"
+              aria-valuetext={`1.2 of ${storageLimit} GB shown for illustration; workspace storage is not measured`}
+              value={1.2}
+              max={storageLimit}
+            />
+            <p className="text-muted-foreground text-sm">
+              User usage comes from Access. Storage is illustrative and is not
+              measured.
+            </p>
+          </div>
+        </div>
+
+        <div className="border-t pt-5">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+            <details className="min-w-0">
+              <summary className="border-input bg-background text-foreground hover:bg-accent focus-visible:ring-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-md border px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-[3px] focus-visible:outline-none [&::-webkit-details-marker]:hidden">
+                <span>Activate license</span>
+                <ChevronDown className="size-4 shrink-0" aria-hidden="true" />
+              </summary>
+              <form
+                className="mt-3 flex flex-col gap-3"
+                onSubmit={activateLicense}
+              >
+                <p className="text-muted-foreground text-sm">
+                  Choose a bundled sample key. This changes the displayed plan;
+                  no payment or license service is contacted.
+                </p>
                 <SettingSelect
                   id="bundled-dummy-license-key"
                   label="Bundled license key"
@@ -143,75 +155,117 @@ export function LicensingPanel({
                   onChange={setDummyKey}
                 />
                 <Button type="submit" className="min-h-11 self-start">
-                  Activate license
+                  Continue
                 </Button>
               </form>
-            </CardContent>
-          </Card>
-          <Card className={panelClass}>
-            <CardHeader>
-              <CardTitle>Compare tiers</CardTitle>
-              <CardDescription>
-                Compare the included limits. These figures are not published
-                plan terms.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3 sm:grid-cols-2">
-              <div
-                className={`rounded-lg border p-4 ${settings.tier === "Team" ? "border-primary ring-ring/30 ring-2" : ""}`}
-              >
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold">Team</h3>
-                  {settings.tier === "Team" ? (
-                    <Badge variant="success">Current</Badge>
-                  ) : null}
-                </div>
-                <p className="text-muted-foreground mt-2 text-sm">
-                  25 users · 10 GB storage
-                </p>
-              </div>
-              <div
-                className={`rounded-lg border p-4 ${settings.tier === "Business" ? "border-primary ring-ring/30 ring-2" : ""}`}
-              >
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold">Business tier</h3>
-                  {settings.tier === "Business" ? (
-                    <Badge variant="success">Current</Badge>
-                  ) : null}
-                </div>
-                <p className="text-muted-foreground mt-2 text-sm">
-                  100 users · 100 GB storage
-                </p>
-              </div>
-            </CardContent>
-            <CardFooter>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                onClick={() =>
-                  setPreview({
-                    title: "Tier details",
-                    description: "These are not published plan terms.",
-                    body: (
-                      <div className="flex flex-col gap-3 text-sm">
-                        <p>Team: 25 users and 10 GB storage.</p>
-                        <p>Business: 100 users and 100 GB storage.</p>
-                        <p className="text-muted-foreground">
-                          These figures are not an offer or a published
-                          OpenSlate plan.
-                        </p>
-                      </div>
-                    ),
-                  })
-                }
-              >
-                View tier details
-              </Button>
-            </CardFooter>
-          </Card>
+            </details>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={renewLicense}
+            >
+              <Clock3 data-icon="inline-start" /> Renew license
+            </Button>
+          </div>
+          <p className="text-muted-foreground mt-3 text-sm">
+            Renewal changes the displayed expiration only; no purchase or
+            payment occurs.
+          </p>
         </div>
       </div>
+    </section>
+  );
+}
+
+export function LicenseTierComparison({
+  settings,
+  setPreview,
+}: LicenseTierComparisonProps) {
+  return (
+    <section className="min-w-0 p-6" aria-labelledby="license-tier-heading">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2
+            id="license-tier-heading"
+            className="text-xl font-semibold tracking-tight"
+          >
+            Compare included allowances
+          </h2>
+          <p className="text-muted-foreground mt-1 text-sm">
+            These example allowances are not published plan terms.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          onClick={() =>
+            setPreview({
+              title: "Tier details",
+              description: "These are not published plan terms.",
+              body: (
+                <div className="flex flex-col gap-3 text-sm">
+                  <p>Team: 25 users and 10 GB storage.</p>
+                  <p>Business: 100 users and 100 GB storage.</p>
+                  <p className="text-muted-foreground">
+                    These figures are not an offer or a published OpenSlate
+                    plan.
+                  </p>
+                </div>
+              ),
+            })
+          }
+        >
+          View tier details
+        </Button>
+      </header>
+
+      <Table className="mt-4 table-fixed" aria-label="Included tier allowances">
+        <TableCaption className="sr-only">
+          User and storage allowances for Team and Business tiers.
+        </TableCaption>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[44%]" scope="col">
+              Allowance
+            </TableHead>
+            <TableHead scope="col">
+              <span className="flex flex-wrap items-center gap-2">
+                Team
+                {settings.tier === "Team" ? (
+                  <Badge variant="success">Current</Badge>
+                ) : null}
+              </span>
+            </TableHead>
+            <TableHead scope="col">
+              <span className="flex flex-wrap items-center gap-2">
+                Business
+                {settings.tier === "Business" ? (
+                  <Badge variant="success">Current</Badge>
+                ) : null}
+              </span>
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow>
+            <TableHead className="whitespace-normal" scope="row">
+              Users
+            </TableHead>
+            <TableCell className="whitespace-normal">25</TableCell>
+            <TableCell className="whitespace-normal">100</TableCell>
+          </TableRow>
+          <TableRow>
+            <TableHead className="whitespace-normal" scope="row">
+              Storage allowance
+            </TableHead>
+            <TableCell className="whitespace-normal">10 GB</TableCell>
+            <TableCell className="whitespace-normal">100 GB</TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
     </section>
   );
 }
