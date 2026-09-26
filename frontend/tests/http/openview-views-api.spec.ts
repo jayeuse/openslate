@@ -2950,7 +2950,10 @@ test("OpenView invalidations refresh Views while preserving dirty edits and clea
   const api = await installViewsApi(page, { initialLayout: "table" });
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
 
-  const search = page.getByLabel("Search Equipment");
+  const search = page.getByRole("searchbox", {
+    name: "Search Equipment",
+    exact: true,
+  });
   await search.fill("compressor");
   await expect(page.getByText("Compressor 01")).toBeVisible();
   await expect
