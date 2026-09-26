@@ -3334,6 +3334,9 @@ test("a saved view beyond the bounded list loads through its UUID deep link", as
   ).toBeVisible();
   expect(api.saved().is_deleted).toBe(true);
 
+  await expect(page).toHaveURL((url) => !url.searchParams.has("view"), {
+    timeout: 15_000,
+  });
   await page.getByRole("button", { name: "Archived views" }).click();
   const archivedDialog = page.getByRole("dialog", { name: "Archived views" });
   await expect(
@@ -3351,6 +3354,10 @@ test("a saved view beyond the bounded list loads through its UUID deep link", as
     archivedDialog.getByRole("status").filter({ hasText: "restored" }),
   ).toBeVisible();
   expect(api.saved().is_deleted).toBe(false);
+  await expect(page).toHaveURL(
+    (url) => url.searchParams.get("view") === viewId,
+    { timeout: 15_000 },
+  );
   await archivedDialog.getByRole("button", { name: "Close" }).click();
   await expect(page.getByLabel("Saved view")).toHaveValue(viewId);
 });
