@@ -905,6 +905,29 @@ test("a line to another department is drawn as a handoff", async ({ page }) => {
   await expect(page.getByRole("list", { name: "Canvas key" })).toContainText(
     "Handoff to another department",
   );
+
+  // Every look keeps the two line kinds apart, on the canvas and in the key.
+  for (const theme of ["slate", "whiteboard", "triplicate", "stockroom"]) {
+    const dashes = await page.evaluate((id) => {
+      if (id === "slate") delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = id;
+      const dash = (selector: string) =>
+        getComputedStyle(document.querySelector(selector)!).strokeDasharray;
+      return {
+        relationship: dash('[data-cell-id="sample-uses"] [data-sandbox-line]'),
+        handoff: dash('[data-cell-id="sample-billing"] [data-sandbox-line]'),
+        keyRelationship: dash(
+          '[data-sandbox-line="key"][data-sandbox-edge-kind="relationship"]',
+        ),
+        keyHandoff: dash(
+          '[data-sandbox-line="key"][data-sandbox-edge-kind="handoff"]',
+        ),
+      };
+    }, theme);
+    expect(dashes.handoff, theme).not.toBe(dashes.relationship);
+    expect(dashes.keyRelationship, theme).toBe(dashes.relationship);
+    expect(dashes.keyHandoff, theme).toBe(dashes.handoff);
+  }
 });
 
 test("a rejected password is reported beside Publish, not above the list", async ({

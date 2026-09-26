@@ -225,6 +225,17 @@
 
 [data-theme="stockroom"] .sandbox-ui [data-sandbox-line] {
   stroke-width: 1.6px;
-  stroke-dasharray: none;
   animation: none;
+}
+
+[data-theme="stockroom"]
+  .sandbox-ui
+  [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
+  stroke-dasharray: none;
+}
+
+[data-theme="stockroom"]
+  .sandbox-ui
+  [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
+  stroke-dasharray: 8 5;
 }

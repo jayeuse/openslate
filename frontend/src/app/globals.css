@@ -426,6 +426,12 @@ textarea {
   animation: sandbox-relationship-flow 2.4s linear infinite;
 }
 
+/* A handoff to another department is dashed in every look; themes may
+   change the dash but never make it match a relationship. */
+.sandbox-ui [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
+  stroke-dasharray: 6 4;
+}
+
 /* Canvas lettering follows the theme's type. */
 .sandbox-ui svg text {
   font-family: var(--font-ui), sans-serif;

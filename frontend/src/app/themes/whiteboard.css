@@ -208,9 +208,21 @@
 
 [data-theme="whiteboard"] .sandbox-ui [data-sandbox-line] {
   stroke-width: 2.4px;
-  stroke-dasharray: none;
   stroke-linecap: round;
   animation: none;
+}
+
+/* Marker lines: a relationship is one solid stroke, a handoff is dashed. */
+[data-theme="whiteboard"]
+  .sandbox-ui
+  [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
+  stroke-dasharray: none;
+}
+
+[data-theme="whiteboard"]
+  .sandbox-ui
+  [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
+  stroke-dasharray: 10 6;
 }
 
 [data-theme="whiteboard"]

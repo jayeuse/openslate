@@ -208,7 +208,18 @@
   stroke-dasharray: 6 4;
 }
 
-[data-theme="triplicate"] .sandbox-ui [data-sandbox-line] {
+/* Carbon lines: a relationship is a dashed carbon stroke, and a handoff
+   to another department is dotted, so the two stay distinct. */
+[data-theme="triplicate"]
+  .sandbox-ui
+  [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
   stroke-dasharray: 5 4;
   stroke-linecap: butt;
+}
+
+[data-theme="triplicate"]
+  .sandbox-ui
+  [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
+  stroke-dasharray: 1.5 3.5;
+  stroke-linecap: round;
 }

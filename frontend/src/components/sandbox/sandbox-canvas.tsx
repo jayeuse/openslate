@@ -1089,12 +1089,12 @@ export function SandboxCanvas({
           >
             {(
               [
-                ["Relationship", "line", ""],
-                ["Handoff to another department", "line", "6 4"],
-                ["Required field", "filled", ""],
-                ["Optional field", "hollow", ""],
+                ["Relationship", "line", "relationship"],
+                ["Handoff to another department", "line", "handoff"],
+                ["Required field", "filled", null],
+                ["Optional field", "hollow", null],
               ] as const
-            ).map(([label, sample, dash]) => (
+            ).map(([label, sample, kind]) => (
               <li key={label} className="flex items-center gap-2">
                 <svg
                   aria-hidden="true"
@@ -1104,13 +1104,17 @@ export function SandboxCanvas({
                 >
                   {sample === "line" ? (
                     <line
+                      // The same hooks as canvas lines, so each theme styles
+                      // the sample like the real line; "key" skips the flow
+                      // animation.
+                      data-sandbox-line="key"
+                      data-sandbox-edge-kind={kind ?? undefined}
                       x1="0"
                       y1="4"
                       x2="24"
                       y2="4"
                       stroke="var(--canvas-edge)"
                       strokeWidth="1.5"
-                      strokeDasharray={dash}
                     />
                   ) : (
                     <circle
