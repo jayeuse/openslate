@@ -901,6 +901,7 @@ test("a line to another department is drawn as a handoff", async ({ page }) => {
     "data-sandbox-edge-kind",
     "handoff",
   );
+  await page.getByText("Key", { exact: true }).click();
   await expect(page.getByRole("list", { name: "Canvas key" })).toContainText(
     "Handoff to another department",
   );

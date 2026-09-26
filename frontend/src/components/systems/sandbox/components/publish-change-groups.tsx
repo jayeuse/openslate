@@ -232,6 +232,7 @@ function ModuleChanges({ entry }: { entry: ModuleEntry }) {
             variant="ghost"
             size="sm"
             className="text-muted-foreground ml-auto h-6 shrink-0 px-2 text-xs"
+            data-inline-toggle
             aria-expanded={fieldsOpen}
             aria-label={`${fieldsOpen ? "Hide" : "Show"} ${fieldCount} in ${entry.name}`}
             onClick={() => setFieldsOpen((value) => !value)}

@@ -477,8 +477,12 @@ textarea {
 }
 
 @media (max-width: 1279px) {
-  [data-sandbox-page] button,
-  body:has([data-sandbox-page]) [role="dialog"] button {
+  /* Inline toggles inside a list row (such as a field count) keep the 24px
+     minimum so rows keep one rhythm. */
+  [data-sandbox-page] button:not([data-inline-toggle]),
+  body:has([data-sandbox-page])
+    [role="dialog"]
+    button:not([data-inline-toggle]) {
     min-width: 44px;
     min-height: 44px;
   }

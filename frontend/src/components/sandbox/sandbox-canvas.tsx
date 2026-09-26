@@ -1078,52 +1078,58 @@ export function SandboxCanvas({
         className="sandbox-minimap border-border bg-card pointer-events-auto absolute right-3 bottom-3 z-10 hidden overflow-hidden rounded-md border shadow-sm sm:block"
       />
       {state.modules.length > 0 ? (
-        <ul
-          aria-label="Canvas key"
-          className="border-border bg-card text-muted-foreground pointer-events-none absolute bottom-3 left-3 z-10 hidden grid-cols-2 gap-x-4 gap-y-1 rounded-md border px-2.5 py-2 text-xs shadow-sm sm:grid"
-        >
-          {(
-            [
-              ["Relationship", "line", ""],
-              ["Handoff to another department", "line", "6 4"],
-              ["Required field", "filled", ""],
-              ["Optional field", "hollow", ""],
-            ] as const
-          ).map(([label, sample, dash]) => (
-            <li key={label} className="flex items-center gap-2">
-              <svg
-                aria-hidden="true"
-                width="24"
-                height="8"
-                className="shrink-0"
-              >
-                {sample === "line" ? (
-                  <line
-                    x1="0"
-                    y1="4"
-                    x2="24"
-                    y2="4"
-                    stroke="var(--canvas-edge)"
-                    strokeWidth="1.5"
-                    strokeDasharray={dash}
-                  />
-                ) : (
-                  <circle
-                    cx="12"
-                    cy="4"
-                    r="3"
-                    fill={
-                      sample === "filled" ? "var(--canvas-type-ink)" : "none"
-                    }
-                    stroke="var(--canvas-type-ink)"
-                    strokeWidth="1.25"
-                  />
-                )}
-              </svg>
-              <span>{label}</span>
-            </li>
-          ))}
-        </ul>
+        // Closed by default so the key never covers tables; it opens upward.
+        <details className="group absolute bottom-3 left-3 z-10 hidden sm:block">
+          <summary className="border-border bg-card text-muted-foreground hover:text-foreground flex min-h-6 cursor-pointer list-none items-center rounded-md border px-2.5 text-xs shadow-sm [&::-webkit-details-marker]:hidden">
+            Key
+          </summary>
+          <ul
+            aria-label="Canvas key"
+            className="border-border bg-card text-muted-foreground absolute bottom-full left-0 mb-1 grid w-max grid-cols-2 gap-x-4 gap-y-1 rounded-md border px-2.5 py-2 text-xs shadow-sm"
+          >
+            {(
+              [
+                ["Relationship", "line", ""],
+                ["Handoff to another department", "line", "6 4"],
+                ["Required field", "filled", ""],
+                ["Optional field", "hollow", ""],
+              ] as const
+            ).map(([label, sample, dash]) => (
+              <li key={label} className="flex items-center gap-2">
+                <svg
+                  aria-hidden="true"
+                  width="24"
+                  height="8"
+                  className="shrink-0"
+                >
+                  {sample === "line" ? (
+                    <line
+                      x1="0"
+                      y1="4"
+                      x2="24"
+                      y2="4"
+                      stroke="var(--canvas-edge)"
+                      strokeWidth="1.5"
+                      strokeDasharray={dash}
+                    />
+                  ) : (
+                    <circle
+                      cx="12"
+                      cy="4"
+                      r="3"
+                      fill={
+                        sample === "filled" ? "var(--canvas-type-ink)" : "none"
+                      }
+                      stroke="var(--canvas-type-ink)"
+                      strokeWidth="1.25"
+                    />
+                  )}
+                </svg>
+                <span>{label}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
       <p id="sandbox-canvas-keyboard-alternative" className="sr-only">
         Select canvas items with a pointer or their field controls. Use the
