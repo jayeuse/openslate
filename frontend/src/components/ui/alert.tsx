@@ -17,7 +17,7 @@ export function Alert({
   };
   return (
     <div
-      role={variant === "destructive" ? "alert" : "status"}
+      role="status"
       className={cn(
         "rounded-[var(--radius)] border p-4 text-sm",
         styles[variant],
