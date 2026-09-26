@@ -169,25 +169,24 @@ def plan_lifecycle(
         for field in scope.fields:
             if getattr(field.type, "value", field.type) == "relationship":
                 continue
-            surviving_records = sorted_scalars(
-                db,
-                select(Record)
+            key = str(field.id)
+            surviving_records = db.execute(
+                select(Record.id, Record.module_id)
                 .where(
                     Record.module_id == field.module_id,
                     Record.id.not_in(purge_record_ids),
+                    Record.data.has_key(key),
                 )
                 .order_by(Record.id),
-            )
-            key = str(field.id)
+            ).all()
             key_strips.extend(
                 LifecycleKeyStrip(
-                    record_id=record.id,
-                    module_id=record.module_id,
+                    record_id=record_id,
+                    module_id=module_id,
                     field_id=field.id,
                     key=key,
                 )
-                for record in surviving_records
-                if key in record.data
+                for record_id, module_id in surviving_records
             )
 
     purge_module_ids = {module.id for module in scope.modules}
