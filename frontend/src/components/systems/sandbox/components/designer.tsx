@@ -63,6 +63,7 @@ import {
   type SandboxDropKind,
 } from "@/components/sandbox/sandbox-canvas";
 import { SandboxInspector } from "@/components/sandbox/sandbox-inspector";
+import { SANDBOX_ZOOM } from "@/lib/sandbox/x6-adapter";
 import type { SandboxDesignTarget as SandboxInspectorTarget } from "../domain/model";
 import { arrangedLayout, resetLayout } from "../helpers/designer-layout";
 import { duplicateDesignTarget } from "../helpers/designer-duplication";
@@ -823,6 +824,8 @@ export function Designer({
   // first-department fallback for creation commands.
   const inspectedItem =
     selectedModule ?? design.departments.find((item) => item.id === selected);
+  const atMinZoom = canvasView.zoom <= SANDBOX_ZOOM.min + 0.001;
+  const atMaxZoom = canvasView.zoom >= SANDBOX_ZOOM.max - 0.001;
   const currentDeleteImpact = deletionImpact(design, deleteTarget);
   function open(kind: string) {
     setEditor(kind);
@@ -1855,10 +1858,13 @@ export function Designer({
                   >
                     <Button
                       size="icon"
-                      className="size-11"
                       variant="ghost"
                       aria-label="Zoom out"
-                      onClick={() => graphRef.current?.zoomOut()}
+                      aria-disabled={atMinZoom}
+                      className="size-11 aria-disabled:opacity-50"
+                      onClick={() => {
+                        if (!atMinZoom) graphRef.current?.zoomOut();
+                      }}
                     >
                       <ZoomOut aria-hidden="true" />
                     </Button>
@@ -1871,10 +1877,13 @@ export function Designer({
                     </output>
                     <Button
                       size="icon"
-                      className="size-11"
                       variant="ghost"
                       aria-label="Zoom in"
-                      onClick={() => graphRef.current?.zoomIn()}
+                      aria-disabled={atMaxZoom}
+                      className="size-11 aria-disabled:opacity-50"
+                      onClick={() => {
+                        if (!atMaxZoom) graphRef.current?.zoomIn();
+                      }}
                     >
                       <ZoomIn aria-hidden="true" />
                     </Button>
@@ -1884,8 +1893,12 @@ export function Designer({
                       variant="outline"
                       aria-label="Fit canvas"
                       onClick={() => {
-                        graphRef.current?.fit();
-                        setCanvasAction("Canvas fitted.");
+                        const fitted = graphRef.current?.fit() ?? true;
+                        setCanvasAction(
+                          fitted
+                            ? "Canvas fitted."
+                            : `Canvas at ${Math.round(SANDBOX_ZOOM.fitMin * 100)}%. Part of the design is out of view.`,
+                        );
                       }}
                     >
                       <Maximize2 aria-hidden="true" />

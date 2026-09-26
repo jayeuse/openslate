@@ -69,7 +69,8 @@ export interface SandboxCanvasApi {
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
-  fit: () => void;
+  /** Fits the design; false when it is larger than the view at the floor. */
+  fit: () => boolean;
   center: () => void;
   /** Places a newly-created node, or queues its position until it is rendered. */
   placeNode: (nodeId: string, position: { x: number; y: number }) => void;
@@ -132,10 +133,16 @@ interface CanvasEditor {
   property: "name" | "type";
   id: string;
   value: string;
+  nodeId: string;
+  rowIndex?: number;
   left: number;
   top: number;
   width: number;
 }
+
+// The inline editor is a fixed 28px control centred on the text it edits.
+const CANVAS_EDITOR_HEIGHT = 28;
+const CANVAS_EDITOR_MIN_WIDTH = 160;
 
 export function SandboxCanvas({
   state,
@@ -294,21 +301,41 @@ export function SandboxCanvas({
         `${SANDBOX_GRID_SIZE * scaleX}px ${SANDBOX_GRID_SIZE * scaleY}px`,
         `${SANDBOX_GRID_MAJOR_SIZE * scaleX}px ${SANDBOX_GRID_MAJOR_SIZE * scaleY}px`,
       ].join(", ");
+      const minorHalf = (SANDBOX_GRID_SIZE * scaleX) / 2;
+      const majorHalf = (SANDBOX_GRID_MAJOR_SIZE * scaleX) / 2;
       grid.style.backgroundPosition = [
-        `${offsetX}px ${offsetY}px`,
-        `${offsetX}px ${offsetY}px`,
+        `${offsetX - minorHalf}px ${offsetY - minorHalf}px`,
+        `${offsetX - majorHalf}px ${offsetY - majorHalf}px`,
       ].join(", ");
       grid.dataset.scale = `${scaleX}`;
       grid.dataset.translate = `${offsetX},${offsetY}`;
     };
     updateGridVisual();
     emitViewState();
+    // Keep an open inline editor on its text while the view zooms or pans.
+    const reanchorEditor = (): void => {
+      const current = editorRef.current;
+      if (current === null) return;
+      const node = graph.getCellById(current.nodeId);
+      if (node === null || !node.isNode()) return;
+      const next = {
+        ...current,
+        ...editorAnchor(node, current.property, current.rowIndex),
+      };
+      editorRef.current = next;
+      setEditor(next);
+    };
     const updateScale = (): void => {
       updateGridVisual();
       emitViewState();
+      reanchorEditor();
+    };
+    const updateTranslate = (): void => {
+      updateGridVisual();
+      reanchorEditor();
     };
     graph.on("scale", updateScale);
-    graph.on("translate", updateGridVisual);
+    graph.on("translate", updateTranslate);
 
     const updateDragSnap = (freeMove: boolean): void => {
       if (freeMoveRef.current === freeMove) {
@@ -372,8 +399,11 @@ export function SandboxCanvas({
         ? box.y +
           MODULE_TABLE.headerHeight +
           rowIndex * MODULE_TABLE.rowHeight +
-          2
-        : box.y + (nodeKindOf(node) === "department" ? 5 : 3);
+          MODULE_TABLE.rowHeight / 2
+        : box.y +
+          (nodeKindOf(node) === "department"
+            ? 18
+            : MODULE_TABLE.headerHeight / 2);
       const width = isField
         ? property === "type"
           ? MODULE_TABLE.width - MODULE_TABLE.splitX - 8
@@ -385,8 +415,8 @@ export function SandboxCanvas({
       const bounds = container.getBoundingClientRect();
       return {
         left: Math.max(4, clientPoint.x - bounds.left),
-        top: Math.max(4, clientPoint.y - bounds.top),
-        width,
+        top: Math.max(4, clientPoint.y - bounds.top - CANVAS_EDITOR_HEIGHT / 2),
+        width: Math.max(CANVAS_EDITOR_MIN_WIDTH, width * graph.zoom()),
       };
     };
 
@@ -411,12 +441,27 @@ export function SandboxCanvas({
         return;
       }
       callbacksRef.current.onSelect(id);
+      // Pan only when the edited text is out of view (the anchor clamps to
+      // the 4px edge), so editing inside a large visible table never jumps.
+      let anchor = editorAnchor(node, property, rowIndex);
+      const view = container.getBoundingClientRect();
+      if (
+        anchor.left <= 4 ||
+        anchor.top <= 4 ||
+        anchor.top + CANVAS_EDITOR_HEIGHT > view.height ||
+        anchor.left + CANVAS_EDITOR_MIN_WIDTH / 2 > view.width
+      ) {
+        graph.centerCell(node);
+        anchor = editorAnchor(node, property, rowIndex);
+      }
       const nextEditor: CanvasEditor = {
         target,
         property,
         id,
         value,
-        ...editorAnchor(node, property, rowIndex),
+        nodeId: node.id,
+        rowIndex,
+        ...anchor,
       };
       editorRef.current = nextEditor;
       setEditor(nextEditor);
@@ -487,13 +532,20 @@ export function SandboxCanvas({
             minScale: SANDBOX_ZOOM.fitMin,
             maxScale: 1,
           });
-          // At the readability floor the design is larger than the view:
-          // show its start instead of cutting both ends.
-          // X6 ignores padding here, so align, then inset by 24 screen pixels.
-          if (graph.zoom() <= SANDBOX_ZOOM.fitMin + 0.001) {
-            graph.positionContent("top-left");
-            graph.translateBy(24, 24);
+          if (graph.zoom() > SANDBOX_ZOOM.fitMin + 0.001) return true;
+          // At the floor the design is larger than the view: show its start,
+          // 24px in from the top-left, measured from the department frames.
+          const departments = graph
+            .getNodes()
+            .filter((node) => nodeKindOf(node) === "department");
+          const box = graph.getCellsBBox(
+            departments.length > 0 ? departments : graph.getNodes(),
+          );
+          if (box !== null) {
+            const scale = graph.zoom();
+            graph.translate(24 - box.x * scale, 24 - box.y * scale);
           }
+          return false;
         },
         center: () => {
           graph.centerContent();
@@ -945,7 +997,8 @@ export function SandboxCanvas({
             `${SANDBOX_GRID_SIZE}px ${SANDBOX_GRID_SIZE}px`,
             `${SANDBOX_GRID_MAJOR_SIZE}px ${SANDBOX_GRID_MAJOR_SIZE}px`,
           ].join(", "),
-          backgroundPosition: "0 0, 0 0",
+          // Shift by half a cell so each dot sits on a snap point.
+          backgroundPosition: `${-SANDBOX_GRID_SIZE / 2}px ${-SANDBOX_GRID_SIZE / 2}px, ${-SANDBOX_GRID_MAJOR_SIZE / 2}px ${-SANDBOX_GRID_MAJOR_SIZE / 2}px`,
         }}
       />
       <div
@@ -995,7 +1048,7 @@ export function SandboxCanvas({
               aria-label="Canvas field type"
               autoFocus
               disabled={pending}
-              className="border-primary bg-card text-foreground ring-ring/30 h-7 w-full rounded border px-1 text-xs font-semibold uppercase shadow-md ring-2 outline-none"
+              className="border-primary bg-card text-foreground ring-ring/30 h-7 w-full rounded border px-1 text-xs shadow-md ring-2 outline-none"
               value={editor.value}
               onChange={(event) => {
                 setEditor((current) =>

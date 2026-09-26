@@ -409,9 +409,13 @@ test("the canvas zoom range keeps a spread design legible", async ({
   await page.getByRole("button", { name: "Fit canvas" }).click();
   await expect.poll(zoom).toBe(50);
 
-  for (let step = 0; step < 4; step += 1)
-    await page.getByRole("button", { name: "Zoom out" }).click();
-  await expect.poll(zoom).toBe(50);
+  await expect(page.getByRole("button", { name: "Zoom out" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await expect(page.getByRole("status", { name: "Canvas action" })).toHaveText(
+    "Canvas at 50%. Part of the design is out of view.",
+  );
 });
 
 test("an empty Sandbox authors and persists a complete connected organization", async ({

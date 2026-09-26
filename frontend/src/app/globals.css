@@ -322,13 +322,24 @@ textarea {
 .sandbox-minimap .x6-widget-minimap {
   position: relative;
   overflow: hidden;
-  background: var(--surface);
+  background: var(--canvas-background);
   user-select: none;
 }
 
 .sandbox-minimap .x6-widget-minimap .x6-graph {
   display: inline-block;
+  box-shadow: none;
   cursor: pointer;
+}
+
+/* Dark card fills sit too close to the dark canvas to read at minimap scale. */
+.dark .sandbox-minimap [data-sandbox-body] {
+  fill: var(--rule-strong);
+}
+
+/* At minimap scale, text and edges are noise; frames and tables carry it. */
+.sandbox-minimap :is(text, .x6-edge) {
+  display: none;
 }
 
 .sandbox-minimap .x6-widget-minimap .x6-graph > svg {
