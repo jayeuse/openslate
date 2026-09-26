@@ -878,6 +878,34 @@ test("the publish review groups changes and keeps Publish in reach", async ({
   ).toBeInViewport();
 });
 
+test("a line to another department is drawn as a handoff", async ({ page }) => {
+  const design = structuredClone(configuredSandboxDesign);
+  design.relationships.push({
+    id: "sample-billing",
+    name: "Bills customer",
+    source: "sample-requests",
+    target: "sample-customers",
+    cardinality: "One-to-many",
+    fieldMappings: [],
+  });
+  await openAuthenticatedSandbox(page, design);
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const line = (id: string) =>
+    canvas.locator(`.x6-cell[data-cell-id="${id}"] [data-sandbox-line]`);
+
+  await expect(line("sample-uses")).toHaveAttribute(
+    "data-sandbox-edge-kind",
+    "relationship",
+  );
+  await expect(line("sample-billing")).toHaveAttribute(
+    "data-sandbox-edge-kind",
+    "handoff",
+  );
+  await expect(page.getByRole("list", { name: "Canvas key" })).toContainText(
+    "Handoff to another department",
+  );
+});
+
 test("a rejected password is reported beside Publish, not above the list", async ({
   page,
 }) => {

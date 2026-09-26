@@ -541,10 +541,45 @@ export function SandboxCanvas({
           const departments = graph
             .getNodes()
             .filter((node) => nodeKindOf(node) === "department");
-          const box = graph.getCellsBBox(
-            departments.length > 0 ? departments : graph.getNodes(),
+          const modulesOf = (department: Node) =>
+            (department.getChildren() ?? []).filter(
+              (cell): cell is Node =>
+                cell.isNode() && nodeKindOf(cell) === "module",
+            );
+          // Open on the busiest department, so the first view shows tables
+          // and the lines between them rather than one card in a frame.
+          const busyness = (department: Node) => {
+            const ids = new Set(modulesOf(department).map((item) => item.id));
+            const lines = graph
+              .getEdges()
+              .filter(
+                (edge) =>
+                  ids.has(edge.getSourceCellId()) ||
+                  ids.has(edge.getTargetCellId()),
+              ).length;
+            return ids.size + lines;
+          };
+          const anchor = departments.reduce<Node | null>(
+            (best, department) =>
+              best === null || busyness(department) > busyness(best)
+                ? department
+                : best,
+            null,
           );
-          if (box !== null) graph.translate(24 - box.x, 24 - box.y);
+          const box = anchor?.getBBox() ?? graph.getCellsBBox(graph.getNodes());
+          if (box === null) return;
+          if (anchor === null || box.width + 48 <= container.clientWidth) {
+            graph.translate(24 - box.x, 24 - box.y);
+            return;
+          }
+          // A narrow canvas cannot hold the department, so show its first
+          // table whole, with the department head above it.
+          const first = [...modulesOf(anchor)].sort(
+            (a, b) =>
+              a.getBBox().y - b.getBBox().y || a.getBBox().x - b.getBBox().x,
+          )[0];
+          const target = first?.getBBox() ?? box;
+          graph.translate(16 - target.x, 16 - box.y);
         },
         fit: () => {
           graph.zoomToFit({
@@ -1042,33 +1077,48 @@ export function SandboxCanvas({
         aria-hidden="true"
         className="sandbox-minimap border-border bg-card pointer-events-auto absolute right-3 bottom-3 z-10 hidden overflow-hidden rounded-md border shadow-sm sm:block"
       />
-      {state.links.length > 0 ? (
+      {state.modules.length > 0 ? (
         <ul
-          aria-label="Line key"
-          className="border-border bg-card text-muted-foreground absolute bottom-3 left-3 z-10 hidden gap-1 rounded-md border px-2.5 py-2 text-xs shadow-sm sm:grid"
+          aria-label="Canvas key"
+          className="border-border bg-card text-muted-foreground pointer-events-none absolute bottom-3 left-3 z-10 hidden grid-cols-2 gap-x-4 gap-y-1 rounded-md border px-2.5 py-2 text-xs shadow-sm sm:grid"
         >
           {(
             [
-              ["Relationship", ""],
-              ["Handoff to another department", "6 4"],
+              ["Relationship", "line", ""],
+              ["Handoff to another department", "line", "6 4"],
+              ["Required field", "filled", ""],
+              ["Optional field", "hollow", ""],
             ] as const
-          ).map(([label, dash]) => (
+          ).map(([label, sample, dash]) => (
             <li key={label} className="flex items-center gap-2">
               <svg
                 aria-hidden="true"
                 width="24"
-                height="6"
+                height="8"
                 className="shrink-0"
               >
-                <line
-                  x1="0"
-                  y1="3"
-                  x2="24"
-                  y2="3"
-                  stroke="var(--canvas-edge)"
-                  strokeWidth="1.5"
-                  strokeDasharray={dash}
-                />
+                {sample === "line" ? (
+                  <line
+                    x1="0"
+                    y1="4"
+                    x2="24"
+                    y2="4"
+                    stroke="var(--canvas-edge)"
+                    strokeWidth="1.5"
+                    strokeDasharray={dash}
+                  />
+                ) : (
+                  <circle
+                    cx="12"
+                    cy="4"
+                    r="3"
+                    fill={
+                      sample === "filled" ? "var(--canvas-type-ink)" : "none"
+                    }
+                    stroke="var(--canvas-type-ink)"
+                    strokeWidth="1.25"
+                  />
+                )}
               </svg>
               <span>{label}</span>
             </li>

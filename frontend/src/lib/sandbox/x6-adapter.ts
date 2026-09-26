@@ -118,12 +118,11 @@ export function moduleTableMarkup(fieldCount: number): SandboxMarkupUnit[] {
     { tagName: "rect", selector: "headerBar" },
     { tagName: "rect", selector: "identity" },
     { tagName: "text", selector: "headerTitle" },
-    { tagName: "path", selector: "tableIcon" },
   ];
   for (let i = 0; i < rows; i += 1) {
     markup.push({ tagName: "rect", selector: `row${i}` });
     markup.push({ tagName: "line", selector: `sep${i}` });
-    markup.push({ tagName: "text", selector: `required${i}` });
+    markup.push({ tagName: "circle", selector: `marker${i}` });
     markup.push({ tagName: "text", selector: `name${i}` });
     markup.push({ tagName: "text", selector: `type${i}` });
   }
@@ -190,26 +189,21 @@ export function moduleTableAttrs(
             : `var(--dept-${tone}-card, #f1f3f5)`,
       "data-selected": selectedModule ? "true" : "false",
     },
-    // The department's identity color on the card's leading edge.
+    // The department's identity square, the same mark as on the
+    // department head.
     identity: {
       "data-sandbox-part": "identity",
-      x: 0,
-      y: 8,
-      width: 3,
-      height: tableHeight - 16,
+      x: 12,
+      y: headerHeight / 2 - 5,
+      width: 10,
+      height: 10,
+      rx: 2,
       fill: `var(--dept-${tone}, #8e79b8)`,
       stroke: "none",
       pointerEvents: "none",
     },
-    tableIcon: {
-      d: "M12 11h14v12H12z M12 15h14 M17 15v8",
-      fill: "none",
-      stroke: colors.typeText,
-      strokeWidth: 1.2,
-      pointerEvents: "none",
-    },
     headerTitle: {
-      x: 34,
+      x: 30,
       y: headerHeight / 2,
       textAnchor: "start",
       textVerticalAnchor: "middle",
@@ -273,15 +267,16 @@ export function moduleTableAttrs(
           ? "No fields yet"
           : truncateModuleTitle(field.name, 18),
     };
-    attrs[`required${i}`] = {
-      x: 13,
-      y: rowCenter,
-      textAnchor: "middle",
-      textVerticalAnchor: "middle",
-      fontSize: 12,
-      fill: colors.typeText,
+    // Required fields have a filled marker, optional fields a hollow one;
+    // the canvas key names both.
+    attrs[`marker${i}`] = {
+      cx: 14,
+      cy: rowCenter,
+      r: field === undefined ? 0 : 3,
+      fill: field?.required ? colors.typeText : "none",
+      stroke: colors.typeText,
+      strokeWidth: 1.25,
       pointerEvents: "none",
-      text: field === undefined ? "" : field.required ? "•" : "○",
       "aria-hidden": "true",
     };
     attrs[`type${i}`] = {

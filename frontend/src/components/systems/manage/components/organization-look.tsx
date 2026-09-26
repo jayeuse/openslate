@@ -27,27 +27,39 @@ const LOOKS: Record<OrganizationTheme, { name: string; description: string }> =
   };
 
 /**
- * A small scene drawn with the theme's own tokens: ground, a card with a
- * title in the theme's type, an action bar, and the flow and warn signals.
- * data-theme-preview scopes the theme's tokens to this element.
+ * A small piece of the Sandbox canvas drawn with the theme's own tokens: a
+ * department head with its identity mark, and a table card with a header and
+ * two field rows. The canvas is where the looks differ most, so the preview
+ * shows it. data-theme-preview scopes the theme's tokens to this element.
  */
 function LookSwatch({ theme }: { theme: OrganizationTheme }) {
   return (
     <div
       aria-hidden="true"
       data-theme-preview={theme}
-      className="grid h-24 place-items-center rounded-[var(--radius)] border border-[var(--rule)] bg-[var(--ground)] p-3"
+      className="rounded-[var(--radius)] border border-[var(--rule)] bg-[var(--canvas-background)] p-3 font-[family-name:var(--font-ui)] text-xs"
     >
-      <div className="grid w-full gap-2 rounded-[var(--radius)] border border-[var(--rule)] bg-[var(--surface)] p-2.5 font-[family-name:var(--font-ui)] text-[var(--ink)] shadow-[var(--lift)]">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold">Aa Orders</span>
-          <span className="flex gap-1">
-            <span className="size-2 rounded-full bg-[var(--flow)]" />
-            <span className="size-2 rounded-full bg-[var(--warn)]" />
-          </span>
+      <div className="overflow-hidden rounded-[var(--radius)] border border-[var(--canvas-dept-frame)] bg-[var(--canvas-dept-fill)]">
+        <div className="flex items-center gap-1.5 bg-[var(--dept-1-band)] px-2 py-1 font-semibold text-[var(--canvas-dept-ink)]">
+          <span className="size-2 shrink-0 rounded-sm bg-[var(--dept-1)]" />
+          Commerce
         </div>
-        <span className="h-1.5 w-2/3 rounded-full bg-[var(--rule)]" />
-        <span className="h-4 w-16 rounded-[var(--radius)] bg-[var(--action)]" />
+        <div className="p-2">
+          <div className="overflow-hidden rounded-[var(--radius)] border border-[var(--canvas-module-frame)] bg-[var(--canvas-module-fill)] text-[var(--canvas-module-ink)]">
+            <div className="flex items-center gap-1.5 bg-[var(--dept-1-card)] px-2 py-1 font-semibold">
+              <span className="size-2 shrink-0 rounded-sm bg-[var(--dept-1)]" />
+              Orders
+            </div>
+            <div className="flex justify-between gap-2 border-t border-[var(--canvas-row-rule)] px-2 py-0.5">
+              <span>Order total</span>
+              <span className="text-[var(--canvas-type-ink)]">Number</span>
+            </div>
+            <div className="flex justify-between gap-2 border-t border-[var(--canvas-row-rule)] bg-[var(--canvas-row-stripe)] px-2 py-0.5">
+              <span>Paid</span>
+              <span className="text-[var(--canvas-type-ink)]">Checkbox</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

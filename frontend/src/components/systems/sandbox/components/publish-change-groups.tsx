@@ -213,7 +213,7 @@ function ModuleChanges({ entry }: { entry: ModuleEntry }) {
   const fieldCount = counted(entry.fields.length, KIND_NOUNS.field);
   return (
     <>
-      <div className="flex items-start gap-2">
+      <div className="flex items-center gap-2">
         {entry.change ? (
           <ChangeRow change={entry.change} />
         ) : (
@@ -223,7 +223,7 @@ function ModuleChanges({ entry }: { entry: ModuleEntry }) {
                 Unchanged
               </span>
             ) : null}
-            <span className="min-w-0 break-words">{entry.name}</span>
+            <span className="min-w-0 flex-1 break-words">{entry.name}</span>
           </>
         )}
         {entry.fields.length ? (
