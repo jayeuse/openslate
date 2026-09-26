@@ -8,4 +8,8 @@ Audit capture includes application data mutated through FastAPI. It excludes Ale
 
 After a successful audited commit, the listener queues one or more opaque invalidation events and publishes them through PostgreSQL notification. The event payload identifies only safe entity scope and never contains row snapshots, credentials, filenames, or file bytes. Delivery is best effort: database and audit state remain canonical if an SSE listener is unavailable.
 
-Audit history is not a backup, a security-information event stream, or a complete record of host-level operations. Backup, restore, and installed-host observability remain pending deployment work.
+Audit history is not a backup, a security-information event stream, or a complete
+record of host-level operations. A guarded encrypted backup and manual restore
+foundation exists; supported customer recovery, automated backup scheduling and
+installed-host observability remain pending deployment work. See
+[Deployment Architecture](12-deployment-architecture.md).

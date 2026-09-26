@@ -1,6 +1,7 @@
 """SQL behavior tests; run only on the guarded disposable full-stack database."""
 
 import os
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import HTTPException
@@ -314,6 +315,121 @@ def test_pagination_ties_nulls_last_and_projection(query_db):
     assert query_records(query_db, payload).items[0].data == {}
 
 
+def test_projection_preserves_record_metadata_json_values_and_unselected_sort_fields(
+    query_db: Session,
+) -> None:
+    module, selected_field, _ = setup_rows(query_db, "text", [])
+    filter_field = Field(
+        module_id=module.id,
+        name="Filter value",
+        type="text",
+        position=1,
+        required=False,
+        config={},
+    )
+    sort_field = Field(
+        module_id=module.id,
+        name="Sort value",
+        type="text",
+        position=2,
+        required=False,
+        config={},
+    )
+    hidden_field = Field(
+        module_id=module.id,
+        name="Unselected value",
+        type="text",
+        position=3,
+        required=False,
+        config={},
+    )
+    query_db.add_all([filter_field, sort_field, hidden_field])
+    query_db.flush()
+
+    selected_key = str(selected_field.id)
+    filter_key = str(filter_field.id)
+    sort_key = str(sort_field.id)
+    hidden_key = str(hidden_field.id)
+    explicit_null = Record(
+        module_id=module.id,
+        data={
+            selected_key: None,
+            filter_key: "include",
+            sort_key: "b",
+            hidden_key: "private",
+        },
+        performed_by=None,
+    )
+    missing_key = Record(
+        module_id=module.id,
+        data={filter_key: "include", sort_key: "a", hidden_key: "private"},
+        is_deleted=True,
+        deleted_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    nested_value = {"items": [1, {"value": None}]}
+    nested_record = Record(
+        module_id=module.id,
+        data={
+            selected_key: nested_value,
+            filter_key: "include",
+            sort_key: "c",
+            hidden_key: "private",
+        },
+    )
+    excluded = Record(
+        module_id=module.id,
+        data={selected_key: "excluded", filter_key: "exclude", sort_key: "0"},
+    )
+    query_db.add_all([explicit_null, missing_key, nested_record, excluded])
+    query_db.flush()
+    original_data = dict(explicit_null.data)
+
+    payload = request_for(
+        module,
+        selected_field,
+        filters=[
+            {
+                "field_id": filter_field.id,
+                "expected_type": filter_field.type,
+                "operator": "eq",
+                "value": "include",
+            }
+        ],
+        sort=[
+            {
+                "field_id": sort_field.id,
+                "expected_type": sort_field.type,
+                "direction": "asc",
+            }
+        ],
+        deleted="include",
+    )
+
+    result = query_records(query_db, payload)
+
+    assert [item.id for item in result.items] == [
+        missing_key.id,
+        explicit_null.id,
+        nested_record.id,
+    ]
+    by_id = {item.id: item for item in result.items}
+    assert by_id[missing_key.id].data == {}
+    assert by_id[explicit_null.id].data == {selected_key: None}
+    assert by_id[nested_record.id].data == {selected_key: nested_value}
+    assert hidden_key not in by_id[explicit_null.id].data
+    assert result.pagination.total == 3
+
+    response = by_id[missing_key.id]
+    assert response.module_id == missing_key.module_id
+    assert response.created_at == missing_key.created_at
+    assert response.updated_at == missing_key.updated_at
+    assert response.deleted_at == missing_key.deleted_at
+    assert response.is_deleted is True
+    assert response.performed_by == missing_key.performed_by
+    assert query_db.get(Record, explicit_null.id) is explicit_null
+    assert explicit_null.data == original_data
+
+
 def test_archived_field_renames_work_and_changed_type_fails(query_db):
     module, field, _ = setup_rows(query_db, "text", ["kept"])
     payload = request_for(module, field)
@@ -334,6 +450,23 @@ def test_cross_module_reference_fails_without_broadening(query_db):
     with pytest.raises(HTTPException) as error:
         query_records(query_db, request_for(other, field))
     assert error.value.status_code == 409
+
+
+@pytest.mark.parametrize(("value", "total"), [("a", 1), ("missing", 0)])
+def test_filtered_empty_page_preserves_exact_total(query_db, value, total):
+    module, field, _ = setup_rows(query_db, "text", ["a", "b"])
+    payload = request_for(
+        module,
+        field,
+        filters=[
+            {"field_id": field.id, "expected_type": "text", "operator": "eq", "value": value}
+        ],
+    ).model_copy(update={"offset": 25})
+    result = query_records(query_db, payload)
+    assert result.items == []
+    assert result.pagination.total == total
+    assert result.pagination.count == 0
+    assert result.pagination.has_more is False
 
 
 @pytest.mark.parametrize(

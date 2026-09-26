@@ -22,7 +22,13 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.designs.date_values import parse_datetime
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.records.models import Record
-from app.systems.sandbox.records.query import compile_query, validate_definition
+from app.systems.sandbox.records.query import (
+    RecordProjection,
+    compile_query,
+    projected_record,
+    projected_record_query,
+    validate_definition,
+)
 from app.systems.sandbox.records.query_schemas import RecordQuery
 
 MAX_ROWS = 10_000
@@ -68,7 +74,7 @@ def format_cell(value: Any, field: Field, timezone: str, locale: str) -> str:
 
 
 def encode_csv(
-    rows: Iterable[Record], fields: list[Field], timezone: str, locale: str
+    rows: Iterable[Record | RecordProjection], fields: list[Field], timezone: str, locale: str
 ) -> tuple[bytes, int]:
     result = bytearray()
     row_buffer = io.StringIO(newline="")
@@ -110,10 +116,16 @@ def export_snapshot(engine: Engine, payload: RecordQuery) -> tuple[bytes, int]:
             )
             if profile is None:
                 raise HTTPException(503, detail="Workspace configuration is unavailable")
-            statement = compile_query(payload.module_id, payload.definition, fields).limit(
-                MAX_ROWS + 1
+            statement = projected_record_query(
+                compile_query(payload.module_id, payload.definition, fields),
+                payload.definition,
+            ).limit(
+                MAX_ROWS + 1,
             )
-            rows = snapshot.scalars(statement.execution_options(yield_per=100))
+            rows = (
+                projected_record(row)
+                for row in snapshot.execute(statement.execution_options(yield_per=100))
+            )
             return encode_csv(
                 rows,
                 [fields[ref.field_id] for ref in payload.definition.columns],

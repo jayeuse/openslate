@@ -107,5 +107,7 @@ class IdentityRateLimitBucket(Base):
 
     fingerprint: Mapped[str] = mapped_column(String(64), primary_key=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     blocked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

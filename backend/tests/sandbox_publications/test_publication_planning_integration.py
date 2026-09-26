@@ -298,6 +298,44 @@ def test_preview_blocks_names_already_used_by_unbound_live_structure(
     assert ("module_name_conflict", "sample-equipment") in blockers
 
 
+def test_preview_preserves_order_and_duplicate_live_name_blockers(
+    integration_owner_db: Session,
+) -> None:
+    _publisher, document = publish_structure(integration_owner_db)
+    collision_name = "External duplicate department"
+    integration_owner_db.add(Department(department_name=collision_name))
+    integration_owner_db.flush()
+
+    duplicate = document.design.departments[0].model_copy(deep=True)
+    duplicate.id = "external-duplicate-department"
+    duplicate.name = collision_name
+    document.design.layout[duplicate.id] = document.design.layout[
+        document.design.departments[0].id
+    ].model_copy(deep=True)
+    document.design.departments.extend([duplicate, duplicate.model_copy(deep=True)])
+
+    blockers = publication_plan(integration_owner_db, document).blockers
+
+    assert [(item.code, item.message, item.target_id) for item in blockers] == [
+        (
+            "department_name_conflict",
+            "Active department name is already in use",
+            duplicate.id,
+        ),
+        (
+            "department_name_conflict",
+            "Active department name is already in use",
+            duplicate.id,
+        ),
+        (
+            "department_name_conflict",
+            "Active department names must be unique",
+            duplicate.id,
+        ),
+        ("document_invalid", "Duplicate department ID", duplicate.id),
+    ]
+
+
 def test_publication_allows_swapping_bound_department_and_module_names(
     integration_owner_db: Session,
 ) -> None:
@@ -406,6 +444,46 @@ def test_publish_rejects_workspace_and_audit_drift_after_preview(integration_own
         _apply(integration_owner_db, publisher.id, saved, preview, "audit-drift")
     assert audit.value.code == "live_state_changed"
     assert integration_owner_db.scalar(select(func.count()).select_from(SandboxPublication)) == 1
+
+
+def test_publish_rejects_record_data_drift_in_an_unbound_module(
+    integration_owner_db: Session,
+) -> None:
+    publisher, _document = publish_structure(integration_owner_db)
+    department = Department(department_name="Unbound record department")
+    integration_owner_db.add(department)
+    integration_owner_db.flush()
+    module = Module(
+        department_id=department.id,
+        module_name="Unbound record module",
+        is_schema_accepted=False,
+    )
+    integration_owner_db.add(module)
+    integration_owner_db.flush()
+    record = Record(
+        module_id=module.id,
+        data={
+            "unicode": "Māori 🟦",
+            "nullable": None,
+            "nested": {"items": ["水", None, {"enabled": True}]},
+        },
+    )
+    integration_owner_db.add(record)
+    integration_owner_db.flush()
+
+    saved = read_document(integration_owner_db)
+    preview = publication_plan(integration_owner_db, saved.document)
+    record.data = {
+        "unicode": "Māori 🟦",
+        "nullable": None,
+        "nested": {"items": ["水", None, {"enabled": False}]},
+    }
+    integration_owner_db.flush()
+
+    with pytest.raises(PublicationError) as error:
+        _apply(integration_owner_db, publisher.id, saved, preview, "unbound-record-drift")
+
+    assert error.value.code == "live_state_changed"
 
 
 def _assert_update(plan, kind: str, sandbox_id: str) -> None:

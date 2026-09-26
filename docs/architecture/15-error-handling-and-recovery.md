@@ -10,4 +10,8 @@ File write, read, promotion, and deletion errors return controlled storage failu
 
 SSE notification failure never undoes an already committed mutation. Clients resynchronize with authorized API reads. A stalled stream is closed so it releases its subscription capacity.
 
-Customer-facing recovery remains incomplete: signed installer retry, database restore, filesystem backup restore, and cross-host validation are planned in the deployment architecture. Current local reset operations are development-only and are not a recovery guarantee.
+Guarded encrypted backup and manual database/filesystem restore utilities
+provide a recovery foundation. Customer-facing recovery remains incomplete:
+signed installer retry, a supported restore workflow and cross-host validation
+remain deployment work. Current local reset operations are development-only
+and are not a recovery guarantee. See [Deployment Architecture](12-deployment-architecture.md).

@@ -14,6 +14,7 @@ from app.systems.sandbox.automations.models import (
 from app.systems.sandbox.designs.schemas import AutomationDocument
 from app.systems.sandbox.publications.models import SandboxBinding
 from app.systems.sandbox.publications.rules import _field_key
+from app.systems.sandbox.publications.snapshot import PublicationSnapshot
 
 
 def automation_semantics_changed(
@@ -22,35 +23,43 @@ def automation_semantics_changed(
     module_bindings: dict[str, SandboxBinding],
     field_bindings: dict[str, SandboxBinding],
     automation_bindings: dict[str, SandboxBinding],
+    *,
+    snapshot: PublicationSnapshot | None = None,
 ) -> bool:
     binding = automation_bindings.get(desired.id)
-    live = (
-        db.get(PublishedAutomationDefinition, binding.automation_id)
-        if binding is not None and binding.automation_id is not None
-        else None
-    )
+    live = None
+    if binding is not None and binding.automation_id is not None:
+        live = (
+            snapshot.automations.get(binding.automation_id)
+            if snapshot is not None
+            else db.get(PublishedAutomationDefinition, binding.automation_id)
+        )
     if live is None:
         return False
-    conditions = list(
-        db.scalars(
-            select(PublishedAutomationCondition)
-            .where(
-                PublishedAutomationCondition.automation_id == live.id,
-                PublishedAutomationCondition.is_deleted.is_(False),
+    if snapshot is None:
+        conditions = list(
+            db.scalars(
+                select(PublishedAutomationCondition)
+                .where(
+                    PublishedAutomationCondition.automation_id == live.id,
+                    PublishedAutomationCondition.is_deleted.is_(False),
+                )
+                .order_by(PublishedAutomationCondition.position)
             )
-            .order_by(PublishedAutomationCondition.position)
         )
-    )
-    actions = list(
-        db.scalars(
-            select(PublishedAutomationAction)
-            .where(
-                PublishedAutomationAction.automation_id == live.id,
-                PublishedAutomationAction.is_deleted.is_(False),
+        actions = list(
+            db.scalars(
+                select(PublishedAutomationAction)
+                .where(
+                    PublishedAutomationAction.automation_id == live.id,
+                    PublishedAutomationAction.is_deleted.is_(False),
+                )
+                .order_by(PublishedAutomationAction.position)
             )
-            .order_by(PublishedAutomationAction.position)
         )
-    )
+    else:
+        conditions = snapshot.conditions.get(live.id, [])
+        actions = snapshot.actions.get(live.id, [])
     desired_signature = desired_automation_signature(
         desired,
         module_bindings,

@@ -244,17 +244,6 @@ def _grouped_aggregate_snapshot(
             dimension_expression.asc().nulls_last(),
         )
     )
-    total = db.scalar(
-        select(func.count())
-        .select_from(
-            grouped_query.with_only_columns(dimension_expression.label("dimension"))
-            .order_by(None)
-            .subquery()
-        )
-    ) or 0
-    if total > MAX_AGGREGATE_SNAPSHOT_BUCKETS:
-        raise _snapshot_limit_exceeded()
-
     rows = db.execute(grouped_query.limit(MAX_AGGREGATE_SNAPSHOT_BUCKETS + 1)).all()
     if len(rows) > MAX_AGGREGATE_SNAPSHOT_BUCKETS:
         raise _snapshot_limit_exceeded()

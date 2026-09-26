@@ -102,7 +102,12 @@ def _not_found() -> HTTPException:
 
 
 def _response(
-    db: Session, notification: InAppNotification, work: ScheduledWork
+    db: Session,
+    notification: InAppNotification,
+    work: ScheduledWork,
+    *,
+    announcement_board_ids: dict[UUID, UUID] | None = None,
+    event_reminder_fields: dict[UUID, tuple[UUID, UUID, str]] | None = None,
 ) -> NotificationItem:
     common = dict(
         id=notification.id,
@@ -120,26 +125,44 @@ def _response(
     if work.kind == WorkKind.ANNOUNCEMENT_PUBLISH:
         if work.announcement_id is None or work.publication_result_id is None:
             raise _not_found()
-        announcement = db.get(BoardAnnouncement, work.announcement_id)
-        if announcement is None:
-            raise _not_found()
+        if announcement_board_ids is None:
+            announcement = db.get(BoardAnnouncement, work.announcement_id)
+            if announcement is None:
+                raise _not_found()
+            board_id = announcement.board_id
+        else:
+            page_board_id = announcement_board_ids.get(work.announcement_id)
+            if page_board_id is None:
+                raise _not_found()
+            board_id = page_board_id
         return AnnouncementNotificationResponse(
             **common,
             kind="announcement-publish",
-            board_id=announcement.board_id,
-            announcement_id=announcement.id,
+            board_id=board_id,
+            announcement_id=work.announcement_id,
             publication_revision_id=work.publication_result_id,
         )
     if work.kind == WorkKind.EVENT_REMINDER and work.reminder_id is not None:
-        reminder = db.get(BoardEventReminder, work.reminder_id)
-        if reminder is None:
-            raise _not_found()
+        if event_reminder_fields is None:
+            reminder = db.get(BoardEventReminder, work.reminder_id)
+            if reminder is None:
+                raise _not_found()
+            board_id, event_id, occurrence_id = (
+                reminder.board_id,
+                reminder.event_id,
+                reminder.occurrence_id,
+            )
+        else:
+            reference = event_reminder_fields.get(work.reminder_id)
+            if reference is None:
+                raise _not_found()
+            board_id, event_id, occurrence_id = reference
         return EventReminderNotificationResponse(
             **common,
             kind="event-reminder",
-            board_id=reminder.board_id,
-            event_id=reminder.event_id,
-            occurrence_id=reminder.occurrence_id,
+            board_id=board_id,
+            event_id=event_id,
+            occurrence_id=occurrence_id,
         )
     raise _not_found()
 
@@ -163,7 +186,57 @@ def list_notifications(
             )
         )
     }
-    items = [_response(db, item, work_by_id[item.work_id]) for item in result.items]
+    page_entries = [(item, work_by_id[item.work_id]) for item in result.items]
+
+    announcement_ids = {
+        work.announcement_id
+        for _, work in page_entries
+        if work.kind == WorkKind.ANNOUNCEMENT_PUBLISH
+        and work.announcement_id is not None
+    }
+    announcement_board_ids = (
+        {
+            announcement_id: board_id
+            for announcement_id, board_id in db.execute(
+                select(BoardAnnouncement.id, BoardAnnouncement.board_id).where(
+                    BoardAnnouncement.id.in_(announcement_ids)
+                )
+            )
+        }
+        if announcement_ids
+        else {}
+    )
+    reminder_ids = {
+        work.reminder_id
+        for _, work in page_entries
+        if work.kind == WorkKind.EVENT_REMINDER
+        and work.reminder_id is not None
+    }
+    event_reminder_fields = (
+        {
+            reminder_id: (board_id, event_id, occurrence_id)
+            for reminder_id, board_id, event_id, occurrence_id in db.execute(
+                select(
+                    BoardEventReminder.id,
+                    BoardEventReminder.board_id,
+                    BoardEventReminder.event_id,
+                    BoardEventReminder.occurrence_id,
+                ).where(BoardEventReminder.id.in_(reminder_ids))
+            )
+        }
+        if reminder_ids
+        else {}
+    )
+    items = [
+        _response(
+            db,
+            item,
+            work,
+            announcement_board_ids=announcement_board_ids,
+            event_reminder_fields=event_reminder_fields,
+        )
+        for item, work in page_entries
+    ]
     return NotificationListResponse(items=items, pagination=result.pagination)
 
 

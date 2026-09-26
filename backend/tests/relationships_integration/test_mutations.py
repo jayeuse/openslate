@@ -15,6 +15,7 @@ from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 from app.systems.sandbox.relationships.schemas import (
     RelationshipAvailability,
+    RelationshipHiddenReason,
     RelationshipListRequest,
 )
 from app.systems.sandbox.relationships.service import (
@@ -232,3 +233,40 @@ def test_relationship_list_filters_visibility_and_pagination_in_postgresql(
     assert all_page.total == 4
     assert all_page.count == 2
     assert all_page.has_more is True
+
+
+def test_relationship_list_projects_each_hidden_reason_independently(
+    integration_db: Session, owned_ids: set[UUID]
+) -> None:
+    field, source_module, target_module, sources, targets = _seed_graph(
+        integration_db, owned_ids
+    )
+    edge = _add_edge(integration_db, owned_ids, field, sources[0], targets[0])
+    hidden_causes = (
+        (field, RelationshipHiddenReason.FIELD_ARCHIVED),
+        (sources[0], RelationshipHiddenReason.SOURCE_RECORD_ARCHIVED),
+        (targets[0], RelationshipHiddenReason.TARGET_RECORD_ARCHIVED),
+        (source_module, RelationshipHiddenReason.SOURCE_MODULE_ARCHIVED),
+        (target_module, RelationshipHiddenReason.TARGET_MODULE_ARCHIVED),
+    )
+
+    for entity, reason in hidden_causes:
+        entity.is_deleted = True
+        entity.deleted_at = datetime.now(UTC)
+        integration_db.flush()
+
+        hidden, pagination = list_relationships(
+            integration_db,
+            RelationshipListRequest(
+                field_id=field.id,
+                availability=RelationshipAvailability.HIDDEN,
+            ),
+        )
+
+        assert [item.id for item in hidden] == [edge.id]
+        assert hidden[0].hidden_reasons == [reason]
+        assert pagination.total == 1
+
+        entity.is_deleted = False
+        entity.deleted_at = None
+        integration_db.flush()

@@ -4,10 +4,12 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import or_, select
+from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session, aliased, joinedload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.listing import ListQuerySpec, execute_standard_list
+from app.common.listing import ListQuerySpec, build_standard_list_statements
+from app.common.listing.schemas import PaginationMetadata
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
@@ -40,21 +42,37 @@ def get_relationship(db: Session, relationship_id: UUID) -> RelationshipEdge:
 
 
 def _edge_hidden_reasons(edge: RelationshipEdge) -> list[RelationshipHiddenReason]:
-    reasons: list[RelationshipHiddenReason] = []
     field = edge.field
     source = edge.source_record
     target = edge.target_record
     source_module = getattr(source, "module", None)
     target_module = getattr(target, "module", None)
-    if field.is_deleted:
+    return _hidden_reasons(
+        field.is_deleted,
+        source.is_deleted,
+        target.is_deleted,
+        source_module.is_deleted if source_module is not None else False,
+        target_module.is_deleted if target_module is not None else False,
+    )
+
+
+def _hidden_reasons(
+    field_is_deleted: bool,
+    source_is_deleted: bool,
+    target_is_deleted: bool,
+    source_module_is_deleted: bool,
+    target_module_is_deleted: bool,
+) -> list[RelationshipHiddenReason]:
+    reasons: list[RelationshipHiddenReason] = []
+    if field_is_deleted:
         reasons.append(RelationshipHiddenReason.FIELD_ARCHIVED)
-    if source.is_deleted:
+    if source_is_deleted:
         reasons.append(RelationshipHiddenReason.SOURCE_RECORD_ARCHIVED)
-    if target.is_deleted:
+    if target_is_deleted:
         reasons.append(RelationshipHiddenReason.TARGET_RECORD_ARCHIVED)
-    if source_module is not None and source_module.is_deleted:
+    if source_module_is_deleted:
         reasons.append(RelationshipHiddenReason.SOURCE_MODULE_ARCHIVED)
-    if target_module is not None and target_module.is_deleted:
+    if target_module_is_deleted:
         reasons.append(RelationshipHiddenReason.TARGET_MODULE_ARCHIVED)
     return reasons
 
@@ -87,13 +105,32 @@ def list_relationships(
     target_record = aliased(Record)
     source_module = aliased(Module)
     target_module = aliased(Module)
+    source_record_module = aliased(Module)
+    target_record_module = aliased(Module)
     statement = (
-        select(RelationshipEdge)
+        select(
+            RelationshipEdge.id.label("id"),
+            RelationshipEdge.field_id.label("field_id"),
+            RelationshipEdge.source_record_id.label("source_record_id"),
+            RelationshipEdge.target_record_id.label("target_record_id"),
+            RelationshipEdge.created_at.label("created_at"),
+            RelationshipEdge.updated_at.label("updated_at"),
+            RelationshipEdge.deleted_at.label("deleted_at"),
+            RelationshipEdge.is_deleted.label("is_deleted"),
+            RelationshipEdge.performed_by.label("performed_by"),
+            Field.is_deleted.label("field_is_deleted"),
+            source_record.is_deleted.label("source_record_is_deleted"),
+            target_record.is_deleted.label("target_record_is_deleted"),
+            source_record_module.is_deleted.label("source_module_is_deleted"),
+            target_record_module.is_deleted.label("target_module_is_deleted"),
+        )
         .join(Field, RelationshipEdge.field_id == Field.id)
         .join(source_record, RelationshipEdge.source_record_id == source_record.id)
         .join(target_record, RelationshipEdge.target_record_id == target_record.id)
         .join(source_module, Field.module_id == source_module.id)
         .join(target_module, Field.relationship_target_module_id == target_module.id)
+        .join(source_record_module, source_record.module_id == source_record_module.id)
+        .join(target_record_module, target_record.module_id == target_record_module.id)
     )
     if params.field_id is not None:
         statement = statement.where(RelationshipEdge.field_id == params.field_id)
@@ -133,9 +170,45 @@ def list_relationships(
         tie_breaker=cast(ColumnElement[Any], RelationshipEdge.id),
         deleted_field=cast(ColumnElement[bool], RelationshipEdge.is_deleted),
     )
-    result = execute_standard_list(db, statement, params, spec)
-    items = [relationship_response(edge) for edge in result.items]
-    return items, result.pagination
+    item_statement, count_statement = build_standard_list_statements(statement, params, spec)
+    total = int(db.scalar(count_statement) or 0)
+    rows = db.execute(item_statement).all()
+    items = [_projected_relationship_response(row) for row in rows]
+    pagination = PaginationMetadata(
+        limit=params.limit,
+        offset=params.offset,
+        count=len(items),
+        total=total,
+        has_more=params.offset + len(items) < total,
+    )
+    return items, pagination
+
+
+def _projected_relationship_response(row: Row[tuple[Any, ...]]) -> RelationshipResponse:
+    reasons = _hidden_reasons(
+        row.field_is_deleted,
+        row.source_record_is_deleted,
+        row.target_record_is_deleted,
+        row.source_module_is_deleted,
+        row.target_module_is_deleted,
+    )
+    return RelationshipResponse.model_validate(
+        {
+            "id": row.id,
+            "field_id": row.field_id,
+            "source_record_id": row.source_record_id,
+            "target_record_id": row.target_record_id,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+            "deleted_at": row.deleted_at,
+            "is_deleted": row.is_deleted,
+            "performed_by": row.performed_by,
+            "visibility": (
+                RelationshipVisibility.HIDDEN if reasons else RelationshipVisibility.AVAILABLE
+            ),
+            "hidden_reasons": reasons,
+        }
+    )
 
 
 __all__ = [

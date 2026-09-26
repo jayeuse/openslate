@@ -174,6 +174,172 @@ def test_validation_reports_structural_duplicates_missing_layout_and_self_links(
     } <= codes
 
 
+def test_validation_preserves_duplicate_lookup_precedence_and_issue_order() -> None:
+    payload = sample_document().model_dump(by_alias=True, mode="json")
+    design = payload["design"]
+    repeated_field = {
+        "id": "repeated-field",
+        "name": "Repeated field",
+        "type": "Text",
+        "required": False,
+        "closed": False,
+        "config": {"kind": "text", "defaultValue": ""},
+    }
+    design["modules"].extend(
+        {
+            "id": "sample-aa",
+            "departmentId": "sample-operations",
+            "name": "Repeated module",
+            "closed": False,
+            "fields": [deepcopy(repeated_field), deepcopy(repeated_field)],
+        }
+        for _ in range(3)
+    )
+    design["layout"]["sample-aa"] = {"x": 0, "y": 0, "width": 100, "height": 100}
+    duplicate_module = deepcopy(design["modules"][0])
+    duplicate_module["closed"] = True
+    duplicate_module["fields"] = [
+        {
+            "id": "sample-field-requests-request-number",
+            "name": "Request number",
+            "type": "Number",
+            "required": True,
+            "closed": False,
+            "config": {"kind": "number", "defaultValue": None},
+        },
+        {
+            "id": "last-only",
+            "name": "Last only",
+            "type": "Text",
+            "required": False,
+            "closed": False,
+            "config": {"kind": "text", "defaultValue": ""},
+        },
+    ]
+    design["modules"].append(duplicate_module)
+
+    first_relationship = design["relationships"][0]
+    first_relationship["fieldMappings"] = [
+        {
+            "sourceFieldId": "sample-field-requests-request-number",
+            "targetFieldId": "sample-field-equipment-name",
+        }
+    ]
+    second_relationship = deepcopy(first_relationship)
+    second_relationship.update(
+        {
+            "sourceModuleId": "sample-customers",
+            "cardinality": "one-to-one",
+            "fieldMappings": [
+                {
+                    "sourceFieldId": "sample-field-customers-customer-id",
+                    "targetFieldId": "sample-field-equipment-status",
+                }
+            ],
+        }
+    )
+    design["relationships"].append(second_relationship)
+    payload["automations"] = [
+        {
+            "id": "automation-lookup",
+            "name": "Duplicate lookup",
+            "enabled": True,
+            "priority": 0,
+            "trigger": {"kind": "record-created", "moduleId": "sample-requests"},
+            "conditionGroup": {
+                "operator": "all",
+                "conditions": [
+                    {
+                        "id": "condition-lookup",
+                        "field": {"moduleId": "sample-requests", "fieldId": "last-only"},
+                        "operator": "=",
+                        "value": {"kind": "literal", "value": "x"},
+                    }
+                ],
+            },
+            "actions": [
+                {
+                    "id": "create-lookup",
+                    "kind": "create-record",
+                    "moduleId": "sample-requests",
+                    "values": [
+                        {"fieldId": "last-only", "value": {"kind": "literal", "value": "x"}}
+                    ],
+                }
+            ],
+        }
+    ]
+    payload["scenarios"] = [
+        {
+            "id": "scenario-lookup",
+            "name": "Duplicate lookup",
+            "records": [
+                {"id": "request", "moduleId": "sample-requests", "values": {"last-only": "x"}},
+                {"id": "equipment-1", "moduleId": "sample-equipment", "values": {}},
+                {"id": "equipment-2", "moduleId": "sample-equipment", "values": {}},
+            ],
+            "links": [
+                {
+                    "relationshipId": "sample-uses",
+                    "sourceRecordId": "request",
+                    "targetRecordId": "equipment-1",
+                },
+                {
+                    "relationshipId": "sample-uses",
+                    "sourceRecordId": "request",
+                    "targetRecordId": "equipment-2",
+                },
+            ],
+        }
+    ]
+
+    issues = validate_document(payload)
+
+    assert [(issue.code, issue.message, issue.target_id) for issue in issues] == [
+        ("module.id_duplicate", "Duplicate module ID", "sample-aa"),
+        ("module.id_duplicate", "Duplicate module ID", "sample-requests"),
+        ("relationship.id_duplicate", "Duplicate relationship ID", "sample-uses"),
+        ("field.id_duplicate", "Duplicate field ID", "sample-aa"),
+        ("field.id_duplicate", "Duplicate field ID", "sample-aa"),
+        ("field.id_duplicate", "Duplicate field ID", "sample-aa"),
+        (
+            "automation.field_missing",
+            "Automation references a missing field",
+            "automation-lookup",
+        ),
+        (
+            "automation.field_missing",
+            "Automation action references a missing or closed field",
+            "automation-lookup",
+        ),
+        (
+            "scenario.module_missing",
+            "Scenario record references a missing or closed module",
+            "scenario-lookup",
+        ),
+        (
+            "scenario.field_missing",
+            "Scenario value references a missing or closed field",
+            "scenario-lookup",
+        ),
+        (
+            "scenario.link_module_mismatch",
+            "Scenario link does not match relationship modules",
+            "scenario-lookup",
+        ),
+        (
+            "scenario.link_module_mismatch",
+            "Scenario link does not match relationship modules",
+            "scenario-lookup",
+        ),
+        (
+            "scenario.cardinality_invalid",
+            "Scenario links violate one-to-one cardinality",
+            "scenario-lookup",
+        ),
+    ]
+
+
 def test_validation_exercises_automation_and_scenario_reference_failures() -> None:
     payload = sample_document().model_dump(by_alias=True, mode="json")
     modules = payload["design"]["modules"]

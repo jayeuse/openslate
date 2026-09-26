@@ -27,6 +27,8 @@ from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query import (
     compile_query,
     field_expression,
+    projected_record,
+    projected_record_query,
     validate_definition,
 )
 from app.systems.sandbox.records.query_schemas import QueryDefinition
@@ -171,8 +173,14 @@ def capture_report_snapshot(engine: Engine, report_id: UUID, owner_id: UUID) -> 
                     for sort in recipe.sorts
                 )
                 statement = statement.order_by(None).order_by(*ordering, Record.id.asc())
+                statement = projected_record_query(
+                    statement,
+                    definition,
+                    extra_field_ids=(group_field.id,),
+                )
                 statement = statement.add_columns(group_expression.label("group_value"))
             else:
+                statement = projected_record_query(statement, definition)
                 statement = statement.add_columns(literal(None).label("group_value"))
             results = db.execute(statement.limit(MAX_ROWS + 1).execution_options(yield_per=100))
 
@@ -198,7 +206,9 @@ def capture_report_snapshot(engine: Engine, report_id: UUID, owner_id: UUID) -> 
             previous_group: Any = None
             has_group = False
             group_count = 0
-            for record, group_value in results:
+            for row in results:
+                record = projected_record(row)
+                group_value = row.group_value
                 if len(frozen_rows) >= MAX_ROWS:
                     raise limit_exceeded()
                 if group_field is not None and (not has_group or group_value != previous_group):

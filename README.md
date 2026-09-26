@@ -304,11 +304,13 @@ Schema changes go through `backend/migrations/` and are checked with Alembic.
 
 ## Domain API
 
-Roles, users, departments, modules, fields, records, and audit reads are
-administrator-only. Domain collections use the standard list contract and
-expose `POST`, `GET`, `PATCH`, soft `DELETE`, and restore where applicable.
-Records validate active field definitions, required values, select options, and
-JSON value types.
+User and role administration and audit reads require administrator authority.
+Departments, modules, fields, and records use their Access read/write
+capabilities; see [Authentication and Authorization](docs/architecture/08-authentication-authorization.md).
+Domain collections use the standard list contract. Structural closure and
+purge use the previewed lifecycle workflow; mutations and restore follow each
+resource's contract. Records validate active field definitions, required values,
+select options, and JSON value types.
 
 FastAPI Identity issues short-lived signed JWTs, stores local sessions and
 action tokens in PostgreSQL, and manages HttpOnly browser cookies plus CSRF.
@@ -388,10 +390,12 @@ deployment principal has the documented owner/bootstrap capabilities.
 - `backend/app/common/` contains shared dependencies, exceptions, and
   utilities.
 - `backend/app/systems/` groups capability packages under product domains:
-  `sandbox` for organization structure, `access` for identity/roles, `manage`
-  for workspace/audit, `openview` for saved views, and `platform` for files.
-  `boards` and `comms` are reserved. This backend grouping does not connect
-  the frontend's local sample features to the API.
+  `sandbox` for structure, records, designs and automations; `access` for
+  identity, roles, groups and policy; `manage` for workspace/audit; `openview`
+  for views, charts, dashboards and reports; `boards` for shared content and
+  events; and `platform` for files, events and scheduling. `comms` is reserved.
+  An implemented backend capability does not by itself establish that every
+  corresponding frontend control uses persisted API state.
 - `backend/migrations/` is the only supported path for application schema
   changes.
 - `backend/app/systems/manage/audit/` owns transactional ORM listeners,

@@ -6,11 +6,12 @@ OpenSlate groups domain behavior under FastAPI `systems` packages:
 
 | Area | Responsibilities |
 | --- | --- |
-| `access` | Local identity, users, roles, permissions, invitations, recovery |
+| `access` | Local identity, users, roles, groups, Access policy, invitations, recovery, service-identity metadata |
 | `sandbox` | Shared design draft/history, safe publication, departments, modules, fields, records, relationships, lifecycle, temporary tests, and published automation execution |
-| `openview` | Saved views |
+| `openview` | Saved views, chart preferences, dashboards, reports, frozen report runs and schedules |
+| `boards` | Shared boards, grants, widgets, announcements, events, reminders, attachments and record links |
 | `manage` | Workspace profile and audit history |
-| `platform` | Private files, scan queue, worker, and SSE events |
+| `platform` | Private files and scan queue, SSE invalidations, scheduled work, in-app notifications and optional SMTP outbox |
 
 Users are application-owned rows with a role. Credentials, sessions, password and invitation action tokens, and throttling buckets are separate PostgreSQL tables. The literal `admin` role has all capabilities; malformed permission documents fail closed.
 
