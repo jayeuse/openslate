@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
 import { ApiError } from "@/lib/api";
-import { Columns3, Filter, MoreHorizontal, Settings2, X } from "lucide-react";
+import { Columns3, MoreHorizontal, Settings2, X } from "lucide-react";
 import {
   queryOpenViewGroupedRecords,
   type OpenViewGroupSelector,
@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SearchFilterToolbar } from "@/components/ui/search-filter-toolbar";
 import {
   Dialog,
   DialogClose,
@@ -119,12 +120,13 @@ const SAVED_VIEW_LAYOUT_LABELS: Record<SavedViewLayout, string> = {
   timeline: "Timeline",
 };
 const GROUP_PAGE_SIZE = 12;
-const GROUP_MEMBER_PAGE_SIZE = 25;
+const DEFAULT_RECORD_PAGE_SIZE = 25;
 
 type RecordPageState = {
   moduleId: string;
   queryKey: string;
   rows: OpenViewRecord[];
+  limit: number;
   offset: number;
   total: number;
   hasMore: boolean;
@@ -260,6 +262,9 @@ export default function ServerBackedViewsWorkspace({
     recordInvalidation,
   } = resource;
   const [recordPage, setRecordPage] = useState<RecordPageState | null>(null);
+  const [recordPageSize, setRecordPageSize] = useState(
+    DEFAULT_RECORD_PAGE_SIZE,
+  );
   const [recordRetry, setRecordRetry] = useState(0);
   const [inspectionContext, setInspectionContext] =
     useState<RecordInspectionContext | null>(null);
@@ -286,7 +291,7 @@ export default function ServerBackedViewsWorkspace({
   const [actionError, setActionError] = useState("");
   const [saveOpen, setSaveOpen] = useState(false);
   const [openViewPanel, setOpenViewPanel] = useState<
-    "filters" | "columns" | "layout" | null
+    "columns" | "layout" | null
   >(null);
   const [saveName, setSaveName] = useState("");
   const [saveAudience, setSaveAudience] = useState("private");
@@ -389,6 +394,13 @@ export default function ServerBackedViewsWorkspace({
     recordPagePosition.key === draftKey ? recordPagePosition.offset : 0;
   const setRecordOffset = (offset: number) =>
     setRecordPagePosition({ key: draftKey, offset });
+  const changeRecordPageSize = (pageSize: number) => {
+    if (pageSize === recordPageSize) return;
+    setRecordPage(null);
+    setGeneralGroupSnapshot(null);
+    setRecordPageSize(pageSize);
+    setRecordOffset(0);
+  };
   useEffect(() => {
     setRecordPagePosition((current) =>
       current.key === draftKey ? current : { key: draftKey, offset: 0 },
@@ -518,6 +530,7 @@ export default function ServerBackedViewsWorkspace({
           groupByFieldType,
           groupOffset: generalGroupOffset,
           selectedGroup: generalSelectedGroup,
+          recordPageSize,
           recordOffset,
           retry: generalGroupRetry,
         })
@@ -531,9 +544,10 @@ export default function ServerBackedViewsWorkspace({
       JSON.stringify({
         moduleId,
         definition: requestDefinition,
+        limit: recordPageSize,
         offset: recordOffset,
       }),
-    [moduleId, recordOffset, requestDefinition],
+    [moduleId, recordOffset, recordPageSize, requestDefinition],
   );
 
   useEffect(() => {
@@ -569,6 +583,7 @@ export default function ServerBackedViewsWorkspace({
       moduleId,
       queryKey,
       rows: previous?.moduleId === moduleId ? previous.rows : [],
+      limit: recordPageSize,
       offset: previous?.moduleId === moduleId ? previous.offset : 0,
       total: previous?.moduleId === moduleId ? previous.total : 0,
       hasMore: previous?.moduleId === moduleId ? previous.hasMore : false,
@@ -578,7 +593,7 @@ export default function ServerBackedViewsWorkspace({
     void queryOpenViewRecords({
       moduleId,
       definition: requestDefinition,
-      limit: 25,
+      limit: recordPageSize,
       offset: isUuid(requestedRecord) ? 0 : recordOffset,
     })
       .then((result) => {
@@ -587,6 +602,7 @@ export default function ServerBackedViewsWorkspace({
           moduleId,
           queryKey,
           rows: result.items,
+          limit: result.pagination.limit,
           offset: result.pagination.offset,
           total: result.pagination.total,
           hasMore: result.pagination.hasMore,
@@ -606,6 +622,7 @@ export default function ServerBackedViewsWorkspace({
             moduleId,
             queryKey,
             rows: [],
+            limit: recordPageSize,
             offset: 0,
             total: 0,
             hasMore: false,
@@ -619,6 +636,7 @@ export default function ServerBackedViewsWorkspace({
           moduleId,
           queryKey,
           rows: previous?.moduleId === moduleId ? previous.rows : [],
+          limit: recordPageSize,
           offset: previous?.moduleId === moduleId ? previous.offset : 0,
           total: previous?.moduleId === moduleId ? previous.total : 0,
           hasMore: previous?.moduleId === moduleId ? previous.hasMore : false,
@@ -639,6 +657,7 @@ export default function ServerBackedViewsWorkspace({
     recordOffset,
     recordInvalidation,
     recordRetry,
+    recordPageSize,
     requestDefinition,
     requestedRecord,
     unsafeIntegerRequestFilter,
@@ -671,7 +690,7 @@ export default function ServerBackedViewsWorkspace({
         fieldId: groupByFieldId,
         expectedType: groupByFieldType,
       },
-      limit: GROUP_MEMBER_PAGE_SIZE,
+      limit: recordPageSize,
       offset: recordOffset,
       groupLimit: GROUP_PAGE_SIZE,
       groupOffset: generalGroupOffset,
@@ -709,6 +728,7 @@ export default function ServerBackedViewsWorkspace({
     incompleteFilters,
     moduleId,
     normalizedDraftDefinition,
+    recordPageSize,
     recordOffset,
     recordInvalidation,
   ]);
@@ -777,6 +797,7 @@ export default function ServerBackedViewsWorkspace({
           moduleId,
           queryKey: generalGroupRequestKey,
           rows: selectedGeneralGroupPage?.items ?? [],
+          limit: selectedGeneralGroupPage?.pagination?.limit ?? recordPageSize,
           offset: selectedGeneralGroupPage?.pagination?.offset ?? 0,
           total:
             selectedGeneralGroupPage?.pagination?.total ??
@@ -1003,6 +1024,7 @@ export default function ServerBackedViewsWorkspace({
         definition: normalizedDraftDefinition,
         source: pageContext?.source ?? {
           kind: "records",
+          limit: currentRecordPage?.limit ?? recordPageSize,
           group:
             generalGroupedView &&
             groupByFieldId &&
@@ -1050,8 +1072,8 @@ export default function ServerBackedViewsWorkspace({
     };
     const pageSize =
       context.source.kind === "window"
-        ? (context.source.request.limit ?? 25)
-        : 25;
+        ? (context.source.request.limit ?? DEFAULT_RECORD_PAGE_SIZE)
+        : (context.source.limit ?? DEFAULT_RECORD_PAGE_SIZE);
     const offset =
       direction > 0
         ? context.offset + pageSize
@@ -1076,13 +1098,13 @@ export default function ServerBackedViewsWorkspace({
                 selectedGroup: context.source.group.selected,
                 groupLimit: GROUP_PAGE_SIZE,
                 groupOffset: context.source.group.offset,
-                limit: GROUP_MEMBER_PAGE_SIZE,
+                limit: pageSize,
                 offset,
               })
             : await queryOpenViewRecords({
                 moduleId,
                 definition: context.definition,
-                limit: GROUP_MEMBER_PAGE_SIZE,
+                limit: pageSize,
                 offset,
               });
       if (request !== inspectionRequest.current || !stillInspecting()) return;
@@ -1910,7 +1932,21 @@ export default function ServerBackedViewsWorkspace({
     );
   }
 
-  const rowPageLoading = currentRecordPage?.loading ?? false;
+  const recordPageRequestPending = Boolean(
+    !generalGroupedView &&
+    moduleId &&
+    currentWorkspace &&
+    currentWorkspace.fields.length > 0 &&
+    presentationLayout !== "kanban" &&
+    presentationLayout !== "calendar" &&
+    presentationLayout !== "timeline" &&
+    !unsafeIntegerRequestFilter &&
+    !incompleteRequestFilter &&
+    (!recordPage ||
+      recordPage.moduleId !== moduleId ||
+      recordPage.queryKey !== queryKey),
+  );
+  const rowPageLoading = currentRecordPage?.loading ?? recordPageRequestPending;
   const rowError = currentRecordPage?.error ?? "";
   const linkedRecordLoading = Boolean(
     isUuid(requestedRecord) &&
@@ -2346,76 +2382,103 @@ export default function ServerBackedViewsWorkspace({
               </div>
             </div>
 
-            <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(14rem,1fr)_minmax(12rem,0.65fr)_auto] lg:items-end">
-              <Field>
-                <FieldLabel htmlFor="openview-search">
-                  Search {moduleName}
-                </FieldLabel>
-                <Input
-                  id="openview-search"
-                  className="min-h-11"
-                  maxLength={240}
-                  placeholder={"Search " + moduleName.toLowerCase() + "…"}
-                  value={draft.definition.search ?? ""}
-                  onChange={(event) =>
-                    updateDefinition((current) => ({
-                      ...current,
-                      search: event.target.value || null,
-                    }))
-                  }
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="openview-quick-sort">Sort</FieldLabel>
-                <Select
-                  id="openview-quick-sort"
-                  aria-label="Sort"
-                  className="min-h-11"
-                  value={quickSortValue}
-                  disabled={Boolean(pendingAction)}
-                  onValueChange={changeQuickSort}
-                >
-                  {!quickSortFields.some(
+            <div className="min-w-0">
+              <SearchFilterToolbar
+                searchLabel={`Search ${moduleName}`}
+                placeholder={`Search ${moduleName.toLowerCase()}…`}
+                query={draft.definition.search ?? ""}
+                onQueryChange={(query) =>
+                  updateDefinition((current) => ({
+                    ...current,
+                    search: query || null,
+                  }))
+                }
+                searchMaxLength={240}
+                sort={quickSortValue}
+                sortOptions={[
+                  ...(!quickSortFields.some(
                     (field) => field.id === firstSort?.fieldId,
-                  ) && firstSort ? (
-                    <option value={quickSortValue} disabled>
-                      Saved sort field unavailable
-                    </option>
-                  ) : null}
-                  <option value="">Default order</option>
-                  {quickSortFields.flatMap((field) => [
-                    <option key={field.id + ":asc"} value={field.id + ":asc"}>
-                      {quickSortLabel(field, "asc")}
-                    </option>,
-                    <option key={field.id + ":desc"} value={field.id + ":desc"}>
-                      {quickSortLabel(field, "desc")}
-                    </option>,
-                  ])}
-                </Select>
-              </Field>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  aria-label={
-                    draft.definition.filters.length
-                      ? "More filters, " +
-                        draft.definition.filters.length +
-                        " active"
-                      : "More filters"
+                  ) && firstSort
+                    ? [
+                        {
+                          value: quickSortValue,
+                          label: "Saved sort field unavailable",
+                          disabled: true,
+                        },
+                      ]
+                    : []),
+                  { value: "", label: "Default order" },
+                  ...quickSortFields.flatMap((field) => [
+                    {
+                      value: `${field.id}:asc`,
+                      label: quickSortLabel(field, "asc"),
+                    },
+                    {
+                      value: `${field.id}:desc`,
+                      label: quickSortLabel(field, "desc"),
+                    },
+                  ]),
+                ]}
+                onSortChange={changeQuickSort}
+                sortDisabled={Boolean(pendingAction)}
+                filtersDisabled={Boolean(pendingAction)}
+                activeFilterCount={draft.definition.filters.length}
+                filtersClassName="sm:grid-cols-1 xl:grid-cols-1"
+              >
+                <SavedViewFilterControls
+                  logic={draft.definition.logic}
+                  filters={draft.definition.filters}
+                  fields={fields}
+                  activeFields={activeFields}
+                  rowKeyFor={filterRowKeyFor}
+                  onLogicChange={(logic) =>
+                    updateDefinition((current) => ({ ...current, logic }))
                   }
-                  disabled={Boolean(pendingAction)}
-                  onClick={() => setOpenViewPanel("filters")}
+                  onUpdateFilter={updateFilter}
+                  onRemoveFilter={removeFilter}
+                  onAddFilter={addFilter}
+                />
+              </SearchFilterToolbar>
+            </div>
+
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+              {draft.definition.filters.length ? (
+                <div
+                  aria-label="Active filters"
+                  className="flex min-w-0 flex-1 flex-wrap items-center gap-2"
                 >
-                  <Filter aria-hidden="true" />
-                  More filters
-                  {draft.definition.filters.length ? (
-                    <Badge variant="secondary" className="ml-1">
-                      {draft.definition.filters.length}
-                    </Badge>
-                  ) : null}
-                </Button>
+                  <span className="text-muted-foreground text-sm">
+                    Active filters
+                  </span>
+                  {draft.definition.filters.map((filter, index) => {
+                    const summary = filterSummary(
+                      filter,
+                      activeFields.get(filter.fieldId)?.name ??
+                        "Unavailable field",
+                    );
+                    return (
+                      <Button
+                        key={filterRowKeyFor(filter, index)}
+                        type="button"
+                        variant="outline"
+                        className="min-h-11 max-w-full justify-start whitespace-normal"
+                        aria-label={
+                          "Remove filter " + (index + 1) + ": " + summary
+                        }
+                        onClick={() => removeFilter(index)}
+                      >
+                        <span className="text-left break-words">{summary}</span>
+                        <X aria-hidden="true" />
+                      </Button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-sm">
+                  No active filters
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
                   variant="outline"
@@ -2438,41 +2501,6 @@ export default function ServerBackedViewsWorkspace({
                 </Button>
               </div>
             </div>
-
-            {draft.definition.filters.length ? (
-              <div
-                aria-label="Active filters"
-                className="flex flex-wrap items-center gap-2"
-              >
-                <span className="text-muted-foreground text-sm">
-                  Active filters
-                </span>
-                {draft.definition.filters.map((filter, index) => {
-                  const summary = filterSummary(
-                    filter,
-                    activeFields.get(filter.fieldId)?.name ??
-                      "Unavailable field",
-                  );
-                  return (
-                    <Button
-                      key={filterRowKeyFor(filter, index)}
-                      type="button"
-                      variant="outline"
-                      className="min-h-11 max-w-full justify-start whitespace-normal"
-                      aria-label={
-                        "Remove filter " + (index + 1) + ": " + summary
-                      }
-                      onClick={() => removeFilter(index)}
-                    >
-                      <span className="text-left break-words">{summary}</span>
-                      <X aria-hidden="true" />
-                    </Button>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-muted-foreground text-sm">No active filters</p>
-            )}
 
             {!isLiveRecordLayout(presentationLayout) ? (
               <Alert role="note">
@@ -2722,13 +2750,15 @@ export default function ServerBackedViewsWorkspace({
                     pinnedFieldId={pinnedField?.id ?? null}
                     presentation={draft.presentation}
                     pending={Boolean(pendingAction)}
+                    pageSize={currentRecordPage?.limit ?? recordPageSize}
                     onOpenRecord={openRecordFromResults}
-                    onPreviousPage={() =>
-                      setRecordOffset(Math.max(0, renderedRecordOffset - 25))
-                    }
-                    onNextPage={() =>
-                      setRecordOffset(renderedRecordOffset + 25)
-                    }
+                    onPageIndexChange={(pageIndex) => {
+                      if (rowPageLoading || pendingAction) return;
+                      const pageSize =
+                        currentRecordPage?.limit ?? recordPageSize;
+                      setRecordOffset(pageIndex * pageSize);
+                    }}
+                    onPageSizeChange={changeRecordPageSize}
                   />
                 )}
               </TabsContent>
@@ -2744,32 +2774,12 @@ export default function ServerBackedViewsWorkspace({
             <DialogContent className="max-w-5xl">
               <DialogHeader>
                 <DialogTitle>
-                  {openViewPanel === "filters"
-                    ? "More filters"
-                    : openViewPanel === "columns"
-                      ? "Columns"
-                      : "Layout settings"}
+                  {openViewPanel === "columns" ? "Columns" : "Layout settings"}
                 </DialogTitle>
                 <DialogDescription>
                   Changes are kept in this view draft until you save them.
                 </DialogDescription>
               </DialogHeader>
-
-              {openViewPanel === "filters" ? (
-                <SavedViewFilterControls
-                  logic={draft.definition.logic}
-                  filters={draft.definition.filters}
-                  fields={fields}
-                  activeFields={activeFields}
-                  rowKeyFor={filterRowKeyFor}
-                  onLogicChange={(logic) =>
-                    updateDefinition((current) => ({ ...current, logic }))
-                  }
-                  onUpdateFilter={updateFilter}
-                  onRemoveFilter={removeFilter}
-                  onAddFilter={addFilter}
-                />
-              ) : null}
 
               {openViewPanel === "columns" ? (
                 <SavedViewColumnControls

@@ -5,7 +5,7 @@ import type {
   OpenViewGroupSelector,
 } from "../adapters/analytics-api";
 import { Button } from "@/components/ui/button";
-import { PaginationControls } from "@/components/ui/pagination-controls";
+import { TablePagination } from "@/components/ui/table-pagination";
 
 type GroupOption = {
   key: string;
@@ -118,31 +118,22 @@ export function LiveGroupedResults({
         </p>
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
-        <p aria-live="polite" className="text-muted-foreground text-sm">
-          {range}
-        </p>
-        {pagination ? (
-          <PaginationControls
-            ariaLabel="Group result pages"
-            className="w-auto justify-end"
-            pageCount={Math.max(
-              1,
-              Math.ceil(pagination.total / pagination.limit),
-            )}
-            pageIndex={Math.floor(pagination.offset / pagination.limit)}
-            onPageIndexChange={(nextPage) => {
-              if (loading || error || pending) return;
-              if (nextPage < Math.floor(pagination.offset / pagination.limit))
-                onPreviousPage();
-              else if (
-                nextPage > Math.floor(pagination.offset / pagination.limit)
-              )
-                onNextPage();
-            }}
-          />
-        ) : null}
-      </div>
+      {pagination ? (
+        <TablePagination
+          ariaLabel="Group result pages"
+          total={pagination.total}
+          offset={pagination.offset}
+          rowCount={groups.length}
+          pageSize={pagination.limit}
+          onPageIndexChange={(nextPage) => {
+            const pageIndex = Math.floor(pagination.offset / pagination.limit);
+            if (loading || error || pending) return;
+            if (nextPage < pageIndex) onPreviousPage();
+            else if (nextPage > pageIndex) onNextPage();
+          }}
+          disabled={loading || Boolean(error) || pending}
+        />
+      ) : null}
     </section>
   );
 }

@@ -1352,9 +1352,9 @@ test("private Dashboard saves ordered charts and reloads only the selected compl
   expect(api.snapshots).toHaveLength(3);
   expect(api.snapshots[2]).toMatchObject({
     mode: "groups",
-    dimension: { field_id: regionFieldId },
+    dimension: { field_id: categoryFieldId },
   });
-  await expect(page.getByText("1–25 of 30 aggregate groups")).toBeVisible();
+  await expect(page.getByText("Showing 1–25 of 30")).toBeVisible();
   await expect(
     page
       .getByRole("table", { name: "Complete data for Count by Category" })
@@ -1364,7 +1364,7 @@ test("private Dashboard saves ordered charts and reloads only the selected compl
     page.getByRole("navigation", { name: "Dashboard result pages" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Go to next page" }).click();
-  await expect(page.getByText("26–30 of 30 aggregate groups")).toBeVisible();
+  await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
   await expect(
     page
       .getByRole("table", { name: "Complete data for Count by Category" })
@@ -1617,7 +1617,7 @@ test("private Dashboard Pie builder saves Sum and reloads its preview and comple
   await expect(preview).toBeVisible();
   await expect(preview.locator(".recharts-pie")).toBeVisible();
   await expect(table).toBeVisible();
-  await expect(page.getByText("1–25 of 30 aggregate groups")).toBeVisible();
+  await expect(page.getByText("Showing 1–25 of 30")).toBeVisible();
   await expect(table.locator("tbody tr")).toHaveCount(25);
   expect(api.writes[0]?.body).toEqual({
     name: "Equipment distribution",
@@ -1653,7 +1653,7 @@ test("private Dashboard Pie builder saves Sum and reloads its preview and comple
   await expect(table).toBeVisible();
   await expect(table.locator("tbody tr")).toHaveCount(25);
   await page.getByRole("button", { name: "Go to next page" }).click();
-  await expect(page.getByText("26–30 of 30 aggregate groups")).toBeVisible();
+  await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
   await expect(table.locator("tbody tr")).toHaveCount(5);
   expect(api.snapshots).toHaveLength(2);
   expect(api.snapshots[1]).toMatchObject({
@@ -1662,6 +1662,11 @@ test("private Dashboard Pie builder saves Sum and reloads its preview and comple
     measure: { field_id: amountFieldId, expected_type: "decimal" },
     dimension: { field_id: categoryFieldId, expected_type: "select" },
   });
+
+  await page.getByLabel("Rows per page").selectOption("50");
+  await expect(page.getByText("Showing 1–30 of 30")).toBeVisible();
+  await expect(table.locator("tbody tr")).toHaveCount(30);
+  expect(api.snapshots).toHaveLength(2);
 });
 
 test("Dashboard line builder requires and saves a typed numeric measure for Average", async ({
@@ -2246,13 +2251,13 @@ test("a shorter refreshed snapshot clamps the data page before Previous is used"
   ).toBeVisible();
   await page.getByRole("button", { name: "Go to next page" }).click();
   await page.getByRole("button", { name: "Go to next page" }).click();
-  await expect(page.getByText("51–60 of 60 aggregate groups")).toBeVisible();
+  await expect(page.getByText("Showing 51–60 of 60")).toBeVisible();
 
   api.setSnapshotLength(30);
   await page.getByRole("button", { name: "Refresh now" }).click();
-  await expect(page.getByText("26–30 of 30 aggregate groups")).toBeVisible();
+  await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
   await page.getByRole("button", { name: "Go to previous page" }).click();
-  await expect(page.getByText("1–25 of 30 aggregate groups")).toBeVisible();
+  await expect(page.getByText("Showing 1–25 of 30")).toBeVisible();
 });
 
 test("the categorical Count builder excludes numeric and date fields", async ({
@@ -2492,6 +2497,16 @@ test("private Dashboard saves and reloads all four live widget types", async ({
   await expect(
     page.getByRole("heading", { name: /Workload by Region/ }),
   ).toBeVisible();
+  const workloadTable = page.getByRole("table", { name: "Workload breakdown" });
+  await expect(workloadTable.locator("tbody tr")).toHaveCount(25);
+  const snapshotsBeforeWorkloadPageSize = api.snapshots.length;
+  await page.getByLabel("Rows per page").selectOption("5");
+  await expect(workloadTable.locator("tbody tr")).toHaveCount(5);
+  await expect(page.getByText("Showing 1–5 of 30")).toBeVisible();
+  expect(api.snapshots).toHaveLength(snapshotsBeforeWorkloadPageSize);
+  await page.getByLabel("Rows per page").selectOption("25");
+  await expect(workloadTable.locator("tbody tr")).toHaveCount(25);
+
   await page.getByRole("button", { name: /View records 3/ }).click();
   const recordsTable = page.getByRole("table", { name: "Live records" });
   await expect(recordsTable.getByText("Repair")).toBeVisible();
@@ -2515,6 +2530,14 @@ test("private Dashboard saves and reloads all four live widget types", async ({
   await expect(
     recordsTable.getByRole("cell", { name: "Record 26" }),
   ).toBeVisible();
+  await page.getByLabel("Rows per page").selectOption("50");
+  await expect.poll(() => api.recordQueries.at(-1)?.limit).toBe(50);
+  await expect.poll(() => api.recordQueries.at(-1)?.offset).toBe(0);
+  await expect(recordsTable.locator("tbody tr")).toHaveCount(30);
+  await expect(
+    recordsTable.getByRole("cell", { name: "Record 30" }),
+  ).toBeVisible();
+  expect(api.recordQueries.at(-1)).toMatchObject({ limit: 50, offset: 0 });
   await page.getByRole("button", { name: /View chart 4/ }).click();
   await expect(
     page.getByRole("table", { name: "Complete data for Count by Category" }),

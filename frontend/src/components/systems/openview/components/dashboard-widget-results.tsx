@@ -4,7 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { PaginationControls } from "@/components/ui/pagination-controls";
+import { TablePagination } from "@/components/ui/table-pagination";
 import {
   Table,
   TableBody,
@@ -17,7 +17,6 @@ import {
 import type { OpenViewAggregateSnapshotResult } from "../adapters/analytics-api";
 import type { OpenViewDataSourceField } from "../adapters/views-api";
 import {
-  DASHBOARD_PAGE_SIZE,
   type DraftWidget,
   type SnapshotState,
 } from "../domain/dashboard-draft";
@@ -33,9 +32,11 @@ type DashboardWidgetResultsProps = {
   snapshotLoading: boolean;
   snapshotError: string;
   tablePage: number;
+  tablePageSize: number;
   fieldsByModule: Record<string, OpenViewDataSourceField[]>;
   onRefresh: () => void;
   setTablePage: Dispatch<SetStateAction<number>>;
+  setTablePageSize: Dispatch<SetStateAction<number>>;
 };
 
 function chartValues(
@@ -69,9 +70,11 @@ export function DashboardWidgetResults({
   snapshotLoading,
   snapshotError,
   tablePage,
+  tablePageSize,
   fieldsByModule,
   onRefresh,
   setTablePage,
+  setTablePageSize,
 }: DashboardWidgetResultsProps) {
   const activeIsDateSeries =
     widget.widgetType === "chart" && widget.config.query.mode === "date_series";
@@ -89,13 +92,13 @@ export function DashboardWidgetResults({
   const snapshotRows = aggregateSnapshot?.items ?? [];
   const tablePageCount = Math.max(
     1,
-    Math.ceil(snapshotRows.length / DASHBOARD_PAGE_SIZE),
+    Math.ceil(snapshotRows.length / tablePageSize),
   );
   const boundedTablePage = Math.min(tablePage, tablePageCount - 1);
-  const firstRowIndex = boundedTablePage * DASHBOARD_PAGE_SIZE;
+  const firstRowIndex = boundedTablePage * tablePageSize;
   const visibleRows = snapshotRows.slice(
     firstRowIndex,
-    firstRowIndex + DASHBOARD_PAGE_SIZE,
+    firstRowIndex + tablePageSize,
   );
   const recordsFields =
     widget.widgetType === "records"
@@ -113,13 +116,10 @@ export function DashboardWidgetResults({
       0,
     ) ?? 0;
   const recordsPagination = recordsSnapshot?.pagination;
-  const recordsPageCount = Math.max(
-    1,
-    Math.ceil(
-      (recordsPagination?.total ?? 0) /
-        (recordsPagination?.limit ?? DASHBOARD_PAGE_SIZE),
-    ),
-  );
+  const updatePageSize = (size: number) => {
+    setTablePageSize(size);
+    setTablePage(0);
+  };
 
   return (
     <section
@@ -205,20 +205,15 @@ export function DashboardWidgetResults({
               </TableBody>
             </Table>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
-            <p role="status" className="text-muted-foreground text-sm">
-              {snapshotRows.length
-                ? `${firstRowIndex + 1}–${Math.min(firstRowIndex + DASHBOARD_PAGE_SIZE, snapshotRows.length)} of ${snapshotRows.length} groups`
-                : "0 groups"}
-            </p>
-            <PaginationControls
-              ariaLabel="Dashboard result pages"
-              className="w-auto sm:justify-end"
-              pageCount={tablePageCount}
-              pageIndex={boundedTablePage}
-              onPageIndexChange={setTablePage}
-            />
-          </div>
+          <TablePagination
+            ariaLabel="Dashboard result pages"
+            total={snapshotRows.length}
+            offset={firstRowIndex}
+            rowCount={visibleRows.length}
+            pageSize={tablePageSize}
+            onPageIndexChange={setTablePage}
+            onPageSizeChange={updatePageSize}
+          />
         </div>
       ) : snapshot &&
         snapshot.data.kind === "records" &&
@@ -228,7 +223,7 @@ export function DashboardWidgetResults({
             <Table aria-label="Live records">
               <TableCaption>
                 Current records from this Dashboard. Each page contains up to{" "}
-                {DASHBOARD_PAGE_SIZE} rows.
+                {recordsPagination?.limit ?? tablePageSize} rows.
               </TableCaption>
               <TableHeader>
                 <TableRow>
@@ -250,20 +245,15 @@ export function DashboardWidgetResults({
               </TableBody>
             </Table>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
-            <p role="status" className="text-muted-foreground text-sm">
-              {recordsPagination?.count
-                ? `${recordsPagination.offset + 1}–${recordsPagination.offset + recordsPagination.count} of ${recordsPagination.total} records`
-                : `${recordsPagination?.total ?? 0} records`}
-            </p>
-            <PaginationControls
-              ariaLabel="Dashboard result pages"
-              className="w-auto sm:justify-end"
-              pageCount={recordsPageCount}
-              pageIndex={tablePage}
-              onPageIndexChange={setTablePage}
-            />
-          </div>
+          <TablePagination
+            ariaLabel="Dashboard result pages"
+            total={recordsPagination?.total ?? 0}
+            offset={recordsPagination?.offset ?? 0}
+            rowCount={recordsPagination?.count ?? 0}
+            pageSize={recordsPagination?.limit ?? tablePageSize}
+            onPageIndexChange={setTablePage}
+            onPageSizeChange={updatePageSize}
+          />
         </div>
       ) : snapshot &&
         snapshot.data.kind === "aggregate" &&
@@ -325,20 +315,15 @@ export function DashboardWidgetResults({
                 </TableBody>
               </Table>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
-              <p role="status" className="text-muted-foreground text-sm">
-                {snapshotRows.length
-                  ? `${firstRowIndex + 1}–${Math.min(firstRowIndex + DASHBOARD_PAGE_SIZE, snapshotRows.length)} of ${snapshotRows.length} ${activeIsDateSeries ? "daily values" : "aggregate groups"}`
-                  : `0 ${activeIsDateSeries ? "daily values" : "aggregate groups"}`}
-              </p>
-              <PaginationControls
-                ariaLabel="Dashboard result pages"
-                className="w-auto sm:justify-end"
-                pageCount={tablePageCount}
-                pageIndex={boundedTablePage}
-                onPageIndexChange={setTablePage}
-              />
-            </div>
+            <TablePagination
+              ariaLabel="Dashboard result pages"
+              total={snapshotRows.length}
+              offset={firstRowIndex}
+              rowCount={visibleRows.length}
+              pageSize={tablePageSize}
+              onPageIndexChange={setTablePage}
+              onPageSizeChange={updatePageSize}
+            />
           </div>
         </>
       ) : persisted && !snapshotError ? (

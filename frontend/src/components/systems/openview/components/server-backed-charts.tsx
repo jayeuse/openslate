@@ -111,6 +111,7 @@ export default function ServerBackedCharts() {
   const [queryError, setQueryError] = useState("");
   const [applied, setApplied] = useState<AppliedSnapshot | null>(null);
   const [tablePage, setTablePage] = useState(0);
+  const [tablePageSize, setTablePageSize] = useState(25);
   const appliedRef = useRef<AppliedSnapshot | null>(null);
   const appliedRequestSequence = useRef(0);
   const consumedInvalidationRevision = useRef(0);
@@ -874,7 +875,9 @@ export default function ServerBackedCharts() {
         showValues={showValues}
         showLegend={showLegend}
         tablePage={tablePage}
+        tablePageSize={tablePageSize}
         setTablePage={setTablePage}
+        setTablePageSize={setTablePageSize}
       />
     </div>
   );

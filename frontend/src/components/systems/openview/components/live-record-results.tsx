@@ -5,7 +5,7 @@ import type {
   OpenViewPresentation,
   OpenViewRecord,
 } from "../adapters/views-api";
-import { PaginationControls } from "@/components/ui/pagination-controls";
+import { TablePagination } from "@/components/ui/table-pagination";
 import {
   Table,
   TableBody,
@@ -15,8 +15,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { LiveRecordCards } from "./live-record-cards";
-
-const PAGE_SIZE = 25;
 
 type RecordPage = {
   rows: readonly OpenViewRecord[];
@@ -42,9 +40,10 @@ type LiveRecordResultsProps = {
   pinnedFieldId: string | null;
   presentation: ResultsPresentation;
   pending: boolean;
+  pageSize: number;
   onOpenRecord: (recordId: string) => void;
-  onPreviousPage: () => void;
-  onNextPage: () => void;
+  onPageIndexChange: (pageIndex: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
 };
 
 function recordValue(value: unknown): string {
@@ -65,9 +64,10 @@ export function LiveRecordResults({
   pinnedFieldId,
   presentation,
   pending,
+  pageSize,
   onOpenRecord,
-  onPreviousPage,
-  onNextPage,
+  onPageIndexChange,
+  onPageSizeChange,
 }: LiveRecordResultsProps) {
   return (
     <section
@@ -155,25 +155,16 @@ export function LiveRecordResults({
           </TableBody>
         </Table>
       )}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
-        <p aria-live="polite" className="text-muted-foreground text-sm">
-          Showing {page.rows.length ? page.offset + 1 : 0}–
-          {page.offset + page.rows.length} of {page.total} {scopeLabel}
-        </p>
-        <PaginationControls
-          ariaLabel="Record result pages"
-          className="w-auto justify-end"
-          pageCount={Math.max(1, Math.ceil(page.total / PAGE_SIZE))}
-          pageIndex={Math.floor(page.offset / PAGE_SIZE)}
-          onPageIndexChange={(nextPage) => {
-            if (page.loading || pending) return;
-            if (nextPage < Math.floor(page.offset / PAGE_SIZE))
-              onPreviousPage();
-            else if (nextPage > Math.floor(page.offset / PAGE_SIZE))
-              onNextPage();
-          }}
-        />
-      </div>
+      <TablePagination
+        ariaLabel="Record result pages"
+        total={page.total}
+        offset={page.offset}
+        rowCount={page.rows.length}
+        pageSize={pageSize}
+        onPageIndexChange={onPageIndexChange}
+        onPageSizeChange={onPageSizeChange}
+        disabled={page.loading || pending}
+      />
     </section>
   );
 }

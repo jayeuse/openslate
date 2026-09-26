@@ -637,11 +637,16 @@ test("live charts keep Top visual-only while table, CSV, and print retain all gr
   ).toBeVisible();
   const table = page.getByRole("table", { name: "Complete aggregate data" });
   await expect(table.locator("tbody tr")).toHaveCount(25);
-  await expect(
-    page.getByText("Showing 1–25 of 105 aggregate groups"),
-  ).toBeVisible();
-  await expect(page.getByTestId("charts-print-row")).toHaveCount(105);
+  await expect(page.getByText("Showing 1–25 of 105")).toBeVisible();
+
+  await page.getByRole("button", { name: "Go to next page" }).click();
+  await expect(page.getByText("Showing 26–50 of 105")).toBeVisible();
+  await page.getByLabel("Rows per page").selectOption("50");
+  await expect(table.locator("tbody tr")).toHaveCount(50);
+  await expect(page.getByText("Showing 1–50 of 105")).toBeVisible();
   expect(api.requests).toHaveLength(1);
+
+  await expect(page.getByTestId("charts-print-row")).toHaveCount(105);
   expect(api.requests[0]).not.toHaveProperty("top");
 
   const downloadPromise = page.waitForEvent("download");
@@ -687,9 +692,7 @@ test("date-line charts require and preserve a complete chronological 366-day sna
   for (let pageNumber = 1; pageNumber < 15; pageNumber += 1) {
     await page.getByRole("button", { name: "Go to next page" }).click();
   }
-  await expect(
-    page.getByText("Showing 351–366 of 366 daily values"),
-  ).toBeVisible();
+  await expect(page.getByText("Showing 351–366 of 366")).toBeVisible();
   await expect(page.getByRole("cell", { name: "2024-12-31" })).toBeVisible();
   await expect(page.getByTestId("charts-print-row")).toHaveCount(366);
   await expect(

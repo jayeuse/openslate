@@ -6,13 +6,12 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { PaginationControls } from "@/components/ui/pagination-controls";
+import { TablePagination } from "@/components/ui/table-pagination";
 import {
   Table,
   TableBody,
@@ -31,7 +30,6 @@ import type {
 import type { ChartType } from "../domain/chart-query";
 import { OpenViewChartPreview } from "./chart-preview";
 
-const PAGE_SIZE = 25;
 const MAX_CATEGORICAL_PREVIEW_POINTS = 100;
 
 export type AppliedSnapshot = {
@@ -52,7 +50,9 @@ type ChartSnapshotResultsProps = {
   showValues: boolean;
   showLegend: boolean;
   tablePage: number;
+  tablePageSize: number;
   setTablePage: Dispatch<SetStateAction<number>>;
+  setTablePageSize: Dispatch<SetStateAction<number>>;
 };
 
 function chartNumber(value: OpenViewAggregateDatum["value"]): number | null {
@@ -129,7 +129,9 @@ export function ChartSnapshotResults({
   showValues,
   showLegend,
   tablePage,
+  tablePageSize,
   setTablePage,
+  setTablePageSize,
 }: ChartSnapshotResultsProps) {
   if (!applied) {
     return (
@@ -156,13 +158,10 @@ export function ChartSnapshotResults({
     applied.chartType === "line" ? "" : top,
   );
   const allRows = applied.result.items;
-  const pageCount = Math.ceil(allRows.length / PAGE_SIZE);
   const visibleRows = allRows.slice(
-    tablePage * PAGE_SIZE,
-    (tablePage + 1) * PAGE_SIZE,
+    tablePage * tablePageSize,
+    (tablePage + 1) * tablePageSize,
   );
-  const firstRowNumber = allRows.length ? tablePage * PAGE_SIZE + 1 : 0;
-  const lastRowNumber = Math.min((tablePage + 1) * PAGE_SIZE, allRows.length);
 
   return (
     <>
@@ -329,7 +328,7 @@ export function ChartSnapshotResults({
               <TableBody>
                 {visibleRows.map((item, index) => (
                   <TableRow
-                    key={`${item.key ?? item.label}-${tablePage * PAGE_SIZE + index}`}
+                    key={`${item.key ?? item.label}-${tablePage * tablePageSize + index}`}
                   >
                     <TableCell>{item.label}</TableCell>
                     <TableCell>{String(item.value)}</TableCell>
@@ -350,20 +349,18 @@ export function ChartSnapshotResults({
             </Table>
           </div>
         </CardContent>
-        <CardFooter className="flex flex-wrap items-center justify-between gap-3">
-          <p role="status" className="text-muted-foreground text-sm">
-            {allRows.length
-              ? `Showing ${firstRowNumber}–${lastRowNumber} of ${allRows.length} ${applied.chartType === "line" ? "daily values" : "aggregate groups"}`
-              : `Showing 0 of 0 ${applied.chartType === "line" ? "daily values" : "aggregate groups"}`}
-          </p>
-          <PaginationControls
-            ariaLabel="Complete aggregate data pages"
-            className="w-auto sm:justify-end"
-            pageCount={pageCount}
-            pageIndex={tablePage}
-            onPageIndexChange={setTablePage}
-          />
-        </CardFooter>
+        <TablePagination
+          ariaLabel="Complete aggregate data pages"
+          total={allRows.length}
+          offset={tablePage * tablePageSize}
+          rowCount={visibleRows.length}
+          pageSize={tablePageSize}
+          onPageIndexChange={setTablePage}
+          onPageSizeChange={(size) => {
+            setTablePageSize(size);
+            setTablePage(0);
+          }}
+        />
       </Card>
       <div className="hidden print:block">
         <h1 className="mb-2 text-xl font-semibold">

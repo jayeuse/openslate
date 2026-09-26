@@ -85,6 +85,8 @@ async function installReportsApi(
   let csvReads = 0;
   let reportCreates = 0;
   let reportUpdates = 0;
+  const ownedRunPageRequests: Array<{ limit: number; offset: number }> = [];
+  const sharedRunPageRequests: Array<{ limit: number; offset: number }> = [];
   let failOwnedSecondPage = options.failOwnedSecondPage ?? false;
   let failSharedSecondPage = options.failSharedSecondPage ?? false;
   let failFirstHistoryAfterRun = options.failFirstHistoryAfterRun ?? false;
@@ -228,6 +230,7 @@ async function installReportsApi(
       const url = new URL(request.url());
       const limit = Number(url.searchParams.get("limit") ?? 25);
       const offset = Number(url.searchParams.get("offset") ?? 0);
+      sharedRunPageRequests.push({ limit, offset });
       if (offset === 25 && failSharedSecondPage) {
         failSharedSecondPage = false;
         return route.fulfill({ status: 503, body: "{}" });
@@ -289,6 +292,7 @@ async function installReportsApi(
       const url = new URL(request.url());
       const limit = Number(url.searchParams.get("limit") ?? 25);
       const offset = Number(url.searchParams.get("offset") ?? 0);
+      ownedRunPageRequests.push({ limit, offset });
       if (manualRuns > 0 && offset === 0 && failFirstHistoryAfterRun) {
         failFirstHistoryAfterRun = false;
         return route.fulfill({ status: 503, body: "{}" });
@@ -350,6 +354,10 @@ async function installReportsApi(
     reportCreates: () => reportCreates,
     reportUpdates: () => reportUpdates,
     createdReports: () => createdReports,
+    runPageRequests: () => ({
+      owned: [...ownedRunPageRequests],
+      shared: [...sharedRunPageRequests],
+    }),
   };
 }
 
@@ -445,6 +453,65 @@ test("connected Reports expose only authorized shared-run metadata to a reader",
   });
 });
 
+test("owned and shared output page sizes reset independently to the first page", async ({
+  page,
+}) => {
+  const api = await installReportsApi(page, false, report, {
+    ownerRunCount: 26,
+    sharedRunCount: 26,
+  });
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "Operations review" }).click();
+
+  const ownedOutputPanel = page.getByRole("tabpanel", {
+    name: "Saved outputs",
+  });
+  const ownedOutputs = ownedOutputPanel.getByRole("table", {
+    name: "Saved outputs",
+  });
+  const ownedPageSize = ownedOutputPanel.getByLabel("Rows per page");
+  await expect(ownedPageSize).toHaveValue("25");
+  await page
+    .getByRole("navigation", { name: "Saved output pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
+  await expect(page.getByText("Showing 26–26 of 26")).toBeVisible();
+
+  await ownedPageSize.selectOption("10");
+  await expect(ownedPageSize).toHaveValue("10");
+  await expect(ownedOutputs.getByRole("row")).toHaveCount(11);
+  await expect(page.getByText("Showing 1–10 of 26")).toBeVisible();
+  await expect(
+    ownedOutputs.getByRole("cell", { name: "Recipe version 10" }),
+  ).toBeVisible();
+  expect(api.runPageRequests().owned).toContainEqual({ limit: 10, offset: 0 });
+
+  await page.getByRole("button", { name: "Available outputs" }).click();
+  const availableOutputs = page.getByRole("dialog", {
+    name: "Available outputs",
+  });
+  const sharedPageSize = availableOutputs.getByLabel("Rows per page");
+  const sharedTable = availableOutputs.getByRole("table", {
+    name: "Available outputs",
+  });
+  await expect(sharedPageSize).toHaveValue("25");
+  await availableOutputs
+    .getByRole("navigation", { name: "Available output pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
+  await expect(availableOutputs.getByText("Showing 26–26 of 26")).toBeVisible();
+
+  await sharedPageSize.selectOption("5");
+  await expect(sharedPageSize).toHaveValue("5");
+  await expect(sharedTable.getByRole("row")).toHaveCount(6);
+  await expect(availableOutputs.getByText("Showing 1–5 of 26")).toBeVisible();
+  await expect(
+    sharedTable.getByRole("cell", { name: "Recipe version 5" }),
+  ).toBeVisible();
+  expect(api.runPageRequests().shared).toContainEqual({ limit: 5, offset: 0 });
+  await expect(ownedPageSize).toHaveValue("10");
+});
+
 test("failed owned output page does not relabel old results or leave their actions available", async ({
   page,
 }) => {
@@ -482,20 +549,21 @@ test("failed owned output page does not relabel old results or leave their actio
   await expect(page.getByText("Recipe version 26")).toBeVisible();
 });
 
-test("a confirmed new run keeps the 25-row first page accurate when history refresh fails", async ({
+test("a confirmed new run caps the selected page size when history refresh fails", async ({
   page,
 }) => {
   await installReportsApi(page, false, report, {
-    ownerRunCount: 25,
+    ownerRunCount: 5,
     distinctNewRun: true,
     failFirstHistoryAfterRun: true,
   });
   await page.goto("/openview?section=reports");
   await page.getByRole("button", { name: "Operations review" }).click();
   const outputs = page.getByRole("table", { name: "Saved outputs" });
-  await expect(outputs.getByRole("row")).toHaveCount(26);
+  await page.getByLabel("Rows per page").selectOption("5");
+  await expect(outputs.getByRole("row")).toHaveCount(6);
   await expect(
-    outputs.getByRole("cell", { name: "Recipe version 25" }),
+    outputs.getByRole("cell", { name: "Recipe version 5" }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Run now" }).click();
@@ -504,25 +572,25 @@ test("a confirmed new run keeps the 25-row first page accurate when history refr
       .getByRole("alert")
       .filter({ hasText: "Report history could not be loaded" }),
   ).toBeVisible();
-  await expect(outputs.getByRole("row")).toHaveCount(26);
+  await expect(outputs.getByRole("row")).toHaveCount(6);
   await expect(
     outputs.getByRole("cell", { name: "Recipe version 99" }),
   ).toBeVisible();
   await expect(
-    outputs.getByRole("cell", { name: "Recipe version 25" }),
+    outputs.getByRole("cell", { name: "Recipe version 5" }),
   ).toHaveCount(0);
-  await expect(page.getByText("Showing 1–25 of 26")).toBeVisible();
+  await expect(page.getByText("Showing 1–5 of 6")).toBeVisible();
 
   await page.getByRole("button", { name: "Retry" }).click();
-  await expect(outputs.getByRole("row")).toHaveCount(26);
+  await expect(outputs.getByRole("row")).toHaveCount(6);
   await page
     .getByRole("navigation", { name: "Saved output pages" })
     .getByRole("button", { name: "Go to next page" })
     .click();
   await expect(
-    outputs.getByRole("cell", { name: "Recipe version 25" }),
+    outputs.getByRole("cell", { name: "Recipe version 5" }),
   ).toBeVisible();
-  await expect(page.getByText("Showing 26–26 of 26")).toBeVisible();
+  await expect(page.getByText("Showing 6–6 of 6")).toBeVisible();
 });
 
 test("failed available output page does not relabel old results or leave their actions available", async ({

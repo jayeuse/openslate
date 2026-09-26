@@ -68,7 +68,6 @@ import {
   configSignature,
   draftWidgetsFrom,
   inputWidgets,
-  lastValidTablePage,
   type DashboardWidgetData,
   type DraftWidget,
   type SnapshotState,
@@ -187,12 +186,13 @@ function inclusiveDateRangeDays(
 function loadDashboardWidgetData(
   widget: DraftWidget,
   recordOffset: number,
+  pageSize: number,
 ): Promise<DashboardWidgetData> {
   if (widget.widgetType === "records") {
     return queryOpenViewRecords({
       moduleId: widget.config.query.moduleId,
       definition: widget.config.query.definition,
-      limit: DASHBOARD_PAGE_SIZE,
+      limit: pageSize,
       offset: recordOffset,
     }).then((result) => ({ kind: "records", result }));
   }
@@ -200,6 +200,28 @@ function loadDashboardWidgetData(
     kind: "aggregate",
     result,
   }));
+}
+
+function dashboardSnapshotSignature(
+  widget: DraftWidget | undefined,
+  page: number,
+  pageSize: number,
+): string {
+  const signature = configSignature(widget, page);
+  return widget?.widgetType === "records"
+    ? JSON.stringify({ signature, pageSize })
+    : signature;
+}
+
+function lastValidDashboardPage(
+  currentPage: number,
+  itemCount: number,
+  pageSize: number,
+): number {
+  return Math.min(
+    currentPage,
+    Math.max(0, Math.ceil(itemCount / pageSize) - 1),
+  );
 }
 
 function isAccessDenied(error: unknown): boolean {
@@ -279,6 +301,7 @@ export default function ServerBackedDashboards() {
   const [lastGoodSnapshot, setLastGoodSnapshot] =
     useState<SnapshotState | null>(null);
   const [tablePage, setTablePage] = useState(0);
+  const [tablePageSize, setTablePageSize] = useState(DASHBOARD_PAGE_SIZE);
   const [pageVisible, setPageVisible] = useState(false);
   const requestSequence = useRef(0);
   const routeLoadSequence = useRef(0);
@@ -519,7 +542,11 @@ export default function ServerBackedDashboards() {
   const activePersistedWidget = selectedDashboard?.widgets.find(
     (widget) => widget.id === activeWidgetKey,
   );
-  const activeSignature = configSignature(activeWidget, tablePage);
+  const activeSignature = dashboardSnapshotSignature(
+    activeWidget,
+    tablePage,
+    tablePageSize,
+  );
   const visibleSnapshot =
     activeWidget &&
     lastGoodSnapshot?.widgetKey === activeWidget.key &&
@@ -671,7 +698,11 @@ export default function ServerBackedDashboards() {
       setSnapshotError("");
       return;
     }
-    const signature = configSignature(activeWidget, tablePage);
+    const signature = dashboardSnapshotSignature(
+      activeWidget,
+      tablePage,
+      tablePageSize,
+    );
     const previous = lastGoodSnapshotRef.current;
     if (
       previous?.widgetKey === activeWidget.key &&
@@ -687,7 +718,11 @@ export default function ServerBackedDashboards() {
     snapshotInFlightRef.current = sequence;
     setSnapshotLoading(true);
     setSnapshotError("");
-    void loadDashboardWidgetData(activeWidget, tablePage * DASHBOARD_PAGE_SIZE)
+    void loadDashboardWidgetData(
+      activeWidget,
+      tablePage * tablePageSize,
+      tablePageSize,
+    )
       .then((data) => {
         if (!active || requestSequence.current !== sequence) return;
         const next = {
@@ -699,7 +734,11 @@ export default function ServerBackedDashboards() {
         setLastGoodSnapshot(next);
         if (data.kind === "aggregate")
           setTablePage((current) =>
-            lastValidTablePage(current, data.result.items.length),
+            lastValidDashboardPage(
+              current,
+              data.result.items.length,
+              tablePageSize,
+            ),
           );
       })
       .catch((error: unknown) => {
@@ -727,7 +766,7 @@ export default function ServerBackedDashboards() {
       if (snapshotInFlightRef.current === sequence)
         snapshotInFlightRef.current = null;
     };
-  }, [activePersistedWidget, activeWidget, tablePage]);
+  }, [activePersistedWidget, activeWidget, tablePage, tablePageSize]);
 
   useEffect(() => {
     let active = true;
@@ -1402,12 +1441,20 @@ export default function ServerBackedDashboards() {
       snapshotInFlightRef.current !== null
     )
       return;
-    const signature = configSignature(activeWidget, tablePage);
+    const signature = dashboardSnapshotSignature(
+      activeWidget,
+      tablePage,
+      tablePageSize,
+    );
     const sequence = ++requestSequence.current;
     snapshotInFlightRef.current = sequence;
     setSnapshotLoading(true);
     setSnapshotError("");
-    void loadDashboardWidgetData(activeWidget, tablePage * DASHBOARD_PAGE_SIZE)
+    void loadDashboardWidgetData(
+      activeWidget,
+      tablePage * tablePageSize,
+      tablePageSize,
+    )
       .then((data) => {
         if (requestSequence.current !== sequence) return;
         const next = {
@@ -1419,7 +1466,11 @@ export default function ServerBackedDashboards() {
         setLastGoodSnapshot(next);
         if (data.kind === "aggregate")
           setTablePage((current) =>
-            lastValidTablePage(current, data.result.items.length),
+            lastValidDashboardPage(
+              current,
+              data.result.items.length,
+              tablePageSize,
+            ),
           );
       })
       .catch((error: unknown) => {
@@ -2004,9 +2055,11 @@ export default function ServerBackedDashboards() {
               snapshotLoading={snapshotLoading}
               snapshotError={snapshotError}
               tablePage={tablePage}
+              tablePageSize={tablePageSize}
               fieldsByModule={fieldsByModule}
               onRefresh={refreshActiveSnapshot}
               setTablePage={setTablePage}
+              setTablePageSize={setTablePageSize}
             />
           ) : (
             <section className="flex min-h-64 min-w-0 flex-col justify-center gap-2">

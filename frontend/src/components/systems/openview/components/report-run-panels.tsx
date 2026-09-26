@@ -16,7 +16,6 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { PaginationControls } from "@/components/ui/pagination-controls";
 import {
   Table,
   TableBody,
@@ -25,6 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TablePagination } from "@/components/ui/table-pagination";
 import type {
   OpenViewReport,
   OpenViewReportRun,
@@ -93,12 +93,12 @@ type ReportRunsTableProps = {
   reportName?: string;
   showReportName: boolean;
   actionPending: string;
-  pageIndex: number;
-  pageCount: number;
+  offset: number;
   totalCount: number;
   pageSize: number;
   paginationLabel: string;
   onPageIndexChange: (pageIndex: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
   onOutputRun: (
     run: ReportRunRow,
     reportName: string,
@@ -111,17 +111,14 @@ function ReportRunsTable({
   reportName,
   showReportName,
   actionPending,
-  pageIndex,
-  pageCount,
+  offset,
   totalCount,
   pageSize,
   paginationLabel,
   onPageIndexChange,
+  onPageSizeChange,
   onOutputRun,
 }: ReportRunsTableProps) {
-  const firstRow = totalCount === 0 ? 0 : pageIndex * pageSize + 1;
-  const lastRow = Math.min(pageIndex * pageSize + runs.length, totalCount);
-
   return (
     <>
       <ul
@@ -219,18 +216,15 @@ function ReportRunsTable({
           </TableBody>
         </Table>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-muted-foreground text-sm">
-          Showing {firstRow}–{lastRow} of {totalCount}
-        </p>
-        <PaginationControls
-          ariaLabel={paginationLabel}
-          className="w-auto justify-end"
-          pageCount={pageCount}
-          pageIndex={pageIndex}
-          onPageIndexChange={onPageIndexChange}
-        />
-      </div>
+      <TablePagination
+        ariaLabel={paginationLabel}
+        total={totalCount}
+        offset={offset}
+        rowCount={runs.length}
+        pageSize={pageSize}
+        onPageIndexChange={onPageIndexChange}
+        onPageSizeChange={onPageSizeChange}
+      />
     </>
   );
 }
@@ -240,10 +234,11 @@ type AvailableReportRunsPanelProps = {
   loading: boolean;
   error: string;
   actionPending: string;
-  pageIndex: number;
-  pageCount: number;
+  offset: number;
   totalCount: number;
+  pageSize: number;
   onPageIndexChange: (pageIndex: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
   onRefresh: () => void;
   onRetry: () => void;
   onOutputRun: (
@@ -258,10 +253,11 @@ export function AvailableReportRunsPanel({
   loading,
   error,
   actionPending,
-  pageIndex,
-  pageCount,
+  offset,
   totalCount,
+  pageSize,
   onPageIndexChange,
+  onPageSizeChange,
   onRefresh,
   onRetry,
   onOutputRun,
@@ -305,12 +301,12 @@ export function AvailableReportRunsPanel({
           runs={runs}
           showReportName
           actionPending={actionPending}
-          pageIndex={pageIndex}
-          pageCount={pageCount}
+          offset={offset}
           totalCount={totalCount}
-          pageSize={25}
+          pageSize={pageSize}
           paginationLabel="Available output pages"
           onPageIndexChange={onPageIndexChange}
+          onPageSizeChange={onPageSizeChange}
           onOutputRun={(run, runName, action) => {
             if ("reportName" in run) return onOutputRun(run, runName, action);
           }}
@@ -326,10 +322,11 @@ type SavedReportRunsPanelProps = {
   loading: boolean;
   error: string;
   actionPending: string;
-  pageIndex: number;
-  pageCount: number;
+  offset: number;
   totalCount: number;
+  pageSize: number;
   onPageIndexChange: (pageIndex: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
   onRefresh: () => void;
   onRetry: () => void;
   onOutputRun: (
@@ -345,10 +342,11 @@ export function SavedReportRunsPanel({
   loading,
   error,
   actionPending,
-  pageIndex,
-  pageCount,
+  offset,
   totalCount,
+  pageSize,
   onPageIndexChange,
+  onPageSizeChange,
   onRefresh,
   onRetry,
   onOutputRun,
@@ -406,12 +404,12 @@ export function SavedReportRunsPanel({
             reportName={report.name}
             showReportName={false}
             actionPending={actionPending}
-            pageIndex={pageIndex}
-            pageCount={pageCount}
+            offset={offset}
             totalCount={totalCount}
-            pageSize={25}
+            pageSize={pageSize}
             paginationLabel="Saved output pages"
             onPageIndexChange={onPageIndexChange}
+            onPageSizeChange={onPageSizeChange}
             onOutputRun={(run, runName, action) => {
               if (!("reportName" in run))
                 return onOutputRun(run, runName, action);

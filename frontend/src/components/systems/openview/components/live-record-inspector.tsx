@@ -21,6 +21,8 @@ import {
 export type RecordInspectionPageSource =
   | {
       kind: "records";
+      /** The originating page size; legacy fixed-size callers fall back to 25. */
+      limit?: number;
       group: {
         fieldId: string;
         fieldType: OpenViewQueryFieldType;

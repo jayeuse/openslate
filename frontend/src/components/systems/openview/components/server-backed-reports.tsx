@@ -186,12 +186,14 @@ export default function ServerBackedReports() {
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState("");
   const [runsOffset, setRunsOffset] = useState(0);
+  const [runsPageSize, setRunsPageSize] = useState(PAGE_SIZE);
   const [runsTotal, setRunsTotal] = useState(0);
   const [runsRefresh, setRunsRefresh] = useState(0);
   const [sharedRuns, setSharedRuns] = useState<OpenViewSharedReportRun[]>([]);
   const [sharedLoading, setSharedLoading] = useState(true);
   const [sharedError, setSharedError] = useState("");
   const [sharedOffset, setSharedOffset] = useState(0);
+  const [sharedPageSize, setSharedPageSize] = useState(PAGE_SIZE);
   const [sharedTotal, setSharedTotal] = useState(0);
   const [sharedRefresh, setSharedRefresh] = useState(0);
   const [pendingNavigation, setPendingNavigation] = useState<{
@@ -206,11 +208,6 @@ export default function ServerBackedReports() {
     currentIdentity &&
     !ownerIncludedByAudience(baselineReport, currentIdentity),
   );
-  const runPageIndex = Math.floor(runsOffset / PAGE_SIZE);
-  const runPageCount = Math.max(1, Math.ceil(runsTotal / PAGE_SIZE));
-  const sharedPageIndex = Math.floor(sharedOffset / PAGE_SIZE);
-  const sharedPageCount = Math.max(1, Math.ceil(sharedTotal / PAGE_SIZE));
-
   const navigationGuard = useCallback(
     (href: string, resume: () => void) => {
       if (actionRef.current) return false;
@@ -292,7 +289,7 @@ export default function ServerBackedReports() {
   useEffect(() => {
     let active = true;
     void listOpenViewSharedReportRuns({
-      limit: PAGE_SIZE,
+      limit: sharedPageSize,
       offset: sharedOffset,
     })
       .then((page) => {
@@ -311,7 +308,7 @@ export default function ServerBackedReports() {
     return () => {
       active = false;
     };
-  }, [sharedOffset, sharedRefresh]);
+  }, [sharedOffset, sharedPageSize, sharedRefresh]);
 
   useEffect(() => {
     let active = true;
@@ -378,7 +375,7 @@ export default function ServerBackedReports() {
     let active = true;
     setRunsLoading(true);
     void listOpenViewReportRuns(reportId, {
-      limit: PAGE_SIZE,
+      limit: runsPageSize,
       offset: runsOffset,
     })
       .then((page) => {
@@ -397,7 +394,13 @@ export default function ServerBackedReports() {
     return () => {
       active = false;
     };
-  }, [baselineReport?.id, baselineReport?.isDeleted, runsOffset, runsRefresh]);
+  }, [
+    baselineReport?.id,
+    baselineReport?.isDeleted,
+    runsOffset,
+    runsPageSize,
+    runsRefresh,
+  ]);
 
   function beginAction(name: string): boolean {
     if (actionRef.current) return false;
@@ -733,7 +736,7 @@ export default function ServerBackedReports() {
           ...(runsOffset === 0
             ? current.filter((item) => item.id !== run.id)
             : []),
-        ].slice(0, PAGE_SIZE),
+        ].slice(0, runsPageSize),
       );
       setRunsTotal((current) => current + 1);
       setRunsOffset(0);
@@ -1102,13 +1105,19 @@ export default function ServerBackedReports() {
                   runs={runs}
                   loading={runsLoading}
                   error={runsError}
-                  pageIndex={runPageIndex}
-                  pageCount={runPageCount}
+                  offset={runsOffset}
                   totalCount={runsTotal}
+                  pageSize={runsPageSize}
                   onPageIndexChange={(pageIndex) => {
                     setRuns([]);
                     setRunsLoading(true);
-                    setRunsOffset(pageIndex * PAGE_SIZE);
+                    setRunsOffset(pageIndex * runsPageSize);
+                  }}
+                  onPageSizeChange={(pageSize) => {
+                    setRuns([]);
+                    setRunsLoading(true);
+                    setRunsPageSize(pageSize);
+                    setRunsOffset(0);
                   }}
                   onRefresh={() => {
                     if (runsOffset !== 0) setRuns([]);
@@ -1191,13 +1200,19 @@ export default function ServerBackedReports() {
               loading={sharedLoading}
               error={sharedError}
               actionPending={actionPending}
-              pageIndex={sharedPageIndex}
-              pageCount={sharedPageCount}
+              offset={sharedOffset}
               totalCount={sharedTotal}
+              pageSize={sharedPageSize}
               onPageIndexChange={(pageIndex) => {
                 setSharedRuns([]);
                 setSharedLoading(true);
-                setSharedOffset(pageIndex * PAGE_SIZE);
+                setSharedOffset(pageIndex * sharedPageSize);
+              }}
+              onPageSizeChange={(pageSize) => {
+                setSharedRuns([]);
+                setSharedLoading(true);
+                setSharedPageSize(pageSize);
+                setSharedOffset(0);
               }}
               onRefresh={() => {
                 if (sharedOffset !== 0) setSharedRuns([]);
