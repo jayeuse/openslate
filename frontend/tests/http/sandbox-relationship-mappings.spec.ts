@@ -6,6 +6,7 @@ import {
   initialDesign,
   type Design,
 } from "../../src/components/systems/sandbox/domain/model";
+import { publicationFieldKey } from "../../src/components/systems/sandbox/components/publish-change-groups";
 import { configuredSandboxDesign } from "../helpers/sandbox-fixtures";
 
 type SandboxOptions = {
@@ -22,6 +23,7 @@ type SandboxOptions = {
   issues?: Array<{ code: string; message: string; targetId: string | null }>;
   versionMutationDelay?: Promise<void>;
   versions?: Array<Record<string, unknown>>;
+  previewChanges?: Array<Record<string, string>>;
 };
 
 function configuredDesignWithLegacyMapping(): Design {
@@ -216,7 +218,7 @@ async function openAuthenticatedSandbox(
         documentRevision: revision,
         documentHash: "a".repeat(64),
         expiresAt: "2026-09-22T12:00:00Z",
-        changes: [],
+        changes: options.previewChanges ?? [],
         counts: {
           departments: 0,
           modules: 0,
@@ -787,6 +789,151 @@ test("Build undo preserves an automation that was saved afterward", async ({
   await expect
     .poll(() => sandbox.document().automations[0]?.name)
     .toBe("Saved urgent request alert");
+});
+
+test("the publish review groups changes and keeps Publish in reach", async ({
+  page,
+}) => {
+  const change = (
+    kind: string,
+    action: string,
+    sandboxId: string,
+    label: string,
+  ) => ({ kind, action, sandboxId, label });
+  await openAuthenticatedSandbox(
+    page,
+    { ...configuredSandboxDesign, rules: [] },
+    {
+      previewChanges: [
+        ...Array.from({ length: 6 }, (_, index) =>
+          change("department", "create", `dept-${index}`, `Team ${index + 1}`),
+        ),
+        change("module", "create", "sample-requests", "Service requests"),
+        ...["Request number", "Title", "Status", "Priority"].map((name) =>
+          change(
+            "field",
+            "create",
+            publicationFieldKey("sample-requests", `sample-field-${name}`),
+            name,
+          ),
+        ),
+        change(
+          "field",
+          "update",
+          publicationFieldKey("sample-equipment", "sample-field-Asset tag"),
+          "Asset tag",
+        ),
+        change("field", "close", "retired-field", "Old notes"),
+        change("relationship", "create", "sample-uses", "Uses equipment"),
+      ],
+    },
+  );
+
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  await page.getByRole("button", { name: "Review changes" }).click();
+  const dialog = page.getByRole("dialog", { name: "Review and publish" });
+  await expect(dialog.getByRole("heading", { name: "Changes" })).toBeVisible();
+  await expect(
+    dialog.getByText(
+      "14 changes: 6 departments, 1 module, 6 fields, 1 relationship",
+    ),
+  ).toBeVisible();
+
+  const departments = dialog.getByRole("region", { name: "Departments" });
+  await expect(departments.getByRole("listitem")).toHaveCount(5);
+  await departments
+    .getByRole("button", { name: "Show all 6 departments" })
+    .click();
+  await expect(departments.getByRole("listitem")).toHaveCount(6);
+
+  const modules = dialog.getByRole("region", { name: "Modules" });
+  await expect(
+    modules.getByRole("list", { name: "Fields in Service requests" }),
+  ).toHaveCount(0);
+  await modules
+    .getByRole("button", { name: "Show 4 fields in Service requests" })
+    .click();
+  await modules
+    .getByRole("button", { name: "Show 1 field in Equipment" })
+    .click();
+  await expect(
+    modules
+      .getByRole("list", { name: "Fields in Service requests" })
+      .getByRole("listitem"),
+  ).toHaveCount(4);
+  const assetTag = modules
+    .getByRole("list", { name: "Fields in Equipment" })
+    .getByRole("listitem");
+  await expect(assetTag).toHaveText(/Changed\s*Asset tag/);
+  await expect(
+    dialog.getByRole("region", { name: "Other", exact: true }),
+  ).toContainText("Old notes");
+  await expect(
+    dialog.getByRole("region", { name: "Relationships" }),
+  ).toContainText("Uses equipment");
+
+  await expect(dialog.getByLabel("Your password")).toBeInViewport();
+  await expect(
+    dialog.getByRole("button", { name: "Publish changes" }),
+  ).toBeInViewport();
+});
+
+test("a rejected password is reported beside Publish, not above the list", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, {
+    ...configuredSandboxDesign,
+    rules: [],
+  });
+  await page.route("**/api/sandbox/publications", (route) =>
+    route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({
+        detail: { code: "invalid_password", message: "Invalid password." },
+      }),
+    }),
+  );
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  await page.getByRole("button", { name: "Review changes" }).click();
+  const dialog = page.getByRole("dialog", { name: "Review and publish" });
+  const password = dialog.getByLabel("Your password");
+  await expect(
+    dialog.getByText("Enter your password to publish."),
+  ).toBeVisible();
+
+  await password.fill("not the password");
+  await dialog.getByRole("button", { name: "Publish changes" }).click();
+
+  const message = dialog.getByRole("alert").filter({
+    hasText: "That password was not accepted.",
+  });
+  await expect(message).toBeInViewport();
+  await expect(password).toHaveAttribute("aria-invalid", "true");
+  await expect(password).toHaveAccessibleDescription(
+    /That password was not accepted/,
+  );
+});
+
+test("hovering a module or relationship traces its connections", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page);
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const cell = (id: string) => canvas.locator(`.x6-cell[data-cell-id="${id}"]`);
+  await page.getByRole("button", { name: "Fit canvas" }).click();
+
+  await cell("sample-requests").hover();
+  await expect(cell("sample-customers")).toHaveAttribute("data-trace", "dim");
+  await expect(cell("sample-equipment")).not.toHaveAttribute(
+    "data-trace",
+    "dim",
+  );
+  await expect(cell("sample-uses")).toHaveAttribute("data-trace", "on");
+
+  await page.mouse.move(5, 5);
+  await expect(canvas.locator('.x6-cell[data-trace="dim"]')).toHaveCount(0);
 });
 
 test("a pending publication review protects browser exits", async ({

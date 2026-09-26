@@ -43,6 +43,10 @@ import { synchronizeSandboxCanvas } from "./sandbox-canvas-sync";
 import { createSandboxCanvasRuntime } from "./sandbox-canvas-runtime";
 import { bindSandboxCanvasPortInteractions } from "./sandbox-canvas-ports";
 import { bindSandboxCanvasResizeInteractions } from "./sandbox-canvas-resize";
+import {
+  bindSandboxCanvasTrace,
+  type SandboxCanvasTrace,
+} from "./sandbox-canvas-trace";
 
 type SandboxCommand =
   | void
@@ -192,6 +196,7 @@ export function SandboxCanvas({
     onMove,
   });
   const stateRef = useRef(state);
+  const traceRef = useRef<SandboxCanvasTrace | null>(null);
   function closeEditor(): void {
     editorRef.current = null;
     setEditor(null);
@@ -570,6 +575,9 @@ export function SandboxCanvas({
       state: stateRef,
     });
 
+    const trace = bindSandboxCanvasTrace({ graph, state: stateRef });
+    traceRef.current = trace;
+
     const cleanupResizeInteractions = bindSandboxCanvasResizeInteractions({
       graph,
       history,
@@ -819,6 +827,8 @@ export function SandboxCanvas({
       for (const timer of feedbackTimers.values()) clearTimeout(timer);
       cleanupResizeInteractions();
       cleanupPortInteractions();
+      trace.dispose();
+      traceRef.current = null;
       container.removeEventListener("mousedown", preparePointer, true);
       window.removeEventListener("keydown", updateModifier);
       window.removeEventListener("keyup", updateModifier);
@@ -848,6 +858,7 @@ export function SandboxCanvas({
       appliedLayout: appliedLayoutRef,
       syncing: syncingRef,
     });
+    traceRef.current?.refresh();
   }, [dropTargetId, layout, movingNodeId, state]);
 
   async function commitEditor(value: string): Promise<void> {

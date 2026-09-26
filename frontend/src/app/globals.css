@@ -43,6 +43,9 @@
   --lift: 0 1px 2px rgb(16 24 40 / 0.06);
   --lift-raised:
     0 2px 4px rgb(16 24 40 / 0.04), 0 12px 32px rgb(16 24 40 / 0.1);
+  /* --lift-raised as SVG filter steps, for canvas nodes. */
+  --lift-filter: drop-shadow(0 2px 3px rgb(16 24 40 / 0.06))
+    drop-shadow(0 8px 18px rgb(16 24 40 / 0.12));
 
   --background: var(--ground);
   --foreground: var(--ink);
@@ -117,6 +120,8 @@
   --focus: #6ea2ff;
   --lift: 0 1px 2px rgb(0 0 0 / 0.4);
   --lift-raised: 0 2px 4px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.45);
+  --lift-filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.3))
+    drop-shadow(0 8px 18px rgb(0 0 0 / 0.45));
   --chart-1: #89a6d0;
   --chart-2: #d2aa70;
   --chart-3: #83b58e;
@@ -370,9 +375,33 @@ textarea {
   animation: sandbox-relationship-flow 2.4s linear infinite;
 }
 
+/* The selected module or department lifts off the canvas. */
+.sandbox-ui [data-sandbox-body][data-selected="true"] {
+  filter: var(--lift-filter);
+}
+
+/* Hovering a module or relationship traces its connections
+   (sandbox-canvas-trace.ts). Only opacity animates. */
+.sandbox-ui .x6-cell[data-trace] {
+  transition: opacity 150ms ease-out;
+}
+
+.sandbox-ui .x6-cell[data-trace="dim"] {
+  opacity: 0.35;
+}
+
+.sandbox-ui .x6-edge[data-trace="on"] [data-sandbox-line] {
+  stroke: var(--action);
+  stroke-width: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sandbox-ui [data-sandbox-line="true"] {
     animation: none;
+  }
+
+  .sandbox-ui .x6-cell[data-trace] {
+    transition: none;
   }
 }
 

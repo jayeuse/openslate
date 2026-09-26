@@ -921,6 +921,7 @@ export default function SandboxPage() {
         <ReviewPublishDialog
           open={reviewOpen}
           expectedRevision={session.revision}
+          design={session.document.design}
           disabled={
             pending ||
             Boolean(conflict) ||
