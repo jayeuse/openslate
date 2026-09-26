@@ -554,23 +554,44 @@ test("manual groups can be filtered, sorted, and searched while editing membersh
   await expect(manageMembers).toBeFocused();
 });
 
-test("Access overview quick actions use the integrated Permissions directory", async ({
-  page: pageUnderTest,
-}) => {
-  await mockAccessApi(pageUnderTest);
-
-  const destinations = [
-    { label: /^Open People & services:/, subject: "People & services" },
-    { label: /^Open Roles:/, subject: "Configure member" },
-    { label: /^Open Groups:/, subject: "Configure Operations" },
-    { label: /^Open Detailed rules:/, subject: "Workspace rules" },
-  ] as const;
-
-  for (const destination of destinations) {
+for (const destination of [
+  {
+    label: "People & services",
+    subject: "People & services",
+    query: { view: "identities" },
+  },
+  {
+    label: "Roles",
+    subject: "Configure member",
+    query: { view: "permissions", type: "roles" },
+  },
+  {
+    label: "Groups",
+    subject: "Configure Operations",
+    query: { view: "permissions", type: "groups" },
+  },
+  {
+    label: "Detailed rules",
+    subject: "Workspace rules",
+    query: { view: "permissions", configure: "everyone" },
+  },
+] as const) {
+  test(`Access overview ${destination.label} quick action opens its directory`, async ({
+    page: pageUnderTest,
+  }) => {
+    await mockAccessApi(pageUnderTest);
     await pageUnderTest.goto("/access?view=overview");
     await pageUnderTest
-      .getByRole("button", { name: destination.label })
+      .getByRole("button", { name: new RegExp(`^Open ${destination.label}:`) })
       .click();
+    await expect(pageUnderTest).toHaveURL(
+      (url) =>
+        url.pathname === "/access" &&
+        Object.entries(destination.query).every(
+          ([key, value]) => url.searchParams.get(key) === value,
+        ),
+      { timeout: 15_000 },
+    );
     if (destination.subject === "People & services") {
       await expect(
         pageUnderTest.getByRole("heading", {
@@ -601,8 +622,8 @@ test("Access overview quick actions use the integrated Permissions directory", a
         ).toBeVisible();
       }
     }
-  }
-});
+  });
+}
 
 test("People & services keeps kind filters, advanced filters, and pagination together", async ({
   page: pageUnderTest,
