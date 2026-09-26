@@ -15,24 +15,26 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.models import SandboxBinding
+from app.systems.sandbox.publications.snapshot import (
+    PublicationSnapshot,
+    load_publication_snapshot,
+)
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 
 
-def live_state_digest(db: Session, bindings: list[SandboxBinding], timezone: str) -> str:
+def live_state_digest(
+    db: Session,
+    bindings: list[SandboxBinding],
+    timezone: str,
+    *,
+    snapshot: PublicationSnapshot | None = None,
+) -> str:
+    if snapshot is None:
+        snapshot = load_publication_snapshot(db, bindings)
     rows: list[dict[str, object]] = []
     for binding in bindings:
-        target: object | None
-        if binding.kind == "department":
-            target = db.get(Department, binding.department_id)
-        elif binding.kind == "module":
-            target = db.get(Module, binding.module_id)
-        elif binding.kind in {"field", "relationship"}:
-            target = db.get(Field, binding.field_id)
-        elif binding.kind == "automation":
-            target = db.get(PublishedAutomationDefinition, binding.automation_id)
-        else:
-            target = None
+        target = snapshot.binding_target(binding)
         if target is None:
             rows.append(
                 {
@@ -59,8 +61,15 @@ def live_state_digest(db: Session, bindings: list[SandboxBinding], timezone: str
         )
     structural = {
         "departments": [
-            (str(row.id), row.department_name, row.is_deleted, row.updated_at.isoformat())
-            for row in db.scalars(select(Department).order_by(Department.id))
+            (str(identifier), name, deleted, updated.isoformat())
+            for identifier, name, deleted, updated in db.execute(
+                select(
+                    Department.id,
+                    Department.department_name,
+                    Department.is_deleted,
+                    Department.updated_at,
+                ).order_by(Department.id)
+            )
         ],
         "modules": [
             (
@@ -70,7 +79,15 @@ def live_state_digest(db: Session, bindings: list[SandboxBinding], timezone: str
                 row.is_deleted,
                 row.updated_at.isoformat(),
             )
-            for row in db.scalars(select(Module).order_by(Module.id))
+            for row in db.execute(
+                select(
+                    Module.id,
+                    Module.department_id,
+                    Module.module_name,
+                    Module.is_deleted,
+                    Module.updated_at,
+                ).order_by(Module.id)
+            )
         ],
         "fields": [
             (
@@ -88,11 +105,31 @@ def live_state_digest(db: Session, bindings: list[SandboxBinding], timezone: str
                 row.is_deleted,
                 row.updated_at.isoformat(),
             )
-            for row in db.scalars(select(Field).order_by(Field.id))
+            for row in db.execute(
+                select(
+                    Field.id,
+                    Field.module_id,
+                    Field.name,
+                    Field.type,
+                    Field.position,
+                    Field.required,
+                    Field.config,
+                    Field.audit_redacted,
+                    Field.relationship_target_module_id,
+                    Field.relationship_multiple_targets,
+                    Field.relationship_multiple_sources,
+                    Field.is_deleted,
+                    Field.updated_at,
+                ).order_by(Field.id)
+            )
         ],
         "records": [
-            (str(row.id), str(row.module_id), row.is_deleted, _digest(row.data))
-            for row in db.scalars(select(Record).order_by(Record.id))
+            (str(identifier), str(module_id), deleted, _digest(data))
+            for identifier, module_id, deleted, data in db.execute(
+                select(Record.id, Record.module_id, Record.is_deleted, Record.data)
+                .order_by(Record.id)
+                .execution_options(yield_per=500)
+            )
         ],
         "edges": [
             (
@@ -103,7 +140,16 @@ def live_state_digest(db: Session, bindings: list[SandboxBinding], timezone: str
                 row.is_deleted,
                 row.updated_at.isoformat(),
             )
-            for row in db.scalars(select(RelationshipEdge).order_by(RelationshipEdge.id))
+            for row in db.execute(
+                select(
+                    RelationshipEdge.id,
+                    RelationshipEdge.field_id,
+                    RelationshipEdge.source_record_id,
+                    RelationshipEdge.target_record_id,
+                    RelationshipEdge.is_deleted,
+                    RelationshipEdge.updated_at,
+                ).order_by(RelationshipEdge.id)
+            )
         ],
         "automations": [
             (
@@ -129,8 +175,30 @@ def live_state_digest(db: Session, bindings: list[SandboxBinding], timezone: str
                 row.is_deleted,
                 row.updated_at.isoformat(),
             )
-            for row in db.scalars(
-                select(PublishedAutomationDefinition).order_by(PublishedAutomationDefinition.id)
+            for row in db.execute(
+                select(
+                    PublishedAutomationDefinition.id,
+                    PublishedAutomationDefinition.publication_id,
+                    PublishedAutomationDefinition.published_version_id,
+                    PublishedAutomationDefinition.publisher_id,
+                    PublishedAutomationDefinition.module_id,
+                    PublishedAutomationDefinition.name,
+                    PublishedAutomationDefinition.enabled,
+                    PublishedAutomationDefinition.priority,
+                    PublishedAutomationDefinition.trigger_kind,
+                    PublishedAutomationDefinition.trigger_field_id,
+                    PublishedAutomationDefinition.trigger_operator,
+                    PublishedAutomationDefinition.trigger_value_kind,
+                    PublishedAutomationDefinition.trigger_literal_value,
+                    PublishedAutomationDefinition.trigger_value_field_id,
+                    PublishedAutomationDefinition.schedule_frequency,
+                    PublishedAutomationDefinition.schedule_time,
+                    PublishedAutomationDefinition.schedule_weekday,
+                    PublishedAutomationDefinition.workspace_timezone,
+                    PublishedAutomationDefinition.condition_operator,
+                    PublishedAutomationDefinition.is_deleted,
+                    PublishedAutomationDefinition.updated_at,
+                ).order_by(PublishedAutomationDefinition.id)
             )
         ],
         "conditions": [
@@ -146,8 +214,19 @@ def live_state_digest(db: Session, bindings: list[SandboxBinding], timezone: str
                 row.is_deleted,
                 row.updated_at.isoformat(),
             )
-            for row in db.scalars(
-                select(PublishedAutomationCondition).order_by(PublishedAutomationCondition.id)
+            for row in db.execute(
+                select(
+                    PublishedAutomationCondition.id,
+                    PublishedAutomationCondition.automation_id,
+                    PublishedAutomationCondition.field_id,
+                    PublishedAutomationCondition.position,
+                    PublishedAutomationCondition.operator,
+                    PublishedAutomationCondition.value_kind,
+                    PublishedAutomationCondition.literal_value,
+                    PublishedAutomationCondition.value_field_id,
+                    PublishedAutomationCondition.is_deleted,
+                    PublishedAutomationCondition.updated_at,
+                ).order_by(PublishedAutomationCondition.id)
             )
         ],
         "actions": [
@@ -163,8 +242,19 @@ def live_state_digest(db: Session, bindings: list[SandboxBinding], timezone: str
                 row.is_deleted,
                 row.updated_at.isoformat(),
             )
-            for row in db.scalars(
-                select(PublishedAutomationAction).order_by(PublishedAutomationAction.id)
+            for row in db.execute(
+                select(
+                    PublishedAutomationAction.id,
+                    PublishedAutomationAction.automation_id,
+                    PublishedAutomationAction.target_field_id,
+                    PublishedAutomationAction.position,
+                    PublishedAutomationAction.kind,
+                    PublishedAutomationAction.value_kind,
+                    PublishedAutomationAction.literal_value,
+                    PublishedAutomationAction.value_field_id,
+                    PublishedAutomationAction.is_deleted,
+                    PublishedAutomationAction.updated_at,
+                ).order_by(PublishedAutomationAction.id)
             )
         ],
     }

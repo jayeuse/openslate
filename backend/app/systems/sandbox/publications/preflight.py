@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
 from app.systems.sandbox.departments.models import Department
@@ -70,17 +70,22 @@ def live_name_blockers(
         for binding in bindings["module"].values()
         if binding.module_id is not None
     }
-    for department in document.design.departments:
-        if department.closed:
-            continue
-        statement = select(Department.id).where(
-            Department.department_name == department.name,
+    department_names = {
+        department.name for department in document.design.departments if not department.closed
+    }
+    live_department_names: set[str] = set()
+    if department_names:
+        department_statement = select(Department.department_name).where(
+            Department.department_name.in_(department_names),
             Department.is_deleted.is_(False),
         )
         if bound_department_ids:
-            statement = statement.where(Department.id.not_in(bound_department_ids))
-        existing = db.scalar(statement.limit(1))
-        if existing is not None:
+            department_statement = department_statement.where(
+                Department.id.not_in(bound_department_ids)
+            )
+        live_department_names = set(db.scalars(department_statement))
+    for department in document.design.departments:
+        if not department.closed and department.name in live_department_names:
             blockers.append(
                 PublicationBlocker(
                     code="department_name_conflict",
@@ -88,21 +93,35 @@ def live_name_blockers(
                     target_id=department.id,
                 )
             )
+    candidate_module_pairs: set[tuple[Any, str]] = set()
     for module in document.design.modules:
         if module.closed:
             continue
         department_binding = bindings["department"].get(module.department_id)
         if department_binding is None or department_binding.department_id is None:
             continue
-        statement = select(Module.id).where(
-            Module.department_id == department_binding.department_id,
-            Module.module_name == module.name,
+        candidate_module_pairs.add((department_binding.department_id, module.name))
+    live_module_pairs: set[tuple[Any, str]] = set()
+    if candidate_module_pairs:
+        module_statement = select(Module.department_id, Module.module_name).where(
+            tuple_(Module.department_id, Module.module_name).in_(candidate_module_pairs),
             Module.is_deleted.is_(False),
         )
         if bound_module_ids:
-            statement = statement.where(Module.id.not_in(bound_module_ids))
-        existing = db.scalar(statement.limit(1))
-        if existing is not None:
+            module_statement = module_statement.where(Module.id.not_in(bound_module_ids))
+        live_module_pairs = {
+            (department_id, module_name)
+            for department_id, module_name in db.execute(module_statement)
+        }
+    for module in document.design.modules:
+        if module.closed:
+            continue
+        department_binding = bindings["department"].get(module.department_id)
+        if (
+            department_binding is not None
+            and department_binding.department_id is not None
+            and (department_binding.department_id, module.name) in live_module_pairs
+        ):
             blockers.append(
                 PublicationBlocker(
                     code="module_name_conflict",

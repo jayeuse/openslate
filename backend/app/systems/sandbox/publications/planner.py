@@ -4,19 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from typing import Any, Literal
-from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.sandbox.automations.models import PublishedAutomationDefinition
-from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.designs.schemas import DesignField, SandboxDocument
 from app.systems.sandbox.designs.validation import validate_document
 from app.systems.sandbox.fields.impact import validate_change_impact
 from app.systems.sandbox.fields.models import Field, FieldType
-from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.automation_comparison import (
     automation_semantics_changed,
 )
@@ -48,6 +44,10 @@ from app.systems.sandbox.publications.schemas import (
     PublicationChange,
     PublicationCounts,
 )
+from app.systems.sandbox.publications.snapshot import (
+    PublicationSnapshot,
+    load_publication_snapshot,
+)
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.service import (
     RelationshipConflict,
@@ -75,6 +75,7 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
         db.scalars(select(SandboxBinding).order_by(SandboxBinding.kind, SandboxBinding.sandbox_id))
     )
     by_kind = _binding_map(bindings)
+    snapshot = load_publication_snapshot(db, bindings)
     changes: list[PublicationChange] = []
     blockers = [
         PublicationBlocker(
@@ -86,9 +87,7 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
         normalize_legacy_field_bindings(document, by_kind, persist=False)
     except ValueError as error:
         blockers.append(
-            PublicationBlocker(
-                code="field_binding_ambiguous", message=str(error), target_id=None
-            )
+            PublicationBlocker(code="field_binding_ambiguous", message=str(error), target_id=None)
         )
     blockers.extend(_legacy_mapping_blockers(document))
     blockers.extend(structure_name_blockers(document))
@@ -105,12 +104,14 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
     for item in document.design.departments:
         desired_ids["department"].add(item.id)
         _plan_item(
-            db, changes, "department", item.id, item.name, item.closed, by_kind["department"]
+            changes, "department", item.id, item.name, item.closed, by_kind["department"], snapshot
         )
     for module in document.design.modules:
         desired_ids["module"].add(module.id)
         module_closed = effective_module_closed[module.id]
-        _plan_item(db, changes, "module", module.id, module.name, module_closed, by_kind["module"])
+        _plan_item(
+            changes, "module", module.id, module.name, module_closed, by_kind["module"], snapshot
+        )
         module_binding = by_kind["module"].get(module.id)
         expected_department = by_kind["department"].get(module.department_id)
         if (
@@ -119,7 +120,7 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
             and module_binding.module_id is not None
             and expected_department.department_id is not None
         ):
-            live_module = db.get(Module, module_binding.module_id)
+            live_module = snapshot.modules.get(module_binding.module_id)
             if (
                 live_module is not None
                 and live_module.department_id != expected_department.department_id
@@ -130,7 +131,9 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
             field_key = _field_key(module.id, field.id)
             desired_ids["field"].add(field_key)
             field_closed = field.closed or module_closed
-            _plan_item(db, changes, "field", field_key, field.name, field_closed, by_kind["field"])
+            _plan_item(
+                changes, "field", field_key, field.name, field_closed, by_kind["field"], snapshot
+            )
             try:
                 desired_config = operational_config(field)
             except ValueError:
@@ -162,8 +165,8 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
                     )
                 )
             if bound is not None and bound.field_id is not None:
-                blockers.extend(_type_change_blocker(db, bound.field_id, field))
-                live_field = db.get(Field, bound.field_id)
+                live_field = snapshot.fields.get(bound.field_id)
+                blockers.extend(_type_change_blocker(live_field, field))
                 expected_position = (
                     active_position if not field.closed and not module.closed else None
                 )
@@ -181,18 +184,17 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
     module_departments = {module.id: module.department_id for module in document.design.modules}
     for relationship in document.design.relationships:
         desired_ids["relationship"].add(relationship.id)
-        relationship_closed = (
-            effective_module_closed.get(relationship.source_module_id, False)
-            or effective_module_closed.get(relationship.target_module_id, False)
-        )
+        relationship_closed = effective_module_closed.get(
+            relationship.source_module_id, False
+        ) or effective_module_closed.get(relationship.target_module_id, False)
         _plan_item(
-            db,
             changes,
             "relationship",
             relationship.id,
             relationship.name,
             relationship_closed,
             by_kind["relationship"],
+            snapshot,
         )
         if module_departments.get(relationship.source_module_id) != module_departments.get(
             relationship.target_module_id
@@ -206,7 +208,7 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
             )
         binding = by_kind["relationship"].get(relationship.id)
         if binding is not None and binding.field_id is not None:
-            live = db.get(Field, binding.field_id)
+            live = snapshot.fields.get(binding.field_id)
             source_binding = by_kind["module"].get(relationship.source_module_id)
             desired_source = source_binding.module_id if source_binding is not None else None
             if (
@@ -258,7 +260,13 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
     for execution_position, automation in enumerate(document.automations):
         desired_ids["automation"].add(automation.id)
         _plan_item(
-            db, changes, "automation", automation.id, automation.name, False, by_kind["automation"]
+            changes,
+            "automation",
+            automation.id,
+            automation.name,
+            False,
+            by_kind["automation"],
+            snapshot,
         )
         if automation_semantics_changed(
             db,
@@ -266,11 +274,12 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
             by_kind["module"],
             by_kind["field"],
             by_kind["automation"],
+            snapshot=snapshot,
         ):
             _append_update(changes, "automation", automation.id, automation.name)
         binding = by_kind["automation"].get(automation.id)
         automation_live = (
-            db.get(PublishedAutomationDefinition, binding.automation_id)
+            snapshot.automations.get(binding.automation_id)
             if binding is not None and binding.automation_id is not None
             else None
         )
@@ -278,9 +287,9 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
             _append_update(changes, "automation", automation.id, automation.name)
         blockers.extend(_automation_blockers(document, automation))
 
-    _plan_removed_items(db, changes, by_kind, desired_ids)
+    _plan_removed_items(changes, by_kind, desired_ids, snapshot)
     blockers.extend(module_schema_blockers(document))
-    blockers.extend(close_blockers(db, by_kind, desired_ids, document))
+    blockers.extend(close_blockers(db, by_kind, desired_ids, document, snapshot=snapshot))
     blockers.extend(hierarchy_close_blockers(document))
     blockers.extend(unmanaged_field_blockers(db, by_kind, document))
     blockers.extend(live_relationship_department_blockers(db, by_kind, document))
@@ -296,13 +305,17 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
         timezone = profile.timezone
     return replace(
         _finish(changes, blockers),
-        live_state_digest=live_state_digest(db, bindings, timezone),
+        live_state_digest=live_state_digest(db, bindings, timezone, snapshot=snapshot),
         workspace_timezone=timezone,
     )
+
+
 def locked_publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
     """Recompute plan after executor acquired its canonical operational locks."""
 
     return publication_plan(db, document)
+
+
 def _finish(
     changes: list[PublicationChange], blockers: list[PublicationBlocker]
 ) -> PublicationPlan:
@@ -329,8 +342,12 @@ def _finish(
         live_state_digest=_digest(impact_payload["changes"]),
         workspace_timezone="",
     )
+
+
 def _kinds() -> tuple[BindingKind, ...]:
     return ("department", "module", "field", "relationship", "automation")
+
+
 def _binding_map(bindings: list[SandboxBinding]) -> dict[BindingKind, dict[str, SandboxBinding]]:
     result: dict[BindingKind, dict[str, SandboxBinding]] = {kind: {} for kind in _kinds()}
     for binding in bindings:
@@ -340,42 +357,40 @@ def _binding_map(bindings: list[SandboxBinding]) -> dict[BindingKind, dict[str, 
 
 
 def _plan_item(
-    db: Session,
     changes: list[PublicationChange],
     kind: BindingKind,
     sandbox_id: str,
     label: str,
     closed: bool,
     bindings: dict[str, SandboxBinding],
+    snapshot: PublicationSnapshot,
 ) -> None:
     bound = bindings.get(sandbox_id)
-    if bound is None or _bound_target(db, kind, bound) is None:
+    target = _bound_target(bound, snapshot) if bound is not None else None
+    if target is None:
         changes.append(
             PublicationChange(kind=kind, action="create", sandbox_id=sandbox_id, label=label)
         )
-    else:
-        target = _bound_target(db, kind, bound)
-        if target is None:
-            return
-        target_label = (
-            target.department_name
-            if kind == "department"
-            else target.module_name
-            if kind == "module"
-            else target.name
+        return
+    target_label = (
+        target.department_name
+        if kind == "department"
+        else target.module_name
+        if kind == "module"
+        else target.name
+    )
+    if closed and not target.is_deleted:
+        changes.append(
+            PublicationChange(kind=kind, action="close", sandbox_id=sandbox_id, label=label)
         )
-        if closed and not target.is_deleted:
-            changes.append(
-                PublicationChange(kind=kind, action="close", sandbox_id=sandbox_id, label=label)
-            )
-        elif not closed and target.is_deleted:
-            changes.append(
-                PublicationChange(kind=kind, action="reopen", sandbox_id=sandbox_id, label=label)
-            )
-        elif target_label != label:
-            changes.append(
-                PublicationChange(kind=kind, action="update", sandbox_id=sandbox_id, label=label)
-            )
+    elif not closed and target.is_deleted:
+        changes.append(
+            PublicationChange(kind=kind, action="reopen", sandbox_id=sandbox_id, label=label)
+        )
+    elif target_label != label:
+        changes.append(
+            PublicationChange(kind=kind, action="update", sandbox_id=sandbox_id, label=label)
+        )
 
 
 def _append_update(
@@ -390,22 +405,11 @@ def _append_update(
         )
 
 
-def _bound_target(db: Session, kind: BindingKind, binding: SandboxBinding) -> Any | None:
-    if kind == "department":
-        return db.get(Department, binding.department_id)
-    if kind == "module":
-        return db.get(Module, binding.module_id)
-    if kind in {"field", "relationship"}:
-        return db.get(Field, binding.field_id)
-    return db.get(PublishedAutomationDefinition, binding.automation_id)
+def _bound_target(binding: SandboxBinding, snapshot: PublicationSnapshot) -> Any | None:
+    return snapshot.binding_target(binding)
 
 
-def _type_change_blocker(
-    db: Session, field_id: UUID, desired: DesignField
-) -> list[PublicationBlocker]:
-    from app.systems.sandbox.fields.models import Field
-
-    actual = db.get(Field, field_id)
+def _type_change_blocker(actual: Field | None, desired: DesignField) -> list[PublicationBlocker]:
     if actual is None:
         return [
             PublicationBlocker(
@@ -452,16 +456,16 @@ def _field_impact_blockers(
 
 
 def _plan_removed_items(
-    db: Session,
     changes: list[PublicationChange],
     bindings: dict[BindingKind, dict[str, SandboxBinding]],
     desired_ids: dict[BindingKind, set[str]],
+    snapshot: PublicationSnapshot,
 ) -> None:
     for kind in _kinds():
         for sandbox_id, binding in bindings[kind].items():
             if sandbox_id in desired_ids[kind]:
                 continue
-            target = _bound_target(db, kind, binding)
+            target = _bound_target(binding, snapshot)
             if target is None or target.is_deleted:
                 continue
             label = (

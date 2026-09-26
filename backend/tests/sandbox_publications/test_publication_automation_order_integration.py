@@ -98,6 +98,29 @@ def test_retargeting_an_automation_to_a_new_module_replaces_its_definition(
     assert action is not None and action.target_field_id == target
 
 
+def test_reordering_condition_and_action_children_is_a_semantic_change(
+    integration_owner_db: Session,
+) -> None:
+    document = publishable_document()
+    document.automations = [
+        _automation_with_ordered_children("first"),
+        _automation_with_ordered_children("second"),
+    ]
+    _publisher, published = publish_structure(integration_owner_db, document)
+    changed = published.model_copy(deep=True)
+    changed.automations[0].condition_group.conditions.reverse()
+    changed.automations[0].actions.reverse()
+
+    plan = publication_plan(integration_owner_db, changed)
+
+    assert not plan.blockers
+    assert {
+        change.sandbox_id
+        for change in plan.changes
+        if change.kind == "automation" and change.action == "update"
+    } == {"first"}
+
+
 def _automation(
     identifier: str,
     value: str,
@@ -126,3 +149,51 @@ def _automation(
             ],
         }
     )
+
+
+def _automation_with_ordered_children(identifier: str) -> AutomationDocument:
+    payload = _automation(identifier, "Open").model_dump(by_alias=True, mode="json")
+    payload["conditionGroup"] = {
+        "operator": "all",
+        "conditions": [
+            {
+                "id": f"{identifier}-condition-one",
+                "field": {
+                    "moduleId": "sample-requests",
+                    "fieldId": "sample-field-requests-status",
+                },
+                "operator": "=",
+                "value": {"kind": "literal", "value": "Open"},
+            },
+            {
+                "id": f"{identifier}-condition-two",
+                "field": {
+                    "moduleId": "sample-requests",
+                    "fieldId": "sample-field-requests-title",
+                },
+                "operator": "=",
+                "value": {"kind": "literal", "value": "Ready"},
+            },
+        ],
+    }
+    payload["actions"] = [
+        {
+            "id": f"{identifier}-action-one",
+            "kind": "set-field",
+            "target": {
+                "moduleId": "sample-requests",
+                "fieldId": "sample-field-requests-status",
+            },
+            "value": {"kind": "literal", "value": "In progress"},
+        },
+        {
+            "id": f"{identifier}-action-two",
+            "kind": "set-field",
+            "target": {
+                "moduleId": "sample-requests",
+                "fieldId": "sample-field-requests-title",
+            },
+            "value": {"kind": "literal", "value": "Updated title"},
+        },
+    ]
+    return AutomationDocument.model_validate(payload)

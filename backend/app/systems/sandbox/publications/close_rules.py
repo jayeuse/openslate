@@ -19,6 +19,7 @@ from app.systems.sandbox.publications.automation_comparison import automation_se
 from app.systems.sandbox.publications.models import SandboxBinding
 from app.systems.sandbox.publications.rules import _field_key
 from app.systems.sandbox.publications.schemas import PublicationBlocker
+from app.systems.sandbox.publications.snapshot import PublicationSnapshot
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 
@@ -30,6 +31,8 @@ def close_blockers(
     bindings: dict[BindingKind, dict[str, SandboxBinding]],
     desired_ids: dict[BindingKind, set[str]],
     document: SandboxDocument,
+    *,
+    snapshot: PublicationSnapshot | None = None,
 ) -> list[PublicationBlocker]:
     blockers: list[PublicationBlocker] = []
     desired_automations = {automation.id: automation for automation in document.automations}
@@ -45,6 +48,7 @@ def close_blockers(
                 bindings["module"],
                 bindings["field"],
                 bindings["automation"],
+                snapshot=snapshot,
             )
         )
     )
@@ -165,6 +169,26 @@ def unmanaged_field_blockers(
         for binding in bindings[kind].values()
         if binding.field_id is not None
     }
+    candidate_modules = {
+        binding.module_id
+        for module in document.design.modules
+        if not module.closed
+        and (binding := bindings["module"].get(module.id)) is not None
+        and binding.module_id is not None
+    }
+    unmanaged_module_ids: set[UUID] = set()
+    if candidate_modules:
+        unmanaged_module_ids = set(
+            db.scalars(
+                select(Field.module_id)
+                .where(
+                    Field.module_id.in_(candidate_modules),
+                    Field.is_deleted.is_(False),
+                    Field.id.not_in(bound_field_ids),
+                )
+                .distinct()
+            )
+        )
     blockers: list[PublicationBlocker] = []
     for module in document.design.modules:
         if module.closed:
@@ -172,16 +196,7 @@ def unmanaged_field_blockers(
         binding = bindings["module"].get(module.id)
         if binding is None or binding.module_id is None:
             continue
-        unmanaged = db.scalar(
-            select(Field.id)
-            .where(
-                Field.module_id == binding.module_id,
-                Field.is_deleted.is_(False),
-                Field.id.not_in(bound_field_ids),
-            )
-            .limit(1)
-        )
-        if unmanaged is not None:
+        if binding.module_id in unmanaged_module_ids:
             blockers.append(
                 PublicationBlocker(
                     code="module_has_unmanaged_fields",
