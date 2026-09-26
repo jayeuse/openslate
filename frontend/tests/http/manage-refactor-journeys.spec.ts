@@ -60,7 +60,15 @@ test("Manage reset cancellation retains drafts and confirmation requires draft a
   await expect(name).toBeVisible();
   const original = await name.inputValue();
   await name.fill("Keep this draft");
-  const reset = page.getByRole("button", { name: "Reset Manage", exact: true });
+  const options = page.getByRole("button", {
+    name: "Manage options",
+    exact: true,
+  });
+  await options.click();
+  const reset = page.getByRole("menuitem", {
+    name: "Reset Manage",
+    exact: true,
+  });
   await reset.click();
   const dialog = page.getByRole("alertdialog");
   const confirm = dialog.getByRole("button", {
@@ -71,7 +79,8 @@ test("Manage reset cancellation retains drafts and confirmation requires draft a
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(name).toHaveValue("Keep this draft");
-  await expect(reset).toBeFocused();
+  await expect(options).toBeFocused();
+  await options.click();
   await reset.click();
   await dialog
     .getByRole("checkbox", { name: "Discard affected unsaved drafts" })

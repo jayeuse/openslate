@@ -15,6 +15,7 @@ import {
   useState,
   type FormEvent,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -148,6 +149,15 @@ function ManageContent() {
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const optionsOpener = useRef<HTMLButtonElement | null>(null);
   const recoveryView = tab === "Security" || tab === "Backup";
+  const pageTitle = recoveryView ? "Security & recovery" : tab;
+  const pageDescription =
+    tab === "Organization"
+      ? "Make this workspace feel like your organization."
+      : tab === "Audit"
+        ? "See who changed what, then inspect the details."
+        : recoveryView
+          ? "Review sessions and keep a copy of your workspace settings."
+          : "Configure organization, security, recovery, updates and licensing.";
 
   const section = sectionForTab(tab);
   const currentFor = (view: ViewTab): ManageSettings => {
@@ -414,7 +424,7 @@ function ManageContent() {
   }
 
   const panelClass =
-    "min-w-0 w-full rounded-[var(--radius)] border-border bg-card md:[&>div]:gap-1 md:[&>div]:p-3";
+    "min-w-0 w-full rounded-[var(--radius)] border-border bg-card";
 
   if (manage.resource.status !== "ready")
     return (
@@ -433,18 +443,60 @@ function ManageContent() {
       </section>
     );
 
+  const renderPageHeader = (actions?: ReactNode) => (
+    <header className="flex flex-wrap items-center justify-between gap-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1
+            ref={headingRef}
+            tabIndex={-1}
+            className="text-2xl font-semibold tracking-tight sm:text-3xl"
+          >
+            {pageTitle}
+          </h1>
+        </div>
+        <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
+          {pageDescription}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        {actions}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                ref={optionsOpener}
+                type="button"
+                variant="outline"
+                size="icon"
+                className="size-11"
+                aria-label="Manage options"
+              />
+            }
+          >
+            <MoreHorizontal aria-hidden="true" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onClick={(event) => {
+                requestReset(event);
+                confirmOpener.current = optionsOpener.current;
+              }}
+            >
+              <RotateCcw aria-hidden="true" /> Reset Manage
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </header>
+  );
+
   return (
-    <div
-      className={
-        recoveryView
-          ? "min-w-0 space-y-6"
-          : "min-w-0 space-y-3 md:[&_button]:min-h-8 md:[&_form]:gap-3 md:[&_input]:min-h-8 md:[&_section>div:first-child>p]:sr-only md:[&_select]:h-8 md:[&_td]:py-1 md:[&_th]:h-8 md:[&_th]:py-1"
-      }
-    >
+    <div className="min-w-0 space-y-6">
       <fieldset
         disabled={manage.pending}
         aria-busy={manage.pending}
-        className={recoveryView ? "min-w-0 space-y-6" : "contents"}
+        className="min-w-0 space-y-6"
       >
         {manage.pending ? (
           <p role="status" className="text-muted-foreground text-sm">
@@ -461,78 +513,7 @@ function ManageContent() {
             </Button>
           </Alert>
         ) : null}
-        {recoveryView ? (
-          <header className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-3">
-                <h1
-                  ref={headingRef}
-                  tabIndex={-1}
-                  className="text-2xl font-semibold tracking-tight sm:text-3xl"
-                >
-                  Security & recovery
-                </h1>
-              </div>
-              <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
-                Review sessions and keep a copy of your workspace settings.
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      ref={optionsOpener}
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-11"
-                      aria-label="Manage options"
-                    />
-                  }
-                >
-                  <MoreHorizontal aria-hidden="true" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem
-                    onClick={(event) => {
-                      requestReset(event);
-                      confirmOpener.current = optionsOpener.current;
-                    }}
-                  >
-                    <RotateCcw aria-hidden="true" /> Reset Manage
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </header>
-        ) : (
-          <header className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-3">
-                <h1
-                  ref={headingRef}
-                  tabIndex={-1}
-                  className="text-2xl font-semibold tracking-tight sm:text-3xl"
-                >
-                  Manage
-                </h1>
-              </div>
-              <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
-                Configure organization, security, recovery, updates and
-                licensing.
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              className="min-h-11"
-              onClick={requestReset}
-            >
-              <RotateCcw data-icon="inline-start" /> Reset Manage
-            </Button>
-          </header>
-        )}
+        {tab !== "Audit" ? renderPageHeader() : null}
 
         {storageUnavailable ? (
           <Alert role="note" variant="warning">
@@ -541,11 +522,7 @@ function ManageContent() {
           </Alert>
         ) : null}
 
-        <div
-          className={
-            recoveryView ? "flex flex-col gap-6" : "flex flex-col gap-3"
-          }
-        >
+        <div className="flex flex-col gap-6">
           {navigationNotice ? (
             <Alert role="status" variant="warning">
               {navigationNotice}
@@ -712,7 +689,10 @@ function ManageContent() {
           ) : null}
 
           {tab === "Audit" ? (
-            <ManageAudit entries={manage.collections.activity} />
+            <ManageAudit
+              entries={manage.collections.activity}
+              renderHeader={renderPageHeader}
+            />
           ) : null}
 
           {tab === "Updates" ? (
