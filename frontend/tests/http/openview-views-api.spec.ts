@@ -1035,6 +1035,7 @@ async function openColumns(page: Page) {
 
 async function closeDialog(dialog: Locator) {
   await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(dialog).toBeHidden();
 }
 
 async function setLayoutFromSettings(page: Page, layout: SavedViewLayout) {
