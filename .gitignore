@@ -61,4 +61,6 @@ next-env.d.ts
 .agent-runtime/
 .opencode/
 .codex/
+.claude/
+.mcp.json
 .impeccable/
