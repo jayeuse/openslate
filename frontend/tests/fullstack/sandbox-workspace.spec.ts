@@ -24,7 +24,7 @@ function fixture(): Fixture {
 
 async function applyTemplate(page: Page, name: string) {
   await page.getByRole("button", { name: "More Sandbox actions" }).click();
-  await page.getByRole("menuitem", { name: "Start from template" }).click();
+  await page.getByRole("menuitem", { name: "Start from a template" }).click();
   await page.getByRole("button", { name: `Select ${name}` }).click();
   await page.getByRole("button", { name: `Use ${name}` }).click();
   await expect(
@@ -1271,7 +1271,7 @@ test("Sandbox exposes the simplified Build, Automations, Test, and History journ
   await page.getByLabel("Email or username").fill(credentials.email);
   await page.getByLabel("Password").fill(credentials.password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/openview$/);
+  await expect(page).toHaveURL(/\/(openview|sandbox)$/);
   await page.goto("/sandbox?section=designer");
 
   await expect(

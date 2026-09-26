@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { workspaceStartRoute } from "@/components/workspace-start";
 import {
   Field as FormField,
   FieldControl,
@@ -28,7 +29,9 @@ export default function LoginPage() {
     try {
       const session = await signIn(identifier, password);
       router.push(
-        session.setup_required ? "/auth/setup?temporary=1" : "/openview",
+        session.setup_required
+          ? "/auth/setup?temporary=1"
+          : await workspaceStartRoute(),
       );
     } catch (error) {
       setError(

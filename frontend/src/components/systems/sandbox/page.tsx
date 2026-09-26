@@ -129,6 +129,32 @@ function sandboxStillLoading(): SandboxCommandFailure {
   return { ok: false, error: "Sandbox is still loading." };
 }
 
+type PublishStatus = { label: string; publishable: boolean };
+
+// The header status names the draft's real state, and Review & Publish is
+// available only when publishing would change something.
+function publishStatus(
+  session: SandboxDocumentSession | null,
+  design: Design,
+  conflict: boolean,
+): PublishStatus {
+  if (conflict) return { label: "Unsaved changes", publishable: false };
+  const published = session?.publishedHash !== undefined;
+  if (
+    !published &&
+    design.departments.length === 0 &&
+    design.modules.length === 0
+  )
+    return { label: "Nothing to publish yet", publishable: false };
+  if (
+    session?.hasUnpublishedChanges === true ||
+    (published && session.contentHash !== session.publishedHash)
+  )
+    return { label: "Unpublished changes", publishable: true };
+  if (published) return { label: "Published", publishable: false };
+  return { label: "Draft saved", publishable: true };
+}
+
 function emptyDocument(): SandboxDocumentV2 {
   return migrateSandboxFileV1({
     kind: "openslate-sandbox",
@@ -156,6 +182,7 @@ export default function SandboxPage() {
   const [message, setMessage] = useState("");
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [automationDraft, setAutomationDraft] = useState({
     dirty: false,
     pending: false,
@@ -177,12 +204,10 @@ export default function SandboxPage() {
     ).values(),
   );
   const requestedFocusTarget = search.get("inspect");
-  const requestedSelection =
-    requestedFocusTarget ??
-    search.get("module") ??
-    search.get("department") ??
-    design.modules[0]?.id ??
-    "";
+  const linkedSelection =
+    requestedFocusTarget ?? search.get("module") ?? search.get("department");
+  const requestedSelection = linkedSelection ?? design.modules[0]?.id ?? "";
+  const status = publishStatus(session, design, Boolean(conflict));
 
   const refreshVersions = useCallback(async () => {
     setVersions(await listAllSandboxVersions());
@@ -683,23 +708,13 @@ export default function SandboxPage() {
           </Button>
         </Alert>
       ) : null}
-      <header className="space-y-2 xl:flex xl:flex-wrap xl:items-end xl:justify-between xl:gap-4 xl:space-y-0">
-        <div className="flex items-center justify-between gap-2 xl:contents">
-          <div className="flex min-w-0 items-center gap-2 xl:flex-wrap xl:gap-3">
-            <h1 className="truncate text-xl font-semibold tracking-tight sm:text-2xl">
+      <header className="xl:flex xl:flex-wrap xl:items-end xl:justify-between xl:gap-4">
+        <div className="flex flex-col gap-3 xl:contents">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
               Organization builder
             </h1>
-            <Badge variant="outline" className="max-xl:hidden">
-              {conflict
-                ? "Unsaved changes"
-                : session?.hasUnpublishedChanges === true ||
-                    (session?.publishedHash !== undefined &&
-                      session.contentHash !== session.publishedHash)
-                  ? "Unpublished changes"
-                  : session?.publishedHash
-                    ? "Published"
-                    : "Draft saved"}
-            </Badge>
+            <Badge variant="outline">{status.label}</Badge>
           </div>
           <div className="flex shrink-0 gap-2">
             {section === "Build" ? (
@@ -730,7 +745,7 @@ export default function SandboxPage() {
               disabled={
                 pending ||
                 testPending ||
-                Boolean(conflict) ||
+                !status.publishable ||
                 automationDraft.dirty ||
                 automationDraft.pending
               }
@@ -745,6 +760,12 @@ export default function SandboxPage() {
                 automationDraft.dirty ||
                 automationDraft.pending
               }
+              templatesOpen={templatesOpen}
+              onTemplatesOpenChange={setTemplatesOpen}
+              canCheckpoint={
+                design.departments.length > 0 || design.modules.length > 0
+              }
+              canDiscard={status.publishable}
               onCreateCheckpoint={checkpoint}
               onImport={importFile}
               onApplyTemplate={applyTemplate}
@@ -777,6 +798,7 @@ export default function SandboxPage() {
         <Designer
           key={`${requestedSelection}-${sandboxGeneration}`}
           initialSelected={requestedSelection}
+          inspectOnOpen={linkedSelection !== null}
           focusTargetId={requestedFocusTarget}
           design={design}
           change={change}
@@ -785,6 +807,7 @@ export default function SandboxPage() {
           onViewPreferenceChange={() => undefined}
           createRequest={null}
           onCreateRequestHandled={() => undefined}
+          onStartFromTemplate={() => setTemplatesOpen(true)}
           pending={pending}
         />
       ) : null}

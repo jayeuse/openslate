@@ -111,6 +111,7 @@ import {
   type SandboxCommandResult,
 } from "../state/commands";
 import type { SandboxCreateRequest } from "./sandbox-controls";
+import { EmptyCanvasPanel } from "./empty-canvas-panel";
 import {
   SANDBOX_WORKBENCH_MAX_WIDTH,
   SANDBOX_WORKBENCH_MIN_WIDTH,
@@ -163,6 +164,7 @@ function updateProjectedFieldOrThrow(
 
 export function Designer({
   initialSelected,
+  inspectOnOpen,
   focusTargetId,
   design,
   change,
@@ -171,9 +173,12 @@ export function Designer({
   onViewPreferenceChange,
   createRequest,
   onCreateRequestHandled,
+  onStartFromTemplate,
   pending,
 }: {
   initialSelected: string;
+  /** A link asked for one item, so narrow screens open on its Properties. */
+  inspectOnOpen: boolean;
   focusTargetId: string | null;
   design: Design;
   change: (
@@ -185,11 +190,15 @@ export function Designer({
   onViewPreferenceChange: () => void;
   createRequest: SandboxCreateRequest | null;
   onCreateRequestHandled: (id: number) => void;
+  onStartFromTemplate: () => void;
   pending: boolean;
 }) {
   const [viewPreferences, setViewPreferences] =
     useState<SandboxViewPreferences>(loadSandboxViewPreferences);
-  const [pane, setPane] = useState<DesignerPane>(viewPreferences.mobilePane);
+  // Narrow screens open on the canvas, the Sandbox's main surface.
+  const [pane, setPane] = useState<DesignerPane>(
+    inspectOnOpen ? "Inspector" : "Canvas",
+  );
   const [wide, setWide] = useState(false);
   // Wide screens show one workbench beside the canvas. A selection opens
   // Properties; an empty design starts on Structure.
@@ -242,9 +251,8 @@ export function Designer({
     patchViewPreferences({
       gridVisible: canvasView.gridVisible,
       snapEnabled: canvasView.snapEnabled,
-      mobilePane: pane,
     });
-  }, [canvasView.gridVisible, canvasView.snapEnabled, pane]);
+  }, [canvasView.gridVisible, canvasView.snapEnabled]);
   useEffect(() => {
     if (!wide) return;
     const preferences = viewPreferencesRef.current;
@@ -824,6 +832,8 @@ export function Designer({
   // first-department fallback for creation commands.
   const inspectedItem =
     selectedModule ?? design.departments.find((item) => item.id === selected);
+  const designIsEmpty =
+    design.departments.length === 0 && design.modules.length === 0;
   const atMinZoom = canvasView.zoom <= SANDBOX_ZOOM.min + 0.001;
   const atMaxZoom = canvasView.zoom >= SANDBOX_ZOOM.max - 0.001;
   const currentDeleteImpact = deletionImpact(design, deleteTarget);
@@ -2065,9 +2075,17 @@ export function Designer({
                 ) : null}
                 <div
                   ref={canvasFrameRef}
-                  className="h-[420px] overflow-hidden xl:h-auto xl:min-h-0 xl:flex-1"
+                  data-empty={designIsEmpty || undefined}
+                  className="relative h-[420px] overflow-hidden xl:h-auto xl:min-h-0 xl:flex-1 data-empty:[&_.sandbox-minimap]:hidden"
                   aria-label="Module design canvas"
                 >
+                  {designIsEmpty ? (
+                    <EmptyCanvasPanel
+                      pending={pending}
+                      onStartFromTemplate={onStartFromTemplate}
+                      onAddDepartment={() => open("department")}
+                    />
+                  ) : null}
                   <SandboxCanvas
                     state={projected}
                     layout={design.layout ?? compactDefaultLayout}

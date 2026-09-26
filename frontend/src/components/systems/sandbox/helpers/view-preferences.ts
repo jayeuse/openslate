@@ -5,7 +5,6 @@ export interface SandboxViewPreferences {
   snapEnabled: boolean;
   workbenchWidth: number;
   workbenchCollapsed: boolean;
-  mobilePane: DesignerPane;
 }
 
 export const SANDBOX_VIEW_PREFERENCES_KEY = "openslate.sandbox.view.v2";
@@ -20,7 +19,6 @@ export const defaultSandboxViewPreferences: SandboxViewPreferences = {
   snapEnabled: true,
   workbenchWidth: SANDBOX_WORKBENCH_DEFAULT_WIDTH,
   workbenchCollapsed: false,
-  mobilePane: "Structure",
 };
 
 function boundedNumber(
@@ -36,12 +34,6 @@ function boundedNumber(
 
 function booleanOr(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
-}
-
-function paneOr(value: unknown): DesignerPane {
-  return value === "Canvas" || value === "Inspector" || value === "Structure"
-    ? value
-    : defaultSandboxViewPreferences.mobilePane;
 }
 
 export function normalizeSandboxViewPreferences(
@@ -71,7 +63,6 @@ export function normalizeSandboxViewPreferences(
       stored.workbenchCollapsed ?? stored.inspectorCollapsed,
       defaultSandboxViewPreferences.workbenchCollapsed,
     ),
-    mobilePane: paneOr(stored.mobilePane),
   };
 }
 

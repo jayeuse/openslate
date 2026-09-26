@@ -173,7 +173,10 @@ export function SandboxInspectorOutline({
     field === undefined
       ? undefined
       : state.modules.find((item) => item.id === field.moduleId);
-  const structureSearch = searchSandboxStructure(state, structureQuery);
+  // With no departments the search is disabled, so a query left over from
+  // before must not keep hiding "Add department".
+  const activeQuery = state.departments.length ? structureQuery : "";
+  const structureSearch = searchSandboxStructure(state, activeQuery);
 
   function beginEdit(id: string, value: string): void {
     onSelect(id);
@@ -371,12 +374,7 @@ export function SandboxInspectorOutline({
         disabled={pending}
         className="text-muted-foreground hover:text-foreground mt-1 h-11 w-full justify-start px-2 text-xs font-normal xl:h-9"
       >
-        Add{" "}
-        {kind === "department"
-          ? "Department"
-          : kind === "module"
-            ? "Module"
-            : "Field"}
+        Add {kind}
       </Button>
     );
   }
@@ -461,7 +459,7 @@ export function SandboxInspectorOutline({
                 {item.name}
               </span>
               {item.closed ? (
-                <Badge variant="secondary" className="text-[10px]">
+                <Badge variant="secondary" className="text-xs">
                   Closed
                 </Badge>
               ) : null}
@@ -617,7 +615,7 @@ export function SandboxInspectorOutline({
         <div className="flex flex-col gap-3">
           <div>
             <SectionTitle>Structure</SectionTitle>
-            <p className="text-muted-foreground mt-1 text-[11px]">
+            <p className="text-muted-foreground mt-1 text-xs">
               Select an item for settings. Use the visible actions to add,
               rename, or manage items.
             </p>
@@ -629,6 +627,7 @@ export function SandboxInspectorOutline({
               size="sm"
               className="min-h-11 min-w-0 flex-1 xl:min-h-8"
               aria-label="Expand all"
+              disabled={state.departments.length === 0}
               onClick={() => {
                 setCollapsedDepartments(new Set());
                 setCollapsedModules(new Set());
@@ -642,6 +641,7 @@ export function SandboxInspectorOutline({
               size="sm"
               className="min-h-11 min-w-0 flex-1 xl:min-h-8"
               aria-label="Collapse all"
+              disabled={state.departments.length === 0}
               onClick={() => {
                 setCollapsedDepartments(
                   new Set(state.departments.map((item) => item.id)),
@@ -663,6 +663,7 @@ export function SandboxInspectorOutline({
               type="search"
               aria-label="Search structure"
               placeholder="Search structure"
+              disabled={state.departments.length === 0}
               value={structureQuery}
               onChange={(event) => setStructureQuery(event.target.value)}
               className="h-11 pl-8 xl:h-9"
@@ -684,18 +685,16 @@ export function SandboxInspectorOutline({
           <ul className="mt-3 flex flex-col gap-3">
             {state.departments.map(renderDepartment)}
           </ul>
-        ) : (
+        ) : activeQuery.trim() ? (
           <Empty className="mt-3 items-start gap-1 border p-3 text-left">
             <EmptyHeader className="items-start">
               <EmptyDescription className="text-xs">
-                {structureQuery.trim()
-                  ? "No structure items match."
-                  : "No departments yet. Add one to start your sandbox."}
+                No structure items match.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
-        )}
-        {!structureQuery.trim() ? addRow("department") : null}
+        ) : null}
+        {!activeQuery.trim() ? addRow("department") : null}
         <div className="border-border mt-4 border-t pt-3">
           <SectionTitle>Relationships</SectionTitle>
           <ul className="mt-2 flex flex-col gap-1">
@@ -730,10 +729,10 @@ export function SandboxInspectorOutline({
             onClick={onAddRelationship}
             className="text-muted-foreground mt-1 min-h-11 w-full justify-start px-2 text-xs font-normal xl:min-h-9"
           >
-            Add Relationship
+            Add relationship
           </Button>
           {state.modules.length < 2 ? (
-            <p className="text-muted-foreground px-2 text-[11px]">
+            <p className="text-muted-foreground px-2 text-xs">
               Add two modules to connect them.
             </p>
           ) : null}

@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { workspaceStartRoute } from "@/components/workspace-start";
 import {
   Field,
   FieldControl,
@@ -78,7 +79,7 @@ export default function AuthSetupPage() {
     try {
       if (temporaryPasswordSetup) {
         await changePassword(currentPassword, password);
-        router.replace("/openview");
+        router.replace(await workspaceStartRoute());
       } else {
         await completeInvitation(invitationToken as string, password);
         router.replace("/login");

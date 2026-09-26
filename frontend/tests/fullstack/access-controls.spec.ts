@@ -28,7 +28,7 @@ async function signIn(page: Page) {
   await page.getByLabel("Email or username").fill(credentials.email);
   await page.getByLabel("Password").fill(credentials.password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/openview$/);
+  await expect(page).toHaveURL(/\/(openview|sandbox)$/);
 }
 
 test("Access defaults and identity editor offer only controls their save paths support", async ({

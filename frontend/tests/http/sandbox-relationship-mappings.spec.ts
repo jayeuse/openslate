@@ -246,7 +246,7 @@ test("an organization template replaces the empty draft only after confirmation"
   const sandbox = await openAuthenticatedSandbox(page, initialDesign);
 
   await page.getByRole("button", { name: "More Sandbox actions" }).click();
-  await page.getByRole("menuitem", { name: "Start from template" }).click();
+  await page.getByRole("menuitem", { name: "Start from a template" }).click();
   const dialog = page.getByRole("dialog", { name: "Organization templates" });
   await expect(
     dialog.getByRole("button", { name: "Select Inventory & procurement" }),
@@ -286,7 +286,7 @@ test("a detailed template remains usable when moving from Automations to Test", 
   await openAuthenticatedSandbox(page, initialDesign);
 
   await page.getByRole("button", { name: "More Sandbox actions" }).click();
-  await page.getByRole("menuitem", { name: "Start from template" }).click();
+  await page.getByRole("menuitem", { name: "Start from a template" }).click();
   await page
     .getByRole("button", { name: "Use Inventory & procurement" })
     .click();
@@ -318,7 +318,7 @@ test("a rejected template replacement stays open with its recoverable error", as
   });
 
   await page.getByRole("button", { name: "More Sandbox actions" }).click();
-  await page.getByRole("menuitem", { name: "Start from template" }).click();
+  await page.getByRole("menuitem", { name: "Start from a template" }).click();
   const dialog = page.getByRole("dialog", { name: "Organization templates" });
   await dialog
     .getByRole("button", { name: "Use Inventory & procurement" })
@@ -416,6 +416,105 @@ test("the canvas zoom range keeps a spread design legible", async ({
   await expect(page.getByRole("status", { name: "Canvas action" })).toHaveText(
     "Canvas at 50%. Part of the design is out of view.",
   );
+});
+
+test("an empty, never-published Sandbox offers one start and nothing to publish", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, initialDesign);
+  const publish = page.getByRole("button", { name: "Review & Publish" });
+  const canvas = page.getByLabel("Module design canvas");
+
+  await expect(
+    page.getByText("Nothing to publish yet", { exact: true }),
+  ).toBeVisible();
+  await expect(publish).toBeDisabled();
+  await expect(
+    canvas.getByRole("heading", { name: "Design your organization" }),
+  ).toBeVisible();
+  await expect(page.getByText("No departments yet")).toHaveCount(0);
+  await expect(
+    page.getByRole("searchbox", { name: "Search structure" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "More Sandbox actions" }).click();
+  for (const name of ["Save checkpoint", "Discard draft changes"])
+    await expect(page.getByRole("menuitem", { name })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  await page.keyboard.press("Escape");
+
+  await canvas.getByRole("button", { name: "Start from a template" }).click();
+  const templates = page.getByRole("dialog", {
+    name: "Organization templates",
+  });
+  await expect(templates).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(templates).toBeHidden();
+
+  await canvas
+    .getByRole("button", { name: "Add your first department" })
+    .click();
+  await expect(page.getByLabel("Department name")).toBeFocused();
+  await page.getByLabel("Department name").fill("Operations");
+  await page.getByRole("button", { name: "Create department" }).click();
+
+  await expect(
+    canvas.getByRole("heading", { name: "Design your organization" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Unpublished changes", { exact: true }),
+  ).toBeVisible();
+  await expect(publish).toBeEnabled();
+});
+
+test("emptying the design clears a leftover Structure search", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, initialDesign);
+  await page.getByRole("button", { name: "Add department" }).click();
+  await page.getByLabel("Department name").fill("Operations");
+  await page.getByRole("button", { name: "Create department" }).click();
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
+  const search = page.getByRole("searchbox", { name: "Search structure" });
+  await search.fill("no such item");
+  await expect(page.getByText("No structure items match.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Undo" }).click();
+
+  await expect(search).toBeDisabled();
+  await expect(page.getByText("No structure items match.")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Add department" }),
+  ).toBeVisible();
+});
+
+test("a published Sandbox with no new changes has nothing to publish", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    publishedHash: "a".repeat(64),
+    hasUnpublishedChanges: false,
+  });
+
+  await expect(page.getByText("Published", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Review & Publish" }),
+  ).toBeDisabled();
+});
+
+test("a phone opens the Sandbox on the canvas", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openAuthenticatedSandbox(page);
+
+  await expect(page.getByRole("tab", { name: "Canvas" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByLabel("Module design canvas")).toBeVisible();
 });
 
 test("an empty Sandbox authors and persists a complete connected organization", async ({
@@ -697,9 +796,14 @@ test("a pending publication review protects browser exits", async ({
   const publicationDelay = new Promise<void>((resolve) => {
     releasePreview = resolve;
   });
-  await openAuthenticatedSandbox(page, initialDesign, {
-    publicationDelay,
-  });
+  await openAuthenticatedSandbox(
+    page,
+    {
+      ...initialDesign,
+      departments: [{ id: "operations", name: "Operations", closed: false }],
+    },
+    { publicationDelay },
+  );
 
   await expect
     .poll(() =>
@@ -858,12 +962,16 @@ test("the Designer saves offset Date/Time bounds in chronological order", async 
 test("a failed structural save remains visibly unsaved until the shared draft is reloaded", async ({
   page,
 }) => {
-  await openAuthenticatedSandbox(page, initialDesign, {
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
     saveFailure: "Sandbox storage is unavailable.",
     hasUnpublishedChanges: false,
   });
   await expect(page.getByText("Draft saved", { exact: true })).toBeVisible();
 
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
   await page.getByRole("button", { name: "Add department" }).click();
   await page.getByLabel("Department name").fill("Operations");
   await page.getByRole("button", { name: "Create department" }).click();
@@ -905,9 +1013,13 @@ test("a failed structural save remains visibly unsaved until the shared draft is
 test("discard refresh failure leaves the dialog open and allows a retry", async ({
   page,
 }) => {
-  const sandbox = await openAuthenticatedSandbox(page, initialDesign, {
-    discardRefreshFailure: "The shared Sandbox could not be refreshed.",
-  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    {
+      discardRefreshFailure: "The shared Sandbox could not be refreshed.",
+    },
+  );
   await page.route("**/api/sandbox/versions", async (route) => {
     if (route.request().method() !== "POST") return route.fallback();
     await route.fulfill({
@@ -953,9 +1065,13 @@ test("discard keeps browser exits guarded throughout its composite request", asy
   const discardRefreshDelay = new Promise<void>((resolve) => {
     releaseRefresh = resolve;
   });
-  const sandbox = await openAuthenticatedSandbox(page, initialDesign, {
-    discardRefreshDelay,
-  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    {
+      discardRefreshDelay,
+    },
+  );
   await page.route("**/api/sandbox/versions", async (route) => {
     if (route.request().method() !== "POST") return route.fallback();
     await route.fulfill({
