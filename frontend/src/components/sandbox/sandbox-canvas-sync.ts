@@ -35,6 +35,7 @@ interface SandboxCanvasSynchronization {
   layout: SandboxCanvasLayout | undefined;
   movingNodeId: string | null;
   dropTargetId: string | null;
+  overview: boolean;
   pendingPositions: MutableCurrent<Map<string, CanvasPosition>>;
   appliedLayout: MutableCurrent<SandboxCanvasLayout | undefined>;
   syncing: MutableCurrent<boolean>;
@@ -47,6 +48,7 @@ export function synchronizeSandboxCanvas({
   layout,
   movingNodeId,
   dropTargetId,
+  overview,
   pendingPositions,
   appliedLayout,
   syncing,
@@ -95,6 +97,7 @@ export function synchronizeSandboxCanvas({
         height,
         departmentSelected,
         departmentFeedback,
+        overview,
       );
       const existing = graph.getCellById(department.id);
       const departmentNode =
@@ -189,6 +192,7 @@ export function synchronizeSandboxCanvas({
                 : dropTargetId === sandboxModule.id
                   ? "drop"
                   : null,
+              overview,
             ),
             ports: {
               ...getModulePorts(state.selectedCellId === sandboxModule.id),
@@ -225,6 +229,7 @@ export function synchronizeSandboxCanvas({
               : dropTargetId === sandboxModule.id
                 ? "drop"
                 : null,
+            overview,
           ),
         );
         moduleNode.setData({
@@ -318,13 +323,15 @@ export function synchronizeSandboxCanvas({
                 ],
                 attrs: {
                   label: {
-                    fontSize: 10,
+                    fontSize: 12,
                     fill: "var(--card-foreground, #20242c)",
+                    "data-sandbox-part": "edge-label",
                     pointerEvents: "none",
                     text: link.label,
                   },
                   body: {
                     ref: "label",
+                    "data-sandbox-part": "edge-label",
                     fill: "var(--card, #ffffff)",
                     stroke: "var(--border, #e4e7ec)",
                     strokeWidth: 1,

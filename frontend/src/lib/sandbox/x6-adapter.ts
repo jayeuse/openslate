@@ -122,6 +122,7 @@ export function moduleTableAttrs(
   selectedFieldId: string | null = null,
   selectedModule = false,
   feedback: "drop" | "moving" | null = null,
+  overview = false,
 ): SandboxNodeAttrs {
   const { width, headerHeight, rowHeight } = MODULE_TABLE;
   const colors = MODULE_TABLE_COLORS;
@@ -180,10 +181,11 @@ export function moduleTableAttrs(
       y: headerHeight / 2,
       textAnchor: "start",
       textVerticalAnchor: "middle",
-      fontSize: 13,
+      fontSize: overview ? 30 : 13,
       fontWeight: "bold",
       fill: colors.headerText,
-      text: truncateModuleTitle(name, 28),
+      text: truncateModuleTitle(name, overview ? 14 : 28),
+      "data-sandbox-part": "module-title",
     },
   };
   for (let i = 0; i < rows; i += 1) {
@@ -234,6 +236,7 @@ export function moduleTableAttrs(
       textVerticalAnchor: "middle",
       fontSize: 12,
       fill: field === undefined ? colors.emptyText : colors.nameText,
+      "data-sandbox-part": "field-text",
       fontStyle: field === undefined ? "italic" : "normal",
       text:
         field === undefined
@@ -250,6 +253,7 @@ export function moduleTableAttrs(
       pointerEvents: "none",
       text: field === undefined ? "" : field.required ? "•" : "○",
       "aria-hidden": "true",
+      "data-sandbox-part": "field-text",
     };
     attrs[`type${i}`] = {
       pointerEvents: "none",
@@ -257,10 +261,11 @@ export function moduleTableAttrs(
       y: rowCenter,
       textAnchor: "end",
       textVerticalAnchor: "middle",
-      fontSize: 10,
+      fontSize: 12,
       fontWeight: 400,
       fontFamily: "ui-monospace, SFMono-Regular, monospace",
       fill: colors.typeText,
+      "data-sandbox-part": "field-text",
       text:
         field === undefined
           ? ""
@@ -375,6 +380,18 @@ export function getModulePorts(
     },
   };
 }
+
+/**
+ * Manual zoom range, the smallest scale Fit may choose, and the scale below
+ * which the canvas renders an overview (names only, sized to stay ≥12px on
+ * screen down to `fitMin`).
+ */
+export const SANDBOX_ZOOM = {
+  min: 0.25,
+  max: 2,
+  fitMin: 0.4,
+  overview: 0.75,
+} as const;
 
 /**
  * Base X6 graph options for the sandbox canvas: a themed surface, panning,

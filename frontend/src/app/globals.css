@@ -317,6 +317,17 @@ textarea {
   stroke-width: 2px;
 }
 
+/* Semantic zoom: node builders enlarge names in an overview; hide the field
+ * rows and relationship labels that would render too small to read. */
+[data-canvas-zoom="overview"]
+  :is(
+    [data-sandbox-part="field-text"],
+    [data-sandbox-part="department-meta"],
+    [data-sandbox-part="edge-label"]
+  ) {
+  visibility: hidden;
+}
+
 @keyframes sandbox-relationship-flow {
   to {
     stroke-dashoffset: -24;

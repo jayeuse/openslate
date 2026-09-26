@@ -82,6 +82,7 @@ export function departmentNodeAttrs(
   height: number,
   selected: boolean,
   feedback: CanvasFeedback,
+  overview = false,
 ) {
   const moving = feedback === "moving";
   const dropTarget = feedback === "drop";
@@ -113,17 +114,18 @@ export function departmentNodeAttrs(
     },
     heading: {
       x: 12,
-      y: 18,
+      y: overview ? 24 : 18,
       textAnchor: "start",
       textVerticalAnchor: "middle",
-      fontSize: 11,
+      fontSize: overview ? 33 : 13,
       fontWeight: 600,
+      "data-sandbox-part": "department-title",
       fill: moving
         ? "var(--warning, #b45309)"
         : dropTarget || selected
           ? CANVAS_NODE_ACTIVE
           : CANVAS_NODE_TEXT,
-      text: truncateLabel(name, 30),
+      text: truncateLabel(name, overview ? 16 : 30),
     },
     resizeGrip: {
       width: 24,
@@ -151,8 +153,9 @@ export function departmentNodeAttrs(
       y: 18,
       textAnchor: "end",
       textVerticalAnchor: "middle",
-      fontSize: 10,
+      fontSize: 12,
       fill: "var(--muted-foreground, #9aa1ac)",
+      "data-sandbox-part": "department-meta",
       text: `${moduleCount} ${moduleCount === 1 ? "module" : "modules"}`,
     },
   };

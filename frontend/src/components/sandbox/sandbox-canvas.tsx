@@ -22,6 +22,7 @@ import {
   MODULE_TABLE,
   SANDBOX_GRID_MAJOR_SIZE,
   SANDBOX_GRID_SIZE,
+  SANDBOX_ZOOM,
   snapSandboxPosition,
 } from "@/lib/sandbox/x6-adapter";
 import type { SandboxCommandResult } from "@/components/systems/sandbox/state/commands";
@@ -167,6 +168,8 @@ export function SandboxCanvas({
   const editorRef = useRef<CanvasEditor | null>(null);
   const editorCommitRef = useRef<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  // Below the overview zoom, nodes render names only at a readable size.
+  const [overview, setOverview] = useState(false);
   const [dropError, setDropError] = useState<string | null>(null);
   const [paletteDragKind, setPaletteDragKind] =
     useState<SandboxDropKind | null>(null);
@@ -307,6 +310,7 @@ export function SandboxCanvas({
     const updateScale = (): void => {
       updateGridVisual();
       emitViewState();
+      setOverview(graph.zoom() < SANDBOX_ZOOM.overview);
     };
     graph.on("scale", updateScale);
     graph.on("translate", updateGridVisual);
@@ -468,16 +472,33 @@ export function SandboxCanvas({
           snapEnabled: snapEnabledRef.current,
         }),
         zoomIn: () => {
-          graph.zoom(0.1, { minScale: 0.25, maxScale: 2 });
+          graph.zoom(0.1, {
+            minScale: SANDBOX_ZOOM.min,
+            maxScale: SANDBOX_ZOOM.max,
+          });
         },
         zoomOut: () => {
-          graph.zoom(-0.1, { minScale: 0.25, maxScale: 2 });
+          graph.zoom(-0.1, {
+            minScale: SANDBOX_ZOOM.min,
+            maxScale: SANDBOX_ZOOM.max,
+          });
         },
         resetZoom: () => {
           graph.zoom(1, { absolute: true });
         },
         fit: () => {
-          graph.zoomToFit({ padding: 24, maxScale: 1 });
+          graph.zoomToFit({
+            padding: 24,
+            minScale: SANDBOX_ZOOM.fitMin,
+            maxScale: 1,
+          });
+          // At the readability floor the design is larger than the view:
+          // show its start instead of cutting both ends.
+          // X6 ignores padding here, so align, then inset by 24 screen pixels.
+          if (graph.zoom() <= SANDBOX_ZOOM.fitMin + 0.001) {
+            graph.positionContent("top-left");
+            graph.translateBy(24, 24);
+          }
         },
         center: () => {
           graph.centerContent();
@@ -776,11 +797,12 @@ export function SandboxCanvas({
       layout,
       movingNodeId,
       dropTargetId,
+      overview,
       pendingPositions: pendingPositionsRef,
       appliedLayout: appliedLayoutRef,
       syncing: syncingRef,
     });
-  }, [dropTargetId, layout, movingNodeId, state]);
+  }, [dropTargetId, layout, movingNodeId, overview, state]);
 
   async function commitEditor(value: string): Promise<void> {
     const activeEditor = editorRef.current;

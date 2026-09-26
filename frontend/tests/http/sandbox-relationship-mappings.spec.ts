@@ -353,6 +353,64 @@ test("an empty Sandbox renders no placeholder entities and can create its first 
   ).toBeVisible();
 });
 
+test("the Build canvas owns most of a wide screen and one workbench switches Structure and Properties", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page);
+
+  const workbench = page.getByRole("complementary", {
+    name: "Design workbench",
+  });
+  const tabs = workbench.getByRole("tablist", { name: "Workbench view" });
+  await expect(tabs.getByRole("tab", { name: "Properties" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByRole("complementary", { name: "Design inspector" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Organization structure" }),
+  ).toBeHidden();
+
+  const canvas = await page.getByLabel("Module design canvas").boundingBox();
+  const side = await workbench.boundingBox();
+  if (!canvas || !side) throw new Error("Build layout is not rendered");
+  expect(canvas.width / (canvas.width + side.width)).toBeGreaterThanOrEqual(
+    0.65,
+  );
+
+  await tabs.getByRole("tab", { name: "Structure" }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Organization structure" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Design inspector" }),
+  ).toBeHidden();
+});
+
+test("fitting a narrow canvas keeps the design readable", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const spreadDesign = structuredClone(configuredSandboxDesign);
+  spreadDesign.layout = {
+    "sample-commercial": { x: 4000, y: 0, width: 600, height: 400 },
+  };
+  await openAuthenticatedSandbox(page, spreadDesign);
+
+  await page.getByRole("tab", { name: "Canvas" }).click();
+  await page.getByRole("button", { name: "Fit canvas" }).click();
+  await expect
+    .poll(async () =>
+      Number.parseInt(
+        (await page.getByRole("status", { name: "Canvas zoom" }).innerText()) ??
+          "0",
+        10,
+      ),
+    )
+    .toBeGreaterThanOrEqual(40);
+});
+
 test("an empty Sandbox authors and persists a complete connected organization", async ({
   page,
 }) => {
@@ -373,6 +431,10 @@ test("an empty Sandbox authors and persists a complete connected organization", 
   await page.getByRole("checkbox", { name: "Required field" }).click();
   await page.getByRole("button", { name: "Create field" }).click();
 
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
   await page.getByRole("button", { name: /^Add relationship$/i }).click();
   const relationshipDialog = page.getByRole("dialog", {
     name: "Connect modules",
