@@ -23,7 +23,9 @@ test("Manage preserves section drafts, validates saves, and retains accepted set
   await expect(name).toBeVisible();
   const original = await name.inputValue();
   await name.fill("Refactor journey workspace");
-  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await page
+    .getByRole("link", { name: "Security & recovery", exact: true })
+    .click();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
   await expect(name).toHaveValue("Refactor journey workspace");
   await page
@@ -83,11 +85,15 @@ test("Manage snapshot rename retains invalid input, restores focus on cancel, an
   page,
 }) => {
   await page.goto("/manage?view=backup");
+  await page
+    .getByRole("button", { name: "Inspect Scheduled snapshot", exact: true })
+    .click();
   const opener = page.getByRole("button", {
-    name: "Rename Scheduled snapshot",
+    name: "Snapshot actions",
     exact: true,
   });
   await opener.click();
+  await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
   const dialog = page.getByRole("dialog", {
     name: "Rename snapshot",
     exact: true,
@@ -111,20 +117,21 @@ test("Manage snapshot rename retains invalid input, restores focus on cancel, an
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(opener).toBeFocused();
   await opener.click();
+  await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
   await expect(name).toHaveValue("Scheduled snapshot");
   await name.fill("Renamed journey snapshot");
   await submit.click();
   await expect(dialog).toBeHidden();
   await expect(
     page.getByRole("button", {
-      name: "Rename Renamed journey snapshot",
+      name: "Inspect Renamed journey snapshot",
       exact: true,
     }),
   ).toBeVisible();
   await page.reload();
   await expect(
     page.getByRole("button", {
-      name: "Rename Renamed journey snapshot",
+      name: "Inspect Renamed journey snapshot",
       exact: true,
     }),
   ).toBeVisible();

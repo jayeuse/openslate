@@ -79,9 +79,8 @@ const workspaceNavigationDefinitions = [
     defaultItem: "organization",
     items: [
       { id: "organization", label: "Organization" },
-      { id: "security", label: "Security" },
+      { id: "security", label: "Security & recovery" },
       { id: "audit", label: "Audit" },
-      { id: "backup", label: "Backup" },
       { id: "updates", label: "Updates" },
       { id: "licensing", label: "Licensing" },
     ],
@@ -130,6 +129,8 @@ function sectionFor(
       ? (sandboxLegacySections[requested.toLowerCase()] ??
         requested.toLowerCase())
       : requested;
+  if (definition.id === "manage" && requested?.toLowerCase() === "backup")
+    return "security";
   if (definition.id === "access" && requested === "simulator")
     return "identities";
   if (definition.id === "access" && requested === "reviews") return "overview";

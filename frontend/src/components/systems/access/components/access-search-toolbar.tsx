@@ -10,6 +10,7 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
+import { cn } from "@/lib/utils";
 
 type AccessSearchToolbarProps<T extends string> = {
   searchLabel: string;
@@ -21,6 +22,7 @@ type AccessSearchToolbarProps<T extends string> = {
   sortOptions: readonly { value: T; label: string }[];
   onSortChange: (sort: T) => void;
   activeFilterCount: number;
+  filtersClassName?: string;
   children: ReactNode;
 };
 
@@ -35,6 +37,7 @@ export function AccessSearchToolbar<T extends string>({
   sortOptions,
   onSortChange,
   activeFilterCount,
+  filtersClassName,
   children,
 }: AccessSearchToolbarProps<T>) {
   const id = useId();
@@ -114,7 +117,12 @@ export function AccessSearchToolbar<T extends string>({
         aria-label={`${searchLabel} filters`}
         hidden={!expanded}
       >
-        <div className="grid min-w-0 gap-3 border-t p-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div
+          className={cn(
+            "grid min-w-0 gap-3 border-t p-3 sm:grid-cols-2 xl:grid-cols-4",
+            filtersClassName,
+          )}
+        >
           {children}
         </div>
       </div>
