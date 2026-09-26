@@ -326,8 +326,8 @@ test("Defaults remains locked after a save when browser cleanup fails twice", as
     };
   });
 
-  await browserPage.goto("/access?view=reviews");
-  await browserPage.getByRole("button", { name: "Configure defaults" }).click();
+  await browserPage.goto("/access?view=overview");
+  await browserPage.getByRole("button", { name: "Edit defaults" }).click();
   await browserPage.getByLabel("Invitation expiry days").fill("21");
   await browserPage.getByRole("button", { name: "Save defaults" }).click();
   await expect(browserPage.getByText("Access defaults updated.")).toBeVisible();
@@ -388,7 +388,7 @@ test("Defaults remains locked after a save when browser cleanup fails twice", as
   await expect(
     browserPage.getByRole("dialog", { name: "Access defaults" }),
   ).not.toBeVisible();
-  await browserPage.getByRole("button", { name: "Configure defaults" }).click();
+  await browserPage.getByRole("button", { name: "Edit defaults" }).click();
   await expect(
     browserPage.getByRole("button", { name: "Save defaults" }),
   ).toBeEnabled();

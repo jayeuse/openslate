@@ -58,8 +58,6 @@ const workspaceNavigationDefinitions = [
       { id: "roles", label: "Roles" },
       { id: "groups", label: "Groups" },
       { id: "rules", label: "Detailed rules" },
-      { id: "simulator", label: "Check access" },
-      { id: "reviews", label: "Access reviews" },
     ],
   },
   {
@@ -134,6 +132,9 @@ function sectionFor(
       ? (sandboxLegacySections[requested.toLowerCase()] ??
         requested.toLowerCase())
       : requested;
+  if (definition.id === "access" && requested === "simulator")
+    return "identities";
+  if (definition.id === "access" && requested === "reviews") return "overview";
   if (
     definition.id === "openview" &&
     openViewRecordIdPattern.test(params.get("record") ?? "")

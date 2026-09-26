@@ -36,15 +36,9 @@ test("Access defaults and identity editor offer only controls their save paths s
 }) => {
   await signIn(page);
 
-  await page.goto("/access?view=reviews");
-  await expect(
-    page.getByText("Formal access reviews are not available yet."),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Start access review" }),
-  ).toHaveCount(0);
+  await page.goto("/access?view=overview");
   const configureDefaults = page.getByRole("button", {
-    name: "Configure defaults",
+    name: "Edit defaults",
   });
   await configureDefaults.focus();
   await page.keyboard.press("Enter");
@@ -69,25 +63,23 @@ test("Access defaults and identity editor offer only controls their save paths s
   ).toBeVisible();
 });
 
-test("Access keeps seven views usable at 390px and only offers truthful directory filters", async ({
+test("Access current views and legacy links remain usable at 390px with truthful filters", async ({
   page,
 }) => {
   await signIn(page);
   await page.setViewportSize({ width: 390, height: 844 });
   const views = [
-    ["overview", "Access overview"],
-    ["identities", "Identity directory"],
-    ["roles", "Roles"],
-    ["groups", "Groups & departments"],
-    ["rules", "Access rules"],
-    ["simulator", "Check access"],
-    ["reviews", "Access reviews"],
+    ["overview", 1, "Access overview"],
+    ["identities", 1, "People & services"],
+    ["roles", 2, "Roles"],
+    ["groups", 2, "Groups & departments"],
+    ["rules", 2, "Detailed rules"],
   ] as const;
 
-  for (const [view, heading] of views) {
+  for (const [view, level, heading] of views) {
     await page.goto(`/access?view=${view}`);
     await expect(
-      page.getByRole("heading", { level: 2, name: heading }),
+      page.getByRole("heading", { level, name: heading }),
     ).toBeVisible();
     expect(
       await page.evaluate(
@@ -96,13 +88,32 @@ test("Access keeps seven views usable at 390px and only offers truthful director
     ).toBe(true);
   }
 
+  await page.goto("/access?view=simulator");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "People & services" }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.goto("/access?view=reviews");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Access overview" }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+
   await page.goto("/access?view=identities");
   const filters = page.getByRole("search", { name: "Identity filters" });
+  await filters.getByRole("button", { name: "More filters" }).click();
   const status = filters.getByLabel("Status");
   await expect(status.locator('option[value="deleted"]')).toHaveCount(0);
   await expect(status.locator('option[value="suspended"]')).toHaveCount(0);
   await expect(filters.getByLabel("Activity")).toHaveCount(0);
-  await filters.getByText("More filters").click();
   await expect(filters.getByLabel("Group")).toBeVisible();
   await expect(filters.getByLabel("Expiry")).toBeVisible();
   await expect(

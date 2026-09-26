@@ -55,8 +55,6 @@ test("Access keeps stable view URLs while using plain-language navigation labels
     ["roles", "Roles", "/access?view=roles"],
     ["groups", "Groups", "/access?view=groups"],
     ["rules", "Detailed rules", "/access?view=rules"],
-    ["simulator", "Check access", "/access?view=simulator"],
-    ["reviews", "Access reviews", "/access?view=reviews"],
   ]);
 
   expect(
@@ -65,6 +63,22 @@ test("Access keeps stable view URLs while using plain-language navigation labels
       "rules",
       "/access",
       new URLSearchParams("view=rules"),
+    ),
+  ).toBe(true);
+  expect(
+    isWorkspaceNavigationItemActive(
+      "access",
+      "identities",
+      "/access",
+      new URLSearchParams("view=simulator"),
+    ),
+  ).toBe(true);
+  expect(
+    isWorkspaceNavigationItemActive(
+      "access",
+      "overview",
+      "/access",
+      new URLSearchParams("view=reviews"),
     ),
   ).toBe(true);
 });

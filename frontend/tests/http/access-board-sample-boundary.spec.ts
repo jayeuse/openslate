@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const roleId = "00000000-0000-4000-8000-000000000002";
+const identityId = "00000000-0000-4000-8000-000000000004";
 const timestamp = "2026-09-23T00:00:00Z";
 
 function pageResult(items: unknown[]) {
@@ -74,9 +75,31 @@ test("Access explains where its detailed rules currently apply", async ({
     } else if (pathname === "/api/access/rules") {
       headers.ETag = '"workspace-1"';
       body = pageResult([]);
+    } else if (pathname === "/api/users") {
+      body = pageResult([
+        {
+          id: identityId,
+          email: "policy-check@example.test",
+          username: "policy-check",
+          status: "active",
+          role_id: roleId,
+          display_name: "Policy check person",
+          identity_kind: "internal",
+          job_title: "Test identity",
+          sponsor_user_id: null,
+          expires_at: null,
+          department_ids: [],
+          primary_department_id: null,
+          invitation_sent_at: timestamp,
+          created_at: timestamp,
+          updated_at: timestamp,
+          deleted_at: null,
+          is_deleted: false,
+          performed_by: null,
+        },
+      ]);
     } else if (
       [
-        "/api/users",
         "/api/departments",
         "/api/access/groups",
         "/api/access/service-identities",
@@ -113,6 +136,17 @@ test("Access explains where its detailed rules currently apply", async ({
 
   await page.goto("/access?view=simulator");
   await expect(
-    page.getByText(/This read-only check uses current workspace policy/),
+    page.getByRole("heading", { name: "People & services", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "View details for Policy check person" })
+    .click();
+  const preview = page.getByRole("dialog", {
+    name: "Identity details",
+    exact: true,
+  });
+  await preview.getByRole("tab", { name: "Check access", exact: true }).click();
+  await expect(
+    preview.getByText(/This read-only check uses current workspace policy/),
   ).toBeVisible();
 });

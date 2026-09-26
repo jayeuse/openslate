@@ -927,6 +927,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
       </Tabs>
 
       <IdentityPreview
+        controller={controller}
         identity={previewIdentity}
         identities={directoryIdentities}
         roles={controller.state.roles}

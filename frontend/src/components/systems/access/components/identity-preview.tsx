@@ -15,9 +15,13 @@ import {
 } from "@/components/ui/dialog";
 import type { AccessGroup, AccessIdentity } from "../domain/policy";
 import { displayIdentityStatus } from "../domain/policy";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { IdentityAccessCheck } from "./identity-access-check";
+import type { AccessController } from "../state/controller";
 import type { Role } from "../domain/model";
 
 type IdentityPreviewProps = {
+  controller: AccessController;
   identity: AccessIdentity | null;
   identities: readonly AccessIdentity[];
   roles: readonly Role[];
@@ -92,6 +96,7 @@ function IdentityMark({ kind }: { kind: AccessIdentity["kind"] }) {
 }
 
 export function IdentityPreview({
+  controller,
   identity,
   identities,
   roles,
@@ -117,7 +122,7 @@ export function IdentityPreview({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl space-y-5" finalFocus={finalFocus}>
+      <DialogContent className="max-w-4xl space-y-5" finalFocus={finalFocus}>
         <DialogHeader className="pr-10">
           <DialogTitle>Identity details</DialogTitle>
           <DialogDescription>
@@ -160,94 +165,111 @@ export function IdentityPreview({
               </div>
             </div>
 
-            <dl className="space-y-3 border-y py-4">
-              <Detail label="Role" value={roleName} />
-              {identity.kind === "internal" ? (
-                <>
-                  <Detail
-                    label="Job title"
-                    value={identity.title.trim() || "Not provided"}
-                  />
-                  <Detail
-                    label="Department"
-                    value={
-                      identity.departmentIds.length === 0
-                        ? "Not assigned"
-                        : identity.departmentIds
-                            .map(
-                              (departmentId) =>
-                                departments.find(
-                                  (department) =>
-                                    department.id === departmentId,
-                                )?.name ?? "Unavailable",
-                            )
-                            .join(", ")
-                    }
-                  />
-                  <Detail
-                    label="Groups"
-                    value={
-                      identity.groupIds.length === 0
-                        ? "No groups"
-                        : identity.groupIds
-                            .map(
-                              (groupId) =>
-                                groups.find((group) => group.id === groupId)
-                                  ?.name ?? "Unavailable",
-                            )
-                            .join(", ")
-                    }
-                  />
-                  <Detail
-                    label="Access expires"
-                    value={formatExpiry(identity.expiresAt)}
-                  />
-                </>
-              ) : identity.kind === "guest" ? (
-                <>
-                  <Detail
-                    label="Sponsor"
-                    value={referencedName(identity.sponsorId, identities)}
-                  />
-                  <Detail
-                    label="Access expires"
-                    value={formatExpiry(identity.expiresAt)}
-                  />
-                </>
-              ) : (
-                <>
-                  <Detail
-                    label="Owner"
-                    value={referencedName(identity.ownerId, identities)}
-                  />
-                  <Detail
-                    label="Purpose"
-                    value={identity.purpose.trim() || "Not provided"}
-                  />
-                  <Detail
-                    label="Access expires"
-                    value={formatExpiry(identity.expiresAt)}
-                  />
-                </>
-              )}
-            </dl>
+            <Tabs key={identity.id} defaultValue="details">
+              <TabsList
+                aria-label="Identity information"
+                className="grid w-full grid-cols-2"
+              >
+                <TabsTrigger value="details">Details</TabsTrigger>
+                <TabsTrigger value="check">Check access</TabsTrigger>
+              </TabsList>
+              <TabsContent value="details" className="space-y-4">
+                <dl className="space-y-3 border-y py-4">
+                  <Detail label="Role" value={roleName} />
+                  {identity.kind === "internal" ? (
+                    <>
+                      <Detail
+                        label="Job title"
+                        value={identity.title.trim() || "Not provided"}
+                      />
+                      <Detail
+                        label="Department"
+                        value={
+                          identity.departmentIds.length === 0
+                            ? "Not assigned"
+                            : identity.departmentIds
+                                .map(
+                                  (departmentId) =>
+                                    departments.find(
+                                      (department) =>
+                                        department.id === departmentId,
+                                    )?.name ?? "Unavailable",
+                                )
+                                .join(", ")
+                        }
+                      />
+                      <Detail
+                        label="Groups"
+                        value={
+                          identity.groupIds.length === 0
+                            ? "No groups"
+                            : identity.groupIds
+                                .map(
+                                  (groupId) =>
+                                    groups.find((group) => group.id === groupId)
+                                      ?.name ?? "Unavailable",
+                                )
+                                .join(", ")
+                        }
+                      />
+                      <Detail
+                        label="Access expires"
+                        value={formatExpiry(identity.expiresAt)}
+                      />
+                    </>
+                  ) : identity.kind === "guest" ? (
+                    <>
+                      <Detail
+                        label="Sponsor"
+                        value={referencedName(identity.sponsorId, identities)}
+                      />
+                      <Detail
+                        label="Access expires"
+                        value={formatExpiry(identity.expiresAt)}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <Detail
+                        label="Owner"
+                        value={referencedName(identity.ownerId, identities)}
+                      />
+                      <Detail
+                        label="Purpose"
+                        value={identity.purpose.trim() || "Not provided"}
+                      />
+                      <Detail
+                        label="Access expires"
+                        value={formatExpiry(identity.expiresAt)}
+                      />
+                    </>
+                  )}
+                </dl>
 
-            <section className="space-y-2" aria-labelledby="identity-about">
-              <h3 id="identity-about" className="font-semibold">
-                About this identity
-              </h3>
-              <p className="text-muted-foreground text-sm">{description}</p>
-            </section>
+                <section className="space-y-2" aria-labelledby="identity-about">
+                  <h3 id="identity-about" className="font-semibold">
+                    About this identity
+                  </h3>
+                  <p className="text-muted-foreground text-sm">{description}</p>
+                </section>
 
-            {identity.kind === "guest" && status === "pending" ? (
-              <Alert variant="warning">
-                <p className="font-medium">Invitation pending</p>
-                <p className="mt-1 text-sm">
-                  This guest has not accepted their invitation.
-                </p>
-              </Alert>
-            ) : null}
-
+                {identity.kind === "guest" && status === "pending" ? (
+                  <Alert variant="warning">
+                    <p className="font-medium">Invitation pending</p>
+                    <p className="mt-1 text-sm">
+                      This guest has not accepted their invitation.
+                    </p>
+                  </Alert>
+                ) : null}
+              </TabsContent>
+              <TabsContent value="check">
+                <IdentityAccessCheck
+                  key={identity.id}
+                  controller={controller}
+                  identityId={identity.id}
+                />
+              </TabsContent>
+            </Tabs>
             <DialogFooter className="mt-2 flex-col-reverse sm:flex-row sm:justify-between">
               <DialogClose
                 render={

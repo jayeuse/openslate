@@ -623,7 +623,9 @@ test("identity previews show current kind-specific details without making change
   await expect(preview.getByText("Active", { exact: true })).toBeVisible();
   await expect(preview.getByText("admin", { exact: true })).toBeVisible();
   await expect(preview.getByText("No expiry", { exact: true })).toBeVisible();
-  await preview.getByRole("button", { name: "Close", exact: true }).click();
+  await preview
+    .getByRole("button", { name: "Close identity details", exact: true })
+    .click();
   await expect(preview).toBeHidden();
 
   await pageUnderTest
@@ -634,14 +636,18 @@ test("identity previews show current kind-specific details without making change
   await expect(
     preview.getByText("Access expires", { exact: true }),
   ).toBeVisible();
-  await preview.getByRole("button", { name: "Close", exact: true }).click();
+  await preview
+    .getByRole("button", { name: "Close identity details", exact: true })
+    .click();
 
   await pageUnderTest
     .getByRole("button", { name: "View details for Taylor Brooks" })
     .click();
   await expect(preview.getByText("Unavailable", { exact: true })).toBeVisible();
   await expect(preview.getByText("Sponsor", { exact: true })).toBeVisible();
-  await preview.getByRole("button", { name: "Close", exact: true }).click();
+  await preview
+    .getByRole("button", { name: "Close identity details", exact: true })
+    .click();
 
   await pageUnderTest
     .getByRole("button", { name: "View details for Weekly summary sync" })
@@ -748,10 +754,8 @@ test("Access rule drafts pause security navigation and resume only after discard
 
 async function openDirtyDefaults(pageUnderTest: Page) {
   await mockAccessApi(pageUnderTest);
-  await pageUnderTest.goto("/access?view=reviews");
-  await pageUnderTest
-    .getByRole("button", { name: "Configure defaults" })
-    .click();
+  await pageUnderTest.goto("/access?view=overview");
+  await pageUnderTest.getByRole("button", { name: "Edit defaults" }).click();
   await pageUnderTest.getByLabel("Invitation expiry days").fill("21");
 }
 
@@ -821,7 +825,7 @@ test("Cancel asks before discarding a dirty Access defaults draft", async ({
   await pageUnderTest.getByRole("button", { name: "Cancel" }).click();
   await pageUnderTest.getByRole("button", { name: "Discard changes" }).click();
   await expect(
-    pageUnderTest.getByRole("button", { name: "Configure defaults" }),
+    pageUnderTest.getByRole("button", { name: "Edit defaults" }),
   ).toBeVisible();
 });
 
@@ -861,9 +865,7 @@ test("an accepted reload restores unsaved Access defaults without saving", async
   await pageUnderTest.getByRole("button", { name: "Cancel" }).click();
   await pageUnderTest.getByRole("button", { name: "Discard changes" }).click();
   await pageUnderTest.reload();
-  await pageUnderTest
-    .getByRole("button", { name: "Configure defaults" })
-    .click();
+  await pageUnderTest.getByRole("button", { name: "Edit defaults" }).click();
   await expect(pageUnderTest.getByLabel("Invitation expiry days")).toHaveValue(
     "14",
   );
@@ -1236,10 +1238,8 @@ test("saved defaults cannot replay after reload when draft removal fails", async
     };
   });
 
-  await pageUnderTest.goto("/access?view=reviews");
-  await pageUnderTest
-    .getByRole("button", { name: "Configure defaults" })
-    .click();
+  await pageUnderTest.goto("/access?view=overview");
+  await pageUnderTest.getByRole("button", { name: "Edit defaults" }).click();
   await pageUnderTest.getByLabel("Invitation expiry days").fill("21");
   await pageUnderTest.getByRole("button", { name: "Save defaults" }).click();
   await expect(
@@ -1261,9 +1261,7 @@ test("saved defaults cannot replay after reload when draft removal fails", async
   await expect(
     pageUnderTest.getByRole("dialog", { name: "Access defaults" }),
   ).not.toBeVisible();
-  await pageUnderTest
-    .getByRole("button", { name: "Configure defaults" })
-    .click();
+  await pageUnderTest.getByRole("button", { name: "Edit defaults" }).click();
   await expect(pageUnderTest.getByLabel("Invitation expiry days")).toHaveValue(
     "21",
   );
@@ -1609,10 +1607,8 @@ test("a restored defaults draft cannot save after its selected group is deleted"
 }) => {
   let groupExists = true;
   await mockAccessApi(pageUnderTest, () => groupExists);
-  await pageUnderTest.goto("/access?view=reviews");
-  await pageUnderTest
-    .getByRole("button", { name: "Configure defaults" })
-    .click();
+  await pageUnderTest.goto("/access?view=overview");
+  await pageUnderTest.getByRole("button", { name: "Edit defaults" }).click();
   await pageUnderTest.getByLabel("Invitation expiry days").fill("21");
   groupExists = false;
   pageUnderTest.once("dialog", (dialog) => dialog.accept());
@@ -2101,39 +2097,44 @@ test("browser Back and Forward restore an unsaved group editor without submittin
   await discardRestoredDraft(pageUnderTest, restored);
 });
 
-test("browser Back and Forward restore unsaved Access defaults without submitting", async ({
+test("workspace defaults are editable on Overview and legacy views route to their homes", async ({
   page: pageUnderTest,
 }) => {
   await mockAccessApi(pageUnderTest);
   const mutations = trackAccessMutations(pageUnderTest);
   await pageUnderTest.goto("/access?view=overview");
-  await pageUnderTest
-    .getByRole("link", { name: "Access reviews", exact: true })
-    .click();
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=reviews$/);
-
-  await pageUnderTest
-    .getByRole("button", { name: "Configure defaults" })
-    .click();
+  await expect(
+    pageUnderTest.getByRole("heading", { name: "Access overview" }),
+  ).toBeVisible();
+  const editDefaults = pageUnderTest.getByRole("button", {
+    name: "Edit defaults",
+  });
+  await expect(editDefaults).toBeVisible();
+  await editDefaults.click();
   const editor = pageUnderTest.getByRole("dialog", {
     name: "Access defaults",
   });
-  await editor.getByLabel("Invitation expiry days").fill("21");
-
-  await pageUnderTest.goBack();
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=overview$/);
   await expect(editor).toBeVisible();
-  await expect(editor.getByLabel("Invitation expiry days")).toHaveValue("21");
-  await pageUnderTest.goForward();
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=reviews$/);
+  await expect(editor.getByLabel("Invitation expiry days")).toHaveValue("14");
+  await editor.getByRole("button", { name: "Cancel" }).click();
+  await expect(editor).toBeHidden();
 
-  const restored = pageUnderTest.getByRole("dialog", {
-    name: "Access defaults",
-  });
-  await expect(restored).toBeVisible();
-  await expect(restored.getByLabel("Invitation expiry days")).toHaveValue("21");
+  await pageUnderTest.goto("/access?view=simulator");
+  await expect(
+    pageUnderTest.getByRole("heading", { name: "People & services" }),
+  ).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Edit defaults" }),
+  ).toHaveCount(0);
+
+  await pageUnderTest.goto("/access?view=reviews");
+  await expect(
+    pageUnderTest.getByRole("heading", { name: "Access overview" }),
+  ).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Edit defaults" }),
+  ).toBeVisible();
   expect(mutations).toEqual([]);
-  await discardRestoredDraft(pageUnderTest, restored);
 });
 
 test("role directory keeps its controls clear and compares baselines across pages", async ({
@@ -2270,7 +2271,7 @@ test("role directory keeps its controls clear and compares baselines across page
   await pageUnderTest
     .getByRole("navigation", { name: "Role pages" })
     .getByRole("button", { name: "Go to previous page" })
-    .click();
+    .press("Enter");
   await expect(
     pageUnderTest.getByRole("button", { name: "More actions for admin" }),
   ).toBeVisible();
@@ -2289,31 +2290,174 @@ test("role directory keeps its controls clear and compares baselines across page
   ).toBe(true);
 });
 
-test("unavailable review and policy launchers stay absent while defaults remain usable", async ({
+test("Identity details checks the selected person and service without stale results or writes", async ({
   page: pageUnderTest,
 }) => {
-  await mockAccessApi(pageUnderTest);
-  await pageUnderTest.goto("/access?view=reviews");
-  await expect(
-    pageUnderTest.getByRole("heading", { name: "Access reviews" }),
-  ).toBeVisible();
-  await expect(
-    pageUnderTest.getByText("Formal access reviews are not available yet."),
-  ).toBeVisible();
-  await expect(
-    pageUnderTest.getByRole("button", {
-      name: /Start access review|Review export|Import policy|View policy history/,
-    }),
-  ).toHaveCount(0);
-
-  const configure = pageUnderTest.getByRole("button", {
-    name: "Configure defaults",
+  await mockAccessApi(
+    pageUnderTest,
+    undefined,
+    undefined,
+    () => [directoryUsers[0]!, directoryUsers[1]!],
+    undefined,
+    undefined,
+    () => directoryServices,
+  );
+  const writes: string[] = [];
+  const submittedChecks: unknown[] = [];
+  pageUnderTest.on("request", (request) => {
+    const { pathname } = new URL(request.url());
+    if (
+      request.method() !== "GET" &&
+      pathname !== "/api/access/checks" &&
+      (pathname === "/api/users" ||
+        pathname === "/api/roles" ||
+        pathname.startsWith("/api/access/"))
+    ) {
+      writes.push(`${request.method()} ${pathname}`);
+    }
   });
-  await configure.focus();
-  await pageUnderTest.keyboard.press("Enter");
+  await pageUnderTest.route("**/api/access/checks", async (route) => {
+    const submittedCheck = route.request().postDataJSON() as {
+      principal_kind: "user" | "service";
+      principal_id: string;
+      permission_id: string;
+      scope_kind: string;
+    };
+    submittedChecks.push(submittedCheck);
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        principal_kind: submittedCheck.principal_kind,
+        principal_id: submittedCheck.principal_id,
+        permission_id: submittedCheck.permission_id,
+        scope_kind: submittedCheck.scope_kind,
+        policy_decision:
+          submittedCheck.principal_kind === "service" ||
+          submittedCheck.principal_id === directoryUsers[0]!.id
+            ? "allow"
+            : "deny",
+        reason:
+          submittedCheck.principal_kind === "user" &&
+          submittedCheck.principal_id === directoryUsers[1]!.id
+            ? "default_deny"
+            : "rule_allow",
+        source_rule_id:
+          submittedCheck.principal_kind === "user" &&
+          submittedCheck.principal_id === directoryUsers[1]!.id
+            ? null
+            : "00000000-0000-4000-8000-000000000012",
+        policy_revision: 3,
+        checked_at: timestamp,
+        runtime_supported: submittedCheck.principal_kind !== "service",
+      }),
+    });
+  });
+
+  await pageUnderTest.goto("/access?view=identities");
+
+  const preview = pageUnderTest.getByRole("dialog", {
+    name: "Identity details",
+    exact: true,
+  });
+  const runCheck = async () => {
+    await expect(
+      preview.getByRole("tab", { name: "Details", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      preview.getByRole("tab", { name: "Check access", exact: true }),
+    ).toBeVisible();
+    await preview
+      .getByRole("tab", { name: "Check access", exact: true })
+      .click();
+    await expect(
+      preview.getByRole("heading", {
+        name: /^(Allowed|Denied|Sign-in unavailable)$/,
+      }),
+    ).toHaveCount(0);
+    await expect(preview.getByLabel("Identity", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(preview.getByLabel("Resource", { exact: true })).toBeVisible();
+    await expect(preview.getByLabel("Action", { exact: true })).toBeVisible();
+    await preview.getByRole("button", { name: "Check access" }).click();
+  };
+
+  await pageUnderTest
+    .getByRole("button", { name: "View details for Alex Ops" })
+    .click();
   await expect(
-    pageUnderTest.getByRole("dialog", { name: "Access defaults" }),
+    preview.getByRole("heading", { name: "Alex Ops", exact: true }),
   ).toBeVisible();
-  await pageUnderTest.keyboard.press("Escape");
-  await expect(configure).toBeFocused();
+  await runCheck();
+  await expect(
+    preview.getByRole("heading", { name: "Allowed", exact: true }),
+  ).toBeVisible();
+  await expect(
+    preview.getByText("An access rule allows this action.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(preview.getByText("Access rule", { exact: true })).toBeVisible();
+  await expect(
+    preview.getByRole("heading", { name: "Check context", exact: true }),
+  ).toBeVisible();
+  await expect(
+    preview.getByText("Technical details", { exact: true }),
+  ).toBeVisible();
+  expect(submittedChecks[0]).toEqual({
+    principal_kind: "user",
+    principal_id: directoryUsers[0]!.id,
+    permission_id: "records.read",
+    scope_kind: "workspace",
+  });
+
+  await preview
+    .getByRole("button", { name: "Close identity details", exact: true })
+    .click();
+  await pageUnderTest
+    .getByRole("button", { name: "View details for Jamie Chen" })
+    .click();
+  await expect(
+    preview.getByRole("heading", { name: "Jamie Chen", exact: true }),
+  ).toBeVisible();
+  await runCheck();
+  await expect(
+    preview.getByRole("heading", { name: "Allowed", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    preview.getByRole("heading", { name: "Denied", exact: true }),
+  ).toBeVisible();
+  expect(submittedChecks[1]).toEqual({
+    principal_kind: "user",
+    principal_id: directoryUsers[1]!.id,
+    permission_id: "records.read",
+    scope_kind: "workspace",
+  });
+
+  await preview
+    .getByRole("button", { name: "Close identity details", exact: true })
+    .click();
+  await pageUnderTest
+    .getByRole("button", { name: "View details for Weekly summary sync" })
+    .click();
+  await expect(
+    preview.getByRole("heading", { name: "Weekly summary sync", exact: true }),
+  ).toBeVisible();
+  await runCheck();
+  await expect(
+    preview.getByRole("heading", { name: "Denied", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    preview.getByText("Policy permits, but service sign-in is unavailable.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(submittedChecks[2]).toEqual({
+    principal_kind: "service",
+    principal_id: directoryServices[0]!.id,
+    permission_id: "records.read",
+    scope_kind: "workspace",
+  });
+
+  expect(writes).toEqual([]);
 });

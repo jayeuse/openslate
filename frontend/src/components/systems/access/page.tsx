@@ -38,10 +38,8 @@ import {
   type AccessOverviewDestination,
 } from "./components/overview-view";
 import type { AccessSubjectRef } from "./domain/policy";
-import { ReviewsView } from "./components/reviews-view";
 import { RolesView } from "./components/roles-view";
 import { RulesView } from "./components/rules-view";
-import { SimulatorView } from "./components/simulator-view";
 
 const accessViews = [
   { id: "overview", label: "Overview" },
@@ -49,8 +47,6 @@ const accessViews = [
   { id: "roles", label: "Roles" },
   { id: "groups", label: "Groups" },
   { id: "rules", label: "Detailed rules" },
-  { id: "simulator", label: "Check access" },
-  { id: "reviews", label: "Access reviews" },
 ] as const;
 
 const accessPanelClass = "min-h-0 flex-1 overflow-y-auto overscroll-contain";
@@ -141,11 +137,16 @@ function AccessControlCenter() {
       ...controller.state.identities,
       ...controller.state.deletedIdentities.map((item) => item.identity),
     ].some((identity) => identity.id === requestedUser);
-  const activeView: AccessView = isAccessView(requestedView)
-    ? requestedView
-    : hasUserDeepLink
+  const activeView: AccessView =
+    requestedView === "simulator"
       ? "identities"
-      : "overview";
+      : requestedView === "reviews"
+        ? "overview"
+        : isAccessView(requestedView)
+          ? requestedView
+          : hasUserDeepLink
+            ? "identities"
+            : "overview";
 
   useEffect(() => {
     if (!readReady || requestedUser === null || hasUserDeepLink) return;
@@ -348,13 +349,7 @@ function AccessControlCenter() {
         </Alert>
       ) : null}
 
-      <div
-        className={
-          activeView === "reviews"
-            ? `${accessPanelClass} grid gap-4 xl:grid-cols-2 xl:items-start`
-            : accessPanelClass
-        }
-      >
+      <div className={accessPanelClass}>
         {activeView === "overview" ? (
           <OverviewView
             controller={controller}
@@ -382,29 +377,13 @@ function AccessControlCenter() {
             initialSubject={requestedSubject}
           />
         ) : null}
-        {activeView === "simulator" ? (
-          <SimulatorView controller={controller} />
-        ) : null}
-        {activeView === "reviews" ? (
-          <>
-            <ReviewsView controller={controller} />
-            <GovernanceDialogs
-              controller={controller}
-              dialog={governanceDialog}
-              onDialogChange={setGovernanceDialog}
-            />
-          </>
-        ) : null}
-      </div>
-
-      {activeView !== "reviews" && (
         <GovernanceDialogs
           controller={controller}
           dialog={governanceDialog}
           onDialogChange={setGovernanceDialog}
           showLauncher={false}
         />
-      )}
+      </div>
 
       <AlertDialog
         open={pendingNavigation !== null}
