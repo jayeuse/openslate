@@ -117,16 +117,16 @@ export function IdentityPreview({
       : identity?.kind === "guest"
         ? "A sponsored identity with time-limited access."
         : identity?.kind === "service"
-          ? "Service metadata for an integration or automation. No credentials are shown."
-          : "The selected identity is no longer available in the directory.";
+          ? "Service details for an integration or automation. No credentials are shown."
+          : "This person or service is no longer in the directory.";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl space-y-5" finalFocus={finalFocus}>
         <DialogHeader className="pr-10">
-          <DialogTitle>Identity details</DialogTitle>
+          <DialogTitle>Access details</DialogTitle>
           <DialogDescription>
-            This is a read-only preview. Choose Manage identity to edit.
+            This is a read-only preview. Choose Edit access to make changes.
           </DialogDescription>
         </DialogHeader>
         <DialogClose
@@ -136,7 +136,7 @@ export function IdentityPreview({
               variant="ghost"
               size="icon"
               className="absolute top-3 right-3 min-h-11 min-w-11"
-              aria-label="Close identity details"
+              aria-label="Close access details"
             />
           }
         >
@@ -248,7 +248,7 @@ export function IdentityPreview({
 
                 <section className="space-y-2" aria-labelledby="identity-about">
                   <h3 id="identity-about" className="font-semibold">
-                    About this identity
+                    About
                   </h3>
                   <p className="text-muted-foreground text-sm">{description}</p>
                 </section>
@@ -287,7 +287,7 @@ export function IdentityPreview({
                 className="min-h-11"
                 onClick={() => onManage(identity.id)}
               >
-                <Pencil aria-hidden="true" /> Manage identity
+                <Pencil aria-hidden="true" /> Edit access
               </Button>
             </DialogFooter>
           </>

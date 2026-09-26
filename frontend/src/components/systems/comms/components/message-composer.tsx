@@ -393,7 +393,7 @@ export function MessageComposer({
               ↗
             </span>
           </InputGroupButton>
-          <span className="text-muted-foreground ml-auto text-[10px]">
+          <span className="text-muted-foreground ml-auto text-xs">
             {preferences.sendShortcut === "ctrl-enter"
               ? "Ctrl + Enter to send"
               : "Enter to send"}

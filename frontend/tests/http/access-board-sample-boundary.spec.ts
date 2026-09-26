@@ -145,7 +145,7 @@ test("Access explains where its detailed rules currently apply", async ({
     .getByRole("button", { name: "View details for Policy check person" })
     .click();
   const preview = page.getByRole("dialog", {
-    name: "Identity details",
+    name: "Access details",
     exact: true,
   });
   await preview.getByRole("tab", { name: "Check access", exact: true }).click();

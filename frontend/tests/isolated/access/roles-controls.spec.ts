@@ -39,6 +39,6 @@ test("role template actions preserve recommendation and blank defaults", () => {
   expect(createFallback).toContain('id: "draft:new-role"');
   expect(createFallback).toContain("grants: []");
   expect(source).toContain("createRole: startCreateRole");
-  expect(source).toContain('role.name.toLowerCase() === "admin"');
-  expect(source).toContain('role.name.toLowerCase() === "member"');
+  expect(source).toContain('role.system === "admin"');
+  expect(source).toContain('role.system === "member"');
 });

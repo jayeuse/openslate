@@ -593,13 +593,15 @@ test("maps authoritative pending invitations without a send timestamp as revoked
   expect(result.snapshot.roles).toEqual([
     {
       id: ids.roleAdmin,
-      name: "admin",
+      name: "Administrator",
+      system: "admin",
       builtin: true,
       grants: ["records.read", "departments.write"],
     },
     {
       id: ids.roleMember,
-      name: "member",
+      name: "Member",
+      system: "member",
       description: "Standard staff",
       builtin: true,
       grants: ["records.read"],

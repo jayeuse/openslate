@@ -27,7 +27,7 @@ test("unavailable Access reviews explain the current state without dead-end acti
     "Formal access reviews are not available yet.",
   );
   expect(unavailableBranch).toMatch(
-    /People &amp; services, Roles, Groups, and\s+Detailed rules/,
+    /People &amp; services, Roles, Groups, and\s+Custom rules/,
   );
   expect(unavailableBranch).not.toContain("Start access review");
   expect(unavailableBranch).not.toContain("Create access review");

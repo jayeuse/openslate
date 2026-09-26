@@ -595,7 +595,7 @@ function AppHeaderActions({
 function WorkspaceMark() {
   return (
     <span
-      className="bg-foreground text-background grid size-8 shrink-0 place-items-center rounded-md text-[10px] font-bold"
+      className="bg-foreground text-background grid size-8 shrink-0 place-items-center rounded-md text-xs font-bold"
       aria-hidden="true"
     >
       OS

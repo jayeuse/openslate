@@ -36,6 +36,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SampleDataNote } from "@/components/sample-data-note";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import ManageAudit from "./components/audit";
 import {
@@ -154,6 +155,14 @@ function ManageContent() {
   const optionsOpener = useRef<HTMLButtonElement | null>(null);
   const recoveryView = tab === "Security" || tab === "Backup";
   const pageTitle = recoveryView ? "Security & recovery" : tab;
+  const sampleSubject =
+    tab === "Audit"
+      ? "Audit entries"
+      : tab === "Updates & licensing"
+        ? "Versions and licenses"
+        : recoveryView
+          ? "Sessions and snapshots"
+          : "Settings";
   const pageDescription =
     tab === "Organization"
       ? "Make this workspace feel like your organization."
@@ -462,6 +471,9 @@ function ManageContent() {
         <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
           {pageDescription}
         </p>
+        <SampleDataNote className="mt-3">
+          {sampleSubject} here are examples.
+        </SampleDataNote>
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {actions}

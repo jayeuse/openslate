@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  DEFAULT_TABLE_PAGE_SIZE,
+  TABLE_PAGE_SIZE_OPTIONS,
+} from "@/components/ui/table-pagination";
+import {
   ChevronDown,
   Copy,
   Ellipsis,
@@ -128,7 +132,7 @@ function directoryEntries(controller: AccessController): DirectoryEntry[] {
       key: `role:${role.id}`,
       subject: { kind: "role", id: role.id },
       name: role.name,
-      description: role.description ?? "Reusable baseline permissions.",
+      description: role.description ?? "Reusable standard permissions.",
       members: identities.filter((identity) => identity.roleId === role.id),
       ruleCount: ruleCount({ kind: "role", id: role.id }),
     })),
@@ -220,7 +224,7 @@ function PermissionsDirectory({
   const [roleType, setRoleType] = useState<"all" | "builtin" | "custom">("all");
   const [membership, setMembership] = useState<MembershipFilter>("all");
   const [pageIndex, setPageIndex] = useState(0);
-  const [pageSize, setPageSize] = useState(5);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_TABLE_PAGE_SIZE);
   const [expanded, setExpanded] = useState(initialOpen);
   const [chartOpen, setChartOpen] = useState(false);
   const [pendingTransition, setPendingTransition] = useState<
@@ -442,7 +446,7 @@ function PermissionsDirectory({
         <aside className="min-w-0 space-y-5 xl:border-r xl:pr-5">
           <div className="flex items-center justify-between gap-2">
             <h3 className="font-semibold">
-              {entry?.kind === "identity" ? "Identity" : "Members"}
+              {entry?.kind === "identity" ? "Person or service" : "Members"}
               {entry && entry.kind !== "identity"
                 ? ` (${entry.members.length})`
                 : ""}
@@ -510,7 +514,7 @@ function PermissionsDirectory({
               ) : null}
               {entry.kind === "role" ? (
                 <div className="space-y-3 border-t pt-4">
-                  <h4 className="text-sm font-medium">Baseline permissions</h4>
+                  <h4 className="text-sm font-medium">Standard permissions</h4>
                   <p className="text-muted-foreground text-sm">
                     {entry.role.grants.length}{" "}
                     {entry.role.grants.length === 1 ? "grant" : "grants"} from
@@ -527,8 +531,8 @@ function PermissionsDirectory({
                   </Button>
                   <p className="text-muted-foreground text-xs leading-relaxed">
                     {entry.role.builtin
-                      ? "Built-in roles are protected. Duplicate this role to create an editable baseline."
-                      : "Baseline grants belong to the role. Workspace rules can refine access."}
+                      ? "Built-in roles are protected. Duplicate this role to create an editable copy."
+                      : "Standard permissions belong to the role. Custom rules can change access."}
                   </p>
                 </div>
               ) : null}
@@ -583,8 +587,10 @@ function PermissionsDirectory({
         <div className="space-y-1 text-sm">
           {row.original.kind === "role" ? (
             <p>
-              {row.original.role.grants.length} baseline{" "}
-              {row.original.role.grants.length === 1 ? "grant" : "grants"}
+              {row.original.role.grants.length} standard{" "}
+              {row.original.role.grants.length === 1
+                ? "permission"
+                : "permissions"}
             </p>
           ) : null}
           <p className="text-muted-foreground">
@@ -685,7 +691,7 @@ function PermissionsDirectory({
             { value: "name-desc", label: "Name (Z–A)" },
             { value: "members", label: "Most members" },
             { value: "rules", label: "Most rules" },
-            { value: "grants", label: "Most baseline grants" },
+            { value: "grants", label: "Most standard permissions" },
           ]}
           onSortChange={(value) => filter(() => setSort(value))}
           activeFilterCount={
@@ -822,7 +828,7 @@ function PermissionsDirectory({
                 filter(() => setPageSize(value));
               }}
             >
-              {[5, 10, 25, 50].map((size) => (
+              {TABLE_PAGE_SIZE_OPTIONS.map((size) => (
                 <NativeSelectOption key={size} value={size}>
                   {size}
                 </NativeSelectOption>

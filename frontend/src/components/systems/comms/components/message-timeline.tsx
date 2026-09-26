@@ -142,7 +142,7 @@ export function MessageTimeline({
             className="[content-visibility:visible]"
           >
             {newDay && (
-              <div className="text-muted-foreground my-5 flex items-center gap-3 px-3 text-[10px] font-medium">
+              <div className="text-muted-foreground my-5 flex items-center gap-3 px-3 text-xs font-medium">
                 <Separator className="flex-1" />
                 {message.created
                   ? new Date(message.created).toLocaleDateString([], {
@@ -240,7 +240,7 @@ export function MessageTimeline({
                       {authorName}
                     </strong>
                     {preferences.timestamps !== "none" && (
-                      <span className="text-muted-foreground shrink-0 text-[10px]">
+                      <span className="text-muted-foreground shrink-0 text-xs">
                         {message.created
                           ? new Date(message.created)[
                               preferences.timestamps === "full"
@@ -439,7 +439,7 @@ export function MessageTimeline({
                     >
                       <Card className="hover:bg-muted w-full">
                         <CardContent className="p-3">
-                          <span className="text-muted-foreground mb-1 block text-[10px] font-semibold tracking-wider uppercase">
+                          <span className="text-muted-foreground mb-1 block text-xs font-semibold tracking-wider uppercase">
                             OpenView · linked record
                           </span>
                           <span className="underline underline-offset-4">

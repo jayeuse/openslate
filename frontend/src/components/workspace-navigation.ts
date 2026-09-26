@@ -41,9 +41,9 @@ const workspaceNavigationDefinitions = [
     queryKey: "section",
     defaultItem: "overview",
     items: [
+      { id: "overview", label: "Overview" },
       { id: "announcements", label: "Announcements" },
       { id: "calendar", label: "Calendar" },
-      { id: "overview", label: "Overview" },
     ],
   },
   {
@@ -228,6 +228,33 @@ export function getWorkspaceNavigation(
       items,
     };
   });
+}
+
+export type WorkspaceLocation = {
+  workspace: { label: string; href: string };
+  section: string;
+};
+
+/** The workspace and open section a URL shows, for the breadcrumb. */
+export function getWorkspaceLocation(
+  pathname: string,
+  searchParams: URLSearchParams,
+  hash = "",
+): WorkspaceLocation | null {
+  const definition = workspaceNavigationDefinitions.find(
+    (candidate) => candidate.pathname === pathname,
+  );
+  if (!definition) return null;
+  const sectionId = sectionFor(definition, searchParams, hash);
+  const group = getWorkspaceNavigation(pathname, searchParams).find(
+    (candidate) => candidate.id === definition.id,
+  );
+  const section = definition.items.find((item) => item.id === sectionId);
+  if (!group || !section) return null;
+  return {
+    workspace: { label: group.label, href: group.href },
+    section: section.label,
+  };
 }
 
 export function isWorkspaceNavigationItemActive(

@@ -3285,7 +3285,7 @@ function RecordLayout({
                       />
                       {summaryField ? (
                         <div className="min-w-0">
-                          <p className="text-muted-foreground text-[0.6875rem] font-semibold tracking-wide uppercase">
+                          <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
                             {summaryField.label}
                           </p>
                           <div className="mt-1 text-sm font-medium break-words">
@@ -3309,7 +3309,7 @@ function RecordLayout({
                       {columns.map((field) =>
                         field.id === summaryField.id ? null : (
                           <div key={field.id} className="min-w-0">
-                            <dt className="text-muted-foreground text-[0.6875rem] font-semibold tracking-wide uppercase">
+                            <dt className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
                               {field.label}
                             </dt>
                             <dd className="mt-1 text-sm break-words">
@@ -3337,7 +3337,7 @@ function RecordLayout({
                   <TableHead
                     key={field.id}
                     className={cn(
-                      "h-11 px-4 text-[0.6875rem] font-semibold tracking-wide uppercase",
+                      "h-11 px-4 text-xs font-semibold tracking-wide uppercase",
                       layout.pinnedColumns.includes(field.id)
                         ? "bg-muted sticky left-0 z-10"
                         : undefined,
@@ -3475,7 +3475,7 @@ function RecordLayout({
                       : `${groupField?.label ?? "Records"} group`}
                   </span>
                   {attentionCount ? (
-                    <Badge variant="warning" className="text-[0.6875rem]">
+                    <Badge variant="warning" className="text-xs">
                       {attentionCount} need attention
                     </Badge>
                   ) : (
@@ -3509,7 +3509,7 @@ function RecordLayout({
                               <Badge
                                 variant="outline"
                                 className={cn(
-                                  "shrink-0 text-[0.6875rem]",
+                                  "shrink-0 text-xs",
                                   priorityTone.surface,
                                   priorityTone.border,
                                 )}
@@ -3609,7 +3609,7 @@ function RecordLayout({
                         {formatCalendarDate(date, true)}
                       </span>
                       {date === OPENVIEW_SAMPLE_SNAPSHOT_DATE ? (
-                        <Badge variant="secondary" className="text-[0.6875rem]">
+                        <Badge variant="secondary" className="text-xs">
                           Reference date
                         </Badge>
                       ) : null}
@@ -3725,7 +3725,7 @@ function RecordLayout({
                         (day) => (
                           <div
                             key={day}
-                            className="text-muted-foreground px-2 py-2 text-center text-[0.6875rem] font-semibold tracking-wide uppercase"
+                            className="text-muted-foreground px-2 py-2 text-center text-xs font-semibold tracking-wide uppercase"
                           >
                             {day}
                           </div>
@@ -3763,7 +3763,7 @@ function RecordLayout({
                               {isSampleDate ? (
                                 <Badge
                                   variant="secondary"
-                                  className="px-1.5 py-0 text-[0.625rem]"
+                                  className="px-1.5 py-0 text-xs"
                                 >
                                   Reference date
                                 </Badge>
@@ -3881,7 +3881,7 @@ function RecordLayout({
                     aria-hidden="true"
                   />
                   <span className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground text-[0.6875rem] font-semibold tracking-wide uppercase">
+                    <span className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
                       {facts.status || "Unspecified"}
                     </span>
                     <span className="text-xs font-medium tabular-nums">
@@ -3911,7 +3911,7 @@ function RecordLayout({
                   <Badge
                     variant="outline"
                     className={cn(
-                      "shrink-0 text-[0.6875rem]",
+                      "shrink-0 text-xs",
                       priorityTone.surface,
                       priorityTone.border,
                     )}

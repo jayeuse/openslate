@@ -157,7 +157,12 @@ export function SettingActions({
       >
         Discard changes
       </Button>
-      <Button type="button" className="min-h-11" onClick={onSave}>
+      <Button
+        type="button"
+        className="min-h-11"
+        onClick={onSave}
+        disabled={!dirty}
+      >
         Save settings
       </Button>
     </CardFooter>

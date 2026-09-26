@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 
 const workflow = [
-  ["01", "Provision", "Create the first administrator outside the browser."],
+  ["01", "Set up", "Create the first administrator outside the browser."],
   ["02", "Model", "Shape departments, modules, and fields around your team."],
   ["03", "Operate", "Work with validated records in one focused workspace."],
 ] as const;
@@ -62,19 +62,15 @@ export default function Home() {
               access
             </span>
             <span className="inline-flex items-center gap-2">
-              <Database size={15} className="text-primary" /> PostgreSQL-backed
+              <Database size={15} className="text-primary" /> Your records stay
+              on your server
             </span>
           </div>
         </div>
 
         <div className="border-border bg-card rounded-[calc(var(--radius)*1.5)] border p-5 sm:p-7">
           <div className="border-border flex items-center justify-between border-b pb-5">
-            <div>
-              <p className="text-muted-foreground text-xs font-semibold tracking-[0.16em] uppercase">
-                Launch sequence
-              </p>
-              <h2 className="mt-2 text-xl font-semibold">A guided start</h2>
-            </div>
+            <h2 className="text-xl font-semibold">A guided start</h2>
             <PanelsTopLeft className="text-primary" aria-hidden="true" />
           </div>
           <div className="divide-border divide-y">
@@ -100,8 +96,8 @@ export default function Home() {
         </div>
       </section>
       <footer className="border-border text-muted-foreground mx-auto flex max-w-7xl flex-col gap-2 border-t px-6 py-6 text-xs sm:flex-row sm:justify-between lg:px-10">
-        <span>OpenSlate Operations</span>
-        <span>Next.js · FastAPI · PostgreSQL</span>
+        <span>OpenSlate</span>
+        <span>Self-hosted by default</span>
       </footer>
     </main>
   );

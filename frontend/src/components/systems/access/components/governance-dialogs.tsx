@@ -536,7 +536,7 @@ export function GovernanceDialogs({
                   (role) => role.id === state.defaults.defaultRoleId,
                 )?.name ?? "No default role"}{" "}
                 role · {state.defaults.invitationExpiryDays}-day invitations ·
-                Default deny
+                Anything not listed: no access
               </p>
               <p className="text-muted-foreground mt-1 text-xs">
                 Defaults apply to new identities. Existing access stays
@@ -605,7 +605,7 @@ export function GovernanceDialogs({
                   }
                 >
                   {state.roles
-                    .filter((role) => role.name !== "admin")
+                    .filter((role) => role.system !== "admin")
                     .map((role) => (
                       <NativeSelectOption key={role.id} value={role.id}>
                         {role.name}
@@ -668,7 +668,7 @@ export function GovernanceDialogs({
                 />
               </Field>
               <div className="flex flex-wrap content-end gap-2">
-                <Badge variant="outline">Default deny · required</Badge>
+                <Badge variant="outline">Anything not listed: no access</Badge>
                 <Badge variant="outline">Guest sponsor · required</Badge>
                 <Badge variant="outline">Service owner · required</Badge>
               </div>

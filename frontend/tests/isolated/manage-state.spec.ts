@@ -276,5 +276,5 @@ test("CSV export quotes multiline text and neutralizes spreadsheet formulas", ()
   expect(csv).toContain('"\'+SUM(1,2)"');
   expect(csv).toContain('"A ""quoted"" name\nSecond line"');
   expect(csv).toContain('"\'@formula"');
-  expect(csv).toContain("Manage change");
+  expect(csv).toContain("Your change");
 });

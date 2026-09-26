@@ -32,6 +32,11 @@ import type {
   ScopeCatalogEntry,
 } from "../domain/controller-utils";
 
+// The API names built-in roles by their keys; people read these names.
+const SYSTEM_ROLE_NAMES: Readonly<Record<string, string>> = {
+  admin: "Administrator",
+  member: "Member",
+};
 export const ACCESS_PAGE_LIMIT = 100;
 export const ACCESS_PAGE_MAXIMUM = 20;
 const VERSION_READ_CONCURRENCY = 8;
@@ -403,9 +408,12 @@ export function mapAuthoritativeAccessSnapshot(
     .filter((role) => !role.is_deleted)
     .map((role) => ({
       id: role.id,
-      name: role.role,
+      name: SYSTEM_ROLE_NAMES[role.role] ?? role.role,
+      ...(role.role in SYSTEM_ROLE_NAMES
+        ? { system: role.role as "admin" | "member" }
+        : {}),
       ...(role.description ? { description: role.description } : {}),
-      builtin: role.role === "admin" || role.role === "member",
+      builtin: role.role in SYSTEM_ROLE_NAMES,
       grants:
         role.role === "admin"
           ? resources.capabilities.map((capability) => capability.id)

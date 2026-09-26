@@ -54,8 +54,8 @@ test("Access defaults and identity editor offer only controls their save paths s
   await expect(configureDefaults).toBeFocused();
   await page.getByRole("link", { name: "People & services" }).click();
   await expect(page).toHaveURL(/\/access\?view=identities$/);
-  await page.getByRole("button", { name: "Add identity" }).click();
-  await page.getByRole("menuitem", { name: "Internal identity" }).click();
+  await page.getByRole("button", { name: "Add person or service" }).click();
+  await page.getByRole("menuitem", { name: "Internal person" }).click();
   await expect(
     page.getByText(
       "To change membership, close this editor and open Permissions.",
@@ -130,13 +130,19 @@ test("duplicating Administrator persists its ten effective data grants", async (
   await signIn(page);
   await page.goto("/access?view=permissions&type=roles");
   const administrator = page.getByRole("row").filter({
-    has: page.getByRole("button", { name: "Configure admin", exact: true }),
+    has: page.getByRole("button", {
+      name: "Configure Administrator",
+      exact: true,
+    }),
   });
   await administrator
-    .getByRole("button", { name: "More actions for admin", exact: true })
+    .getByRole("button", {
+      name: "More actions for Administrator",
+      exact: true,
+    })
     .click();
   await page.getByRole("menuitem", { name: "Duplicate", exact: true }).click();
-  await expect(page.getByText("Duplicated admin.")).toBeVisible();
+  await expect(page.getByText("Duplicated Administrator.")).toBeVisible();
 
   await page.reload();
   const persisted = await page.evaluate(async () => {
@@ -149,7 +155,7 @@ test("duplicating Administrator persists its ten effective data grants", async (
     const list = (await listResponse.json()) as {
       items: Array<{ id: string; role: string }>;
     };
-    const copy = list.items.find((role) => role.role === "admin copy");
+    const copy = list.items.find((role) => role.role === "Administrator copy");
     if (!copy) throw new Error("Duplicated admin role was not persisted");
     const response = await fetch(`/api/roles/${copy.id}`, {
       credentials: "same-origin",
@@ -162,7 +168,7 @@ test("duplicating Administrator persists its ten effective data grants", async (
       permissions: Record<string, boolean>;
     };
   });
-  expect(persisted.role).toBe("admin copy");
+  expect(persisted.role).toBe("Administrator copy");
   expect(persisted.permissions).toEqual({
     "departments.read": true,
     "departments.write": true,

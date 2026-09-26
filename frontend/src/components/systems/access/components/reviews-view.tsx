@@ -267,7 +267,7 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
           <p>Formal access reviews are not available yet.</p>
           <p>
             Manage current access in People &amp; services, Roles, Groups, and
-            Detailed rules.
+            Custom rules.
           </p>
         </Alert>
       </section>

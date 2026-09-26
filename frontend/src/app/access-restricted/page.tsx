@@ -1,5 +1,8 @@
+import type { Metadata } from "next";
 import { LockKeyhole } from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+export const metadata: Metadata = { title: "Access restricted" };
 
 export default function AccessRestrictedPage() {
   return (

@@ -710,10 +710,10 @@ function ChartTable({
       </TableCaption>
       <TableHeader className="bg-muted/65">
         <TableRow className="hover:bg-muted/65">
-          <TableHead className="px-4 text-[0.6875rem] font-semibold tracking-wide uppercase">
+          <TableHead className="px-4 text-xs font-semibold tracking-wide uppercase">
             {fieldLabel(settings.moduleId, settings.dimension)}
           </TableHead>
-          <TableHead className="px-4 text-right text-[0.6875rem] font-semibold tracking-wide uppercase">
+          <TableHead className="px-4 text-right text-xs font-semibold tracking-wide uppercase">
             {settings.aggregation === "count"
               ? "Records"
               : settings.aggregation}

@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "OpenSlate Operations",
+    default: "OpenSlate",
     template: "%s | OpenSlate",
   },
   description: "A focused workspace for departments, modules, and records.",

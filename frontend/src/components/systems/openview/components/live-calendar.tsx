@@ -664,7 +664,7 @@ export function LiveCalendar({
                               {day}
                             </p>
                             {rows[0] ? (
-                              <h4 className="text-muted-foreground mb-1 px-1 text-[0.6875rem] font-medium">
+                              <h4 className="text-muted-foreground mb-1 px-1 text-xs font-medium">
                                 {formatWindowDate(
                                   rows[0].data[dateField.id],
                                   dateField.type,
@@ -706,7 +706,7 @@ export function LiveCalendar({
                                         {title}
                                       </span>
                                       {detailFields.length ? (
-                                        <span className="text-muted-foreground mt-1 block text-left text-[0.6875rem]">
+                                        <span className="text-muted-foreground mt-1 block text-left text-xs">
                                           {detailFields
                                             .slice(0, 2)
                                             .map((field) =>
@@ -715,7 +715,7 @@ export function LiveCalendar({
                                             .join(" · ")}
                                         </span>
                                       ) : null}
-                                      <span className="text-muted-foreground mt-1 block text-left text-[0.625rem]">
+                                      <span className="text-muted-foreground mt-1 block text-left text-xs">
                                         {formatWindowDate(
                                           row.data[dateField.id],
                                           dateField.type,

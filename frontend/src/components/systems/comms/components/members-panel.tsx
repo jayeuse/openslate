@@ -62,7 +62,7 @@ export function MembersPanel({
         );
         return (
           <section key={String(offline)} className="mt-2">
-            <h4 className="text-muted-foreground mb-2 text-[10px] font-semibold tracking-wider uppercase">
+            <h4 className="text-muted-foreground mb-2 text-xs font-semibold tracking-wider uppercase">
               {offline ? "Offline" : "Online"}
               <span aria-hidden="true"> — {group.length}</span>
             </h4>
@@ -94,7 +94,7 @@ export function MembersPanel({
                     <span className="block truncate text-sm font-medium">
                       {person.name}
                     </span>
-                    <span className="text-muted-foreground block truncate text-[10px]">
+                    <span className="text-muted-foreground block truncate text-xs">
                       {roles.find((role) => role.id === person.role)?.name ??
                         "Unassigned"}{" "}
                       · {samplePresence(person.id, viewerId, viewerPresence)}

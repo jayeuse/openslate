@@ -278,7 +278,8 @@ test("duplicating Administrator copies its effective grants into a custom role",
   }));
   current.snapshot.roles.push({
     id: ids.adminRole,
-    name: "admin",
+    name: "Administrator",
+    system: "admin",
     description: "Protected administration.",
     builtin: true,
     grants: effectiveGrants,
@@ -317,10 +318,47 @@ test("duplicating Administrator copies its effective grants into a custom role",
   expect(result).toEqual({ ok: true, summary: "Role duplicated." });
   expect(created).toHaveLength(1);
   expect(created[0]).toMatchObject({
-    role: "admin copy",
+    role: "Administrator copy",
     description: "Protected administration.",
   });
   expect(created[0]?.permissions).toEqual(effectivePermissions);
+});
+
+test("custom roles cannot take a built-in role's display name", async () => {
+  const current = snapshot();
+  const roleId = current.snapshot.roles[0]!.id;
+  let writes = 0;
+  const writeAdapters = adapters({
+    createRole: async () => {
+      writes += 1;
+      throw new Error("create should not run");
+    },
+    updateRole: async () => {
+      writes += 1;
+      throw new Error("update should not run");
+    },
+  });
+  const rejection = {
+    ok: false,
+    error:
+      "Administrator and Member are built-in role names. Choose another name.",
+  };
+
+  expect(
+    await executeAuthoritativeAccessCommand(
+      current,
+      { type: "create-role", input: { name: " administrator ", grants: [] } },
+      writeAdapters,
+    ),
+  ).toEqual(rejection);
+  expect(
+    await executeAuthoritativeAccessCommand(
+      current,
+      { type: "update-role", roleId, patch: { name: "Member" } },
+      writeAdapters,
+    ),
+  ).toEqual(rejection);
+  expect(writes).toBe(0);
 });
 
 test("uses the authoritative administrator role and paginates sessions only on demand", async () => {
@@ -328,7 +366,8 @@ test("uses the authoritative administrator role and paginates sessions only on d
   current.snapshot.roles[0] = {
     ...current.snapshot.roles[0],
     id: "00000000-0000-4000-8000-000000000099",
-    name: "admin",
+    name: "Administrator",
+    system: "admin",
   };
   expect(getAuthoritativeAdminRoleId(current.snapshot)).toBe(
     "00000000-0000-4000-8000-000000000099",

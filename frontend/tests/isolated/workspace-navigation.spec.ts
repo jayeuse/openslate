@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  getWorkspaceLocation,
   getWorkspaceNavigation,
   isWorkspaceNavigationItemActive,
 } from "../../src/components/workspace-navigation";
@@ -281,4 +282,30 @@ test("sidebar highlights the same section as Access, OpenView, and Sandbox deep 
       new URLSearchParams("section=AUTOMATION"),
     ),
   ).toBe(true);
+});
+
+test("every workspace lists its default section first", () => {
+  for (const group of getWorkspaceNavigation("/", new URLSearchParams())) {
+    expect(group.href, group.id).toBe(group.items[0]?.href);
+  }
+});
+
+test("the workspace location names the open section and links its workspace", () => {
+  expect(
+    getWorkspaceLocation("/sandbox", new URLSearchParams("section=history")),
+  ).toEqual({
+    workspace: { label: "Sandbox", href: "/sandbox?section=build" },
+    section: "History",
+  });
+  expect(
+    getWorkspaceLocation("/sandbox", new URLSearchParams("section=designer"))
+      ?.section,
+  ).toBe("Build");
+  expect(
+    getWorkspaceLocation("/platform", new URLSearchParams("file=sample-file")),
+  ).toEqual({
+    workspace: { label: "Platform", href: "/platform?section=search" },
+    section: "File library",
+  });
+  expect(getWorkspaceLocation("/comms", new URLSearchParams())).toBeNull();
 });

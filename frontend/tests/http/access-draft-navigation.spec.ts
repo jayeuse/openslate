@@ -368,6 +368,7 @@ test("shared directory pagination shows current page and respects boundaries", a
     await page
       .getByLabel("Subject type", { exact: true })
       .selectOption({ label: subjectType });
+    await page.getByLabel("Rows per page").selectOption("5");
     const navigation = page.getByRole("navigation", {
       name: "Permissions directory pages",
     });
@@ -562,7 +563,7 @@ for (const destination of [
   },
   {
     label: "Roles",
-    subject: "Configure member",
+    subject: "Configure Member",
     query: { view: "permissions", type: "roles" },
   },
   {
@@ -571,7 +572,7 @@ for (const destination of [
     query: { view: "permissions", type: "groups" },
   },
   {
-    label: "Detailed rules",
+    label: "Custom rules",
     subject: "Workspace rules",
     query: { view: "permissions", configure: "everyone" },
   },
@@ -653,16 +654,8 @@ test("People & services keeps kind filters, advanced filters, and pagination tog
   await expect(
     pageUnderTest.getByRole("tab", { name: "Services 1" }),
   ).toBeVisible();
-  await expect(pageUnderTest.getByText("Showing 1–3 of 5")).toBeVisible();
-  await expect(
-    pageUnderTest.getByRole("button", { name: "Go to previous page" }),
-  ).toBeDisabled();
-
-  await pageUnderTest.getByRole("button", { name: "Go to next page" }).click();
-  await expect(pageUnderTest.getByText("Showing 4–5 of 5")).toBeVisible();
-  await expect(
-    pageUnderTest.getByRole("button", { name: "Go to next page" }),
-  ).toBeDisabled();
+  await expect(pageUnderTest.getByText("Showing 1–5 of 5")).toBeVisible();
+  await expect(pageUnderTest.getByLabel("Rows per page")).toHaveValue("10");
   await expect(
     pageUnderTest.getByRole("button", {
       name: "View details for Taylor Brooks",
@@ -724,7 +717,7 @@ test("identity previews show current kind-specific details without making change
   await pageUnderTest.getByLabel("Rows per page").selectOption("5");
 
   const preview = pageUnderTest.getByRole("dialog", {
-    name: "Identity details",
+    name: "Access details",
   });
 
   await pageUnderTest
@@ -736,10 +729,12 @@ test("identity previews show current kind-specific details without making change
   await expect(preview.getByText("alex@example.test")).toBeVisible();
   await expect(preview.getByText("Internal", { exact: true })).toBeVisible();
   await expect(preview.getByText("Active", { exact: true })).toBeVisible();
-  await expect(preview.getByText("admin", { exact: true })).toBeVisible();
+  await expect(
+    preview.getByText("Administrator", { exact: true }),
+  ).toBeVisible();
   await expect(preview.getByText("No expiry", { exact: true })).toBeVisible();
   await preview
-    .getByRole("button", { name: "Close identity details", exact: true })
+    .getByRole("button", { name: "Close access details", exact: true })
     .click();
   await expect(preview).toBeHidden();
 
@@ -752,7 +747,7 @@ test("identity previews show current kind-specific details without making change
     preview.getByText("Access expires", { exact: true }),
   ).toBeVisible();
   await preview
-    .getByRole("button", { name: "Close identity details", exact: true })
+    .getByRole("button", { name: "Close access details", exact: true })
     .click();
 
   await pageUnderTest
@@ -761,7 +756,7 @@ test("identity previews show current kind-specific details without making change
   await expect(preview.getByText("Unavailable", { exact: true })).toBeVisible();
   await expect(preview.getByText("Sponsor", { exact: true })).toBeVisible();
   await preview
-    .getByRole("button", { name: "Close identity details", exact: true })
+    .getByRole("button", { name: "Close access details", exact: true })
     .click();
 
   await pageUnderTest
@@ -801,7 +796,7 @@ test("identity preview restores focus on Escape and hands off to the existing ed
   });
   await trigger.click();
   const preview = pageUnderTest.getByRole("dialog", {
-    name: "Identity details",
+    name: "Access details",
   });
   await expect(preview).toBeVisible();
   await pageUnderTest.keyboard.press("Escape");
@@ -810,8 +805,8 @@ test("identity preview restores focus on Escape and hands off to the existing ed
 
   await trigger.click();
   await pageUnderTest
-    .getByRole("dialog", { name: "Identity details" })
-    .getByRole("button", { name: "Manage identity" })
+    .getByRole("dialog", { name: "Access details" })
+    .getByRole("button", { name: "Edit access" })
     .click();
 
   const editor = pageUnderTest.getByRole("dialog", { name: "Alex Ops" });
@@ -1219,7 +1214,7 @@ test("an accepted role stays locked after both draft cleanup operations fail", a
   ).toBeDisabled();
   await expect(
     pageUnderTest.getByText(
-      "Current Access role: Shift lead; 1 baseline grants.",
+      "Current role: Shift lead, with 1 standard permission.",
     ),
   ).toBeVisible();
   const savedRole = pageUnderTest.getByRole("region", {
@@ -1552,12 +1547,14 @@ test("an accepted reload restores an unsaved internal identity", async ({
 }) => {
   await mockAccessApi(pageUnderTest);
   await pageUnderTest.goto("/access?view=identities");
-  await pageUnderTest.getByRole("button", { name: "Add identity" }).click();
   await pageUnderTest
-    .getByRole("menuitem", { name: "Internal identity" })
+    .getByRole("button", { name: "Add person or service" })
+    .click();
+  await pageUnderTest
+    .getByRole("menuitem", { name: "Internal person" })
     .click();
   const editor = pageUnderTest.getByRole("dialog", {
-    name: /Add internal identity/,
+    name: /Add internal person/,
   });
   await editor.getByLabel("Name", { exact: true }).fill("Alex Ops");
   await editor.getByLabel("Email", { exact: true }).fill("alex@example.test");
@@ -1566,7 +1563,7 @@ test("an accepted reload restores an unsaved internal identity", async ({
   await pageUnderTest.reload();
 
   const restored = pageUnderTest.getByRole("dialog", {
-    name: /Add internal identity/,
+    name: /Add internal person/,
   });
   await expect(restored.getByLabel("Name", { exact: true })).toHaveValue(
     "Alex Ops",
@@ -1579,7 +1576,7 @@ test("an accepted reload restores an unsaved internal identity", async ({
   await pageUnderTest.getByRole("button", { name: "Discard changes" }).click();
   await pageUnderTest.reload();
   await expect(
-    pageUnderTest.getByRole("dialog", { name: /Add internal identity/ }),
+    pageUnderTest.getByRole("dialog", { name: /Add internal person/ }),
   ).not.toBeVisible();
 });
 
@@ -1593,10 +1590,12 @@ test("a guest draft keeps its sponsor and expiry through accepted reload", async
     () => [person],
   );
   await pageUnderTest.goto("/access?view=identities");
-  await pageUnderTest.getByRole("button", { name: "Add identity" }).click();
-  await pageUnderTest.getByRole("menuitem", { name: "Guest identity" }).click();
+  await pageUnderTest
+    .getByRole("button", { name: "Add person or service" })
+    .click();
+  await pageUnderTest.getByRole("menuitem", { name: "Guest" }).click();
   const editor = pageUnderTest.getByRole("dialog", {
-    name: /Add guest identity/,
+    name: /Add guest/,
   });
   await editor.getByLabel("Name", { exact: true }).fill("Guest operator");
   await editor.getByLabel("Email", { exact: true }).fill("guest@example.test");
@@ -1630,8 +1629,8 @@ test("a restored identity edit cannot turn a deleted target into a new identity"
     .getByRole("button", { name: "View details for Alex Ops", exact: true })
     .click();
   await pageUnderTest
-    .getByRole("dialog", { name: "Identity details", exact: true })
-    .getByRole("button", { name: "Manage identity", exact: true })
+    .getByRole("dialog", { name: "Access details", exact: true })
+    .getByRole("button", { name: "Edit access", exact: true })
     .click();
   await pageUnderTest.getByLabel("Job title").fill("Shift lead");
 
@@ -2110,12 +2109,14 @@ test("browser Back and Forward restore an unsaved identity editor without submit
     .click();
   await expect(pageUnderTest).toHaveURL(/\/access\?view=identities$/);
 
-  await pageUnderTest.getByRole("button", { name: "Add identity" }).click();
   await pageUnderTest
-    .getByRole("menuitem", { name: "Internal identity" })
+    .getByRole("button", { name: "Add person or service" })
+    .click();
+  await pageUnderTest
+    .getByRole("menuitem", { name: "Internal person" })
     .click();
   const editor = pageUnderTest.getByRole("dialog", {
-    name: /Add internal identity/,
+    name: /Add internal person/,
   });
   await editor.getByLabel("Name", { exact: true }).fill("Alex Ops");
   await editor.getByLabel("Email", { exact: true }).fill("alex@example.test");
@@ -2129,7 +2130,7 @@ test("browser Back and Forward restore an unsaved identity editor without submit
   await expect(pageUnderTest).toHaveURL(/\/access\?view=identities$/);
 
   const restored = pageUnderTest.getByRole("dialog", {
-    name: /Add internal identity/,
+    name: /Add internal person/,
   });
   await expect(restored).toBeVisible();
   await expect(restored.getByLabel("Name", { exact: true })).toHaveValue(
@@ -2356,7 +2357,7 @@ test("role directory keeps its controls clear and compares baselines across page
   const roleType = pageUnderTest.getByLabel("Role type", { exact: true });
   await expect(roleType).toHaveValue("all");
   await roleType.selectOption("custom");
-  await expect(directory).not.toContainText("admin");
+  await expect(directory).not.toContainText("Administrator");
   await roleType.selectOption("all");
   const sort = pageUnderTest.getByLabel("Sort permissions", { exact: true });
   await expect(sort).toHaveValue("name");
@@ -2365,11 +2366,13 @@ test("role directory keeps its controls clear and compares baselines across page
   await expect(
     pageUnderTest.getByRole("button", { name: "Compare roles", exact: true }),
   ).toBeVisible();
-  await expect(pageUnderTest.getByText("Showing 1–5 of 6")).toBeVisible();
+  await expect(pageUnderTest.getByText("Showing 1–6 of 6")).toBeVisible();
   await directory
-    .getByRole("button", { name: "Configure admin", exact: true })
+    .getByRole("button", { name: "Configure Administrator", exact: true })
     .click();
-  await expect(pageUnderTest.getByText("Baseline permissions")).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("heading", { name: "Standard permissions" }),
+  ).toBeVisible();
   await expect(
     pageUnderTest.getByRole("button", { name: "View role", exact: true }),
   ).toBeVisible();
@@ -2388,7 +2391,9 @@ test("role directory keeps its controls clear and compares baselines across page
     name: "Compare roles",
   });
   await expect(compareDialog).toBeVisible();
-  await pageUnderTest.getByRole("checkbox", { name: /Compare admin$/ }).check();
+  await pageUnderTest
+    .getByRole("checkbox", { name: /Compare Administrator$/ })
+    .check();
   await pageUnderTest
     .getByRole("navigation", { name: "Role comparison pages" })
     .getByRole("button", { name: "Go to next page" })
@@ -2405,7 +2410,7 @@ test("role directory keeps its controls clear and compares baselines across page
   const dialog = pageUnderTest.getByRole("dialog", { name: "Compare roles" });
   await expect(dialog).toBeVisible();
   await expect(
-    dialog.getByRole("columnheader", { name: /admin/ }),
+    dialog.getByRole("columnheader", { name: /Administrator/ }),
   ).toBeVisible();
   await expect(
     dialog.getByRole("columnheader", { name: /Warehouse coordinator/ }),
@@ -2415,7 +2420,7 @@ test("role directory keeps its controls clear and compares baselines across page
   await expect(permissionRow).toContainText("Granted");
   await expect(
     dialog.getByText(
-      "These are role baselines. Detailed rules may affect actual access.",
+      "These are standard role permissions. Custom rules can change actual access.",
     ),
   ).toBeVisible();
   await expect(
@@ -2442,10 +2447,12 @@ test("role directory keeps its controls clear and compares baselines across page
     pageUnderTest.getByRole("button", { name: "Compare roles", exact: true }),
   ).toBeVisible();
   await expect(
-    pageUnderTest.getByRole("button", { name: "More actions for admin" }),
+    pageUnderTest.getByRole("button", {
+      name: "More actions for Administrator",
+    }),
   ).toBeVisible();
   await pageUnderTest
-    .getByRole("button", { name: "More actions for admin" })
+    .getByRole("button", { name: "More actions for Administrator" })
     .focus();
   await pageUnderTest.keyboard.press("Enter");
   await expect(
@@ -2525,7 +2532,7 @@ test("Identity details checks the selected person and service without stale resu
   await pageUnderTest.goto("/access?view=identities");
 
   const preview = pageUnderTest.getByRole("dialog", {
-    name: "Identity details",
+    name: "Access details",
     exact: true,
   });
   const runCheck = async () => {
@@ -2581,7 +2588,7 @@ test("Identity details checks the selected person and service without stale resu
   });
 
   await preview
-    .getByRole("button", { name: "Close identity details", exact: true })
+    .getByRole("button", { name: "Close access details", exact: true })
     .click();
   await pageUnderTest
     .getByRole("button", { name: "View details for Jamie Chen" })
@@ -2604,7 +2611,7 @@ test("Identity details checks the selected person and service without stale resu
   });
 
   await preview
-    .getByRole("button", { name: "Close identity details", exact: true })
+    .getByRole("button", { name: "Close access details", exact: true })
     .click();
   await pageUnderTest
     .getByRole("button", { name: "View details for Weekly summary sync" })
@@ -2748,6 +2755,7 @@ test("Permissions directory keeps staged rules through view guards and restores 
   const mutations = trackAccessMutations(pageUnderTest);
 
   await pageUnderTest.goto("/access?view=permissions");
+  await pageUnderTest.getByLabel("Rows per page").selectOption("5");
   const configureGroup = pageUnderTest.getByRole("button", {
     name: "Configure Operations",
     exact: true,
@@ -2830,8 +2838,8 @@ test("Permissions directory defaults to shared subjects while restoring an indiv
     exact: true,
   });
   await expect(directory).toContainText("Everyone");
-  await expect(directory).toContainText("member");
-  await expect(directory).toContainText("admin");
+  await expect(directory).toContainText("Member");
+  await expect(directory).toContainText("Administrator");
   await expect(directory).toContainText("Operations");
   await expect(
     directory.getByRole("button", { name: "Configure Alex Ops", exact: true }),

@@ -130,7 +130,7 @@ export function SandboxInspectorProperties({
             </p>
             <Badge
               variant="outline"
-              className="shrink-0 text-[10px] tracking-[0.12em] uppercase"
+              className="shrink-0 text-xs tracking-[0.12em] uppercase"
             >
               {selectedType}
             </Badge>
@@ -348,7 +348,7 @@ export function SandboxInspectorProperties({
             />
           </Field>
           <div className="border-border border-t pt-3">
-            <p className="text-muted-foreground mb-1 text-[10px] font-medium tracking-[0.12em] uppercase">
+            <p className="text-muted-foreground mb-1 text-xs font-medium tracking-[0.12em] uppercase">
               Parent module
             </p>
             <button

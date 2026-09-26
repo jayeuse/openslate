@@ -102,7 +102,9 @@ test("connected Report notifications show reference status and refetch after mar
   await connected.getByRole("button", { name: "Mark as read" }).click();
   await expect(connected.getByText("Read", { exact: true })).toBeVisible();
   expect(listReadsAfterMutation).toBeGreaterThanOrEqual(1);
-  await expect(page.getByText("Preview notifications")).toBeVisible();
+  await expect(
+    page.getByText("Preview notifications", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("Preview preferences")).toBeVisible();
 });
 

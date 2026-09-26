@@ -45,6 +45,7 @@ import {
   CollapsibleContent,
 } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SampleDataNote } from "@/components/sample-data-note";
 import {
   MessageScrollerProvider,
   MessageScroller,
@@ -1102,6 +1103,9 @@ export default function SampleComms() {
                         <Plus className="size-4" />
                       </Action>
                     </div>
+                    <SampleDataNote className="border-b px-4 py-2 text-xs">
+                      Conversations here are examples.
+                    </SampleDataNote>
                     <div className="p-3">
                       <Input
                         aria-label="Search conversations"
@@ -1417,7 +1421,7 @@ export default function SampleComms() {
                                         </span>
                                         {(preferences.mutedUntil[item.id] ??
                                           0) > Date.now() && (
-                                          <span className="text-muted-foreground text-[10px]">
+                                          <span className="text-muted-foreground text-xs">
                                             Muted
                                           </span>
                                         )}
@@ -1428,7 +1432,7 @@ export default function SampleComms() {
                                           />
                                         )}
                                         {item.archived && (
-                                          <span className="text-muted-foreground ml-auto text-[10px]">
+                                          <span className="text-muted-foreground ml-auto text-xs">
                                             Archived
                                           </span>
                                         )}

@@ -53,9 +53,9 @@ const COMPARISON_PAGE_SIZE = 5;
 
 function roleDescription(role: Role): string {
   if (role.description) return role.description;
-  if (role.name.toLowerCase() === "admin")
+  if (role.system === "admin")
     return "Full protected administration of the workspace.";
-  if (role.name.toLowerCase() === "member")
+  if (role.system === "member")
     return "Standard access to assigned workspace resources.";
   return "No description";
 }
@@ -319,8 +319,8 @@ export function RoleManagement({ controller, children }: RoleManagementProps) {
             <DialogTitle>Compare roles</DialogTitle>
             <DialogDescription>
               {compareStep === "select"
-                ? "Choose two to four roles to compare their permission baselines."
-                : "Compare the permission baselines of these roles. Not granted means there is no baseline grant for that permission."}
+                ? "Choose two to four roles to compare their standard permissions."
+                : "Compare the standard permissions of these roles. Not granted means the role does not include that permission."}
             </DialogDescription>
           </DialogHeader>
 
@@ -426,12 +426,10 @@ export function RoleManagement({ controller, children }: RoleManagementProps) {
               </div>
               <div className="space-y-1">
                 <p className="text-muted-foreground text-sm">
-                  These are role baselines. Detailed rules may affect actual
-                  access.
+                  These are standard role permissions. Custom rules can change
+                  actual access.
                 </p>
-                {compared.some(
-                  (role) => role.name.toLowerCase() === "admin",
-                ) && (
+                {compared.some((role) => role.system === "admin") && (
                   <p className="text-muted-foreground text-sm">
                     Protected Administrator management access is additional to
                     these data permissions.

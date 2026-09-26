@@ -47,12 +47,15 @@ import {
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { AccessSearchToolbar } from "../../access/components/access-search-toolbar";
+import {
+  DEFAULT_TABLE_PAGE_SIZE,
+  TABLE_PAGE_SIZE_OPTIONS,
+} from "@/components/ui/table-pagination";
 import type { ManageActivityEntry } from "../state/model";
 import type { CompleteCollection } from "../../shared/helpers/sample-collections";
 import {
   buildActivityCsv,
   initialActivityFilters,
-  MANAGE_ACTIVITY_PAGE_SIZE,
   queryManageActivity,
   uniqueValues,
 } from "./audit-data";
@@ -65,7 +68,7 @@ export {
 } from "./audit-data";
 export type { ActivityFilters } from "./audit-data";
 
-const PAGE_SIZE_OPTIONS = [MANAGE_ACTIVITY_PAGE_SIZE, 10, 25, 50] as const;
+const PAGE_SIZE_OPTIONS = TABLE_PAGE_SIZE_OPTIONS;
 const ACTIVITY_SORT_OPTIONS: readonly {
   value: ActivityOrder;
   label: string;
@@ -98,7 +101,7 @@ function downloadActivityCsv(entries: readonly ManageActivityEntry[]): void {
 }
 
 function sourceLabel(source: ManageActivityEntry["source"]): string {
-  return source === "manage" ? "Manage change" : "Example";
+  return source === "manage" ? "Your change" : "Preloaded";
 }
 
 function sourceVariant(
@@ -145,7 +148,7 @@ export default function ManageAudit({
     initialActivityFilters,
   );
   const [pageIndex, setPageIndex] = useState(0);
-  const [pageSize, setPageSize] = useState<number>(MANAGE_ACTIVITY_PAGE_SIZE);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_TABLE_PAGE_SIZE);
   const [selected, setSelected] = useState<ManageActivityEntry | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [notice, setNotice] = useState("");
@@ -588,8 +591,7 @@ export default function ManageAudit({
 
       <p className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm">
         <FileSearch aria-hidden="true" className="size-4 shrink-0" />
-        Example rows are sample activity. Open details to compare before and
-        after values.
+        Open details to compare before and after values.
       </p>
 
       <Dialog

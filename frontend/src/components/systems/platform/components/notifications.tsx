@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Bell } from "lucide-react";
 import { Action, Panel, Toggle } from "../../shared/components/ui";
+import { SampleDataNote } from "@/components/sample-data-note";
 import ConnectedReportNotifications from "./connected-report-notifications";
 import type { SampleNotification } from "../../comms/domain/model";
 import type { PlatformNotificationPreferences } from "../domain/model";
@@ -35,10 +36,9 @@ export default function Notifications({
       <ConnectedReportNotifications />
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Panel title="Preview notifications">
-          <p className="text-muted-foreground text-sm">
-            These sample updates stay in this browser and are not connected to
-            live delivery.
-          </p>
+          <SampleDataNote>
+            Preview notifications are examples and are not delivered.
+          </SampleDataNote>
           <div className="flex flex-wrap gap-2">
             <Action
               onClick={onMarkAllRead}
@@ -147,7 +147,7 @@ export default function Notifications({
             }
           />
           <p className="text-muted-foreground text-xs">
-            Preferences updated. No emails or background jobs are sent.
+            This preview sends no emails.
           </p>
         </Panel>
       </div>

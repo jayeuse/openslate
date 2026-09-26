@@ -426,18 +426,18 @@ export function VersionsWorkspace({
                                       {version.label}
                                     </span>
                                     {isComparedFirst ? (
-                                      <span className="border-primary/30 bg-primary/10 text-primary shrink-0 rounded border px-1 py-0.5 text-[10px] leading-none font-semibold">
+                                      <span className="border-primary/30 bg-primary/10 text-primary shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold">
                                         A
                                       </span>
                                     ) : null}
                                     {isComparedSecond ? (
-                                      <span className="border-primary/30 bg-primary/10 text-primary shrink-0 rounded border px-1 py-0.5 text-[10px] leading-none font-semibold">
+                                      <span className="border-primary/30 bg-primary/10 text-primary shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold">
                                         B
                                       </span>
                                     ) : null}
                                     <Badge
                                       variant="outline"
-                                      className="shrink-0 px-1 py-0 text-[10px]"
+                                      className="shrink-0 px-1 py-0 text-xs"
                                     >
                                       {versionKindLabel(version)}
                                     </Badge>

@@ -100,7 +100,7 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
     {
       label: "Roles",
       value: state.roles.length,
-      detail: "What each identity can do",
+      detail: "What each role allows",
       icon: ShieldCheck,
       destination: "roles" as const,
     },
@@ -113,7 +113,7 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
     },
     {
       label: "Rules",
-      displayLabel: "Detailed rules",
+      displayLabel: "Custom rules",
       value: state.rules.length,
       detail: "Specific allow and deny conditions",
       icon: KeyRound,
@@ -236,7 +236,7 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
                   <div>
                     <p className="text-sm font-medium">No immediate findings</p>
                     <p className="text-muted-foreground mt-1 text-sm">
-                      Invitations, expiry, and service metadata look consistent.
+                      Invitations, expiry, and service details look consistent.
                     </p>
                   </div>
                 </div>
@@ -356,7 +356,7 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
               <div>
                 <CardTitle>Workspace defaults</CardTitle>
                 <CardDescription className="mt-1 text-xs">
-                  Applied when a new identity is created.
+                  Applied when you add a person or service.
                 </CardDescription>
               </div>
             </CardHeader>
@@ -385,8 +385,8 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-3 py-2 last:pb-0">
-                  <dt className="text-muted-foreground">Fallback</dt>
-                  <dd className="text-right font-medium">Default deny</dd>
+                  <dt className="text-muted-foreground">Anything not listed</dt>
+                  <dd className="text-right font-medium">No access</dd>
                 </div>
               </dl>
               <p className="text-muted-foreground text-xs">

@@ -1,8 +1,10 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import type { Route } from "next";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
+import { getWorkspaceLocation } from "@/components/workspace-navigation";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -12,36 +14,69 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 
-const sectionLabels: Record<string, string> = {
-  sandbox: "Sandbox",
-  boards: "Boards",
-  comms: "OpenComms",
-  access: "Access",
-  openview: "OpenView",
-  manage: "Manage",
-  platform: "Workspace tools",
+// Routes without sections in the sidebar name only themselves.
+const routeLabels: Record<string, string> = {
+  "/comms": "OpenComms",
+  "/settings/appearance": "Appearance",
 };
 
+// Links in the header bar keep a 24px target.
+const crumbTarget = "inline-flex min-h-6 items-center";
+
+/**
+ * Workspace › workspace › open section. Phones drop the Workspace root so the
+ * crumbs that change stay readable.
+ */
 export function AppBreadcrumbs() {
   const pathname = usePathname();
-  const section = pathname.split("/").filter(Boolean)[0];
-  const label =
-    pathname === "/settings/appearance"
-      ? "Appearance"
-      : sectionLabels[section] || "Workspace";
+  const searchParams = useSearchParams();
+  // Legacy Platform links pick their section by hash, as the sidebar does.
+  const [hash, setHash] = useState("");
+  useEffect(() => {
+    const syncHash = () => setHash(window.location.hash);
+    syncHash();
+    window.addEventListener("hashchange", syncHash);
+    return () => window.removeEventListener("hashchange", syncHash);
+  }, [pathname, searchParams]);
+  const location = getWorkspaceLocation(
+    pathname,
+    new URLSearchParams(searchParams.toString()),
+    hash,
+  );
+  const current = location?.section ?? routeLabels[pathname] ?? "Workspace";
   return (
     <Breadcrumb className="min-w-0">
       <BreadcrumbList className="flex-nowrap">
-        <BreadcrumbItem>
+        <BreadcrumbItem className="max-sm:hidden">
           <BreadcrumbLink
+            className={crumbTarget}
             render={<GuardedWorkspaceLink href={"/openview" as Route} />}
           >
             Workspace
           </BreadcrumbLink>
         </BreadcrumbItem>
-        <BreadcrumbSeparator />
+        <BreadcrumbSeparator className="max-sm:hidden" />
+        {location ? (
+          <>
+            <BreadcrumbItem className="shrink-0">
+              <BreadcrumbLink
+                className={crumbTarget}
+                render={
+                  <GuardedWorkspaceLink
+                    href={location.workspace.href as Route}
+                  />
+                }
+              >
+                {location.workspace.label}
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+          </>
+        ) : null}
         <BreadcrumbItem className="min-w-0">
-          <BreadcrumbPage className="truncate">{label}</BreadcrumbPage>
+          <BreadcrumbPage className="block min-h-6 truncate leading-6">
+            {current}
+          </BreadcrumbPage>
         </BreadcrumbItem>
       </BreadcrumbList>
     </Breadcrumb>

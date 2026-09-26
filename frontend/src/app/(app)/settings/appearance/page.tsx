@@ -37,7 +37,6 @@ export default function AppearancePage() {
   return (
     <>
       <PageHeader
-        eyebrow="Settings"
         title="Appearance"
         description="Choose light or dark for your workspace. This setting applies to you on this device."
       />
