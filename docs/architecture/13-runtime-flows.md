@@ -5,13 +5,19 @@
 ## Developer startup
 
 1. Start the documented disposable PostgreSQL service and validate root configuration.
-2. Use the owner connection to apply the Alembic baseline and provision the constrained runtime login.
+2. Provision owner, runtime and inspector roles through the guarded bootstrap
+   path, then apply Alembic migrations with the owner connection.
 3. Start FastAPI on loopback. For daily hot reload, start `next dev` and open
    its direct browser origin; its development-only `/api` proxy reaches FastAPI.
 4. For production-like operation, build the static frontend and start FastAPI
    with `WEB_ASSETS_ROOT`, then explicitly start the disabled gateway profile
    with `./scripts/dev.py caddy`; Caddy has one FastAPI upstream.
 5. Create the first local administrator through the documented bootstrap or host-recovery path.
+
+The FastAPI lifespan owns event listening, automation and report scheduling,
+plus optional SMTP delivery. The file scanner is a separate operator-started
+process. Test-mode worker guards prevent automatic scheduled work; scheduled
+execution requires dedicated tests. See [Backend Architecture](04-backend-architecture.md).
 
 ## Browser sign-in and request
 
@@ -29,14 +35,18 @@
 
 1. FastAPI authorizes upload and writes the opaque bytes into private quarantine.
 2. Metadata and scan work are committed to PostgreSQL.
-3. The worker validates size/digest and scans the quarantined bytes. Only a verified clean result promotes an immutable ready object.
-4. Download rechecks file and parent authorization and streams the ready object through FastAPI.
+3. The separate scanner worker validates size/digest and scans the quarantined
+   bytes. Only a verified clean result promotes an immutable ready object.
+4. Download checks file and parent authorization, reads and verifies the ready
+   object's complete bytes, rechecks authorization after storage I/O, then
+   returns a full-body response through FastAPI. It is not a streaming read.
 
 ## Mutation and invalidation
 
 1. A route commits individual ORM changes through `AuditSession`.
 2. Audit rows commit with the business state.
-3. The listener publishes opaque PostgreSQL notification after commit.
+3. The audit commit hook invokes the best-effort publisher through a separate
+   PostgreSQL connection; the listener forwards committed notifications to SSE.
 4. Authenticated SSE subscribers receive invalidation or resync and refetch authorized resources.
 
 ## Optional action delivery

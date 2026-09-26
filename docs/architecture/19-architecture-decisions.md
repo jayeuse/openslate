@@ -12,4 +12,7 @@
 | PostgreSQL notification plus SSE | Opaque invalidation without a second data API | Clients resync through authorized reads |
 | Optional SMTP outbox | Installation must work without a mail server while allowing configured action delivery | Encrypted PostgreSQL outbox and bounded SMTP worker are implemented; delivery is disabled by default and at least once |
 
-Windows/macOS packaging, bundled PostgreSQL service management, encrypted backups, and automatic setup remain implementation decisions still to be proven by native acceptance tests.
+Encrypted backups have a standalone guarded foundation. Windows/macOS
+packaging, bundled PostgreSQL service management, automatic setup, backup
+scheduling and supported customer recovery remain incomplete and require
+native acceptance before release.

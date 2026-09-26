@@ -21,4 +21,9 @@ PostgreSQL uses separate owner and constrained runtime credentials. FastAPI alon
 
 SSE is authenticated and contains opaque invalidation data only. Subscriber limits, short-lived authorization checks, bounded queues, and send timeouts limit retained stream resources. FastAPI separates exact static exports, `/api`, and `/api/events`; it never sends UI HTML for an API or missing-asset path. Static route/asset cache policy and response security headers belong to FastAPI/Caddy, not a Node.js frontend process. Audit redacts sensitive fields and does not record raw passwords, tokens, object paths, or bytes.
 
-Windows/macOS installer security, disk encryption checks, LAN TLS setup, secret delivery, backup encryption, restore validation, and operational monitoring are pending. They must not be represented as verified production controls.
+The standalone backup foundation uses encrypted Restic repositories. Automated
+backup scheduling, installed-host key operations, supported customer recovery,
+Windows/macOS installer security, disk encryption checks, LAN TLS setup, secret
+delivery and operational monitoring still require deployment work and native
+acceptance. They must not be represented as verified production controls. See
+[Deployment Architecture](12-deployment-architecture.md).
