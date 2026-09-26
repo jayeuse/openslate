@@ -2076,6 +2076,7 @@ export function Designer({
                 <div
                   ref={canvasFrameRef}
                   data-empty={designIsEmpty || undefined}
+                  data-skin="canvas-frame"
                   className="relative h-[420px] overflow-hidden xl:h-auto xl:min-h-0 xl:flex-1 data-empty:[&_.sandbox-minimap]:hidden"
                   aria-label="Module design canvas"
                 >

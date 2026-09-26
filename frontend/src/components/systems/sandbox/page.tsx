@@ -711,7 +711,10 @@ export default function SandboxPage() {
       <header className="xl:flex xl:flex-wrap xl:items-end xl:justify-between xl:gap-4">
         <div className="flex flex-col gap-3 xl:contents">
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
+            <h1
+              data-slot="page-title"
+              className="text-xl font-semibold tracking-tight sm:text-2xl"
+            >
               Organization builder
             </h1>
             <Badge variant="outline">{status.label}</Badge>

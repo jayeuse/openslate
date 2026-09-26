@@ -312,7 +312,10 @@ function AccessControlCenter() {
         }
       >
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          <h1
+            data-slot="page-title"
+            className="text-2xl font-semibold tracking-tight sm:text-3xl"
+          >
             {activeView === "overview"
               ? "Access overview"
               : activeView === "identities"

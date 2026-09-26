@@ -12,7 +12,10 @@ export function PageHeader({
   return (
     <div className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <h1 className="text-2xl leading-tight font-semibold tracking-[-0.035em] sm:text-[30px]">
+        <h1
+          data-slot="page-title"
+          className="text-2xl leading-tight font-semibold tracking-[-0.035em] sm:text-[30px]"
+        >
           {title}
         </h1>
         {description && (

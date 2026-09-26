@@ -1,0 +1,170 @@
+/*
+ * Whiteboard: the back-office planning board. Marker ink on white board,
+ * an aluminium frame around the canvas, bold marker lines. Dark is the
+ * slate chalkboard after hours. Look only: layout and words never change.
+ * Every token the light block sets, the dark block sets too, so no light
+ * value leaks into dark mode.
+ */
+:root[data-theme="whiteboard"],
+[data-theme-preview="whiteboard"] {
+  --ground: #e4e8eb;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eef1f3;
+  --surface-hover: #e7ebee;
+  --ink: #1b1f23;
+  --ink-muted: #434b53;
+  --rule: #cbd2d8;
+  --rule-strong: #9aa4ad;
+  --control-edge: #6f7a83;
+  --action: #1d5fb8;
+  --action-ink: #ffffff;
+  --action-text: #1d5fb8;
+  --action-tint: #e4edf9;
+  --flow: #1b7340;
+  --flow-ink: #ffffff;
+  --flow-text: #1b7340;
+  --flow-tint: #e3f1e8;
+  --flow-rule: #a9d3b7;
+  --warn: #8f5a00;
+  --warn-ink: #ffffff;
+  --warn-text: #7a4b00;
+  --warn-tint: #fbf1dc;
+  --warn-rule: #e0c48c;
+  --danger: #b42f27;
+  --danger-text: #9a261f;
+  --danger-tint: #fcedeb;
+  --danger-rule: #f0b8b3;
+  --danger-ink: #ffffff;
+  --focus: #1d5fb8;
+  --lift: 0 1px 0 rgb(27 31 35 / 0.3);
+  --lift-raised: 0 1px 0 rgb(27 31 35 / 0.3), 0 6px 14px rgb(27 31 35 / 0.1);
+  --lift-filter: drop-shadow(0 1px 0 rgb(27 31 35 / 0.3))
+    drop-shadow(0 6px 10px rgb(27 31 35 / 0.12));
+  --sidebar: #f3f5f6;
+  --canvas-background: #fafbfc;
+  --canvas-grid: #e3e7ea;
+  --canvas-grid-major: #cfd5da;
+  --radius: 0.375rem;
+  --font-ui: var(--font-atkinson), system-ui, sans-serif;
+  --font-code: var(--font-geist-mono);
+  --card-edge: transparent;
+  --card-lift: var(--lift-raised);
+  /* Materials, private to this theme's skin rules. */
+  --wb-tape: #2a2f34;
+  --wb-frame: #aeb7bf;
+  --wb-frame-hi: #eef1f3;
+}
+
+.dark[data-theme="whiteboard"],
+.dark [data-theme-preview="whiteboard"] {
+  --ground: #1b2224;
+  --surface: #222a2d;
+  --surface-raised: #283135;
+  --surface-sunken: #1e2629;
+  --surface-hover: #2c3639;
+  --ink: #eff2ee;
+  --ink-muted: #aeb9b8;
+  --rule: #34403f;
+  --rule-strong: #4d5b5a;
+  --control-edge: #7a8887;
+  --action: #86b5f2;
+  --action-ink: #0d1b2e;
+  --action-text: #9fc4f6;
+  --action-tint: #1c2c40;
+  --flow: #72c492;
+  --flow-ink: #0c2215;
+  --flow-text: #8bd2a6;
+  --flow-tint: #15301f;
+  --flow-rule: #2c5a3d;
+  --warn: #e8ad52;
+  --warn-ink: #2a1a03;
+  --warn-text: #f0c27a;
+  --warn-tint: #33260f;
+  --warn-rule: #6a4c18;
+  --danger: #f28b82;
+  --danger-text: #f5a29a;
+  --danger-tint: #3a1715;
+  --danger-rule: #6e2a25;
+  --danger-ink: #2a0906;
+  --focus: #86b5f2;
+  --lift: 0 1px 0 rgb(0 0 0 / 0.45);
+  --lift-raised: 0 1px 0 rgb(0 0 0 / 0.45), 0 6px 14px rgb(0 0 0 / 0.35);
+  --lift-filter: drop-shadow(0 1px 0 rgb(0 0 0 / 0.45))
+    drop-shadow(0 6px 10px rgb(0 0 0 / 0.4));
+  --sidebar: #192022;
+  --canvas-background: #1f2729;
+  --canvas-grid: color-mix(in srgb, #3a4745 55%, transparent);
+  --canvas-grid-major: color-mix(in srgb, #4f5f5d 60%, transparent);
+  --radius: 0.375rem;
+  --font-ui: var(--font-atkinson), system-ui, sans-serif;
+  --font-code: var(--font-geist-mono);
+  --card-edge: transparent;
+  --card-lift: var(--lift-raised);
+  --wb-tape: #d7dcd8;
+  --wb-frame: #4a5553;
+  --wb-frame-hi: #2c3639;
+}
+
+/* Skin places. */
+[data-theme="whiteboard"]
+  :is([data-slot="page-title"], [data-slot="card-title"]) {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+[data-theme="whiteboard"] [data-slot="badge"] {
+  font-weight: 700;
+}
+
+[data-theme="whiteboard"] [data-slot="tabs-trigger"][data-active] {
+  box-shadow: inset 0 -3px 0 var(--action);
+}
+
+[data-theme="whiteboard"] [data-slot="table-head"] {
+  font-weight: 700;
+}
+
+/* The canvas paints over its frame's own background, so the frame draws
+   on a layer above it that ignores the pointer. */
+[data-theme="whiteboard"] [data-skin="canvas-frame"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 3px var(--wb-frame),
+    inset 0 0 0 4px var(--wb-frame-hi);
+}
+
+/* Taped department borders and marker lines. Idle strokes skip selected,
+   moving, and pressed cells, because CSS outranks SVG attributes; state
+   strokes stay heavier than idle ones. */
+[data-theme="whiteboard"]
+  .sandbox-ui
+  .x6-cell:not([data-sandbox-pressed="true"])
+  [data-sandbox-kind="department"][data-selected="false"][data-feedback=""] {
+  stroke: var(--wb-tape);
+  stroke-width: 2.5px;
+}
+
+[data-theme="whiteboard"]
+  .sandbox-ui
+  [data-sandbox-kind][data-selected="true"] {
+  stroke-width: 3.5px;
+}
+
+[data-theme="whiteboard"] .sandbox-ui [data-sandbox-line] {
+  stroke-width: 2.4px;
+  stroke-dasharray: none;
+  stroke-linecap: round;
+  animation: none;
+}
+
+[data-theme="whiteboard"]
+  .sandbox-ui
+  .x6-edge[data-trace="on"]
+  [data-sandbox-line] {
+  stroke-width: 3.4px;
+}

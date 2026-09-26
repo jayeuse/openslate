@@ -24,6 +24,7 @@ export function FieldLabel({
 }) {
   return (
     <FieldPrimitive.Label
+      data-slot="field-label"
       className={cn("text-sm font-medium", className)}
       {...props}
     />

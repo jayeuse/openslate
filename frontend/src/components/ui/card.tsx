@@ -5,8 +5,9 @@ import { cn } from "@/lib/utils";
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <section
+      data-slot="card"
       className={cn(
-        "border-border bg-card text-card-foreground self-start rounded-[var(--radius)] border",
+        "border-card-edge bg-card text-card-foreground shadow-card self-start rounded-[var(--radius)] border",
         className,
       )}
       {...props}
@@ -31,7 +32,13 @@ export function CardTitle({
   className,
   ...props
 }: HTMLAttributes<HTMLHeadingElement>) {
-  return <h2 className={cn("text-base font-semibold", className)} {...props} />;
+  return (
+    <h2
+      data-slot="card-title"
+      className={cn("text-base font-semibold", className)}
+      {...props}
+    />
+  );
 }
 export function CardDescription({
   className,

@@ -90,6 +90,8 @@ export function departmentNodeAttrs(
     rect: { stroke: "none", strokeWidth: 0 },
     body: {
       "data-sandbox-body": "true",
+      // Theme skin hook (src/app/themes).
+      "data-sandbox-kind": "department",
       width: DEPARTMENT_WIDTH,
       height,
       fill: moving

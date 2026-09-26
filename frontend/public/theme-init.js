@@ -29,4 +29,12 @@ try {
   };
   const mode = preference("openslate-theme", "light", ["light", "dark"]);
   root.classList.toggle("dark", mode === "dark");
+  // Organization look (lib/appearance-preferences.ts). Slate is the default.
+  const theme = preference("openslate-org-theme", "slate", [
+    "slate",
+    "whiteboard",
+    "triplicate",
+    "stockroom",
+  ]);
+  if (theme !== "slate") root.dataset.theme = theme;
 } catch {}

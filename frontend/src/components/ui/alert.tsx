@@ -18,6 +18,8 @@ export function Alert({
   return (
     <div
       role="status"
+      data-slot="alert"
+      data-variant={variant}
       className={cn(
         "rounded-[var(--radius)] border p-4 text-sm",
         styles[variant],

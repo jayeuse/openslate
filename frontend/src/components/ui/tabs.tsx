@@ -23,6 +23,7 @@ export function TabsList({
 }) {
   return (
     <TabsPrimitive.List
+      data-slot="tabs-list"
       className={cn(
         "bg-muted text-muted-foreground inline-flex w-fit items-center gap-1 rounded-[var(--radius)] p-1",
         className,
@@ -39,6 +40,7 @@ export function TabsTrigger({
 }) {
   return (
     <TabsPrimitive.Tab
+      data-slot="tabs-trigger"
       className={cn(
         "focus-visible:outline-ring data-active:bg-card data-active:text-foreground inline-flex items-center justify-center rounded-sm px-3 py-1.5 text-sm font-medium outline-none focus-visible:outline-2 disabled:opacity-50 data-active:shadow-sm",
         className,

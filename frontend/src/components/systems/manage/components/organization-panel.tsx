@@ -17,6 +17,7 @@ import {
   SettingActions,
   type SettingsPanelForm,
 } from "./panel-ui";
+import { OrganizationLook } from "./organization-look";
 
 type OrganizationPanelProps = {
   form: SettingsPanelForm;
@@ -254,6 +255,8 @@ export function OrganizationPanel({
           </Button>
         </nav>
       </aside>
+
+      <OrganizationLook />
     </section>
   );
 }

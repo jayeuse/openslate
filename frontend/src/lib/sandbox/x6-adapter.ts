@@ -132,6 +132,8 @@ export function moduleTableAttrs(
     rect: { stroke: "none", strokeWidth: 0 },
     body: {
       "data-sandbox-body": "true",
+      // Theme skin hook (src/app/themes).
+      "data-sandbox-kind": "module",
       width,
       height: tableHeight,
       rx: 8,
@@ -155,6 +157,8 @@ export function moduleTableAttrs(
       "data-feedback": feedback ?? "",
     },
     headerBar: {
+      // Theme skin hook: the header follows the body's corner shape.
+      "data-sandbox-part": "header",
       width,
       height: headerHeight,
       rx: 8,

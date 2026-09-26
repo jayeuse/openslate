@@ -2,14 +2,22 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+@import "./themes/whiteboard.css";
+@import "./themes/triplicate.css";
+@import "./themes/stockroom.css";
+
 /*
  * Theme contract. A theme sets the semantic tokens below (surfaces, ink,
- * signals, focus, elevation) for light (:root) and dark (.dark); the shadcn
- * names are aliases of them. Slate is the default theme. Signals keep one
- * meaning each: action acts, flow shows movement and success, warn asks for
- * attention, danger marks destructive actions.
+ * signals, focus, elevation, type, radius, canvas) for light and dark; the
+ * shadcn names are aliases of them. Slate is the default theme on :root and
+ * .dark. Other themes live in ./themes and override the same names on
+ * :root[data-theme="…"]; [data-theme-preview="…"] renders a theme's tokens
+ * inside one element, for the look picker. Signals keep one meaning each:
+ * action acts, flow shows movement and success, warn asks for attention,
+ * danger marks destructive actions.
  */
-:root {
+:root,
+[data-theme-preview="slate"] {
   --ground: #f7f8fa;
   --surface: #ffffff;
   --surface-raised: #ffffff;
@@ -28,7 +36,7 @@
   --flow-ink: #ffffff;
   --flow-text: #0f766e;
   --flow-tint: #e7f5f3;
-  --warn: #b25e00;
+  --warn: #a36600;
   --warn-ink: #ffffff;
   --warn-text: #8a5300;
   --warn-tint: #fff7e8;
@@ -85,9 +93,16 @@
   --sandbox-node-border: var(--rule-strong);
   --sandbox-field-stripe: var(--ground);
   --radius: 0.5rem;
+  --font-ui: var(--font-geist-sans);
+  --font-code: var(--font-geist-mono);
+  /* Card material. Themes set these instead of overriding Card, so a card's
+     own border or ring classes still win. */
+  --card-edge: var(--rule);
+  --card-lift: 0 0 #0000;
 }
 
-.dark {
+.dark,
+.dark [data-theme-preview="slate"] {
   --ground: #0d1014;
   --surface: #151920;
   --surface-raised: #1b2028;
@@ -106,7 +121,7 @@
   --flow-ink: #06201c;
   --flow-text: #5ed0bf;
   --flow-tint: #0f2a27;
-  --warn: #f2a24b;
+  --warn: #e5b250;
   --warn-ink: #231302;
   --warn-text: #f6b870;
   --warn-tint: #2b1d0c;
@@ -156,6 +171,8 @@
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-muted: var(--sidebar-muted);
   --color-sidebar-accent: var(--sidebar-accent);
+  --color-card-edge: var(--card-edge);
+  --shadow-card: var(--card-lift);
   --color-action-text: var(--action-text);
   --color-action-tint: var(--action-tint);
   --color-flow: var(--flow);
@@ -176,8 +193,8 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -203,7 +220,7 @@ html.dark {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), sans-serif;
+  font-family: var(--font-ui), sans-serif;
 }
 
 button,

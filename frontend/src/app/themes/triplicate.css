@@ -1,0 +1,160 @@
+/*
+ * Triplicate: carbon-copy business forms. Navy form ink on off-white paper,
+ * square corners, uppercase condensed labels, dashed carbon lines, and a
+ * flat offset shadow like a stacked form. Dark is carbon paper at night.
+ * Look only: layout and words never change. The dark block sets every
+ * token the light block sets.
+ */
+:root[data-theme="triplicate"],
+[data-theme-preview="triplicate"] {
+  --ground: #f1f1ec;
+  --surface: #fefefc;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f4f3ee;
+  --surface-hover: #ecebe4;
+  --ink: #1e2d55;
+  --ink-muted: #4b5675;
+  --rule: #c9cdd6;
+  --rule-strong: #8e96aa;
+  --control-edge: #6e7892;
+  /* Carbon blue, apart from the navy form ink, so links read as links. */
+  --action: #1f4fbf;
+  --action-ink: #ffffff;
+  --action-text: #1f4fbf;
+  --action-tint: #e5ecfa;
+  --flow: #2d7a4b;
+  --flow-ink: #ffffff;
+  --flow-text: #276b42;
+  --flow-tint: #e3efe6;
+  --flow-rule: #a8cdb4;
+  --warn: #8a5a00;
+  --warn-ink: #ffffff;
+  --warn-text: #7a4f00;
+  --warn-tint: #f8f0dc;
+  --warn-rule: #dcc58f;
+  --danger: #b3261e;
+  --danger-text: #a0221b;
+  --danger-tint: #fbedeb;
+  --danger-rule: #ebb5b0;
+  --danger-ink: #ffffff;
+  --focus: #1f4fbf;
+  --lift: 3px 3px 0 rgb(30 45 85 / 0.1);
+  --lift-raised: 3px 3px 0 rgb(30 45 85 / 0.14);
+  --lift-filter: drop-shadow(3px 3px 0 rgb(30 45 85 / 0.14));
+  --sidebar: #f4f3ee;
+  --canvas-background: #e3e6e8;
+  --canvas-grid: #d6dadd;
+  --canvas-grid-major: #c5cacf;
+  --radius: 0.125rem;
+  --font-ui: var(--font-archivo), system-ui, sans-serif;
+  --font-code: var(--font-geist-mono);
+  --card-edge: var(--rule-strong);
+  --card-lift: var(--lift);
+}
+
+.dark[data-theme="triplicate"],
+.dark [data-theme-preview="triplicate"] {
+  --ground: #10142a;
+  --surface: #171c35;
+  --surface-raised: #1c223f;
+  --surface-sunken: #13182f;
+  --surface-hover: #212846;
+  --ink: #e8eaf2;
+  --ink-muted: #a4abc4;
+  --rule: #2a3154;
+  --rule-strong: #414a73;
+  --control-edge: #6d77a1;
+  --action: #9fb3f2;
+  --action-ink: #10142a;
+  --action-text: #c2cff7;
+  --action-tint: #202848;
+  --flow: #72c496;
+  --flow-ink: #0b2014;
+  --flow-text: #8cd2a9;
+  --flow-tint: #13291d;
+  --flow-rule: #2a553b;
+  --warn: #e3b35a;
+  --warn-ink: #231803;
+  --warn-text: #ebc57c;
+  --warn-tint: #2e2410;
+  --warn-rule: #5e4a1c;
+  --danger: #f08a80;
+  --danger-text: #f4a097;
+  --danger-tint: #37161a;
+  --danger-rule: #6a2a2f;
+  --danger-ink: #2a0a0c;
+  --focus: #9fb3f2;
+  --lift: 3px 3px 0 rgb(0 0 0 / 0.35);
+  --lift-raised: 3px 3px 0 rgb(0 0 0 / 0.45);
+  --lift-filter: drop-shadow(3px 3px 0 rgb(0 0 0 / 0.45));
+  --sidebar: #0e1226;
+  --canvas-background: #141934;
+  --canvas-grid: color-mix(in srgb, #2d3560 55%, transparent);
+  --canvas-grid-major: color-mix(in srgb, #3d4677 60%, transparent);
+  --radius: 0.125rem;
+  --font-ui: var(--font-archivo), system-ui, sans-serif;
+  --font-code: var(--font-geist-mono);
+  --card-edge: var(--rule-strong);
+  --card-lift: var(--lift);
+}
+
+/* Skin places. Labels, table heads, and chips can show names people typed,
+   so they keep their case; the condensed width carries the form look. */
+[data-theme="triplicate"]
+  :is([data-slot="page-title"], [data-slot="card-title"]) {
+  font-stretch: 92%;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+[data-theme="triplicate"]
+  :is(
+    [data-slot="field-label"],
+    [data-slot="table-head"],
+    [data-slot="badge"]
+  ) {
+  letter-spacing: 0.03em;
+  font-stretch: 85%;
+}
+
+/* Status chips read as rubber stamps. */
+[data-theme="triplicate"] [data-slot="badge"] {
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 0;
+}
+
+[data-theme="triplicate"] [data-slot="tabs-trigger"][data-active] {
+  box-shadow: inset 0 -3px 0 var(--ink);
+}
+
+/* The canvas paints over its frame's own background, so the frame draws
+   on a layer above it that ignores the pointer. */
+[data-theme="triplicate"] [data-skin="canvas-frame"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
+}
+
+/* Form boxes: square corners and dashed carbon lines. */
+[data-theme="triplicate"]
+  .sandbox-ui
+  :is([data-sandbox-body], [data-sandbox-part="header"]) {
+  rx: 0;
+  ry: 0;
+}
+
+[data-theme="triplicate"]
+  .sandbox-ui
+  .x6-cell:not([data-sandbox-pressed="true"])
+  [data-sandbox-kind="department"][data-selected="false"][data-feedback=""] {
+  stroke-dasharray: 6 4;
+}
+
+[data-theme="triplicate"] .sandbox-ui [data-sandbox-line] {
+  stroke-dasharray: 5 4;
+  stroke-linecap: butt;
+}

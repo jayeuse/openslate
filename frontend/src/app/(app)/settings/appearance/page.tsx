@@ -38,7 +38,7 @@ export default function AppearancePage() {
     <>
       <PageHeader
         title="Appearance"
-        description="Choose light or dark for your workspace. This setting applies to you on this device."
+        description="Choose light or dark for your workspace. This setting applies to you on this device. The organization look is set in Manage, under Organization."
       />
       <div className="max-w-md">
         <Card>

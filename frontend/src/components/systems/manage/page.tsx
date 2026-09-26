@@ -462,6 +462,7 @@ function ManageContent() {
         <div className="flex flex-wrap items-center gap-3">
           <h1
             ref={headingRef}
+            data-slot="page-title"
             tabIndex={-1}
             className="text-2xl font-semibold tracking-tight sm:text-3xl"
           >

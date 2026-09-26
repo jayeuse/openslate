@@ -78,3 +78,59 @@ export function persistAppearancePreferences(
     // Private browsing and blocked storage should not prevent appearance changes.
   }
 }
+
+/**
+ * The organization's look. Themes change color, type, and materials only;
+ * layout, behavior, and words stay the same. The owner picks one for the
+ * whole organization. Until the workspace settings API stores it, the choice
+ * lives in this browser.
+ */
+export const ORGANIZATION_THEMES = [
+  "slate",
+  "whiteboard",
+  "triplicate",
+  "stockroom",
+] as const;
+
+export type OrganizationTheme = (typeof ORGANIZATION_THEMES)[number];
+
+const ORGANIZATION_THEME_KEY = "openslate-org-theme";
+
+export function readOrganizationTheme(
+  storage: Pick<Storage, "getItem"> | null | undefined,
+): OrganizationTheme {
+  try {
+    const value = storage?.getItem(ORGANIZATION_THEME_KEY) ?? null;
+    return isOneOf(value, ORGANIZATION_THEMES) ? value : "slate";
+  } catch {
+    return "slate";
+  }
+}
+
+export function readBrowserOrganizationTheme(): OrganizationTheme {
+  try {
+    return readOrganizationTheme(window.localStorage);
+  } catch {
+    return "slate";
+  }
+}
+
+/** Slate is the base token set, so it needs no attribute. */
+export function applyOrganizationTheme(
+  theme: OrganizationTheme,
+  root: HTMLElement = document.documentElement,
+): void {
+  if (theme === "slate") delete root.dataset.theme;
+  else root.dataset.theme = theme;
+}
+
+export function persistOrganizationTheme(
+  theme: OrganizationTheme,
+  storage?: StorageLike | null,
+): void {
+  try {
+    (storage ?? window.localStorage)?.setItem(ORGANIZATION_THEME_KEY, theme);
+  } catch {
+    // Blocked storage still applies the look for this page view.
+  }
+}

@@ -3290,7 +3290,10 @@ function OpenViewHeader() {
   return (
     <header className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+        <h1
+          data-slot="page-title"
+          className="text-2xl font-semibold tracking-tight sm:text-3xl"
+        >
           Views
         </h1>
         <p className="text-muted-foreground mt-2 max-w-2xl text-sm">
