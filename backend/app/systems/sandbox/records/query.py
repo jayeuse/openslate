@@ -1,14 +1,32 @@
 """One typed SQL compiler for interactive records and CSV snapshots."""
 
 from collections.abc import Sequence
-from datetime import date
+from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from typing import cast as type_cast
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import Boolean, Date, DateTime, Numeric, String, and_, case, cast, func, or_, select
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Numeric,
+    String,
+    and_,
+    case,
+    cast,
+    func,
+    literal,
+    or_,
+    select,
+    true,
+    type_coerce,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
@@ -28,6 +46,18 @@ from app.systems.sandbox.records.query_schemas import (
     RecordQuery,
 )
 from app.systems.sandbox.records.schemas import RecordResponse
+
+
+@dataclass(frozen=True, slots=True)
+class RecordProjection:
+    id: UUID
+    module_id: UUID
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: datetime | None
+    is_deleted: bool
+    performed_by: UUID | None
+    data: dict[str, Any]
 
 
 def invalid_view(message: str = "A referenced field has changed; repair the view") -> HTTPException:
@@ -189,7 +219,13 @@ def compile_query(
         statement = statement.where(
             and_(*filter_conditions) if definition.logic == "and" else or_(*filter_conditions)
         )
-    ordering = []
+    return statement.order_by(*query_ordering(definition, fields))
+
+
+def query_ordering(
+    definition: QueryDefinition, fields: dict[UUID, Field]
+) -> list[ColumnElement[Any]]:
+    ordering: list[ColumnElement[Any]] = []
     for sort in definition.sort:
         expression = field_expression(fields[sort.field_id])
         ordering.append(
@@ -197,23 +233,117 @@ def compile_query(
         )
     if not ordering:
         ordering.append(Record.created_at.asc().nulls_last())
-    return statement.order_by(*ordering, Record.id.asc())
+    return [*ordering, Record.id.asc()]
 
 
-def projected_record(record: Record, definition: QueryDefinition) -> RecordResponse:
-    response = RecordResponse.model_validate(record)
-    keys = {str(ref.field_id) for ref in definition.columns}
-    response.data = {key: value for key, value in record.data.items() if key in keys}
-    return response
+def _record_data_projection(field_ids: Sequence[UUID]) -> ColumnElement[Any]:
+    keys = tuple(dict.fromkeys(str(field_id) for field_id in field_ids))
+    if not keys:
+        return literal({}, type_=JSONB)
+
+    entries = func.jsonb_each(Record.data).table_valued("key", "value").alias("record_data_keys")
+    selected_data = (
+        select(func.jsonb_object_agg(entries.c.key, entries.c.value))
+        .select_from(entries)
+        .where(entries.c.key.in_(keys))
+        .correlate(Record)
+        .scalar_subquery()
+    )
+    return type_coerce(
+        func.coalesce(selected_data, literal({}, type_=JSONB)),
+        JSONB,
+    )
+
+
+def projected_record_query(
+    statement: Select[tuple[Record]],
+    definition: QueryDefinition,
+    *,
+    extra_field_ids: Sequence[UUID] = (),
+) -> Select[tuple[Any, ...]]:
+    """Select Record metadata and only the definition's top-level JSON keys."""
+
+    field_ids = [reference.field_id for reference in definition.columns]
+    field_ids.extend(extra_field_ids)
+    return statement.with_only_columns(
+        Record.id.label("id"),
+        Record.module_id.label("module_id"),
+        Record.created_at.label("created_at"),
+        Record.updated_at.label("updated_at"),
+        Record.deleted_at.label("deleted_at"),
+        Record.is_deleted.label("is_deleted"),
+        Record.performed_by.label("performed_by"),
+        _record_data_projection(field_ids).label("data"),
+        maintain_column_froms=True,
+    )
+
+
+def projected_record(row: Row[tuple[Any, ...]]) -> RecordProjection:
+    return RecordProjection(
+        id=row.id,
+        module_id=row.module_id,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        deleted_at=row.deleted_at,
+        is_deleted=row.is_deleted,
+        performed_by=row.performed_by,
+        data=row.data,
+    )
+
+
+def projected_record_response(row: Row[tuple[Any, ...]]) -> RecordResponse:
+    return RecordResponse.model_validate(projected_record(row))
+
+
+def _filtered_page(
+    db: Session, payload: RecordQuery, fields: dict[UUID, Field]
+) -> tuple[int, list[Row[tuple[Any, ...]]]]:
+    # Reuse all matching IDs, not JSON values, for the exact total and page.
+    matching = (
+        compile_query(payload.module_id, payload.definition, fields)
+        .with_only_columns(Record.id)
+        .order_by(None)
+        .cte("matching_record_ids")
+        .prefix_with("MATERIALIZED", dialect="postgresql")
+    )
+    total = select(func.count().label("total")).select_from(matching).subquery("matching_total")
+    paging_definition = payload.definition.model_copy(update={"filters": [], "search": None})
+    statement = compile_query(payload.module_id, paging_definition, fields).join(
+        matching, Record.id == matching.c.id
+    )
+    page = (
+        projected_record_query(statement, payload.definition)
+        .add_columns(
+            func.row_number()
+            .over(order_by=query_ordering(payload.definition, fields))
+            .label("position")
+        )
+        .limit(payload.limit)
+        .offset(payload.offset)
+        .subquery("record_page")
+    )
+    # The outer join retains the total even when the requested page is empty.
+    rows = db.execute(
+        select(total.c.total, *page.c)
+        .select_from(total.outerjoin(page, true()))
+        .order_by(page.c.position)
+    ).all()
+    return int(rows[0].total), [row for row in rows if row.id is not None]
 
 
 def query_records(db: Session, payload: RecordQuery) -> StandardListResponse[RecordResponse]:
     fields = validate_definition(db, payload.module_id, payload.definition)
-    statement = compile_query(payload.module_id, payload.definition, fields)
-    total = db.scalar(select(func.count()).select_from(statement.order_by(None).subquery())) or 0
-    rows = db.scalars(statement.limit(payload.limit).offset(payload.offset)).all()
+    if payload.definition.filters or payload.definition.search:
+        total, rows = _filtered_page(db, payload, fields)
+    else:
+        statement = compile_query(payload.module_id, payload.definition, fields)
+        total = (
+            db.scalar(select(func.count()).select_from(statement.order_by(None).subquery())) or 0
+        )
+        projected_statement = projected_record_query(statement, payload.definition)
+        rows = list(db.execute(projected_statement.limit(payload.limit).offset(payload.offset)))
     return StandardListResponse(
-        items=[projected_record(row, payload.definition) for row in rows],
+        items=[projected_record_response(row) for row in rows],
         pagination=PaginationMetadata(
             limit=payload.limit,
             offset=payload.offset,

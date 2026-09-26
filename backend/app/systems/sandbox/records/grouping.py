@@ -17,7 +17,8 @@ from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query import (
     compile_query,
     field_expression,
-    projected_record,
+    projected_record_query,
+    projected_record_response,
     validate_definition,
 )
 from app.systems.sandbox.records.query_schemas import (
@@ -134,10 +135,11 @@ def query_grouped_records(db: Session, payload: GroupedRecordQuery) -> GroupedRe
         member_total = db.scalar(
             select(func.count()).select_from(members_query.order_by(None).subquery())
         ) or 0
-        member_rows = db.scalars(
-            members_query.limit(payload.limit).offset(payload.offset)
+        projected_members = projected_record_query(members_query, payload.definition)
+        member_rows = db.execute(
+            projected_members.limit(payload.limit).offset(payload.offset)
         ).all()
-        items = [projected_record(row, payload.definition) for row in member_rows]
+        items = [projected_record_response(row) for row in member_rows]
         pagination = PaginationMetadata(
             limit=payload.limit,
             offset=payload.offset,

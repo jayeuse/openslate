@@ -15,7 +15,8 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.records.query import (
     compile_query,
     field_expression,
-    projected_record,
+    projected_record_query,
+    projected_record_response,
     validate_definition,
 )
 from app.systems.sandbox.records.query_schemas import (
@@ -97,9 +98,10 @@ def query_window_records(db: Session, payload: WindowRecordQuery) -> WindowRecor
     total = db.scalar(
         select(func.count()).select_from(statement.order_by(None).subquery())
     ) or 0
-    rows = db.scalars(statement.limit(payload.limit).offset(payload.offset)).all()
+    projected_statement = projected_record_query(statement, payload.definition)
+    rows = db.execute(projected_statement.limit(payload.limit).offset(payload.offset)).all()
     return WindowRecordResponse(
-        items=[projected_record(row, payload.definition) for row in rows],
+        items=[projected_record_response(row) for row in rows],
         pagination=PaginationMetadata(
             limit=payload.limit,
             offset=payload.offset,
