@@ -5,7 +5,7 @@ import {
   type SandboxFieldType,
   type SandboxState,
 } from "@/lib/sandbox/model";
-import { MODULE_TABLE } from "@/lib/sandbox/x6-adapter";
+import { MODULE_TABLE, departmentTone } from "@/lib/sandbox/x6-adapter";
 
 export type SandboxDropKind = "department" | "module" | "field";
 
@@ -39,8 +39,10 @@ export interface DropResolution {
   error: string | null;
 }
 
-const CANVAS_NODE_BORDER = "var(--sandbox-node-border, #a8b2c1)";
-const CANVAS_NODE_TEXT = "var(--muted-foreground, #68707d)";
+const CANVAS_NODE_BORDER = "var(--canvas-dept-frame, #a8b2c1)";
+const CANVAS_NODE_TEXT = "var(--canvas-dept-ink, #555e6c)";
+/** Height of the department head band that holds the name. */
+export const DEPARTMENT_HEAD_HEIGHT = 36;
 const CANVAS_NODE_SELECTED = "var(--accent, #f5f9ff)";
 const CANVAS_NODE_ACTIVE = "var(--primary, #3b82f6)";
 const CANVAS_NODE_MOVING = "var(--canvas-moving, #fff8eb)";
@@ -82,9 +84,11 @@ export function departmentNodeAttrs(
   height: number,
   selected: boolean,
   feedback: CanvasFeedback,
+  departmentIndex = 0,
 ) {
   const moving = feedback === "moving";
   const dropTarget = feedback === "drop";
+  const tone = departmentTone(departmentIndex);
   return {
     text: { refX: 0, refY: 0 },
     rect: { stroke: "none", strokeWidth: 0 },
@@ -100,7 +104,7 @@ export function departmentNodeAttrs(
           ? "var(--canvas-drop, #eff6ff)"
           : selected
             ? CANVAS_NODE_SELECTED
-            : "var(--card, #e9edf2)",
+            : "var(--canvas-dept-fill, #ffffff)",
       stroke: moving
         ? "var(--warning, #f59e0b)"
         : dropTarget || selected
@@ -113,8 +117,31 @@ export function departmentNodeAttrs(
       "data-selected": selected ? "true" : "false",
       "data-feedback": feedback ?? "",
     },
-    heading: {
+    // The head band and identity mark exist in every theme; each theme
+    // colors them through --dept-n-band and --dept-n.
+    band: {
+      "data-sandbox-part": "band",
+      x: 1,
+      y: 1,
+      width: DEPARTMENT_WIDTH - 2,
+      height: DEPARTMENT_HEAD_HEIGHT - 1,
+      fill: `var(--dept-${tone}-band, transparent)`,
+      stroke: "none",
+      pointerEvents: "none",
+    },
+    mark: {
+      "data-sandbox-part": "identity",
       x: 12,
+      y: 14,
+      width: 8,
+      height: 8,
+      rx: 2,
+      fill: `var(--dept-${tone}, #8e79b8)`,
+      stroke: "none",
+      pointerEvents: "none",
+    },
+    heading: {
+      x: 26,
       y: 18,
       textAnchor: "start",
       textVerticalAnchor: "middle",
@@ -154,7 +181,7 @@ export function departmentNodeAttrs(
       textAnchor: "end",
       textVerticalAnchor: "middle",
       fontSize: 12,
-      fill: "var(--muted-foreground, #9aa1ac)",
+      fill: CANVAS_NODE_TEXT,
       text: `${moduleCount} ${moduleCount === 1 ? "module" : "modules"}`,
     },
   };
@@ -193,6 +220,7 @@ export function updateDepartmentSizeAttrs(node: Node): void {
   const { width, height } = node.getSize();
   node.setAttrs({
     body: { width, height },
+    band: { width: width - 2 },
     subheading: { x: width - 12 },
     resizeGrip: { x: width - 24, y: height - 24 },
     resizeLines: {

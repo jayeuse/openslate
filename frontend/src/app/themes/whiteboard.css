@@ -54,6 +54,32 @@
   --wb-tape: #2a2f34;
   --wb-frame: #aeb7bf;
   --wb-frame-hi: #eef1f3;
+  /* Canvas skin. */
+  --canvas-dept-fill: #fafbfc;
+  --canvas-dept-frame: #2a2f34;
+  --canvas-dept-ink: #1b1f23;
+  --canvas-module-fill: #ffffff;
+  --canvas-module-frame: #c9ced3;
+  --canvas-module-ink: #1b1f23;
+  --canvas-row-rule: #e3e7ea;
+  --canvas-row-stripe: #ffffff;
+  --canvas-type-ink: #434b53;
+  --canvas-edge: #30373d;
+  --canvas-label-fill: #fafbfc;
+  --canvas-label-frame: #fafbfc;
+  --canvas-label-ink: #1b1f23;
+  --dept-1: #dfc168;
+  --dept-2: #bbade0;
+  --dept-3: #edbb8f;
+  --dept-4: #c8baa6;
+  --dept-1-band: var(--dept-1);
+  --dept-2-band: var(--dept-2);
+  --dept-3-band: var(--dept-3);
+  --dept-4-band: var(--dept-4);
+  --dept-1-card: #f4eacb;
+  --dept-2-card: #e9e3f6;
+  --dept-3-card: #f9e6d4;
+  --dept-4-card: #ece5db;
 }
 
 .dark[data-theme="whiteboard"],
@@ -104,6 +130,32 @@
   --wb-tape: #d7dcd8;
   --wb-frame: #4a5553;
   --wb-frame-hi: #2c3639;
+  /* Canvas skin. */
+  --canvas-dept-fill: #1f2729;
+  --canvas-dept-frame: #d7dcd8;
+  --canvas-dept-ink: #111416;
+  --canvas-module-fill: #283135;
+  --canvas-module-frame: #4d5b5a;
+  --canvas-module-ink: #eff2ee;
+  --canvas-row-rule: #34403f;
+  --canvas-row-stripe: #283135;
+  --canvas-type-ink: #aeb9b8;
+  --canvas-edge: #d7dcd8;
+  --canvas-label-fill: #1f2729;
+  --canvas-label-frame: #1f2729;
+  --canvas-label-ink: #eff2ee;
+  --dept-1: #c9ad57;
+  --dept-2: #a497cf;
+  --dept-3: #d4a273;
+  --dept-4: #b5a792;
+  --dept-1-band: var(--dept-1);
+  --dept-2-band: var(--dept-2);
+  --dept-3-band: var(--dept-3);
+  --dept-4-band: var(--dept-4);
+  --dept-1-card: #3a3524;
+  --dept-2-card: #302c40;
+  --dept-3-card: #3d3024;
+  --dept-4-card: #35312b;
 }
 
 /* Skin places. */
@@ -145,7 +197,6 @@
   .sandbox-ui
   .x6-cell:not([data-sandbox-pressed="true"])
   [data-sandbox-kind="department"][data-selected="false"][data-feedback=""] {
-  stroke: var(--wb-tape);
   stroke-width: 2.5px;
 }
 

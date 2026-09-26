@@ -75,6 +75,11 @@ export interface SandboxCanvasApi {
   resetZoom: () => void;
   /** Fits the design; false when it is larger than the view at the floor. */
   fit: () => boolean;
+  /**
+   * The opening view: 100% zoom with the design's top-left 24px in, so table
+   * and field names are readable. The minimap and Fit show the rest.
+   */
+  start: () => void;
   center: () => void;
   /** Places a newly-created node, or queues its position until it is rendered. */
   placeNode: (nodeId: string, position: { x: number; y: number }) => void;
@@ -530,6 +535,16 @@ export function SandboxCanvas({
         },
         resetZoom: () => {
           graph.zoom(1, { absolute: true });
+        },
+        start: () => {
+          graph.zoom(1, { absolute: true });
+          const departments = graph
+            .getNodes()
+            .filter((node) => nodeKindOf(node) === "department");
+          const box = graph.getCellsBBox(
+            departments.length > 0 ? departments : graph.getNodes(),
+          );
+          if (box !== null) graph.translate(24 - box.x, 24 - box.y);
         },
         fit: () => {
           graph.zoomToFit({
@@ -1027,6 +1042,39 @@ export function SandboxCanvas({
         aria-hidden="true"
         className="sandbox-minimap border-border bg-card pointer-events-auto absolute right-3 bottom-3 z-10 hidden overflow-hidden rounded-md border shadow-sm sm:block"
       />
+      {state.links.length > 0 ? (
+        <ul
+          aria-label="Line key"
+          className="border-border bg-card text-muted-foreground absolute bottom-3 left-3 z-10 hidden gap-1 rounded-md border px-2.5 py-2 text-xs shadow-sm sm:grid"
+        >
+          {(
+            [
+              ["Relationship", ""],
+              ["Handoff to another department", "6 4"],
+            ] as const
+          ).map(([label, dash]) => (
+            <li key={label} className="flex items-center gap-2">
+              <svg
+                aria-hidden="true"
+                width="24"
+                height="6"
+                className="shrink-0"
+              >
+                <line
+                  x1="0"
+                  y1="3"
+                  x2="24"
+                  y2="3"
+                  stroke="var(--canvas-edge)"
+                  strokeWidth="1.5"
+                  strokeDasharray={dash}
+                />
+              </svg>
+              <span>{label}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <p id="sandbox-canvas-keyboard-alternative" className="sr-only">
         Select canvas items with a pointer or their field controls. Use the
         Structure panel for complete keyboard editing.

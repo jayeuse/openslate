@@ -13,18 +13,33 @@ import {
 } from "@antv/x6";
 import { FIELD_TYPE_META, type SandboxField, type SandboxState } from "./model";
 
-/** Shared by persisted relationships and the provisional connection preview. */
-export function relationshipLineAttrs(selected = false) {
+/**
+ * A relationship line. A handoff connects modules in different departments;
+ * it is dashed so the key can name it. Shared by persisted relationships and
+ * the provisional connection preview.
+ */
+export function relationshipLineAttrs(selected = false, handoff = false) {
   return {
     "data-sandbox-line": "true",
+    "data-sandbox-edge-kind": handoff ? "handoff" : "relationship",
     stroke: selected
       ? "var(--primary, #3b82f6)"
-      : "var(--muted-foreground, #68707d)",
-    strokeWidth: 1.25,
-    strokeDasharray: "7 5",
+      : "var(--canvas-edge, #68707d)",
+    strokeWidth: 1.5,
+    strokeDasharray: handoff ? "6 4" : "",
     sourceMarker: null,
     targetMarker: null,
   };
+}
+
+/**
+ * Department identity: four colors per theme, cycled in department order and
+ * always shown beside the department name. `--dept-n-band` fills the
+ * department head and `--dept-n-card` the module header; each theme decides
+ * how loud they are.
+ */
+export function departmentTone(departmentIndex: number): number {
+  return (((departmentIndex % 4) + 4) % 4) + 1;
 }
 
 export const NODE_KINDS = ["department", "module"] as const;
@@ -61,18 +76,18 @@ export const MODULE_TABLE = {
   splitX: 144,
 } as const;
 
+// Canvas skin tokens (globals.css and src/app/themes). Each theme sets them
+// for light and dark; the fallbacks only cover a missing stylesheet.
 export const MODULE_TABLE_COLORS = {
-  headerFill: "var(--muted, #dce1e8)",
-  headerText: "var(--foreground, #20242c)",
-  bodyFill: "var(--card, #e9edf2)",
-  bodyStroke: "var(--sandbox-node-border, #a8b2c1)",
-  splitStroke: "var(--border, #b8cbf3)",
-  rowStroke: "var(--border, #c8d8f7)",
-  stripeFill: "var(--sandbox-field-stripe, #dce2e9)",
+  headerText: "var(--canvas-module-ink, #20242c)",
+  bodyFill: "var(--canvas-module-fill, #ffffff)",
+  bodyStroke: "var(--canvas-module-frame, #a8b2c1)",
+  rowStroke: "var(--canvas-row-rule, #e4e7ec)",
+  stripeFill: "var(--canvas-row-stripe, #f7f8fa)",
   selectedRowFill: "var(--accent, #dce8ff)",
-  nameText: "var(--card-foreground, #1f2d4d)",
-  typeText: "var(--muted-foreground, #30446d)",
-  emptyText: "var(--muted-foreground, #7183a6)",
+  nameText: "var(--canvas-module-ink, #1f2d4d)",
+  typeText: "var(--canvas-type-ink, #555e6c)",
+  emptyText: "var(--canvas-type-ink, #555e6c)",
 } as const;
 
 export interface SandboxMarkupUnit {
@@ -101,6 +116,7 @@ export function moduleTableMarkup(fieldCount: number): SandboxMarkupUnit[] {
   const markup: SandboxMarkupUnit[] = [
     { tagName: "rect", selector: "body" },
     { tagName: "rect", selector: "headerBar" },
+    { tagName: "rect", selector: "identity" },
     { tagName: "text", selector: "headerTitle" },
     { tagName: "path", selector: "tableIcon" },
   ];
@@ -122,7 +138,9 @@ export function moduleTableAttrs(
   selectedFieldId: string | null = null,
   selectedModule = false,
   feedback: "drop" | "moving" | null = null,
+  departmentIndex = 0,
 ): SandboxNodeAttrs {
+  const tone = departmentTone(departmentIndex);
   const { width, headerHeight, rowHeight } = MODULE_TABLE;
   const colors = MODULE_TABLE_COLORS;
   const rows = Math.max(fields.length, 1);
@@ -169,8 +187,19 @@ export function moduleTableAttrs(
           ? "var(--warning, #d97706)"
           : selectedModule || feedback === "drop"
             ? "var(--accent, #edf3ff)"
-            : colors.headerFill,
+            : `var(--dept-${tone}-card, #f1f3f5)`,
       "data-selected": selectedModule ? "true" : "false",
+    },
+    // The department's identity color on the card's leading edge.
+    identity: {
+      "data-sandbox-part": "identity",
+      x: 0,
+      y: 8,
+      width: 3,
+      height: tableHeight - 16,
+      fill: `var(--dept-${tone}, #8e79b8)`,
+      stroke: "none",
+      pointerEvents: "none",
     },
     tableIcon: {
       d: "M12 11h14v12H12z M12 15h14 M17 15v8",
@@ -263,12 +292,9 @@ export function moduleTableAttrs(
       textVerticalAnchor: "middle",
       fontSize: 12,
       fontWeight: 400,
-      fontFamily: "ui-monospace, SFMono-Regular, monospace",
       fill: colors.typeText,
-      text:
-        field === undefined
-          ? ""
-          : FIELD_TYPE_META[field.type].label.toLowerCase(),
+      // The same words the Properties panel uses.
+      text: field === undefined ? "" : FIELD_TYPE_META[field.type].label,
     };
   }
   return attrs;
@@ -438,7 +464,7 @@ export function graphOptions(
       allowBlank: false,
       allowLoop: false,
       router: { name: "orth" },
-      connector: { name: "normal" },
+      connector: { name: "rounded", args: { radius: 8 } },
       validateConnection: ({ sourceCell, targetCell }) => {
         if (sourceCell === null || sourceCell === undefined) {
           return false;

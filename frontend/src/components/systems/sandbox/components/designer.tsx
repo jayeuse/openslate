@@ -13,6 +13,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Input } from "@/components/ui/input";
@@ -288,7 +289,7 @@ export function Designer({
   useEffect(() => {
     if (wide) return;
     const frame = requestAnimationFrame(() => {
-      if (canvasFrameRef.current?.clientWidth) graphRef.current?.fit();
+      if (canvasFrameRef.current?.clientWidth) graphRef.current?.start();
     });
     return () => cancelAnimationFrame(frame);
   }, [pane, wide]);
@@ -1429,11 +1430,13 @@ export function Designer({
       className="flex h-full flex-col gap-5 p-5"
     >
       {inspectedItem ? (
-        <div>
-          <p className="text-muted-foreground text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold break-words">
+            {inspectedItem.name}
+          </h2>
+          <Badge variant="outline">
             {selectedModule ? "Module" : "Department"}
-          </p>
-          <h2 className="mt-1 text-lg font-semibold">{inspectedItem.name}</h2>
+          </Badge>
         </div>
       ) : editor && editor !== "relationship" ? null : (
         <div className="flex flex-col gap-2">
@@ -1473,31 +1476,33 @@ export function Designer({
             <Button
               variant="outline"
               disabled={pending}
-              aria-label={`${(selectedModule ?? department)?.closed ? "Reopen" : "Close"} ${selectedModule ? "module" : "department"}`}
-              onClick={async () => {
-                if (selectedModule) {
-                  await toggleLifecycle({
-                    kind: "module",
-                    id: selectedModule.id,
-                  });
-                } else if (department) {
-                  await toggleLifecycle({
-                    kind: "department",
-                    id: department.id,
-                  });
-                }
-              }}
-            >
-              {(selectedModule ?? department)?.closed ? "Reopen" : "Close"}
-            </Button>
-            <Button
-              variant="outline"
-              disabled={pending}
               onClick={() => open("module")}
             >
               Add module
             </Button>
           </ButtonGroup>
+          {/* Closing changes what the live workspace accepts, so it sits
+              apart from the editing actions and names what it closes. */}
+          <Button
+            variant="outline"
+            className="w-full justify-start"
+            disabled={pending}
+            onClick={async () => {
+              if (selectedModule) {
+                await toggleLifecycle({
+                  kind: "module",
+                  id: selectedModule.id,
+                });
+              } else if (department) {
+                await toggleLifecycle({
+                  kind: "department",
+                  id: department.id,
+                });
+              }
+            }}
+          >
+            {`${(selectedModule ?? department)?.closed ? "Reopen" : "Close"} ${selectedModule ? "module" : "department"}`}
+          </Button>
           {selectedModule && (
             <>
               <div className="border-border flex flex-col gap-2 border-t pt-4">
@@ -1852,7 +1857,7 @@ export function Designer({
                   (previousSize !== undefined && previousSize.inPixels > 0)
                 )
                   return;
-                requestAnimationFrame(() => graphRef.current?.fit());
+                requestAnimationFrame(() => graphRef.current?.start());
               }}
               className="h-full w-full min-w-0"
             >

@@ -917,7 +917,10 @@ export default function SandboxPage() {
       <footer className="border-border text-muted-foreground flex flex-wrap justify-between gap-2 border-t pt-3 text-xs">
         <span>{counts(design)}</span>
         <span>
-          Draft · {session?.history.past.length ?? 0} undo steps available
+          Draft
+          {session?.history.past.length
+            ? ` · ${session.history.past.length} ${session.history.past.length === 1 ? "change" : "changes"} you can undo`
+            : ""}
         </span>
       </footer>
       {session ? (

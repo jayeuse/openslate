@@ -1,7 +1,7 @@
 /*
  * Triplicate: carbon-copy business forms. Navy form ink on off-white paper,
- * square corners, uppercase condensed labels, dashed carbon lines, and a
- * flat offset shadow like a stacked form. Dark is carbon paper at night.
+ * square corners, condensed labels, dashed carbon lines, and paper-tinted
+ * departments like the copies of a carbon form. Dark is carbon paper at night.
  * Look only: layout and words never change. The dark block sets every
  * token the light block sets.
  */
@@ -38,9 +38,10 @@
   --danger-rule: #ebb5b0;
   --danger-ink: #ffffff;
   --focus: #1f4fbf;
-  --lift: 3px 3px 0 rgb(30 45 85 / 0.1);
-  --lift-raised: 3px 3px 0 rgb(30 45 85 / 0.14);
-  --lift-filter: drop-shadow(3px 3px 0 rgb(30 45 85 / 0.14));
+  --lift: 0 1px 2px rgb(30 45 85 / 0.08);
+  --lift-raised: 0 1px 2px rgb(30 45 85 / 0.08), 0 6px 16px rgb(30 45 85 / 0.1);
+  --lift-filter: drop-shadow(0 1px 2px rgb(30 45 85 / 0.1))
+    drop-shadow(0 6px 10px rgb(30 45 85 / 0.12));
   --sidebar: #f4f3ee;
   --canvas-background: #e3e6e8;
   --canvas-grid: #d6dadd;
@@ -50,6 +51,32 @@
   --font-code: var(--font-geist-mono);
   --card-edge: var(--rule-strong);
   --card-lift: var(--lift);
+  /* Canvas skin. */
+  --canvas-dept-fill: #fefefc;
+  --canvas-dept-frame: #8e96aa;
+  --canvas-dept-ink: #1e2d55;
+  --canvas-module-fill: #fefefc;
+  --canvas-module-frame: #1e2d55;
+  --canvas-module-ink: #1e2d55;
+  --canvas-row-rule: #c9cdd6;
+  --canvas-row-stripe: #fefefc;
+  --canvas-type-ink: #4b5675;
+  --canvas-edge: #1e2d55;
+  --canvas-label-fill: #fefefc;
+  --canvas-label-frame: #1e2d55;
+  --canvas-label-ink: #1e2d55;
+  --dept-1: #b8993a;
+  --dept-2: #8e96aa;
+  --dept-3: #5e9a74;
+  --dept-4: #c0808b;
+  --dept-1-band: #f6f0d6;
+  --dept-2-band: #eef0f4;
+  --dept-3-band: #e3efe6;
+  --dept-4-band: #f5e6e8;
+  --dept-1-card: var(--dept-1-band);
+  --dept-2-card: var(--dept-2-band);
+  --dept-3-card: var(--dept-3-band);
+  --dept-4-card: var(--dept-4-band);
 }
 
 .dark[data-theme="triplicate"],
@@ -84,9 +111,10 @@
   --danger-rule: #6a2a2f;
   --danger-ink: #2a0a0c;
   --focus: #9fb3f2;
-  --lift: 3px 3px 0 rgb(0 0 0 / 0.35);
-  --lift-raised: 3px 3px 0 rgb(0 0 0 / 0.45);
-  --lift-filter: drop-shadow(3px 3px 0 rgb(0 0 0 / 0.45));
+  --lift: 0 1px 2px rgb(0 0 0 / 0.4);
+  --lift-raised: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 16px rgb(0 0 0 / 0.4);
+  --lift-filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.45))
+    drop-shadow(0 6px 10px rgb(0 0 0 / 0.4));
   --sidebar: #0e1226;
   --canvas-background: #141934;
   --canvas-grid: color-mix(in srgb, #2d3560 55%, transparent);
@@ -96,6 +124,32 @@
   --font-code: var(--font-geist-mono);
   --card-edge: var(--rule-strong);
   --card-lift: var(--lift);
+  /* Canvas skin. */
+  --canvas-dept-fill: #171c35;
+  --canvas-dept-frame: #414a73;
+  --canvas-dept-ink: #e8eaf2;
+  --canvas-module-fill: #1c223f;
+  --canvas-module-frame: #6d77a1;
+  --canvas-module-ink: #e8eaf2;
+  --canvas-row-rule: #2a3154;
+  --canvas-row-stripe: #1c223f;
+  --canvas-type-ink: #a4abc4;
+  --canvas-edge: #a4abc4;
+  --canvas-label-fill: #171c35;
+  --canvas-label-frame: #6d77a1;
+  --canvas-label-ink: #e8eaf2;
+  --dept-1: #d4b85c;
+  --dept-2: #a4abc4;
+  --dept-3: #7fbf96;
+  --dept-4: #d9a0aa;
+  --dept-1-band: #2c2a1c;
+  --dept-2-band: #232846;
+  --dept-3-band: #1c2e25;
+  --dept-4-band: #33222a;
+  --dept-1-card: var(--dept-1-band);
+  --dept-2-card: var(--dept-2-band);
+  --dept-3-card: var(--dept-3-band);
+  --dept-4-card: var(--dept-4-band);
 }
 
 /* Skin places. Labels, table heads, and chips can show names people typed,

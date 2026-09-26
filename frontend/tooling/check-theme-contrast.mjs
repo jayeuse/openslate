@@ -35,6 +35,15 @@ const PAIRS = [
   ["input", "background", 3],
   ["ring", "background", 3],
   ["ring", "card", 3],
+  // Canvas skin: table text, type labels, department heads, line labels.
+  ["canvas-module-ink", "canvas-module-fill", 4.5],
+  ["canvas-type-ink", "canvas-module-fill", 4.5],
+  ["canvas-type-ink", "canvas-row-stripe", 4.5],
+  ["canvas-label-ink", "canvas-label-fill", 4.5],
+  ...[1, 2, 3, 4].flatMap((n) => [
+    ["canvas-module-ink", `dept-${n}-card`, 4.5],
+    ["canvas-dept-ink", `dept-${n}-band`, 4.5],
+  ]),
 ];
 
 // Each block ends its selector list with the preview selector, for example
