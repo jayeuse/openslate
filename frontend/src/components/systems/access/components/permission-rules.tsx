@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   AlertTriangle,
   ChevronDown,
@@ -67,9 +68,20 @@ import type {
   AccessSubjectRef,
 } from "../domain/policy";
 
-export type RulesViewProps = {
+export type PermissionRulesProps = {
   controller: AccessController;
   initialSubject?: AccessSubjectRef;
+  children: (context: PermissionRulesContext) => ReactNode;
+};
+
+export type PermissionRulesContext = {
+  subject: AccessSubjectRef;
+  editor: ReactNode;
+  ready: boolean;
+  hasDraft: boolean;
+  blocked: boolean;
+  requestSubjectChange: (subject: AccessSubjectRef) => void;
+  discardDraft: () => boolean;
 };
 
 type Selection = {
@@ -235,7 +247,11 @@ function RuleTimeWindow({
   );
 }
 
-export function RulesView({ controller, initialSubject }: RulesViewProps) {
+export function PermissionRules({
+  controller,
+  initialSubject,
+  children,
+}: PermissionRulesProps) {
   const userId = useVerifiedWorkspaceUserId();
   const { state, actions, permissionCatalog, scopeCatalog } = controller;
   const firstScope = scopeCatalog[0] ?? {
@@ -260,6 +276,7 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
     Record<string, ConflictResolution>
   >({});
   const [query, setQuery] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [sort, setSort] = useState<"name" | "name-desc">("name");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
@@ -323,6 +340,16 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
     }
     resetDraftState();
     return true;
+  }
+
+  function discardDraft(): boolean {
+    if (controller.isPending()) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return false;
+    }
+    return clearDraftState();
   }
 
   function resetDraftState() {
@@ -645,6 +672,18 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
   }
 
   function requestSelection(next: Selection) {
+    if (uncertainDraft) {
+      setError(
+        "Review the uncertain Rules change before starting another one.",
+      );
+      return;
+    }
+    if (controller.isPending()) {
+      setError(
+        "Another Access change is already in progress. Try again shortly.",
+      );
+      return;
+    }
     if (dirty) {
       if (setupOpen) {
         setResumeSetup(true);
@@ -658,6 +697,10 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
     setExpandedId(null);
     setSetupPermissionId(null);
     setPageIndex(0);
+  }
+
+  function requestSubjectChange(subject: AccessSubjectRef) {
+    requestSelection({ ...selection, subject });
   }
 
   async function applyChanges() {
@@ -780,23 +823,38 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
     return "Conditions only";
   }
 
-  return (
+  const editor = (
     <section
       aria-labelledby="rules-title"
-      className="flex min-w-0 flex-col gap-3"
+      className="flex min-w-0 flex-col gap-2"
     >
       <fieldset disabled={editingDisabled} className="contents">
-        <div>
-          <h2
-            id="rules-title"
-            tabIndex={-1}
-            className="text-xl font-semibold tracking-tight"
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2
+              id="rules-title"
+              tabIndex={-1}
+              className="text-base font-semibold tracking-tight"
+            >
+              Workspace rules
+            </h2>
+            <p className="text-muted-foreground mt-0.5 text-sm">
+              Set permissions, then review your changes.
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            className="min-h-11"
+            aria-expanded={filtersOpen}
+            aria-controls="rule-filters"
+            onClick={() => setFiltersOpen((open) => !open)}
           >
-            Detailed rules
-          </h2>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Set permissions, then review your changes.
-          </p>
+            Filter rules{" "}
+            <ChevronDown
+              aria-hidden="true"
+              className={filtersOpen ? "rotate-180" : ""}
+            />
+          </Button>
         </div>
 
         {notice ? <Alert variant="success">{notice}</Alert> : null}
@@ -819,51 +877,53 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
           </Alert>
         ) : null}
 
-        <AccessSearchToolbar
-          searchLabel="What can they do?"
-          placeholder="Search actions or technical ID"
-          query={query}
-          onQueryChange={(value) => {
-            setQuery(value);
-            setPageIndex(0);
-          }}
-          sort={sort}
-          sortOptions={[
-            { value: "name", label: "Name (A–Z)" },
-            { value: "name-desc", label: "Name (Z–A)" },
-          ]}
-          onSortChange={(value) => {
-            setSort(value);
-            setPageIndex(0);
-          }}
-          activeFilterCount={modifiedOnly ? 1 : 0}
-        >
-          <Field className="flex-row items-center justify-between gap-3">
-            <div>
-              <FieldLabel htmlFor="modified-rules">Modified only</FieldLabel>
-              <FieldDescription>
-                Show explicit rules and staged changes.
-              </FieldDescription>
-            </div>
-            <Switch
-              id="modified-rules"
-              checked={modifiedOnly}
-              onCheckedChange={(checked) => {
-                setModifiedOnly(checked);
-                setPageIndex(0);
-              }}
-            />
-          </Field>
-        </AccessSearchToolbar>
+        <div id="rule-filters" hidden={!filtersOpen}>
+          <AccessSearchToolbar
+            searchLabel="What can they do?"
+            placeholder="Search actions or technical ID"
+            query={query}
+            onQueryChange={(value) => {
+              setQuery(value);
+              setPageIndex(0);
+            }}
+            sort={sort}
+            sortOptions={[
+              { value: "name", label: "Name (A–Z)" },
+              { value: "name-desc", label: "Name (Z–A)" },
+            ]}
+            onSortChange={(value) => {
+              setSort(value);
+              setPageIndex(0);
+            }}
+            activeFilterCount={modifiedOnly ? 1 : 0}
+          >
+            <Field className="flex-row items-center justify-between gap-3">
+              <div>
+                <FieldLabel htmlFor="modified-rules">Modified only</FieldLabel>
+                <FieldDescription>
+                  Show explicit rules and staged changes.
+                </FieldDescription>
+              </div>
+              <Switch
+                id="modified-rules"
+                checked={modifiedOnly}
+                onCheckedChange={(checked) => {
+                  setModifiedOnly(checked);
+                  setPageIndex(0);
+                }}
+              />
+            </Field>
+          </AccessSearchToolbar>
+        </div>
         <p className="text-muted-foreground text-xs">
           Use existing access follows broader or default access. A scope lock
           can still block more specific rules.
         </p>
-        <div className="min-w-0 overflow-hidden rounded-lg border">
+        <div className="min-w-0 overflow-x-auto rounded-lg border">
           <div className="hidden lg:block">
             <DataTable
               ariaLabel="Workspace permissions"
-              className="w-full table-fixed [&_td:last-child]:text-right [&_th:first-child]:w-[30%] [&_th:last-child]:w-[15%] [&_th:last-child]:text-right [&_th:nth-child(2)]:w-[55%]"
+              className="w-full min-w-[38rem] table-fixed [&_td:last-child]:text-right [&_th:first-child]:w-[30%] [&_th:last-child]:w-[15%] [&_th:last-child]:text-right [&_th:nth-child(2)]:w-[55%]"
               cellClassName="p-4 whitespace-normal"
               columns={columns}
               data={visiblePermissions}
@@ -1214,12 +1274,12 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
         </Dialog>
 
         {dirty ? (
-          <div className="bg-card/95 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 shadow-sm backdrop-blur sm:sticky sm:bottom-3">
+          <div className="bg-card flex flex-col gap-3 border-t p-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm">
               <strong>{pending.length}</strong> staged change
               {pending.length === 1 ? "" : "s"}
             </p>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Button
                 type="button"
                 variant="outline"
@@ -1599,4 +1659,14 @@ export function RulesView({ controller, initialSubject }: RulesViewProps) {
       </AlertDialog>
     </section>
   );
+
+  return children({
+    subject: selection.subject,
+    editor,
+    ready: journalReady,
+    hasDraft: dirty || uncertainDraft,
+    blocked: controller.isPending() || uncertainDraft,
+    requestSubjectChange,
+    discardDraft,
+  });
 }

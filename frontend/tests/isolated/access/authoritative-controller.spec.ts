@@ -621,7 +621,7 @@ test("explains how to resolve a group delete blocked by detailed rules", async (
 
   expect(result.ok).toBe(false);
   if (!result.ok)
-    expect(result.error).toMatch(/Detailed rules.*remove or retarget/i);
+    expect(result.error).toMatch(/Permissions.*remove or retarget/i);
 });
 
 test("explains a denied initial Access read instead of suggesting another generic retry", async () => {

@@ -1795,8 +1795,8 @@ export function GroupEditor({
             <AlertDialogTitle>Delete {original?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               First remove its members, default assignments, and any rules in
-              Detailed rules. Deleting the group will not delete those rules.
-              Enter the exact group name to confirm.
+              Permissions. Deleting the group will not delete those rules. Enter
+              the exact group name to confirm.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Field>

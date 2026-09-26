@@ -55,9 +55,7 @@ const workspaceNavigationDefinitions = [
     items: [
       { id: "overview", label: "Overview" },
       { id: "identities", label: "People & services" },
-      { id: "roles", label: "Roles" },
-      { id: "groups", label: "Groups" },
-      { id: "rules", label: "Detailed rules" },
+      { id: "permissions", label: "Permissions" },
     ],
   },
   {
@@ -135,6 +133,11 @@ function sectionFor(
   if (definition.id === "access" && requested === "simulator")
     return "identities";
   if (definition.id === "access" && requested === "reviews") return "overview";
+  if (
+    definition.id === "access" &&
+    ["roles", "groups", "rules"].includes(requested ?? "")
+  )
+    return "permissions";
   if (
     definition.id === "openview" &&
     openViewRecordIdPattern.test(params.get("record") ?? "")

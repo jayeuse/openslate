@@ -58,7 +58,7 @@ test("Access defaults and identity editor offer only controls their save paths s
   await page.getByRole("menuitem", { name: "Internal identity" }).click();
   await expect(
     page.getByText(
-      "To change membership, close this editor and open the Groups tab.",
+      "To change membership, close this editor and open Permissions.",
     ),
   ).toBeVisible();
 });
@@ -71,9 +71,10 @@ test("Access current views and legacy links remain usable at 390px with truthful
   const views = [
     ["overview", 1, "Access overview"],
     ["identities", 1, "People & services"],
-    ["roles", 2, "Roles"],
-    ["groups", 2, "Groups & departments"],
-    ["rules", 2, "Detailed rules"],
+    ["permissions", 1, "Permissions"],
+    ["roles", 1, "Permissions"],
+    ["groups", 1, "Permissions"],
+    ["rules", 1, "Permissions"],
   ] as const;
 
   for (const [view, level, heading] of views) {
@@ -108,7 +109,9 @@ test("Access current views and legacy links remain usable at 390px with truthful
   ).toBe(true);
 
   await page.goto("/access?view=identities");
-  const filters = page.getByRole("search", { name: "Identity filters" });
+  const filters = page.getByRole("region", {
+    name: "Search identities controls",
+  });
   await filters.getByRole("button", { name: "More filters" }).click();
   const status = filters.getByLabel("Status");
   await expect(status.locator('option[value="deleted"]')).toHaveCount(0);
@@ -125,11 +128,14 @@ test("duplicating Administrator persists its ten effective data grants", async (
   page,
 }) => {
   await signIn(page);
-  await page.goto("/access?view=roles");
+  await page.goto("/access?view=permissions&type=roles");
   const administrator = page.getByRole("row").filter({
-    has: page.getByRole("button", { name: /^admin\b/i }),
+    has: page.getByRole("button", { name: "Configure admin", exact: true }),
   });
-  await administrator.getByRole("button", { name: "Duplicate" }).click();
+  await administrator
+    .getByRole("button", { name: "More actions for admin", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "Duplicate", exact: true }).click();
   await expect(page.getByText("Duplicated admin.")).toBeVisible();
 
   await page.reload();

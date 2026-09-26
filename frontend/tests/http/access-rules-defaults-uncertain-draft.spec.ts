@@ -126,6 +126,23 @@ async function mockAccessApi(
   });
 }
 
+async function openEveryoneRules(browserPage: Page) {
+  await browserPage.goto("/access?view=permissions");
+  const configureEveryone = browserPage.getByRole("button", {
+    name: "Configure Everyone",
+    exact: true,
+  });
+  if ((await configureEveryone.getAttribute("aria-expanded")) !== "true")
+    await configureEveryone.click();
+  await expect(configureEveryone).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    browserPage.getByRole("heading", {
+      name: "Workspace rules",
+      exact: true,
+    }),
+  ).toBeVisible();
+}
+
 test("Rules blocks a policy request when its draft cannot enter review state", async ({
   page: browserPage,
 }) => {
@@ -148,7 +165,7 @@ test("Rules blocks a policy request when its draft cannot enter review state", a
     };
   });
 
-  await browserPage.goto("/access?view=rules");
+  await openEveryoneRules(browserPage);
   const decision = browserPage.getByRole("group", {
     name: "Read records decision",
   });
@@ -176,7 +193,7 @@ test("Rules compares saved choices with current policy after an uncertain reques
       mutations += 1;
     },
   });
-  await browserPage.goto("/access?view=rules");
+  await openEveryoneRules(browserPage);
   await browserPage
     .getByRole("group", { name: "Read records decision" })
     .getByRole("button", { name: "Allow" })
@@ -232,7 +249,7 @@ test("using existing access preserves the rule lock and time window", async ({
     ],
   });
   await browserPage.setViewportSize({ width: 390, height: 844 });
-  await browserPage.goto("/access?view=rules");
+  await openEveryoneRules(browserPage);
 
   const readCard = browserPage
     .getByRole("article")
@@ -419,7 +436,7 @@ test("Rule setup opens context and the selected rule without applying on Done", 
     },
   });
 
-  await browserPage.goto("/access?view=rules");
+  await openEveryoneRules(browserPage);
   await browserPage.setViewportSize({ width: 1280, height: 900 });
   await expect(
     browserPage.getByRole("button", {

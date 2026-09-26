@@ -149,8 +149,13 @@ test("group deletion explains rule references and preserves the editor after a c
 }) => {
   const deletePreconditions: string[] = [];
   await mockGroupDeleteConflict(page, deletePreconditions);
-  await page.goto("/access?view=groups");
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.goto("/access?view=permissions");
+  await page
+    .getByRole("button", { name: "Configure Operations", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Manage members", exact: true })
+    .click();
   await page.getByRole("button", { name: "Delete group" }).click();
   await expect(
     page.getByText(/Deleting the group will not delete those rules/),
@@ -166,7 +171,7 @@ test("group deletion explains rule references and preserves the editor after a c
 
   await expect(
     page.getByText(
-      "Open Detailed rules to remove or retarget this group's rules before deleting it.",
+      "Open Permissions to remove or retarget this group's rules before deleting it.",
     ),
   ).toBeVisible();
   await expect(

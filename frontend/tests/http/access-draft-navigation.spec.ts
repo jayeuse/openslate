@@ -287,6 +287,54 @@ async function mockAccessApi(
   });
 }
 
+async function openPermissionSubject(pageUnderTest: Page, name: string) {
+  await pageUnderTest.goto("/access?view=permissions");
+  const configure = pageUnderTest.getByRole("button", {
+    name: `Configure ${name}`,
+    exact: true,
+  });
+  if ((await configure.getAttribute("aria-expanded")) !== "true")
+    await configure.click();
+  await expect(configure).toHaveAttribute("aria-expanded", "true");
+  return configure;
+}
+
+async function openEveryoneRules(pageUnderTest: Page) {
+  await openPermissionSubject(pageUnderTest, "Everyone");
+  await expect(
+    pageUnderTest.getByRole("heading", {
+      name: "Workspace rules",
+      exact: true,
+    }),
+  ).toBeVisible();
+}
+
+async function openGroupEditor(pageUnderTest: Page, name: string) {
+  await openPermissionSubject(pageUnderTest, name);
+  await pageUnderTest
+    .getByRole("button", { name: "Manage members", exact: true })
+    .click();
+}
+
+async function openRoleEditor(pageUnderTest: Page, name: string) {
+  await openPermissionSubject(pageUnderTest, name);
+  await pageUnderTest
+    .getByRole("button", { name: "Edit role", exact: true })
+    .click();
+}
+
+async function openCreateDialog(pageUnderTest: Page, kind: "role" | "group") {
+  await pageUnderTest
+    .getByRole("button", { name: "Create", exact: true })
+    .click();
+  await pageUnderTest
+    .getByRole("menuitem", {
+      name: `Create ${kind}`,
+      exact: true,
+    })
+    .click();
+}
+
 test("shared directory pagination shows current page and respects boundaries", async ({
   page,
 }) => {
@@ -308,12 +356,21 @@ test("shared directory pagination shows current page and respects boundaries", a
     () => extraRoles,
     () => extraGroups,
   );
-  for (const [view, label] of [
-    ["roles", "Role pages"],
-    ["groups", "Group pages"],
-  ]) {
-    await page.goto(`/access?view=${view}`);
-    const navigation = page.getByRole("navigation", { name: label });
+  for (const subjectType of ["Roles", "Groups"]) {
+    await page.goto("/access?view=permissions");
+    const moreFilters = page.getByRole("button", {
+      name: "More filters",
+      exact: true,
+    });
+    await expect(moreFilters).toHaveAttribute("aria-expanded", "false");
+    await moreFilters.click();
+    await expect(moreFilters).toHaveAttribute("aria-expanded", "true");
+    await page
+      .getByLabel("Subject type", { exact: true })
+      .selectOption({ label: subjectType });
+    const navigation = page.getByRole("navigation", {
+      name: "Permissions directory pages",
+    });
     await expect(
       navigation.getByLabel("Page 1 of 2", { exact: true }),
     ).toHaveText("1");
@@ -334,7 +391,7 @@ test("shared directory pagination shows current page and respects boundaries", a
       navigation.getByLabel("Page 1 of 2", { exact: true }),
     ).toHaveText("1");
   }
-  await page.goto("/access?view=rules");
+  await openEveryoneRules(page);
   const navigation = page.getByRole("navigation", { name: "Permission pages" });
   await expect(
     navigation.getByLabel("Page 1 of 1", { exact: true }),
@@ -394,10 +451,7 @@ test("manual groups can be filtered, sorted, and searched while editing membersh
   );
 
   await pageUnderTest.setViewportSize({ width: 1280, height: 900 });
-  await pageUnderTest.goto("/access?view=groups");
-  const table = pageUnderTest.getByRole("table", { name: "Groups directory" });
-  const membership = pageUnderTest.getByLabel("Membership");
-  const sort = pageUnderTest.getByLabel("Sort groups");
+  await pageUnderTest.goto("/access?view=permissions");
   const moreFilters = pageUnderTest.getByRole("button", {
     name: "More filters",
     exact: true,
@@ -405,14 +459,20 @@ test("manual groups can be filtered, sorted, and searched while editing membersh
   await expect(moreFilters).toHaveAttribute("aria-expanded", "false");
   await moreFilters.click();
   await expect(moreFilters).toHaveAttribute("aria-expanded", "true");
+  await pageUnderTest
+    .getByLabel("Subject type", { exact: true })
+    .selectOption({ label: "Groups" });
+  const table = pageUnderTest.getByRole("table", {
+    name: "Permissions directory",
+  });
+  const membership = pageUnderTest.getByLabel("Membership");
+  const sort = pageUnderTest.getByLabel("Sort permissions");
 
   await expect(table.getByRole("row").nth(1)).toContainText("Analytics");
   await membership.selectOption("with-members");
   await expect(table.getByRole("row")).toHaveCount(3);
   await expect(table).not.toContainText("Analytics");
-  await expect(
-    pageUnderTest.getByText("Showing 1–2 of 2 groups"),
-  ).toBeVisible();
+  await expect(pageUnderTest.getByText("Showing 1–2 of 2")).toBeVisible();
 
   await membership.selectOption("empty");
   await expect(table.getByRole("row")).toHaveCount(2);
@@ -424,7 +484,11 @@ test("manual groups can be filtered, sorted, and searched while editing membersh
   await expect(table.getByRole("row").nth(1)).toContainText("Support");
   await expect(table.getByRole("row").nth(2)).toContainText("Operations");
 
-  await pageUnderTest.getByRole("button", { name: "Create group" }).click();
+  const createTrigger = pageUnderTest.getByRole("button", {
+    name: "Create",
+    exact: true,
+  });
+  await openCreateDialog(pageUnderTest, "group");
   const editor = pageUnderTest.getByRole("dialog", { name: "Create group" });
   await expect(editor.getByText("0 selected")).toBeVisible();
   await expect(
@@ -463,40 +527,43 @@ test("manual groups can be filtered, sorted, and searched while editing membersh
   await editor.getByRole("button", { name: "Cancel" }).click();
   await pageUnderTest.getByRole("button", { name: "Discard changes" }).click();
   await expect(editor).not.toBeVisible();
-  const createButton = pageUnderTest.locator("#create-group-button");
-  await expect(createButton).toBeFocused();
-  await pageUnderTest.getByRole("button", { name: "Create group" }).click();
+  await expect(createTrigger).toBeFocused();
+  await openCreateDialog(pageUnderTest, "group");
   const freshEditor = pageUnderTest.getByRole("dialog", {
     name: "Create group",
   });
   await expect(freshEditor.getByLabel("Search members")).toHaveValue("");
   await freshEditor.getByRole("button", { name: "Cancel" }).click();
   await pageUnderTest.getByRole("button", { name: "Discard changes" }).click();
-  await expect(createButton).toBeFocused();
+  await expect(createTrigger).toBeFocused();
 
-  const supportRow = table.getByRole("row").filter({ hasText: "Support" });
-  const supportEdit = supportRow.getByRole("button", {
-    name: "Edit",
+  const support = table.getByRole("button", {
+    name: "Configure Support",
     exact: true,
   });
-  await supportEdit.click();
+  await support.click();
+  const manageMembers = pageUnderTest.getByRole("button", {
+    name: "Manage members",
+    exact: true,
+  });
+  await manageMembers.click();
   const supportEditor = pageUnderTest.getByRole("dialog", {
     name: "Edit Support",
   });
   await supportEditor.getByRole("button", { name: "Cancel" }).click();
-  await expect(supportEdit).toBeFocused();
+  await expect(manageMembers).toBeFocused();
 });
 
-test("Access overview quick actions open all four destinations", async ({
+test("Access overview quick actions use the integrated Permissions directory", async ({
   page: pageUnderTest,
 }) => {
   await mockAccessApi(pageUnderTest);
 
   const destinations = [
-    { label: /^Open People & services:/, view: "identities" },
-    { label: /^Open Roles:/, view: "roles" },
-    { label: /^Open Groups:/, view: "groups" },
-    { label: /^Open Detailed rules:/, view: "rules" },
+    { label: /^Open People & services:/, subject: "People & services" },
+    { label: /^Open Roles:/, subject: "Configure member" },
+    { label: /^Open Groups:/, subject: "Configure Operations" },
+    { label: /^Open Detailed rules:/, subject: "Workspace rules" },
   ] as const;
 
   for (const destination of destinations) {
@@ -504,9 +571,36 @@ test("Access overview quick actions open all four destinations", async ({
     await pageUnderTest
       .getByRole("button", { name: destination.label })
       .click();
-    await expect(pageUnderTest).toHaveURL(
-      new RegExp(`/access\\?view=${destination.view}$`),
-    );
+    if (destination.subject === "People & services") {
+      await expect(
+        pageUnderTest.getByRole("heading", {
+          name: "People & services",
+          exact: true,
+        }),
+      ).toBeVisible();
+    } else {
+      await expect(
+        pageUnderTest.getByRole("heading", {
+          name: "Permissions",
+          exact: true,
+        }),
+      ).toBeVisible();
+      if (destination.subject === "Workspace rules") {
+        await expect(
+          pageUnderTest.getByRole("heading", {
+            name: "Workspace rules",
+            exact: true,
+          }),
+        ).toBeVisible();
+      } else {
+        await expect(
+          pageUnderTest.getByRole("button", {
+            name: destination.subject,
+            exact: true,
+          }),
+        ).toBeVisible();
+      }
+    }
   }
 });
 
@@ -721,15 +815,25 @@ test("Access rule drafts pause security navigation and resume only after discard
   ).toBeVisible();
 
   await pageUnderTest.getByRole("button", { name: "Open Groups" }).click();
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=groups$/);
-  await pageUnderTest.getByRole("button", { name: "View rules" }).click();
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=rules$/);
+  await expect(
+    pageUnderTest.getByRole("heading", { name: "Permissions", exact: true }),
+  ).toBeVisible();
+  await pageUnderTest
+    .getByRole("button", { name: "Configure Operations", exact: true })
+    .click();
+  await expect(
+    pageUnderTest.getByRole("heading", {
+      name: "Workspace rules",
+      exact: true,
+    }),
+  ).toBeVisible();
 
   const decision = pageUnderTest.getByRole("group", {
     name: "Read records decision",
   });
   await decision.getByRole("button", { name: "Allow" }).click();
   await expect(pageUnderTest.getByText("1 staged change")).toBeVisible();
+  const permissionsUrl = pageUnderTest.url();
 
   await pageUnderTest.getByRole("link", { name: /Sign-in & security/ }).click();
   await expect(
@@ -737,7 +841,7 @@ test("Access rule drafts pause security navigation and resume only after discard
       name: "Discard unsaved Access changes?",
     }),
   ).toBeVisible();
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=rules$/);
+  await expect(pageUnderTest).toHaveURL(permissionsUrl);
 
   await pageUnderTest.getByRole("button", { name: "Keep editing" }).click();
   await expect(decision.getByRole("button", { name: "Allow" })).toHaveAttribute(
@@ -875,11 +979,8 @@ test("an accepted reload restores an unsaved role name and description", async (
   page: pageUnderTest,
 }) => {
   await mockAccessApi(pageUnderTest);
-  await pageUnderTest.goto("/access?view=roles");
-  await pageUnderTest
-    .getByRole("button", { name: "Create role" })
-    .first()
-    .click();
+  await pageUnderTest.goto("/access?view=permissions");
+  await openCreateDialog(pageUnderTest, "role");
   await pageUnderTest.getByLabel("Role name").fill("Shift lead");
   await pageUnderTest.getByLabel("Description").fill("Coordinates handoffs");
   await pageUnderTest.getByRole("checkbox", { name: "Read records" }).check();
@@ -955,11 +1056,8 @@ test("a saved role cannot reopen for duplicate submission when draft removal fai
     };
   });
 
-  await pageUnderTest.goto("/access?view=roles");
-  await pageUnderTest
-    .getByRole("button", { name: "Create role" })
-    .first()
-    .click();
+  await pageUnderTest.goto("/access?view=permissions");
+  await openCreateDialog(pageUnderTest, "role");
   await pageUnderTest.getByLabel("Role name").fill("Shift lead");
   await pageUnderTest.getByRole("button", { name: "Save role" }).click();
   await pageUnderTest.getByRole("button", { name: "Apply changes" }).click();
@@ -1081,11 +1179,8 @@ test("an accepted role stays locked after both draft cleanup operations fail", a
     };
   });
 
-  await pageUnderTest.goto("/access?view=roles");
-  await pageUnderTest
-    .getByRole("button", { name: "Create role" })
-    .first()
-    .click();
+  await pageUnderTest.goto("/access?view=permissions");
+  await openCreateDialog(pageUnderTest, "role");
   await pageUnderTest.getByLabel("Role name").fill(" Shift lead ");
   await pageUnderTest.getByLabel("Description").fill("Draft night duties.");
   await pageUnderTest.getByRole("checkbox", { name: "Read records" }).check();
@@ -1171,11 +1266,8 @@ test("an unconfirmed role creation keeps its values locked through accepted relo
     });
   });
 
-  await pageUnderTest.goto("/access?view=roles");
-  await pageUnderTest
-    .getByRole("button", { name: "Create role" })
-    .first()
-    .click();
+  await pageUnderTest.goto("/access?view=permissions");
+  await openCreateDialog(pageUnderTest, "role");
   await pageUnderTest.getByLabel("Role name").fill("Shift lead");
   await pageUnderTest.getByRole("button", { name: "Save role" }).click();
   await pageUnderTest.getByRole("button", { name: "Apply changes" }).click();
@@ -1277,11 +1369,8 @@ test("an accepted reload restores an unsaved group name and description", async 
     () => [],
     () => [person],
   );
-  await pageUnderTest.goto("/access?view=groups");
-  await pageUnderTest
-    .getByRole("button", { name: "Create group" })
-    .first()
-    .click();
+  await pageUnderTest.goto("/access?view=permissions");
+  await openCreateDialog(pageUnderTest, "group");
   await pageUnderTest.getByLabel("Group name").fill("Night operations");
   await pageUnderTest.getByLabel("Description").fill("Overnight handoffs");
   await pageUnderTest.getByRole("checkbox", { name: /Alex Ops/ }).check();
@@ -1336,11 +1425,8 @@ test("a group save sends no request when its safety state cannot be stored", asy
     };
   });
 
-  await pageUnderTest.goto("/access?view=groups");
-  await pageUnderTest
-    .getByRole("button", { name: "Create group" })
-    .first()
-    .click();
+  await pageUnderTest.goto("/access?view=permissions");
+  await openCreateDialog(pageUnderTest, "group");
   await pageUnderTest.getByLabel("Group name").fill("Night operations");
   await pageUnderTest.getByRole("button", { name: "Save group" }).click();
   await pageUnderTest.getByRole("button", { name: "Apply changes" }).click();
@@ -1411,11 +1497,8 @@ test("an uncertain group shows saved and current membership before discard", asy
     },
   );
 
-  await pageUnderTest.goto("/access?view=groups");
-  await pageUnderTest
-    .getByRole("button", { name: "Create group" })
-    .first()
-    .click();
+  await pageUnderTest.goto("/access?view=permissions");
+  await openCreateDialog(pageUnderTest, "group");
   await pageUnderTest.getByLabel("Group name").fill("Night operations");
   await pageUnderTest
     .getByLabel("Description")
@@ -1549,11 +1632,7 @@ test("a restored group edit cannot save after its target is deleted", async ({
 }) => {
   let groupExists = true;
   await mockAccessApi(pageUnderTest, () => groupExists);
-  await pageUnderTest.goto("/access?view=groups");
-  await pageUnderTest
-    .getByRole("button", { name: "Edit", exact: true })
-    .first()
-    .click();
+  await openGroupEditor(pageUnderTest, "Operations");
   await pageUnderTest.getByLabel("Group name").fill("New operations");
   groupExists = false;
   pageUnderTest.once("dialog", (dialog) => dialog.accept());
@@ -1584,11 +1663,7 @@ test("a restored role edit cannot save after its target is deleted", async ({
     () => [],
     () => (roleExists ? [...roles, customRole] : roles),
   );
-  await pageUnderTest.goto("/access?view=roles");
-  await pageUnderTest
-    .getByRole("button", { name: /operator/ })
-    .first()
-    .click();
+  await openRoleEditor(pageUnderTest, "operator");
   await pageUnderTest.getByLabel("Role name").fill("Shift operator");
   roleExists = false;
   pageUnderTest.once("dialog", (dialog) => dialog.accept());
@@ -1626,7 +1701,7 @@ test("a dirty Access rules draft warns before browser reload", async ({
   page: pageUnderTest,
 }) => {
   await mockAccessApi(pageUnderTest);
-  await pageUnderTest.goto("/access?view=rules");
+  await openEveryoneRules(pageUnderTest);
   const decision = pageUnderTest.getByRole("group", {
     name: "Read records decision",
   });
@@ -1642,7 +1717,7 @@ test("a dirty Access rules draft warns before browser reload", async ({
   await dialog.dismiss();
   await reload;
 
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=rules$/);
+  await expect(pageUnderTest).toHaveURL(/\/access\?view=permissions$/);
   await expect(decision.getByRole("button", { name: "Allow" })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -1660,6 +1735,9 @@ test("a dirty Access rules draft warns before browser reload", async ({
   });
   await pageUnderTest.reload();
   expect(unexpectedWarnings).toBe(0);
+  await pageUnderTest
+    .getByRole("button", { name: "Configure Everyone", exact: true })
+    .click();
   await expect(decision.getByRole("button", { name: "Allow" })).toHaveAttribute(
     "aria-pressed",
     "false",
@@ -1670,7 +1748,7 @@ test("an accepted reload restores the Rules draft without submitting it", async 
   page: pageUnderTest,
 }) => {
   await mockAccessApi(pageUnderTest);
-  await pageUnderTest.goto("/access?view=rules");
+  await openEveryoneRules(pageUnderTest);
   const decision = pageUnderTest.getByRole("group", {
     name: "Read records decision",
   });
@@ -1724,28 +1802,56 @@ test("an accepted reload restores the Rules draft without submitting it", async 
   expect(ruleWrites).toEqual([]);
 });
 
-test("browser Back and Forward restore a staged Rules decision", async ({
+test("browser Back and Forward retain a staged group rule through the legacy Rules view", async ({
   page: pageUnderTest,
 }) => {
   await mockAccessApi(pageUnderTest);
-  await pageUnderTest.goto("/access?view=groups");
-  await pageUnderTest.getByRole("button", { name: "View rules" }).click();
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=rules$/);
+  const mutations = trackAccessMutations(pageUnderTest);
+  await pageUnderTest.goto("/access?view=permissions&type=groups");
+  const configureGroup = pageUnderTest.getByRole("button", {
+    name: "Configure Operations",
+    exact: true,
+  });
+  await configureGroup.click();
   const decision = pageUnderTest.getByRole("group", {
     name: "Read records decision",
   });
   await decision.getByRole("button", { name: "Allow" }).click();
   await expect(pageUnderTest.getByText("1 staged change")).toBeVisible();
 
+  pageUnderTest.once("dialog", (dialog) => dialog.accept());
+  await pageUnderTest.goto("/access?view=rules");
+  await expect(pageUnderTest).toHaveURL(/\/access\?view=rules$/);
+  await expect(
+    pageUnderTest.getByRole("heading", { name: "Permissions", exact: true }),
+  ).toBeVisible();
+  await expect(configureGroup).toHaveAttribute("aria-expanded", "true");
+  await expect(decision.getByRole("button", { name: "Allow" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  pageUnderTest.once("dialog", (dialog) => dialog.accept());
   await pageUnderTest.goBack();
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=groups$/);
+  await expect(pageUnderTest).toHaveURL(
+    /\/access\?view=permissions&type=groups$/,
+  );
+  await expect(configureGroup).toHaveAttribute("aria-expanded", "true");
+  await expect(decision.getByRole("button", { name: "Allow" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  pageUnderTest.once("dialog", (dialog) => dialog.accept());
   await pageUnderTest.goForward();
   await expect(pageUnderTest).toHaveURL(/\/access\?view=rules$/);
+  await expect(configureGroup).toHaveAttribute("aria-expanded", "true");
   await expect(decision.getByRole("button", { name: "Allow" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
   await expect(pageUnderTest.getByText("1 staged change")).toBeVisible();
+  expect(mutations).toEqual([]);
 });
 
 test("a restored Rules draft for a deleted group cannot be submitted", async ({
@@ -1753,8 +1859,7 @@ test("a restored Rules draft for a deleted group cannot be submitted", async ({
 }) => {
   let groupExists = true;
   await mockAccessApi(pageUnderTest, () => groupExists);
-  await pageUnderTest.goto("/access?view=groups");
-  await pageUnderTest.getByRole("button", { name: "View rules" }).click();
+  await openPermissionSubject(pageUnderTest, "Operations");
   const decision = pageUnderTest.getByRole("group", {
     name: "Read records decision",
   });
@@ -1805,7 +1910,7 @@ test("Rules restore keeps the opening baseline when live policy changes", async 
           ]
         : [],
   );
-  await pageUnderTest.goto("/access?view=rules");
+  await openEveryoneRules(pageUnderTest);
   await pageUnderTest
     .getByRole("group", { name: "Read records decision" })
     .getByRole("button", { name: "Allow" })
@@ -1870,7 +1975,7 @@ test("an uncertain edited role does not review a recreated role with the same na
     );
   }, previousRoleId);
 
-  await pageUnderTest.goto("/access?view=roles");
+  await pageUnderTest.goto("/access?view=permissions");
 
   const currentRole = pageUnderTest.getByRole("region", {
     name: "Current Access role",
@@ -1929,7 +2034,7 @@ test("an uncertain edited group does not review a recreated group with the same 
     );
   }, previousGroupId);
 
-  await pageUnderTest.goto("/access?view=groups");
+  await pageUnderTest.goto("/access?view=permissions");
 
   const currentGroup = pageUnderTest.getByRole("region", {
     name: "Current Access group",
@@ -1958,7 +2063,7 @@ test("Rules warns when tab storage cannot protect a new change", async ({
     };
   });
   await mockAccessApi(pageUnderTest);
-  await pageUnderTest.goto("/access?view=rules");
+  await openEveryoneRules(pageUnderTest);
   const decision = pageUnderTest.getByRole("group", {
     name: "Read records decision",
   });
@@ -2022,10 +2127,12 @@ test("browser Back and Forward restore an unsaved role editor without submitting
   await mockAccessApi(pageUnderTest);
   const mutations = trackAccessMutations(pageUnderTest);
   await pageUnderTest.goto("/access?view=overview");
-  await pageUnderTest.getByRole("link", { name: "Roles", exact: true }).click();
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=roles$/);
+  await pageUnderTest
+    .getByRole("link", { name: "Permissions", exact: true })
+    .click();
+  await expect(pageUnderTest).toHaveURL(/\/access\?view=permissions$/);
 
-  await pageUnderTest.getByRole("button", { name: "Create role" }).click();
+  await openCreateDialog(pageUnderTest, "role");
   const editor = pageUnderTest.getByRole("dialog", { name: "Create role" });
   await editor.getByLabel("Role name").fill("Shift lead");
   await editor.getByLabel("Description").fill("Coordinates handoffs");
@@ -2037,7 +2144,7 @@ test("browser Back and Forward restore an unsaved role editor without submitting
     pageUnderTest.getByRole("heading", { name: "Access overview" }),
   ).toBeVisible();
   await pageUnderTest.goForward();
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=roles$/);
+  await expect(pageUnderTest).toHaveURL(/\/access\?view=permissions$/);
 
   const restored = pageUnderTest.getByRole("dialog", { name: "Create role" });
   await expect(restored).toBeVisible();
@@ -2064,11 +2171,11 @@ test("browser Back and Forward restore an unsaved group editor without submittin
   const mutations = trackAccessMutations(pageUnderTest);
   await pageUnderTest.goto("/access?view=overview");
   await pageUnderTest
-    .getByRole("link", { name: "Groups", exact: true })
+    .getByRole("link", { name: "Permissions", exact: true })
     .click();
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=groups$/);
+  await expect(pageUnderTest).toHaveURL(/\/access\?view=permissions$/);
 
-  await pageUnderTest.getByRole("button", { name: "Create group" }).click();
+  await openCreateDialog(pageUnderTest, "group");
   const editor = pageUnderTest.getByRole("dialog", { name: "Create group" });
   await editor.getByLabel("Group name").fill("Night operations");
   await editor.getByLabel("Description").fill("Overnight handoffs");
@@ -2080,7 +2187,7 @@ test("browser Back and Forward restore an unsaved group editor without submittin
     pageUnderTest.getByRole("heading", { name: "Access overview" }),
   ).toBeVisible();
   await pageUnderTest.goForward();
-  await expect(pageUnderTest).toHaveURL(/\/access\?view=groups$/);
+  await expect(pageUnderTest).toHaveURL(/\/access\?view=permissions$/);
 
   const restored = pageUnderTest.getByRole("dialog", { name: "Create group" });
   await expect(restored).toBeVisible();
@@ -2097,7 +2204,7 @@ test("browser Back and Forward restore an unsaved group editor without submittin
   await discardRestoredDraft(pageUnderTest, restored);
 });
 
-test("workspace defaults are editable on Overview and legacy views route to their homes", async ({
+test("workspace defaults are editable and legacy Access views normalize to current homes", async ({
   page: pageUnderTest,
 }) => {
   await mockAccessApi(pageUnderTest);
@@ -2118,6 +2225,45 @@ test("workspace defaults are editable on Overview and legacy views route to thei
   await expect(editor.getByLabel("Invitation expiry days")).toHaveValue("14");
   await editor.getByRole("button", { name: "Cancel" }).click();
   await expect(editor).toBeHidden();
+
+  await pageUnderTest.goto("/access?view=roles");
+  await expect(
+    pageUnderTest.getByRole("heading", { name: "Permissions", exact: true }),
+  ).toBeVisible();
+  await pageUnderTest
+    .getByRole("button", { name: "More filters", exact: true })
+    .click();
+  await expect(
+    pageUnderTest.getByLabel("Subject type", { exact: true }),
+  ).toHaveValue("roles");
+
+  await pageUnderTest.goto("/access?view=groups");
+  await expect(
+    pageUnderTest.getByRole("heading", { name: "Permissions", exact: true }),
+  ).toBeVisible();
+  await pageUnderTest
+    .getByRole("button", { name: "More filters", exact: true })
+    .click();
+  await expect(
+    pageUnderTest.getByLabel("Subject type", { exact: true }),
+  ).toHaveValue("groups");
+
+  await pageUnderTest.goto("/access?view=rules");
+  await expect(
+    pageUnderTest.getByRole("heading", { name: "Permissions", exact: true }),
+  ).toBeVisible();
+  await expect(
+    pageUnderTest.getByRole("button", {
+      name: "Configure Everyone",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    pageUnderTest.getByRole("heading", {
+      name: "Workspace rules",
+      exact: true,
+    }),
+  ).toBeVisible();
 
   await pageUnderTest.goto("/access?view=simulator");
   await expect(
@@ -2161,23 +2307,18 @@ test("role directory keeps its controls clear and compares baselines across page
     () => directoryRoles,
   );
   await pageUnderTest.setViewportSize({ width: 390, height: 844 });
-  await pageUnderTest.goto("/access?view=roles");
+  await pageUnderTest.goto("/access?view=permissions");
   await expect(
-    pageUnderTest.getByRole("heading", { name: "Roles" }),
+    pageUnderTest.getByRole("heading", { name: "Permissions", exact: true }),
   ).toBeVisible();
+  const directory = pageUnderTest.getByRole("table", {
+    name: "Permissions directory",
+  });
   await expect(
-    pageUnderTest.getByText("Built-in roles", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    pageUnderTest.getByText("Custom roles", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    pageUnderTest.getByText(
-      "The last active Administrator cannot be reassigned or disabled.",
-    ),
-  ).toBeVisible();
-  await expect(
-    pageUnderTest.getByRole("searchbox", { name: "Search roles", exact: true }),
+    pageUnderTest.getByRole("searchbox", {
+      name: "Search permissions directory",
+      exact: true,
+    }),
   ).toBeVisible();
   const moreFilters = pageUnderTest.getByRole("button", {
     name: "More filters",
@@ -2186,45 +2327,54 @@ test("role directory keeps its controls clear and compares baselines across page
   await expect(moreFilters).toHaveAttribute("aria-expanded", "false");
   await moreFilters.click();
   await expect(moreFilters).toHaveAttribute("aria-expanded", "true");
-  const filters = pageUnderTest.getByRole("group", { name: "Filter roles" });
-  await expect(filters.getByRole("button", { name: "All 6" })).toBeVisible();
-  await expect(
-    filters.getByRole("button", { name: "Built-in 2" }),
-  ).toBeVisible();
-  await expect(filters.getByRole("button", { name: "Custom 4" })).toBeVisible();
-  await expect(pageUnderTest.getByLabel("Sort")).toHaveValue("name");
-  await pageUnderTest.getByLabel("Sort").selectOption("grants");
-  await pageUnderTest.getByLabel("Sort").selectOption("name");
+  const subjectType = pageUnderTest.getByLabel("Subject type", {
+    exact: true,
+  });
+  await expect(subjectType).toBeVisible();
+  await subjectType.selectOption("roles");
+  const roleType = pageUnderTest.getByLabel("Role type", { exact: true });
+  await expect(roleType).toHaveValue("all");
+  await roleType.selectOption("custom");
+  await expect(directory).not.toContainText("admin");
+  await roleType.selectOption("all");
+  const sort = pageUnderTest.getByLabel("Sort permissions", { exact: true });
+  await expect(sort).toHaveValue("name");
+  await sort.selectOption("grants");
+  await sort.selectOption("name");
   await expect(
     pageUnderTest.getByRole("button", { name: "Compare roles", exact: true }),
   ).toBeVisible();
   await expect(pageUnderTest.getByText("Showing 1–5 of 6")).toBeVisible();
+  await directory
+    .getByRole("button", { name: "Configure admin", exact: true })
+    .click();
+  await expect(pageUnderTest.getByText("Baseline permissions")).toBeVisible();
   await expect(
-    pageUnderTest
-      .getByRole("button", { name: "View role", exact: true })
-      .first(),
+    pageUnderTest.getByRole("button", { name: "View role", exact: true }),
   ).toBeVisible();
   await expect(
-    pageUnderTest
-      .getByRole("button", { name: "Edit role", exact: true })
-      .first(),
+    pageUnderTest.getByText(/Built-in roles are protected/),
+  ).toBeVisible();
+  await directory
+    .getByRole("button", { name: "Configure Operator", exact: true })
+    .click();
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Edit role", exact: true }),
   ).toBeVisible();
 
   await pageUnderTest.getByRole("button", { name: "Compare roles" }).click();
-  await expect(
-    pageUnderTest.getByRole("button", { name: "Cancel compare" }),
-  ).toBeVisible();
+  const compareDialog = pageUnderTest.getByRole("dialog", {
+    name: "Compare roles",
+  });
+  await expect(compareDialog).toBeVisible();
+  await pageUnderTest.getByRole("checkbox", { name: /Compare admin$/ }).check();
   await pageUnderTest
-    .getByRole("checkbox", { name: "Compare admin", exact: true })
-    .check();
-  await pageUnderTest
-    .getByRole("navigation", { name: "Role pages" })
+    .getByRole("navigation", { name: "Role comparison pages" })
     .getByRole("button", { name: "Go to next page" })
     .click();
   await pageUnderTest
     .getByRole("checkbox", {
-      name: "Compare Warehouse coordinator",
-      exact: true,
+      name: /Compare Warehouse coordinator$/,
     })
     .check();
   await pageUnderTest
@@ -2267,11 +2417,9 @@ test("role directory keeps its controls clear and compares baselines across page
   ).toBe(true);
   await pageUnderTest.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
-  await pageUnderTest.getByRole("button", { name: "Cancel compare" }).click();
-  await pageUnderTest
-    .getByRole("navigation", { name: "Role pages" })
-    .getByRole("button", { name: "Go to previous page" })
-    .press("Enter");
+  await expect(
+    pageUnderTest.getByRole("button", { name: "Compare roles", exact: true }),
+  ).toBeVisible();
   await expect(
     pageUnderTest.getByRole("button", { name: "More actions for admin" }),
   ).toBeVisible();
@@ -2460,4 +2608,445 @@ test("Identity details checks the selected person and service without stale resu
   });
 
   expect(writes).toEqual([]);
+});
+
+test("Permissions directory protects a staged group rule while switching subjects", async ({
+  page: pageUnderTest,
+}) => {
+  const groupWithAlex = { ...group, member_ids: [ids.person] };
+  await mockAccessApi(
+    pageUnderTest,
+    undefined,
+    undefined,
+    () => [person],
+    undefined,
+    () => [groupWithAlex],
+  );
+  const mutations = trackAccessMutations(pageUnderTest);
+
+  await pageUnderTest.goto("/access?view=permissions&type=all");
+
+  await expect(
+    pageUnderTest.getByRole("heading", { name: "Permissions", exact: true }),
+  ).toBeVisible();
+  const navigation = pageUnderTest.getByRole("navigation", {
+    name: "Main navigation",
+  });
+  await expect(
+    navigation.getByRole("link", { name: "Overview", exact: true }),
+  ).toBeVisible();
+  await expect(
+    navigation.getByRole("link", {
+      name: "People & services",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    navigation.getByRole("link", { name: "Permissions", exact: true }),
+  ).toBeVisible();
+  await expect(navigation.getByRole("link")).toHaveCount(3);
+
+  const directory = pageUnderTest.getByRole("table", {
+    name: "Permissions directory",
+    exact: true,
+  });
+  await expect(directory).toBeVisible();
+  const configureGroup = directory.getByRole("button", {
+    name: "Configure Operations",
+    exact: true,
+  });
+  await configureGroup.click();
+  await expect(
+    pageUnderTest
+      .getByRole("list", { name: "Members of Operations" })
+      .getByText("Alex Ops", { exact: true }),
+  ).toBeVisible();
+
+  const decision = pageUnderTest.getByRole("group", {
+    name: "Read records decision",
+  });
+  await expect(decision).toBeVisible();
+  const allow = decision.getByRole("button", { name: "Allow", exact: true });
+  await allow.click();
+  await expect(allow).toHaveAttribute("aria-pressed", "true");
+  await expect(pageUnderTest.getByText("1 staged change")).toBeVisible();
+
+  const configureAlex = directory.getByRole("button", {
+    name: "Configure Alex Ops",
+    exact: true,
+  });
+  await configureAlex.click();
+  const discardPrompt = pageUnderTest.getByRole("heading", {
+    name: "Discard staged changes?",
+    exact: true,
+  });
+  await expect(discardPrompt).toBeVisible();
+  await pageUnderTest.getByRole("button", { name: "Keep editing" }).click();
+  await expect(discardPrompt).toBeHidden();
+  await expect(configureGroup).toHaveAttribute("aria-expanded", "true");
+  await expect(allow).toHaveAttribute("aria-pressed", "true");
+
+  await configureAlex.click();
+  await expect(discardPrompt).toBeVisible();
+  await pageUnderTest
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(configureAlex).toHaveAttribute("aria-expanded", "true");
+  expect(mutations).toEqual([]);
+
+  await configureGroup.click();
+  await pageUnderTest
+    .getByRole("button", { name: "Manage members", exact: true })
+    .click();
+  const groupEditor = pageUnderTest.getByRole("dialog", {
+    name: "Edit Operations",
+    exact: true,
+  });
+  await expect(groupEditor).toBeVisible();
+  await groupEditor.getByRole("button", { name: "Cancel" }).click();
+  expect(mutations).toEqual([]);
+});
+
+test("Permissions directory keeps staged rules through view guards and restores the group", async ({
+  page: pageUnderTest,
+}) => {
+  const extraGroups = Array.from({ length: 6 }, (_, index) => ({
+    ...group,
+    id: `00000000-0000-4000-8000-${String(index + 30).padStart(12, "0")}`,
+    name: `Zulu team ${index}`,
+  }));
+  const groups = [{ ...group, member_ids: [ids.person] }, ...extraGroups];
+  await mockAccessApi(
+    pageUnderTest,
+    undefined,
+    undefined,
+    () => [person],
+    undefined,
+    () => groups,
+  );
+  const mutations = trackAccessMutations(pageUnderTest);
+
+  await pageUnderTest.goto("/access?view=permissions");
+  const configureGroup = pageUnderTest.getByRole("button", {
+    name: "Configure Operations",
+    exact: true,
+  });
+  await configureGroup.click();
+  const decision = pageUnderTest.getByRole("group", {
+    name: "Read records decision",
+  });
+  const allow = decision.getByRole("button", { name: "Allow", exact: true });
+  await allow.click();
+  await expect(allow).toHaveAttribute("aria-pressed", "true");
+
+  const moreFilters = pageUnderTest.getByRole("button", {
+    name: "More filters",
+    exact: true,
+  });
+  await moreFilters.click();
+  const subjectType = pageUnderTest.getByLabel("Subject type", { exact: true });
+  await subjectType.selectOption("identities");
+  const discardPrompt = pageUnderTest.getByRole("heading", {
+    name: "Discard staged rule changes?",
+    exact: true,
+  });
+  await expect(discardPrompt).toBeVisible();
+  await pageUnderTest.getByRole("button", { name: "Keep editing" }).click();
+  await expect(discardPrompt).toBeHidden();
+  await expect(subjectType).toHaveValue("shared");
+  await expect(configureGroup).toHaveAttribute("aria-expanded", "true");
+  await expect(allow).toHaveAttribute("aria-pressed", "true");
+
+  const sort = pageUnderTest.getByLabel("Sort permissions", { exact: true });
+  await sort.selectOption("members");
+  await expect(discardPrompt).toBeVisible();
+  await pageUnderTest.getByRole("button", { name: "Keep editing" }).click();
+  await expect(discardPrompt).toBeHidden();
+  await expect(sort).toHaveValue("name");
+  await expect(configureGroup).toHaveAttribute("aria-expanded", "true");
+  await expect(allow).toHaveAttribute("aria-pressed", "true");
+
+  await pageUnderTest
+    .getByRole("navigation", { name: "Permissions directory pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
+  await expect(discardPrompt).toBeVisible();
+  await pageUnderTest.getByRole("button", { name: "Keep editing" }).click();
+  await expect(discardPrompt).toBeHidden();
+  await expect(configureGroup).toBeVisible();
+  await expect(allow).toHaveAttribute("aria-pressed", "true");
+
+  pageUnderTest.once("dialog", (dialog) => dialog.accept());
+  await pageUnderTest.reload();
+
+  await expect(configureGroup).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    pageUnderTest
+      .getByRole("group", { name: "Read records decision" })
+      .getByRole("button", { name: "Allow", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(mutations).toEqual([]);
+});
+
+test("Permissions directory defaults to shared subjects while restoring an individual rules draft", async ({
+  page: pageUnderTest,
+}) => {
+  const service = directoryServices[0]!;
+  await mockAccessApi(
+    pageUnderTest,
+    undefined,
+    undefined,
+    () => [person],
+    undefined,
+    undefined,
+    () => [service],
+  );
+  const mutations = trackAccessMutations(pageUnderTest);
+
+  await pageUnderTest.goto("/access?view=permissions");
+  const directory = pageUnderTest.getByRole("table", {
+    name: "Permissions directory",
+    exact: true,
+  });
+  await expect(directory).toContainText("Everyone");
+  await expect(directory).toContainText("member");
+  await expect(directory).toContainText("admin");
+  await expect(directory).toContainText("Operations");
+  await expect(
+    directory.getByRole("button", { name: "Configure Alex Ops", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    directory.getByRole("button", {
+      name: "Configure Weekly summary sync",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+
+  await pageUnderTest
+    .getByRole("button", { name: "More filters", exact: true })
+    .click();
+  const subjectType = pageUnderTest.getByLabel("Subject type", { exact: true });
+  await expect(subjectType).toHaveValue("shared");
+  const optionLabels = (
+    await subjectType.locator("option").allTextContents()
+  ).map((label) => label.trim());
+  expect(optionLabels).toContain("Workspace, roles & groups");
+  expect(optionLabels).toContain("Roles");
+  expect(optionLabels).toContain("Groups");
+  expect(optionLabels).toContain("People & services");
+  expect(optionLabels).toContain("All subjects");
+
+  await subjectType.selectOption({ label: "People & services" });
+  const configureAlex = directory.getByRole("button", {
+    name: "Configure Alex Ops",
+    exact: true,
+  });
+  await expect(configureAlex).toBeVisible();
+  await expect(
+    directory.getByRole("button", {
+      name: "Configure Weekly summary sync",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await configureAlex.click();
+  await expect(
+    pageUnderTest.getByRole("heading", {
+      name: "Workspace rules",
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  const allow = pageUnderTest
+    .getByRole("group", { name: "Read records decision" })
+    .getByRole("button", { name: "Allow", exact: true });
+  await allow.click();
+  await expect(allow).toHaveAttribute("aria-pressed", "true");
+  await expect(pageUnderTest.getByText("1 staged change")).toBeVisible();
+
+  pageUnderTest.once("dialog", (dialog) => dialog.accept());
+  await pageUnderTest.reload();
+
+  await expect(pageUnderTest).toHaveURL(/\/access\?view=permissions$/);
+  await pageUnderTest
+    .getByRole("button", { name: "More filters", exact: true })
+    .click();
+  await expect(subjectType).toHaveValue("shared");
+  await expect(
+    directory.getByRole("button", { name: "Configure Alex Ops", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    directory.getByRole("button", {
+      name: "Configure Weekly summary sync",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  const restoredSubject = pageUnderTest.getByRole("region", {
+    name: "Selected permission subject",
+    exact: true,
+  });
+  await expect(restoredSubject).toContainText("Alex Ops");
+  await expect(
+    restoredSubject
+      .getByRole("group", { name: "Read records decision" })
+      .getByRole("button", { name: "Allow", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(mutations).toEqual([]);
+});
+
+test("discarding staged rules applies the requested directory subject filter", async ({
+  page: pageUnderTest,
+}) => {
+  const groups = [
+    group,
+    ...Array.from({ length: 6 }, (_, index) => ({
+      ...group,
+      id: `00000000-0000-4000-8000-${String(index + 40).padStart(12, "0")}`,
+      name: `Zulu team ${index}`,
+    })),
+  ];
+  await mockAccessApi(
+    pageUnderTest,
+    undefined,
+    undefined,
+    () => [person],
+    undefined,
+    () => groups,
+  );
+  const mutations = trackAccessMutations(pageUnderTest);
+
+  await pageUnderTest.goto("/access?view=permissions");
+  await pageUnderTest
+    .getByRole("button", { name: "Configure Operations", exact: true })
+    .click();
+  await pageUnderTest
+    .getByRole("group", { name: "Read records decision" })
+    .getByRole("button", { name: "Allow", exact: true })
+    .click();
+
+  await pageUnderTest
+    .getByRole("button", { name: "More filters", exact: true })
+    .click();
+  const subjectType = pageUnderTest.getByLabel("Subject type", { exact: true });
+  await subjectType.selectOption("identities");
+  await expect(
+    pageUnderTest.getByRole("heading", {
+      name: "Discard staged rule changes?",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await pageUnderTest
+    .getByRole("button", { name: "Discard and continue", exact: true })
+    .click();
+
+  await expect(subjectType).toHaveValue("identities");
+  await expect(
+    pageUnderTest.getByRole("button", {
+      name: "Configure Operations",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  expect(mutations).toEqual([]);
+});
+
+test("discarding staged rules applies the requested directory page size", async ({
+  page: pageUnderTest,
+}) => {
+  const groups = [
+    group,
+    ...Array.from({ length: 6 }, (_, index) => ({
+      ...group,
+      id: `00000000-0000-4000-8000-${String(index + 50).padStart(12, "0")}`,
+      name: `Zulu team ${index}`,
+    })),
+  ];
+  await mockAccessApi(
+    pageUnderTest,
+    undefined,
+    undefined,
+    () => [person],
+    undefined,
+    () => groups,
+  );
+  const mutations = trackAccessMutations(pageUnderTest);
+
+  await pageUnderTest.goto("/access?view=permissions");
+  await pageUnderTest
+    .getByRole("button", { name: "Configure Operations", exact: true })
+    .click();
+  await pageUnderTest
+    .getByRole("group", { name: "Read records decision" })
+    .getByRole("button", { name: "Allow", exact: true })
+    .click();
+
+  const pageSize = pageUnderTest.getByLabel("Rows per page", { exact: true });
+  await pageSize.selectOption("10");
+  await expect(
+    pageUnderTest.getByRole("heading", {
+      name: "Discard staged rule changes?",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await pageUnderTest
+    .getByRole("button", { name: "Discard and continue", exact: true })
+    .click();
+
+  await expect(pageSize).toHaveValue("10");
+  await expect(pageUnderTest.getByText("1 staged change")).not.toBeVisible();
+  expect(mutations).toEqual([]);
+});
+
+test("legacy Permissions aliases follow sidebar and browser history changes", async ({
+  page: pageUnderTest,
+}) => {
+  await mockAccessApi(pageUnderTest);
+
+  await pageUnderTest.goto("/access?view=roles");
+  await expect(
+    pageUnderTest.getByRole("heading", { name: "Permissions", exact: true }),
+  ).toBeVisible();
+  await pageUnderTest
+    .getByRole("button", { name: "More filters", exact: true })
+    .click();
+  const subjectType = pageUnderTest.getByLabel("Subject type", { exact: true });
+  await expect(subjectType).toHaveValue("roles");
+
+  const navigation = pageUnderTest.getByRole("navigation", {
+    name: "Main navigation",
+  });
+  await navigation
+    .getByRole("link", { name: "Permissions", exact: true })
+    .click();
+  await expect(pageUnderTest).toHaveURL(/\/access\?view=permissions$/);
+  await expect(subjectType).toHaveValue("shared");
+  await pageUnderTest.goBack();
+  await expect(pageUnderTest).toHaveURL(/\/access\?view=roles$/);
+  await expect(subjectType).toHaveValue("roles");
+
+  await pageUnderTest.goto("/access?view=rules");
+  const configureEveryone = pageUnderTest.getByRole("button", {
+    name: "Configure Everyone",
+    exact: true,
+  });
+  await expect(configureEveryone).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    pageUnderTest.getByRole("heading", {
+      name: "Workspace rules",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await pageUnderTest
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Permissions", exact: true })
+    .click();
+  await expect(pageUnderTest).toHaveURL(/\/access\?view=permissions$/);
+  await expect(configureEveryone).toHaveAttribute("aria-expanded", "false");
+  await pageUnderTest.goBack();
+  await expect(pageUnderTest).toHaveURL(/\/access\?view=rules$/);
+  await expect(configureEveryone).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    pageUnderTest.getByRole("heading", {
+      name: "Workspace rules",
+      exact: true,
+    }),
+  ).toBeVisible();
 });

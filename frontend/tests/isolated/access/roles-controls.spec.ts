@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 const source = readFileSync(
   resolve(
     process.cwd(),
-    "src/components/systems/access/components/roles-view.tsx",
+    "src/components/systems/access/components/role-management.tsx",
   ),
   "utf8",
 );
@@ -19,11 +19,7 @@ function sourceBetween(start: string, end: string): string {
   return source.slice(startIndex, endIndex + end.length);
 }
 
-test("role actions and templates use clear, least-privilege guidance", () => {
-  expect(source).toContain("Adjust the search or create a role.");
-  expect(source).not.toContain(
-    "Adjust the search or create a role from a template.",
-  );
+test("role template actions preserve recommendation and blank defaults", () => {
   const templates = sourceBetween(
     "const recommendedTemplateId",
     "</DialogContent>\n      </Dialog>",
@@ -37,12 +33,12 @@ test("role actions and templates use clear, least-privilege guidance", () => {
   expect(templates).not.toContain("createRoleFromTemplate(recommended");
   const createFallback = sourceBetween(
     "function startCreateRole()",
-    "const roleColumns",
+    "const controls: RoleManagementControls",
   );
   expect(createFallback).toContain("controller.state.templates.length");
   expect(createFallback).toContain('id: "draft:new-role"');
   expect(createFallback).toContain("grants: []");
-  expect(source.match(/onClick=\{startCreateRole\}/g)).toHaveLength(2);
+  expect(source).toContain("createRole: startCreateRole");
   expect(source).toContain('role.name.toLowerCase() === "admin"');
   expect(source).toContain('role.name.toLowerCase() === "member"');
 });

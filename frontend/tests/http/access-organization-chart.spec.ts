@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -126,10 +126,13 @@ async function setup(page: Page, empty = false) {
       body: JSON.stringify(payload[path] ?? { detail: "Not mocked" }),
     });
   });
-  await page.goto("/access?view=groups");
+  await page.goto("/access?view=permissions");
   await page
-    .getByRole("tab", { name: "Organization chart", exact: true })
+    .getByRole("button", { name: "Organization chart", exact: true })
     .click();
+  await expect(
+    page.getByRole("dialog", { name: "Organization chart", exact: true }),
+  ).toBeVisible();
   return mutations;
 }
 
@@ -139,12 +142,16 @@ test("Access directories share search, sort, and expandable filter controls", as
   await setup(page);
   await page.setViewportSize({ width: 1280, height: 900 });
 
-  async function expectToolbar(searchName: string, sortName: string) {
-    await expect(page.getByLabel(searchName, { exact: true })).toBeVisible();
-    const sort = page.getByLabel(sortName, { exact: true });
+  async function expectToolbar(
+    searchName: string,
+    sortName: string,
+    scope: Page | Locator = page,
+  ) {
+    await expect(scope.getByLabel(searchName, { exact: true })).toBeVisible();
+    const sort = scope.getByLabel(sortName, { exact: true });
     await expect(sort).toBeVisible();
     await expect(sort).toHaveJSProperty("tagName", "SELECT");
-    const moreFilters = page.getByRole("button", {
+    const moreFilters = scope.getByRole("button", {
       name: "More filters",
       exact: true,
     });
@@ -182,10 +189,15 @@ test("Access directories share search, sort, and expandable filter controls", as
   await identityFilters.click();
   await expect(identityFilters).toHaveAttribute("aria-expanded", "false");
 
-  await page.goto("/access?view=roles");
-  const roleFilters = await expectToolbar("Search roles", "Sort");
-  const roleTypes = page.getByRole("group", { name: "Filter roles" });
-  await expect(roleTypes).not.toBeVisible();
+  await page.goto("/access?view=permissions");
+  const roleFilters = await expectToolbar(
+    "Search permissions directory",
+    "Sort permissions",
+  );
+  await expect(
+    page.getByLabel("Subject type", { exact: true }),
+  ).not.toBeVisible();
+  await expect(page.getByLabel("Role type", { exact: true })).not.toBeVisible();
   const compare = page.getByRole("button", {
     name: "Compare roles",
     exact: true,
@@ -193,42 +205,60 @@ test("Access directories share search, sort, and expandable filter controls", as
   await expect(compare).toBeVisible();
   await roleFilters.click();
   await expect(roleFilters).toHaveAttribute("aria-expanded", "true");
-  await expect(roleTypes).toBeVisible();
+  await expect(page.getByLabel("Subject type", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Role type", { exact: true })).toBeVisible();
+  await page
+    .getByLabel("Subject type", { exact: true })
+    .selectOption({ label: "Roles" });
   await expect(compare).toBeVisible();
 
-  await page.goto("/access?view=groups");
-  const groupFilters = await expectToolbar("Search groups", "Sort groups");
+  await page.goto("/access?view=permissions");
+  const groupFilters = await expectToolbar(
+    "Search permissions directory",
+    "Sort permissions",
+  );
   await expect(
     page.getByLabel("Membership", { exact: true }),
   ).not.toBeVisible();
   await groupFilters.click();
   await expect(groupFilters).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByLabel("Membership", { exact: true })).toBeVisible();
+  await page
+    .getByLabel("Subject type", { exact: true })
+    .selectOption({ label: "Groups" });
 
   await page
-    .getByRole("tab", { name: "Organization chart", exact: true })
+    .getByRole("button", { name: "Organization chart", exact: true })
     .click();
+  await expect(
+    page.getByRole("dialog", { name: "Organization chart", exact: true }),
+  ).toBeVisible();
+  const chart = page.getByRole("dialog", {
+    name: "Organization chart",
+    exact: true,
+  });
   const chartFilters = await expectToolbar(
     "Search people or departments",
     "Sort departments",
+    chart,
   );
-  const departmentSort = page.getByLabel("Sort departments", { exact: true });
+  const departmentSort = chart.getByLabel("Sort departments", { exact: true });
   await expect(departmentSort).toHaveValue("name");
   await departmentSort.selectOption("members");
   await expect(departmentSort).toHaveValue("members");
-  const sharedMemberships = page.getByRole("checkbox", {
+  const sharedMemberships = chart.getByRole("checkbox", {
     name: "Shared memberships",
     exact: true,
   });
   await expect(sharedMemberships).not.toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Fit view", exact: true }),
+    chart.getByRole("button", { name: "Fit view", exact: true }),
   ).toBeVisible();
   await chartFilters.click();
   await expect(chartFilters).toHaveAttribute("aria-expanded", "true");
   await expect(sharedMemberships).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Fit view", exact: true }),
+    chart.getByRole("button", { name: "Fit view", exact: true }),
   ).toBeVisible();
 });
 
@@ -236,6 +266,10 @@ test("organization membership explorer selects people, searches, and restores th
   page,
 }) => {
   const mutations = await setup(page);
+  const chart = page.getByRole("dialog", {
+    name: "Organization chart",
+    exact: true,
+  });
   const profile = page.getByRole("complementary", {
     name: "Organization details",
   });
@@ -255,12 +289,12 @@ test("organization membership explorer selects people, searches, and restores th
   await expect(profile).toContainText("Finance");
   await expect(profile).toContainText("Operations");
   await expect(profile).toContainText("Primary");
-  const moreFilters = page.getByRole("button", {
+  const moreFilters = chart.getByRole("button", {
     name: "More filters",
     exact: true,
   });
   await expect(moreFilters).toHaveAttribute("aria-expanded", "false");
-  const sharedMemberships = page.getByRole("checkbox", {
+  const sharedMemberships = chart.getByRole("checkbox", {
     name: "Shared memberships",
     exact: true,
   });
@@ -268,9 +302,9 @@ test("organization membership explorer selects people, searches, and restores th
   await moreFilters.click();
   await expect(moreFilters).toHaveAttribute("aria-expanded", "true");
   await sharedMemberships.check();
-  const departmentSort = page.getByLabel("Sort departments", { exact: true });
+  const departmentSort = chart.getByLabel("Sort departments", { exact: true });
   await departmentSort.selectOption("members");
-  const departmentCards = page
+  const departmentCards = chart
     .getByRole("region", { name: "Department membership graph" })
     .getByRole("button", { name: /^Explore (Finance|Operations)$/ });
   await expect(departmentCards).toHaveCount(2);
@@ -283,7 +317,7 @@ test("organization membership explorer selects people, searches, and restores th
   await expect(
     profile.getByRole("heading", { name: "Your organization" }),
   ).toBeVisible();
-  await page
+  await chart
     .getByRole("searchbox", {
       name: "Search people or departments",
       exact: true,
@@ -296,26 +330,28 @@ test("organization membership explorer selects people, searches, and restores th
     .getByRole("button", { name: "View Robin Park", exact: true })
     .click();
   await expect(profile).toContainText("No department assigned");
-  await page
+  await chart
     .getByRole("searchbox", {
       name: "Search people or departments",
       exact: true,
     })
     .fill("not-a-person");
   await expect(
-    page.getByText("No matching people or departments"),
+    chart.getByText("No matching people or departments"),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Clear search", exact: true }).click();
+  await chart
+    .getByRole("button", { name: "Clear search", exact: true })
+    .click();
   await expect(
-    page.getByRole("button", { name: "Explore Finance", exact: true }),
+    chart.getByRole("button", { name: "Explore Finance", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
-  await expect(page.getByLabel("Graph zoom")).toHaveText("110%");
-  await page.getByRole("button", { name: "Fit view", exact: true }).click();
+  await chart.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await expect(chart.getByLabel("Graph zoom")).toHaveText("110%");
+  await chart.getByRole("button", { name: "Fit view", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Explore Operations", exact: true }),
+    chart.getByRole("button", { name: "Explore Operations", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("Guest Person", { exact: true })).toHaveCount(0);
+  await expect(chart.getByText("Guest Person", { exact: true })).toHaveCount(0);
   expect(mutations).toEqual([]);
 });
 

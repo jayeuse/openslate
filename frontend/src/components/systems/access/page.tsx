@@ -31,22 +31,20 @@ import {
   GovernanceDialogs,
   type GovernanceDialogTarget,
 } from "./components/governance-dialogs";
-import { GroupsView } from "./components/groups-view";
 import { IdentitiesView } from "./components/identities-view";
 import {
   OverviewView,
   type AccessOverviewDestination,
 } from "./components/overview-view";
-import type { AccessSubjectRef } from "./domain/policy";
-import { RolesView } from "./components/roles-view";
-import { RulesView } from "./components/rules-view";
+import {
+  PermissionsView,
+  type PermissionSubjectFilter,
+} from "./components/permissions-view";
 
 const accessViews = [
   { id: "overview", label: "Overview" },
   { id: "identities", label: "People & services" },
-  { id: "roles", label: "Roles" },
-  { id: "groups", label: "Groups" },
-  { id: "rules", label: "Detailed rules" },
+  { id: "permissions", label: "Permissions" },
 ] as const;
 
 const accessPanelClass = "min-h-0 flex-1 overflow-y-auto overscroll-contain";
@@ -56,6 +54,19 @@ type PendingAccessNavigation = { href: string; resume: () => void };
 
 function isAccessView(value: string | null): value is AccessView {
   return accessViews.some((view) => view.id === value);
+}
+
+function permissionsFilter(
+  view: string | null,
+  type: string | null,
+): PermissionSubjectFilter {
+  const requested = view === "roles" || view === "groups" ? view : type;
+  return requested === "roles" ||
+    requested === "groups" ||
+    requested === "identities" ||
+    requested === "all"
+    ? requested
+    : "shared";
 }
 
 function AccessFallback() {
@@ -118,7 +129,6 @@ function AccessControlCenter() {
   const searchParams = useSearchParams();
   const controller = useAccessController();
   const { hasUnsavedDraft, discardUnsavedDrafts } = useAccessDraftNavigation();
-  const [requestedSubject, setRequestedSubject] = useState<AccessSubjectRef>();
   const [governanceDialog, setGovernanceDialog] =
     useState<GovernanceDialogTarget | null>(null);
   const [pendingNavigation, setPendingNavigation] =
@@ -142,11 +152,15 @@ function AccessControlCenter() {
       ? "identities"
       : requestedView === "reviews"
         ? "overview"
-        : isAccessView(requestedView)
-          ? requestedView
-          : hasUserDeepLink
-            ? "identities"
-            : "overview";
+        : requestedView === "roles" ||
+            requestedView === "groups" ||
+            requestedView === "rules"
+          ? "permissions"
+          : isAccessView(requestedView)
+            ? requestedView
+            : hasUserDeepLink
+              ? "identities"
+              : "overview";
 
   useEffect(() => {
     if (!readReady || requestedUser === null || hasUserDeepLink) return;
@@ -218,12 +232,8 @@ function AccessControlCenter() {
     return `${pathname}?${next.toString()}`;
   }
 
-  function pushAccessView(
-    view: AccessView,
-    options?: { keepSubject?: boolean },
-  ) {
+  function pushAccessView(view: AccessView) {
     setNavigationNotice("");
-    if (!options?.keepSubject) setRequestedSubject(undefined);
     router.push(accessViewHref(view) as Route);
   }
 
@@ -231,9 +241,9 @@ function AccessControlCenter() {
     if (guardWorkspaceNavigation(href, resume)) resume();
   }
 
-  function navigate(view: AccessView, options?: { keepSubject?: boolean }) {
+  function navigate(view: AccessView) {
     const href = accessViewHref(view);
-    requestAccessNavigation(href, () => pushAccessView(view, options));
+    requestAccessNavigation(href, () => pushAccessView(view));
   }
 
   function navigateFromOverview(destination: AccessOverviewDestination) {
@@ -250,14 +260,19 @@ function AccessControlCenter() {
       );
       return;
     }
+    if (
+      destination === "roles" ||
+      destination === "groups" ||
+      destination === "rules"
+    ) {
+      const next = new URLSearchParams({ view: "permissions" });
+      if (destination === "rules") next.set("configure", "everyone");
+      else next.set("type", destination);
+      const href = `${pathname}?${next.toString()}`;
+      requestAccessNavigation(href, () => router.push(href as Route));
+      return;
+    }
     navigate(destination);
-  }
-
-  function openRulesForGroup(groupId: string) {
-    requestAccessNavigation(accessViewHref("rules"), () => {
-      setRequestedSubject({ kind: "group", id: groupId });
-      pushAccessView("rules", { keepSubject: true });
-    });
   }
 
   function discardAndContinueNavigation() {
@@ -291,7 +306,7 @@ function AccessControlCenter() {
         className={
           activeView === "overview" ||
           activeView === "identities" ||
-          activeView === "roles"
+          activeView === "permissions"
             ? "flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
             : "flex shrink-0 items-start justify-between gap-3"
         }
@@ -302,20 +317,20 @@ function AccessControlCenter() {
               ? "Access overview"
               : activeView === "identities"
                 ? "People & services"
-                : "Access"}
+                : "Permissions"}
           </h1>
           <p className="text-muted-foreground mt-1 max-w-3xl text-sm">
             {activeView === "overview"
               ? "Manage who has access and what they can do."
               : activeView === "identities"
                 ? "Manage internal people, sponsored guests, and service metadata."
-                : "Manage identities, roles, groups, and access policies."}
+                : "Choose who, see their members, and set what they can do."}
           </p>
         </div>
         <Button
           asChild
           variant="outline"
-          className={`min-h-11 shrink-0 px-3 ${activeView === "overview" || activeView === "identities" || activeView === "roles" ? "w-full sm:w-auto" : ""}`}
+          className="min-h-11 w-full shrink-0 px-3 sm:w-auto"
         >
           <GuardedWorkspaceLink href="/manage?view=security">
             <ShieldCheck aria-hidden="true" />
@@ -359,22 +374,22 @@ function AccessControlCenter() {
         {activeView === "identities" ? (
           <IdentitiesView controller={controller} />
         ) : null}
-        {activeView === "roles" ? <RolesView controller={controller} /> : null}
-        {activeView === "groups" ? (
-          <GroupsView
+        {activeView === "permissions" ? (
+          <PermissionsView
             controller={controller}
-            onOpenRulesForGroup={openRulesForGroup}
-          />
-        ) : null}
-        {activeView === "rules" ? (
-          <RulesView
-            key={
-              requestedSubject?.kind === "group"
-                ? `rules-${requestedSubject.id}`
-                : "rules"
+            initialFilter={permissionsFilter(
+              requestedView,
+              searchParams.get("type"),
+            )}
+            initialOpen={
+              requestedView === "rules" ||
+              searchParams.get("configure") === "everyone"
             }
-            controller={controller}
-            initialSubject={requestedSubject}
+            routeIntent={JSON.stringify([
+              requestedView,
+              searchParams.get("type"),
+              searchParams.get("configure"),
+            ])}
           />
         ) : null}
         <GovernanceDialogs

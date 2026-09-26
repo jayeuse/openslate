@@ -117,9 +117,12 @@ test("Access explains where its detailed rules currently apply", async ({
     });
   });
 
-  await page.goto("/access?view=rules");
+  await page.goto("/access?view=permissions");
+  await page
+    .getByRole("button", { name: "Configure Everyone", exact: true })
+    .click();
   await expect(
-    page.getByRole("heading", { name: "Detailed rules", exact: true }),
+    page.getByRole("heading", { name: "Workspace rules", exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "Read records options", exact: true })
@@ -134,7 +137,7 @@ test("Access explains where its detailed rules currently apply", async ({
     ),
   ).toBeVisible();
 
-  await page.goto("/access?view=simulator");
+  await page.goto("/access?view=identities");
   await expect(
     page.getByRole("heading", { name: "People & services", exact: true }),
   ).toBeVisible();

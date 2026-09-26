@@ -85,7 +85,7 @@ test("identity editor explains required relationships without disabled group con
   expect(membership).toContain("draft.groupIds.length === 0");
   expect(membership).toContain("draft.groupIds.map((groupId)");
   expect(membership).toContain(
-    "Groups tab. Choose a group and edit its members there.",
+    "Permissions. Choose a group, then Manage members.",
   );
   expect(membership).not.toContain("<Checkbox");
 });
