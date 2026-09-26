@@ -27,21 +27,6 @@ try {
     const value = localStorage.getItem(key);
     return values.includes(value) ? value : fallback;
   };
-  const theme = preference("openslate-theme", "light", ["light", "dark"]);
-  root.classList.toggle("dark", theme === "dark");
-  root.dataset.accent = preference("openslate-accent", "neutral", [
-    "cobalt",
-    "indigo",
-    "emerald",
-    "neutral",
-  ]);
-  root.dataset.density = preference("openslate-density", "comfortable", [
-    "comfortable",
-    "compact",
-  ]);
-  root.dataset.radius = preference("openslate-radius", "subtle", [
-    "square",
-    "subtle",
-    "rounded",
-  ]);
+  const mode = preference("openslate-theme", "light", ["light", "dark"]);
+  root.classList.toggle("dark", mode === "dark");
 } catch {}

@@ -219,7 +219,7 @@ export default function ManageAudit({
           <div className="flex min-w-0 items-center gap-3">
             <span
               aria-hidden="true"
-              className="bg-primary/10 text-primary flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+              className="bg-muted text-foreground flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
             >
               {initials}
             </span>

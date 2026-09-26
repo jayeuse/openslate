@@ -1,149 +1,130 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Theme contract. A theme sets the semantic tokens below (surfaces, ink,
+ * signals, focus, elevation) for light (:root) and dark (.dark); the shadcn
+ * names are aliases of them. Slate is the default theme. Signals keep one
+ * meaning each: action acts, flow shows movement and success, warn asks for
+ * attention, danger marks destructive actions.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #202124;
-  --card: #ffffff;
-  --card-foreground: #202124;
-  --popover: #ffffff;
-  --popover-foreground: #202124;
-  --primary: #242527;
-  --primary-foreground: #ffffff;
-  --secondary: #f1f1f2;
-  --secondary-foreground: #353638;
-  --muted: #f5f5f6;
-  --muted-foreground: #686b72;
-  --accent: #eeeeef;
-  --accent-foreground: #242527;
-  --destructive: #dc2626;
-  --destructive-foreground: #ffffff;
-  --success: #15803d;
-  --warning: #b45309;
-  --border: #e5e5e7;
-  --input: #d2d3d5;
-  --ring: #777b83;
+  --ground: #f7f8fa;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f1f3f5;
+  --surface-hover: #eef0f3;
+  --ink: #0f1115;
+  --ink-muted: #555e6c;
+  --rule: #e4e7ec;
+  --rule-strong: #d0d5dd;
+  --control-edge: #858e9b;
+  --action: #2563eb;
+  --action-ink: #ffffff;
+  --action-text: #1d4ed8;
+  --action-tint: #eef3fe;
+  --flow: #0f766e;
+  --flow-ink: #ffffff;
+  --flow-text: #0f766e;
+  --flow-tint: #e7f5f3;
+  --warn: #b25e00;
+  --warn-ink: #ffffff;
+  --warn-text: #8a5300;
+  --warn-tint: #fff7e8;
+  --danger: #d92d20;
+  --flow-rule: #b7dfd9;
+  --warn-rule: #f2d3a0;
+  --danger-text: #b42318;
+  --danger-tint: #fef3f2;
+  --danger-rule: #fecdca;
+  --danger-ink: #ffffff;
+  --focus: #2563eb;
+  --lift: 0 1px 2px rgb(16 24 40 / 0.06);
+  --lift-raised:
+    0 2px 4px rgb(16 24 40 / 0.04), 0 12px 32px rgb(16 24 40 / 0.1);
+
+  --background: var(--ground);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface-raised);
+  --popover-foreground: var(--ink);
+  --primary: var(--action);
+  --primary-foreground: var(--action-ink);
+  --secondary: var(--surface-sunken);
+  --secondary-foreground: var(--ink);
+  --muted: var(--surface-sunken);
+  --muted-foreground: var(--ink-muted);
+  --accent: var(--surface-hover);
+  --accent-foreground: var(--ink);
+  --destructive: var(--danger);
+  --destructive-foreground: var(--danger-ink);
+  --success: var(--flow-text);
+  --warning: var(--warn-text);
+  --border: var(--rule);
+  --input: var(--control-edge);
+  --ring: var(--focus);
   --chart-1: #6382b6;
   --chart-2: #c08b48;
   --chart-3: #5f936d;
   --chart-4: #8b70a2;
   --chart-5: #b96f66;
-  --sidebar: #f5f5f6;
-  --sidebar-foreground: #292b2f;
-  --sidebar-muted: #686b72;
-  --sidebar-accent: #e7e7e9;
-  --density-space: 1rem;
-  --density-control-height: 2.5rem;
-  --canvas-background: #ffffff;
-  --canvas-moving: #fff8eb;
-  --canvas-drop: #edf3ff;
-  --canvas-grid: #d8dde5;
-  --canvas-grid-major: #bac3cf;
-  --sandbox-node-border: #9da8b8;
-  --sandbox-field-stripe: #f1f1f2;
-  --radius: 0.65rem;
+  --sidebar: var(--ground);
+  --sidebar-foreground: var(--ink);
+  --sidebar-muted: var(--ink-muted);
+  --sidebar-accent: var(--surface-hover);
+  --canvas-background: #f5f6f8;
+  --canvas-moving: var(--warn-tint);
+  --canvas-drop: var(--action-tint);
+  --canvas-grid: #dde1e7;
+  --canvas-grid-major: #c3c9d2;
+  --sandbox-node-border: var(--rule-strong);
+  --sandbox-field-stripe: var(--ground);
+  --radius: 0.5rem;
 }
 
 .dark {
-  --background: #111315;
-  --foreground: #f1f3f5;
-  --card: #181a1d;
-  --card-foreground: #f1f3f5;
-  --popover: #1d2024;
-  --popover-foreground: #f1f3f5;
-  --primary: #f1f1f2;
-  --primary-foreground: #171819;
-  --secondary: #272b30;
-  --secondary-foreground: #e5e7eb;
-  --muted: #22262b;
-  --muted-foreground: #aeb6c0;
-  --accent: #2c2e31;
-  --accent-foreground: #f1f1f2;
-  --destructive: #ff9292;
-  --destructive-foreground: #080808;
-  --success: #4ade80;
-  --warning: #fbbf24;
+  --ground: #0d1014;
+  --surface: #151920;
+  --surface-raised: #1b2028;
+  --surface-sunken: #1a1e25;
+  --surface-hover: #232933;
+  --ink: #eceff3;
+  --ink-muted: #9ea7b3;
+  --rule: #262c35;
+  --rule-strong: #3a424e;
+  --control-edge: #636c79;
+  --action: #6ea2ff;
+  --action-ink: #0b1220;
+  --action-text: #8db6ff;
+  --action-tint: #17243b;
+  --flow: #3cc0ae;
+  --flow-ink: #06201c;
+  --flow-text: #5ed0bf;
+  --flow-tint: #0f2a27;
+  --warn: #f2a24b;
+  --warn-ink: #231302;
+  --warn-text: #f6b870;
+  --warn-tint: #2b1d0c;
+  --danger: #ff8a7a;
+  --flow-rule: #1e4a45;
+  --warn-rule: #5a3d14;
+  --danger-text: #ff9c8f;
+  --danger-tint: #2c1210;
+  --danger-rule: #5c2320;
+  --danger-ink: #2a0703;
+  --focus: #6ea2ff;
+  --lift: 0 1px 2px rgb(0 0 0 / 0.4);
+  --lift-raised: 0 2px 4px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.45);
   --chart-1: #89a6d0;
   --chart-2: #d2aa70;
   --chart-3: #83b58e;
   --chart-4: #ad93c1;
   --chart-5: #d3948c;
-  --border: #30343b;
-  --input: #3a414b;
-  --ring: #aeb1b8;
-  --sidebar: #17191c;
-  --sidebar-foreground: #eef1f4;
-  --sidebar-muted: #a8b0ba;
-  --sidebar-accent: #292d33;
-  --canvas-background: #181b1f;
-  --canvas-moving: #3d311b;
-  --canvas-drop: #253653;
-  --canvas-grid: color-mix(in srgb, #343941 45%, transparent);
-  --canvas-grid-major: color-mix(in srgb, #4b535d 55%, transparent);
-  --sandbox-node-border: var(--border);
-  --sandbox-field-stripe: #22262b;
-}
-
-[data-accent="cobalt"] {
-  --primary: #2563eb;
-  --primary-foreground: #fff;
-  --accent: #edf3ff;
-  --accent-foreground: #1d4ed8;
-}
-.dark[data-accent="cobalt"] {
-  --primary: #77a9ff;
-  --primary-foreground: #111827;
-  --accent: #253653;
-  --accent-foreground: #c6d8ff;
-}
-[data-accent="indigo"] {
-  --primary: #4f46e5;
-  --accent: #eef2ff;
-  --accent-foreground: #4338ca;
-}
-.dark[data-accent="indigo"] {
-  --primary: #9aa5ff;
-  --primary-foreground: #15152b;
-  --accent: #30345a;
-  --accent-foreground: #d0d4ff;
-}
-[data-accent="emerald"] {
-  --primary: #046c4e;
-  --accent: #ecfdf5;
-  --accent-foreground: #047857;
-}
-.dark[data-accent="emerald"] {
-  --primary: #5ee0b0;
-  --primary-foreground: #08251b;
-  --accent: #1d493c;
-  --accent-foreground: #a9f3d3;
-}
-[data-accent="neutral"] {
-  --primary: #242527;
-  --accent: #eeeeef;
-  --accent-foreground: #242527;
-}
-.dark[data-accent="neutral"] {
-  --primary: #f1f1f2;
-  --primary-foreground: #171819;
-  --accent: #2c2e31;
-  --accent-foreground: #f1f1f2;
-}
-[data-density="compact"] {
-  --density-space: 0.75rem;
-  --density-control-height: 2.25rem;
-}
-[data-density="comfortable"] {
-  --density-space: 1rem;
-  --density-control-height: 2.5rem;
-}
-[data-radius="square"] {
-  --radius: 0.2rem;
-}
-[data-radius="subtle"] {
-  --radius: 0.45rem;
-}
-[data-radius="rounded"] {
-  --radius: 0.8rem;
+  --canvas-background: #12161b;
+  --canvas-grid: color-mix(in srgb, #343b46 45%, transparent);
+  --canvas-grid-major: color-mix(in srgb, #4a5360 55%, transparent);
 }
 
 @theme inline {
@@ -170,6 +151,19 @@
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-muted: var(--sidebar-muted);
   --color-sidebar-accent: var(--sidebar-accent);
+  --color-action-text: var(--action-text);
+  --color-action-tint: var(--action-tint);
+  --color-flow: var(--flow);
+  --color-flow-text: var(--flow-text);
+  --color-flow-tint: var(--flow-tint);
+  --color-flow-rule: var(--flow-rule);
+  --color-warn: var(--warn);
+  --color-warn-text: var(--warn-text);
+  --color-warn-tint: var(--warn-tint);
+  --color-warn-rule: var(--warn-rule);
+  --color-danger-text: var(--danger-text);
+  --color-danger-tint: var(--danger-tint);
+  --color-danger-rule: var(--danger-rule);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-chart-1: var(--chart-1);
@@ -184,9 +178,12 @@
   --radius-lg: var(--radius);
 }
 
-* {
-  border-color: var(--border);
-  box-sizing: border-box;
+/* Layered so border-color utilities (border-input, border-primary, …) win. */
+@layer base {
+  * {
+    border-color: var(--border);
+    box-sizing: border-box;
+  }
 }
 
 html {
@@ -227,31 +224,24 @@ textarea:focus-visible {
 }
 
 ::selection {
-  background: var(--accent);
-  color: var(--accent-foreground);
+  background: color-mix(in srgb, var(--action) 22%, transparent);
+  color: var(--ink);
+}
+
+input,
+textarea {
+  caret-color: var(--action);
 }
 
 /* Keep canvas editor contrast and interaction feedback local to the sandbox. */
 .sandbox-ui {
-  --background: #f3f3f4;
-  --card: #f8f8f9;
-  --popover: #f8f8f9;
-  --muted: #ebebed;
-  --secondary: #ebebed;
-  --sandbox-field-stripe: #eeeeef;
-  --border: #d0d1d3;
-  --input: #b7b9bc;
-}
-
-.dark .sandbox-ui {
-  --background: #111315;
-  --card: #181a1d;
-  --popover: #1d2024;
-  --muted: #22262b;
-  --secondary: #272b30;
-  --sandbox-field-stripe: #272e37;
-  --border: #30343b;
-  --input: #3a414b;
+  --background: var(--surface-sunken);
+  --card: var(--surface);
+  --popover: var(--surface-raised);
+  --muted: var(--surface-hover);
+  --secondary: var(--surface-hover);
+  --sandbox-field-stripe: var(--ground);
+  --border: var(--rule-strong);
 }
 
 .sandbox-ui .sandbox-field-list > li {
@@ -393,7 +383,12 @@ textarea:focus-visible {
 .app-shell [data-slot="sidebar-menu-button"] {
   min-height: 2.75rem;
 }
-.app-shell [data-slot="sidebar-menu-button"][data-active="true"] {
+.app-shell
+  :is(
+    [data-slot="sidebar-menu-button"],
+    [data-slot="sidebar-menu-sub-button"]
+  ):not([aria-expanded])[data-active]:not([data-active="false"]) {
+  color: var(--action-text);
   font-weight: 600;
 }
 .app-shell [data-slot="sidebar-menu-button"] svg {
