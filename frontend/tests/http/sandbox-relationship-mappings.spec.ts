@@ -390,25 +390,28 @@ test("the Build canvas owns most of a wide screen and one workbench switches Str
   ).toBeHidden();
 });
 
-test("fitting a narrow canvas keeps the design readable", async ({ page }) => {
+test("the canvas zoom range keeps a spread design legible", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const spreadDesign = structuredClone(configuredSandboxDesign);
   spreadDesign.layout = {
     "sample-commercial": { x: 4000, y: 0, width: 600, height: 400 },
   };
   await openAuthenticatedSandbox(page, spreadDesign);
+  const zoom = async () =>
+    Number.parseInt(
+      await page.getByRole("status", { name: "Canvas zoom" }).innerText(),
+      10,
+    );
 
   await page.getByRole("tab", { name: "Canvas" }).click();
   await page.getByRole("button", { name: "Fit canvas" }).click();
-  await expect
-    .poll(async () =>
-      Number.parseInt(
-        (await page.getByRole("status", { name: "Canvas zoom" }).innerText()) ??
-          "0",
-        10,
-      ),
-    )
-    .toBeGreaterThanOrEqual(40);
+  await expect.poll(zoom).toBe(50);
+
+  for (let step = 0; step < 4; step += 1)
+    await page.getByRole("button", { name: "Zoom out" }).click();
+  await expect.poll(zoom).toBe(50);
 });
 
 test("an empty Sandbox authors and persists a complete connected organization", async ({

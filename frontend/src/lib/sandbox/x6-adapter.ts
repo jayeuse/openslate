@@ -55,10 +55,10 @@ export function snapSandboxPosition(
  * Compact module cards with aligned field names and quiet type labels.
  */
 export const MODULE_TABLE = {
-  width: 280,
-  headerHeight: 40,
-  rowHeight: 32,
-  splitX: 174,
+  width: 232,
+  headerHeight: 34,
+  rowHeight: 26,
+  splitX: 144,
 } as const;
 
 export const MODULE_TABLE_COLORS = {
@@ -122,7 +122,6 @@ export function moduleTableAttrs(
   selectedFieldId: string | null = null,
   selectedModule = false,
   feedback: "drop" | "moving" | null = null,
-  overview = false,
 ): SandboxNodeAttrs {
   const { width, headerHeight, rowHeight } = MODULE_TABLE;
   const colors = MODULE_TABLE_COLORS;
@@ -170,22 +169,21 @@ export function moduleTableAttrs(
       "data-selected": selectedModule ? "true" : "false",
     },
     tableIcon: {
-      d: "M14 14h14v12H14z M14 18h14 M19 18v8",
+      d: "M12 11h14v12H12z M12 15h14 M17 15v8",
       fill: "none",
       stroke: colors.typeText,
       strokeWidth: 1.2,
       pointerEvents: "none",
     },
     headerTitle: {
-      x: 38,
+      x: 34,
       y: headerHeight / 2,
       textAnchor: "start",
       textVerticalAnchor: "middle",
-      fontSize: overview ? 30 : 13,
+      fontSize: 13,
       fontWeight: "bold",
       fill: colors.headerText,
-      text: truncateModuleTitle(name, overview ? 14 : 28),
-      "data-sandbox-part": "module-title",
+      text: truncateModuleTitle(name, 24),
     },
   };
   for (let i = 0; i < rows; i += 1) {
@@ -236,12 +234,11 @@ export function moduleTableAttrs(
       textVerticalAnchor: "middle",
       fontSize: 12,
       fill: field === undefined ? colors.emptyText : colors.nameText,
-      "data-sandbox-part": "field-text",
       fontStyle: field === undefined ? "italic" : "normal",
       text:
         field === undefined
           ? "No fields yet"
-          : truncateModuleTitle(field.name, 21),
+          : truncateModuleTitle(field.name, 18),
     };
     attrs[`required${i}`] = {
       x: 13,
@@ -253,7 +250,6 @@ export function moduleTableAttrs(
       pointerEvents: "none",
       text: field === undefined ? "" : field.required ? "•" : "○",
       "aria-hidden": "true",
-      "data-sandbox-part": "field-text",
     };
     attrs[`type${i}`] = {
       pointerEvents: "none",
@@ -265,7 +261,6 @@ export function moduleTableAttrs(
       fontWeight: 400,
       fontFamily: "ui-monospace, SFMono-Regular, monospace",
       fill: colors.typeText,
-      "data-sandbox-part": "field-text",
       text:
         field === undefined
           ? ""
@@ -382,16 +377,11 @@ export function getModulePorts(
 }
 
 /**
- * Manual zoom range, the smallest scale Fit may choose, and the scale below
- * which the canvas renders an overview (names only, sized to stay ≥12px on
- * screen down to `fitMin`).
+ * Zoom range for the canvas. The whole diagram scales uniformly (like an ERD)
+ * and the floor keeps 12px canvas text at 6px or more on screen; the minimap
+ * gives the overview beyond it.
  */
-export const SANDBOX_ZOOM = {
-  min: 0.25,
-  max: 2,
-  fitMin: 0.4,
-  overview: 0.75,
-} as const;
+export const SANDBOX_ZOOM = { min: 0.5, max: 1.5, fitMin: 0.5 } as const;
 
 /**
  * Base X6 graph options for the sandbox canvas: a themed surface, panning,
@@ -415,7 +405,12 @@ export function graphOptions(
     // the drag snap precision without hiding or resizing the world grid.
     grid: { size: gridSize, visible: false },
     panning: { enabled: true },
-    mousewheel: { enabled: true, modifiers: ["ctrl", "meta"] },
+    mousewheel: {
+      enabled: true,
+      modifiers: ["ctrl", "meta"],
+      minScale: SANDBOX_ZOOM.min,
+      maxScale: SANDBOX_ZOOM.max,
+    },
     translating: { autoOffset: false },
     embedding: {
       enabled: true,

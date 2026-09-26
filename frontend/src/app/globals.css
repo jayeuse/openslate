@@ -317,15 +317,36 @@ textarea {
   stroke-width: 2px;
 }
 
-/* Semantic zoom: node builders enlarge names in an overview; hide the field
- * rows and relationship labels that would render too small to read. */
-[data-canvas-zoom="overview"]
-  :is(
-    [data-sandbox-part="field-text"],
-    [data-sandbox-part="department-meta"],
-    [data-sandbox-part="edge-label"]
-  ) {
-  visibility: hidden;
+/* Minimap overview for the Sandbox canvas. X6 would inject these rules at
+ * runtime, which the production CSP blocks, so they live here, themed. */
+.sandbox-minimap .x6-widget-minimap {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface);
+  user-select: none;
+}
+
+.sandbox-minimap .x6-widget-minimap .x6-graph {
+  display: inline-block;
+  cursor: pointer;
+}
+
+.sandbox-minimap .x6-widget-minimap .x6-graph > svg {
+  pointer-events: none;
+  shape-rendering: optimizespeed;
+}
+
+.sandbox-minimap .x6-widget-minimap-viewport {
+  position: absolute;
+  box-sizing: content-box;
+  margin: -2px 0 0 -2px;
+  border: 2px solid var(--action);
+  border-radius: 2px;
+  cursor: move;
+}
+
+.sandbox-minimap .x6-widget-minimap-viewport-zoom {
+  display: none;
 }
 
 @keyframes sandbox-relationship-flow {

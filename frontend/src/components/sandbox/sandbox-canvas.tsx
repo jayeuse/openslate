@@ -156,6 +156,7 @@ export function SandboxCanvas({
 }: SandboxCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const minimapRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<SandboxCanvasRuntime | null>(null);
   const pendingPositionsRef = useRef<Map<string, CanvasPosition>>(new Map());
   const freeMoveRef = useRef(false);
@@ -168,8 +169,6 @@ export function SandboxCanvas({
   const editorRef = useRef<CanvasEditor | null>(null);
   const editorCommitRef = useRef<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
-  // Below the overview zoom, nodes render names only at a readable size.
-  const [overview, setOverview] = useState(false);
   const [dropError, setDropError] = useState<string | null>(null);
   const [paletteDragKind, setPaletteDragKind] =
     useState<SandboxDropKind | null>(null);
@@ -234,6 +233,7 @@ export function SandboxCanvas({
     const { graph, history } = createSandboxCanvasRuntime(
       container,
       snapEnabledRef.current ? SANDBOX_GRID_SIZE : 1,
+      minimapRef.current,
     );
     if (gridRef.current)
       gridRef.current.dataset.snapSize = `${graph.getGridSize()}`;
@@ -292,13 +292,9 @@ export function SandboxCanvas({
       const offsetY = matrix.f || 0;
       grid.style.backgroundSize = [
         `${SANDBOX_GRID_SIZE * scaleX}px ${SANDBOX_GRID_SIZE * scaleY}px`,
-        `${SANDBOX_GRID_SIZE * scaleX}px ${SANDBOX_GRID_SIZE * scaleY}px`,
-        `${SANDBOX_GRID_MAJOR_SIZE * scaleX}px ${SANDBOX_GRID_MAJOR_SIZE * scaleY}px`,
         `${SANDBOX_GRID_MAJOR_SIZE * scaleX}px ${SANDBOX_GRID_MAJOR_SIZE * scaleY}px`,
       ].join(", ");
       grid.style.backgroundPosition = [
-        `${offsetX}px ${offsetY}px`,
-        `${offsetX}px ${offsetY}px`,
         `${offsetX}px ${offsetY}px`,
         `${offsetX}px ${offsetY}px`,
       ].join(", ");
@@ -310,7 +306,6 @@ export function SandboxCanvas({
     const updateScale = (): void => {
       updateGridVisual();
       emitViewState();
-      setOverview(graph.zoom() < SANDBOX_ZOOM.overview);
     };
     graph.on("scale", updateScale);
     graph.on("translate", updateGridVisual);
@@ -797,12 +792,11 @@ export function SandboxCanvas({
       layout,
       movingNodeId,
       dropTargetId,
-      overview,
       pendingPositions: pendingPositionsRef,
       appliedLayout: appliedLayoutRef,
       syncing: syncingRef,
     });
-  }, [dropTargetId, layout, movingNodeId, overview, state]);
+  }, [dropTargetId, layout, movingNodeId, state]);
 
   async function commitEditor(value: string): Promise<void> {
     const activeEditor = editorRef.current;
@@ -941,19 +935,17 @@ export function SandboxCanvas({
         hidden={!gridVisible}
         className="pointer-events-none absolute inset-0"
         style={{
+          // Dots, not lines: the grid guides placement without competing
+          // with the diagram.
           backgroundImage: [
-            `linear-gradient(to right, ${CANVAS_GRID} 1px, transparent 1px)`,
-            `linear-gradient(to bottom, ${CANVAS_GRID} 1px, transparent 1px)`,
-            `linear-gradient(to right, ${CANVAS_GRID_MAJOR} 1px, transparent 1px)`,
-            `linear-gradient(to bottom, ${CANVAS_GRID_MAJOR} 1px, transparent 1px)`,
+            `radial-gradient(circle, ${CANVAS_GRID} 1px, transparent 1.2px)`,
+            `radial-gradient(circle, ${CANVAS_GRID_MAJOR} 1.2px, transparent 1.6px)`,
           ].join(", "),
           backgroundSize: [
             `${SANDBOX_GRID_SIZE}px ${SANDBOX_GRID_SIZE}px`,
-            `${SANDBOX_GRID_SIZE}px ${SANDBOX_GRID_SIZE}px`,
-            `${SANDBOX_GRID_MAJOR_SIZE}px ${SANDBOX_GRID_MAJOR_SIZE}px`,
             `${SANDBOX_GRID_MAJOR_SIZE}px ${SANDBOX_GRID_MAJOR_SIZE}px`,
           ].join(", "),
-          backgroundPosition: "0 0, 0 0, 0 0, 0 0",
+          backgroundPosition: "0 0, 0 0",
         }}
       />
       <div
@@ -963,6 +955,13 @@ export function SandboxCanvas({
         aria-describedby="sandbox-canvas-keyboard-alternative"
         tabIndex={0}
         className="focus:ring-ring absolute inset-0 outline-none focus:ring-2 focus:ring-inset"
+      />
+      {/* Pointer navigation aid; Fit and the Structure tab are the keyboard
+          equivalents, so the minimap stays out of the accessibility tree. */}
+      <div
+        ref={minimapRef}
+        aria-hidden="true"
+        className="sandbox-minimap border-border bg-card pointer-events-auto absolute right-3 bottom-3 z-10 hidden overflow-hidden rounded-md border shadow-sm sm:block"
       />
       <p id="sandbox-canvas-keyboard-alternative" className="sr-only">
         Select canvas items with a pointer or their field controls. Use the
@@ -996,7 +995,7 @@ export function SandboxCanvas({
               aria-label="Canvas field type"
               autoFocus
               disabled={pending}
-              className="border-primary bg-card text-foreground ring-ring/30 h-7 w-full rounded border px-1 text-[10px] font-semibold uppercase shadow-md ring-2 outline-none"
+              className="border-primary bg-card text-foreground ring-ring/30 h-7 w-full rounded border px-1 text-xs font-semibold uppercase shadow-md ring-2 outline-none"
               value={editor.value}
               onChange={(event) => {
                 setEditor((current) =>

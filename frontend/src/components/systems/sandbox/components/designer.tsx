@@ -63,7 +63,6 @@ import {
   type SandboxDropKind,
 } from "@/components/sandbox/sandbox-canvas";
 import { SandboxInspector } from "@/components/sandbox/sandbox-inspector";
-import { SANDBOX_ZOOM } from "@/lib/sandbox/x6-adapter";
 import type { SandboxDesignTarget as SandboxInspectorTarget } from "../domain/model";
 import { arrangedLayout, resetLayout } from "../helpers/designer-layout";
 import { duplicateDesignTarget } from "../helpers/designer-duplication";
@@ -2053,14 +2052,6 @@ export function Designer({
                 ) : null}
                 <div
                   ref={canvasFrameRef}
-                  data-canvas-zoom={
-                    canvasView.zoom < SANDBOX_ZOOM.overview
-                      ? "overview"
-                      : "detail"
-                  }
-                  style={
-                    { "--canvas-zoom": canvasView.zoom } as React.CSSProperties
-                  }
                   className="h-[420px] overflow-hidden xl:h-auto xl:min-h-0 xl:flex-1"
                   aria-label="Module design canvas"
                 >
