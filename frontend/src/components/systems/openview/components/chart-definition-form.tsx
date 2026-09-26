@@ -1,15 +1,24 @@
 "use client";
 
 import type { Dispatch, FormEvent, SetStateAction } from "react";
+import {
+  CalendarDays,
+  Filter,
+  MoreHorizontal,
+  SlidersHorizontal,
+} from "lucide-react";
 import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
@@ -19,6 +28,14 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import type { OpenViewChartPreferenceConfig } from "../adapters/chart-preferences-api";
 import type {
   OpenViewDataSource,
@@ -192,15 +209,17 @@ export function ChartDefinitionForm({
     applySnapshot,
   } = actions;
 
+  const dateWindowActive = Boolean(
+    fromDate &&
+    toDate &&
+    dateWindowValid &&
+    (dateSeries ? selectedDateField : dateFieldId),
+  );
+  const displayOptionsCount =
+    Number(Boolean(top)) + Number(!showLegend) + Number(!showValues);
+
   return (
-    <Card className="print:hidden">
-      <CardHeader>
-        <CardTitle>Live charts</CardTitle>
-        <CardDescription>
-          Apply a chart definition to request one complete, authorized aggregate
-          snapshot. Draft changes do not reload data until applied.
-        </CardDescription>
-      </CardHeader>
+    <Card className="w-full min-w-0 print:hidden">
       <CardContent>
         {preferencesError ? (
           <Alert
@@ -304,10 +323,10 @@ export function ChartDefinitionForm({
           </p>
         ) : (
           <form
-            className="flex flex-col gap-5"
+            className="flex flex-col gap-4"
             onSubmit={(event) => void applySnapshot(event)}
           >
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <Field>
                 <FieldLabel htmlFor="chart-data-source">Data source</FieldLabel>
                 <Select
@@ -359,7 +378,7 @@ export function ChartDefinitionForm({
               </Field>
               {dateSeries ? (
                 <Field>
-                  <FieldLabel htmlFor="chart-date-field">Date field</FieldLabel>
+                  <FieldLabel htmlFor="chart-date-field">Group by</FieldLabel>
                   <Select
                     id="chart-date-field"
                     className="min-h-11"
@@ -382,11 +401,15 @@ export function ChartDefinitionForm({
                     <FieldDescription>
                       No date fields are available.
                     </FieldDescription>
-                  ) : null}
+                  ) : (
+                    <FieldDescription>
+                      Choose the date field for this chronological series.
+                    </FieldDescription>
+                  )}
                 </Field>
               ) : (
                 <Field>
-                  <FieldLabel htmlFor="chart-dimension">Dimension</FieldLabel>
+                  <FieldLabel htmlFor="chart-dimension">Group by</FieldLabel>
                   <Select
                     id="chart-dimension"
                     className="min-h-11"
@@ -412,36 +435,8 @@ export function ChartDefinitionForm({
                   ) : null}
                 </Field>
               )}
-              {!dateSeries ? (
-                <Field>
-                  <FieldLabel htmlFor="chart-date-field">
-                    Chart date field
-                  </FieldLabel>
-                  <Select
-                    id="chart-date-field"
-                    className="min-h-11"
-                    value={dateFieldId}
-                    disabled={
-                      fieldsLoading || !dateFields.length || queryLoading
-                    }
-                    onValueChange={setDateFieldId}
-                  >
-                    <option value="">No date window</option>
-                    {dateFields.map((field) => (
-                      <option key={field.id} value={field.id}>
-                        {field.name}
-                      </option>
-                    ))}
-                  </Select>
-                  {!dateFields.length && !fieldsLoading ? (
-                    <FieldDescription>
-                      No date fields are available.
-                    </FieldDescription>
-                  ) : null}
-                </Field>
-              ) : null}
               <Field>
-                <FieldLabel htmlFor="chart-aggregation">Aggregation</FieldLabel>
+                <FieldLabel htmlFor="chart-aggregation">Measure</FieldLabel>
                 <Select
                   id="chart-aggregation"
                   className="min-h-11"
@@ -457,7 +452,7 @@ export function ChartDefinitionForm({
                 </Select>
               </Field>
               {aggregation !== "count" ? (
-                <Field>
+                <Field className="sm:col-start-2 xl:col-start-4">
                   <FieldLabel htmlFor="chart-measure">
                     Numeric measure
                   </FieldLabel>
@@ -481,85 +476,9 @@ export function ChartDefinitionForm({
                   </Select>
                   {!numericFields.length ? (
                     <FieldDescription>
-                      Sum and average require a numeric field.
+                      Sum and average require an available numeric field.
                     </FieldDescription>
                   ) : null}
-                </Field>
-              ) : null}
-              {dateSeries || dateFieldId || fromDate || toDate ? (
-                <>
-                  <Field>
-                    <FieldLabel htmlFor="chart-from-date">
-                      {dateSeries ? "From date" : "Chart from date"}
-                    </FieldLabel>
-                    <Input
-                      id="chart-from-date"
-                      className="min-h-11"
-                      type="date"
-                      value={fromDate}
-                      disabled={queryLoading}
-                      onChange={(event) => setFromDate(event.target.value)}
-                    />
-                    {!fromDate && !toDate ? (
-                      <FieldDescription>
-                        {dateSeries
-                          ? "Choose both dates for an inclusive window of 1–366 days."
-                          : "Optionally bound grouped results to a date window; it is ANDed with the field filters."}
-                      </FieldDescription>
-                    ) : null}
-                    {(dateSeries || fromDate || toDate) && !dateWindowValid ? (
-                      <FieldError>
-                        Choose an inclusive range of 1–366 days, with the start
-                        date on or before the end.
-                      </FieldError>
-                    ) : null}
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="chart-to-date">
-                      {dateSeries ? "To date" : "Chart to date"}
-                    </FieldLabel>
-                    <Input
-                      id="chart-to-date"
-                      className="min-h-11"
-                      type="date"
-                      value={toDate}
-                      disabled={queryLoading}
-                      onChange={(event) => setToDate(event.target.value)}
-                    />
-                    {(dateSeries || fromDate || toDate) && !dateWindowValid ? (
-                      <FieldError>
-                        Choose an inclusive range of 1–366 days, with the start
-                        date on or before the end.
-                      </FieldError>
-                    ) : null}
-                  </Field>
-                </>
-              ) : null}
-              {!dateSeries ? (
-                <Field>
-                  <FieldLabel htmlFor="chart-top">
-                    Top groups in chart
-                  </FieldLabel>
-                  <Select
-                    id="chart-top"
-                    className="min-h-11"
-                    value={top}
-                    disabled={queryLoading}
-                    onValueChange={setTop}
-                  >
-                    <option value="">
-                      No Top filter (large previews cap at 100)
-                    </option>
-                    <option value="5">Top 5</option>
-                    <option value="10">Top 10</option>
-                    <option value="20">Top 20</option>
-                    <option value="50">Top 50</option>
-                  </Select>
-                  <FieldDescription>
-                    Top limits the preview only. Without a Top filter, large
-                    categorical previews show at most 100 groups; table, CSV,
-                    and print retain the full snapshot.
-                  </FieldDescription>
                 </Field>
               ) : null}
             </div>
@@ -581,46 +500,261 @@ export function ChartDefinitionForm({
               </div>
             ) : null}
 
-            <ChartFilterControls
-              filterFields={filterFields}
-              filters={filters}
-              filterLogic={filterLogic}
-              filterValidation={filterValidation}
-              queryLoading={queryLoading}
-              setFilters={setFilters}
-              setFilterLogic={setFilterLogic}
-              addFilter={addFilter}
-            />
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      aria-label={`Filters (${filters.length})`}
+                    />
+                  }
+                >
+                  <Filter data-icon="inline-start" aria-hidden="true" />
+                  <span>Filters</span>
+                  <Badge variant="secondary">{filters.length}</Badge>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  collisionPadding={12}
+                  className="max-h-[min(36rem,calc(100dvh-6rem))] w-[min(44rem,calc(100vw-2rem))] gap-4 overflow-y-auto p-4"
+                >
+                  <PopoverHeader>
+                    <PopoverTitle>Chart filters</PopoverTitle>
+                    <PopoverDescription>
+                      Filter the source records before aggregation. The date
+                      window is combined with these filters.
+                    </PopoverDescription>
+                  </PopoverHeader>
+                  <ChartFilterControls
+                    filterFields={filterFields}
+                    filters={filters}
+                    filterLogic={filterLogic}
+                    filterValidation={filterValidation}
+                    queryLoading={queryLoading}
+                    setFilters={setFilters}
+                    setFilterLogic={setFilterLogic}
+                    addFilter={addFilter}
+                  />
+                </PopoverContent>
+              </Popover>
 
-            <fieldset className="flex flex-wrap gap-x-6 gap-y-3 rounded-[var(--radius)] border p-4">
-              <legend className="px-1 text-sm font-medium">
-                Chart display
-              </legend>
-              <Field className="flex-row items-center gap-3">
-                <Checkbox
-                  id="chart-show-legend"
-                  checked={showLegend}
-                  disabled={queryLoading}
-                  onCheckedChange={(checked) => setShowLegend(checked === true)}
-                />
-                <FieldLabel htmlFor="chart-show-legend" className="font-normal">
-                  Show legend
-                </FieldLabel>
-              </Field>
-              <Field className="flex-row items-center gap-3">
-                <Checkbox
-                  id="chart-show-values"
-                  checked={showValues}
-                  disabled={queryLoading}
-                  onCheckedChange={(checked) => setShowValues(checked === true)}
-                />
-                <FieldLabel htmlFor="chart-show-values" className="font-normal">
-                  Show values
-                </FieldLabel>
-              </Field>
-            </fieldset>
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      aria-label="Date window"
+                    />
+                  }
+                >
+                  <CalendarDays data-icon="inline-start" aria-hidden="true" />
+                  <span>Date window</span>
+                  {dateWindowActive ? (
+                    <Badge variant="secondary">Active</Badge>
+                  ) : null}
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  collisionPadding={12}
+                  className="max-h-[min(36rem,calc(100dvh-6rem))] w-[min(30rem,calc(100vw-2rem))] gap-4 overflow-y-auto p-4"
+                >
+                  <PopoverHeader>
+                    <PopoverTitle>Date window</PopoverTitle>
+                    <PopoverDescription>
+                      {dateSeries
+                        ? "Choose an inclusive 1–366 day period for this date series."
+                        : "Optionally limit grouped results to an inclusive date range; it is ANDed with the field filters."}
+                    </PopoverDescription>
+                  </PopoverHeader>
+                  {!dateSeries ? (
+                    <Field>
+                      <FieldLabel htmlFor="chart-date-field">
+                        Chart date field
+                      </FieldLabel>
+                      <Select
+                        id="chart-date-field"
+                        className="min-h-11"
+                        value={dateFieldId}
+                        disabled={
+                          fieldsLoading || !dateFields.length || queryLoading
+                        }
+                        onValueChange={setDateFieldId}
+                      >
+                        <option value="">No date window</option>
+                        {dateFields.map((field) => (
+                          <option key={field.id} value={field.id}>
+                            {field.name}
+                          </option>
+                        ))}
+                      </Select>
+                      {!dateFields.length && !fieldsLoading ? (
+                        <FieldDescription>
+                          No date fields are available.
+                        </FieldDescription>
+                      ) : null}
+                    </Field>
+                  ) : null}
+                  {dateSeries || dateFieldId || fromDate || toDate ? (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Field>
+                        <FieldLabel htmlFor="chart-from-date">
+                          {dateSeries ? "From date" : "Chart from date"}
+                        </FieldLabel>
+                        <Input
+                          id="chart-from-date"
+                          className="min-h-11"
+                          type="date"
+                          value={fromDate}
+                          disabled={queryLoading}
+                          onChange={(event) => setFromDate(event.target.value)}
+                        />
+                        {!fromDate && !toDate ? (
+                          <FieldDescription>
+                            Enter both dates for an inclusive window of 1–366
+                            days.
+                          </FieldDescription>
+                        ) : null}
+                        {(dateSeries || fromDate || toDate) &&
+                        !dateWindowValid ? (
+                          <FieldError>
+                            Choose a range of 1–366 days, with the start date on
+                            or before the end.
+                          </FieldError>
+                        ) : null}
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor="chart-to-date">
+                          {dateSeries ? "To date" : "Chart to date"}
+                        </FieldLabel>
+                        <Input
+                          id="chart-to-date"
+                          className="min-h-11"
+                          type="date"
+                          value={toDate}
+                          disabled={queryLoading}
+                          onChange={(event) => setToDate(event.target.value)}
+                        />
+                        {(dateSeries || fromDate || toDate) &&
+                        !dateWindowValid ? (
+                          <FieldError>
+                            Choose a range of 1–366 days, with the start date on
+                            or before the end.
+                          </FieldError>
+                        ) : null}
+                      </Field>
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground text-sm">
+                      Choose a chart date field to add an optional date window.
+                    </p>
+                  )}
+                </PopoverContent>
+              </Popover>
 
-            <div className="flex flex-wrap items-center gap-3">
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      aria-label={`Display options (${displayOptionsCount} active)`}
+                    />
+                  }
+                >
+                  <SlidersHorizontal
+                    data-icon="inline-start"
+                    aria-hidden="true"
+                  />
+                  <span>Display options</span>
+                  {displayOptionsCount ? (
+                    <Badge variant="secondary">{displayOptionsCount}</Badge>
+                  ) : null}
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  collisionPadding={12}
+                  className="max-h-[min(36rem,calc(100dvh-6rem))] w-[min(24rem,calc(100vw-2rem))] gap-4 overflow-y-auto p-4"
+                >
+                  <PopoverHeader>
+                    <PopoverTitle>Display options</PopoverTitle>
+                    <PopoverDescription>
+                      These settings affect the chart preview. The complete
+                      table and exports retain every returned value.
+                    </PopoverDescription>
+                  </PopoverHeader>
+                  {!dateSeries ? (
+                    <Field>
+                      <FieldLabel htmlFor="chart-top">
+                        Top groups in chart
+                      </FieldLabel>
+                      <Select
+                        id="chart-top"
+                        className="min-h-11"
+                        value={top}
+                        disabled={queryLoading}
+                        onValueChange={setTop}
+                      >
+                        <option value="">
+                          No Top filter (large previews cap at 100)
+                        </option>
+                        <option value="5">Top 5</option>
+                        <option value="10">Top 10</option>
+                        <option value="20">Top 20</option>
+                        <option value="50">Top 50</option>
+                      </Select>
+                      <FieldDescription>
+                        Top limits the preview only. Without a Top filter, large
+                        categorical previews show at most 100 groups; the table,
+                        CSV, and print retain the full snapshot.
+                      </FieldDescription>
+                    </Field>
+                  ) : null}
+                  <fieldset className="flex flex-col gap-3 rounded-[var(--radius)] border p-3">
+                    <legend className="px-1 text-sm font-medium">
+                      Chart display
+                    </legend>
+                    <Field className="flex-row items-center gap-3">
+                      <Checkbox
+                        id="chart-show-legend"
+                        checked={showLegend}
+                        disabled={queryLoading}
+                        onCheckedChange={(checked) =>
+                          setShowLegend(checked === true)
+                        }
+                      />
+                      <FieldLabel
+                        htmlFor="chart-show-legend"
+                        className="font-normal"
+                      >
+                        Show legend
+                      </FieldLabel>
+                    </Field>
+                    <Field className="flex-row items-center gap-3">
+                      <Checkbox
+                        id="chart-show-values"
+                        checked={showValues}
+                        disabled={queryLoading}
+                        onCheckedChange={(checked) =>
+                          setShowValues(checked === true)
+                        }
+                      />
+                      <FieldLabel
+                        htmlFor="chart-show-values"
+                        className="font-normal"
+                      >
+                        Show values
+                      </FieldLabel>
+                    </Field>
+                  </fieldset>
+                </PopoverContent>
+              </Popover>
+
               <Button
                 type="button"
                 variant="outline"
@@ -636,34 +770,54 @@ export function ChartDefinitionForm({
               >
                 {preferencesSaving ? "Saving settings…" : "Save settings"}
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                disabled={
-                  !preferencesLoaded ||
-                  preferencesLoading ||
-                  preferencesSaving ||
-                  settingsDenied ||
-                  !moduleId ||
-                  (categoryFields.length === 0 && dateFields.length === 0)
-                }
-                onClick={() => void resetSettings()}
-              >
-                Reset settings
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      aria-label="Chart settings"
+                    />
+                  }
+                >
+                  <MoreHorizontal aria-hidden="true" />
+                  <span className="sr-only">Chart settings</span>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>
+                      Personal chart settings
+                    </DropdownMenuLabel>
+                    <DropdownMenuItem
+                      disabled={
+                        !preferencesLoaded ||
+                        preferencesLoading ||
+                        preferencesSaving ||
+                        settingsDenied ||
+                        !moduleId ||
+                        (categoryFields.length === 0 && dateFields.length === 0)
+                      }
+                      onClick={() => void resetSettings()}
+                    >
+                      Reset settings
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
                 type="submit"
-                className="min-h-11"
+                className="min-h-11 sm:ml-auto"
                 disabled={!canRunQuery}
               >
                 {queryLoading ? "Loading complete snapshot…" : "Apply chart"}
               </Button>
-              <p className="text-muted-foreground text-sm">
-                Each Apply loads one complete aggregate snapshot; the result
-                reports its full group or date count.
-              </p>
             </div>
+            <p className="text-muted-foreground text-sm">
+              Chart query changes take effect after Apply. Display options
+              update the preview; the table and exports retain the full last
+              successful snapshot.
+            </p>
           </form>
         )}
       </CardContent>

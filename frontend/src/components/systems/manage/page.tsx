@@ -1,21 +1,42 @@
 "use client";
-import { useSearchParams } from "next/navigation";
-import { AlertTriangle, CheckCircle2, RotateCcw } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  MoreHorizontal,
+  LockKeyhole,
+  Database,
+  X,
+  RotateCcw,
+} from "lucide-react";
 import {
   Suspense,
   useRef,
   useState,
   type FormEvent,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
-import {
-  completeCollection,
-  pageCollection,
-} from "../shared/helpers/sample-collections";
 import ManageAudit from "./components/audit";
 import {
   decodeManageSettings,
@@ -39,13 +60,16 @@ import {
   type PreviewState,
 } from "./components/manage-dialogs";
 import { OrganizationPanel } from "./components/organization-panel";
-import { SecurityPanel } from "./components/security-panel";
-import { BackupPanel } from "./components/backup-panel";
+import { SecurityPanel, SecurityPolicyForm } from "./components/security-panel";
+import { BackupPanel, SnapshotScheduleForm } from "./components/backup-panel";
 import { UpdatesPanel } from "./components/updates-panel";
-import { LicensingPanel } from "./components/licensing-panel";
+import {
+  LicensingPanel,
+  LicenseTierComparison,
+} from "./components/licensing-panel";
 
 type ViewTab =
-  "Organization" | "Security" | "Audit" | "Backup" | "Updates" | "Licensing";
+  "Organization" | "Security" | "Audit" | "Backup" | "Updates & licensing";
 
 type Snapshot = ManageSnapshot;
 
@@ -54,12 +78,13 @@ const manageTabs: readonly ViewTab[] = [
   "Security",
   "Audit",
   "Backup",
-  "Updates",
-  "Licensing",
+  "Updates & licensing",
 ];
 
 function manageTabFromQuery(value: string | null): ViewTab {
   const normalized = value?.toLowerCase();
+  if (normalized === "updates" || normalized === "licensing")
+    return "Updates & licensing";
   return (
     manageTabs.find((tab) => tab.toLowerCase() === normalized) ?? "Organization"
   );
@@ -90,6 +115,7 @@ export default function Manage() {
 
 function ManageContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const requestedTab = manageTabFromQuery(searchParams.get("view"));
   const manage = useManageController();
   const activeUsers = manage.people.filter((person) => person.active).length;
@@ -113,10 +139,10 @@ function ManageContent() {
   const [mfaOpen, setMfaOpen] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
   const [dummyKey, setDummyKey] = useState("SAMPLE-TEAM-2026");
-  const [sessionSearch, setSessionSearch] = useState("");
-  const [sessionPage, setSessionPage] = useState(1);
-  const [snapshotName, setSnapshotName] = useState("Manual snapshot");
-  const [snapshotPage, setSnapshotPage] = useState(1);
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const policyOpener = useRef<HTMLButtonElement | null>(null);
+  const scheduleOpener = useRef<HTMLButtonElement | null>(null);
   const [renameTarget, setRenameTarget] = useState<Snapshot | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [renameError, setRenameError] = useState("");
@@ -125,6 +151,17 @@ function ManageContent() {
   const renameOpener = useRef<HTMLElement | null>(null);
   const mfaOpener = useRef<HTMLButtonElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
+  const optionsOpener = useRef<HTMLButtonElement | null>(null);
+  const recoveryView = tab === "Security" || tab === "Backup";
+  const pageTitle = recoveryView ? "Security & recovery" : tab;
+  const pageDescription =
+    tab === "Organization"
+      ? "Make this workspace feel like your organization."
+      : tab === "Audit"
+        ? "See who changed what, then inspect the details."
+        : tab === "Updates & licensing"
+          ? "Your workspace version and plan, together in one place."
+          : "Review sessions and keep a copy of your workspace settings.";
 
   const section = sectionForTab(tab);
   const currentFor = (view: ViewTab): ManageSettings => {
@@ -136,45 +173,6 @@ function ManageContent() {
   const dirty = section ? manage.dirty(section) : false;
   const errors = section ? manage.errors(section) : {};
   const updateAvailable = manage.updateAvailable;
-  const visibleSessions = manage.collections.sessions.items.filter(
-    (session) => {
-      const query = sessionSearch.trim().toLowerCase();
-      return (
-        !query ||
-        [
-          session.personName,
-          session.device,
-          session.browser,
-          session.location,
-        ].some((value) => value.toLowerCase().includes(query))
-      );
-    },
-  );
-  const sessionPageCount = Math.max(1, Math.ceil(visibleSessions.length / 2));
-  const sessionResult = pageCollection(
-    completeCollection(visibleSessions, `manage:sessions:${sessionSearch}`),
-    (sessionPage - 1) * 2,
-    2,
-  );
-  const safeSessionPage = sessionResult.offset / sessionResult.limit + 1;
-  const visibleSessionRows = sessionResult.items;
-  const firstVisibleSession =
-    visibleSessions.length === 0 ? 0 : (safeSessionPage - 1) * 2 + 1;
-  const lastVisibleSession = Math.min(
-    safeSessionPage * 2,
-    visibleSessions.length,
-  );
-  const snapshotPageCount = Math.max(1, Math.ceil(backups.length / 2));
-  const snapshotResult = pageCollection(
-    manage.collections.snapshots,
-    (snapshotPage - 1) * 2,
-    2,
-  );
-  const safeSnapshotPage = snapshotResult.offset / snapshotResult.limit + 1;
-  const visibleBackups = snapshotResult.items;
-  const firstVisibleSnapshot =
-    backups.length === 0 ? 0 : (safeSnapshotPage - 1) * 2 + 1;
-  const lastVisibleSnapshot = Math.min(safeSnapshotPage * 2, backups.length);
   const remoteSessions = sessions.filter((session) => !session.current);
   const localeCode =
     current.locale === "Filipino"
@@ -248,7 +246,6 @@ function ManageContent() {
     );
     setError(result.ok ? "" : result.message);
     setNotice(result.ok ? result.message : "");
-    if (result.ok) setSnapshotPage(1);
     return result.ok;
   }
 
@@ -310,7 +307,6 @@ function ManageContent() {
           const result = await manage.revokeSession(session.id);
           setError(result.ok ? "" : result.message);
           setNotice(result.ok ? result.message : "");
-          if (result.ok) setSessionPage(1);
 
           return result.ok;
         },
@@ -329,7 +325,6 @@ function ManageContent() {
           const result = await manage.revokeAllSessions();
           setError(result.ok ? "" : result.message);
           setNotice(result.ok ? result.message : "");
-          if (result.ok) setSessionPage(1);
 
           return result.ok;
         },
@@ -433,7 +428,7 @@ function ManageContent() {
   }
 
   const panelClass =
-    "min-w-0 w-full rounded-[var(--radius)] border-border bg-card md:[&>div]:gap-1 md:[&>div]:p-3";
+    "min-w-0 w-full rounded-[var(--radius)] border-border bg-card";
 
   if (manage.resource.status !== "ready")
     return (
@@ -452,12 +447,60 @@ function ManageContent() {
       </section>
     );
 
+  const renderPageHeader = (actions?: ReactNode) => (
+    <header className="flex flex-wrap items-center justify-between gap-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1
+            ref={headingRef}
+            tabIndex={-1}
+            className="text-2xl font-semibold tracking-tight sm:text-3xl"
+          >
+            {pageTitle}
+          </h1>
+        </div>
+        <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
+          {pageDescription}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        {actions}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                ref={optionsOpener}
+                type="button"
+                variant="outline"
+                size="icon"
+                className="size-11"
+                aria-label="Manage options"
+              />
+            }
+          >
+            <MoreHorizontal aria-hidden="true" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onClick={(event) => {
+                requestReset(event);
+                confirmOpener.current = optionsOpener.current;
+              }}
+            >
+              <RotateCcw aria-hidden="true" /> Reset Manage
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </header>
+  );
+
   return (
-    <div className="min-w-0 space-y-3 md:[&_button]:min-h-8 md:[&_form]:gap-3 md:[&_input]:min-h-8 md:[&_section>div:first-child>p]:sr-only md:[&_select]:h-8 md:[&_td]:py-1 md:[&_th]:h-8 md:[&_th]:py-1">
+    <div className="min-w-0 space-y-6">
       <fieldset
         disabled={manage.pending}
         aria-busy={manage.pending}
-        className="contents"
+        className="min-w-0 space-y-6"
       >
         {manage.pending ? (
           <p role="status" className="text-muted-foreground text-sm">
@@ -474,30 +517,7 @@ function ManageContent() {
             </Button>
           </Alert>
         ) : null}
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-3">
-              <h1
-                ref={headingRef}
-                tabIndex={-1}
-                className="text-2xl font-semibold tracking-tight sm:text-3xl"
-              >
-                Manage
-              </h1>
-            </div>
-            <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
-              Configure organization, security, recovery, updates and licensing.
-            </p>
-          </div>
-          <Button
-            type="button"
-            variant="ghost"
-            className="min-h-11"
-            onClick={requestReset}
-          >
-            <RotateCcw data-icon="inline-start" /> Reset Manage
-          </Button>
-        </header>
+        {tab !== "Audit" ? renderPageHeader() : null}
 
         {storageUnavailable ? (
           <Alert role="note" variant="warning">
@@ -506,7 +526,7 @@ function ManageContent() {
           </Alert>
         ) : null}
 
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-6">
           {navigationNotice ? (
             <Alert role="status" variant="warning">
               {navigationNotice}
@@ -548,110 +568,300 @@ function ManageContent() {
             />
           ) : null}
 
-          {tab === "Security" ? (
-            <SecurityPanel
-              form={{
-                dirty,
-                saveSection,
-                current,
-                errors,
-                changeSetting,
-                clearDraft,
-              }}
-              panelClass={panelClass}
-              sessionList={{
-                sessions,
-                sessionSearch,
-                setSessionSearch,
-                setSessionPage,
-                remoteSessions,
-                visibleSessions,
-                visibleSessionRows,
-                firstVisibleSession,
-                lastVisibleSession,
-                sessionPageCount,
-                safeSessionPage,
-              }}
-              actions={{ openMfa, endAllRemoteSessions, endSession }}
-            />
+          {recoveryView ? (
+            <section
+              aria-label="Security and recovery workspace"
+              className="min-w-0 space-y-5"
+            >
+              <Alert role="note">
+                Preview workspace · Policies and sessions are simulated.
+                Snapshots contain saved Manage settings only.
+              </Alert>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="bg-card flex flex-wrap items-center gap-4 rounded-lg border p-5">
+                  <LockKeyhole
+                    aria-hidden="true"
+                    className="text-muted-foreground size-6 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="font-semibold">Account policy</h2>
+                      {manage.dirty("security") ? (
+                        <Badge variant="warning">Unsaved changes</Badge>
+                      ) : null}
+                    </div>
+                    <p className="text-muted-foreground mt-1 text-sm">
+                      {settings.mfa === "Optional"
+                        ? "Optional two-factor"
+                        : settings.mfa}{" "}
+                      · {settings.timeout} timeout
+                    </p>
+                  </div>
+                  <Button
+                    ref={policyOpener}
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => {
+                      setError("");
+                      setPolicyOpen(true);
+                    }}
+                  >
+                    Edit policy
+                  </Button>
+                </div>
+                <div className="bg-card flex flex-wrap items-center gap-4 rounded-lg border p-5">
+                  <Database
+                    aria-hidden="true"
+                    className="text-muted-foreground size-6 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="font-semibold">Snapshot schedule</h2>
+                      {manage.dirty("backup") ? (
+                        <Badge variant="warning">Unsaved changes</Badge>
+                      ) : null}
+                    </div>
+                    <p className="text-muted-foreground mt-1 text-sm">
+                      {settings.schedule} · Keep{" "}
+                      {settings.retention.toLowerCase()}
+                    </p>
+                    <p className="text-muted-foreground text-xs">
+                      Simulated schedule
+                    </p>
+                  </div>
+                  <Button
+                    ref={scheduleOpener}
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => {
+                      setError("");
+                      setScheduleOpen(true);
+                    }}
+                  >
+                    Edit schedule
+                  </Button>
+                </div>
+              </div>
+              <Tabs
+                value={tab === "Backup" ? "snapshots" : "sessions"}
+                onValueChange={(value) => {
+                  if (!manage.pending)
+                    router.push(
+                      `/manage?view=${value === "snapshots" ? "backup" : "security"}`,
+                      { scroll: false },
+                    );
+                }}
+              >
+                <TabsList aria-label="Security and recovery views">
+                  <TabsTrigger value="sessions" className="min-h-11 gap-2 px-4">
+                    Sessions <Badge variant="outline">{sessions.length}</Badge>
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="snapshots"
+                    className="min-h-11 gap-2 px-4"
+                  >
+                    Snapshots <Badge variant="outline">{backups.length}</Badge>
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="sessions" keepMounted className="min-w-0">
+                  <SecurityPanel
+                    sessions={manage.collections.sessions}
+                    actions={{ endAllRemoteSessions, endSession }}
+                  />
+                </TabsContent>
+                <TabsContent value="snapshots" keepMounted className="min-w-0">
+                  <BackupPanel
+                    snapshots={manage.collections.snapshots}
+                    actions={{
+                      addSnapshot,
+                      requestRestore,
+                      setCompareTarget,
+                      downloadSnapshot,
+                      renameOpener,
+                      setRenameTarget,
+                      setRenameError,
+                      setRenameValue,
+                      requestConfirm,
+                      manage,
+                      setError,
+                      setNotice,
+                    }}
+                  />
+                </TabsContent>
+              </Tabs>
+            </section>
           ) : null}
 
           {tab === "Audit" ? (
-            <ManageAudit entries={manage.collections.activity} />
-          ) : null}
-
-          {tab === "Backup" ? (
-            <BackupPanel
-              form={{
-                dirty,
-                saveSection,
-                current,
-                errors,
-                changeSetting,
-                clearDraft,
-              }}
-              panelClass={panelClass}
-              snapshotList={{
-                backups,
-                snapshotName,
-                setSnapshotName,
-                visibleBackups,
-                setSnapshotPage,
-                firstVisibleSnapshot,
-                lastVisibleSnapshot,
-                snapshotPageCount,
-                safeSnapshotPage,
-              }}
-              actions={{
-                addSnapshot,
-                requestRestore,
-                setCompareTarget,
-                downloadSnapshot,
-                renameOpener,
-                setRenameTarget,
-                setRenameError,
-                setRenameValue,
-                requestConfirm,
-                manage,
-                setError,
-                setNotice,
-                setPreview,
-              }}
-              settings={settings}
-              retention={retention}
+            <ManageAudit
+              entries={manage.collections.activity}
+              renderHeader={renderPageHeader}
             />
           ) : null}
 
-          {tab === "Updates" ? (
-            <UpdatesPanel
-              panelClass={panelClass}
-              settings={settings}
-              actions={{
-                manage,
-                setError,
-                setNotice,
-                startUpdate,
-                setShowChangelog,
-                rollbackUpdate,
-              }}
-              updateAvailable={updateAvailable}
-              showChangelog={showChangelog}
-              history={history}
-            />
-          ) : null}
-
-          {tab === "Licensing" ? (
-            <LicensingPanel
-              panelClass={panelClass}
-              settings={settings}
-              activeUsers={activeUsers}
-              seatLimit={seatLimit}
-              actions={{ renewLicense, setPreview }}
-              licenseForm={{ activateLicense, dummyKey, setDummyKey }}
-            />
+          {tab === "Updates & licensing" ? (
+            <div className="min-w-0 space-y-5">
+              <Alert role="note">
+                Preview environment. Version and license changes here are
+                simulated.
+              </Alert>
+              <div className="bg-card grid min-w-0 divide-y overflow-hidden rounded-lg border xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] xl:divide-x xl:divide-y-0">
+                <UpdatesPanel
+                  settings={settings}
+                  actions={{
+                    manage,
+                    setError,
+                    setNotice,
+                    startUpdate,
+                    setShowChangelog,
+                    rollbackUpdate,
+                  }}
+                  updateAvailable={updateAvailable}
+                  showChangelog={showChangelog}
+                  history={history}
+                />
+                <LicensingPanel
+                  settings={settings}
+                  activeUsers={activeUsers}
+                  seatLimit={seatLimit}
+                  actions={{ renewLicense }}
+                  licenseForm={{ activateLicense, dummyKey, setDummyKey }}
+                />
+              </div>
+              <div className="bg-card rounded-lg border">
+                <LicenseTierComparison
+                  settings={settings}
+                  setPreview={setPreview}
+                />
+              </div>
+            </div>
           ) : null}
         </div>
       </fieldset>
+      <Dialog
+        open={policyOpen}
+        onOpenChange={setPolicyOpen}
+        dismissible={!manage.pending}
+      >
+        <DialogContent
+          className="max-w-3xl"
+          finalFocus={() => policyOpener.current}
+        >
+          <DialogHeader className="mb-5">
+            <div className="flex items-center justify-between gap-3">
+              <DialogTitle>Account policy</DialogTitle>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Close account policy"
+                disabled={manage.pending}
+                onClick={() => setPolicyOpen(false)}
+              >
+                <X aria-hidden="true" />
+              </Button>
+            </div>
+            <DialogDescription>
+              Set account protection preferences. These preview settings are not
+              enforced. Closing keeps your unsaved changes.
+            </DialogDescription>
+          </DialogHeader>
+          <fieldset
+            disabled={manage.pending}
+            aria-busy={manage.pending}
+            className="min-w-0 space-y-4"
+          >
+            {error ? (
+              <Alert role="alert" variant="destructive">
+                {error}
+              </Alert>
+            ) : null}
+            <SecurityPolicyForm
+              form={{
+                dirty: manage.dirty("security"),
+                current: manage.getDraft("security"),
+                errors: manage.errors("security"),
+                saveSection,
+                clearDraft,
+                changeSetting,
+              }}
+              onPreviewMfa={() => {
+                setPolicyOpen(false);
+                openMfa();
+                mfaOpener.current = policyOpener.current;
+              }}
+            />
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPolicyOpen(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </fieldset>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={scheduleOpen}
+        onOpenChange={setScheduleOpen}
+        dismissible={!manage.pending}
+      >
+        <DialogContent
+          className="max-w-3xl"
+          finalFocus={() => scheduleOpener.current}
+        >
+          <DialogHeader className="mb-5">
+            <div className="flex items-center justify-between gap-3">
+              <DialogTitle>Snapshot schedule</DialogTitle>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Close snapshot schedule"
+                disabled={manage.pending}
+                onClick={() => setScheduleOpen(false)}
+              >
+                <X aria-hidden="true" />
+              </Button>
+            </div>
+            <DialogDescription>
+              Save schedule and retention preferences. No background job runs;
+              snapshots contain saved Manage settings only.
+            </DialogDescription>
+          </DialogHeader>
+          <fieldset
+            disabled={manage.pending}
+            aria-busy={manage.pending}
+            className="min-w-0 space-y-4"
+          >
+            {error ? (
+              <Alert role="alert" variant="destructive">
+                {error}
+              </Alert>
+            ) : null}
+            <SnapshotScheduleForm
+              form={{
+                dirty: manage.dirty("backup"),
+                current: manage.getDraft("backup"),
+                errors: manage.errors("backup"),
+                saveSection,
+                clearDraft,
+                changeSetting,
+              }}
+              settings={settings}
+              retention={retention}
+              actions={{
+                addSnapshot,
+                setPreview: (next) => {
+                  setScheduleOpen(false);
+                  setPreview(next);
+                },
+              }}
+            />
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setScheduleOpen(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </fieldset>
+        </DialogContent>
+      </Dialog>
       <ManageMfaDialog
         open={mfaOpen}
         step={mfaStep}

@@ -1017,7 +1017,7 @@ export async function runAuthoritativeAccessCommand({
     ) {
       if (error.message.startsWith("Group has access rules"))
         return rejected(
-          "Open Detailed rules to remove or retarget this group's rules before deleting it.",
+          "Open Permissions to remove or retarget this group's rules before deleting it.",
         );
       if (error.message === "Group has members")
         return rejected("Remove this group's members before deleting it.");
@@ -1026,7 +1026,7 @@ export async function runAuthoritativeAccessCommand({
           "Remove this group from Access defaults before deleting it.",
         );
       return rejected(
-        "This group cannot be deleted. Review its members, Access defaults, and Detailed rules, then try again.",
+        "This group cannot be deleted. Review its members, Access defaults, and Permissions, then try again.",
       );
     }
     if (!policyApplyAttempted) throw error;

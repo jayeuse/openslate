@@ -318,6 +318,13 @@ async function installDashboardApi(
   page: Page,
   initial: DashboardWire | null = null,
 ) {
+  await page.route("**/api/**", (route) =>
+    route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "Not available in this route test" }),
+    }),
+  );
   let current = initial;
   let alternate: DashboardWire | null = null;
   let dashboardDefaultId: string | null = null;
@@ -356,6 +363,7 @@ async function installDashboardApi(
   let snapshotErrorResponsesRemaining = 0;
   let nextRecordQueryErrorStatus: 401 | 403 | null = null;
   let recordQueryErrorResponsesRemaining = 0;
+  let recordResultCount = 2;
   let recordFieldId = categoryFieldId;
 
   await page.route("**/api/auth/session", async (route) =>
@@ -797,28 +805,27 @@ async function installDashboardApi(
         }),
       });
     }
-    const items = [
-      {
-        id: "00000000-0000-4000-8000-000000000201",
-        module_id: moduleId,
-        data: { [recordFieldId]: "Repair" },
-        created_at: timestamp,
-        updated_at: timestamp,
-        deleted_at: null,
-        is_deleted: false,
-        performed_by: userId,
+    const allItems = Array.from({ length: recordResultCount }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${String(index + 201).padStart(12, "0")}`,
+      module_id: moduleId,
+      data: {
+        [recordFieldId]:
+          index === 0
+            ? "Repair"
+            : index === 1
+              ? "Inspection"
+              : `Record ${index + 1}`,
       },
-      {
-        id: "00000000-0000-4000-8000-000000000202",
-        module_id: moduleId,
-        data: { [recordFieldId]: "Inspection" },
-        created_at: timestamp,
-        updated_at: timestamp,
-        deleted_at: null,
-        is_deleted: false,
-        performed_by: userId,
-      },
-    ];
+      created_at: timestamp,
+      updated_at: timestamp,
+      deleted_at: null,
+      is_deleted: false,
+      performed_by: userId,
+    }));
+    const items = allItems.slice(
+      request.offset,
+      request.offset + request.limit,
+    );
     return route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
@@ -827,8 +834,8 @@ async function installDashboardApi(
           limit: request.limit,
           offset: request.offset,
           count: items.length,
-          total: items.length,
-          has_more: false,
+          total: allItems.length,
+          has_more: request.offset + items.length < allItems.length,
         },
       }),
     });
@@ -868,6 +875,9 @@ async function installDashboardApi(
     },
     setRecordFieldId(id: string) {
       recordFieldId = id;
+    },
+    setRecordResultCount(count: number) {
+      recordResultCount = count;
     },
     setDashboardListHasMore(hasMore: boolean) {
       dashboardListHasMore = hasMore;
@@ -974,6 +984,53 @@ async function expectDashboardMainToFit(page: Page) {
   ).toBeLessThanOrEqual(dimensions.clientWidth);
 }
 
+async function openNewDashboardDialog(page: Page): Promise<Locator> {
+  const dialog = page.getByRole("dialog", { name: "New Dashboard" });
+  await page.getByRole("button", { name: "New Dashboard" }).click();
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function openDashboardSettingsDialog(
+  page: Page,
+  advanceAnimationFrame = false,
+): Promise<Locator> {
+  const dialog = page.getByRole("dialog", { name: "Dashboard settings" });
+  await page.getByRole("button", { name: "Dashboard options" }).click();
+  if (advanceAnimationFrame) await page.clock.fastForward(16);
+  await page.getByRole("menuitem", { name: "Dashboard settings" }).click();
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function openAddWidgetDialog(page: Page): Promise<Locator> {
+  const dialog = page.getByRole("dialog", { name: "Add widget" });
+  await page.getByRole("button", { name: "Add widget", exact: true }).click();
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function finishDashboardDialog(dialog: Locator, pageClock?: Page) {
+  await dialog.getByRole("button", { name: "Done" }).click();
+  if (pageClock) await pageClock.clock.fastForward(200);
+  await expect(dialog).toBeHidden();
+}
+
+async function startNewDashboardDraft(page: Page, name: string) {
+  const dialog = await openNewDashboardDialog(page);
+  await dialog.getByLabel("Dashboard name").fill(name);
+  await finishDashboardDialog(dialog);
+}
+
+async function addWidgetFromDialog(dialog: Locator) {
+  await dialog.getByRole("button", { name: "Add widget", exact: true }).click();
+  await expect(dialog).toBeHidden();
+}
+
+async function selectDashboard(page: Page, id: string) {
+  await page.getByLabel("Dashboard", { exact: true }).selectOption(id);
+}
+
 test("private Dashboard supports mobile keyboard-only controls and survives reload", async ({
   page,
 }) => {
@@ -989,12 +1046,13 @@ test("private Dashboard supports mobile keyboard-only controls and survives relo
   ).not.toBeVisible();
   await expectDashboardMainToFit(page);
 
-  const savedDashboard = page.getByRole("button", { name: "Operations" });
-  await tabTo(page, savedDashboard);
-  await expectVisibleKeyboardFocus(savedDashboard);
-  await page.keyboard.press("Enter");
+  const dashboardPicker = page.getByLabel("Dashboard", { exact: true });
+  await tabTo(page, dashboardPicker);
+  await expectVisibleKeyboardFocus(dashboardPicker);
+  await page.keyboard.press("o");
+  await expect(dashboardPicker).toHaveValue(dashboardId);
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
-  await expect(page.getByLabel("Dashboard name")).toHaveValue("Operations");
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
 
   const newDashboard = page.getByRole("button", { name: "New Dashboard" });
   await tabTo(page, newDashboard, "backward");
@@ -1002,30 +1060,48 @@ test("private Dashboard supports mobile keyboard-only controls and survives relo
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL("/openview?section=dashboards");
 
-  const dashboardName = page.getByLabel("Dashboard name");
+  const newDashboardDialog = page.getByRole("dialog", {
+    name: "New Dashboard",
+  });
+  await expect(newDashboardDialog).toBeVisible();
+  const dashboardName = newDashboardDialog.getByLabel("Dashboard name");
   await expect(dashboardName).toHaveValue("");
   await tabTo(page, dashboardName);
-  await page.keyboard.type("Keyboard dashboard");
+  for (const character of "Keyboard dashboard")
+    await page.keyboard.type(character);
   await expect(dashboardName).toHaveValue("Keyboard dashboard");
+  const doneSettings = newDashboardDialog.getByRole("button", {
+    name: "Done",
+  });
+  await tabTo(page, doneSettings, "backward");
+  await expectVisibleKeyboardFocus(doneSettings);
+  await page.keyboard.press("Enter");
+  await expect(newDashboardDialog).toBeHidden();
 
-  const moduleSelect = page.getByLabel("Module");
+  const addDialog = await openAddWidgetDialog(page);
+  const moduleSelect = addDialog.getByLabel("Data source");
   await tabTo(page, moduleSelect);
   await expectVisibleKeyboardFocus(moduleSelect);
   await expect(moduleSelect).toContainText("Equipment");
   await page.keyboard.press("e");
   await expect(moduleSelect).toHaveValue(moduleId);
 
-  const dimension = page.getByLabel("Group records by");
-  await tabTo(page, dimension);
-  await expect(dimension).toContainText("Category");
-  await page.keyboard.press("c");
-  await page.keyboard.press("a");
+  const dimension = addDialog.getByLabel("Group records by");
   await expect(dimension).toHaveValue(categoryFieldId);
+  await tabTo(page, dimension);
+  await expectVisibleKeyboardFocus(dimension);
+  await expect(dimension).toContainText("Category");
+  await page.keyboard.press("r");
+  await expect(dimension).toHaveValue(regionFieldId);
 
-  const addChart = page.getByRole("button", { name: "Add chart widget" });
+  const addChart = addDialog.getByRole("button", {
+    name: "Add widget",
+    exact: true,
+  });
   await tabTo(page, addChart);
   await expectVisibleKeyboardFocus(addChart);
   await page.keyboard.press("Enter");
+  await expect(addDialog).toBeHidden();
   await expect(page.getByText("1 of 12 widgets")).toBeVisible();
   await expectDashboardMainToFit(page);
 
@@ -1035,7 +1111,7 @@ test("private Dashboard supports mobile keyboard-only controls and survives relo
   await page.keyboard.press("Enter");
 
   const table = page.getByRole("table", {
-    name: "Complete data for Count by Category",
+    name: "Complete data for Count by Region",
   });
   await expect
     .poll(() => new URL(page.url()).searchParams.get("dashboard"))
@@ -1054,7 +1130,7 @@ test("private Dashboard supports mobile keyboard-only controls and survives relo
     query: {
       mode: "groups",
       aggregation: "count",
-      dimension: { field_id: categoryFieldId },
+      dimension: { field_id: regionFieldId },
     },
   });
   await expectDashboardMainToFit(page);
@@ -1077,6 +1153,118 @@ test("private Dashboard supports mobile keyboard-only controls and survives relo
   await expectDashboardMainToFit(page);
 });
 
+test("new Dashboard and widget dialogs keep configuration local until Dashboard save", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page);
+  await page.goto("/openview?section=dashboards");
+
+  await page.getByRole("button", { name: "New Dashboard" }).click();
+  const newDashboardDialog = page.getByRole("dialog", {
+    name: "New Dashboard",
+  });
+  await expect(newDashboardDialog).toBeVisible();
+  await newDashboardDialog
+    .getByLabel("Dashboard name")
+    .fill("Equipment overview");
+  await newDashboardDialog
+    .getByLabel("Refresh cadence")
+    .selectOption("five-minutes");
+  await newDashboardDialog.getByRole("button", { name: "Done" }).click();
+  await expect(newDashboardDialog).toBeHidden();
+  await expect(
+    page.getByText("Unsaved changes", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Save Dashboard" }),
+  ).toBeEnabled();
+
+  await page.getByRole("button", { name: "Add widget", exact: true }).click();
+  const addWidgetDialog = page.getByRole("dialog", { name: "Add widget" });
+  await expect(addWidgetDialog).toBeVisible();
+  await addWidgetDialog.getByLabel("Data source").selectOption(moduleId);
+  await expect(addWidgetDialog.getByLabel("Group records by")).toHaveValue(
+    categoryFieldId,
+  );
+  expect(api.snapshots).toHaveLength(0);
+  await addWidgetDialog
+    .getByRole("button", { name: "Add widget", exact: true })
+    .click();
+  await expect(addWidgetDialog).toBeHidden();
+  await expect(
+    page.getByText("Save this Dashboard to load live data for the widget."),
+  ).toBeVisible();
+  expect(api.snapshots).toHaveLength(0);
+
+  await page.getByRole("button", { name: "Save Dashboard" }).click();
+  await expect(
+    page.getByRole("table", { name: "Complete data for Count by Category" }),
+  ).toBeVisible();
+  expect(api.writes[0]).toMatchObject({
+    method: "POST",
+    body: {
+      name: "Equipment overview",
+      refresh_cadence: "five-minutes",
+      widgets: [
+        {
+          widget_type: "chart",
+          config: {
+            chart_type: "bar",
+            query: {
+              mode: "groups",
+              aggregation: "count",
+              dimension: { field_id: categoryFieldId },
+            },
+          },
+        },
+      ],
+    },
+  });
+  expect(api.snapshots).toHaveLength(1);
+});
+
+test("Dashboard settings remain a visible draft until explicitly saved", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page, dashboard({ widgets: [] }));
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Dashboard options" }).click();
+  await page.getByRole("menuitem", { name: "Dashboard settings" }).click();
+  const settingsDialog = page.getByRole("dialog", {
+    name: "Dashboard settings",
+  });
+  await expect(settingsDialog).toBeVisible();
+  await settingsDialog.getByLabel("Dashboard name").fill("Renamed equipment");
+  await settingsDialog.getByLabel("Refresh cadence").selectOption("one-minute");
+  await settingsDialog.getByRole("button", { name: "Done" }).click();
+
+  await expect(settingsDialog).toBeHidden();
+  await expect(
+    page.getByText("Unsaved changes", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Save Dashboard" }),
+  ).toBeEnabled();
+  expect(api.writes).toHaveLength(0);
+
+  await page.getByRole("button", { name: "Save Dashboard" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Renamed equipment" }),
+  ).toBeVisible();
+  expect(api.writes[0]).toMatchObject({
+    method: "PATCH",
+    dashboardId,
+    body: {
+      revision: 1,
+      name: "Renamed equipment",
+      refresh_cadence: "one-minute",
+      widgets: [],
+    },
+  });
+});
+
 test("private Dashboard saves ordered charts and reloads only the selected complete snapshot", async ({
   page,
 }) => {
@@ -1087,21 +1275,38 @@ test("private Dashboard saves ordered charts and reloads only the selected compl
     page.getByRole("heading", { name: "Private dashboards" }),
   ).toBeVisible();
   await expect(
-    page.getByText("Only you can view these Dashboards."),
+    page.getByText("Each Dashboard is private to you."),
   ).toBeVisible();
-  await page.getByLabel("Dashboard name").fill("Equipment overview");
-  await page.getByLabel("Module").selectOption(moduleId);
-  await page.getByLabel("Group records by").selectOption(categoryFieldId);
-  await page.getByRole("button", { name: "Add chart widget" }).click();
-  await page.getByLabel("Group records by").selectOption(regionFieldId);
-  await page.getByRole("button", { name: "Add chart widget" }).click();
-  await expect(page.getByText("2 of 12 widgets")).toBeVisible();
-  await page.getByRole("button", { name: "Move chart 2 up" }).click();
-  await page.getByLabel("Group records by").selectOption(categoryFieldId);
-  await page.getByRole("button", { name: "Add chart widget" }).click();
+  const newDialog = await openNewDashboardDialog(page);
+  await newDialog.getByLabel("Dashboard name").fill("Equipment overview");
+  await finishDashboardDialog(newDialog);
+
+  let addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  await addDialog.getByLabel("Group records by").selectOption(categoryFieldId);
+  await addWidgetFromDialog(addDialog);
+  addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Group records by").selectOption(regionFieldId);
+  await addWidgetFromDialog(addDialog);
+  await expect(
+    page.getByText("2 of 12 widgets", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Widget options: Count by Region" })
+    .click();
+  await page.getByRole("menuitem", { name: "Move up" }).click();
+  addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Group records by").selectOption(categoryFieldId);
+  await addWidgetFromDialog(addDialog);
   await expect(page.getByText("3 of 12 widgets")).toBeVisible();
-  await page.getByRole("button", { name: "Remove chart 3" }).click();
-  await expect(page.getByText("2 of 12 widgets")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Widget options: Count by Category" })
+    .last()
+    .click();
+  await page.getByRole("menuitem", { name: "Remove widget" }).click();
+  await expect(
+    page.getByText("2 of 12 widgets", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
   await expect(
@@ -1149,20 +1354,23 @@ test("private Dashboard saves ordered charts and reloads only the selected compl
     mode: "groups",
     dimension: { field_id: categoryFieldId },
   });
-  await expect(page.getByText("1–25 of 30 aggregate groups")).toBeVisible();
+  await expect(page.getByText("Showing 1–25 of 30")).toBeVisible();
   await expect(
     page
       .getByRole("table", { name: "Complete data for Count by Category" })
       .locator("tbody tr"),
   ).toHaveCount(25);
-  await page.getByRole("button", { name: "Next data page" }).click();
-  await expect(page.getByText("26–30 of 30 aggregate groups")).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Dashboard result pages" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Go to next page" }).click();
+  await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
   await expect(
     page
       .getByRole("table", { name: "Complete data for Count by Category" })
       .getByText("Group 30"),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Previous data page" }).click();
+  await page.getByRole("button", { name: "Go to previous page" }).click();
 
   api.failNextSnapshot();
   await page.getByRole("button", { name: "Refresh now" }).click();
@@ -1220,21 +1428,23 @@ test("private Dashboard builder saves Count over time and reloads the complete d
   const api = await installDashboardApi(page);
   await page.goto("/openview?section=dashboards");
 
-  await page.getByLabel("Dashboard name").fill("Equipment activity");
-  await page.getByLabel("Module").selectOption(moduleId);
-  await page.getByLabel("Chart type").selectOption("line");
-  const addLineChart = page.getByRole("button", {
-    name: "Add line chart widget",
+  await startNewDashboardDraft(page, "Equipment activity");
+  const addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  await addDialog.getByLabel("Chart type").selectOption("line");
+  const addLineChart = addDialog.getByRole("button", {
+    name: "Add widget",
+    exact: true,
   });
   await expect(addLineChart).toBeDisabled();
-  const dateField = page.getByLabel("Date field");
+  const dateField = addDialog.getByLabel("Date field");
   await expect(dateField).toContainText("Occurred on");
   await expect(dateField).toContainText("Updated at");
   await dateField.selectOption(datetimeFieldId);
-  await page.getByLabel("Start date").fill("2024-02-28");
-  await page.getByLabel("End date").fill("2024-03-01");
+  await addDialog.getByLabel("Start date").fill("2024-02-28");
+  await addDialog.getByLabel("End date").fill("2024-03-01");
   await expect(addLineChart).toBeEnabled();
-  await addLineChart.click();
+  await addWidgetFromDialog(addDialog);
   await expect(page.getByText("1 of 12 widgets")).toBeVisible();
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
@@ -1307,11 +1517,15 @@ test("Dashboard bar builder requires and saves a typed numeric measure for Sum",
   const api = await installDashboardApi(page);
   await page.goto("/openview?section=dashboards");
 
-  await page.getByLabel("Dashboard name").fill("Equipment totals");
-  await page.getByLabel("Module").selectOption(moduleId);
-  await page.getByLabel("Aggregation").selectOption("sum");
-  const addChart = page.getByRole("button", { name: "Add chart widget" });
-  const measure = page.getByLabel("Numeric measure");
+  await startNewDashboardDraft(page, "Equipment totals");
+  const addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  await addDialog.getByLabel("Aggregation").selectOption("sum");
+  const addChart = addDialog.getByRole("button", {
+    name: "Add widget",
+    exact: true,
+  });
+  const measure = addDialog.getByLabel("Numeric measure");
   await expect(measure).toHaveValue("");
   await expect(addChart).toBeDisabled();
   await expect(
@@ -1326,7 +1540,7 @@ test("Dashboard bar builder requires and saves a typed numeric measure for Sum",
 
   await measure.selectOption(amountFieldId);
   await expect(addChart).toBeEnabled();
-  await addChart.click();
+  await addWidgetFromDialog(addDialog);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
@@ -1375,20 +1589,22 @@ test("private Dashboard Pie builder saves Sum and reloads its preview and comple
   const api = await installDashboardApi(page);
   await page.goto("/openview?section=dashboards");
 
-  await page.getByLabel("Dashboard name").fill("Equipment distribution");
-  await page.getByLabel("Module").selectOption(moduleId);
-  await page.getByLabel("Chart type").selectOption("pie");
-  await page.getByLabel("Aggregation").selectOption("sum");
-  const addPieChart = page.getByRole("button", {
-    name: "Add pie chart widget",
+  await startNewDashboardDraft(page, "Equipment distribution");
+  const addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  await addDialog.getByLabel("Chart type").selectOption("pie");
+  await addDialog.getByLabel("Aggregation").selectOption("sum");
+  const addPieChart = addDialog.getByRole("button", {
+    name: "Add widget",
+    exact: true,
   });
-  await expect(page.getByLabel("Group records by")).toBeVisible();
-  await expect(page.getByLabel("Date field")).toHaveCount(0);
-  await expect(page.getByLabel("Start date")).toHaveCount(0);
+  await expect(addDialog.getByLabel("Group records by")).toBeVisible();
+  await expect(addDialog.getByLabel("Date field")).toHaveCount(0);
+  await expect(addDialog.getByLabel("Start date")).toHaveCount(0);
   await expect(addPieChart).toBeDisabled();
-  await page.getByLabel("Numeric measure").selectOption(amountFieldId);
+  await addDialog.getByLabel("Numeric measure").selectOption(amountFieldId);
   await expect(addPieChart).toBeEnabled();
-  await addPieChart.click();
+  await addWidgetFromDialog(addDialog);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
@@ -1401,7 +1617,7 @@ test("private Dashboard Pie builder saves Sum and reloads its preview and comple
   await expect(preview).toBeVisible();
   await expect(preview.locator(".recharts-pie")).toBeVisible();
   await expect(table).toBeVisible();
-  await expect(page.getByText("1–25 of 30 aggregate groups")).toBeVisible();
+  await expect(page.getByText("Showing 1–25 of 30")).toBeVisible();
   await expect(table.locator("tbody tr")).toHaveCount(25);
   expect(api.writes[0]?.body).toEqual({
     name: "Equipment distribution",
@@ -1436,8 +1652,8 @@ test("private Dashboard Pie builder saves Sum and reloads its preview and comple
   await expect(preview.locator(".recharts-pie")).toBeVisible();
   await expect(table).toBeVisible();
   await expect(table.locator("tbody tr")).toHaveCount(25);
-  await page.getByRole("button", { name: "Next data page" }).click();
-  await expect(page.getByText("26–30 of 30 aggregate groups")).toBeVisible();
+  await page.getByRole("button", { name: "Go to next page" }).click();
+  await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
   await expect(table.locator("tbody tr")).toHaveCount(5);
   expect(api.snapshots).toHaveLength(2);
   expect(api.snapshots[1]).toMatchObject({
@@ -1446,6 +1662,11 @@ test("private Dashboard Pie builder saves Sum and reloads its preview and comple
     measure: { field_id: amountFieldId, expected_type: "decimal" },
     dimension: { field_id: categoryFieldId, expected_type: "select" },
   });
+
+  await page.getByLabel("Rows per page").selectOption("50");
+  await expect(page.getByText("Showing 1–30 of 30")).toBeVisible();
+  await expect(table.locator("tbody tr")).toHaveCount(30);
+  expect(api.snapshots).toHaveLength(2);
 });
 
 test("Dashboard line builder requires and saves a typed numeric measure for Average", async ({
@@ -1454,22 +1675,24 @@ test("Dashboard line builder requires and saves a typed numeric measure for Aver
   const api = await installDashboardApi(page);
   await page.goto("/openview?section=dashboards");
 
-  await page.getByLabel("Dashboard name").fill("Daily scores");
-  await page.getByLabel("Module").selectOption(moduleId);
-  await page.getByLabel("Chart type").selectOption("line");
-  await page.getByLabel("Aggregation").selectOption("average");
-  const addLineChart = page.getByRole("button", {
-    name: "Add line chart widget",
+  await startNewDashboardDraft(page, "Daily scores");
+  const addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  await addDialog.getByLabel("Chart type").selectOption("line");
+  await addDialog.getByLabel("Aggregation").selectOption("average");
+  const addLineChart = addDialog.getByRole("button", {
+    name: "Add widget",
+    exact: true,
   });
-  const measure = page.getByLabel("Numeric measure");
+  const measure = addDialog.getByLabel("Numeric measure");
   await expect(measure).toHaveValue("");
   await expect(addLineChart).toBeDisabled();
   await measure.selectOption(scoreFieldId);
-  await page.getByLabel("Date field").selectOption(dateFieldId);
-  await page.getByLabel("Start date").fill("2024-03-01");
-  await page.getByLabel("End date").fill("2024-03-02");
+  await addDialog.getByLabel("Date field").selectOption(dateFieldId);
+  await addDialog.getByLabel("Start date").fill("2024-03-01");
+  await addDialog.getByLabel("End date").fill("2024-03-02");
   await expect(addLineChart).toBeEnabled();
-  await addLineChart.click();
+  await addWidgetFromDialog(addDialog);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
@@ -1525,18 +1748,20 @@ test("line chart builder blocks missing, reversed, and overlong date ranges", as
   const api = await installDashboardApi(page);
   await page.goto("/openview?section=dashboards");
 
-  await page.getByLabel("Module").selectOption(moduleId);
-  await page.getByLabel("Chart type").selectOption("line");
-  const addLineChart = page.getByRole("button", {
-    name: "Add line chart widget",
+  const addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  await addDialog.getByLabel("Chart type").selectOption("line");
+  const addLineChart = addDialog.getByRole("button", {
+    name: "Add widget",
+    exact: true,
   });
-  const dateField = page.getByLabel("Date field");
+  const dateField = addDialog.getByLabel("Date field");
   await expect(dateField).toContainText("Occurred on");
   await expect(addLineChart).toBeDisabled();
 
   await dateField.selectOption(dateFieldId);
-  const startDate = page.getByLabel("Start date");
-  const endDate = page.getByLabel("End date");
+  const startDate = addDialog.getByLabel("Start date");
+  const endDate = addDialog.getByLabel("End date");
   await startDate.fill("2024-02-29");
   await expect(addLineChart).toBeDisabled();
   await endDate.fill("2024-02-29");
@@ -1549,7 +1774,9 @@ test("line chart builder blocks missing, reversed, and overlong date ranges", as
   await expect(addLineChart).toBeDisabled();
   await dateField.selectOption("");
   await expect(addLineChart).toBeDisabled();
-  await expect(page.getByText("0 of 12 widgets")).toBeVisible();
+  await expect(
+    page.getByText("0 of 12 widgets", { exact: true }),
+  ).toBeVisible();
   expect(api.writes).toHaveLength(0);
 });
 
@@ -1564,15 +1791,19 @@ test("stale Dashboard save keeps the name and ordered widget draft available", a
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
 
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
-  await page.getByLabel("Dashboard name").fill("Unsaved operations draft");
+  const settingsDialog = await openDashboardSettingsDialog(page);
+  await settingsDialog
+    .getByLabel("Dashboard name")
+    .fill("Unsaved operations draft");
+  await finishDashboardDialog(settingsDialog);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
   await expect(
     page.getByText("This Dashboard changed since you opened it."),
   ).toBeVisible();
-  await expect(page.getByLabel("Dashboard name")).toHaveValue(
-    "Unsaved operations draft",
-  );
+  await expect(
+    page.getByRole("heading", { name: "Unsaved operations draft" }),
+  ).toBeVisible();
   await expect(page.getByText("1 of 12 widgets")).toBeVisible();
   expect(api.writes).toHaveLength(1);
   expect(api.writes[0]?.method).toBe("PATCH");
@@ -1585,12 +1816,15 @@ test("archiving and restoring a Dashboard uses the saved revision", async ({
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
 
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
-  await page.getByRole("button", { name: "Archive Dashboard" }).click();
+  await page.getByRole("button", { name: "Dashboard options" }).click();
+  await page.getByRole("menuitem", { name: "Archive Dashboard" }).click();
   await expect(page.getByText("Dashboard archived.")).toBeVisible();
   expect(api.writes[0]).toMatchObject({ method: "DELETE", dashboardId });
 
   await page.getByRole("button", { name: "Show archived" }).click();
-  await page.getByRole("button", { name: "Restore Operations" }).click();
+  await selectDashboard(page, dashboardId);
+  await page.getByRole("button", { name: "Dashboard options" }).click();
+  await page.getByRole("menuitem", { name: "Restore Dashboard" }).click();
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   expect(api.writes[1]).toMatchObject({
     method: "POST",
@@ -1605,23 +1839,27 @@ test("a saved Dashboard can be made default, restored on a clean URL, and unset"
   const api = await installDashboardApi(page, dashboard({ widgets: [] }));
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
 
-  await expect(page.getByLabel("Dashboard name")).toHaveValue("Operations");
-  await page.getByRole("button", { name: "Set as default" }).click();
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
+  await page.getByRole("button", { name: "Dashboard options" }).click();
+  await page.getByRole("menuitem", { name: "Set as default" }).click();
+  await page.getByRole("button", { name: "Dashboard options" }).click();
   await expect(
-    page.getByRole("button", { name: "Clear default" }),
+    page.getByRole("menuitem", { name: "Clear default" }),
   ).toBeVisible();
   expect(api.dashboardDefaultWrites).toEqual([{ dashboard_id: dashboardId }]);
 
   await page.goto("/openview?section=dashboards");
-  await expect(page.getByLabel("Dashboard name")).toHaveValue("Operations");
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}(?:$|&)`));
+  await page.getByRole("button", { name: "Dashboard options" }).click();
   await expect(
-    page.getByRole("button", { name: "Clear default" }),
+    page.getByRole("menuitem", { name: "Clear default" }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Clear default" }).click();
+  await page.getByRole("menuitem", { name: "Clear default" }).click();
+  await page.getByRole("button", { name: "Dashboard options" }).click();
   await expect(
-    page.getByRole("button", { name: "Set as default" }),
+    page.getByRole("menuitem", { name: "Set as default" }),
   ).toBeVisible();
   expect(api.dashboardDefaultWrites).toEqual([
     { dashboard_id: dashboardId },
@@ -1640,11 +1878,13 @@ test("retrying an initial default error opens the saved Dashboard without losing
   await expect(
     page.getByRole("button", { name: "Retry default Dashboard" }),
   ).toBeVisible();
-  await expect(page.getByLabel("Dashboard name")).toHaveValue("");
+  await expect(
+    page.getByRole("heading", { name: "No dashboard selected" }),
+  ).toBeVisible();
   const readsBeforeRetry = api.dashboardDefaultReads.length;
   api.recoverDashboardDefaultReads();
   await page.getByRole("button", { name: "Retry default Dashboard" }).click();
-  await expect(page.getByLabel("Dashboard name")).toHaveValue("Operations");
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}(?:$|&)`));
   expect(api.dashboardDefaultReads.length).toBeGreaterThan(readsBeforeRetry);
 });
@@ -1663,9 +1903,13 @@ test("an explicit Dashboard URL outranks a different personal default", async ({
   api.setDashboardDefault(alternateDashboardId);
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
 
-  await expect(page.getByLabel("Dashboard name")).toHaveValue("Operations");
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}(?:$|&)`));
-  await expect(page.getByText("Default", { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByLabel("Dashboard", { exact: true })
+      .getByRole("option", { name: "Quality checks · Default" }),
+  ).toBeAttached();
   expect(api.dashboardReads).toContain(`/api/dashboards/${dashboardId}`);
   expect(api.dashboardReads).not.toContain(
     `/api/dashboards/${alternateDashboardId}`,
@@ -1696,18 +1940,14 @@ test("a delayed default cannot override a Dashboard explicitly chosen from the l
 
   try {
     await gate.started;
-    await expect(
-      page.getByRole("button", { name: "Operations" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Quality checks" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "Operations" }).click();
+    await selectDashboard(page, dashboardId);
     gate.release();
     await defaultResponse;
     await page.waitForLoadState("networkidle");
     await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}(?:$|&)`));
-    await expect(page.getByLabel("Dashboard name")).toHaveValue("Operations");
+    await expect(
+      page.getByRole("heading", { name: "Operations" }),
+    ).toBeVisible();
     expect(api.dashboardReads).toContain(`/api/dashboards/${dashboardId}`);
     expect(api.dashboardReads).not.toContain(
       `/api/dashboards/${alternateDashboardId}`,
@@ -1734,9 +1974,6 @@ test("changing to the archived list prevents a late active default selection", a
 
   try {
     await gate.started;
-    await expect(
-      page.getByRole("button", { name: "Operations" }),
-    ).toBeVisible();
     await page.getByRole("button", { name: "Show archived" }).click();
     await expect(
       page.getByRole("heading", { name: "Archived dashboards" }),
@@ -1747,7 +1984,9 @@ test("changing to the archived list prevents a late active default selection", a
     await defaultResponse;
     await page.waitForLoadState("networkidle");
     await expect(page).toHaveURL("/openview?section=dashboards");
-    await expect(page.getByLabel("Dashboard name")).toHaveValue("");
+    await expect(
+      page.getByRole("heading", { name: "No dashboard selected" }),
+    ).toBeVisible();
     expect(api.dashboardReads).not.toContain(`/api/dashboards/${dashboardId}`);
   } finally {
     gate.release();
@@ -1771,15 +2010,19 @@ test("a late personal default response cannot replace a Dashboard draft", async 
 
   try {
     await gate.started;
-    const dashboardName = page.getByLabel("Dashboard name");
+    const newDialog = await openNewDashboardDialog(page);
+    const dashboardName = newDialog.getByLabel("Dashboard name");
     await dashboardName.fill("Draft entered before the default arrived");
+    await finishDashboardDialog(newDialog);
     gate.release();
     await defaultResponse;
     await page.waitForLoadState("networkidle");
 
-    await expect(dashboardName).toHaveValue(
-      "Draft entered before the default arrived",
-    );
+    await expect(
+      page.getByRole("heading", {
+        name: "Draft entered before the default arrived",
+      }),
+    ).toBeVisible();
     await expect(page).toHaveURL("/openview?section=dashboards");
     expect(api.dashboardReads).not.toContain(`/api/dashboards/${dashboardId}`);
   } finally {
@@ -1804,11 +2047,14 @@ test("an archived default stays hidden and is available again after restore", as
   const readsBeforeRestore = api.dashboardDefaultReads.length;
   await page.getByRole("button", { name: "Show archived" }).click();
   await expect(page.getByText("Default", { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Restore Operations" }).click();
+  await selectDashboard(page, dashboardId);
+  await page.getByRole("button", { name: "Dashboard options" }).click();
+  await page.getByRole("menuitem", { name: "Restore Dashboard" }).click();
 
-  await expect(page.getByLabel("Dashboard name")).toHaveValue("Operations");
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
+  await page.getByRole("button", { name: "Dashboard options" }).click();
   await expect(
-    page.getByRole("button", { name: "Clear default" }),
+    page.getByRole("menuitem", { name: "Clear default" }),
   ).toBeVisible();
   await expect(page.getByText("Default", { exact: true })).toBeVisible();
   await expect
@@ -1827,15 +2073,18 @@ test("restoring at the current URL does not suppress a later Dashboard re-select
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
 
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
-  await page.getByRole("button", { name: "Restore Dashboard" }).click();
+  await page.getByRole("button", { name: "Dashboard options" }).click();
+  await page.getByRole("menuitem", { name: "Restore Dashboard" }).click();
   await expect(page.getByText("Dashboard restored.")).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
 
   await page.getByRole("button", { name: "New Dashboard" }).click();
-  await expect(page.getByRole("button", { name: "Operations" })).toBeVisible();
+  const newDialog = page.getByRole("dialog", { name: "New Dashboard" });
+  await expect(newDialog).toBeVisible();
+  await finishDashboardDialog(newDialog);
   const readsBeforeReselection = api.dashboardReads.length;
-  await page.getByRole("button", { name: "Operations" }).click();
-  await expect(page.getByLabel("Dashboard name")).toHaveValue("Operations");
+  await selectDashboard(page, dashboardId);
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   expect(api.dashboardReads).toHaveLength(readsBeforeReselection + 1);
 });
 
@@ -1856,20 +2105,24 @@ test("a pending Dashboard deep link is cleared when switching to archived list",
     });
     await page.getByRole("button", { name: "Show archived" }).click();
     expect(page.url()).toContain(`dashboard=${dashboardId}`);
-    const dashboardName = page.getByLabel("Dashboard name");
+    const newDialog = await openNewDashboardDialog(page);
+    const dashboardName = newDialog.getByLabel("Dashboard name");
     await dashboardName.fill("Draft after changing the list view");
+    await finishDashboardDialog(newDialog);
     gate.release();
     await routeResponse;
     await expect(page).toHaveURL("/openview?section=dashboards");
-    await expect(dashboardName).toHaveValue(
-      "Draft after changing the list view",
-    );
+    await expect(
+      page.getByRole("heading", {
+        name: "Draft after changing the list view",
+      }),
+    ).toBeVisible();
   } finally {
     gate.release();
   }
-  await expect(page.getByLabel("Dashboard name")).toHaveValue(
-    "Draft after changing the list view",
-  );
+  await expect(
+    page.getByRole("heading", { name: "Draft after changing the list view" }),
+  ).toBeVisible();
   expect(api.dashboardReads.length).toBeGreaterThan(0);
 });
 
@@ -1890,14 +2143,19 @@ test("a pending Dashboard deep link cannot overwrite a new Dashboard draft", asy
     });
     await page.getByRole("button", { name: "New Dashboard" }).click();
     expect(page.url()).toContain(`dashboard=${dashboardId}`);
-    const dashboardName = page.getByLabel("Dashboard name");
+    const newDialog = page.getByRole("dialog", { name: "New Dashboard" });
+    await expect(newDialog).toBeVisible();
+    const dashboardName = newDialog.getByLabel("Dashboard name");
     await dashboardName.fill("Draft after starting a new Dashboard");
+    await finishDashboardDialog(newDialog);
     gate.release();
     await routeResponse;
     await expect(page).toHaveURL("/openview?section=dashboards");
-    await expect(dashboardName).toHaveValue(
-      "Draft after starting a new Dashboard",
-    );
+    await expect(
+      page.getByRole("heading", {
+        name: "Draft after starting a new Dashboard",
+      }),
+    ).toBeVisible();
   } finally {
     gate.release();
   }
@@ -1913,14 +2171,19 @@ test("restoring from the archived list does not overwrite a new Dashboard draft"
   );
   await page.goto("/openview?section=dashboards");
   await page.getByRole("button", { name: "Show archived" }).click();
-  const nameInput = page.getByLabel("Dashboard name");
-  await nameInput.fill("Unsaved Dashboard draft");
-
   const restoreButton = page.getByRole("button", {
     name: "Restore Operations",
   });
+  await expect(restoreButton).toBeVisible();
+  const newDialog = await openNewDashboardDialog(page);
+  const nameInput = newDialog.getByLabel("Dashboard name");
+  await nameInput.fill("Unsaved Dashboard draft");
+  await finishDashboardDialog(newDialog);
+
   await expect(restoreButton).toBeDisabled();
-  await expect(nameInput).toHaveValue("Unsaved Dashboard draft");
+  await expect(
+    page.getByRole("heading", { name: "Unsaved Dashboard draft" }),
+  ).toBeVisible();
   expect(api.writes).toHaveLength(0);
 });
 
@@ -1986,15 +2249,15 @@ test("a shorter refreshed snapshot clamps the data page before Previous is used"
   await expect(
     page.getByRole("table", { name: "Complete data for Count by Category" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Next data page" }).click();
-  await page.getByRole("button", { name: "Next data page" }).click();
-  await expect(page.getByText("51–60 of 60 aggregate groups")).toBeVisible();
+  await page.getByRole("button", { name: "Go to next page" }).click();
+  await page.getByRole("button", { name: "Go to next page" }).click();
+  await expect(page.getByText("Showing 51–60 of 60")).toBeVisible();
 
   api.setSnapshotLength(30);
   await page.getByRole("button", { name: "Refresh now" }).click();
-  await expect(page.getByText("26–30 of 30 aggregate groups")).toBeVisible();
-  await page.getByRole("button", { name: "Previous data page" }).click();
-  await expect(page.getByText("1–25 of 30 aggregate groups")).toBeVisible();
+  await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
+  await page.getByRole("button", { name: "Go to previous page" }).click();
+  await expect(page.getByText("Showing 1–25 of 30")).toBeVisible();
 });
 
 test("the categorical Count builder excludes numeric and date fields", async ({
@@ -2002,9 +2265,10 @@ test("the categorical Count builder excludes numeric and date fields", async ({
 }) => {
   await installDashboardApi(page);
   await page.goto("/openview?section=dashboards");
-  await page.getByLabel("Module").selectOption(moduleId);
+  const addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
 
-  const dimension = page.getByLabel("Group records by");
+  const dimension = addDialog.getByLabel("Group records by");
   await expect(dimension.getByRole("option", { name: "Category" })).toHaveCount(
     1,
   );
@@ -2027,8 +2291,7 @@ test("unsaved Dashboard drafts require an explicit keep or discard before naviga
   await installDashboardApi(page);
   await page.goto("/openview?section=dashboards");
 
-  const dashboardName = page.getByLabel("Dashboard name");
-  await dashboardName.fill("Draft kept after cancel");
+  await startNewDashboardDraft(page, "Draft kept after cancel");
 
   const reportsLink = page.getByRole("link", { name: "Reports", exact: true });
   await reportsLink.click();
@@ -2038,25 +2301,29 @@ test("unsaved Dashboard drafts require an explicit keep or discard before naviga
   await discardDialog.getByRole("button", { name: "Keep editing" }).click();
   await expect(discardDialog).toBeHidden();
   await expect(page).toHaveURL("/openview?section=dashboards");
-  await expect(dashboardName).toHaveValue("Draft kept after cancel");
+  await expect(
+    page.getByRole("heading", { name: "Draft kept after cancel" }),
+  ).toBeVisible();
 
   await reportsLink.click();
   await discardDialog
     .getByRole("button", { name: "Discard and continue" })
     .click();
   await expect(page).toHaveURL("/openview?section=reports");
-  await expect(dashboardName).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Draft kept after cancel" }),
+  ).toHaveCount(0);
 
   await page.getByRole("link", { name: "Dashboards", exact: true }).click();
   await expect(page).toHaveURL("/openview?section=dashboards");
-  await page.getByLabel("Dashboard name").fill("Draft before workspace change");
+  await startNewDashboardDraft(page, "Draft before workspace change");
   await page.getByRole("link", { name: "Search workspace" }).click();
   await expect(discardDialog).toBeVisible();
   await discardDialog
     .getByRole("button", { name: "Discard and continue" })
     .click();
   await expect(page).toHaveURL("/platform");
-  await expect(page.getByLabel("Dashboard name")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
 test("a delayed active Dashboard page cannot enter the archived list", async ({
@@ -2072,7 +2339,8 @@ test("a delayed active Dashboard page cannot enter the archived list", async ({
     }),
   );
   await page.goto("/openview?section=dashboards");
-  await expect(page.getByRole("button", { name: "Operations" })).toBeVisible();
+  await selectDashboard(page, dashboardId);
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
 
   try {
     await page.getByRole("button", { name: "Load more Dashboards" }).click();
@@ -2086,7 +2354,9 @@ test("a delayed active Dashboard page cannot enter the archived list", async ({
     gate.release();
     await expect(page.getByText("No archived Dashboards.")).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Late active page" }),
+      page
+        .getByLabel("Dashboard", { exact: true })
+        .getByRole("option", { name: /Late active page/ }),
     ).toHaveCount(0);
   } finally {
     gate.release();
@@ -2123,22 +2393,23 @@ test("a delayed field page cannot corrupt pagination after switching modules", a
   const gate = api.holdNextFieldPage(moduleId, 1);
   await page.goto("/openview?section=dashboards");
 
-  await page.getByLabel("Module").selectOption(moduleId);
-  const dimension = page.getByLabel("Group records by");
+  const addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  const dimension = addDialog.getByLabel("Group records by");
   await expect(dimension.getByRole("option", { name: "Category" })).toHaveCount(
     1,
   );
-  await page.getByRole("button", { name: "Load more fields" }).click();
+  await addDialog.getByRole("button", { name: "Load more fields" }).click();
 
   try {
     await gate.started;
-    await page.getByLabel("Module").selectOption(secondModuleId);
+    await addDialog.getByLabel("Data source").selectOption(secondModuleId);
     await expect(
       dimension.getByRole("option", { name: "Process" }),
     ).toHaveCount(1);
     gate.release();
 
-    await page.getByRole("button", { name: "Load more fields" }).click();
+    await addDialog.getByRole("button", { name: "Load more fields" }).click();
     await expect
       .poll(
         () =>
@@ -2163,27 +2434,43 @@ test("private Dashboard saves and reloads all four live widget types", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
+  api.setRecordResultCount(30);
   await page.goto("/openview?section=dashboards");
 
-  await page.getByLabel("Dashboard name").fill("Live operations");
-  await page.getByLabel("Module").selectOption(moduleId);
-  await page.getByLabel("Refresh cadence").selectOption("one-minute");
+  const newDialog = await openNewDashboardDialog(page);
+  await newDialog.getByLabel("Dashboard name").fill("Live operations");
+  await newDialog.getByLabel("Refresh cadence").selectOption("one-minute");
+  await finishDashboardDialog(newDialog);
 
-  await page.getByLabel("Widget type").selectOption("summary");
-  await page.getByRole("button", { name: "Add summary widget" }).click();
-  await page.getByLabel("Widget type").selectOption("workload");
-  await page.getByLabel("Aggregation").selectOption("sum");
-  await page.getByLabel("Numeric measure").selectOption(amountFieldId);
-  await page.getByLabel("Group records by").selectOption(regionFieldId);
-  await page.getByRole("button", { name: "Add workload widget" }).click();
-  await page.getByLabel("Widget type").selectOption("records");
-  await page.getByLabel("Display field").selectOption(categoryFieldId);
-  await page.getByRole("button", { name: "Add records widget" }).click();
-  await page.getByLabel("Widget type").selectOption("chart");
-  await page.getByLabel("Aggregation").selectOption("count");
-  await page.getByLabel("Group records by").selectOption(categoryFieldId);
-  await page.getByRole("button", { name: "Add chart widget" }).click();
-  await expect(page.getByText("4 of 12 widgets")).toBeVisible();
+  let addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  await addDialog.getByLabel("Widget type").selectOption("summary");
+  await addDialog.getByLabel("Group records by").selectOption(categoryFieldId);
+  await addWidgetFromDialog(addDialog);
+
+  addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  await addDialog.getByLabel("Widget type").selectOption("workload");
+  await addDialog.getByLabel("Aggregation").selectOption("sum");
+  await addDialog.getByLabel("Numeric measure").selectOption(amountFieldId);
+  await addDialog.getByLabel("Group records by").selectOption(regionFieldId);
+  await addWidgetFromDialog(addDialog);
+
+  addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  await addDialog.getByLabel("Widget type").selectOption("records");
+  await addDialog.getByLabel("Display field").selectOption(categoryFieldId);
+  await addWidgetFromDialog(addDialog);
+
+  addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  await addDialog.getByLabel("Widget type").selectOption("chart");
+  await addDialog.getByLabel("Aggregation").selectOption("count");
+  await addDialog.getByLabel("Group records by").selectOption(categoryFieldId);
+  await addWidgetFromDialog(addDialog);
+  await expect(
+    page.getByText("4 of 12 widgets", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
@@ -2210,6 +2497,16 @@ test("private Dashboard saves and reloads all four live widget types", async ({
   await expect(
     page.getByRole("heading", { name: /Workload by Region/ }),
   ).toBeVisible();
+  const workloadTable = page.getByRole("table", { name: "Workload breakdown" });
+  await expect(workloadTable.locator("tbody tr")).toHaveCount(25);
+  const snapshotsBeforeWorkloadPageSize = api.snapshots.length;
+  await page.getByLabel("Rows per page").selectOption("5");
+  await expect(workloadTable.locator("tbody tr")).toHaveCount(5);
+  await expect(page.getByText("Showing 1–5 of 30")).toBeVisible();
+  expect(api.snapshots).toHaveLength(snapshotsBeforeWorkloadPageSize);
+  await page.getByLabel("Rows per page").selectOption("25");
+  await expect(workloadTable.locator("tbody tr")).toHaveCount(25);
+
   await page.getByRole("button", { name: /View records 3/ }).click();
   const recordsTable = page.getByRole("table", { name: "Live records" });
   await expect(recordsTable.getByText("Repair")).toBeVisible();
@@ -2222,6 +2519,25 @@ test("private Dashboard saves and reloads all four live widget types", async ({
     limit: 25,
     offset: 0,
   });
+  await expect(
+    page.getByRole("navigation", { name: "Dashboard result pages" }),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Dashboard result pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
+  await expect.poll(() => api.recordQueries.at(-1)?.offset).toBe(25);
+  await expect(
+    recordsTable.getByRole("cell", { name: "Record 26" }),
+  ).toBeVisible();
+  await page.getByLabel("Rows per page").selectOption("50");
+  await expect.poll(() => api.recordQueries.at(-1)?.limit).toBe(50);
+  await expect.poll(() => api.recordQueries.at(-1)?.offset).toBe(0);
+  await expect(recordsTable.locator("tbody tr")).toHaveCount(30);
+  await expect(
+    recordsTable.getByRole("cell", { name: "Record 30" }),
+  ).toBeVisible();
+  expect(api.recordQueries.at(-1)).toMatchObject({ limit: 50, offset: 0 });
   await page.getByRole("button", { name: /View chart 4/ }).click();
   await expect(
     page.getByRole("table", { name: "Complete data for Count by Category" }),
@@ -2254,12 +2570,13 @@ test("saved Record widget shows values for a field beyond the first catalog page
   api.setRecordFieldId(laterFieldId);
   await page.goto("/openview?section=dashboards");
 
-  await page.getByLabel("Dashboard name").fill("Later field records");
-  await page.getByLabel("Module").selectOption(moduleId);
-  await page.getByLabel("Widget type").selectOption("records");
-  await page.getByRole("button", { name: "Load more fields" }).click();
-  await page.getByLabel("Display field").selectOption(laterFieldId);
-  await page.getByRole("button", { name: "Add records widget" }).click();
+  await startNewDashboardDraft(page, "Later field records");
+  const addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  await addDialog.getByLabel("Widget type").selectOption("records");
+  await addDialog.getByRole("button", { name: "Load more fields" }).click();
+  await addDialog.getByLabel("Display field").selectOption(laterFieldId);
+  await addWidgetFromDialog(addDialog);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
   expect(api.writes[0]?.body?.widgets?.[0]).toMatchObject({
@@ -2369,10 +2686,20 @@ test("Dashboard cadence polls only while visible and ignores a hidden in-flight 
   await page.clock.fastForward(300_000);
   expect(api.snapshots).toHaveLength(manualSnapshotCount);
 
-  await page.getByLabel("Refresh cadence").selectOption("one-minute");
+  const minuteSettings = await openDashboardSettingsDialog(page, true);
+  await minuteSettings.getByLabel("Refresh cadence").selectOption("one-minute");
+  await finishDashboardDialog(minuteSettings, page);
+  await expect(
+    page.getByText("Unsaved changes", { exact: true }),
+  ).toBeVisible();
+  const unsavedSnapshotCount = api.snapshots.length;
+  await page.clock.fastForward(60_000);
+  expect(api.snapshots).toHaveLength(unsavedSnapshotCount);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
   await expect(table).toBeVisible();
-  await expect(page.getByLabel("Refresh cadence")).toHaveValue("one-minute");
+  await expect(
+    page.getByText(/Every minute while this page is open/),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Refresh now" })).toBeEnabled();
   await expect
     .poll(() => api.snapshots.length)
@@ -2422,10 +2749,16 @@ test("Dashboard cadence polls only while visible and ignores a hidden in-flight 
   await expect.poll(() => api.snapshots.length).toBe(initialSnapshotCount + 4);
   await expect(table.locator("tbody tr")).toHaveCount(4);
 
-  await page.getByLabel("Refresh cadence").selectOption("five-minutes");
+  const fiveMinuteSettings = await openDashboardSettingsDialog(page, true);
+  await fiveMinuteSettings
+    .getByLabel("Refresh cadence")
+    .selectOption("five-minutes");
+  await finishDashboardDialog(fiveMinuteSettings, page);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
   await expect(table).toBeVisible();
-  await expect(page.getByLabel("Refresh cadence")).toHaveValue("five-minutes");
+  await expect(
+    page.getByText(/Every five minutes while this page is open/),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Refresh now" })).toBeEnabled();
   const fiveMinuteSnapshotCount = api.snapshots.length;
   await page.clock.fastForward(299_999);
@@ -2567,7 +2900,8 @@ test("duplicating a Dashboard creates an independent copy and keeps the source d
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Duplicate Dashboard" }).click();
+  await page.getByRole("button", { name: "Dashboard options" }).click();
+  await page.getByRole("menuitem", { name: "Duplicate Dashboard" }).click();
   await expect(
     page.getByRole("heading", { name: "Copy of Operations" }),
   ).toBeVisible();
@@ -2588,16 +2922,17 @@ test("duplicating a Dashboard creates an independent copy and keeps the source d
     },
   });
   expect(api.dashboardDefaultId).toBe(dashboardId);
-  await expect(page.getByText("Default", { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByLabel("Dashboard", { exact: true })
+      .getByRole("option", { name: "Operations · Default" }),
+  ).toBeAttached();
 
   await page.reload();
   await expect(
     page.getByRole("heading", { name: "Copy of Operations" }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: /Operations/ })
-    .first()
-    .click();
+  await selectDashboard(page, dashboardId);
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   expect(api.dashboardDefaultId).toBe(dashboardId);
 });

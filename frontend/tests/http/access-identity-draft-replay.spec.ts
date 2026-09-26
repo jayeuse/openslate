@@ -315,8 +315,11 @@ test("identity deletion does not dispatch when its safety marker cannot be store
   });
   await page.goto("/access?view=identities");
   await page
-    .getByRole("button", { name: /Alex Ops/ })
-    .first()
+    .getByRole("button", { name: "View details for Alex Ops", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Identity details", exact: true })
+    .getByRole("button", { name: "Manage identity", exact: true })
     .click();
   const editor = page.getByRole("dialog", { name: "Alex Ops" });
   await page.evaluate(() => {
@@ -358,8 +361,11 @@ test("administrator role confirmation blocks before mutation when storage fails"
   });
   await page.goto("/access?view=identities");
   await page
-    .getByRole("button", { name: /Alex Ops/ })
-    .first()
+    .getByRole("button", { name: "View details for Alex Ops", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Identity details", exact: true })
+    .getByRole("button", { name: "Manage identity", exact: true })
     .click();
   const editor = page.getByRole("dialog", { name: "Alex Ops" });
   await editor.getByLabel("Role").selectOption(adminRoleId);
@@ -410,8 +416,11 @@ test("uncertain identity edit compares saved title with freshly loaded current t
 
   await page.goto("/access?view=identities");
   await page
-    .getByRole("button", { name: /Alex Ops/ })
-    .first()
+    .getByRole("button", { name: "View details for Alex Ops", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Identity details", exact: true })
+    .getByRole("button", { name: "Manage identity", exact: true })
     .click();
   const editor = page.getByRole("dialog", { name: "Alex Ops" });
   await editor.getByLabel("Job title").fill("Shift lead");

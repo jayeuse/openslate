@@ -1,6 +1,6 @@
 "use client";
 
-import { createElement } from "react";
+import { createElement, useState, type ReactNode } from "react";
 import { Temporal } from "@js-temporal/polyfill";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -46,6 +46,19 @@ function formatOccurrenceTime(item: Occurrence): string {
   }
 }
 
+function formatGridOccurrenceTime(item: Occurrence): string {
+  if (item.event.allDay) return "All day";
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: item.event.timezoneName,
+    }).format(new Date(item.start));
+  } catch {
+    return item.start.slice(11, 16) || "Time";
+  }
+}
+
 function appearsOnDate(item: Occurrence, date: string): boolean {
   if (item.event.allDay) return item.start <= date && date <= item.end;
   try {
@@ -84,10 +97,28 @@ export function calendarDayCountLabel(
   return incomplete ? `At least ${count} ${noun}` : `${count} ${noun}`;
 }
 
+function CalendarEventDisclosure({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return createElement(
+    "details",
+    {
+      className: "border-border mt-2 rounded-md border p-3",
+      onToggle: (event) => setOpen(event.currentTarget.hasAttribute("open")),
+    },
+    createElement(
+      "summary",
+      { className: "min-h-11 cursor-pointer py-2 font-medium" },
+      "View event",
+    ),
+    open ? createElement("div", { className: "mt-2" }, children) : null,
+  );
+}
+
 export function ServerBoardCalendarDisplay({
   page,
   window,
   date,
+  compact = false,
   canEditEvent,
   onEditEvent,
   canArchiveEvent,
@@ -97,6 +128,7 @@ export function ServerBoardCalendarDisplay({
   page: BoardEventOccurrencePage;
   window: CalendarWindow;
   date?: string;
+  compact?: boolean;
   canEditEvent?: (event: BoardEvent) => boolean;
   onEditEvent?: (event: BoardEvent) => void;
   canArchiveEvent?: (event: BoardEvent) => boolean;
@@ -126,18 +158,13 @@ export function ServerBoardCalendarDisplay({
       : createElement(
           "ul",
           { className: "mt-3 flex flex-col gap-2" },
-          ...items.map((item) =>
-            createElement(
-              "li",
-              {
-                key: item.id,
-                className: "border-border rounded-xl border p-3",
-              },
-              createElement(
-                "p",
-                { className: "font-medium break-words" },
-                item.event.title,
-              ),
+          ...items.map((item) => {
+            const title = createElement(
+              "p",
+              { className: "font-medium break-words" },
+              item.event.title,
+            );
+            const editAction =
               onEditEvent && canEditEvent?.(item.event)
                 ? createElement(
                     "button",
@@ -150,7 +177,8 @@ export function ServerBoardCalendarDisplay({
                     },
                     "Edit event",
                   )
-                : null,
+                : null;
+            const archiveAction =
               onArchiveEvent && canArchiveEvent?.(item.event)
                 ? createElement(
                     "button",
@@ -163,37 +191,37 @@ export function ServerBoardCalendarDisplay({
                     },
                     "Archive event",
                   )
-                : null,
-              createElement(
-                "p",
-                { className: "text-muted-foreground mt-1 text-sm" },
-                formatOccurrenceTime(item),
-              ),
-              item.event.details
-                ? createElement(
-                    "p",
-                    {
-                      className: "mt-2 whitespace-pre-wrap break-words text-sm",
-                    },
-                    item.event.details,
-                  )
-                : null,
-              item.event.location
-                ? createElement(
-                    "p",
-                    {
-                      className:
-                        "text-muted-foreground mt-1 text-sm break-words",
-                    },
-                    item.event.location,
-                  )
-                : null,
+                : null;
+            const time = createElement(
+              "p",
+              { className: "text-muted-foreground mt-1 text-sm" },
+              formatOccurrenceTime(item),
+            );
+            const details = item.event.details
+              ? createElement(
+                  "p",
+                  {
+                    className: `${compact ? "" : "mt-2 "}whitespace-pre-wrap break-words text-sm`,
+                  },
+                  item.event.details,
+                )
+              : null;
+            const location = item.event.location
+              ? createElement(
+                  "p",
+                  {
+                    className: "text-muted-foreground mt-1 text-sm break-words",
+                  },
+                  item.event.location,
+                )
+              : null;
+            const links =
               item.event.links.length > 0
                 ? createElement(
                     "ul",
                     {
                       "aria-label": "Event links",
-                      className: "mt-2 flex min-w-0 flex-col gap-1",
+                      className: `${compact ? "" : "mt-2 "}flex min-w-0 flex-col gap-1`,
                     },
                     ...item.event.links.map((link, index) =>
                       createElement(
@@ -219,31 +247,79 @@ export function ServerBoardCalendarDisplay({
                       ),
                     ),
                   )
-                : null,
-              includeAttachments
-                ? createElement(ServerBoardAttachments, {
-                    key: `attachments:${item.event.id}`,
-                    access: "read",
-                    target: {
-                      kind: "event",
-                      boardId: item.event.boardId,
-                      contentId: item.event.id,
-                    },
-                  })
-                : null,
-              includeAttachments
-                ? createElement(ServerBoardRecordLinks, {
-                    key: `record-links:${item.event.id}`,
-                    access: "read",
-                    target: {
-                      kind: "event",
-                      boardId: item.event.boardId,
-                      contentId: item.event.id,
-                    },
-                  })
-                : null,
-            ),
-          ),
+                : null;
+            const attachments = includeAttachments
+              ? createElement(ServerBoardAttachments, {
+                  key: `attachments:${item.event.id}`,
+                  access: "read",
+                  target: {
+                    kind: "event",
+                    boardId: item.event.boardId,
+                    contentId: item.event.id,
+                  },
+                })
+              : null;
+            const recordLinks = includeAttachments
+              ? createElement(ServerBoardRecordLinks, {
+                  key: `record-links:${item.event.id}`,
+                  access: "read",
+                  target: {
+                    kind: "event",
+                    boardId: item.event.boardId,
+                    contentId: item.event.id,
+                  },
+                })
+              : null;
+            const onDemandActions =
+              editAction || archiveAction
+                ? createElement(
+                    "div",
+                    { className: "flex flex-wrap items-center gap-2" },
+                    editAction,
+                    archiveAction,
+                  )
+                : null;
+            const hasDisclosureContent = Boolean(
+              details || links || attachments || recordLinks || onDemandActions,
+            );
+            const disclosure =
+              compact && hasDisclosureContent
+                ? createElement(
+                    CalendarEventDisclosure,
+                    null,
+                    createElement(
+                      "div",
+                      { className: "space-y-3" },
+                      details,
+                      links,
+                      attachments,
+                      recordLinks,
+                      onDemandActions,
+                    ),
+                  )
+                : null;
+            const contents = compact
+              ? [title, time, location, disclosure]
+              : [
+                  title,
+                  editAction,
+                  archiveAction,
+                  time,
+                  details,
+                  location,
+                  links,
+                  attachments,
+                  recordLinks,
+                ];
+            return createElement(
+              "li",
+              {
+                key: item.id,
+                className: "border-border rounded-xl border p-3",
+              },
+              ...contents,
+            );
+          }),
         ),
   );
 }
@@ -306,8 +382,14 @@ export function MonthGrid({
                   occurrences.length,
                   page.pagination.hasMore,
                 );
+                const visibleOccurrences = occurrences.slice(0, 2);
+                const hiddenOccurrenceCount =
+                  occurrences.length - visibleOccurrences.length;
                 return (
-                  <div key={date} className="min-h-24 border-r border-b p-1">
+                  <div
+                    key={date}
+                    className="min-h-24 min-w-0 border-r border-b p-1"
+                  >
                     <Button
                       type="button"
                       variant={selectedDate === date ? "secondary" : "ghost"}
@@ -325,6 +407,31 @@ export function MonthGrid({
                           : ""}
                       </span>
                     </Button>
+                    {visibleOccurrences.length > 0 && (
+                      <ul
+                        aria-label={`${formatDate(date)} event titles`}
+                        className="mt-1 space-y-1"
+                      >
+                        {visibleOccurrences.map((item) => (
+                          <li
+                            key={item.id}
+                            className="bg-muted/50 flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-xs"
+                          >
+                            <span className="text-muted-foreground shrink-0 tabular-nums">
+                              {formatGridOccurrenceTime(item)}
+                            </span>
+                            <span className="min-w-0 truncate font-medium">
+                              {item.event.title}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {hiddenOccurrenceCount > 0 && (
+                      <p className="text-muted-foreground mt-1 px-1 text-xs">
+                        +{hiddenOccurrenceCount} more
+                      </p>
+                    )}
                   </div>
                 );
               })}

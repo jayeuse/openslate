@@ -23,6 +23,13 @@ const otherBoard = {
 };
 
 async function installBoardApi(page: Page, isAllowed: () => boolean) {
+  await page.route("**/api/**", (route) =>
+    route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "Not available in this route test" }),
+    }),
+  );
   await page.route("**/api/auth/session", (route) =>
     route.fulfill({
       contentType: "application/json",
@@ -138,6 +145,64 @@ async function installBoardApi(page: Page, isAllowed: () => boolean) {
   });
 }
 
+test("Board menu keeps administration reachable without crowding the section", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true);
+  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "New Board", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Create a Board" }),
+  ).toBeVisible();
+  await page
+    .getByRole("dialog", { name: "Create a Board" })
+    .getByRole("button", { name: "Close", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Manage Board", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Manage Board" }),
+  ).toBeVisible();
+  await page
+    .getByRole("dialog", { name: "Manage Board" })
+    .getByRole("button", { name: "Close", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Templates", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Board templates" }),
+  ).toBeVisible();
+});
+
+test("read-only Boards viewers cannot open the announcement editor", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true);
+  await page.route(`**/api/boards/${boardId}/my-access`, (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ view: true, edit: false, manage: false }),
+    }),
+  );
+  const access = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/boards/${boardId}/my-access`,
+  );
+  await page.goto(`/boards?board=${boardId}&section=announcements`);
+  await access;
+  await expect(
+    page.getByRole("heading", { name: "Published announcements", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "New announcement", exact: true }),
+  ).toHaveCount(0);
+});
+
 test("visible Boards route opens authorized server Board and keeps section URL", async ({
   page,
 }) => {
@@ -156,8 +221,13 @@ test("visible Boards route opens authorized server Board and keeps section URL",
     page.getByText("Reminders and Board files are unavailable"),
   ).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Calendar", exact: true }).click();
-  await expect(page).toHaveURL(`/boards?board=${boardId}&section=calendar`);
+  await page.getByRole("link", { name: "Calendar", exact: true }).click();
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === "/boards" &&
+      url.searchParams.get("board") === boardId &&
+      url.searchParams.get("section") === "calendar",
+  );
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
 });
 
@@ -234,7 +304,7 @@ test("Favorites only reflects a confirmed favorite removal without manual Refres
   await expect(page.getByText("1 on this page · 1 accessible")).toBeVisible();
   await page.getByRole("button", { name: "Switch board" }).click();
 
-  await page.getByRole("button", { name: "Board options" }).click();
+  await page.getByRole("button", { name: "Board menu" }).click();
   await page.getByRole("menuitem", { name: "Remove from favorites" }).click();
   await expect(
     page.getByText("Board preferences could not be saved. Try again.").first(),
@@ -243,7 +313,7 @@ test("Favorites only reflects a confirmed favorite removal without manual Refres
   await expect(page.getByText("1 on this page · 1 accessible")).toBeVisible();
   await page.getByRole("button", { name: "Switch board" }).click();
 
-  await page.getByRole("button", { name: "Board options" }).click();
+  await page.getByRole("button", { name: "Board menu" }).click();
   await page.getByRole("menuitem", { name: "Remove from favorites" }).click();
   await page.getByRole("button", { name: "Switch board" }).click();
   await expect(page.getByText("0 on this page · 0 accessible")).toBeVisible();
@@ -305,7 +375,7 @@ test("Favorites only refetches when enabled while a favorite removal is pending"
 
   await page.goto(`/boards?board=${boardId}&section=overview`);
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
-  await page.getByRole("button", { name: "Board options" }).click();
+  await page.getByRole("button", { name: "Board menu" }).click();
   await page.getByRole("menuitem", { name: "Remove from favorites" }).click();
   await removalStarted;
 
@@ -324,7 +394,7 @@ test("unsaved Event draft asks before changing Board or section", async ({
   await page.getByRole("button", { name: "New event" }).click();
   await expect(page.getByRole("heading", { name: "New event" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(page).toHaveURL(`/boards?board=${boardId}&section=calendar`);
   await expect(
     page.getByRole("alertdialog", { name: "Discard unsaved Board changes?" }),
@@ -477,6 +547,7 @@ test("Calendar uses Workspace today and reaches later occurrences for reminders"
   ).toHaveAttribute("aria-current", "date");
   await page.getByRole("button", { name: "Load next 100 events" }).click();
   await expect(page.getByText("101 occurrences")).toBeVisible();
+  await page.getByText("Add reminder", { exact: true }).click();
   await page.getByLabel("Event occurrence for reminder").selectOption(late.id);
   await page.getByLabel("Reminder timing").selectOption("now");
   await page.getByRole("button", { name: "Save reminder" }).click();
@@ -519,38 +590,45 @@ test("compact Calendar enters Agenda and permits manual Month selection", async 
   ).toHaveAttribute("aria-pressed", "true");
 });
 
-test("unsaved Announcement draft asks before changing Board or section", async ({
+test("announcement editor retains a canceled close and discards only on confirmation", async ({
   page,
 }) => {
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=announcements`);
-  await page.getByRole("button", { name: "New announcement" }).click();
-  await expect(page.getByRole("heading", { name: "New draft" })).toBeVisible();
-
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
-  await expect(page).toHaveURL(
-    `/boards?board=${boardId}&section=announcements`,
+  await page
+    .getByRole("button", { name: "New announcement", exact: true })
+    .click();
+  const editor = page.getByRole("dialog", {
+    name: "Announcement editor",
+    exact: true,
+  });
+  await editor.getByLabel("Title", { exact: true }).fill("Draft to keep");
+  await editor
+    .getByRole("button", { name: "Close announcement editor" })
+    .click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Discard unsaved announcement changes?",
+  });
+  await expect(confirmation).toBeVisible();
+  await confirmation
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(editor.getByLabel("Title", { exact: true })).toHaveValue(
+    "Draft to keep",
   );
-  await expect(
-    page.getByRole("alertdialog", { name: "Discard unsaved Board changes?" }),
-  ).toBeVisible();
-
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "New draft" })).toBeVisible();
+  await editor
+    .getByRole("button", { name: "Close announcement editor" })
+    .click();
+  await confirmation
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(editor).toBeHidden();
   await page.getByRole("button", { name: "Switch board" }).click();
   await page.getByRole("combobox", { name: "Board", exact: true }).click();
   await page.getByRole("option", { name: /Second live board/ }).click();
   await expect(page).toHaveURL(
-    `/boards?board=${boardId}&section=announcements`,
-  );
-  await expect(
-    page.getByRole("alertdialog", { name: "Discard unsaved Board changes?" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Discard changes" }).click();
-  await expect(page).toHaveURL(
     `/boards?board=${otherBoard.id}&section=overview`,
   );
-  await expect(page.getByRole("heading", { name: "New draft" })).toHaveCount(0);
 });
 
 test("Announcement editor requires a selected active role before saving", async ({
@@ -644,7 +722,8 @@ test("My events refreshes after saving and when the current tab reselects it", a
   });
 
   await page.goto(`/boards?board=${boardId}&section=calendar`);
-  await page.getByRole("button", { name: "My events" }).click();
+  await page.getByRole("button", { name: "Event lists" }).click();
+  await page.getByRole("menuitem", { name: "My events" }).click();
   const myEvents = page.getByRole("region", { name: "My events" });
   await myEvents
     .getByRole("button", { name: "Edit My planning meeting" })
@@ -658,7 +737,8 @@ test("My events refreshes after saving and when the current tab reselects it", a
 
   const beforeReselect = listRequests;
   title = "My planning meeting externally updated";
-  await page.getByRole("button", { name: "My events" }).click();
+  await page.getByRole("button", { name: "Event lists" }).click();
+  await page.getByRole("menuitem", { name: "My events" }).click();
   await expect(
     myEvents.getByRole("button", {
       name: "Edit My planning meeting externally updated",

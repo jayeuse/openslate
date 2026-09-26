@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { MoreHorizontal, Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -10,6 +10,7 @@ import {
 } from "react";
 import { ApiError } from "@/lib/api";
 import { getAuthMe, type AuthMe } from "@/lib/auth-api";
+import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -19,6 +20,34 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import {
   archiveOpenViewReport,
@@ -98,6 +127,19 @@ function ownerIncludedByAudience(
   }
 }
 
+function reportAudienceLabel(audience: ReportDraft["audience"]): string {
+  switch (audience.kind) {
+    case "private":
+      return "Private to me";
+    case "everyone":
+      return "Everyone with Records access";
+    case "role":
+      return "One role";
+    case "user":
+      return "One person";
+  }
+}
+
 export default function ServerBackedReports() {
   const [currentIdentity, setCurrentIdentity] = useState<AuthMe | null>(null);
   const [currentIdentityLoading, setCurrentIdentityLoading] = useState(true);
@@ -137,17 +179,22 @@ export default function ServerBackedReports() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [stale, setStale] = useState(false);
+  const [recipeEditorOpen, setRecipeEditorOpen] = useState(false);
+  const [availableOutputsOpen, setAvailableOutputsOpen] = useState(false);
+  const [activeReportTab, setActiveReportTab] = useState("saved-outputs");
   const [runs, setRuns] = useState<OpenViewReportRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState("");
   const [runsOffset, setRunsOffset] = useState(0);
-  const [runsHasMore, setRunsHasMore] = useState(false);
+  const [runsPageSize, setRunsPageSize] = useState(PAGE_SIZE);
+  const [runsTotal, setRunsTotal] = useState(0);
   const [runsRefresh, setRunsRefresh] = useState(0);
   const [sharedRuns, setSharedRuns] = useState<OpenViewSharedReportRun[]>([]);
   const [sharedLoading, setSharedLoading] = useState(true);
   const [sharedError, setSharedError] = useState("");
   const [sharedOffset, setSharedOffset] = useState(0);
-  const [sharedHasMore, setSharedHasMore] = useState(false);
+  const [sharedPageSize, setSharedPageSize] = useState(PAGE_SIZE);
+  const [sharedTotal, setSharedTotal] = useState(0);
   const [sharedRefresh, setSharedRefresh] = useState(0);
   const [pendingNavigation, setPendingNavigation] = useState<{
     resume: () => void;
@@ -161,7 +208,6 @@ export default function ServerBackedReports() {
     currentIdentity &&
     !ownerIncludedByAudience(baselineReport, currentIdentity),
   );
-
   const navigationGuard = useCallback(
     (href: string, resume: () => void) => {
       if (actionRef.current) return false;
@@ -243,22 +289,13 @@ export default function ServerBackedReports() {
   useEffect(() => {
     let active = true;
     void listOpenViewSharedReportRuns({
-      limit: PAGE_SIZE,
+      limit: sharedPageSize,
       offset: sharedOffset,
     })
       .then((page) => {
         if (!active) return;
-        setSharedRuns((current) =>
-          sharedOffset === 0
-            ? page.items
-            : [
-                ...current,
-                ...page.items.filter(
-                  (item) => !current.some((run) => run.id === item.id),
-                ),
-              ],
-        );
-        setSharedHasMore(page.pagination.hasMore);
+        setSharedRuns(page.items);
+        setSharedTotal(page.pagination.total);
         setSharedError("");
       })
       .catch(() => {
@@ -271,7 +308,7 @@ export default function ServerBackedReports() {
     return () => {
       active = false;
     };
-  }, [sharedOffset, sharedRefresh]);
+  }, [sharedOffset, sharedPageSize, sharedRefresh]);
 
   useEffect(() => {
     let active = true;
@@ -330,7 +367,7 @@ export default function ServerBackedReports() {
   useEffect(() => {
     if (!baselineReport || baselineReport.isDeleted) {
       setRuns([]);
-      setRunsHasMore(false);
+      setRunsTotal(0);
       setRunsLoading(false);
       return;
     }
@@ -338,22 +375,13 @@ export default function ServerBackedReports() {
     let active = true;
     setRunsLoading(true);
     void listOpenViewReportRuns(reportId, {
-      limit: PAGE_SIZE,
+      limit: runsPageSize,
       offset: runsOffset,
     })
       .then((page) => {
         if (!active) return;
-        setRuns((current) =>
-          runsOffset === 0
-            ? page.items
-            : [
-                ...current,
-                ...page.items.filter(
-                  (item) => !current.some((run) => run.id === item.id),
-                ),
-              ],
-        );
-        setRunsHasMore(page.pagination.hasMore);
+        setRuns(page.items);
+        setRunsTotal(page.pagination.total);
         setRunsError("");
       })
       .catch(() => {
@@ -366,7 +394,13 @@ export default function ServerBackedReports() {
     return () => {
       active = false;
     };
-  }, [baselineReport?.id, baselineReport?.isDeleted, runsOffset, runsRefresh]);
+  }, [
+    baselineReport?.id,
+    baselineReport?.isDeleted,
+    runsOffset,
+    runsPageSize,
+    runsRefresh,
+  ]);
 
   function beginAction(name: string): boolean {
     if (actionRef.current) return false;
@@ -392,8 +426,11 @@ export default function ServerBackedReports() {
     setBaselineReport(report);
     setDraft(nextDraft);
     setBaselineDraft(nextDraft);
+    setRecipeEditorOpen(false);
+    setActiveReportTab("saved-outputs");
     setRunsOffset(0);
     setRuns([]);
+    setRunsTotal(0);
     setRunsRefresh((current) => current + 1);
     setError("");
     setNotice("");
@@ -411,10 +448,13 @@ export default function ServerBackedReports() {
     setBaselineReport(null);
     setDraft(nextDraft);
     setBaselineDraft(nextDraft);
+    setRecipeEditorOpen(true);
+    setActiveReportTab("saved-outputs");
     setError("");
     setNotice("");
     setStale(false);
     setRuns([]);
+    setRunsTotal(0);
     runRetryRef.current = null;
   }
 
@@ -437,7 +477,10 @@ export default function ServerBackedReports() {
       setBaselineReport(null);
       setDraft(nextDraft);
       setBaselineDraft(emptyReportDraft());
+      setRecipeEditorOpen(true);
+      setActiveReportTab("saved-outputs");
       setRuns([]);
+      setRunsTotal(0);
       setRunsOffset(0);
       setRunsError("");
       setTemplateReportId("");
@@ -550,6 +593,8 @@ export default function ServerBackedReports() {
       setBaselineReport(saved);
       setDraft(nextDraft);
       setBaselineDraft(nextDraft);
+      setRecipeEditorOpen(false);
+      setActiveReportTab("saved-outputs");
       setReports((current) => [
         saved,
         ...current.filter((report) => report.id !== saved.id),
@@ -646,6 +691,8 @@ export default function ServerBackedReports() {
       setBaselineReport(updated);
       setBaselineDraft(nextDraft);
       setDraft(nextDraft);
+      setRecipeEditorOpen(false);
+      setActiveReportTab("saved-outputs");
       setReports((current) =>
         current.map((report) => (report.id === updated.id ? updated : report)),
       );
@@ -683,12 +730,18 @@ export default function ServerBackedReports() {
         idempotencyKey: runRetryRef.current.key,
       });
       runRetryRef.current = null;
-      setRuns((current) => [
-        run,
-        ...current.filter((item) => item.id !== run.id),
-      ]);
+      setRuns((current) =>
+        [
+          run,
+          ...(runsOffset === 0
+            ? current.filter((item) => item.id !== run.id)
+            : []),
+        ].slice(0, runsPageSize),
+      );
+      setRunsTotal((current) => current + 1);
       setRunsOffset(0);
       setRunsRefresh((current) => current + 1);
+      if (sharedOffset !== 0) setSharedRuns([]);
       setSharedOffset(0);
       setSharedRefresh((current) => current + 1);
       setNotice(
@@ -773,6 +826,35 @@ export default function ServerBackedReports() {
     }));
   }
 
+  const hasDraftContent = Boolean(
+    draft.moduleId ||
+    draft.name ||
+    draft.subtitle ||
+    draft.fields.length ||
+    draft.filters.length ||
+    draft.sorts.length ||
+    draft.groupBy ||
+    draft.includeRowCount,
+  );
+  const showReportSummary = Boolean(
+    baselineReport || hasDraftContent || recipeEditorOpen,
+  );
+  const summaryName =
+    draft.name.trim() || (baselineReport ? baselineReport.name : "New Report");
+  const summarySource =
+    sources.find((source) => source.id === draft.moduleId)?.name ??
+    (draft.moduleId ? "Source details unavailable" : "Choose a source");
+  const canRunReport = Boolean(
+    baselineReport &&
+    !baselineReport.isDeleted &&
+    !dirty &&
+    !actionPending &&
+    !currentIdentityLoading &&
+    currentIdentity &&
+    !currentIdentityError &&
+    !ownerExcludedFromAudience,
+  );
+
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -793,7 +875,7 @@ export default function ServerBackedReports() {
       </header>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)]">
-        <div className="flex min-w-0 flex-col gap-6">
+        <div className="min-w-0">
           <SavedReportsPanel
             reports={reports}
             showArchived={showArchived}
@@ -829,114 +911,324 @@ export default function ServerBackedReports() {
               setListLoading(true);
               setListOffset(reports.length);
             }}
-          />
-
-          <AvailableReportRunsPanel
-            runs={sharedRuns}
-            loading={sharedLoading}
-            error={sharedError}
-            hasMore={sharedHasMore}
-            actionPending={actionPending}
-            onRefresh={() => {
-              setSharedOffset(0);
-              setSharedLoading(true);
-              setSharedRefresh((current) => current + 1);
-            }}
-            onRetry={() => {
-              setSharedLoading(true);
-              setSharedRefresh((current) => current + 1);
-            }}
-            onLoadMore={() => {
-              setSharedLoading(true);
-              setSharedOffset(sharedRuns.length);
-            }}
-            onOutputRun={outputRun}
+            onOpenAvailableOutputs={() => setAvailableOutputsOpen(true)}
           />
         </div>
 
         <div className="flex min-w-0 flex-col gap-6">
-          <ReportRecipeEditor
-            baselineReport={baselineReport}
-            draft={draft}
-            setDraft={setDraft}
-            dirty={dirty}
-            actionPending={actionPending}
-            error={error}
-            notice={notice}
-            stale={stale}
-            sources={sources}
-            sourcesHasMore={sourcesHasMore}
-            sourcesLoading={sourcesLoading}
-            sourcesError={sourcesError}
-            fields={fields}
-            fieldsForModule={fieldsForModule}
-            fieldsHasMore={fieldsHasMore}
-            fieldsLoading={fieldsLoading}
-            fieldsError={fieldsError}
-            onRetrySources={() => {
-              setSourcesLoading(true);
-              setSourcesRefresh((current) => current + 1);
-            }}
-            onRetryFields={() => setFieldsRefresh((current) => current + 1)}
-            loadMoreSources={loadMoreSources}
-            loadMoreFields={loadMoreFields}
-            saveReport={saveReport}
-            archiveOrRestore={archiveOrRestore}
-            reloadLatest={reloadLatest}
-            changeModule={changeModule}
-            updateFilter={updateFilter}
-            resetDraft={() => {
-              setDraft(baselineDraft);
-              setError("");
-              setStale(false);
-            }}
-          />
+          {showReportSummary ? (
+            <Card className="min-w-0">
+              <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <CardTitle className="break-words">{summaryName}</CardTitle>
+                  {draft.subtitle.trim() ? (
+                    <CardDescription className="mt-1 break-words">
+                      {draft.subtitle.trim()}
+                    </CardDescription>
+                  ) : null}
+                  <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-sm">
+                    <div className="flex flex-wrap gap-1.5">
+                      <dt className="text-muted-foreground">Source</dt>
+                      <dd>{summarySource}</dd>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <dt className="text-muted-foreground">Columns</dt>
+                      <dd>
+                        {draft.fields.length}{" "}
+                        {draft.fields.length === 1 ? "column" : "columns"}
+                        {draft.includeRowCount ? " · row count included" : ""}
+                      </dd>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <dt className="text-muted-foreground">Audience</dt>
+                      <dd>{reportAudienceLabel(draft.audience)}</dd>
+                    </div>
+                  </dl>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  {!baselineReport?.isDeleted ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      disabled={Boolean(actionPending)}
+                      onClick={() => setRecipeEditorOpen(true)}
+                    >
+                      Edit report
+                    </Button>
+                  ) : null}
+                  {baselineReport && !baselineReport.isDeleted ? (
+                    <Button
+                      type="button"
+                      className="min-h-11"
+                      disabled={!canRunReport}
+                      onClick={() => void runReport()}
+                    >
+                      {actionPending === "run" ? "Running…" : "Run now"}
+                    </Button>
+                  ) : null}
+                  {baselineReport ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="min-h-11 min-w-11"
+                            aria-label="Report options"
+                          />
+                        }
+                      >
+                        <MoreHorizontal aria-hidden="true" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          disabled={
+                            baselineReport.isDeleted ||
+                            dirty ||
+                            Boolean(actionPending)
+                          }
+                          onClick={() =>
+                            void startFromSavedReport(baselineReport.id)
+                          }
+                        >
+                          Duplicate Report
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          variant={
+                            baselineReport.isDeleted ? "default" : "destructive"
+                          }
+                          disabled={dirty || Boolean(actionPending)}
+                          onClick={() => void archiveOrRestore()}
+                        >
+                          {baselineReport.isDeleted
+                            ? "Restore Report"
+                            : "Archive Report"}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : null}
+                </div>
+              </CardHeader>
+              {dirty ||
+              error ||
+              notice ||
+              currentIdentityError ||
+              ownerExcludedFromAudience ? (
+                <CardContent className="flex flex-col gap-3 pt-0">
+                  {dirty ? (
+                    <p role="status" className="text-muted-foreground text-sm">
+                      Unsaved changes. Save or reset before running or
+                      archiving.
+                    </p>
+                  ) : null}
+                  {ownerExcludedFromAudience ? (
+                    <p role="status" className="text-muted-foreground text-sm">
+                      Your account is not included in this Report audience, so
+                      you cannot run it. Scheduled runs remain available for
+                      eligible recipients.
+                    </p>
+                  ) : null}
+                  {currentIdentityError ? (
+                    <Alert role="alert" variant="destructive">
+                      {currentIdentityError}
+                    </Alert>
+                  ) : null}
+                  {!recipeEditorOpen && error ? (
+                    <Alert role="alert" variant="destructive">
+                      {error}
+                      {stale ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="ml-3 min-h-11"
+                          onClick={() => void reloadLatest()}
+                        >
+                          Reload latest
+                        </Button>
+                      ) : null}
+                    </Alert>
+                  ) : null}
+                  {!recipeEditorOpen && notice ? (
+                    <Alert role="status" variant="success">
+                      {notice}
+                    </Alert>
+                  ) : null}
+                </CardContent>
+              ) : null}
+            </Card>
+          ) : (
+            <Card>
+              <CardContent className="p-6">
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyTitle>Select a Report</EmptyTitle>
+                    <EmptyDescription>
+                      Choose a saved Report or create a new one to set up an
+                      output.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              </CardContent>
+            </Card>
+          )}
 
           {baselineReport && !baselineReport.isDeleted ? (
-            <ReportScheduleControls
-              key={baselineReport.id}
-              reportId={baselineReport.id}
-              disabled={dirty || Boolean(actionPending)}
-              disabledReason={
-                dirty
-                  ? "Save or reset your Report edits before changing its schedule."
-                  : undefined
-              }
-            />
-          ) : null}
-
-          {baselineReport && !baselineReport.isDeleted ? (
-            <SavedReportRunsPanel
-              report={baselineReport}
-              currentIdentityError={currentIdentityError}
-              currentIdentityLoading={currentIdentityLoading}
-              hasCurrentIdentity={Boolean(currentIdentity)}
-              ownerExcludedFromAudience={ownerExcludedFromAudience}
-              dirty={dirty}
-              actionPending={actionPending}
-              runs={runs}
-              loading={runsLoading}
-              error={runsError}
-              hasMore={runsHasMore}
-              onRun={runReport}
-              onRefresh={() => {
-                setRunsOffset(0);
-                setRunsLoading(true);
-                setRunsRefresh((current) => current + 1);
-              }}
-              onRetry={() => {
-                setRunsLoading(true);
-                setRunsRefresh((current) => current + 1);
-              }}
-              onLoadMore={() => {
-                setRunsLoading(true);
-                setRunsOffset(runs.length);
-              }}
-              onOutputRun={outputRun}
-            />
+            <Tabs
+              value={activeReportTab}
+              onValueChange={setActiveReportTab}
+              className="min-w-0"
+            >
+              <TabsList
+                aria-label="Report output sections"
+                className="w-full sm:w-fit"
+              >
+                <TabsTrigger
+                  value="saved-outputs"
+                  className="min-h-11 flex-1 sm:flex-none"
+                >
+                  Saved outputs
+                </TabsTrigger>
+                <TabsTrigger
+                  value="schedule"
+                  className="min-h-11 flex-1 sm:flex-none"
+                >
+                  Schedule
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="saved-outputs" keepMounted>
+                <SavedReportRunsPanel
+                  report={baselineReport}
+                  actionPending={actionPending}
+                  runs={runs}
+                  loading={runsLoading}
+                  error={runsError}
+                  offset={runsOffset}
+                  totalCount={runsTotal}
+                  pageSize={runsPageSize}
+                  onPageIndexChange={(pageIndex) => {
+                    setRuns([]);
+                    setRunsLoading(true);
+                    setRunsOffset(pageIndex * runsPageSize);
+                  }}
+                  onPageSizeChange={(pageSize) => {
+                    setRuns([]);
+                    setRunsLoading(true);
+                    setRunsPageSize(pageSize);
+                    setRunsOffset(0);
+                  }}
+                  onRefresh={() => {
+                    if (runsOffset !== 0) setRuns([]);
+                    setRunsOffset(0);
+                    setRunsLoading(true);
+                    setRunsRefresh((current) => current + 1);
+                  }}
+                  onRetry={() => {
+                    setRunsLoading(true);
+                    setRunsRefresh((current) => current + 1);
+                  }}
+                  onOutputRun={outputRun}
+                />
+              </TabsContent>
+              <TabsContent value="schedule" keepMounted>
+                <ReportScheduleControls
+                  key={baselineReport.id}
+                  reportId={baselineReport.id}
+                  disabled={dirty || Boolean(actionPending)}
+                  disabledReason={
+                    dirty
+                      ? "Save or reset your Report edits before changing its schedule."
+                      : undefined
+                  }
+                />
+              </TabsContent>
+            </Tabs>
           ) : null}
         </div>
       </div>
+      <ReportRecipeEditor
+        open={recipeEditorOpen}
+        onOpenChange={setRecipeEditorOpen}
+        baselineReport={baselineReport}
+        draft={draft}
+        setDraft={setDraft}
+        dirty={dirty}
+        actionPending={actionPending}
+        error={error}
+        notice={notice}
+        stale={stale}
+        sources={sources}
+        sourcesHasMore={sourcesHasMore}
+        sourcesLoading={sourcesLoading}
+        sourcesError={sourcesError}
+        fields={fields}
+        fieldsForModule={fieldsForModule}
+        fieldsHasMore={fieldsHasMore}
+        fieldsLoading={fieldsLoading}
+        fieldsError={fieldsError}
+        onRetrySources={() => {
+          setSourcesLoading(true);
+          setSourcesRefresh((current) => current + 1);
+        }}
+        onRetryFields={() => setFieldsRefresh((current) => current + 1)}
+        loadMoreSources={loadMoreSources}
+        loadMoreFields={loadMoreFields}
+        saveReport={saveReport}
+        reloadLatest={reloadLatest}
+        changeModule={changeModule}
+        updateFilter={updateFilter}
+        resetDraft={() => {
+          setDraft(baselineDraft);
+          setError("");
+          setStale(false);
+        }}
+      />
+      <Sheet open={availableOutputsOpen} onOpenChange={setAvailableOutputsOpen}>
+        <SheetContent className="w-full gap-0 p-0 sm:w-[min(92vw,64rem)]">
+          <SheetHeader className="border-border shrink-0 border-b p-5 pr-14">
+            <SheetTitle>Available outputs</SheetTitle>
+            <SheetDescription>
+              Saved runs you are eligible to open. Recipe editing stays with the
+              owner.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            <AvailableReportRunsPanel
+              runs={sharedRuns}
+              loading={sharedLoading}
+              error={sharedError}
+              actionPending={actionPending}
+              offset={sharedOffset}
+              totalCount={sharedTotal}
+              pageSize={sharedPageSize}
+              onPageIndexChange={(pageIndex) => {
+                setSharedRuns([]);
+                setSharedLoading(true);
+                setSharedOffset(pageIndex * sharedPageSize);
+              }}
+              onPageSizeChange={(pageSize) => {
+                setSharedRuns([]);
+                setSharedLoading(true);
+                setSharedPageSize(pageSize);
+                setSharedOffset(0);
+              }}
+              onRefresh={() => {
+                if (sharedOffset !== 0) setSharedRuns([]);
+                setSharedOffset(0);
+                setSharedLoading(true);
+                setSharedRefresh((current) => current + 1);
+              }}
+              onRetry={() => {
+                setSharedLoading(true);
+                setSharedRefresh((current) => current + 1);
+              }}
+              onOutputRun={outputRun}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
       <AlertDialog
         open={Boolean(pendingNavigation)}
         onOpenChange={(open) => {

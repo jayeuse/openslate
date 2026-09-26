@@ -5,7 +5,15 @@ import type {
   OpenViewPresentation,
   OpenViewRecord,
 } from "../adapters/views-api";
-import { Button } from "@/components/ui/button";
+import { TablePagination } from "@/components/ui/table-pagination";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { LiveRecordCards } from "./live-record-cards";
 
 type RecordPage = {
@@ -32,9 +40,10 @@ type LiveRecordResultsProps = {
   pinnedFieldId: string | null;
   presentation: ResultsPresentation;
   pending: boolean;
+  pageSize: number;
   onOpenRecord: (recordId: string) => void;
-  onPreviousPage: () => void;
-  onNextPage: () => void;
+  onPageIndexChange: (pageIndex: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
 };
 
 function recordValue(value: unknown): string {
@@ -55,9 +64,10 @@ export function LiveRecordResults({
   pinnedFieldId,
   presentation,
   pending,
+  pageSize,
   onOpenRecord,
-  onPreviousPage,
-  onNextPage,
+  onPageIndexChange,
+  onPageSizeChange,
 }: LiveRecordResultsProps) {
   return (
     <section
@@ -81,8 +91,8 @@ export function LiveRecordResults({
           Updating matching records. The last loaded page remains visible.
         </p>
       ) : null}
-      <div className="overflow-x-auto">
-        {cardLayout ? (
+      {cardLayout ? (
+        <div className="overflow-x-auto">
           <LiveRecordCards
             layout={cardLayout}
             rows={page.rows}
@@ -93,84 +103,68 @@ export function LiveRecordResults({
             wrap={presentation.wrap}
             onOpenRecord={onOpenRecord}
           />
-        ) : (
-          <table className="w-full min-w-[36rem] text-left text-sm">
-            <thead className="bg-muted/50 text-muted-foreground">
-              <tr>
-                {tableFields.map((field) => (
-                  <th
-                    key={field.id}
-                    scope="col"
-                    className={`px-4 py-3 font-medium ${field.id === pinnedFieldId ? "bg-muted/50 sticky left-0 z-20" : ""}`}
-                  >
-                    {field.name}
-                  </th>
-                ))}
-                <th scope="col" className="px-4 py-3 font-medium">
-                  Updated
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {page.rows.map((row) => (
-                <tr key={row.id}>
-                  {tableFields.map((field, index) => (
-                    <td
-                      key={field.id}
-                      className={`max-w-80 px-4 align-top ${presentation.density === "compact" ? "py-1.5" : "py-3"} ${presentation.wrap ? "break-words whitespace-normal" : "whitespace-nowrap"} ${field.id === pinnedFieldId ? "bg-card sticky left-0 z-10" : ""}`}
-                    >
-                      {index === 0 ? (
-                        <button
-                          type="button"
-                          className="text-primary focus-visible:ring-ring min-h-11 text-left font-medium underline-offset-4 hover:underline focus-visible:ring-2"
-                          onClick={() => onOpenRecord(row.id)}
-                        >
-                          {recordValue(row.data[field.id])}
-                        </button>
-                      ) : (
-                        recordValue(row.data[field.id])
-                      )}
-                    </td>
-                  ))}
-                  <td
-                    className={`text-muted-foreground px-4 align-top ${presentation.density === "compact" ? "py-1.5" : "py-3"}`}
-                  >
-                    {new Intl.DateTimeFormat("en", {
-                      dateStyle: "medium",
-                    }).format(new Date(row.updatedAt))}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
-        <p aria-live="polite" className="text-muted-foreground text-sm">
-          Showing {page.offset + 1}–{page.offset + page.rows.length} of{" "}
-          {page.total} {scopeLabel}
-        </p>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={page.offset === 0 || page.loading || pending}
-            onClick={onPreviousPage}
-          >
-            Previous
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={!page.hasMore || page.loading || pending}
-            onClick={onNextPage}
-          >
-            Next
-          </Button>
         </div>
-      </div>
+      ) : (
+        <Table className="min-w-[36rem] text-left text-sm">
+          <TableHeader className="bg-muted/50 text-muted-foreground">
+            <TableRow>
+              {tableFields.map((field) => (
+                <TableHead
+                  key={field.id}
+                  scope="col"
+                  className={`px-4 py-3 font-medium ${field.id === pinnedFieldId ? "bg-muted/50 sticky left-0 z-20" : ""}`}
+                >
+                  {field.name}
+                </TableHead>
+              ))}
+              <TableHead scope="col" className="px-4 py-3 font-medium">
+                Updated
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody className="divide-y">
+            {page.rows.map((row) => (
+              <TableRow key={row.id}>
+                {tableFields.map((field, index) => (
+                  <TableCell
+                    key={field.id}
+                    className={`max-w-80 px-4 align-top ${presentation.density === "compact" ? "py-1.5" : "py-3"} ${presentation.wrap ? "break-words whitespace-normal" : "whitespace-nowrap"} ${field.id === pinnedFieldId ? "bg-card sticky left-0 z-10" : ""}`}
+                  >
+                    {index === 0 ? (
+                      <button
+                        type="button"
+                        className="text-primary focus-visible:ring-ring min-h-11 text-left font-medium underline-offset-4 hover:underline focus-visible:ring-2"
+                        onClick={() => onOpenRecord(row.id)}
+                      >
+                        {recordValue(row.data[field.id])}
+                      </button>
+                    ) : (
+                      recordValue(row.data[field.id])
+                    )}
+                  </TableCell>
+                ))}
+                <TableCell
+                  className={`text-muted-foreground px-4 align-top ${presentation.density === "compact" ? "py-1.5" : "py-3"}`}
+                >
+                  {new Intl.DateTimeFormat("en", {
+                    dateStyle: "medium",
+                  }).format(new Date(row.updatedAt))}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+      <TablePagination
+        ariaLabel="Record result pages"
+        total={page.total}
+        offset={page.offset}
+        rowCount={page.rows.length}
+        pageSize={pageSize}
+        onPageIndexChange={onPageIndexChange}
+        onPageSizeChange={onPageSizeChange}
+        disabled={page.loading || pending}
+      />
     </section>
   );
 }

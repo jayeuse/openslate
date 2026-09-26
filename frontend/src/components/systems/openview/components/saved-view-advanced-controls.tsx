@@ -10,7 +10,6 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Select } from "@/components/ui/select";
-import { SavedViewColumnControls } from "./saved-view-column-controls";
 
 type SavedViewLayout = OpenViewSavedView["presentation"]["layout"];
 type GeneralGroupedLayout = "table" | "grid" | "gallery";
@@ -18,11 +17,6 @@ type GeneralGroupedLayout = "table" | "grid" | "gallery";
 type SavedViewAdvancedFields = {
   all: readonly OpenViewDataSourceField[];
   queried: readonly OpenViewDataSourceField[];
-  columnSettings: readonly OpenViewDataSourceField[];
-  presentationVisible: readonly OpenViewDataSourceField[];
-  visible: readonly OpenViewDataSourceField[];
-  visibleIds: ReadonlySet<string>;
-  pinnedField?: OpenViewDataSourceField;
   groupByField?: OpenViewDataSourceField;
   dates: readonly OpenViewDataSourceField[];
   calendarDateField?: OpenViewDataSourceField;
@@ -49,12 +43,6 @@ type SavedViewAdvancedControlsActions = {
       current: OpenViewSavedView["presentation"],
     ) => OpenViewSavedView["presentation"],
   ) => void;
-  updatePresentationFieldVisibility: (
-    fieldId: string,
-    visible: boolean,
-  ) => void;
-  updatePinnedField: (fieldId: string, pinned: boolean) => void;
-  movePresentationField: (fieldId: string, direction: -1 | 1) => void;
 };
 
 function isGeneralGroupedLayout(
@@ -77,11 +65,6 @@ export function SavedViewAdvancedControls({
     fields: {
       all: fields,
       queried: queriedFields,
-      columnSettings: presentationSettingsFields,
-      presentationVisible: presentationVisibleFields,
-      visible: visibleFields,
-      visibleIds: presentationVisibleFieldIds,
-      pinnedField,
       groupByField,
       dates: dateFields,
       calendarDateField,
@@ -92,48 +75,23 @@ export function SavedViewAdvancedControls({
     },
     incompletePresentation,
   } = model;
-  const {
-    updateDefinition,
-    updatePresentation,
-    updatePresentationFieldVisibility,
-    updatePinnedField,
-    movePresentationField,
-  } = actions;
+  const { updateDefinition, updatePresentation } = actions;
 
   return (
     <>
-      <details className="rounded-md border p-3">
-        <summary className="min-h-11 cursor-pointer py-2 font-medium">
-          Advanced query settings
-        </summary>
-        <div className="flex flex-col gap-4 border-t pt-4">
-          {isGeneralGroupedLayout(presentationLayout) ? (
-            <SavedViewColumnControls
-              layout={presentationLayout}
-              fields={presentationSettingsFields}
-              visibleFields={presentationVisibleFields}
-              selectedVisibleFieldCount={visibleFields.length}
-              visibleFieldIds={presentationVisibleFieldIds}
-              pinnedFieldId={pinnedField?.id ?? null}
-              presentation={draft.presentation}
-              onToggleVisibility={updatePresentationFieldVisibility}
-              onTogglePinned={updatePinnedField}
-              onMove={movePresentationField}
-              onDensityChange={(density) =>
-                updatePresentation((current) => ({ ...current, density }))
-              }
-              onCardSizeChange={(cardSize) =>
-                updatePresentation((current) => ({
-                  ...current,
-                  cardSize,
-                }))
-              }
-              onWrapChange={(wrap) =>
-                updatePresentation((current) => ({ ...current, wrap }))
-              }
-            />
-          ) : null}
-
+      <section
+        aria-labelledby="openview-advanced-settings-heading"
+        className="flex flex-col gap-4"
+      >
+        <div>
+          <h3 id="openview-advanced-settings-heading" className="font-medium">
+            Advanced query settings
+          </h3>
+          <p className="text-muted-foreground text-sm">
+            Control sort priority, grouping, and date-based layout options.
+          </p>
+        </div>
+        <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -338,7 +296,7 @@ export function SavedViewAdvancedControls({
             </p>
           ) : null}
         </div>
-      </details>
+      </section>
 
       {presentationLayout === "kanban" ? (
         <div className="flex flex-wrap items-end gap-3">

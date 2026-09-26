@@ -111,6 +111,7 @@ export default function ServerBackedCharts() {
   const [queryError, setQueryError] = useState("");
   const [applied, setApplied] = useState<AppliedSnapshot | null>(null);
   const [tablePage, setTablePage] = useState(0);
+  const [tablePageSize, setTablePageSize] = useState(25);
   const appliedRef = useRef<AppliedSnapshot | null>(null);
   const appliedRequestSequence = useRef(0);
   const consumedInvalidationRevision = useRef(0);
@@ -758,11 +759,10 @@ export default function ServerBackedCharts() {
       <header className="flex flex-wrap items-start justify-between gap-3 sm:gap-4 print:hidden">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            OpenView
+            Charts
           </h1>
           <p className="text-muted-foreground mt-2 max-w-2xl text-sm">
-            Explore operational records, compose reusable views, and prepare
-            analytics for your team.
+            Ask a question about your records.
           </p>
         </div>
       </header>
@@ -875,7 +875,9 @@ export default function ServerBackedCharts() {
         showValues={showValues}
         showLegend={showLegend}
         tablePage={tablePage}
+        tablePageSize={tablePageSize}
         setTablePage={setTablePage}
+        setTablePageSize={setTablePageSize}
       />
     </div>
   );

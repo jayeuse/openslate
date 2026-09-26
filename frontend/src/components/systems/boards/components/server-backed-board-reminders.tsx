@@ -135,7 +135,7 @@ export function ServerBoardReminders({
   return (
     <section
       aria-label="Your Board reminders"
-      className="border-border space-y-4 rounded-xl border p-4"
+      className="border-border min-w-0 space-y-4 rounded-xl border p-4"
     >
       <div>
         <h3 className="font-semibold">Your reminders</h3>
@@ -144,49 +144,54 @@ export function ServerBoardReminders({
         </p>
       </div>
       {boardActive && choices.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)_auto] sm:items-end">
-          <label className="space-y-1 text-sm font-medium">
-            <span>Event occurrence</span>
-            <select
-              aria-label="Event occurrence for reminder"
-              className="border-input bg-background min-h-11 w-full min-w-0 rounded-md border px-3"
-              value={selected?.id ?? ""}
+        <details className="border-border min-w-0 rounded-md border px-3">
+          <summary className="min-h-11 cursor-pointer py-2 font-medium">
+            Add reminder
+          </summary>
+          <div className="grid min-w-0 gap-3 pb-3">
+            <label className="space-y-1 text-sm font-medium">
+              <span>Event occurrence</span>
+              <select
+                aria-label="Event occurrence for reminder"
+                className="border-input bg-background min-h-11 w-full min-w-0 rounded-md border px-3"
+                value={selected?.id ?? ""}
+                disabled={pending}
+                onChange={(event) => setSelectedId(event.currentTarget.value)}
+              >
+                {choices.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {occurrenceLabel(item)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-sm font-medium">
+              <span>Notify me</span>
+              <select
+                aria-label="Reminder timing"
+                className="border-input bg-background min-h-11 w-full min-w-0 rounded-md border px-3"
+                value={timing}
+                disabled={pending}
+                onChange={(event) =>
+                  setTiming(event.currentTarget.value as BoardReminderTiming)
+                }
+              >
+                <option value="15m">15 minutes before</option>
+                <option value="1d">1 day before</option>
+                <option value="start">At start</option>
+                <option value="now">Now</option>
+              </select>
+            </label>
+            <Button
+              type="button"
+              className="min-h-11 w-full"
               disabled={pending}
-              onChange={(event) => setSelectedId(event.currentTarget.value)}
+              onClick={() => void saveReminder()}
             >
-              {choices.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {occurrenceLabel(item)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1 text-sm font-medium">
-            <span>Notify me</span>
-            <select
-              aria-label="Reminder timing"
-              className="border-input bg-background min-h-11 w-full rounded-md border px-3"
-              value={timing}
-              disabled={pending}
-              onChange={(event) =>
-                setTiming(event.currentTarget.value as BoardReminderTiming)
-              }
-            >
-              <option value="15m">15 minutes before</option>
-              <option value="1d">1 day before</option>
-              <option value="start">At start</option>
-              <option value="now">Now</option>
-            </select>
-          </label>
-          <Button
-            type="button"
-            className="min-h-11"
-            disabled={pending}
-            onClick={() => void saveReminder()}
-          >
-            Save reminder
-          </Button>
-        </div>
+              Save reminder
+            </Button>
+          </div>
+        </details>
       )}
       {status === "loading" && <p role="status">Loading your reminders…</p>}
       {status === "error" && (
@@ -212,9 +217,9 @@ export function ServerBoardReminders({
               {items.map((item) => (
                 <li
                   key={item.id}
-                  className="border-border flex flex-wrap items-center justify-between gap-2 rounded-md border p-3"
+                  className="border-border flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-md border p-3"
                 >
-                  <span className="text-sm">
+                  <span className="min-w-0 flex-1 text-sm break-words">
                     {reminderLabel(item, choices)} ·{" "}
                     {item.timing === "15m"
                       ? "15 minutes before"
@@ -238,7 +243,7 @@ export function ServerBoardReminders({
               ))}
             </ul>
           )}
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
             <span>{total} pending</span>
             <Button
               type="button"

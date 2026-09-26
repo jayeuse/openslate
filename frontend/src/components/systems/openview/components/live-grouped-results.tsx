@@ -5,6 +5,7 @@ import type {
   OpenViewGroupSelector,
 } from "../adapters/analytics-api";
 import { Button } from "@/components/ui/button";
+import { TablePagination } from "@/components/ui/table-pagination";
 
 type GroupOption = {
   key: string;
@@ -21,7 +22,10 @@ type LiveGroupedResultsProps = {
   error: string;
   hasPage: boolean;
   groups: readonly GroupOption[];
-  pagination: Pick<OpenViewAnalyticsPagination, "offset" | "hasMore"> | null;
+  pagination: Pick<
+    OpenViewAnalyticsPagination,
+    "offset" | "hasMore" | "limit" | "total"
+  > | null;
   selectedGroup: OpenViewGroupSelector | null;
   pending: boolean;
   onRetry: () => void;
@@ -114,39 +118,22 @@ export function LiveGroupedResults({
         </p>
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
-        <p aria-live="polite" className="text-muted-foreground text-sm">
-          {range}
-        </p>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={
-              !pagination ||
-              pagination.offset === 0 ||
-              loading ||
-              Boolean(error) ||
-              pending
-            }
-            onClick={onPreviousPage}
-          >
-            Previous groups
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={
-              !pagination?.hasMore || loading || Boolean(error) || pending
-            }
-            onClick={onNextPage}
-          >
-            Next groups
-          </Button>
-        </div>
-      </div>
+      {pagination ? (
+        <TablePagination
+          ariaLabel="Group result pages"
+          total={pagination.total}
+          offset={pagination.offset}
+          rowCount={groups.length}
+          pageSize={pagination.limit}
+          onPageIndexChange={(nextPage) => {
+            const pageIndex = Math.floor(pagination.offset / pagination.limit);
+            if (loading || error || pending) return;
+            if (nextPage < pageIndex) onPreviousPage();
+            else if (nextPage > pageIndex) onNextPage();
+          }}
+          disabled={loading || Boolean(error) || pending}
+        />
+      ) : null}
     </section>
   );
 }

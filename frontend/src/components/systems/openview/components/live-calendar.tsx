@@ -12,8 +12,10 @@ import type {
   OpenViewQueryDefinition,
   OpenViewRecord,
 } from "../adapters/views-api";
+import type { RecordInspectionPage } from "./live-record-inspector";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import {
   Empty,
   EmptyDescription,
@@ -36,7 +38,7 @@ export type LiveWindowBaseProps = {
   definition: OpenViewQueryDefinition;
   dateRange: "week" | "month" | "quarter" | "year";
   refreshKey?: number;
-  onOpenRecord: (recordId: string) => void;
+  onOpenRecord: (recordId: string, page: RecordInspectionPage) => void;
 };
 
 export function isCalendarDateField(
@@ -383,12 +385,10 @@ export function WindowPageNavigation({
   result,
   loading,
   onOffsetChange,
-  nextLabel = "Next window page",
 }: {
   result: OpenViewWindowResult;
   loading: boolean;
   onOffsetChange: (offset: number) => void;
-  nextLabel?: string;
 }) {
   const { pagination } = result;
   const first = pagination.total === 0 ? 0 : pagination.offset + 1;
@@ -398,28 +398,20 @@ export function WindowPageNavigation({
       <p aria-live="polite" className="text-muted-foreground text-sm">
         Showing {first}–{last} of {pagination.total} matching records
       </p>
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11"
-          disabled={pagination.offset === 0 || loading}
-          onClick={() =>
-            onOffsetChange(Math.max(0, pagination.offset - pagination.limit))
+      {!loading ? (
+        <PaginationControls
+          ariaLabel="Date window record pages"
+          className="w-auto justify-end"
+          pageCount={Math.max(
+            1,
+            Math.ceil(pagination.total / pagination.limit),
+          )}
+          pageIndex={Math.floor(pagination.offset / pagination.limit)}
+          onPageIndexChange={(nextPage) =>
+            onOffsetChange(nextPage * pagination.limit)
           }
-        >
-          Previous window page
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11"
-          disabled={!pagination.hasMore || loading}
-          onClick={() => onOffsetChange(pagination.offset + pagination.limit)}
-        >
-          {nextLabel}
-        </Button>
-      </div>
+        />
+      ) : null}
     </footer>
   );
 }
@@ -557,6 +549,7 @@ export function LiveCalendar({
     }));
     setPagePosition({ key: "", offset: 0 });
   };
+  const monthLayout = scope === "window" && scale === "month";
 
   return (
     <section
@@ -591,8 +584,8 @@ export function LiveCalendar({
         onShiftWindow={shiftWindow}
         timezone={timezone}
       />
-      {scope === "window" && scale === "month" ? (
-        <div className="flex min-w-0 flex-col gap-4 p-4">
+      {monthLayout ? (
+        <div className="hidden min-w-0 flex-col gap-4 p-4 lg:flex">
           {result && shownRows.length === 0 ? (
             <p role="status" className="text-muted-foreground text-sm">
               No scheduled records in this date window.
@@ -679,7 +672,7 @@ export function LiveCalendar({
                                 )}
                               </h4>
                             ) : null}
-                            <ul className="flex min-w-0 flex-col gap-1">
+                            <ul className="flex max-h-44 min-w-0 flex-col gap-1 overflow-y-auto">
                               {rows.map((row) => {
                                 const title = titleField
                                   ? recordText(row.data[titleField.id])
@@ -689,9 +682,25 @@ export function LiveCalendar({
                                     <Button
                                       type="button"
                                       variant="ghost"
-                                      className="h-auto min-h-11 w-full justify-start border px-2 py-1.5 text-left text-xs whitespace-normal"
+                                      className="h-auto min-h-11 w-full flex-col items-start justify-start gap-0 border px-2 py-1.5 text-left text-xs whitespace-normal"
                                       aria-label={`Open record: ${title}`}
-                                      onClick={() => onOpenRecord(row.id)}
+                                      onClick={() => {
+                                        if (!request || !result) return;
+                                        onOpenRecord(row.id, {
+                                          rows: result.items,
+                                          offset: result.pagination.offset,
+                                          total: result.pagination.total,
+                                          source: {
+                                            kind: "window",
+                                            request,
+                                            returnToPage: (nextOffset) =>
+                                              setPagePosition({
+                                                key: baseKey,
+                                                offset: nextOffset,
+                                              }),
+                                          },
+                                        });
+                                      }}
                                     >
                                       <span className="line-clamp-2 break-words">
                                         {title}
@@ -778,10 +787,8 @@ export function LiveCalendar({
           Select a valid window of up to 366 days to load Calendar records.
         </p>
       ) : null}
-      {result &&
-      shownRows.length === 0 &&
-      (scale === "list" || scope !== "window") ? (
-        <Empty>
+      {result && shownRows.length === 0 ? (
+        <Empty className={monthLayout ? "lg:hidden" : undefined}>
           <EmptyHeader>
             <EmptyTitle>
               {scope === "window"
@@ -796,10 +803,8 @@ export function LiveCalendar({
           </EmptyHeader>
         </Empty>
       ) : null}
-      {result &&
-      shownRows.length > 0 &&
-      (scale === "list" || scope !== "window") ? (
-        <div className="divide-y">
+      {result && shownRows.length > 0 ? (
+        <div className={monthLayout ? "divide-y lg:hidden" : "divide-y"}>
           {groups.map(([day, rows]) => (
             <section
               key={day}
@@ -831,7 +836,23 @@ export function LiveCalendar({
                           type="button"
                           className="text-primary focus-visible:ring-ring min-h-11 min-w-11 text-left font-medium underline-offset-4 hover:underline focus-visible:ring-2"
                           aria-label={`Open record: ${title}`}
-                          onClick={() => onOpenRecord(row.id)}
+                          onClick={() => {
+                            if (!request || !result) return;
+                            onOpenRecord(row.id, {
+                              rows: result.items,
+                              offset: result.pagination.offset,
+                              total: result.pagination.total,
+                              source: {
+                                kind: "window",
+                                request,
+                                returnToPage: (nextOffset) =>
+                                  setPagePosition({
+                                    key: baseKey,
+                                    offset: nextOffset,
+                                  }),
+                              },
+                            });
+                          }}
                         >
                           {title}
                         </button>

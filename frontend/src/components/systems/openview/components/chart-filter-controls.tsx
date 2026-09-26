@@ -39,11 +39,11 @@ export function ChartFilterControls({
   addFilter,
 }: ChartFilterControlsProps) {
   return (
-    <fieldset className="flex flex-col gap-3 rounded-[var(--radius)] border p-4">
-      <legend className="px-1 text-sm font-medium">Filters</legend>
+    <fieldset className="flex min-w-0 flex-col gap-4">
+      <legend className="sr-only">Filters</legend>
       <p className="text-muted-foreground text-sm">
-        Combine up to 10 field filters with the selected logic before
-        aggregation. A separate date window is ANDed with those filters.
+        Combine up to 10 field filters before aggregation. The separate date
+        window is also applied to the matching records.
       </p>
       <Field className="w-full max-w-56">
         <FieldLabel htmlFor="chart-filter-logic">Chart filter logic</FieldLabel>

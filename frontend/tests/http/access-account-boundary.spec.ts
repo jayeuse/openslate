@@ -143,8 +143,7 @@ test("switching verified accounts clears unfinished Access drafts in the tab", a
   await navigation
     .getByRole("button", { name: "Platform", exact: true })
     .click();
-  await navigation.getByRole("link", { name: "Search", exact: true }).focus();
-  await page.keyboard.press("Enter");
+  await navigation.getByRole("link", { name: "Search", exact: true }).click();
   await expect(page).toHaveURL(/\/platform/);
   await expect
     .poll(() => page.evaluate((key) => sessionStorage.getItem(key), draftA))
@@ -182,8 +181,7 @@ test("a failed draft cleanup blocks an account switch and explains recovery", as
   await navigation
     .getByRole("button", { name: "Platform", exact: true })
     .click();
-  await navigation.getByRole("link", { name: "Search", exact: true }).focus();
-  await page.keyboard.press("Enter");
+  await navigation.getByRole("link", { name: "Search", exact: true }).click();
   await expect(page).toHaveURL(/\/platform/);
   await expect(
     page

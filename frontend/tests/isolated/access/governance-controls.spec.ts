@@ -11,23 +11,23 @@ function governanceLauncherSource(): string {
     ),
     "utf8",
   );
-  const start = source.indexOf("{showLauncher ? (");
-  const end = source.indexOf("\n      ) : (", start);
+  const start = source.indexOf("{showLauncher && (");
+  const end = source.indexOf("\n      )}", start);
   if (start < 0 || end < 0)
     throw new Error("Unable to find the Governance launcher branch.");
   return source.slice(start, end);
 }
 
-test("Governance keeps defaults and an unavailable notice without deferred launchers", () => {
+test("Workspace defaults summarizes current settings without deferred launchers", () => {
   const launcher = governanceLauncherSource();
   const normalizedLauncher = launcher.replace(/\s+/g, " ");
 
-  expect(launcher).toContain("<CardTitle>Access defaults</CardTitle>");
-  expect(launcher).toContain("Manage default access settings.");
-  expect(launcher).toContain("Configure defaults");
+  expect(launcher).toContain("Workspace defaults");
+  expect(launcher).toContain("state.defaults.invitationExpiryDays");
   expect(normalizedLauncher).toContain(
-    "Importing or exporting policies and restoring policy history are not available yet.",
+    "Defaults apply to new identities. Existing access stays unchanged.",
   );
+  expect(launcher).toContain("Configure defaults");
   expect(launcher).not.toMatch(/portable|restorable/i);
 
   for (const deferredLauncher of [

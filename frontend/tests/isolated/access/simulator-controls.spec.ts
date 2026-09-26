@@ -3,11 +3,11 @@ import { resolve } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-function simulatorSource(): string {
+function identityAccessCheckSource(): string {
   return readFileSync(
     resolve(
       process.cwd(),
-      "src/components/systems/access/components/simulator-view.tsx",
+      "src/components/systems/access/components/identity-access-check.tsx",
     ),
     "utf8",
   );
@@ -30,29 +30,38 @@ function disclosureSource(source: string, label: string): string {
   return source.slice(startIndex, endIndex + "</details>".length);
 }
 
-test("keeps the simple three-control, two-card access check composition", () => {
-  const source = simulatorSource();
+test("keeps the selected identity fixed and exposes labeled check controls", () => {
+  const source = identityAccessCheckSource();
 
-  expect(source).toContain('htmlFor="simulator-identity"');
+  expect(source).toContain("identityId: string");
+  expect(source).toContain(
+    "(candidate) => candidate.id === selectedIdentityId",
+  );
+  expect(source).not.toContain('htmlFor="simulator-identity"');
   expect(source).toContain('htmlFor="simulator-resource"');
   expect(source).toContain('htmlFor="simulator-action"');
+  expect(source).toContain('aria-labelledby="identity-check-title"');
   expect(source).toContain('aria-label="Access check result"');
   expect(source).toContain('aria-label="Access decision explanation"');
+  expect(source).toContain("Check context");
   expect(source).toContain("void evaluate()");
 });
 
 test("keeps plain-language results primary and discloses technical provenance", () => {
-  const source = simulatorSource();
+  const source = identityAccessCheckSource();
   const primaryResult = sourceBetween(
     source,
-    '<Card aria-label="Access check result">',
-    '<Card aria-label="Access decision explanation">',
+    '<Card aria-label="Access check result"',
+    '<details className="group mt-4 border-t pt-2">',
   );
   const technicalDetails = disclosureSource(source, "Technical details");
 
   expect(primaryResult).toContain("{resultTitle}");
   expect(primaryResult).toContain("reasonDescriptions[result.reason]");
   expect(primaryResult).toContain("{source}");
+  expect(primaryResult).toContain("Check context");
+  expect(primaryResult).toContain("identity?.name");
+  expect(primaryResult).toContain("selectedPermission?.name");
   expect(primaryResult).not.toContain("result.policy_revision");
   expect(primaryResult).not.toContain("result.source_rule_id");
   expect(primaryResult).not.toContain("result.permission_id");
@@ -75,7 +84,7 @@ test("keeps plain-language results primary and discloses technical provenance", 
 });
 
 test("uses the authoritative check and never presents a client-generated trace", () => {
-  const source = simulatorSource();
+  const source = identityAccessCheckSource();
 
   expect(source).toContain("actions.checkAccess");
   expect(source).not.toContain("actions.resolveAccess");

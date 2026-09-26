@@ -23,7 +23,9 @@ test("Manage preserves section drafts, validates saves, and retains accepted set
   await expect(name).toBeVisible();
   const original = await name.inputValue();
   await name.fill("Refactor journey workspace");
-  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await page
+    .getByRole("link", { name: "Security & recovery", exact: true })
+    .click();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
   await expect(name).toHaveValue("Refactor journey workspace");
   await page
@@ -58,7 +60,15 @@ test("Manage reset cancellation retains drafts and confirmation requires draft a
   await expect(name).toBeVisible();
   const original = await name.inputValue();
   await name.fill("Keep this draft");
-  const reset = page.getByRole("button", { name: "Reset Manage", exact: true });
+  const options = page.getByRole("button", {
+    name: "Manage options",
+    exact: true,
+  });
+  await options.click();
+  const reset = page.getByRole("menuitem", {
+    name: "Reset Manage",
+    exact: true,
+  });
   await reset.click();
   const dialog = page.getByRole("alertdialog");
   const confirm = dialog.getByRole("button", {
@@ -69,7 +79,8 @@ test("Manage reset cancellation retains drafts and confirmation requires draft a
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(name).toHaveValue("Keep this draft");
-  await expect(reset).toBeFocused();
+  await expect(options).toBeFocused();
+  await options.click();
   await reset.click();
   await dialog
     .getByRole("checkbox", { name: "Discard affected unsaved drafts" })
@@ -83,11 +94,15 @@ test("Manage snapshot rename retains invalid input, restores focus on cancel, an
   page,
 }) => {
   await page.goto("/manage?view=backup");
+  await page
+    .getByRole("button", { name: "Inspect Scheduled snapshot", exact: true })
+    .click();
   const opener = page.getByRole("button", {
-    name: "Rename Scheduled snapshot",
+    name: "Snapshot actions",
     exact: true,
   });
   await opener.click();
+  await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
   const dialog = page.getByRole("dialog", {
     name: "Rename snapshot",
     exact: true,
@@ -111,21 +126,115 @@ test("Manage snapshot rename retains invalid input, restores focus on cancel, an
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(opener).toBeFocused();
   await opener.click();
+  await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
   await expect(name).toHaveValue("Scheduled snapshot");
   await name.fill("Renamed journey snapshot");
   await submit.click();
   await expect(dialog).toBeHidden();
   await expect(
     page.getByRole("button", {
-      name: "Rename Renamed journey snapshot",
+      name: "Inspect Renamed journey snapshot",
       exact: true,
     }),
   ).toBeVisible();
   await page.reload();
   await expect(
     page.getByRole("button", {
-      name: "Rename Renamed journey snapshot",
+      name: "Inspect Renamed journey snapshot",
       exact: true,
     }),
   ).toBeVisible();
+});
+
+test("Updates and licensing share one destination without bypassing confirmations", async ({
+  page,
+}) => {
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/") && request.method() !== "GET")
+      writes.push(request.url());
+  });
+  await page.goto("/manage?view=licensing");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Updates & licensing" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Updates & licensing", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    page.getByRole("link", { name: "Licensing", exact: true }),
+  ).toHaveCount(0);
+  const software = page.getByRole("region", {
+    name: "Software version",
+    exact: true,
+  });
+  const license = page.getByRole("region", {
+    name: "License & usage",
+    exact: true,
+  });
+  await expect(software).toBeVisible();
+  await expect(license).toBeVisible();
+  await software
+    .getByRole("button", { name: "Check for updates", exact: true })
+    .click();
+  await software
+    .getByRole("button", { name: "Review update", exact: true })
+    .click();
+  const confirmation = page.getByRole("alertdialog");
+  await expect(confirmation).toContainText("No software is installed.");
+  await confirmation
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(software.getByText("1.4.2", { exact: true })).toBeVisible();
+  await software
+    .getByRole("button", { name: "Review update", exact: true })
+    .click();
+  await confirmation
+    .getByRole("button", { name: "Confirm update", exact: true })
+    .click();
+  await expect(confirmation).toBeHidden();
+  await expect(software.getByText("1.5.0", { exact: true })).toBeVisible();
+
+  await license.getByText("Activate license", { exact: true }).click();
+  await license
+    .getByRole("combobox", { name: "Bundled license key", exact: true })
+    .selectOption("SAMPLE-BUSINESS-2026");
+  await license.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(confirmation).toContainText(
+    "No payment or license service will be contacted.",
+  );
+  await confirmation
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(license.getByText("Team", { exact: true })).toBeVisible();
+  await license.getByRole("button", { name: "Continue", exact: true }).click();
+  await confirmation
+    .getByRole("button", { name: "Confirm activation", exact: true })
+    .click();
+  await expect(confirmation).toBeHidden();
+  await expect(license.getByText("Business", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(software.getByText("1.5.0", { exact: true })).toBeVisible();
+  await expect(license.getByText("Business", { exact: true })).toBeVisible();
+  await software
+    .getByRole("button", { name: "Roll back update", exact: true })
+    .click();
+  await confirmation
+    .getByRole("button", { name: "Confirm rollback", exact: true })
+    .click();
+  await expect(software.getByText("1.4.2", { exact: true })).toBeVisible();
+  await page.goto("/manage?view=updates");
+  await expect(license.getByText("Business", { exact: true })).toBeVisible();
+  await expect(software).toBeVisible();
+  await page.goto("/manage?view=audit");
+  await page
+    .getByRole("searchbox", { name: "Search activity", exact: true })
+    .fill("Release");
+  const activity = page.getByRole("table", {
+    name: "Activity history table",
+    exact: true,
+  });
+  await expect(activity.getByText("Apply", { exact: true })).toBeVisible();
+  await expect(activity.getByText("Rollback", { exact: true })).toBeVisible();
+  expect(writes).toEqual([]);
 });

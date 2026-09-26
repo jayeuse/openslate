@@ -16,7 +16,7 @@ import {
   type WorkspaceNavigationGuard,
 } from "@/components/workspace-navigation-guard";
 import {
-  ChevronsUpDown,
+  ChevronDown,
   Eye,
   History,
   Home,
@@ -83,11 +83,6 @@ import {
 } from "../hooks/use-server-boards";
 
 const PAGE_SIZE = 25;
-const sectionLabels: Record<BoardSection, string> = {
-  overview: "Overview",
-  calendar: "Calendar",
-  announcements: "Announcements",
-};
 
 type BoardActivitySelection = {
   boardId: string;
@@ -200,6 +195,9 @@ function ServerBackedBoardsContent() {
     "idle" | "loading" | "ready" | "error"
   >("idle");
   const [departmentChoicesRetry, setDepartmentChoicesRetry] = useState(0);
+  const [managementMode, setManagementMode] = useState<
+    "create" | "manage" | null
+  >(null);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [portabilityOpen, setPortabilityOpen] = useState(false);
   const [activitySelection, setActivitySelection] =
@@ -434,6 +432,7 @@ function ServerBackedBoardsContent() {
       closeGrants();
       closeWidgets();
       closeAnnouncementManager();
+      setManagementMode(null);
       setTemplatesOpen(false);
       setPortabilityOpen(false);
       setBrowsing(false);
@@ -466,348 +465,402 @@ function ServerBackedBoardsContent() {
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <header
-        className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between"
+        className="border-border flex min-w-0 flex-wrap items-center justify-between gap-3 border-b pb-4"
         aria-label="Current board"
       >
-        <div className="w-full min-w-0 sm:w-auto sm:flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight break-words sm:text-3xl">
-              {board?.name ?? "Boards"}
-            </h1>
-            {board?.status === "archived" && (
-              <Badge variant="outline">Archived</Badge>
-            )}
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="bg-muted border-border hidden size-11 shrink-0 items-center justify-center rounded-lg border sm:flex">
+            <LayoutDashboard className="size-5" aria-hidden="true" />
           </div>
-          <p className="text-muted-foreground mt-1 text-sm break-words">
-            {board?.description ||
-              (board
-                ? "Board details from your workspace."
-                : "Choose an accessible Board to see its details.")}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ServerBackedBoardManagement
-            mode="create"
-            onCreated={(created) => {
-              resource.refresh();
-              navigateToBoard(created);
-            }}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={() => setTemplatesOpen(true)}
-          >
-            Templates
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={() => setPortabilityOpen(true)}
-          >
-            Configurations
-          </Button>
-          <Popover open={browsing} onOpenChange={setBrowsing}>
-            <PopoverTrigger
-              render={<Button variant="outline" className="min-h-11" />}
-            >
-              <ChevronsUpDown data-icon="inline-start" /> Switch board
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              className="w-[min(26rem,calc(100vw-2rem))] gap-4 p-4"
-            >
-              <PopoverHeader>
-                <PopoverTitle>Find a board</PopoverTitle>
-                <PopoverDescription>
-                  Only Boards available to your account appear here.
-                </PopoverDescription>
-              </PopoverHeader>
-              <form
-                className="space-y-2"
-                onSubmit={(event: FormEvent<HTMLFormElement>) => {
-                  event.preventDefault();
-                  setAppliedSearch(searchDraft.trim() || null);
-                  setOffset(0);
-                }}
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <h1
+                className="min-w-0 flex-1"
+                aria-label={board?.name ?? "Boards"}
               >
-                <label
-                  htmlFor="board-switch-search"
-                  className="text-sm font-medium"
-                >
-                  Search accessible Boards
-                </label>
-                <input
-                  id="board-switch-search"
-                  type="search"
-                  maxLength={100}
-                  value={searchDraft}
-                  onChange={(event) =>
-                    setSearchDraft(event.currentTarget.value)
-                  }
-                  className="border-input bg-background text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2"
-                />
-                <div className="flex flex-wrap gap-2">
-                  <Button type="submit" variant="outline" className="min-h-11">
-                    Search boards
-                  </Button>
-                  {appliedSearch && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="min-h-11"
-                      onClick={() => {
-                        setSearchDraft("");
-                        setAppliedSearch(null);
+                {" "}
+                <Popover open={browsing} onOpenChange={setBrowsing}>
+                  <PopoverTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        className="-ml-3 min-h-11 max-w-full justify-start text-xl font-semibold"
+                        aria-label="Switch board"
+                      />
+                    }
+                  >
+                    <span className="truncate">
+                      {board?.name ?? "Choose a board"}
+                    </span>
+                    <ChevronDown
+                      className="size-4 shrink-0"
+                      aria-hidden="true"
+                    />
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="start"
+                    className="w-[min(26rem,calc(100vw-2rem))] gap-4 p-4"
+                  >
+                    <PopoverHeader>
+                      <PopoverTitle>Find a board</PopoverTitle>
+                      <PopoverDescription>
+                        Only Boards available to your account appear here.
+                      </PopoverDescription>
+                    </PopoverHeader>
+                    <form
+                      className="space-y-2"
+                      onSubmit={(event: FormEvent<HTMLFormElement>) => {
+                        event.preventDefault();
+                        setAppliedSearch(searchDraft.trim() || null);
                         setOffset(0);
                       }}
                     >
-                      Clear search
-                    </Button>
-                  )}
-                </div>
-              </form>
-              <SearchSelect
-                label="Board"
-                value={board?.id ?? ""}
-                placeholder="Choose a board"
-                options={options}
-                onValueChange={(id) => {
-                  const target = [...choices, ...(board ? [board] : [])].find(
-                    (choice) => choice.id === id,
-                  );
-                  if (target) navigateToBoard(target);
-                }}
-              />
-              <SearchSelect
-                label="Board status"
-                value={statusFilter}
-                options={[
-                  { value: "active", label: "Active" },
-                  { value: "archived", label: "Archived" },
-                  { value: "all", label: "All Boards" },
-                ]}
-                onValueChange={changeStatus}
-              />
-              <SearchSelect
-                label="Department"
-                value={departmentFilter ?? ""}
-                placeholder="All departments"
-                options={[
-                  { value: "", label: "All departments" },
-                  ...departmentChoices.map((department) => ({
-                    value: department.id,
-                    label: department.name,
-                  })),
-                ]}
-                onValueChange={(departmentId) => {
-                  setDepartmentFilter(departmentId || null);
-                  setOffset(0);
-                }}
-              />
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant={favoritesOnly ? "default" : "outline"}
-                  className="min-h-11"
-                  aria-pressed={favoritesOnly}
-                  onClick={() => {
-                    setFavoritesOnly((value) => !value);
-                    setOffset(0);
-                  }}
-                >
-                  <Star data-icon="inline-start" /> Favorites only
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="min-h-11"
-                  disabled={!hasBoardFilters}
-                  onClick={resetBoardFilters}
-                >
-                  Reset filters
-                </Button>
-                {departmentChoicesStatus === "loading" && (
-                  <span className="text-muted-foreground text-sm" role="status">
-                    Loading departments…
-                  </span>
-                )}
-                {departmentChoicesStatus === "error" && (
-                  <span
-                    className="flex items-center gap-2 text-sm"
-                    role="alert"
-                  >
-                    Department choices are unavailable.
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      onClick={() => {
-                        setDepartmentChoicesStatus("idle");
-                        setDepartmentChoicesRetry((value) => value + 1);
+                      <label
+                        htmlFor="board-switch-search"
+                        className="text-sm font-medium"
+                      >
+                        Search accessible Boards
+                      </label>
+                      <input
+                        id="board-switch-search"
+                        type="search"
+                        maxLength={100}
+                        value={searchDraft}
+                        onChange={(event) =>
+                          setSearchDraft(event.currentTarget.value)
+                        }
+                        className="border-input bg-background text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2"
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="submit"
+                          variant="outline"
+                          className="min-h-11"
+                        >
+                          Search boards
+                        </Button>
+                        {appliedSearch && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="min-h-11"
+                            onClick={() => {
+                              setSearchDraft("");
+                              setAppliedSearch(null);
+                              setOffset(0);
+                            }}
+                          >
+                            Clear search
+                          </Button>
+                        )}
+                      </div>
+                    </form>
+                    <SearchSelect
+                      label="Board"
+                      value={board?.id ?? ""}
+                      placeholder="Choose a board"
+                      options={options}
+                      onValueChange={(id) => {
+                        const target = [
+                          ...choices,
+                          ...(board ? [board] : []),
+                        ].find((choice) => choice.id === id);
+                        if (target) navigateToBoard(target);
                       }}
-                    >
-                      Retry departments
-                    </Button>
-                  </span>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-muted-foreground text-sm">
-                  {currentListPage
-                    ? `${currentListPage.items.length} on this page · ${currentListPage.pagination.total} accessible${appliedSearch ? " matching search" : ""}`
-                    : "Board list unavailable"}
-                </p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={
-                      offset === 0 || resource.list.status === "loading"
-                    }
-                    onClick={() =>
-                      setOffset((value) => Math.max(0, value - PAGE_SIZE))
-                    }
-                  >
-                    Previous
-                  </Button>
-                  <span className="text-muted-foreground text-sm">
-                    Page {Math.floor(offset / PAGE_SIZE) + 1}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={
-                      !currentListPage?.pagination.hasMore ||
-                      resource.list.status === "loading"
-                    }
-                    onClick={() => setOffset((value) => value + PAGE_SIZE)}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            </PopoverContent>
-          </Popover>
+                    />
+                    <SearchSelect
+                      label="Board status"
+                      value={statusFilter}
+                      options={[
+                        { value: "active", label: "Active" },
+                        { value: "archived", label: "Archived" },
+                        { value: "all", label: "All Boards" },
+                      ]}
+                      onValueChange={changeStatus}
+                    />
+                    <SearchSelect
+                      label="Department"
+                      value={departmentFilter ?? ""}
+                      placeholder="All departments"
+                      options={[
+                        { value: "", label: "All departments" },
+                        ...departmentChoices.map((department) => ({
+                          value: department.id,
+                          label: department.name,
+                        })),
+                      ]}
+                      onValueChange={(departmentId) => {
+                        setDepartmentFilter(departmentId || null);
+                        setOffset(0);
+                      }}
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant={favoritesOnly ? "default" : "outline"}
+                        className="min-h-11"
+                        aria-pressed={favoritesOnly}
+                        onClick={() => {
+                          setFavoritesOnly((value) => !value);
+                          setOffset(0);
+                        }}
+                      >
+                        <Star data-icon="inline-start" /> Favorites only
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="min-h-11"
+                        disabled={!hasBoardFilters}
+                        onClick={resetBoardFilters}
+                      >
+                        Reset filters
+                      </Button>
+                      {departmentChoicesStatus === "loading" && (
+                        <span
+                          className="text-muted-foreground text-sm"
+                          role="status"
+                        >
+                          Loading departments…
+                        </span>
+                      )}
+                      {departmentChoicesStatus === "error" && (
+                        <span
+                          className="flex items-center gap-2 text-sm"
+                          role="alert"
+                        >
+                          Department choices are unavailable.
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="min-h-11"
+                            onClick={() => {
+                              setDepartmentChoicesStatus("idle");
+                              setDepartmentChoicesRetry((value) => value + 1);
+                            }}
+                          >
+                            Retry departments
+                          </Button>
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-muted-foreground text-sm">
+                        {currentListPage
+                          ? `${currentListPage.items.length} on this page · ${currentListPage.pagination.total} accessible${appliedSearch ? " matching search" : ""}`
+                          : "Board list unavailable"}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-11"
+                          disabled={
+                            offset === 0 || resource.list.status === "loading"
+                          }
+                          onClick={() =>
+                            setOffset((value) => Math.max(0, value - PAGE_SIZE))
+                          }
+                        >
+                          Previous
+                        </Button>
+                        <span className="text-muted-foreground text-sm">
+                          Page {Math.floor(offset / PAGE_SIZE) + 1}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-11"
+                          disabled={
+                            !currentListPage?.pagination.hasMore ||
+                            resource.list.status === "loading"
+                          }
+                          onClick={() =>
+                            setOffset((value) => value + PAGE_SIZE)
+                          }
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </h1>
+              {board?.status === "archived" && (
+                <Badge variant="outline">Archived</Badge>
+              )}
+            </div>
+            <p className="text-muted-foreground text-sm break-words">
+              {board?.description ||
+                (board
+                  ? "Your team's updates, events, and records."
+                  : "Choose an accessible Board to get started.")}
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             type="button"
-            variant="outline"
-            className="min-h-11"
+            variant="ghost"
+            size="icon"
+            className="size-11"
+            aria-label="Refresh"
+            title="Refresh board"
             onClick={resource.refresh}
           >
-            <RefreshCw data-icon="inline-start" /> Refresh
+            <RefreshCw aria-hidden="true" />
           </Button>
-          {board && (
-            <ServerBackedBoardManagement
-              mode="manage"
-              board={board}
-              onUpdated={(updated) => {
-                resource.applyBoardMutation(updated);
-                resource.refresh();
-              }}
-              onAccessDenied={() => {
-                closeActivity();
-                closePreview();
-                closeGrants();
-                closeWidgets();
-                closeAnnouncementManager();
-                resource.revokeAccess();
-              }}
-              onPurged={() => {
-                const href: Route = "/boards";
-                const resume = () => {
-                  closeActivity();
-                  closePreview();
-                  closeGrants();
-                  closeWidgets();
-                  closeAnnouncementManager();
-                  setBrowsing(false);
-                  router.push(href, { scroll: false });
-                  resource.refresh();
-                };
-                if (requestNavigation(href, resume)) resume();
-              }}
-            />
-          )}
-          {board && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={<Button variant="outline" className="min-h-11" />}
-              >
-                <Settings2 data-icon="inline-start" /> Board options
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-56">
-                <DropdownMenuGroup>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button variant="outline" className="min-h-11" />}
+            >
+              Board menu <ChevronDown data-icon="inline-end" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-56">
+              {board && (
+                <>
                   <DropdownMenuItem
                     className="min-h-11"
-                    disabled={
-                      !resource.personal.data || resource.preferencePending
-                    }
-                    onClick={() => {
-                      void resource.saveFavorite(board.id, !isFavorite);
-                    }}
+                    onClick={() => setManagementMode("manage")}
                   >
-                    <Star />
-                    {isFavorite ? "Remove from favorites" : "Add to favorites"}
+                    <Settings2 />
+                    Manage Board
+                  </DropdownMenuItem>
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem
+                      className="min-h-11"
+                      disabled={
+                        !resource.personal.data || resource.preferencePending
+                      }
+                      onClick={() => {
+                        void resource.saveFavorite(board.id, !isFavorite);
+                      }}
+                    >
+                      <Star />
+                      {isFavorite
+                        ? "Remove from favorites"
+                        : "Add to favorites"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="min-h-11"
+                      disabled={
+                        !resource.personal.data ||
+                        resource.preferencePending ||
+                        (board.status === "archived" && !isHome)
+                      }
+                      onClick={() => {
+                        void resource.saveHome(isHome ? null : board.id);
+                      }}
+                    >
+                      <Home />
+                      {isHome ? "Clear home board" : "Set as home board"}
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="min-h-11"
+                    onClick={() =>
+                      setGrantsSelection({
+                        boardId: board.id,
+                        detailSequence: resource.detail.sequence,
+                      })
+                    }
+                  >
+                    Manage access
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className="min-h-11"
-                    disabled={
-                      !resource.personal.data ||
-                      resource.preferencePending ||
-                      (board.status === "archived" && !isHome)
+                    onClick={() =>
+                      setPreviewSelection({
+                        boardId: board.id,
+                        detailSequence: resource.detail.sequence,
+                      })
                     }
-                    onClick={() => {
-                      void resource.saveHome(isHome ? null : board.id);
-                    }}
                   >
-                    <Home />
-                    {isHome ? "Clear home board" : "Set as home board"}
+                    <Eye /> Preview access
                   </DropdownMenuItem>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="min-h-11"
+                    onClick={() =>
+                      setActivitySelection({
+                        boardId: board.id,
+                        detailSequence: resource.detail.sequence,
+                      })
+                    }
+                  >
+                    <History /> View activity
+                  </DropdownMenuItem>
+
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuGroup>
                 <DropdownMenuItem
                   className="min-h-11"
-                  onClick={() =>
-                    setGrantsSelection({
-                      boardId: board.id,
-                      detailSequence: resource.detail.sequence,
-                    })
-                  }
+                  onClick={() => setManagementMode("create")}
                 >
-                  Manage access
+                  New Board
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="min-h-11"
-                  onClick={() =>
-                    setPreviewSelection({
-                      boardId: board.id,
-                      detailSequence: resource.detail.sequence,
-                    })
-                  }
+                  onClick={() => setTemplatesOpen(true)}
                 >
-                  <Eye /> Preview access
+                  Templates
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="min-h-11"
-                  onClick={() =>
-                    setActivitySelection({
-                      boardId: board.id,
-                      detailSequence: resource.detail.sequence,
-                    })
-                  }
+                  onClick={() => setPortabilityOpen(true)}
                 >
-                  <History /> View activity
+                  Configurations
                 </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
+      <ServerBackedBoardManagement
+        mode="create"
+        open={managementMode === "create"}
+        onOpenChange={(open) => setManagementMode(open ? "create" : null)}
+        onCreated={(created) => {
+          resource.refresh();
+          navigateToBoard(created);
+        }}
+      />
+      {board && (
+        <ServerBackedBoardManagement
+          mode="manage"
+          open={managementMode === "manage"}
+          onOpenChange={(open) => setManagementMode(open ? "manage" : null)}
+          board={board}
+          onUpdated={(updated) => {
+            resource.applyBoardMutation(updated);
+            resource.refresh();
+          }}
+          onAccessDenied={() => {
+            closeActivity();
+            closePreview();
+            closeGrants();
+            closeWidgets();
+            closeAnnouncementManager();
+            resource.revokeAccess();
+          }}
+          onPurged={() => {
+            const href: Route = "/boards";
+            const resume = () => {
+              closeActivity();
+              closePreview();
+              closeGrants();
+              closeWidgets();
+              closeAnnouncementManager();
+              setBrowsing(false);
+              router.push(href, { scroll: false });
+              resource.refresh();
+            };
+            if (requestNavigation(href, resume)) resume();
+          }}
+        />
+      )}
 
       {resource.list.error && (
         <Alert variant="warning">
@@ -950,26 +1003,7 @@ function ServerBackedBoardsContent() {
           {board.status === "archived" && (
             <Alert>This Board is archived and read-only.</Alert>
           )}
-          <nav aria-label="Board sections" className="flex flex-wrap gap-2">
-            {(["overview", "calendar", "announcements"] as const).map(
-              (item) => (
-                <Button
-                  key={item}
-                  type="button"
-                  variant={section === item ? "secondary" : "ghost"}
-                  className="min-h-11"
-                  aria-current={section === item ? "page" : undefined}
-                  onClick={() => {
-                    const href = boardUrl(board.id, item);
-                    const resume = () => router.push(href, { scroll: false });
-                    if (requestNavigation(href, resume)) resume();
-                  }}
-                >
-                  {sectionLabels[item]}
-                </Button>
-              ),
-            )}
-          </nav>
+
           {section === "calendar" ? (
             <ServerBackedBoardCalendar
               key={board.id}
@@ -980,32 +1014,43 @@ function ServerBackedBoardsContent() {
             />
           ) : section === "announcements" ? (
             <div className="flex min-w-0 flex-col gap-6">
-              {board.status === "active" && (
-                <div className="flex justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    onClick={() => setAnnouncementManagerSelection(board.id)}
-                  >
-                    Manage announcements
-                  </Button>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-2xl font-semibold tracking-tight">
+                    Announcements
+                  </h2>
+                  <p className="text-muted-foreground mt-1 text-sm">
+                    Stay up to date with your team.
+                  </p>
                 </div>
-              )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {board.status === "active" && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      onClick={() => setAnnouncementManagerSelection(board.id)}
+                    >
+                      Manage announcements
+                    </Button>
+                  )}
+                  <ServerBackedBoardAnnouncementEditor
+                    key={`editor:${board.id}`}
+                    boardId={board.id}
+                    boardRevision={board.revision}
+                    boardStatus={board.status}
+                    refreshKey={resource.detail.sequence}
+                    onPublished={() => resource.refresh()}
+                    onDraftStateChange={onAnnouncementDraftStateChange}
+                  />
+                </div>
+              </div>
               <ServerBackedBoardAnnouncements
                 key={board.id}
                 boardId={board.id}
                 refreshKey={resource.detail.sequence}
               />
-              <ServerBackedBoardAnnouncementEditor
-                key={`editor:${board.id}`}
-                boardId={board.id}
-                boardRevision={board.revision}
-                boardStatus={board.status}
-                refreshKey={resource.detail.sequence}
-                onPublished={() => resource.refresh()}
-                onDraftStateChange={onAnnouncementDraftStateChange}
-              />
+
               <Sheet
                 open={announcementManagerOpen}
                 onOpenChange={(open) => {
@@ -1042,7 +1087,15 @@ function ServerBackedBoardsContent() {
             </div>
           ) : (
             <div className="flex min-w-0 flex-col gap-6">
-              <div className="flex flex-wrap justify-end">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-2xl font-semibold tracking-tight">
+                    Board overview
+                  </h2>
+                  <p className="text-muted-foreground mt-1 text-sm">
+                    Record summaries and shortcuts for your team.
+                  </p>
+                </div>
                 <Button
                   type="button"
                   variant="outline"

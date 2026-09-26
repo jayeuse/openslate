@@ -321,7 +321,23 @@ export function LiveTimeline({
                         type="button"
                         className="text-primary focus-visible:ring-ring min-h-11 min-w-11 text-left underline-offset-4 hover:underline focus-visible:ring-2"
                         aria-label={`Open record: ${title}`}
-                        onClick={() => onOpenRecord(row.id)}
+                        onClick={() => {
+                          if (!request || !result) return;
+                          onOpenRecord(row.id, {
+                            rows: result.items,
+                            offset: result.pagination.offset,
+                            total: result.pagination.total,
+                            source: {
+                              kind: "window",
+                              request,
+                              returnToPage: (nextOffset) =>
+                                setPagePosition({
+                                  key: baseKey,
+                                  offset: nextOffset,
+                                }),
+                            },
+                          });
+                        }}
                       >
                         {title}
                       </button>
@@ -423,7 +439,6 @@ export function LiveTimeline({
         <WindowPageNavigation
           result={result}
           loading={loading}
-          nextLabel="Next timeline page"
           onOffsetChange={(nextOffset) =>
             setPagePosition({ key: baseKey, offset: nextOffset })
           }

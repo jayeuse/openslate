@@ -96,10 +96,14 @@ test("Board content sections stay on the authorized UUID and fail closed when co
   await expect(page.getByText("Manager-visible event")).toHaveCount(0);
 
   await page
-    .getByRole("button", { name: "Announcements", exact: true })
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "Announcements", exact: true })
     .click();
   await expect(page).toHaveURL(
-    `/boards?board=${boardId}&section=announcements`,
+    (url) =>
+      url.pathname === "/boards" &&
+      url.searchParams.get("board") === boardId &&
+      url.searchParams.get("section") === "announcements",
   );
   await expect(
     page.getByText(

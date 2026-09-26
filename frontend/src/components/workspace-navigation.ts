@@ -55,11 +55,7 @@ const workspaceNavigationDefinitions = [
     items: [
       { id: "overview", label: "Overview" },
       { id: "identities", label: "People & services" },
-      { id: "roles", label: "Roles" },
-      { id: "groups", label: "Groups" },
-      { id: "rules", label: "Detailed rules" },
-      { id: "simulator", label: "Check access" },
-      { id: "reviews", label: "Access reviews" },
+      { id: "permissions", label: "Permissions" },
     ],
   },
   {
@@ -83,11 +79,9 @@ const workspaceNavigationDefinitions = [
     defaultItem: "organization",
     items: [
       { id: "organization", label: "Organization" },
-      { id: "security", label: "Security" },
+      { id: "security", label: "Security & recovery" },
       { id: "audit", label: "Audit" },
-      { id: "backup", label: "Backup" },
-      { id: "updates", label: "Updates" },
-      { id: "licensing", label: "Licensing" },
+      { id: "updates", label: "Updates & licensing" },
     ],
   },
   {
@@ -134,6 +128,18 @@ function sectionFor(
       ? (sandboxLegacySections[requested.toLowerCase()] ??
         requested.toLowerCase())
       : requested;
+  if (definition.id === "manage" && requested?.toLowerCase() === "backup")
+    return "security";
+  if (definition.id === "manage" && requested?.toLowerCase() === "licensing")
+    return "updates";
+  if (definition.id === "access" && requested === "simulator")
+    return "identities";
+  if (definition.id === "access" && requested === "reviews") return "overview";
+  if (
+    definition.id === "access" &&
+    ["roles", "groups", "rules"].includes(requested ?? "")
+  )
+    return "permissions";
   if (
     definition.id === "openview" &&
     openViewRecordIdPattern.test(params.get("record") ?? "")

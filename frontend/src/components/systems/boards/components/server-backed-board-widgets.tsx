@@ -45,8 +45,17 @@ function recordsContent(item: LiveWidgetItem): ReactNode {
   if (item.widget.widgetType === "summary")
     return createElement(
       "p",
-      { className: "text-foreground text-2xl font-semibold tabular-nums" },
-      `${result.pagination.total} matching records`,
+      { className: "flex flex-col gap-1" },
+      createElement(
+        "span",
+        { className: "text-foreground text-4xl font-semibold tabular-nums" },
+        result.pagination.total,
+      ),
+      createElement(
+        "span",
+        { className: "text-muted-foreground text-sm" },
+        "Matching records",
+      ),
     );
   if (
     item.widget.config.fields.some(
@@ -428,12 +437,51 @@ function widgetContent(item: LiveWidgetItem): ReactNode {
     : lineContent(item);
 }
 
-function widgetCard(item: LiveWidgetItem): ReactNode {
+function widgetAudienceLabel(item: LiveWidgetItem): string {
+  switch (item.widget.audience.kind) {
+    case "private":
+      return "Private to its creator";
+    case "everyone":
+      return "Everyone with Board access";
+    case "role":
+    case "user":
+      return "Targeted audience";
+  }
+}
+
+function summaryMetadata(item: LiveWidgetItem): ReactNode {
+  return createElement(
+    "div",
+    {
+      className: "border-border mt-4 border-t pt-3",
+    },
+    createElement(
+      "span",
+      {
+        className:
+          "bg-secondary text-secondary-foreground inline-flex rounded-md px-2 py-1 text-xs",
+      },
+      widgetAudienceLabel(item),
+    ),
+  );
+}
+
+function widgetCard(
+  item: LiveWidgetItem,
+  onRetry: () => void,
+  gridColumns: 2 | 3,
+): ReactNode {
+  const fullWidth =
+    item.widget.config.size === "full"
+      ? gridColumns === 3
+        ? "lg:col-span-3"
+        : "lg:col-span-2"
+      : "";
   return createElement(
     "li",
     {
       key: item.widget.id,
-      className: `border-border bg-card text-card-foreground min-w-0 rounded-xl border p-5 ${item.widget.config.size === "full" ? "lg:col-span-2" : ""}`,
+      className: `border-border bg-card text-card-foreground min-w-0 rounded-xl border p-5 ${fullWidth}`,
     },
     createElement(
       "div",
@@ -467,12 +515,39 @@ function widgetCard(item: LiveWidgetItem): ReactNode {
     item.error && item.data !== null
       ? createElement(
           "p",
-          { className: "text-muted-foreground mb-3 text-sm", role: "alert" },
+          {
+            className:
+              "text-muted-foreground mb-3 flex flex-wrap gap-2 text-sm",
+            role: "alert",
+          },
           "Showing the last loaded data. ",
           item.error,
+          createElement(
+            "button",
+            {
+              type: "button",
+              className:
+                "text-primary min-h-11 rounded-md px-2 font-medium underline underline-offset-2",
+              onClick: onRetry,
+            },
+            "Retry",
+          ),
+        )
+      : null,
+    item.error && item.data === null
+      ? createElement(
+          "button",
+          {
+            type: "button",
+            className:
+              "text-primary min-h-11 rounded-md px-2 font-medium underline underline-offset-2",
+            onClick: onRetry,
+          },
+          "Retry",
         )
       : null,
     widgetContent(item),
+    item.widget.widgetType === "summary" ? summaryMetadata(item) : null,
   );
 }
 
@@ -485,33 +560,26 @@ export function ServerBoardWidgetsDisplay({
 }) {
   const failed = state.status === "error";
   const items = failed ? [] : state.items;
+  const summaries = items.filter(
+    (item) => item.widget.widgetType === "summary",
+  );
+  const gridColumns: 2 | 3 = summaries.length === items.length ? 3 : 2;
   return createElement(
     "section",
-    { "aria-label": "Board widgets", className: "min-w-0 space-y-4" },
+    { "aria-label": "Record summaries", className: "min-w-0 space-y-4" },
     createElement(
       "div",
-      { className: "flex flex-wrap items-center justify-between gap-3" },
+      { className: "space-y-1" },
       createElement(
         "h2",
         { className: "text-lg font-semibold" },
-        "Board overview",
+        "Record summaries",
       ),
       createElement(
-        "button",
-        {
-          type: "button",
-          className:
-            "border-border bg-card text-foreground hover:bg-muted focus-visible:outline-ring inline-flex min-h-11 items-center justify-center rounded-lg border px-4 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50",
-          disabled: state.status === "loading",
-          onClick: onRetry,
-        },
-        "Refresh widgets",
+        "p",
+        { className: "text-muted-foreground text-sm" },
+        "Counts come from records that match each widget’s filters.",
       ),
-    ),
-    createElement(
-      "p",
-      { className: "text-muted-foreground text-sm" },
-      "Only widgets available to your account are shown. Record data also requires OpenView access.",
     ),
     state.error
       ? createElement(
@@ -561,8 +629,13 @@ export function ServerBoardWidgetsDisplay({
     items.length > 0
       ? createElement(
           "ol",
-          { className: "grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2" },
-          ...items.map(widgetCard),
+          {
+            className:
+              gridColumns === 3
+                ? "grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
+                : "grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2",
+          },
+          ...items.map((item) => widgetCard(item, onRetry, gridColumns)),
         )
       : null,
   );

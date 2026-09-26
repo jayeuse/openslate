@@ -15,7 +15,6 @@ import {
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -510,67 +509,50 @@ export function GovernanceDialogs({
 
   return (
     <>
-      {showLauncher ? (
+      <div className="flex flex-col gap-3" aria-live="polite">
+        {notice ? <Alert variant="success">{notice}</Alert> : null}
+        {error ? (
+          <Alert role="alert" variant="destructive">
+            {error}
+          </Alert>
+        ) : null}
+      </div>
+      {showLauncher && (
         <section
           aria-labelledby="governance-title"
-          className="flex flex-col gap-3"
+          className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t px-1 pt-5"
         >
-          <div>
-            <h2
-              id="governance-title"
-              className="text-xl font-semibold tracking-tight"
-            >
-              Governance
-            </h2>
-            <p className="text-muted-foreground mt-1 text-sm">
-              Manage default access settings.
-            </p>
+          <div className="flex min-w-0 items-start gap-3">
+            <Settings2
+              aria-hidden="true"
+              className="text-muted-foreground mt-0.5 size-5 shrink-0"
+            />
+            <div>
+              <h3 id="governance-title" className="text-sm font-medium">
+                Workspace defaults
+              </h3>
+              <p className="text-muted-foreground mt-1 text-sm">
+                {state.roles.find(
+                  (role) => role.id === state.defaults.defaultRoleId,
+                )?.name ?? "No default role"}{" "}
+                role · {state.defaults.invitationExpiryDays}-day invitations ·
+                Default deny
+              </p>
+              <p className="text-muted-foreground mt-1 text-xs">
+                Defaults apply to new identities. Existing access stays
+                unchanged.
+              </p>
+            </div>
           </div>
-          {notice ? <Alert variant="success">{notice}</Alert> : null}
-          {error ? (
-            <Alert role="alert" variant="destructive">
-              {error}
-            </Alert>
-          ) : null}
-          {!controller.availability.policyImportExport ||
-          !controller.availability.historyRestore ? (
-            <Alert variant="warning">
-              Importing or exporting policies and restoring policy history are
-              not available yet.
-            </Alert>
-          ) : null}
-
-          <div className="grid gap-4">
-            <Card>
-              <CardHeader className="p-3">
-                <Settings2 aria-hidden="true" />
-                <CardTitle>Access defaults</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2 p-3">
-                <p className="text-muted-foreground text-sm">
-                  Set default membership and bounded expiry periods.
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  onClick={openDefaults}
-                >
-                  Configure defaults
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 w-full sm:w-auto"
+            onClick={openDefaults}
+          >
+            Configure defaults
+          </Button>
         </section>
-      ) : (
-        <div className="flex flex-col gap-3" aria-live="polite">
-          {notice ? <Alert variant="success">{notice}</Alert> : null}
-          {error ? (
-            <Alert role="alert" variant="destructive">
-              {error}
-            </Alert>
-          ) : null}
-        </div>
       )}
 
       <Dialog

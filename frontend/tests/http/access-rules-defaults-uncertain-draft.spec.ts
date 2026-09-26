@@ -67,6 +67,12 @@ async function mockAccessApi(
     onRulesMutation?: () => void;
     currentDefaults?: () => typeof defaults;
     currentRules?: () => unknown[];
+    capabilities?: Array<{
+      id: string;
+      label: string;
+      description: string;
+      group: string;
+    }>;
   } = {},
 ) {
   await browserPage.route("**/api/**", async (route) => {
@@ -82,7 +88,7 @@ async function mockAccessApi(
       };
     } else if (pathname === "/api/access/capabilities") {
       body = {
-        items: [
+        items: options.capabilities ?? [
           {
             id: "records.read",
             label: "Read records",
@@ -120,6 +126,23 @@ async function mockAccessApi(
   });
 }
 
+async function openEveryoneRules(browserPage: Page) {
+  await browserPage.goto("/access?view=permissions");
+  const configureEveryone = browserPage.getByRole("button", {
+    name: "Configure Everyone",
+    exact: true,
+  });
+  if ((await configureEveryone.getAttribute("aria-expanded")) !== "true")
+    await configureEveryone.click();
+  await expect(configureEveryone).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    browserPage.getByRole("heading", {
+      name: "Workspace rules",
+      exact: true,
+    }),
+  ).toBeVisible();
+}
+
 test("Rules blocks a policy request when its draft cannot enter review state", async ({
   page: browserPage,
 }) => {
@@ -142,7 +165,7 @@ test("Rules blocks a policy request when its draft cannot enter review state", a
     };
   });
 
-  await browserPage.goto("/access?view=rules");
+  await openEveryoneRules(browserPage);
   const decision = browserPage.getByRole("group", {
     name: "Read records decision",
   });
@@ -170,7 +193,7 @@ test("Rules compares saved choices with current policy after an uncertain reques
       mutations += 1;
     },
   });
-  await browserPage.goto("/access?view=rules");
+  await openEveryoneRules(browserPage);
   await browserPage
     .getByRole("group", { name: "Read records decision" })
     .getByRole("button", { name: "Allow" })
@@ -226,38 +249,58 @@ test("using existing access preserves the rule lock and time window", async ({
     ],
   });
   await browserPage.setViewportSize({ width: 390, height: 844 });
-  await browserPage.goto("/access?view=rules");
+  await openEveryoneRules(browserPage);
 
-  const starts = browserPage.locator('input[id$="-mobile-starts"]');
-  const ends = browserPage.locator('input[id$="-mobile-ends"]');
+  const readCard = browserPage
+    .getByRole("article")
+    .filter({ hasText: "Read records" });
+  const readOptionsButton = readCard.getByRole("button", {
+    name: "Read records options",
+  });
+  await readOptionsButton.click();
+  const options = browserPage.getByRole("region", {
+    name: "Read records options",
+  });
+  const starts = options.getByLabel("Starts");
+  const ends = options.getByLabel("Ends");
   const decision = browserPage.getByRole("group", {
     name: "Read records decision",
   });
-  await browserPage
-    .locator("summary:visible")
-    .filter({ hasText: "Conditions and scope lock" })
-    .click();
   await starts.fill("2027-02-03T04:05");
   await ends.fill("2027-11-12T13:14");
   await decision.getByRole("button", { name: "Use existing access" }).click();
+  const advancedButton = options.getByRole("button", {
+    name: "Advanced rule setup",
+  });
+  await advancedButton.click();
+  const setupDialog = browserPage.getByRole("dialog", { name: "Rule setup" });
+  await expect(
+    setupDialog.getByRole("button", { name: "Locked at this scope" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await setupDialog.getByText("About rule coverage", { exact: true }).click();
+  await expect(
+    setupDialog.getByText(
+      /Rules for individual departments are not active yet/i,
+    ),
+  ).toBeVisible();
+  await expect(
+    setupDialog.getByText(
+      /Board grants and content audiences remain separate/i,
+    ),
+  ).toBeVisible();
+  await setupDialog.getByRole("button", { name: "Done" }).click();
 
   await expect(
     decision.getByRole("button", { name: "Use existing access" }),
   ).toHaveAttribute("aria-pressed", "true");
   await expect(starts).toHaveValue("2027-02-03T04:05");
   await expect(ends).toHaveValue("2027-11-12T13:14");
+  await expect(readOptionsButton).toHaveAttribute("aria-expanded", "true");
+  await advancedButton.click();
   await expect(
-    browserPage.getByRole("button", { name: "Locked at this scope" }).first(),
+    setupDialog.getByRole("button", { name: "Locked at this scope" }),
   ).toHaveAttribute("aria-pressed", "true");
-  const workspaceExplanation = browserPage
-    .getByRole("status")
-    .filter({ hasText: "Workspace-wide rules apply" });
-  await expect(workspaceExplanation).toContainText(
-    /Record values.*OpenView or Boards.*Report output/i,
-  );
-  await expect(workspaceExplanation).toContainText(
-    /Board grants and content audiences remain separate/i,
-  );
+  await setupDialog.getByRole("button", { name: "Done" }).click();
 });
 
 test("Defaults remains locked after a save when browser cleanup fails twice", async ({
@@ -300,8 +343,8 @@ test("Defaults remains locked after a save when browser cleanup fails twice", as
     };
   });
 
-  await browserPage.goto("/access?view=reviews");
-  await browserPage.getByRole("button", { name: "Configure defaults" }).click();
+  await browserPage.goto("/access?view=overview");
+  await browserPage.getByRole("button", { name: "Edit defaults" }).click();
   await browserPage.getByLabel("Invitation expiry days").fill("21");
   await browserPage.getByRole("button", { name: "Save defaults" }).click();
   await expect(browserPage.getByText("Access defaults updated.")).toBeVisible();
@@ -362,9 +405,112 @@ test("Defaults remains locked after a save when browser cleanup fails twice", as
   await expect(
     browserPage.getByRole("dialog", { name: "Access defaults" }),
   ).not.toBeVisible();
-  await browserPage.getByRole("button", { name: "Configure defaults" }).click();
+  await browserPage.getByRole("button", { name: "Edit defaults" }).click();
   await expect(
     browserPage.getByRole("button", { name: "Save defaults" }),
   ).toBeEnabled();
   expect(saves).toBe(1);
+});
+
+test("Rule setup opens context and the selected rule without applying on Done", async ({
+  page: browserPage,
+}) => {
+  let mutations = 0;
+  await mockAccessApi(browserPage, {
+    capabilities: [
+      {
+        id: "records.read",
+        label: "Read records",
+        description: "Read workspace records.",
+        group: "Records",
+      },
+      {
+        id: "records.write",
+        label: "Update records",
+        description: "Update workspace records.",
+        group: "Records",
+      },
+    ],
+    onRulesMutation: () => {
+      mutations += 1;
+    },
+  });
+
+  await openEveryoneRules(browserPage);
+  await browserPage.setViewportSize({ width: 1280, height: 900 });
+  await expect(
+    browserPage.getByRole("button", {
+      name: "Read records options",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    browserPage.getByRole("button", { name: "Rule setup", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    browserPage.getByRole("button", { name: "Change context", exact: true }),
+  ).toHaveCount(0);
+  await browserPage
+    .getByRole("button", { name: "Read records options", exact: true })
+    .click();
+  const setupButton = browserPage.getByRole("button", {
+    name: "Advanced rule setup",
+    exact: true,
+  });
+  await setupButton.click();
+
+  const setupDialog = browserPage.getByRole("dialog", { name: "Rule setup" });
+  await expect(setupDialog).toBeVisible();
+  await setupDialog.getByRole("tab", { name: "Context", exact: true }).click();
+  await expect(
+    setupDialog.getByRole("tab", { name: "Context" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(setupDialog.getByLabel("Who gets this?")).toHaveValue(
+    "everyone",
+  );
+  await expect(setupDialog.getByLabel("Choose the specific area")).toHaveValue(
+    "workspace",
+  );
+  await setupDialog.getByRole("button", { name: "Done" }).click();
+  await expect(setupDialog).not.toBeVisible();
+  await expect(setupButton).toBeFocused();
+
+  const updateRow = browserPage.getByRole("row", { name: /Update records/ });
+  await updateRow.getByRole("button", { name: "Allow" }).click();
+  await updateRow
+    .getByRole("button", { name: "Update records options" })
+    .click();
+  const options = browserPage.getByRole("region", {
+    name: "Update records options",
+  });
+  await expect(options.getByLabel("Starts")).toBeVisible();
+  await expect(options.getByLabel("Ends")).toBeVisible();
+  await expect(
+    options.getByRole("button", { name: "Lock at this scope" }),
+  ).toHaveCount(0);
+
+  const advancedButton = options.getByRole("button", {
+    name: "Advanced rule setup",
+  });
+  await advancedButton.click();
+  await expect(
+    setupDialog.getByRole("tab", { name: "Advanced" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    setupDialog.getByRole("heading", { name: "Update records" }),
+  ).toBeVisible();
+  await expect(setupDialog.getByText("Allow", { exact: true })).toBeVisible();
+  await setupDialog.getByText("Technical details", { exact: true }).click();
+  await expect(
+    setupDialog.getByText("records.write", { exact: true }),
+  ).toBeVisible();
+
+  await setupDialog.getByRole("button", { name: "Done" }).click();
+  await expect(setupDialog).not.toBeVisible();
+  await expect(advancedButton).toBeFocused();
+  await expect(
+    updateRow.getByRole("button", { name: "Allow" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(browserPage.getByText("1 staged change")).toBeVisible();
+  expect(mutations).toBe(0);
 });

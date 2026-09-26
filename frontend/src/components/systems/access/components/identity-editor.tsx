@@ -1045,8 +1045,8 @@ export function IdentityEditor({
                   <FieldSet>
                     <FieldLegend>Group membership</FieldLegend>
                     <p className="text-muted-foreground text-sm">
-                      To change membership, close this editor and open the
-                      Groups tab. Choose a group and edit its members there.
+                      To change membership, close this editor and open
+                      Permissions. Choose a group, then Manage members.
                     </p>
                     {draft.groupIds.length === 0 ? (
                       <p className="text-muted-foreground text-sm">

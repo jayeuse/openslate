@@ -448,6 +448,13 @@ function renderWidgets(state: LiveWidgetsState): string {
   );
 }
 
+function renderedText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function widgetItem(
   source: BoardWidget,
   data: LiveWidgetData | null,
@@ -523,12 +530,79 @@ test("live Board Overview renders exact summary count and escaped returned recor
     ]),
   );
   expect(html).toContain("Operations summary");
-  expect(html).toContain("7 matching records");
+  expect(renderedText(html)).toContain("7 Matching records");
   expect(html).toContain("Open requests");
   expect(html).toContain("Request title");
   expect(html).not.toContain("Field 1");
   expect(html).toContain("Private &lt;script&gt;value&lt;/script&gt;");
   expect(html).not.toContain("sample-board");
+});
+
+test("record summary cards pair the exact count with returned source and audience metadata", () => {
+  const summary = {
+    ...widget,
+    name: "Operations summary",
+    widgetType: "summary" as const,
+    config: { ...widget.config, pinned: true },
+  };
+  const roleSummary = {
+    ...summary,
+    id: otherBoardId,
+    name: "Role summary",
+    audience: { kind: "role" as const, roleId: otherBoardId, userId: null },
+  };
+  const privateSummary = {
+    ...summary,
+    id: "00000000-0000-4000-8000-000000000007",
+    name: "Private summary",
+    audience: { kind: "private" as const, roleId: null, userId: null },
+  };
+  const data = (total: number): LiveWidgetData => ({
+    kind: "records",
+    fieldNames: {},
+    result: {
+      items: [],
+      pagination: {
+        limit: 1,
+        offset: 0,
+        count: 0,
+        total,
+        hasMore: total > 0,
+      },
+    },
+  });
+  const html = renderWidgets(
+    displayState([
+      widgetItem(summary, data(24)),
+      widgetItem(roleSummary, data(18)),
+      widgetItem(privateSummary, data(42)),
+    ]),
+  );
+
+  expect(html).toContain("Record summaries");
+  expect(html).not.toContain("Board overview");
+  const text = renderedText(html);
+  expect(text).toContain("24 Matching records");
+  expect(text).toContain("18 Matching records");
+  expect(text).toContain("42 Matching records");
+  expect(html).not.toContain(moduleId);
+  expect(html).toContain("Everyone with Board access");
+  expect(html).toContain("Targeted audience");
+  expect(html).toContain("Private to its creator");
+  expect(html).toContain("Pinned");
+});
+
+test("a widget's initial data failure keeps a retry action on that widget", () => {
+  const summary = { ...widget, widgetType: "summary" as const };
+  const failed = {
+    ...widgetItem(summary, null, "error"),
+    error: "Could not load summary data. Try again.",
+  };
+
+  const html = renderWidgets(displayState([failed]));
+
+  expect(html).toContain("Could not load summary data");
+  expect(renderedText(html)).toContain("Retry");
 });
 
 test("records card does not show values when a selected field label is missing", () => {
@@ -717,7 +791,7 @@ test("live Board Overview makes empty, unavailable, loading, error, and retained
     status: "loading",
     error: "Could not refresh widgets. Try again.",
   });
-  expect(retained).toContain("7 matching records");
+  expect(renderedText(retained)).toContain("7 Matching records");
   expect(retained).toContain("Showing the last loaded");
 });
 

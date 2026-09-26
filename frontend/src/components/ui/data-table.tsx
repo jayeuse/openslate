@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import {
   createPaginatedRowModel,
   rowPaginationFeature,
@@ -45,6 +45,7 @@ export type DataTableProps<TData extends RowData> = {
   pagination?: PaginationState;
   onPaginationChange?: (pagination: PaginationState) => void;
   rowClassName?: (originalRow: TData) => string | undefined;
+  renderExpandedRow?: (originalRow: TData) => ReactNode;
   rowState?: (originalRow: TData) => string | undefined;
 };
 
@@ -60,6 +61,7 @@ export function DataTable<TData extends RowData>({
   onPaginationChange,
   rowClassName,
   rowState,
+  renderExpandedRow,
 }: DataTableProps<TData>) {
   const table = useTable({
     features: dataTableFeatures,
@@ -105,19 +107,33 @@ export function DataTable<TData extends RowData>({
       </TableHeader>
       <TableBody>
         {rows.length ? (
-          rows.map((row) => (
-            <TableRow
-              key={row.id}
-              className={rowClassName?.(row.original)}
-              data-state={rowState?.(row.original)}
-            >
-              {row.getAllCells().map((cell) => (
-                <TableCell key={cell.id} className={cellClassName}>
-                  <table.FlexRender cell={cell} />
-                </TableCell>
-              ))}
-            </TableRow>
-          ))
+          rows.map((row) => {
+            const expanded = renderExpandedRow?.(row.original);
+            return (
+              <Fragment key={row.id}>
+                <TableRow
+                  className={rowClassName?.(row.original)}
+                  data-state={rowState?.(row.original)}
+                >
+                  {row.getAllCells().map((cell) => (
+                    <TableCell key={cell.id} className={cellClassName}>
+                      <table.FlexRender cell={cell} />
+                    </TableCell>
+                  ))}
+                </TableRow>
+                {expanded != null && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={row.getAllCells().length}
+                      className="p-0 whitespace-normal"
+                    >
+                      {expanded}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
+            );
+          })
         ) : (
           <TableRow>
             <TableCell colSpan={Math.max(columns.length, 1)}>

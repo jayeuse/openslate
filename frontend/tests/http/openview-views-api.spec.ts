@@ -1,4 +1,10 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type Route,
+} from "@playwright/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -82,6 +88,8 @@ type SavedView = {
   created_at: string;
   updated_at: string;
 };
+
+type SavedViewLayout = SavedView["presentation"]["layout"];
 
 function baseView(): SavedView {
   return {
@@ -319,6 +327,26 @@ async function installViewsApi(
       "In service",
     ),
   );
+  const windowRows = Array.from({ length: 26 }, (_, index) => {
+    const item = record(
+      `00000000-0000-4000-8000-${(index + 200).toString().padStart(12, "0")}`,
+      `Window equipment ${String(index + 1).padStart(2, "0")}`,
+      "In service",
+    );
+    return {
+      ...item,
+      data: {
+        ...item.data,
+        [timelineStartFieldId]: index === 0 ? "2026-08-29" : "2026-09-01",
+        [timelineEndFieldId]: index === 0 ? "2026-09-04" : "2026-09-10",
+        [calendarDateFieldId]:
+          options.calendarDateTimeValue ?? "2026-09-01T18:30:00.000Z",
+        [timelineDeadlineFieldId]: "2026-09-06",
+        [timelineProgressFieldId]: index === 0 ? "40.50" : "50.00",
+        [timelineTimestampDeadlineFieldId]: "2026-09-06T18:30:00.000Z",
+      },
+    };
+  });
   await page.route("**/api/auth/session", async (route) =>
     route.fulfill({
       contentType: "application/json",
@@ -746,6 +774,9 @@ async function installViewsApi(
       ...(kanbanRows.some((row) => row.id.toLowerCase() === search)
         ? kanbanRows
         : []),
+      ...(windowRows.some((row) => row.id.toLowerCase() === search)
+        ? windowRows
+        : []),
     ].filter(
       (row) =>
         row.id !== deniedRecordId &&
@@ -865,26 +896,6 @@ async function installViewsApi(
     const selectedFieldIds = new Set(
       definition.columns.map(({ field_id }) => field_id),
     );
-    const scheduledRows = Array.from({ length: 26 }, (_, index) => {
-      const item = record(
-        `00000000-0000-4000-8000-${(index + 200).toString().padStart(12, "0")}`,
-        `Window equipment ${String(index + 1).padStart(2, "0")}`,
-        "In service",
-      );
-      return {
-        ...item,
-        data: {
-          ...item.data,
-          [timelineStartFieldId]: index === 0 ? "2026-08-29" : "2026-09-01",
-          [timelineEndFieldId]: index === 0 ? "2026-09-04" : "2026-09-10",
-          [calendarDateFieldId]:
-            options.calendarDateTimeValue ?? "2026-09-01T18:30:00.000Z",
-          [timelineDeadlineFieldId]: "2026-09-06",
-          [timelineProgressFieldId]: index === 0 ? "40.50" : "50.00",
-          [timelineTimestampDeadlineFieldId]: "2026-09-06T18:30:00.000Z",
-        },
-      };
-    });
     const undated = record(
       recordTwoId,
       "Unscheduled equipment",
@@ -903,7 +914,7 @@ async function installViewsApi(
               },
             },
           ]
-        : scheduledRows;
+        : windowRows;
     const limit = Number(body.limit ?? 25);
     const offset = Number(body.offset ?? 0);
     const items = allRows.slice(offset, offset + limit).map((item) => ({
@@ -995,10 +1006,59 @@ async function installViewsApi(
   };
 }
 
+async function openFilters(page: Page) {
+  const button = page.getByRole("button", { name: "More filters" });
+  const region = page.getByRole("region", {
+    name: "Search Equipment filters",
+  });
+  if ((await button.getAttribute("aria-expanded")) !== "true")
+    await button.click();
+  await expect(region).toBeVisible();
+  return region;
+}
+
+async function openLayoutSettings(page: Page) {
+  const dialog = page.getByRole("dialog", { name: "Layout settings" });
+  if (!(await dialog.isVisible()))
+    await page.getByRole("button", { name: "Layout settings" }).click();
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function openColumns(page: Page) {
+  const dialog = page.getByRole("dialog", { name: "Columns" });
+  if (!(await dialog.isVisible()))
+    await page.getByRole("button", { name: "Columns", exact: true }).click();
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function closeDialog(dialog: Locator) {
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(dialog).toBeHidden();
+}
+
+async function setLayoutFromSettings(page: Page, layout: SavedViewLayout) {
+  const dialog = await openLayoutSettings(page);
+  await dialog.getByLabel("Presentation layout").selectOption(layout);
+  await closeDialog(dialog);
+}
+
+async function expectLayoutFromSettings(page: Page, layout: SavedViewLayout) {
+  const dialog = await openLayoutSettings(page);
+  await expect(dialog.getByLabel("Presentation layout")).toHaveValue(layout);
+  await closeDialog(dialog);
+}
+
+async function openViewAction(page: Page, action: string) {
+  await page.getByRole("button", { name: "View actions" }).click();
+  await page.getByRole("menuitem", { name: action, exact: true }).click();
+}
+
 async function addFilterForField(page: Page, fieldId: string) {
-  await page.getByText("Filters (0)", { exact: true }).click();
-  await page.getByRole("button", { name: "Add filter" }).click();
-  await page
+  const filtersRegion = await openFilters(page);
+  await filtersRegion.getByRole("button", { name: "Add filter" }).click();
+  await filtersRegion
     .getByRole("combobox", { name: "Field", exact: true })
     .selectOption(fieldId);
 }
@@ -1008,6 +1068,7 @@ async function enterFilterAndWaitForQuery(
   fieldId: string,
   value: string,
 ) {
+  const filtersRegion = await openFilters(page);
   const requestPromise = page.waitForRequest((request) => {
     const url = new URL(request.url());
     if (url.pathname !== "/api/records/query" || request.method() !== "POST")
@@ -1019,7 +1080,7 @@ async function enterFilterAndWaitForQuery(
         (filter.value === value || filter.value === Number(value)),
     );
   });
-  await page.getByLabel("Value").fill(value);
+  await filtersRegion.getByLabel("Value").fill(value);
   return requestPromise;
 }
 
@@ -1078,10 +1139,13 @@ test("membership View filters accept comma-separated typing and submit lists", a
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   await addFilterForField(page, statusFieldId);
 
-  const operator = page.getByRole("combobox", { name: "Condition" });
+  const filtersRegion = await openFilters(page);
+  const operator = filtersRegion.getByRole("combobox", {
+    name: "Condition",
+  });
   await operator.selectOption("in");
 
-  const value = page.getByLabel("Value");
+  const value = filtersRegion.getByLabel("Value");
   await value.pressSequentially("In service, Inspection due");
   await expect(value).toHaveValue("In service, Inspection due");
   const expectedMembershipFilter = {
@@ -1113,7 +1177,6 @@ test("membership View filters accept comma-separated typing and submit lists", a
     )
     ?.definition.filters.find((filter) => filter.field_id === statusFieldId);
   expect(submittedQueryFilter).toEqual(expectedMembershipFilter);
-
   const saveRequestPromise = page.waitForRequest((request) => {
     const url = new URL(request.url());
     return (
@@ -1145,12 +1208,12 @@ for (const layout of ["kanban", "calendar", "timeline"] as const) {
     await page.goto(
       `/openview?section=views&module=${moduleId}&view=${viewId}`,
     );
-    await expect(
-      page.getByRole("combobox", { name: "Presentation layout" }),
-    ).toHaveValue(layout);
-
+    const layoutDialog = await openLayoutSettings(page);
+    await expect(layoutDialog.getByLabel("Presentation layout")).toHaveValue(
+      layout,
+    );
     if (layout === "kanban") {
-      await page
+      await layoutDialog
         .getByRole("combobox", { name: "Group lanes by" })
         .selectOption(nameFieldId);
       await expect
@@ -1161,13 +1224,17 @@ for (const layout of ["kanban", "calendar", "timeline"] as const) {
         .poll(() => api.windowQueryRequests.length)
         .toBeGreaterThan(0);
     }
+    await closeDialog(layoutDialog);
     const requests =
       layout === "kanban" ? api.groupedQueryRequests : api.windowQueryRequests;
     const initialRequestCount = requests.length;
 
     await addFilterForField(page, statusFieldId);
+    const filtersRegion = await openFilters(page);
     await expect(
-      page.getByText("Complete this condition or remove it before saving."),
+      filtersRegion.getByText(
+        "Complete this condition or remove it before saving.",
+      ),
     ).toBeVisible();
     expect(
       requests
@@ -1179,7 +1246,9 @@ for (const layout of ["kanban", "calendar", "timeline"] as const) {
         ),
     ).toBe(false);
 
-    await page.getByRole("combobox", { name: "Condition" }).selectOption("in");
+    await filtersRegion
+      .getByRole("combobox", { name: "Condition" })
+      .selectOption("in");
     expect(
       requests
         .slice(initialRequestCount)
@@ -1189,7 +1258,7 @@ for (const layout of ["kanban", "calendar", "timeline"] as const) {
           ),
         ),
     ).toBe(false);
-    const value = page.getByLabel("Value");
+    const value = filtersRegion.getByLabel("Value");
     await value.pressSequentially("In service, Inspection due");
     await expect(value).toHaveValue("In service, Inspection due");
     await expect
@@ -1216,10 +1285,11 @@ test("switching scalar and membership View filters clears incompatible values", 
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   await addFilterForField(page, statusFieldId);
 
-  const operator = page.getByRole("combobox", { name: "Condition" });
-  const value = page.getByLabel("Value");
-  const saveChanges = page.getByRole("button", { name: "Save changes" });
-  const saveView = page.getByRole("button", { name: "Save view" });
+  const filtersRegion = await openFilters(page);
+  const operator = filtersRegion.getByRole("combobox", {
+    name: "Condition",
+  });
+  const value = filtersRegion.getByLabel("Value");
 
   await value.fill("In service");
   await operator.selectOption("in");
@@ -1227,14 +1297,13 @@ test("switching scalar and membership View filters clears incompatible values", 
   await expect(
     page.getByText("Complete this condition or remove it before saving."),
   ).toBeVisible();
-  await expect(saveChanges).toBeDisabled();
-  await expect(saveView).toBeDisabled();
-
   await value.fill("In service, Inspection due");
   await operator.selectOption("eq");
   await expect(value).toHaveValue("");
-  await expect(saveChanges).toBeDisabled();
-  await expect(saveView).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Save changes" }),
+  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save view" })).toBeDisabled();
 });
 
 test("changing a Views filter field with the keyboard retains focus", async ({
@@ -1242,10 +1311,10 @@ test("changing a Views filter field with the keyboard retains focus", async ({
 }) => {
   await installViewsApi(page);
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await page.getByText("Filters (0)", { exact: true }).click();
-  await page.getByRole("button", { name: "Add filter" }).click();
+  const filtersRegion = await openFilters(page);
+  await filtersRegion.getByRole("button", { name: "Add filter" }).click();
 
-  const field = page.getByRole("combobox", { name: "Field" });
+  const field = filtersRegion.getByRole("combobox", { name: "Field" });
   await expect(field).toHaveValue(nameFieldId);
   await field.focus();
   await page.keyboard.press("s");
@@ -1260,8 +1329,9 @@ test("clearing a number View filter stays blank instead of querying zero", async
   const api = await installViewsApi(page);
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   await addFilterForField(page, numberFieldId);
+  const filtersRegion = await openFilters(page);
 
-  const value = page.getByLabel("Value");
+  const value = filtersRegion.getByLabel("Value");
   await value.fill("12.5");
   await expect
     .poll(() =>
@@ -1278,7 +1348,9 @@ test("clearing a number View filter stays blank instead of querying zero", async
   await value.fill("");
   await expect(value).toHaveValue("");
   await expect(
-    page.getByText("Complete this condition or remove it before saving."),
+    filtersRegion.getByText(
+      "Complete this condition or remove it before saving.",
+    ),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Save changes" }),
@@ -1301,8 +1373,9 @@ test("unsafe integer View filters fail locally without sending a rounded value",
   const api = await installViewsApi(page);
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   await addFilterForField(page, integerFieldId);
+  const filtersRegion = await openFilters(page);
 
-  const valueInput = page.getByLabel("Value");
+  const valueInput = filtersRegion.getByLabel("Value");
   for (const value of ["9007199254740993", "1.0000000000000001"]) {
     await valueInput.fill(value);
 
@@ -1318,9 +1391,6 @@ test("unsafe integer View filters fail locally without sending a rounded value",
         { exact: true },
       ),
     ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Save changes" }),
-    ).toBeDisabled();
     expect(
       api.recordQueryRequests.some(({ definition }) =>
         definition.filters.some(
@@ -1333,6 +1403,9 @@ test("unsafe integer View filters fail locally without sending a rounded value",
       ),
     ).toBe(false);
   }
+  await expect(
+    page.getByRole("button", { name: "Save changes" }),
+  ).toBeDisabled();
 });
 
 test("server-backed Views preserve edits through save, conflict, archive, restore, and default changes", async ({
@@ -1341,7 +1414,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   const api = await installViewsApi(page);
 
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await expect(page.getByRole("heading", { name: "OpenView" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Views" })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
     viewId,
   );
@@ -1350,7 +1423,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
     new RegExp(`module=${moduleId}.*view=${viewId}`),
   );
 
-  const search = page.getByRole("textbox", { name: "Search Equipment" });
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
   await search.fill("panel");
   await expect(page.getByText("Cooling panel 02")).toBeVisible();
   await expect(page.getByText("Centrifugal pump 04")).toHaveCount(0);
@@ -1385,13 +1458,13 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
 
   await page.reload();
   await expect(
-    page.getByRole("textbox", { name: "Search Equipment" }),
+    page.getByRole("searchbox", { name: "Search Equipment" }),
   ).toHaveValue("panel 02");
   await expect(page.getByText("Cooling panel 02")).toBeVisible();
 
   api.makeNextPatchStale();
   await page
-    .getByRole("textbox", { name: "Search Equipment" })
+    .getByRole("searchbox", { name: "Search Equipment" })
     .fill("compressor");
   await page.getByRole("button", { name: "Save changes" }).click();
   const conflictDialog = page.getByRole("dialog", {
@@ -1426,12 +1499,9 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   expect(api.saved().definition.search).toBe("compressor");
 
   await page
-    .getByRole("textbox", { name: "Search Equipment" })
+    .getByRole("searchbox", { name: "Search Equipment" })
     .fill("draft before archive");
-  await page
-    .getByRole("region", { name: "View controls" })
-    .getByRole("button", { name: "Archive view" })
-    .click();
+  await openViewAction(page, "Archive view");
   const archiveDialog = page.getByRole("alertdialog", {
     name: "Archive saved view?",
   });
@@ -1441,13 +1511,10 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await discardDialog.getByRole("button", { name: "Keep editing" }).click();
   await archiveDialog.getByRole("button", { name: "Cancel" }).click();
   await expect(
-    page.getByRole("textbox", { name: "Search Equipment" }),
+    page.getByLabel("Search Equipment", { exact: true }),
   ).toHaveValue("draft before archive");
   expect(api.saved().is_deleted).toBe(false);
-  await page
-    .getByRole("region", { name: "View controls" })
-    .getByRole("button", { name: "Archive view" })
-    .click();
+  await openViewAction(page, "Archive view");
   api.rejectNextMutation("archive");
   await archiveDialog.getByRole("button", { name: "Archive view" }).click();
   await discardDialog
@@ -1457,15 +1524,12 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
     archiveDialog.getByRole("alert").filter({ hasText: "Archive" }),
   ).toBeVisible();
   expect(api.saved().is_deleted).toBe(false);
-  await expect(page.locator("#openview-search")).toHaveValue(
-    "draft before archive",
-  );
+  await expect(
+    page.getByLabel("Search Equipment", { exact: true }),
+  ).toHaveValue("draft before archive");
   await archiveDialog.getByRole("button", { name: "Cancel" }).click();
 
-  await page
-    .getByRole("region", { name: "View controls" })
-    .getByRole("button", { name: "Archive view" })
-    .click();
+  await openViewAction(page, "Archive view");
   await archiveDialog.getByRole("button", { name: "Archive view" }).click();
   await discardDialog
     .getByRole("button", { name: "Discard and continue" })
@@ -1476,7 +1540,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
 
   await page
-    .getByRole("textbox", { name: "Search Equipment" })
+    .getByRole("searchbox", { name: "Search Equipment" })
     .fill("draft before restore");
   await expect(page.getByText("Unsaved changes")).toBeVisible();
   await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
@@ -1496,7 +1560,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await discardDialog.getByRole("button", { name: "Keep editing" }).click();
   await archivedDialog.getByRole("button", { name: "Close" }).click();
   await expect(
-    page.getByRole("textbox", { name: "Search Equipment" }),
+    page.getByLabel("Search Equipment", { exact: true }),
   ).toHaveValue("draft before restore");
   expect(api.saved().is_deleted).toBe(true);
   await page.getByRole("button", { name: "Archived views" }).click();
@@ -1511,9 +1575,9 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
     archivedDialog.getByRole("alert").filter({ hasText: "Restore" }),
   ).toBeVisible();
   expect(api.saved().is_deleted).toBe(true);
-  await expect(page.locator("#openview-search")).toHaveValue(
-    "draft before restore",
-  );
+  await expect(
+    page.getByLabel("Search Equipment", { exact: true }),
+  ).toHaveValue("draft before restore");
   await archivedDialog
     .getByRole("button", { name: "Restore Equipment register" })
     .click();
@@ -1525,7 +1589,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   ).toBeVisible();
   await archivedDialog.getByRole("button", { name: "Close" }).click();
 
-  await page.getByRole("button", { name: "Set as my default" }).click();
+  await openViewAction(page, "Set as my default");
   await expect(
     page.getByRole("status").filter({ hasText: "default" }),
   ).toBeVisible();
@@ -1544,9 +1608,9 @@ test("clearing an implicit default asks before discarding its local draft", asyn
   await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
     viewId,
   );
-  const search = page.getByRole("textbox", { name: "Search Equipment" });
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
   await search.fill("unpublished default draft");
-  await page.getByRole("button", { name: "Clear my default" }).click();
+  await openViewAction(page, "Clear my default");
 
   const discardDialog = page.getByRole("alertdialog", {
     name: "Discard unsaved view changes?",
@@ -1557,7 +1621,7 @@ test("clearing an implicit default asks before discarding its local draft", asyn
   await expect(search).toHaveValue("unpublished default draft");
   expect(api.personalDefault()).toBe(viewId);
 
-  await page.getByRole("button", { name: "Clear my default" }).click();
+  await openViewAction(page, "Clear my default");
   api.rejectNextMutation("default-clear");
   await discardDialog
     .getByRole("button", { name: "Discard and continue" })
@@ -1568,7 +1632,7 @@ test("clearing an implicit default asks before discarding its local draft", asyn
   expect(api.personalDefault()).toBe(viewId);
   await expect(search).toHaveValue("unpublished default draft");
 
-  await page.getByRole("button", { name: "Clear my default" }).click();
+  await openViewAction(page, "Clear my default");
   await discardDialog
     .getByRole("button", { name: "Discard and continue" })
     .click();
@@ -1588,7 +1652,7 @@ test("selecting Unsaved view overrides a personal default after discard confirma
   await page.goto(`/openview?section=views&module=${moduleId}`);
   const savedView = page.getByRole("combobox", { name: "Saved view" });
   await expect(savedView).toHaveValue(viewId);
-  const search = page.getByRole("textbox", { name: "Search Equipment" });
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
   await search.fill("keep until confirmed");
   await savedView.selectOption("");
 
@@ -1626,12 +1690,10 @@ test("duplicating a saved view saves the current draft as a private selected cop
 
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   await page
-    .getByRole("textbox", { name: "Search Equipment" })
+    .getByRole("searchbox", { name: "Search Equipment" })
     .fill("draft query");
-  await page
-    .getByRole("combobox", { name: "Presentation layout" })
-    .selectOption("grid");
-  await page.getByRole("button", { name: "Duplicate view" }).click();
+  await setLayoutFromSettings(page, "grid");
+  await openViewAction(page, "Duplicate view");
 
   await expect(
     page.getByRole("status").filter({ hasText: "was duplicated" }),
@@ -1643,7 +1705,7 @@ test("duplicating a saved view saves the current draft as a private selected cop
     `/openview?section=views&module=${moduleId}&view=${duplicateViewId}`,
   );
   await expect(
-    page.getByRole("textbox", { name: "Search Equipment" }),
+    page.getByRole("searchbox", { name: "Search Equipment" }),
   ).toHaveValue("draft query");
 
   expect(api.createdViews()).toHaveLength(1);
@@ -1667,7 +1729,7 @@ test("duplicating a long Unicode view keeps the copy name within the API limit",
   const api = await installViewsApi(page, { initialName: "🚜".repeat(100) });
 
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await page.getByRole("button", { name: "Duplicate view" }).click();
+  await openViewAction(page, "Duplicate view");
 
   await expect(
     page.getByRole("status").filter({ hasText: "was duplicated" }),
@@ -1683,25 +1745,24 @@ test("resetting changes restores the saved base or clears an unsaved draft", asy
   const api = await installViewsApi(page);
 
   await page.goto(`/openview?section=views&module=${moduleId}`);
-  const search = page.getByRole("textbox", { name: "Search Equipment" });
-  const layout = page.getByRole("combobox", { name: "Presentation layout" });
-  await expect(layout).toHaveValue("table");
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
+  await expectLayoutFromSettings(page, "table");
   await search.fill("unsaved draft");
-  await layout.selectOption("grid");
+  await setLayoutFromSettings(page, "grid");
   await page.getByRole("button", { name: "Reset changes" }).click();
   await expect(search).toHaveValue("");
-  await expect(layout).toHaveValue("table");
+  await expectLayoutFromSettings(page, "table");
   await expect(page.getByText("Unsaved changes")).toHaveCount(0);
   await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
 
   await page.getByRole("combobox", { name: "Saved view" }).selectOption(viewId);
   await expect(search).toHaveValue("pump");
   await search.fill("saved draft");
-  await layout.selectOption("grid");
+  await setLayoutFromSettings(page, "grid");
   await page.getByRole("button", { name: "Reset changes" }).click();
 
   await expect(search).toHaveValue("pump");
-  await expect(layout).toHaveValue("table");
+  await expectLayoutFromSettings(page, "table");
   await expect(page.getByText("Unsaved changes")).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
     viewId,
@@ -1721,7 +1782,7 @@ test("saved Views send, save, and reload up to three ordered sort rules", async 
   const api = await installViewsApi(page, { disableInitialSearch: true });
 
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await page.getByText("Advanced query settings", { exact: true }).click();
+  const settings = await openLayoutSettings(page);
   const addSort = page.getByRole("button", { name: "Add sort rule" });
   await addSort.click();
   await page.getByLabel("Sort field 1").selectOption(statusFieldId);
@@ -1742,6 +1803,7 @@ test("saved Views send, save, and reload up to three ordered sort rules", async 
   await expect
     .poll(() => api.recordQueryRequests.at(-1)?.definition.sort)
     .toEqual(expectedSort);
+  await closeDialog(settings);
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "was saved" }),
@@ -1749,16 +1811,36 @@ test("saved Views send, save, and reload up to three ordered sort rules", async 
   expect(api.saved().definition.sort).toEqual(expectedSort);
 
   await page.reload();
-  await page.getByText("Advanced query settings", { exact: true }).click();
-  await expect(page.getByLabel("Sort field 1")).toHaveValue(statusFieldId);
-  await expect(page.getByLabel("Sort direction 1")).toHaveValue("desc");
-  await expect(page.getByLabel("Sort field 2")).toHaveValue(nameFieldId);
-  await expect(page.getByLabel("Sort direction 2")).toHaveValue("asc");
-  await expect(page.getByLabel("Sort field 3")).toHaveValue(serialFieldId);
-  await expect(page.getByLabel("Sort direction 3")).toHaveValue("desc");
+  const reloadedSettings = await openLayoutSettings(page);
+  await expect(reloadedSettings.getByLabel("Sort field 1")).toHaveValue(
+    statusFieldId,
+  );
+  await expect(reloadedSettings.getByLabel("Sort direction 1")).toHaveValue(
+    "desc",
+  );
+  await expect(reloadedSettings.getByLabel("Sort field 2")).toHaveValue(
+    nameFieldId,
+  );
+  await expect(reloadedSettings.getByLabel("Sort direction 2")).toHaveValue(
+    "asc",
+  );
+  await expect(reloadedSettings.getByLabel("Sort field 3")).toHaveValue(
+    serialFieldId,
+  );
+  await expect(reloadedSettings.getByLabel("Sort direction 3")).toHaveValue(
+    "desc",
+  );
   await expect(
-    page.getByRole("button", { name: "Add sort rule" }),
+    reloadedSettings.getByRole("button", { name: "Add sort rule" }),
   ).toBeDisabled();
+  await closeDialog(reloadedSettings);
+
+  await page.getByRole("combobox", { name: "Sort" }).selectOption("");
+  await expect
+    .poll(() => api.recordQueryRequests.at(-1)?.definition.sort)
+    .toEqual([]);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => api.saved().definition.sort).toEqual([]);
 });
 
 for (const layout of ["table", "grid", "gallery"] as const) {
@@ -1770,9 +1852,10 @@ for (const layout of ["table", "grid", "gallery"] as const) {
     await page.goto(
       `/openview?section=views&module=${moduleId}&view=${viewId}`,
     );
-    await page.getByText("Advanced query settings", { exact: true }).click();
-    await page.getByLabel("Presentation layout").selectOption(layout);
-    await page.getByLabel("Group records by").selectOption(statusFieldId);
+    const settings = await openLayoutSettings(page);
+    await settings.getByLabel("Presentation layout").selectOption(layout);
+    await settings.getByLabel("Group records by").selectOption(statusFieldId);
+    await closeDialog(settings);
 
     const group = page.getByRole("button", {
       name: "In service, 38 records",
@@ -1791,7 +1874,7 @@ for (const layout of ["table", "grid", "gallery"] as const) {
     });
     await group.click();
     await expect(group).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByText("Showing 1–25 of 38 records")).toBeVisible();
+    await expect(page.getByText("Showing 1–25 of 38")).toBeVisible();
     if (layout === "table") {
       await expect(page.getByRole("table").getByRole("row")).toHaveCount(26);
     } else {
@@ -1811,8 +1894,11 @@ for (const layout of ["table", "grid", "gallery"] as const) {
     });
     expect(api.recordQueryRequests).toHaveLength(ordinaryRequestCount);
 
-    await page.getByRole("button", { name: "Next", exact: true }).click();
-    await expect(page.getByText("Showing 26–38 of 38 records")).toBeVisible();
+    await page
+      .getByRole("navigation", { name: "Record result pages" })
+      .getByRole("button", { name: "Go to next page" })
+      .click();
+    await expect(page.getByText("Showing 26–38 of 38")).toBeVisible();
     if (layout === "table") {
       await expect(page.getByRole("table").getByRole("row")).toHaveCount(14);
     } else {
@@ -1838,7 +1924,7 @@ for (const layout of ["table", "grid", "gallery"] as const) {
         .nth(1)
         .getByRole("button", { name: "In service" })
         .click();
-      const inspector = page.getByRole("region", { name: "Linked record" });
+      const inspector = page.getByRole("dialog", { name: "Record details" });
       await expect(
         inspector.getByRole("heading", { name: "In service" }),
       ).toBeVisible();
@@ -1870,14 +1956,15 @@ for (const layout of ["calendar", "timeline"] as const) {
     await page.goto(
       `/openview?section=views&module=${moduleId}&view=${viewId}`,
     );
-    await page.getByText("Advanced query settings", { exact: true }).click();
+    const settings = await openLayoutSettings(page);
     const layoutLabel = layout === "calendar" ? "Calendar" : "Timeline";
     await expect(
-      page.getByText(
+      settings.getByText(
         `General grouping is inactive in ${layoutLabel}; the saved group field is preserved.`,
       ),
     ).toBeVisible();
-    await expect(page.getByLabel("Group records by")).toHaveCount(0);
+    await expect(settings.getByLabel("Group records by")).toHaveCount(0);
+    await closeDialog(settings);
 
     await page.getByLabel("Window starts").fill("2026-09-01");
     await page.getByLabel("Window ends").fill("2026-09-30");
@@ -1920,12 +2007,15 @@ test("saved table presentation controls persist and drive the rendered table", a
     "Updated",
   ]);
 
-  await page.getByText("Advanced query settings", { exact: true }).click();
-  await page.getByRole("button", { name: "Move Status up" }).click();
-  await page.getByRole("checkbox", { name: "Pin Status" }).click();
-  await page.getByRole("checkbox", { name: "Show Serial number" }).click();
-  await page.getByLabel("Row density").selectOption("compact");
-  await page.getByRole("checkbox", { name: "Wrap long text" }).click();
+  const columnsDialog = await openColumns(page);
+  await columnsDialog.getByRole("button", { name: "Move Status up" }).click();
+  await columnsDialog.getByRole("checkbox", { name: "Pin Status" }).click();
+  await columnsDialog
+    .getByRole("checkbox", { name: "Show Serial number" })
+    .click();
+  await columnsDialog.getByLabel("Row density").selectOption("compact");
+  await columnsDialog.getByRole("checkbox", { name: "Wrap long text" }).click();
+  await closeDialog(columnsDialog);
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(
     page.getByRole("status").filter({
@@ -1945,17 +2035,20 @@ test("saved table presentation controls persist and drive the rendered table", a
     "Equipment name",
     "Updated",
   ]);
-  await page.getByText("Advanced query settings", { exact: true }).click();
+  const reloadedColumns = await openColumns(page);
   await expect(
-    page.getByRole("checkbox", { name: "Show Serial number" }),
+    reloadedColumns.getByRole("checkbox", { name: "Show Serial number" }),
   ).toHaveAttribute("aria-checked", "false");
   await expect(
-    page.getByRole("checkbox", { name: "Pin Status" }),
+    reloadedColumns.getByRole("checkbox", { name: "Pin Status" }),
   ).toHaveAttribute("aria-checked", "true");
-  await expect(page.getByLabel("Row density")).toHaveValue("compact");
+  await expect(reloadedColumns.getByLabel("Row density")).toHaveValue(
+    "compact",
+  );
   await expect(
-    page.getByRole("checkbox", { name: "Wrap long text" }),
+    reloadedColumns.getByRole("checkbox", { name: "Wrap long text" }),
   ).toHaveAttribute("aria-checked", "true");
+  await closeDialog(reloadedColumns);
 
   const pinnedHeader = table.getByRole("columnheader", { name: "Status" });
   const pinnedCell = table
@@ -2050,15 +2143,20 @@ for (const layout of ["grid", "gallery"] as const) {
       ),
     ).toEqual(["Status", "Unselected query field", "Serial number"]);
 
-    await page.getByText("Advanced query settings", { exact: true }).click();
-    await page.getByRole("button", { name: "Move Serial number up" }).click();
-    const hiddenDetail = page.getByRole("checkbox", {
+    const columnsDialog = await openColumns(page);
+    await columnsDialog
+      .getByRole("button", { name: "Move Serial number up" })
+      .click();
+    const hiddenDetail = columnsDialog.getByRole("checkbox", {
       name: "Show Unselected query field",
     });
     await hiddenDetail.click();
     await expect(hiddenDetail).toHaveAttribute("aria-checked", "false");
-    await page.getByLabel("Card size").selectOption("compact");
-    await page.getByRole("checkbox", { name: "Wrap long text" }).click();
+    await columnsDialog.getByLabel("Card size").selectOption("compact");
+    await columnsDialog
+      .getByRole("checkbox", { name: "Wrap long text" })
+      .click();
+    await closeDialog(columnsDialog);
     await page.getByRole("button", { name: "Save changes" }).click();
     await expect(
       page.getByRole("status").filter({
@@ -2072,14 +2170,19 @@ for (const layout of ["grid", "gallery"] as const) {
     });
 
     await page.reload();
-    await page.getByText("Advanced query settings", { exact: true }).click();
-    await expect(page.getByLabel("Card size")).toHaveValue("compact");
+    const reloadedColumns = await openColumns(page);
+    await expect(reloadedColumns.getByLabel("Card size")).toHaveValue(
+      "compact",
+    );
     await expect(
-      page.getByRole("checkbox", { name: "Wrap long text" }),
+      reloadedColumns.getByRole("checkbox", { name: "Wrap long text" }),
     ).toHaveAttribute("aria-checked", "true");
     await expect(
-      page.getByRole("checkbox", { name: "Show Unselected query field" }),
+      reloadedColumns.getByRole("checkbox", {
+        name: "Show Unselected query field",
+      }),
     ).toHaveAttribute("aria-checked", "false");
+    await closeDialog(reloadedColumns);
 
     const firstVisibleCard = records.getByRole("listitem").first();
     const article = firstVisibleCard.getByRole("article");
@@ -2112,9 +2215,9 @@ test("Grid and Gallery use the current server page and save only the selected la
     page.getByRole("heading", { name: "Equipment register" }),
   ).toBeVisible();
 
-  const layout = page.getByRole("combobox", { name: "Presentation layout" });
+  const layout = page.getByRole("combobox", { name: "Layout" });
   await expect(layout).toHaveValue("table");
-  await page.getByRole("textbox", { name: "Search Equipment" }).fill("");
+  await page.getByRole("searchbox", { name: "Search Equipment" }).fill("");
   await expect(
     page.getByText("30 matching records · live workspace data"),
   ).toBeVisible();
@@ -2150,9 +2253,7 @@ test("Grid and Gallery use the current server page and save only the selected la
   const shortTitleBounds = await shortTitle.boundingBox();
   expect(shortTitleBounds?.width).toBeGreaterThanOrEqual(44);
   await expect(page.getByRole("table")).toHaveCount(0);
-  await expect(
-    page.getByText("Showing 1–25 of 30 matching records"),
-  ).toBeVisible();
+  await expect(page.getByText("Showing 1–25 of 30")).toBeVisible();
 
   await layout.selectOption("gallery");
   await page.getByRole("button", { name: "Save changes" }).click();
@@ -2174,10 +2275,8 @@ test("Grid and Gallery use the current server page and save only the selected la
     gallery.getByText("Do not surface this query-only field", { exact: true }),
   ).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await expect(
-    page.getByText("Showing 26–30 of 30 matching records"),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "Go to next page" }).click();
+  await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
   await expect(gallery.getByRole("listitem")).toHaveCount(5);
   await gallery.getByRole("button", { name: "Open record: SN-55" }).focus();
   await page.keyboard.press("Enter");
@@ -2186,18 +2285,171 @@ test("Grid and Gallery use the current server page and save only the selected la
   );
 });
 
+test("Views exposes its filter, column, and layout editors on demand", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page, {
+    disableInitialSearch: true,
+    cardFieldsNotInColumns: true,
+  });
+  await page.goto(
+    "/openview?section=views&module=" + moduleId + "&view=" + viewId,
+  );
+
+  const initialRevision = api.saved().revision;
+  for (const layout of [
+    "Table",
+    "Grid",
+    "Gallery",
+    "Kanban",
+    "Calendar",
+    "Timeline",
+  ]) {
+    await expect(
+      page.getByRole("tab", { name: layout, exact: true }),
+    ).toBeVisible();
+  }
+  const sort = page.getByRole("combobox", { name: "Sort" });
+  await sort.selectOption(statusFieldId + ":desc");
+  await expect
+    .poll(() =>
+      api.recordQueryRequests.some(
+        ({ definition }) =>
+          definition.sort[0]?.field_id === statusFieldId &&
+          definition.sort[0]?.direction === "desc",
+      ),
+    )
+    .toBe(true);
+
+  const columnsDialog = page.getByRole("dialog", { name: "Columns" });
+  await page.getByRole("button", { name: "Columns", exact: true }).click();
+  await expect(columnsDialog).toBeVisible();
+  await columnsDialog.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByText("Unsaved changes", { exact: true })).toHaveCount(
+    1,
+  );
+  expect(api.saved().revision).toBe(initialRevision);
+
+  const filtersRegion = await openFilters(page);
+
+  await filtersRegion.getByRole("button", { name: "Add filter" }).click();
+  await filtersRegion
+    .getByRole("combobox", { name: "Field", exact: true })
+    .selectOption(statusFieldId);
+  await filtersRegion
+    .getByRole("combobox", { name: "Condition" })
+    .selectOption("eq");
+  await filtersRegion.getByLabel("Value").fill("Inspection due");
+  await expect
+    .poll(() =>
+      api.recordQueryRequests.some(({ definition }) =>
+        definition.filters.some(
+          (filter) =>
+            filter.field_id === statusFieldId &&
+            filter.operator === "eq" &&
+            filter.value === "Inspection due",
+        ),
+      ),
+    )
+    .toBe(true);
+  await expect(
+    page.getByText("Status is Inspection due", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "More filters" }),
+  ).toHaveAttribute("aria-expanded", "true");
+
+  await page.getByRole("button", { name: "Columns", exact: true }).click();
+  await expect(columnsDialog).toBeVisible();
+  await columnsDialog
+    .getByRole("checkbox", { name: "Show Serial number" })
+    .click();
+  await columnsDialog.getByRole("button", { name: "Close" }).click();
+
+  const layoutDialog = page.getByRole("dialog", { name: "Layout settings" });
+  await page
+    .getByRole("button", { name: "Layout settings", exact: true })
+    .click();
+  await expect(layoutDialog).toBeVisible();
+  await layoutDialog.getByRole("button", { name: "Add sort rule" }).click();
+  await layoutDialog.getByLabel("Sort field 2").selectOption(serialFieldId);
+  await layoutDialog.getByLabel("Sort direction 2").selectOption("asc");
+  await layoutDialog.getByRole("button", { name: "Close" }).click();
+
+  expect(api.saved().revision).toBe(1);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => api.saved().revision).toBe(2);
+  expect(api.saved().definition.filters).toEqual([
+    {
+      field_id: statusFieldId,
+      expected_type: "select",
+      operator: "eq",
+      value: "Inspection due",
+    },
+  ]);
+  expect(api.saved().definition.sort).toEqual([
+    { field_id: statusFieldId, expected_type: "select", direction: "desc" },
+    { field_id: serialFieldId, expected_type: "text", direction: "asc" },
+  ]);
+  expect(api.saved().presentation.column_field_ids).toEqual([
+    nameFieldId,
+    serialFieldId,
+  ]);
+});
+
+for (const layout of ["calendar", "timeline"] as const) {
+  test(`${layout} record details navigate across the server page and close back to it`, async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, { initialLayout: layout });
+    await page.goto(
+      "/openview?section=views&module=" + moduleId + "&view=" + viewId,
+    );
+    await page.getByLabel("Window starts").fill("2026-09-01");
+    await page.getByLabel("Window ends").fill("2026-09-30");
+    await expect(
+      page.getByRole("button", { name: "Open record: Window equipment 25" }),
+    ).toBeVisible();
+
+    await page
+      .getByRole("button", { name: "Open record: Window equipment 25" })
+      .click();
+    const details = page.getByRole("dialog", { name: "Record details" });
+    await expect(
+      details.getByRole("heading", { name: "Window equipment 25" }),
+    ).toBeVisible();
+    await expect(
+      details.getByRole("button", { name: "Next record" }),
+    ).toBeEnabled();
+    await details.getByRole("button", { name: "Next record" }).click();
+    await expect(
+      details.getByRole("heading", { name: "Window equipment 26" }),
+    ).toBeVisible();
+    await expect.poll(() => api.windowQueryRequests.at(-1)?.offset).toBe(25);
+
+    await details.getByRole("button", { name: "Close" }).click();
+    await expect
+      .poll(() => new URL(page.url()).searchParams.get("record"))
+      .toBeNull();
+    await expect(
+      page.getByRole("button", { name: "Open record: Window equipment 26" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Showing 26–26 of 26 matching records"),
+    ).toBeVisible();
+  });
+}
+
 test("Views inspector follows the filtered page in both directions and reopens safe links through record authorization", async ({
   page,
 }) => {
   const api = await installViewsApi(page, { disableInitialSearch: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await expect(
-    page.getByText("Showing 1–25 of 30 matching records"),
-  ).toBeVisible();
+  await expect(page.getByText("Showing 1–25 of 30")).toBeVisible();
 
   await page.getByRole("button", { name: "Equipment 25", exact: true }).click();
-  const inspector = page.getByRole("region", { name: "Linked record" });
+  const inspector = page.getByRole("dialog", { name: "Record details" });
   await expect(
     inspector.getByRole("heading", { name: "Equipment 25" }),
   ).toBeVisible();
@@ -2205,10 +2457,8 @@ test("Views inspector follows the filtered page in both directions and reopens s
   await expect(
     inspector.getByRole("heading", { name: "Equipment 26" }),
   ).toBeVisible();
-  await inspector.getByRole("button", { name: "Return to results" }).click();
-  await expect(
-    page.getByText("Showing 26–30 of 30 matching records"),
-  ).toBeVisible();
+  await inspector.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
   await page.getByRole("button", { name: "Equipment 26", exact: true }).click();
   await inspector.getByRole("button", { name: "Previous record" }).click();
   await expect(
@@ -2261,6 +2511,120 @@ test("Views inspector follows the filtered page in both directions and reopens s
   ).toHaveCount(0);
 });
 
+test("Views page size drives server offsets and inspector adjacency", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page, { disableInitialSearch: true });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+
+  const results = page.getByRole("region", { name: "Record results" });
+  const pageSize = results.getByLabel("Rows per page");
+  await expect(pageSize).toHaveValue("25");
+  await expect(pageSize.locator("option")).toHaveText(["5", "10", "25", "50"]);
+  await pageSize.selectOption("5");
+  await expect.poll(() => api.recordQueryRequests.at(-1)?.limit).toBe(5);
+  expect(api.recordQueryRequests.at(-1)).toMatchObject({
+    limit: 5,
+    offset: 0,
+  });
+  await expect(results.getByText("Showing 1–5 of 30")).toBeVisible();
+
+  const resultPages = page.getByRole("navigation", {
+    name: "Record result pages",
+  });
+  await resultPages.getByRole("button", { name: "Go to next page" }).click();
+  await expect.poll(() => api.recordQueryRequests.at(-1)?.offset).toBe(5);
+  expect(api.recordQueryRequests.at(-1)).toMatchObject({
+    limit: 5,
+    offset: 5,
+  });
+  await expect(results.getByText("Showing 6–10 of 30")).toBeVisible();
+
+  await pageSize.selectOption("10");
+  await expect.poll(() => api.recordQueryRequests.at(-1)?.limit).toBe(10);
+  expect(api.recordQueryRequests.at(-1)).toMatchObject({
+    limit: 10,
+    offset: 0,
+  });
+  await expect(results.getByText("Showing 1–10 of 30")).toBeVisible();
+
+  await resultPages.getByRole("button", { name: "Go to next page" }).click();
+  await expect(results.getByText("Showing 11–20 of 30")).toBeVisible();
+  await page.getByRole("button", { name: "Equipment 20", exact: true }).click();
+  const inspector = page.getByRole("dialog", { name: "Record details" });
+  const requestsBeforeNextRecord = api.recordQueryRequests.length;
+  await inspector.getByRole("button", { name: "Next record" }).click();
+  await expect(
+    inspector.getByRole("heading", { name: "Equipment 21" }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      api.recordQueryRequests
+        .slice(requestsBeforeNextRecord)
+        .some(({ limit, offset }) => limit === 10 && offset === 20),
+    )
+    .toBe(true);
+
+  const requestsBeforePreviousRecord = api.recordQueryRequests.length;
+  await inspector.getByRole("button", { name: "Previous record" }).click();
+  await expect(
+    inspector.getByRole("heading", { name: "Equipment 20" }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      api.recordQueryRequests
+        .slice(requestsBeforePreviousRecord)
+        .some(({ limit, offset }) => limit === 10 && offset === 10),
+    )
+    .toBe(true);
+  await inspector.getByRole("button", { name: "Close" }).click();
+  await expect(results.getByText("Showing 11–20 of 30")).toBeVisible();
+});
+
+test("Views grouped member page size preserves twelve-group directory paging", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page, { disableInitialSearch: true });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+
+  const settings = await openLayoutSettings(page);
+  await settings.getByLabel("Group records by").selectOption(statusFieldId);
+  await closeDialog(settings);
+  const group = page.getByRole("button", {
+    name: "In service, 38 records",
+  });
+  await expect(group).toBeVisible();
+  await expect(page.getByText("Groups 1–1 of 1").first()).toBeVisible();
+  await group.click();
+
+  const results = page.getByRole("region", { name: "Record results" });
+  await results.getByLabel("Rows per page").selectOption("5");
+  await expect.poll(() => api.groupedQueryRequests.at(-1)?.limit).toBe(5);
+  expect(api.groupedQueryRequests.at(-1)).toMatchObject({
+    limit: 5,
+    offset: 0,
+    group_limit: 12,
+    group_offset: 0,
+    selected_group: { kind: "value", value: "In service" },
+  });
+  await expect(results.getByText("Showing 1–5 of 38")).toBeVisible();
+
+  await page
+    .getByRole("navigation", { name: "Record result pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
+  await expect.poll(() => api.groupedQueryRequests.at(-1)?.offset).toBe(5);
+  expect(api.groupedQueryRequests.at(-1)).toMatchObject({
+    limit: 5,
+    offset: 5,
+    group_limit: 12,
+    group_offset: 0,
+    selected_group: { kind: "value", value: "In service" },
+  });
+  await expect(results.getByText("Showing 6–10 of 38")).toBeVisible();
+  await expect(page.getByText("Groups 1–1 of 1").first()).toBeVisible();
+});
+
 test("Views inspector does not reveal a stale list row before record authorization finishes", async ({
   page,
 }) => {
@@ -2274,7 +2638,7 @@ test("Views inspector does not reveal a stale list row before record authorizati
   const lookup = api.pauseNextRecordLookup();
   await page.getByRole("button", { name: "Centrifugal pump 04" }).click();
   await lookup.started;
-  const inspector = page.getByRole("region", { name: "Linked record" });
+  const inspector = page.getByRole("dialog", { name: "Record details" });
   await expect(inspector.getByText("Loading linked record…")).toBeVisible();
   await expect(
     inspector.getByRole("heading", { name: "Centrifugal pump 04" }),
@@ -2283,31 +2647,28 @@ test("Views inspector does not reveal a stale list row before record authorizati
   await expect(inspector.getByText("This record is unavailable")).toBeVisible();
 });
 
-test("Views linked-record banner returns to the page reached through inspector navigation", async ({
+test("closing record details returns to the page reached through inspector navigation", async ({
   page,
 }) => {
   await installViewsApi(page, { disableInitialSearch: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await expect(
-    page.getByText("Showing 1–25 of 30 matching records"),
-  ).toBeVisible();
+  await expect(page.getByText("Showing 1–25 of 30")).toBeVisible();
 
   await page.getByRole("button", { name: "Equipment 25", exact: true }).click();
-  const inspector = page.getByRole("region", { name: "Linked record" });
+  const inspector = page.getByRole("dialog", { name: "Record details" });
   await inspector.getByRole("button", { name: "Next record" }).click();
   await expect(
     inspector.getByRole("heading", { name: "Equipment 26" }),
   ).toBeVisible();
-  const banner = page.getByRole("status").filter({
-    hasText:
-      "Showing this linked record. The saved view query remains unchanged.",
-  });
-  await banner.getByRole("button", { name: "Return to results" }).click();
-
   await expect(
-    page.getByText("Showing 26–30 of 30 matching records"),
+    inspector.getByText(
+      "Showing this linked record. The saved view query remains unchanged.",
+    ),
   ).toBeVisible();
+  await inspector.getByRole("button", { name: "Close" }).click();
+
+  await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Equipment 26", exact: true }),
   ).toBeVisible();
@@ -2320,12 +2681,14 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  const groupField = page.getByRole("combobox", { name: "Group lanes by" });
+  const settings = await openLayoutSettings(page);
+  const groupField = settings.getByRole("combobox", { name: "Group lanes by" });
   await expect(groupField).toBeVisible();
   await expect(
     groupField.getByRole("option", { name: "Serial number" }),
   ).toHaveCount(0);
   await groupField.selectOption(nameFieldId);
+  await closeDialog(settings);
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(
     page
@@ -2346,7 +2709,10 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
     group_offset: 0,
     selected_group: null,
   });
-  await page.getByRole("button", { name: "Next lanes" }).click();
+  await page
+    .getByRole("navigation", { name: "Kanban lane pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
   await expect(page.getByText("Lanes 13–13 of 13").first()).toBeVisible();
   expect(api.groupedQueryRequests.at(-1)).toMatchObject({
     group_offset: 12,
@@ -2377,7 +2743,10 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
     selected_group: { kind: "value", value: "In service" },
   });
   api.failNextGroupedQuery();
-  await page.getByRole("button", { name: "Next lane records" }).click();
+  await page
+    .getByRole("navigation", { name: "Kanban lane record pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
   await expect(
     page.getByRole("alert").filter({
       hasText: "Grouped query temporarily failed.",
@@ -2416,7 +2785,7 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
     .getByRole("button", { name: "Open record: In service" })
     .click();
   await expect(page).toHaveURL(new RegExp(`record=${linkedRecordId}`));
-  const linkedRecord = page.getByRole("region", { name: "Linked record" });
+  const linkedRecord = page.getByRole("dialog", { name: "Record details" });
   await expect(linkedRecord).toBeVisible();
   await expect(
     linkedRecord.getByRole("heading", { name: "In service" }),
@@ -2426,12 +2795,13 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
       "Kanban lanes and counts continue to use the saved view query.",
     ),
   ).toBeVisible();
-  await expect(laneRecords.getByRole("listitem")).toHaveCount(1);
   expect(api.recordQueryRequests).toHaveLength(1);
   expect(api.groupedQueryRequests).toHaveLength(groupedRequestCount);
   expect(api.groupedQueryRequests.at(-1)).toMatchObject({
     selected_group: { kind: "value", value: "In service" },
   });
+  await linkedRecord.getByRole("button", { name: "Close" }).click();
+  await expect(laneRecords.getByRole("listitem")).toHaveCount(1);
 });
 
 test("Calendar displays workspace-local window matches, pages results, and retries failures", async ({
@@ -2443,9 +2813,7 @@ test("Calendar displays workspace-local window matches, pages results, and retri
   await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
     viewId,
   );
-  await expect(
-    page.getByRole("combobox", { name: "Presentation layout" }),
-  ).toHaveValue("calendar");
+  await expectLayoutFromSettings(page, "calendar");
   await page.getByLabel("Window starts").fill("2026-09-01");
   await page.getByLabel("Window ends").fill("2026-09-30");
   await expect(
@@ -2468,7 +2836,10 @@ test("Calendar displays workspace-local window matches, pages results, and retri
   });
 
   api.failNextWindowQuery();
-  await page.getByRole("button", { name: "Next window page" }).click();
+  await page
+    .getByRole("navigation", { name: "Date window record pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
   await expect(
     page.getByRole("alert").filter({
       hasText: "Window records could not be loaded.",
@@ -2515,14 +2886,20 @@ test("saved Calendar range and Month/List scale drive and persist the live layou
   });
 
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await expect(page.getByLabel("Calendar date range")).toHaveValue("quarter");
-  await expect(page.getByLabel("Calendar scale")).toHaveValue("month");
+  const settings = await openLayoutSettings(page);
+  await expect(settings.getByLabel("Calendar date range")).toHaveValue(
+    "quarter",
+  );
+  await expect(settings.getByLabel("Calendar scale")).toHaveValue("month");
+  await closeDialog(settings);
   await expect(
     page.getByRole("region", { name: "Calendar", exact: true }),
   ).toBeVisible();
 
-  await page.getByLabel("Calendar date range").selectOption("year");
-  await page.getByLabel("Calendar scale").selectOption("list");
+  const editSettings = await openLayoutSettings(page);
+  await editSettings.getByLabel("Calendar date range").selectOption("year");
+  await editSettings.getByLabel("Calendar scale").selectOption("list");
+  await closeDialog(editSettings);
   await expect(
     page.getByRole("region", { name: "Calendar list view" }),
   ).toBeVisible();
@@ -2537,20 +2914,32 @@ test("saved Calendar range and Month/List scale drive and persist the live layou
   await expect.poll(() => api.saved().presentation.scale).toBe("list");
 
   await page.reload();
-  await expect(page.getByLabel("Calendar date range")).toHaveValue("year");
-  await expect(page.getByLabel("Calendar scale")).toHaveValue("list");
+  const reloadedSettings = await openLayoutSettings(page);
+  await expect(reloadedSettings.getByLabel("Calendar date range")).toHaveValue(
+    "year",
+  );
+  await expect(reloadedSettings.getByLabel("Calendar scale")).toHaveValue(
+    "list",
+  );
+  await closeDialog(reloadedSettings);
   await expect(
     page.getByRole("region", { name: "Calendar list view" }),
   ).toBeVisible();
 
-  await page.getByLabel("Calendar scale").selectOption("month");
+  const scaleSettings = await openLayoutSettings(page);
+  await scaleSettings.getByLabel("Calendar scale").selectOption("month");
+  await closeDialog(scaleSettings);
   await expect(
     page.getByRole("region", { name: "Calendar", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => api.saved().presentation.scale).toBe("month");
   await page.reload();
-  await expect(page.getByLabel("Calendar scale")).toHaveValue("month");
+  const savedScaleSettings = await openLayoutSettings(page);
+  await expect(savedScaleSettings.getByLabel("Calendar scale")).toHaveValue(
+    "month",
+  );
+  await closeDialog(savedScaleSettings);
   await expect(
     page.getByRole("region", { name: "Calendar", exact: true }),
   ).toBeVisible();
@@ -2562,7 +2951,10 @@ test("OpenView invalidations refresh Views while preserving dirty edits and clea
   const api = await installViewsApi(page, { initialLayout: "table" });
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
 
-  const search = page.getByLabel("Search Equipment");
+  const search = page.getByRole("searchbox", {
+    name: "Search Equipment",
+    exact: true,
+  });
   await search.fill("compressor");
   await expect(page.getByText("Compressor 01")).toBeVisible();
   await expect
@@ -2619,7 +3011,7 @@ test("default invalidation keeps an implicit selected view and its dirty draft a
   await page.goto(`/openview?section=views&module=${moduleId}`);
   const selected = page.getByRole("combobox", { name: "Saved view" });
   await expect(selected).toHaveValue(viewId);
-  const search = page.getByRole("textbox", { name: "Search Equipment" });
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
   await search.fill("compressor");
   await expect(search).toHaveValue("compressor");
 
@@ -2662,7 +3054,7 @@ test("default invalidation follows the new default after an implicit draft is re
   });
   await page.goto(`/openview?section=views&module=${moduleId}`);
   const selected = page.getByRole("combobox", { name: "Saved view" });
-  const search = page.getByRole("textbox", { name: "Search Equipment" });
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
   await expect(selected).toHaveValue(viewId);
   await search.fill("compressor");
   await search.fill("pump");
@@ -2684,7 +3076,7 @@ for (const localAction of ["revert", "save"] as const) {
     const api = await installViewsApi(page, { initialDefault: true });
     await page.goto(`/openview?section=views&module=${moduleId}`);
     const selected = page.getByRole("combobox", { name: "Saved view" });
-    const search = page.getByRole("textbox", { name: "Search Equipment" });
+    const search = page.getByRole("searchbox", { name: "Search Equipment" });
     await expect(selected).toHaveValue(viewId);
     await search.fill("compressor");
     if (localAction === "revert") {
@@ -2789,12 +3181,18 @@ test("Timeline renders complete intervals and keeps unscheduled records separate
     ]),
   );
 
-  await page.getByRole("button", { name: "Next timeline page" }).click();
+  await page
+    .getByRole("navigation", { name: "Date window record pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
   await expect(
     page.getByRole("button", { name: "Open record: Window equipment 26" }),
   ).toBeVisible();
   expect(api.windowQueryRequests.at(-1)).toMatchObject({ offset: 25 });
-  await page.getByRole("button", { name: "Previous window page" }).click();
+  await page
+    .getByRole("navigation", { name: "Date window record pages" })
+    .getByRole("button", { name: "Go to previous page" })
+    .click();
   await expect(
     page.getByRole("button", { name: "Open record: Window equipment 01" }),
   ).toBeVisible();
@@ -2830,7 +3228,11 @@ test("Timeline renders complete intervals and keeps unscheduled records separate
   await expect(openRecord).toBeVisible();
   await openRecord.click();
   await expect(page).toHaveURL(new RegExp(`record=${recordTwoId}`));
-  await expect(page.getByText("Showing this linked record.")).toBeVisible();
+  await expect(
+    page
+      .getByRole("dialog", { name: "Record details" })
+      .getByText("Showing this linked record."),
+  ).toBeVisible();
 });
 
 test("Timeline accepts a DATETIME deadline alongside DATE interval fields", async ({
@@ -2839,11 +3241,13 @@ test("Timeline accepts a DATETIME deadline alongside DATE interval fields", asyn
   const api = await installViewsApi(page, { initialLayout: "timeline" });
 
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  const deadlineField = page.getByRole("combobox", {
+  const settings = await openLayoutSettings(page);
+  const deadlineField = settings.getByRole("combobox", {
     name: "Deadline field (optional)",
   });
   await deadlineField.selectOption(timelineTimestampDeadlineFieldId);
   const save = page.getByRole("button", { name: "Save changes" });
+  await closeDialog(settings);
   await expect(save).toBeEnabled();
   await save.click();
   await expect(
@@ -2870,7 +3274,7 @@ test("stale conflict can reload the authoritative saved version without losing i
   await expect(
     page.getByRole("heading", { name: "Equipment register" }),
   ).toBeVisible();
-  const search = page.getByRole("textbox", { name: "Search Equipment" });
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
   await search.fill("my local edit");
   api.makeNextPatchStale();
   await page.getByRole("button", { name: "Save changes" }).click();
@@ -2920,7 +3324,7 @@ test("a saved view beyond the bounded list loads through its UUID deep link", as
     page.locator(`#openview-saved-view option[value="${viewId}"]`),
   ).toHaveCount(1);
 
-  await page.getByRole("button", { name: "Archive view" }).click();
+  await openViewAction(page, "Archive view");
   await page
     .getByRole("alertdialog", { name: "Archive saved view?" })
     .getByRole("button", { name: "Archive view" })
@@ -2930,6 +3334,9 @@ test("a saved view beyond the bounded list loads through its UUID deep link", as
   ).toBeVisible();
   expect(api.saved().is_deleted).toBe(true);
 
+  await expect(page).toHaveURL((url) => !url.searchParams.has("view"), {
+    timeout: 15_000,
+  });
   await page.getByRole("button", { name: "Archived views" }).click();
   const archivedDialog = page.getByRole("dialog", { name: "Archived views" });
   await expect(
@@ -2947,6 +3354,10 @@ test("a saved view beyond the bounded list loads through its UUID deep link", as
     archivedDialog.getByRole("status").filter({ hasText: "restored" }),
   ).toBeVisible();
   expect(api.saved().is_deleted).toBe(false);
+  await expect(page).toHaveURL(
+    (url) => url.searchParams.get("view") === viewId,
+    { timeout: 15_000 },
+  );
   await archivedDialog.getByRole("button", { name: "Close" }).click();
   await expect(page.getByLabel("Saved view")).toHaveValue(viewId);
 });
@@ -2965,14 +3376,14 @@ test("changing saved views resets record pagination", async ({ page }) => {
 
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
-  await page.getByRole("textbox", { name: "Search Equipment" }).fill("");
+  await page.getByRole("searchbox", { name: "Search Equipment" }).fill("");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(
     page
       .getByRole("status")
       .filter({ hasText: "Equipment register” was saved" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await page.getByRole("button", { name: "Go to next page" }).click();
   await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
 
   await page.getByLabel("Saved view").selectOption(secondViewId);
@@ -2986,7 +3397,7 @@ test("invalid UUID view links recover to the first active catalog source", async
   await installViewsApi(page);
 
   await page.goto("/openview?section=views&module=bad-module&view=bad-view");
-  await expect(page.getByRole("heading", { name: "OpenView" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Views" })).toBeVisible();
   await expect(
     page.getByRole("alert").filter({ hasText: "unavailable" }),
   ).toBeVisible();
@@ -3097,11 +3508,12 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
     page.getByRole("heading", { name: "Private dashboards" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("textbox", { name: "Dashboard name" }),
-  ).toHaveValue("");
-  await expect(
     page.getByText("No Dashboards yet.", { exact: false }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "New Dashboard" }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Dashboard name" }),
+  ).toHaveValue("");
   expect(dashboardListRequests).toBeGreaterThan(0);
   expect(savedViewRequests).toBe(0);
 });

@@ -342,6 +342,22 @@ async function expectNoHorizontalOverflow(page: Page, viewportWidth: number) {
     .toBeLessThanOrEqual(viewportWidth);
 }
 
+async function openChartFilters(page: Page) {
+  await page.getByRole("button", { name: /^Filters/ }).click();
+}
+
+async function openChartDateWindow(page: Page) {
+  await page.getByRole("button", { name: "Date window" }).click();
+}
+
+async function openChartDisplayOptions(page: Page) {
+  await page.getByRole("button", { name: /^Display options/ }).click();
+}
+
+async function openChartSettings(page: Page) {
+  await page.getByRole("button", { name: "Chart settings" }).click();
+}
+
 test("live charts remain usable on mobile in dark mode with reduced motion", async ({
   page,
   browserName,
@@ -377,9 +393,7 @@ test("live charts remain usable on mobile in dark mode with reduced motion", asy
   });
   await page.goto("/openview?section=charts");
 
-  await expect(
-    page.getByRole("heading", { name: "Live charts" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Charts" })).toBeVisible();
   await page.getByLabel("Chart type").selectOption("pie");
   await page.getByRole("button", { name: "Apply chart" }).click();
 
@@ -476,6 +490,84 @@ test("live charts remain usable on mobile in dark mode with reduced motion", asy
   expect(consoleErrors).toEqual([]);
 });
 
+test("opening chart configuration panels does not load an aggregate until Apply", async ({
+  page,
+}) => {
+  const api = await installChartsApi(page);
+  await page.goto("/openview?section=charts");
+  await expect(page.getByRole("heading", { name: "Charts" })).toBeVisible();
+
+  await openChartFilters(page);
+  await expect(page.getByLabel("Chart filter logic")).toBeVisible();
+  await expect.poll(() => api.requests.length).toBe(0);
+  await page.keyboard.press("Escape");
+
+  await openChartDateWindow(page);
+  await expect(page.getByLabel("Chart date field")).toBeVisible();
+  await expect.poll(() => api.requests.length).toBe(0);
+  await page.keyboard.press("Escape");
+
+  await openChartDisplayOptions(page);
+  await expect(page.getByLabel("Top groups in chart")).toBeVisible();
+  await expect(
+    page.getByRole("checkbox", { name: "Show values" }),
+  ).toBeVisible();
+  await expect.poll(() => api.requests.length).toBe(0);
+});
+
+test("Apply uses the latest filter draft while the applied snapshot remains visible", async ({
+  page,
+}) => {
+  const api = await installChartsApi(page);
+  api.setAggregateHandler(() =>
+    snapshot([
+      {
+        key: "open",
+        label: "Open",
+        value: "2.500000000000000001",
+        record_count: 2,
+      },
+    ]),
+  );
+  await page.goto("/openview?section=charts");
+  await page.getByRole("button", { name: "Apply chart" }).click();
+
+  const table = page.getByRole("table", { name: "Complete aggregate data" });
+  await expect(
+    table.getByRole("cell", { name: "2.500000000000000001" }),
+  ).toBeVisible();
+  const initialRequestCount = api.requests.length;
+
+  await openChartFilters(page);
+  await page.getByRole("button", { name: "Add filter" }).click();
+  await page.getByLabel("Filter 1 field").selectOption(categoryFieldId);
+  await page.getByLabel("Filter 1 value").selectOption("In service");
+  await expect(page.getByText(/Unapplied chart settings/)).toBeVisible();
+  await expect(
+    table.getByRole("cell", { name: "2.500000000000000001" }),
+  ).toBeVisible();
+  await expect.poll(() => api.requests.length).toBe(initialRequestCount);
+
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Apply chart" }).click();
+  await expect.poll(() => api.requests.length).toBe(initialRequestCount + 1);
+  expect(api.requests.at(-1)).toMatchObject({
+    definition: {
+      filters: [
+        {
+          field_id: categoryFieldId,
+          expected_type: "select",
+          operator: "eq",
+          value: "In service",
+        },
+      ],
+    },
+  });
+  await expect(
+    table.getByRole("cell", { name: "2.500000000000000001" }),
+  ).toBeVisible();
+});
+
 test("mobile pie values keep a long returned decimal readable without page overflow", async ({
   page,
 }) => {
@@ -495,9 +587,7 @@ test("mobile pie values keep a long returned decimal readable without page overf
   await page.setViewportSize({ width: 320, height: 844 });
   await page.goto("/openview?section=charts");
 
-  await expect(
-    page.getByRole("heading", { name: "Live charts" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Charts" })).toBeVisible();
   await page.getByLabel("Chart type").selectOption("pie");
   await page.getByRole("button", { name: "Apply chart" }).click();
 
@@ -536,10 +626,10 @@ test("live charts keep Top visual-only while table, CSV, and print retain all gr
   });
   await page.goto(`/openview?section=charts`);
 
-  await expect(
-    page.getByRole("heading", { name: "Live charts" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Charts" })).toBeVisible();
+  await openChartDisplayOptions(page);
   await page.getByLabel("Top groups in chart").selectOption("5");
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Apply chart" }).click();
 
   await expect(
@@ -547,9 +637,16 @@ test("live charts keep Top visual-only while table, CSV, and print retain all gr
   ).toBeVisible();
   const table = page.getByRole("table", { name: "Complete aggregate data" });
   await expect(table.locator("tbody tr")).toHaveCount(25);
-  await expect(page.getByText("1–25 of 105 aggregate groups")).toBeVisible();
-  await expect(page.getByTestId("charts-print-row")).toHaveCount(105);
+  await expect(page.getByText("Showing 1–25 of 105")).toBeVisible();
+
+  await page.getByRole("button", { name: "Go to next page" }).click();
+  await expect(page.getByText("Showing 26–50 of 105")).toBeVisible();
+  await page.getByLabel("Rows per page").selectOption("50");
+  await expect(table.locator("tbody tr")).toHaveCount(50);
+  await expect(page.getByText("Showing 1–50 of 105")).toBeVisible();
   expect(api.requests).toHaveLength(1);
+
+  await expect(page.getByTestId("charts-print-row")).toHaveCount(105);
   expect(api.requests[0]).not.toHaveProperty("top");
 
   const downloadPromise = page.waitForEvent("download");
@@ -574,11 +671,13 @@ test("date-line charts require and preserve a complete chronological 366-day sna
   await page.goto("/openview?section=charts");
 
   await page.getByLabel("Chart type").selectOption("line");
-  await expect(page.getByLabel("Date field")).toBeVisible();
+  await expect(page.getByLabel("Group by")).toBeVisible();
   await expect(page.getByLabel("Top groups in chart")).toHaveCount(0);
-  await page.getByLabel("Date field").selectOption(dateFieldId);
+  await page.getByLabel("Group by").selectOption(dateFieldId);
+  await openChartDateWindow(page);
   await page.getByLabel("From date").fill("2024-01-01");
   await page.getByLabel("To date").fill("2024-12-31");
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Apply chart" }).click();
 
   await expect(
@@ -591,9 +690,9 @@ test("date-line charts require and preserve a complete chronological 366-day sna
     date_field: { field_id: dateFieldId, expected_type: "date" },
   });
   for (let pageNumber = 1; pageNumber < 15; pageNumber += 1) {
-    await page.getByRole("button", { name: "Next data table page" }).click();
+    await page.getByRole("button", { name: "Go to next page" }).click();
   }
-  await expect(page.getByText("351–366 of 366 daily values")).toBeVisible();
+  await expect(page.getByText("Showing 351–366 of 366")).toBeVisible();
   await expect(page.getByRole("cell", { name: "2024-12-31" })).toBeVisible();
   await expect(page.getByTestId("charts-print-row")).toHaveCount(366);
   await expect(
@@ -614,13 +713,15 @@ test("categorical filters and numeric aggregation are sent with catalog UUIDs", 
   const api = await installChartsApi(page);
   await page.goto("/openview?section=charts");
 
-  await page.getByLabel("Aggregation").selectOption("sum");
-  await page.getByLabel("Measure").selectOption(amountFieldId);
+  await page.getByLabel("Measure").selectOption("sum");
+  await page.getByLabel("Numeric measure").selectOption(amountFieldId);
+  await openChartFilters(page);
   await page.getByRole("button", { name: "Add filter" }).click();
   await expect(page.getByText("Filter 1 field", { exact: true })).toBeVisible();
   await page.getByLabel("Filter 1 field").selectOption(categoryFieldId);
   await page.getByLabel("Filter 1 operator").selectOption("eq");
   await page.getByLabel("Filter 1 value").selectOption("In service");
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Apply chart" }).click();
 
   expect(api.requests).toHaveLength(1);
@@ -657,19 +758,30 @@ test("categorical Chart controls save, reload, reset, and reapply complete autho
   await page.goto("/openview?section=charts");
 
   await page.getByLabel("Chart type").selectOption("bar");
+  await openChartFilters(page);
   await page.getByLabel("Chart filter logic").selectOption("or");
+  await page.keyboard.press("Escape");
+
+  await openChartDateWindow(page);
   await page.getByLabel("Chart date field").selectOption(dateFieldId);
   await page.getByLabel("Chart from date").fill("2026-09-01");
   await page.getByLabel("Chart to date").fill("2026-09-30");
+  await page.keyboard.press("Escape");
+
+  await openChartFilters(page);
   await page.getByRole("button", { name: "Add filter" }).click();
   await page.getByLabel("Filter 1 value").selectOption("In service");
   await page.getByRole("button", { name: "Add filter" }).click();
   await page.getByLabel("Filter 2 field").selectOption(amountFieldId);
   await page.getByLabel("Filter 2 operator").selectOption("gt");
   await page.getByLabel("Filter 2 value").fill("1");
+  await page.keyboard.press("Escape");
+
+  await openChartDisplayOptions(page);
   await page.getByLabel("Top groups in chart").selectOption("5");
   await page.getByRole("checkbox", { name: "Show legend" }).uncheck();
   await page.getByRole("checkbox", { name: "Show values" }).uncheck();
+  await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Apply chart" }).click();
   await expect(
@@ -713,9 +825,18 @@ test("categorical Chart controls save, reload, reset, and reapply complete autho
   ).toHaveCount(0);
 
   await page.reload();
+  await openChartFilters(page);
   await expect(page.getByLabel("Chart filter logic")).toHaveValue("or");
+  await expect(page.getByLabel("Filter 1 value")).toHaveValue("In service");
+  await expect(page.getByLabel("Filter 2 value")).toHaveValue("1");
+  await page.keyboard.press("Escape");
+
+  await openChartDateWindow(page);
   await expect(page.getByLabel("Chart date field")).toHaveValue(dateFieldId);
   await expect(page.getByLabel("Chart from date")).toHaveValue("2026-09-01");
+  await page.keyboard.press("Escape");
+
+  await openChartDisplayOptions(page);
   await expect(page.getByLabel("Top groups in chart")).toHaveValue("5");
   await expect(
     page.getByRole("checkbox", { name: "Show legend" }),
@@ -723,10 +844,10 @@ test("categorical Chart controls save, reload, reset, and reapply complete autho
   await expect(
     page.getByRole("checkbox", { name: "Show values" }),
   ).not.toBeChecked();
-  await expect(page.getByLabel("Filter 1 value")).toHaveValue("In service");
-  await expect(page.getByLabel("Filter 2 value")).toHaveValue("1");
 
-  await page.getByRole("button", { name: "Reset settings" }).click();
+  await page.keyboard.press("Escape");
+  await openChartSettings(page);
+  await page.getByRole("menuitem", { name: "Reset settings" }).click();
   await expect.poll(() => api.preferenceRequests.length).toBe(2);
   expect(api.savedPreference()).toMatchObject({
     module_id: moduleId,
@@ -776,16 +897,21 @@ test("repeated Chart Reset restores edited controls and a failed Reset keeps edi
 }) => {
   const api = await installChartsApi(page);
   await page.goto("/openview?section=charts");
-  const top = page.getByLabel("Top groups in chart");
-  const showValues = page.getByRole("checkbox", { name: "Show values" });
-  const reset = page.getByRole("button", { name: "Reset settings" });
+  const reset = page.getByRole("menuitem", { name: "Reset settings" });
 
+  await openChartSettings(page);
   await reset.click();
   await expect.poll(() => api.preferenceRequests.length).toBe(1);
+  await openChartDisplayOptions(page);
+  const top = page.getByLabel("Top groups in chart");
+  const showValues = page.getByRole("checkbox", { name: "Show values" });
   await top.selectOption("5");
   await showValues.uncheck();
+  await page.keyboard.press("Escape");
+  await openChartSettings(page);
   await reset.click();
   await expect.poll(() => api.preferenceRequests.length).toBe(2);
+  await openChartDisplayOptions(page);
   await expect(top).toHaveValue("");
   await expect(showValues).toBeChecked();
   await expect(page.getByRole("status")).toContainText(
@@ -794,9 +920,12 @@ test("repeated Chart Reset restores edited controls and a failed Reset keeps edi
 
   await top.selectOption("10");
   await showValues.uncheck();
+  await page.keyboard.press("Escape");
   api.failNextPreferenceWrite();
+  await openChartSettings(page);
   await reset.click();
   await expect.poll(() => api.preferenceRequests.length).toBe(3);
+  await openChartDisplayOptions(page);
   await expect(top).toHaveValue("10");
   await expect(showValues).not.toBeChecked();
   await expect(
@@ -809,18 +938,23 @@ test("saving Chart settings keeps a newer edit made while the request is pending
 }) => {
   const api = await installChartsApi(page);
   await page.goto("/openview?section=charts");
+  await openChartDisplayOptions(page);
   const top = page.getByLabel("Top groups in chart");
   await top.selectOption("5");
+  await page.keyboard.press("Escape");
   const pending = api.pauseNextPreferenceWrite();
   await page.getByRole("button", { name: "Save settings" }).click();
   await pending.started;
+  await openChartDisplayOptions(page);
   await top.selectOption("10");
+  await page.keyboard.press("Escape");
   pending.release();
 
   await expect(page.getByRole("status")).toContainText(
     "Chart settings saved for this account.",
   );
   await expect.poll(() => api.savedPreference()?.top).toBe(5);
+  await openChartDisplayOptions(page);
   await expect(top).toHaveValue("10");
 });
 
@@ -839,11 +973,14 @@ test("Show values renders all selected Top 50 groups, including groups beyond 20
     ),
   );
   await page.goto("/openview?section=charts");
+  await openChartDisplayOptions(page);
   await page.getByLabel("Top groups in chart").selectOption("50");
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Apply chart" }).click();
 
   const preview = page.getByRole("img", { name: "Aggregate chart preview" });
   await expect(preview.locator(".recharts-label")).toHaveCount(30);
+  await openChartDisplayOptions(page);
   await page.getByRole("checkbox", { name: "Show values" }).uncheck();
   await expect(preview.locator(".recharts-label")).toHaveCount(0);
   await page.getByRole("checkbox", { name: "Show values" }).check();
@@ -856,12 +993,15 @@ test("date-only line Chart settings can be reset to a valid saved preference", a
   const api = await installChartsApi(page, { dateOnly: true });
   await page.goto("/openview?section=charts");
   await page.getByLabel("Chart type").selectOption("line");
+  await openChartDateWindow(page);
   await page.getByLabel("From date").fill("2026-09-01");
   await page.getByLabel("To date").fill("2026-09-30");
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect.poll(() => api.preferenceRequests.length).toBe(1);
 
-  await page.getByRole("button", { name: "Reset settings" }).click();
+  await openChartSettings(page);
+  await page.getByRole("menuitem", { name: "Reset settings" }).click();
   await expect.poll(() => api.preferenceRequests.length).toBe(2);
   expect(api.savedPreference()).toMatchObject({
     module_id: moduleId,
@@ -916,10 +1056,12 @@ test("decimal filters preserve canonical precision in the aggregate request", as
   const preciseDecimal = "9007199254740993.123456789012345678";
   await page.goto("/openview?section=charts");
 
+  await openChartFilters(page);
   await page.getByRole("button", { name: "Add filter" }).click();
   await page.getByLabel("Filter 1 field").selectOption(amountFieldId);
   await page.getByLabel("Filter 1 operator").selectOption("gt");
   await page.getByLabel("Filter 1 value").fill(preciseDecimal);
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Apply chart" }).click();
 
   expect(api.requests).toHaveLength(1);
@@ -937,6 +1079,7 @@ test("integer filters reject fractional values", async ({ page }) => {
   await installChartsApi(page);
   await page.goto("/openview?section=charts");
 
+  await openChartFilters(page);
   await page.getByRole("button", { name: "Add filter" }).click();
   await page.getByLabel("Filter 1 field").selectOption(integerFieldId);
   await page.getByLabel("Filter 1 value").fill("4.5");
@@ -944,6 +1087,7 @@ test("integer filters reject fractional values", async ({ page }) => {
     page.getByRole("button", { name: "Apply chart" }),
   ).toBeDisabled();
   await page.getByLabel("Filter 1 value").fill("4");
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "Apply chart" })).toBeEnabled();
 });
 
@@ -1077,9 +1221,7 @@ test("Charts, Dashboards and Reports use live routes", async ({ page }) => {
   });
   await page.goto("/openview?section=charts");
 
-  await expect(
-    page.getByRole("heading", { name: "Live charts" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Charts" })).toBeVisible();
   await page.getByRole("link", { name: "Dashboards" }).click();
   await expect(page).toHaveURL(/section=dashboards/);
   await expect(
@@ -1142,9 +1284,7 @@ test("live charts reflow at true 200% Chromium tab zoom", async ({
     );
 
     await page.goto(new URL("/openview?section=charts", baseURL).toString());
-    await expect(
-      page.getByRole("heading", { name: "Live charts" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Charts" })).toBeVisible();
     await page.getByLabel("Chart type").selectOption("pie");
     await page.getByRole("button", { name: "Apply chart" }).click();
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertCircle, ShieldCheck, Users } from "lucide-react";
+import { AlertCircle, Search, ShieldCheck, Users } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -1058,6 +1058,7 @@ export function GroupEditor({
           ),
         ),
   );
+  const [memberSearch, setMemberSearch] = useState("");
   const [error, setError] = useState("");
   const [journalIssue, setJournalIssue] = useState("");
   const [savedButUncleared, setSavedButUncleared] = useState(false);
@@ -1078,10 +1079,18 @@ export function GroupEditor({
   const [conflictChoices, setConflictChoices] = useState<
     Record<string, ConflictChoice | undefined>
   >({});
-  const eligibleIdentities = controller.state.identities.filter(
-    (identity) =>
-      identity.kind !== "service" &&
-      (identity.status === "active" || draft?.memberIds.includes(identity.id)),
+  const eligibleIdentities = controller.state.identities
+    .filter(
+      (identity) =>
+        identity.kind !== "service" &&
+        (identity.status === "active" ||
+          draft?.memberIds.includes(identity.id)),
+    )
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const visibleIdentities = eligibleIdentities.filter((identity) =>
+    `${identity.name} ${identity.kind === "service" ? "" : identity.email}`
+      .toLowerCase()
+      .includes(memberSearch.trim().toLowerCase()),
   );
   const currentGroup =
     intent === "edit"
@@ -1413,25 +1422,24 @@ export function GroupEditor({
 
   return (
     <>
-      <Sheet
+      <Dialog
         open={draft !== null}
         onOpenChange={(open) => !open && requestClose()}
       >
-        <SheetContent className="w-[min(92vw,34rem)] gap-0 p-0">
-          <SheetHeader className="border-border border-b p-5">
-            <SheetTitle>
+        <DialogContent className="flex max-h-[90dvh] max-w-2xl flex-col overflow-hidden p-0">
+          <DialogHeader className="border-border border-b p-5">
+            <DialogTitle>
               {intent === "create"
                 ? "Create group"
                 : original
                   ? `Edit ${original.name}`
                   : "Edit group"}
-            </SheetTitle>
-            <SheetDescription>
-              Manual groups do not nest. Add internal people and guests
-              directly.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5">
+            </DialogTitle>
+            <DialogDescription>
+              Update the group details and choose who belongs to it.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-5">
             {submissionUncertain && (
               <UncertainDraftWarning
                 subject="group"
@@ -1514,59 +1522,112 @@ export function GroupEditor({
                     placeholder="Explain the shared responsibility or access need."
                   />
                 </Field>
-                <FieldSet>
-                  <FieldLegend>Members</FieldLegend>
-                  <p className="text-muted-foreground text-sm">
-                    Service identities cannot join groups.
-                  </p>
-                  <div className="flex max-h-72 flex-col gap-1 overflow-y-auto rounded-md border p-2">
-                    {eligibleIdentities.map((identity) => (
-                      <Field
-                        key={identity.id}
-                        className="hover:bg-muted/50 min-h-11 flex-row items-center rounded-md px-2"
-                      >
-                        <Checkbox
-                          id={`group-member-${identity.id}`}
-                          checked={memberIds.includes(identity.id)}
-                          onCheckedChange={(checked) =>
-                            stageValues({
-                              name,
-                              description,
-                              memberIds: checked
-                                ? [...memberIds, identity.id]
-                                : memberIds.filter((id) => id !== identity.id),
-                            })
+                <FieldSet className="min-w-0">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-3">
+                        <FieldLegend>Members</FieldLegend>
+                        <span
+                          className="text-muted-foreground text-sm"
+                          aria-live="polite"
+                        >
+                          {memberIds.length} selected
+                        </span>
+                      </div>
+                      <p className="text-muted-foreground mt-1 text-sm">
+                        Manual groups do not nest. Service identities cannot
+                        join.
+                      </p>
+                    </div>
+                    <Field className="w-full sm:max-w-64">
+                      <FieldLabel htmlFor="group-member-search">
+                        Search members
+                      </FieldLabel>
+                      <div className="relative">
+                        <Search
+                          aria-hidden="true"
+                          className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+                        />
+                        <Input
+                          id="group-member-search"
+                          type="search"
+                          className="min-h-11 pl-9"
+                          value={memberSearch}
+                          placeholder="Name or email"
+                          onChange={(event) =>
+                            setMemberSearch(event.target.value)
                           }
                         />
-                        <FieldLabel
-                          htmlFor={`group-member-${identity.id}`}
-                          className="min-w-0 flex-1 font-normal"
+                      </div>
+                    </Field>
+                  </div>
+                  <div className="flex max-h-72 flex-col gap-1 overflow-y-auto rounded-md border p-2">
+                    {visibleIdentities.length ? (
+                      visibleIdentities.map((identity) => (
+                        <Field
+                          key={identity.id}
+                          className="hover:bg-muted/50 min-h-14 flex-row items-center rounded-md px-2 py-2"
                         >
-                          <span className="block truncate">
-                            {identity.name}
-                          </span>
-                          <span className="text-muted-foreground block text-xs capitalize">
-                            {identity.kind}
-                          </span>
-                        </FieldLabel>
-                      </Field>
-                    ))}
+                          <Checkbox
+                            id={`group-member-${identity.id}`}
+                            checked={memberIds.includes(identity.id)}
+                            onCheckedChange={(checked) =>
+                              stageValues({
+                                name,
+                                description,
+                                memberIds: checked
+                                  ? [...memberIds, identity.id]
+                                  : memberIds.filter(
+                                      (id) => id !== identity.id,
+                                    ),
+                              })
+                            }
+                          />
+                          <FieldLabel
+                            htmlFor={`group-member-${identity.id}`}
+                            className="min-w-0 flex-1 font-normal"
+                          >
+                            <span className="block font-medium break-words">
+                              {identity.name}
+                            </span>
+                            <span className="text-muted-foreground block text-xs break-words">
+                              {identity.kind === "service"
+                                ? ""
+                                : identity.email}
+                              {identity.kind !== "service" && (
+                                <span className="capitalize">
+                                  {` · ${identity.kind}`}
+                                </span>
+                              )}
+                            </span>
+                          </FieldLabel>
+                        </Field>
+                      ))
+                    ) : (
+                      <p className="text-muted-foreground p-3 text-sm">
+                        {eligibleIdentities.length
+                          ? "No eligible people match this search."
+                          : "No eligible people are available yet."}
+                      </p>
+                    )}
                   </div>
                 </FieldSet>
                 <Alert>
                   <Users />
                   <div className="mt-2">
-                    <p className="font-medium">Affected identities</p>
+                    <p className="font-medium">Membership impact</p>
                     <p className="mt-1">
-                      {impactCopy(memberIds.length, "group")} Scoped rules
-                      assigned to this group will apply to them.
+                      {memberIds.length
+                        ? `${memberIds.length} ${memberIds.length === 1 ? "person is" : "people are"} selected.`
+                        : "No people are selected yet."}{" "}
+                      Group-scoped rules apply to selected members.
                     </p>
                   </div>
                 </Alert>
               </FieldGroup>
             </fieldset>
           </div>
-          <SheetFooter className="border-border mt-0 border-t p-5">
+          <DialogFooter className="border-border mt-0 border-t p-5 sm:items-center sm:justify-between">
             {original && (
               <Button
                 variant="destructive"
@@ -1597,9 +1658,9 @@ export function GroupEditor({
             >
               Save group
             </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog
         open={confirmUncertainDiscard}
@@ -1734,8 +1795,8 @@ export function GroupEditor({
             <AlertDialogTitle>Delete {original?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               First remove its members, default assignments, and any rules in
-              Detailed rules. Deleting the group will not delete those rules.
-              Enter the exact group name to confirm.
+              Permissions. Deleting the group will not delete those rules. Enter
+              the exact group name to confirm.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Field>

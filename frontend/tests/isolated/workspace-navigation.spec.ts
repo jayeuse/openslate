@@ -41,10 +41,10 @@ test("active section selection uses stable IDs when rendered copy changes", () =
   ).toBe(true);
 });
 
-test("Access keeps stable view URLs while using plain-language navigation labels", () => {
+test("Access keeps one Permissions entry while legacy views highlight it", () => {
   const access = getWorkspaceNavigation(
     "/access",
-    new URLSearchParams("view=rules"),
+    new URLSearchParams("view=permissions"),
   ).find((entry) => entry.id === "access");
 
   expect(
@@ -52,19 +52,41 @@ test("Access keeps stable view URLs while using plain-language navigation labels
   ).toEqual([
     ["overview", "Overview", "/access?view=overview"],
     ["identities", "People & services", "/access?view=identities"],
-    ["roles", "Roles", "/access?view=roles"],
-    ["groups", "Groups", "/access?view=groups"],
-    ["rules", "Detailed rules", "/access?view=rules"],
-    ["simulator", "Check access", "/access?view=simulator"],
-    ["reviews", "Access reviews", "/access?view=reviews"],
+    ["permissions", "Permissions", "/access?view=permissions"],
   ]);
 
   expect(
     isWorkspaceNavigationItemActive(
       "access",
-      "rules",
+      "permissions",
       "/access",
-      new URLSearchParams("view=rules"),
+      new URLSearchParams("view=permissions"),
+    ),
+  ).toBe(true);
+  for (const legacyView of ["roles", "groups", "rules"]) {
+    expect(
+      isWorkspaceNavigationItemActive(
+        "access",
+        "permissions",
+        "/access",
+        new URLSearchParams(`view=${legacyView}`),
+      ),
+    ).toBe(true);
+  }
+  expect(
+    isWorkspaceNavigationItemActive(
+      "access",
+      "identities",
+      "/access",
+      new URLSearchParams("view=simulator"),
+    ),
+  ).toBe(true);
+  expect(
+    isWorkspaceNavigationItemActive(
+      "access",
+      "overview",
+      "/access",
+      new URLSearchParams("view=reviews"),
     ),
   ).toBe(true);
 });
@@ -115,8 +137,8 @@ test("sidebar section links retain only each screen's relevant deep-link context
     item("/access", "view=identities&user=ana", "access", "identities")?.href,
   ).toBe("/access?view=identities&user=ana");
   expect(
-    item("/access", "view=identities&user=ana", "access", "roles")?.href,
-  ).toBe("/access?view=roles");
+    item("/access", "view=identities&user=ana", "access", "permissions")?.href,
+  ).toBe("/access?view=permissions");
   expect(
     item(
       "/openview",
