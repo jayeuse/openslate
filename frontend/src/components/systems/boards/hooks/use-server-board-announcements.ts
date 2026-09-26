@@ -4,7 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { ApiContractError, ApiError } from "@/lib/api";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import { listBoardAnnouncements } from "../adapters/board-announcements-api";
-import type { BoardAnnouncementPage } from "../adapters/board-announcements-api";
+import type {
+  BoardAnnouncementListOptions,
+  BoardAnnouncementPage,
+} from "../adapters/board-announcements-api";
 import {
   listBoardAnnouncementPersonal,
   putBoardAnnouncementBookmark,
@@ -181,6 +184,32 @@ export type AnnouncementPersonalById = Record<
   BoardAnnouncementPersonalState
 >;
 
+export type PublishedAnnouncementSort = "newest" | "oldest" | "title";
+export type AnnouncementFeedQueryOptions = {
+  limit: number;
+  sortBy: NonNullable<BoardAnnouncementListOptions["sortBy"]>;
+  sortOrder: NonNullable<BoardAnnouncementListOptions["sortOrder"]>;
+};
+
+export const defaultAnnouncementFeedQuery: AnnouncementFeedQueryOptions = {
+  limit: 25,
+  sortBy: "updated_at",
+  sortOrder: "desc",
+};
+
+export function announcementFeedQueryForSort(
+  sort: PublishedAnnouncementSort,
+): Pick<AnnouncementFeedQueryOptions, "sortBy" | "sortOrder"> {
+  switch (sort) {
+    case "newest":
+      return { sortBy: "updated_at", sortOrder: "desc" };
+    case "oldest":
+      return { sortBy: "updated_at", sortOrder: "asc" };
+    case "title":
+      return { sortBy: "title", sortOrder: "asc" };
+  }
+}
+
 export type AnnouncementFeedState = {
   key: string | null;
   sequence: number;
@@ -323,6 +352,7 @@ export function announcementFeedKey(
   actorId: string,
   appliedSearch = "",
   authorId: string | null = null,
+  options: AnnouncementFeedQueryOptions = defaultAnnouncementFeedQuery,
 ): string {
   return JSON.stringify([
     boardId,
@@ -330,6 +360,9 @@ export function announcementFeedKey(
     offset,
     normalizePublishedAnnouncementSearch(appliedSearch),
     authorId,
+    options.limit,
+    options.sortBy,
+    options.sortOrder,
   ]);
 }
 
@@ -343,6 +376,7 @@ export async function loadPublishedAnnouncementFeed(
   onHidden: () => void = () => {},
   appliedSearch = "",
   authorId: string | null = null,
+  options: AnnouncementFeedQueryOptions = defaultAnnouncementFeedQuery,
 ): Promise<{
   page: BoardAnnouncementPage;
   personal: AnnouncementPersonalById;
@@ -350,10 +384,10 @@ export async function loadPublishedAnnouncementFeed(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const page = await listBoardAnnouncements(boardId, {
       view: "published",
-      limit: 25,
+      limit: options.limit,
       offset,
-      sortBy: "updated_at",
-      sortOrder: "desc",
+      sortBy: options.sortBy,
+      sortOrder: options.sortOrder,
       search: normalizePublishedAnnouncementSearch(appliedSearch) || undefined,
       authorId: authorId ?? undefined,
     });
@@ -392,6 +426,7 @@ export function useServerBoardAnnouncements(
   appliedSearch = "",
   authorId: string | null = null,
   enabled = true,
+  options: AnnouncementFeedQueryOptions = defaultAnnouncementFeedQuery,
 ) {
   const actorId = useVerifiedWorkspaceUserId();
   const [state, setState] = useState<AnnouncementFeedState>(initialState);
@@ -405,6 +440,7 @@ export function useServerBoardAnnouncements(
     actorId,
     normalizedSearch,
     authorId,
+    options,
   );
 
   useEffect(() => {
@@ -440,6 +476,7 @@ export function useServerBoardAnnouncements(
       },
       normalizedSearch,
       authorId,
+      options,
     )
       .then(({ page, personal }) => {
         if (request !== sequence.current) return;
@@ -477,6 +514,9 @@ export function useServerBoardAnnouncements(
     offset,
     refreshKey,
     retryKey,
+    options.limit,
+    options.sortBy,
+    options.sortOrder,
   ]);
 
   async function toggle(

@@ -1,10 +1,11 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../../src/lib/api";
 import type { BoardAnnouncementPage } from "../../src/components/systems/boards/adapters/board-announcements-api";
-import { ServerBoardAnnouncementFeedDisplay } from "../../src/components/systems/boards/components/server-backed-board-announcements";
+import { ServerBoardAnnouncementReaderContent } from "../../src/components/systems/boards/components/server-board-announcement-feed-display";
 import {
+  announcementFeedQueryForSort,
   announcementFeedKey,
   announcementFeedFailure,
   announcementAuthorChoiceFailure,
@@ -21,6 +22,7 @@ const otherBoardId = "00000000-0000-4000-8000-000000000002";
 const otherUserId = "00000000-0000-4000-8000-000000000007";
 const announcementId = "00000000-0000-4000-8000-000000000003";
 const authorId = "00000000-0000-4000-8000-000000000004";
+const viewerId = otherUserId;
 const publishedAt = "2026-09-23T00:00:00Z";
 const page: BoardAnnouncementPage = {
   items: [
@@ -78,6 +80,24 @@ const wireAnnouncement = {
   updated_at: publishedAt,
 };
 
+const browserAnnouncement = {
+  ...wireAnnouncement,
+  body: "Use the new entrance.\n<script>not markup</script>",
+};
+
+const browserBoard = {
+  id: boardId,
+  owner_id: viewerId,
+  department_id: null,
+  name: "Operations board",
+  description: "Current authorized workspace content",
+  status: "active",
+  default_section: "announcements",
+  revision: 4,
+  created_at: publishedAt,
+  updated_at: publishedAt,
+};
+
 function wirePage(items: unknown[]) {
   return {
     items,
@@ -104,6 +124,144 @@ function installFetch(responder: (path: string) => Response) {
     paths,
     restore: () => {
       globalThis.fetch = original;
+    },
+  };
+}
+
+async function installAnnouncementBrowserApi(page: Page) {
+  let authorChoices = [{ id: authorId, label: "Avery" }];
+  let publishedItems = [browserAnnouncement];
+  const personalRows = [
+    {
+      announcement_id: announcementId,
+      publication_number: 1,
+      read: false,
+      bookmarked: true,
+    },
+  ];
+  let personalBarrier: Promise<void> | null = null;
+  let releasePersonalBarrier: (() => void) | null = null;
+  let personalRequestObserved = Promise.resolve();
+  let observePersonalRequest: (() => void) | null = null;
+
+  await page.route("**/api/**", (route) =>
+    route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "Unmocked announcement test API route" }),
+    }),
+  );
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        authenticated: true,
+        user_id: viewerId,
+        setup_required: false,
+      }),
+    }),
+  );
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ today: "2026-09-23" }),
+    }),
+  );
+  await page.route("**/api/views/data-sources**", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 0,
+          total: 0,
+          has_more: false,
+        },
+      }),
+    }),
+  );
+  await page.route("**/api/boards**", async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname;
+    const prefix = `/api/boards/${boardId}`;
+    const reply = (status: number, body: unknown) =>
+      route.fulfill({
+        status,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+    if (path === "/api/boards/personal")
+      return reply(200, { favorite_board_ids: [], home_board_id: null });
+    if (path === "/api/boards")
+      return reply(200, {
+        items: [browserBoard],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      });
+    if (path === `${prefix}/my-access`)
+      return reply(200, { view: true, edit: true, manage: true });
+    if (path === `${prefix}/content-audience-targets`)
+      return reply(200, {
+        items: [],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 0,
+          total: 0,
+          has_more: false,
+        },
+      });
+    if (path === `${prefix}/announcement-authors`)
+      return reply(200, authorChoices);
+    if (path === `${prefix}/announcements`) {
+      const view = url.searchParams.get("view");
+      return reply(200, wirePage(view === "published" ? publishedItems : []));
+    }
+    if (path === `${prefix}/announcement-personal`) {
+      observePersonalRequest?.();
+      if (personalBarrier) await personalBarrier;
+      const requestedIds = url.searchParams.getAll("announcement_id");
+      return reply(
+        200,
+        personalRows.filter((row) =>
+          requestedIds.includes(row.announcement_id),
+        ),
+      );
+    }
+    if (path === prefix) return reply(200, browserBoard);
+    return reply(404, { detail: "Unmocked announcement test API route" });
+  });
+
+  return {
+    setAuthorChoices(choices: typeof authorChoices) {
+      authorChoices = choices;
+    },
+    setPublishedItems(items: typeof publishedItems) {
+      publishedItems = items;
+    },
+    holdPersonalResponse() {
+      personalBarrier = new Promise<void>((resolve) => {
+        releasePersonalBarrier = resolve;
+      });
+      personalRequestObserved = new Promise<void>((resolve) => {
+        observePersonalRequest = resolve;
+      });
+    },
+    waitForPersonalRequest() {
+      return personalRequestObserved;
+    },
+    releasePersonalResponse() {
+      releasePersonalBarrier?.();
+      personalBarrier = null;
+      releasePersonalBarrier = null;
+      observePersonalRequest = null;
     },
   };
 }
@@ -212,6 +370,72 @@ test("selected visible author is sent as a server filter and isolated in the fee
   }
 });
 
+test("published sort and page size reach the server before offset paging", async () => {
+  const mock = installFetch(() =>
+    Response.json({
+      ...wirePage([]),
+      pagination: {
+        limit: 5,
+        offset: 10,
+        count: 0,
+        total: 12,
+        has_more: true,
+      },
+    }),
+  );
+  try {
+    const sorts = [
+      {
+        selection: "newest" as const,
+        expectedBy: "updated_at",
+        expectedOrder: "desc",
+      },
+      {
+        selection: "oldest" as const,
+        expectedBy: "updated_at",
+        expectedOrder: "asc",
+      },
+      {
+        selection: "title" as const,
+        expectedBy: "title",
+        expectedOrder: "asc",
+      },
+    ];
+    for (const [index, sort] of sorts.entries()) {
+      const options = {
+        limit: 5,
+        ...announcementFeedQueryForSort(sort.selection),
+      };
+      const loaded = await loadPublishedAnnouncementFeed(
+        boardId,
+        10,
+        () => {},
+        "",
+        null,
+        options,
+      );
+      const query = new URL(mock.paths[index] ?? "", "https://example.test")
+        .searchParams;
+      expect(query.get("limit")).toBe("5");
+      expect(query.get("offset")).toBe("10");
+      expect(query.get("sort_by")).toBe(sort.expectedBy);
+      expect(query.get("sort_order")).toBe(sort.expectedOrder);
+      expect(loaded.page.pagination).toMatchObject({
+        limit: 5,
+        offset: 10,
+        total: 12,
+        hasMore: true,
+      });
+      if (sort.selection === "title")
+        expect(
+          announcementFeedKey(boardId, 10, authorId, "", null, options),
+        ).not.toBe(announcementFeedKey(boardId, 10, authorId));
+    }
+  } finally {
+    mock.restore();
+  }
+});
+
 test("author choices clear across identity or denial and remove an author that disappears", () => {
   const firstKey = `${authorId}:${boardId}`;
   const secondKey = `${otherUserId}:${boardId}`;
@@ -312,47 +536,50 @@ test("hidden item in batch clears old page and refetches published content once"
   }
 });
 
-test("published announcement feed renders returned revision as safe text without sample fallback", () => {
-  const html = renderToStaticMarkup(
-    createElement(ServerBoardAnnouncementFeedDisplay, { page }),
-  );
-  expect(html).toContain("Published safety update");
-  expect(html).toContain("Use the new entrance.");
-  expect(html).toContain("&lt;script&gt;not markup&lt;/script&gt;");
-  expect(html).toContain("Pinned");
-  expect(html).not.toContain("sample-board");
-  expect(html).not.toContain("Unpublished replacement");
+test("published feed shows only returned safe text and clears when the server returns an empty page", async ({
+  page,
+}) => {
+  const api = await installAnnouncementBrowserApi(page);
+  await page.goto(`/boards?board=${boardId}&section=announcements`);
 
-  const empty = renderToStaticMarkup(
-    createElement(ServerBoardAnnouncementFeedDisplay, {
-      page: {
-        ...page,
-        items: [],
-        pagination: { ...page.pagination, count: 0, total: 0 },
-      },
-    }),
+  await expect(
+    page.getByRole("heading", { name: "Published safety update" }),
+  ).toBeVisible();
+  await expect(page.getByText("Pinned", { exact: true })).toBeVisible();
+  const summary = page.locator("article p").first();
+  await expect(summary).toBeVisible();
+  expect(await summary.textContent()).toBe(browserAnnouncement.body);
+  await expect(page.locator("article script")).toHaveCount(0);
+  expect(await page.locator("body").innerText()).not.toContain("sample-board");
+  expect(await page.locator("body").innerText()).not.toContain(
+    "Unpublished replacement",
   );
-  expect(empty).toContain("No published announcements");
-  expect(empty).not.toContain("Published safety update");
+
+  api.setPublishedItems([]);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "No published announcements" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Published safety update" }),
+  ).toHaveCount(0);
 });
 
-test("published card author byline uses only an authorized choice label or a generic fallback", () => {
-  const named = renderToStaticMarkup(
-    createElement(ServerBoardAnnouncementFeedDisplay, {
-      page,
-      authorLabels: { [authorId]: "Avery" },
-    }),
-  );
-  expect(named).toContain("Avery");
-  expect(named).not.toContain(authorId);
-  const absent = renderToStaticMarkup(
-    createElement(ServerBoardAnnouncementFeedDisplay, {
-      page,
-      authorLabels: {},
-    }),
-  );
-  expect(absent).toContain("Author unavailable");
-  expect(absent).not.toContain(authorId);
+test("published card author byline uses only an authorized choice label or a generic fallback", async ({
+  page,
+}) => {
+  const api = await installAnnouncementBrowserApi(page);
+  await page.goto(`/boards?board=${boardId}&section=announcements`);
+
+  await expect(page.getByText("Avery", { exact: true })).toBeVisible();
+  await expect(page.getByText(authorId, { exact: true })).toHaveCount(0);
+
+  api.setAuthorChoices([]);
+  await page.reload();
+  await expect(
+    page.getByText("Author unavailable", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(authorId, { exact: true })).toHaveCount(0);
 });
 
 test("published announcement revision renders its validated external links safely", () => {
@@ -371,7 +598,9 @@ test("published announcement revision renders its validated external links safel
     ],
   };
   const html = renderToStaticMarkup(
-    createElement(ServerBoardAnnouncementFeedDisplay, { page: linked }),
+    createElement(ServerBoardAnnouncementReaderContent, {
+      announcement: linked.items[0],
+    }),
   );
   expect(html).toContain("Policy &lt;script&gt;update&lt;/script&gt;");
   expect(html).toContain('href="https://example.org/policy?a=1&amp;b=2"');
@@ -381,31 +610,40 @@ test("published announcement revision renders its validated external links safel
   expect(html).not.toContain("<script>");
 });
 
-test("published feed shows personal flags only after authoritative batch state loads", () => {
-  const unresolved = renderToStaticMarkup(
-    createElement(ServerBoardAnnouncementFeedDisplay, { page }),
-  );
-  expect(unresolved).not.toContain("Unread");
-  expect(unresolved).not.toContain("Mark as read");
-  expect(unresolved).not.toContain("Bookmark</button>");
+test("published personal flags stay hidden until the authoritative batch response resolves", async ({
+  page,
+}) => {
+  const api = await installAnnouncementBrowserApi(page);
+  api.holdPersonalResponse();
+  try {
+    await page.goto(`/boards?board=${boardId}&section=announcements`);
+    await api.waitForPersonalRequest();
 
-  const loaded = renderToStaticMarkup(
-    createElement(ServerBoardAnnouncementFeedDisplay, {
-      page,
-      personal: {
-        [announcementId]: {
-          announcementId,
-          publicationNumber: 1,
-          read: false,
-          bookmarked: true,
-        },
-      },
-    }),
-  );
-  expect(loaded).toContain("Unread");
-  expect(loaded).toContain("Mark as read");
-  expect(loaded).toContain("Bookmarked");
-  expect(loaded).toContain('aria-pressed="true"');
+    await expect(
+      page.getByRole("heading", { name: "Published safety update" }),
+    ).toHaveCount(0);
+    await expect(page.getByText("Unread", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Mark as read" }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Bookmarked" })).toHaveCount(
+      0,
+    );
+
+    api.releasePersonalResponse();
+    await expect(
+      page.getByRole("heading", { name: "Published safety update" }),
+    ).toBeVisible();
+    await expect(page.getByText("Unread", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Mark as read" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Bookmarked" }),
+    ).toBeVisible();
+  } finally {
+    api.releasePersonalResponse();
+  }
 });
 
 test("announcement feed clears denied and switched private content and ignores stale responses", () => {

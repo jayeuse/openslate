@@ -675,6 +675,46 @@ test("calendar shows returned event details as escaped plain text", () => {
   expect(html).not.toContain("<safety>");
 });
 
+test("calendar keeps Agenda details inline and offers compact event details on demand", () => {
+  const detailed = {
+    ...visibleOccurrence,
+    event: {
+      ...visibleOccurrence.event,
+      details: "Bring the planning checklist.",
+      location: "Room 3",
+    },
+  };
+  const detailedPage = { ...page, items: [detailed] };
+  const window = calendarWindowForMonth("2026-09");
+  const agenda = renderToStaticMarkup(
+    createElement(ServerBoardCalendarDisplay, {
+      page: detailedPage,
+      window,
+      canEditEvent: () => true,
+      onEditEvent: () => undefined,
+    }),
+  );
+  expect(agenda).toContain("Bring the planning checklist.");
+  expect(agenda).toContain("Edit event");
+  expect(agenda).not.toContain("<details");
+
+  const compactProps = {
+    page: detailedPage,
+    window,
+    date: "2026-09-14",
+    compact: true,
+    canEditEvent: () => true,
+    onEditEvent: () => undefined,
+  };
+  const selectedDay = renderToStaticMarkup(
+    createElement(ServerBoardCalendarDisplay, compactProps),
+  );
+  expect(selectedDay).toContain("Visible planning session");
+  expect(selectedDay).toContain("Room 3");
+  expect(selectedDay).toContain("View event");
+  expect(selectedDay).toContain("<details");
+});
+
 test("timed occurrence displays its event timezone without changing its date", () => {
   const timed: BoardEventOccurrencePage["items"][number] = {
     ...visibleOccurrence,

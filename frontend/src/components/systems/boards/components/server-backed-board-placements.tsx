@@ -1,9 +1,30 @@
 "use client";
 
-import { createElement, useEffect, useRef, useState } from "react";
+import { createElement, useEffect, useId, useRef, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import { PaginationControls } from "@/components/ui/pagination-controls";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { ApiContractError, ApiError } from "@/lib/api";
 import {
   createBoardPlacement,
@@ -26,6 +47,7 @@ import {
 import { BoardEmpty } from "./ui";
 
 const PAGE_SIZE = 25;
+const PLACEMENT_PAGE_SIZE_OPTIONS = [5, 10, 25] as const;
 const LABEL_TYPES = new Set(["text", "long_text", "email", "url", "select"]);
 
 export type PlacementWorkspaceState = {
@@ -180,98 +202,156 @@ export function ServerBoardPlacementsDisplay({
   canEdit = false,
   pending = false,
   onRemove,
+  onAddShortcut,
+  sources,
 }: {
   page: BoardPlacementPage;
   canEdit?: boolean;
   pending?: boolean;
   onRemove?: (placementId: string) => void;
+  onAddShortcut?: () => void;
+  sources?: OpenViewDataSource[];
 }) {
   return createElement(
     "section",
     { "aria-label": "Linked records", className: "min-w-0" },
     createElement(
       "div",
-      { className: "mb-4 flex flex-wrap items-baseline justify-between gap-2" },
+      { className: "mb-4 flex flex-wrap items-center justify-between gap-3" },
       createElement(
-        "h2",
-        { className: "text-lg font-semibold" },
-        "Linked records",
+        "div",
+        { className: "min-w-0" },
+        createElement(
+          "h2",
+          { className: "text-lg font-semibold" },
+          "Linked records",
+        ),
+        createElement(
+          "p",
+          { className: "text-muted-foreground text-sm", role: "status" },
+          `${page.pagination.total} record shortcuts`,
+        ),
+      ),
+      canEdit && onAddShortcut
+        ? createElement(
+            Button,
+            {
+              type: "button",
+              variant: "outline",
+              className: "min-h-11",
+              disabled: pending,
+              onClick: onAddShortcut,
+            },
+            "Add shortcut",
+          )
+        : null,
+    ),
+    createElement(
+      Table,
+      { "aria-label": "Linked record shortcuts" },
+      createElement(
+        TableHeader,
+        null,
+        createElement(
+          TableRow,
+          null,
+          createElement(TableHead, null, "Record"),
+          createElement(TableHead, null, "Source"),
+          createElement(TableHead, { className: "text-right" }, "Action"),
+        ),
       ),
       createElement(
-        "p",
-        { className: "text-muted-foreground text-sm", role: "status" },
-        `${page.pagination.total} record shortcuts`,
+        TableBody,
+        null,
+        page.items.length === 0
+          ? createElement(
+              TableRow,
+              null,
+              createElement(
+                TableCell,
+                {
+                  colSpan: 3,
+                  className:
+                    "text-muted-foreground whitespace-normal py-6 text-sm",
+                },
+                canEdit
+                  ? "No linked records on this page. Add a shortcut to make an OpenView record easy to reach."
+                  : "No linked records on this page.",
+              ),
+            )
+          : page.items.map((placement) => {
+              const sourceName =
+                placement.available && placement.moduleId
+                  ? sources?.find((source) => source.id === placement.moduleId)
+                      ?.name
+                  : null;
+              return createElement(
+                TableRow,
+                { key: placement.id },
+                createElement(
+                  TableCell,
+                  { className: "whitespace-normal" },
+                  createElement(
+                    "p",
+                    { className: "font-medium" },
+                    placement.available
+                      ? "Record shortcut"
+                      : "Unavailable record",
+                  ),
+                  createElement(
+                    "p",
+                    { className: "text-muted-foreground text-sm" },
+                    placement.available
+                      ? "OpenView checks your record access again when you open it."
+                      : "This record or its source is no longer available.",
+                  ),
+                ),
+                createElement(
+                  TableCell,
+                  {
+                    className:
+                      "text-muted-foreground max-w-48 whitespace-normal",
+                  },
+                  placement.available
+                    ? sourceName || "Source name unavailable"
+                    : "Unavailable source",
+                ),
+                createElement(
+                  TableCell,
+                  { className: "whitespace-normal" },
+                  createElement(
+                    "div",
+                    { className: "flex flex-wrap justify-end gap-2" },
+                    placement.available && placement.moduleId
+                      ? createElement(
+                          "a",
+                          {
+                            className:
+                              "border-border bg-card hover:bg-muted inline-flex min-h-11 items-center rounded-md border px-3 text-sm font-medium",
+                            href: `/openview?module=${encodeURIComponent(placement.moduleId)}&record=${encodeURIComponent(placement.recordId)}`,
+                          },
+                          "Open record",
+                        )
+                      : null,
+                    canEdit && onRemove
+                      ? createElement(
+                          Button,
+                          {
+                            type: "button",
+                            variant: "outline",
+                            className: "min-h-11",
+                            disabled: pending,
+                            onClick: () => onRemove(placement.id),
+                          },
+                          "Remove shortcut",
+                        )
+                      : null,
+                  ),
+                ),
+              );
+            }),
       ),
     ),
-    page.items.length === 0
-      ? createElement(
-          "p",
-          {
-            className:
-              "border-border text-muted-foreground rounded-xl border border-dashed p-6 text-sm",
-          },
-          "No linked records on this page. Choose a record below to add a shortcut to this Board.",
-        )
-      : createElement(
-          "ul",
-          { className: "flex min-w-0 flex-col gap-3" },
-          ...page.items.map((placement) =>
-            createElement(
-              "li",
-              {
-                key: placement.id,
-                className:
-                  "border-border bg-card flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-xl border p-4",
-              },
-              createElement(
-                "div",
-                { className: "min-w-0" },
-                createElement(
-                  "p",
-                  { className: "font-medium" },
-                  placement.available
-                    ? "Record shortcut"
-                    : "Unavailable record",
-                ),
-                createElement(
-                  "p",
-                  { className: "text-muted-foreground text-sm" },
-                  placement.available
-                    ? "OpenView checks your record access again when you open it."
-                    : "This record or its source is no longer available.",
-                ),
-              ),
-              createElement(
-                "div",
-                { className: "flex flex-wrap items-center gap-2" },
-                placement.available && placement.moduleId
-                  ? createElement(
-                      "a",
-                      {
-                        className:
-                          "border-border bg-card hover:bg-muted inline-flex min-h-11 items-center rounded-md border px-4 text-sm font-medium",
-                        href: `/openview?module=${encodeURIComponent(placement.moduleId)}&record=${encodeURIComponent(placement.recordId)}`,
-                      },
-                      "Open record",
-                    )
-                  : null,
-                canEdit && onRemove
-                  ? createElement(
-                      "button",
-                      {
-                        type: "button",
-                        className:
-                          "border-border bg-card hover:bg-muted min-h-11 rounded-md border px-4 text-sm font-medium disabled:opacity-50",
-                        disabled: pending,
-                        onClick: () => onRemove(placement.id),
-                      },
-                      "Remove shortcut",
-                    )
-                  : null,
-              ),
-            ),
-          ),
-        ),
   );
 }
 
@@ -293,10 +373,12 @@ export function ServerBackedBoardPlacements({
   refreshKey: number;
   onAccessDenied: () => void;
 }) {
+  const pageSizeControlId = useId();
   const [placementPaging, setPlacementPaging] = useState({
     boardId,
     offset: 0,
   });
+  const [placementPageSize, setPlacementPageSize] = useState<number>(PAGE_SIZE);
   const offset =
     placementPaging.boardId === boardId ? placementPaging.offset : 0;
   const [refresh, setRefresh] = useState(0);
@@ -307,7 +389,7 @@ export function ServerBackedBoardPlacements({
   useEffect(() => {
     onAccessDeniedRef.current = onAccessDenied;
   }, [onAccessDenied]);
-  const workspaceKey = `${boardId}:${offset}:${refreshKey}:${refresh}`;
+  const workspaceKey = `${boardId}:${placementPageSize}:${offset}:${refreshKey}:${refresh}`;
   const currentWorkspace =
     workspace.key === workspaceKey ? workspace : emptyPlacementWorkspaceState;
   const [sourcePaging, setSourcePaging] = useState({ boardId, offset: 0 });
@@ -342,16 +424,23 @@ export function ServerBackedBoardPlacements({
   const [pending, setPending] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     currentBoard.current = boardId;
     setPending(false);
     setConflict(false);
     setMutationError(null);
+    setPickerOpen(false);
     return () => {
       currentBoard.current = "";
     };
   }, [boardId]);
+
+  useEffect(() => {
+    if (!boardActive || currentWorkspace.access?.edit === false)
+      setPickerOpen(false);
+  }, [boardActive, currentWorkspace.access?.edit]);
 
   useEffect(() => {
     const sequence = ++workspaceSequence.current;
@@ -364,15 +453,25 @@ export function ServerBackedBoardPlacements({
     );
     void Promise.all([
       getMyBoardAccess(boardId),
-      listBoardPlacements(boardId, { limit: PAGE_SIZE, offset }),
+      listBoardPlacements(boardId, { limit: placementPageSize, offset }),
     ])
       .then(([access, page]) => {
         if (sequence !== workspaceSequence.current) return;
         if (
+          page.pagination.limit !== placementPageSize ||
           page.pagination.offset !== offset ||
           page.pagination.count !== page.items.length
         )
           throw new ApiContractError();
+        if (offset > 0 && offset >= page.pagination.total) {
+          const lastValidOffset =
+            page.pagination.total === 0
+              ? 0
+              : Math.floor((page.pagination.total - 1) / placementPageSize) *
+                placementPageSize;
+          setPlacementPaging({ boardId, offset: lastValidOffset });
+          return;
+        }
         setWorkspace((state) =>
           transitionPlacementWorkspace(state, {
             type: "resolve",
@@ -397,12 +496,15 @@ export function ServerBackedBoardPlacements({
             retain: false,
           }),
         );
-        if (result.denied) onAccessDeniedRef.current();
+        if (result.denied) {
+          setPickerOpen(false);
+          onAccessDeniedRef.current();
+        }
       });
     return () => {
       workspaceSequence.current += 1;
     };
-  }, [boardId, offset, workspaceKey]);
+  }, [boardId, offset, placementPageSize, workspaceKey]);
 
   useEffect(() => {
     const sequence = ++sourceSequence.current;
@@ -429,6 +531,7 @@ export function ServerBackedBoardPlacements({
               : "Could not load record sources. Try again.",
         });
         if (choiceQueryRevokedBoardAccess(error)) {
+          setPickerOpen(false);
           const deniedSequence = ++workspaceSequence.current;
           setWorkspace({
             key: workspaceKey,
@@ -478,6 +581,7 @@ export function ServerBackedBoardPlacements({
               : "Could not load records. Try again.",
         });
         if (choiceQueryRevokedBoardAccess(error)) {
+          setPickerOpen(false);
           const deniedSequence = ++workspaceSequence.current;
           setWorkspace({
             key: workspaceKey,
@@ -512,7 +616,10 @@ export function ServerBackedBoardPlacements({
     page?.items.some((placement) => placement.recordId === selectedRecordId) ??
     false;
 
-  async function mutate(action: () => Promise<unknown>): Promise<void> {
+  async function mutate(
+    action: () => Promise<unknown>,
+    onSuccess?: () => void,
+  ): Promise<void> {
     if (!page || !canEdit || pending || conflict) return;
     const actionBoardId = boardId;
     setPending(true);
@@ -522,12 +629,14 @@ export function ServerBackedBoardPlacements({
       if (currentBoard.current !== actionBoardId) return;
       setSelection((value) => ({ ...value, recordId: "" }));
       setRefresh((value) => value + 1);
+      onSuccess?.();
     } catch (error) {
       if (currentBoard.current !== actionBoardId) return;
       const result = failure(error);
       setMutationError(result.message);
       if (error instanceof ApiError && error.status === 409) setConflict(true);
       if (result.denied) {
+        setPickerOpen(false);
         const sequence = ++workspaceSequence.current;
         setWorkspace((state) =>
           transitionPlacementWorkspace(state, {
@@ -553,336 +662,446 @@ export function ServerBackedBoardPlacements({
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+      <div className="flex min-w-0 flex-col gap-5">
         <p className="text-muted-foreground text-sm">
           Shortcuts do not grant access to a record. OpenView checks record
           access separately.
         </p>
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11"
-          disabled={pending}
-          onClick={() => setRefresh((value) => value + 1)}
-        >
-          Refresh shortcuts
-        </Button>
-      </div>
-      {(currentWorkspace.error || mutationError) && (
-        <Alert variant="destructive">
-          <span>{mutationError ?? currentWorkspace.error}</span>
-          {conflict && (
-            <span>
-              {" "}
-              Refresh latest Board shortcuts before choosing whether to retry.
-            </span>
-          )}
-        </Alert>
-      )}
-      {!page && currentWorkspace.status !== "error" && (
-        <p role="status" className="text-muted-foreground py-8 text-sm">
-          Loading linked records…
-        </p>
-      )}
-      {!page && currentWorkspace.status === "error" && (
-        <BoardEmpty
-          title="Linked records unavailable"
-          description="No shortcuts are shown. Retry or ask a Board manager to check your access."
-        />
-      )}
-      {page && (
-        <>
-          <ServerBoardPlacementsDisplay
-            page={page}
-            canEdit={canEdit && !conflict}
-            pending={pending}
-            onRemove={(placementId) =>
-              void mutate(() =>
-                deleteBoardPlacement(boardId, placementId, page.boardRevision),
-              )
-            }
-          />
-          {(page.pagination.total > PAGE_SIZE || offset > 0) && (
-            <nav
-              aria-label="Linked record pages"
-              className="flex items-center gap-2"
+        {currentWorkspace.error && (
+          <Alert variant="destructive">
+            <span>{currentWorkspace.error}</span>
+            <Button
+              type="button"
+              variant="outline"
+              className="ml-2 min-h-11"
+              disabled={pending}
+              onClick={() => setRefresh((value) => value + 1)}
             >
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                disabled={offset === 0 || pending}
-                onClick={() =>
-                  setPlacementPaging({
-                    boardId,
-                    offset: Math.max(0, offset - PAGE_SIZE),
-                  })
-                }
-              >
-                Previous
-              </Button>
-              <span className="text-muted-foreground text-sm">
-                Page {Math.floor(offset / PAGE_SIZE) + 1}
+              Retry
+            </Button>
+          </Alert>
+        )}
+        {mutationError && !pickerOpen && (
+          <Alert variant="destructive">
+            <span>{mutationError}</span>
+            {conflict && (
+              <span>
+                {" "}
+                Refresh latest Board shortcuts before choosing whether to retry.
               </span>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                disabled={!page.pagination.hasMore || pending}
-                onClick={() =>
-                  setPlacementPaging({ boardId, offset: offset + PAGE_SIZE })
-                }
-              >
-                Next
-              </Button>
-            </nav>
-          )}
-          {canEdit && (
-            <section
-              aria-label="Add record shortcut"
-              className="border-border rounded-xl border p-4 sm:p-5"
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              className="ml-2 min-h-11"
+              disabled={pending}
+              onClick={() => setRefresh((value) => value + 1)}
             >
-              <h3 className="font-semibold">Add record shortcut</h3>
-              <p className="text-muted-foreground mt-1 text-sm">
-                Choose an authorized source and record; this does not copy
-                record data to the Board.
+              Retry
+            </Button>
+          </Alert>
+        )}
+        {!page && currentWorkspace.status !== "error" && (
+          <p role="status" className="text-muted-foreground py-8 text-sm">
+            Loading linked records…
+          </p>
+        )}
+        {!page && currentWorkspace.status === "error" && (
+          <BoardEmpty
+            title="Linked records unavailable"
+            description="No shortcuts are shown. Retry or ask a Board manager to check your access."
+          />
+        )}
+        {page && (
+          <>
+            <ServerBoardPlacementsDisplay
+              page={page}
+              canEdit={canEdit && !conflict}
+              pending={pending}
+              sources={sourcePage?.items}
+              onAddShortcut={() => setPickerOpen(true)}
+              onRemove={(placementId) =>
+                void mutate(() =>
+                  deleteBoardPlacement(
+                    boardId,
+                    placementId,
+                    page.boardRevision,
+                  ),
+                )
+              }
+            />
+            <div className="bg-card flex min-w-0 flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-muted-foreground text-sm" role="status">
+                {page.pagination.total === 0
+                  ? "No linked records"
+                  : page.pagination.count > 0
+                    ? `Showing ${page.pagination.offset + 1}–${page.pagination.offset + page.pagination.count} of ${page.pagination.total}`
+                    : `No shortcuts on this page · ${page.pagination.total} total`}
               </p>
-              <div className="mt-4 flex flex-col gap-3">
-                <label
-                  htmlFor="board-placement-source"
-                  className="text-sm font-medium"
-                >
-                  Record source
-                </label>
-                <select
-                  id="board-placement-source"
-                  className="border-input bg-background min-h-11 rounded-md border px-3"
-                  value={selectedModuleId}
-                  disabled={!sourcePage || pending || conflict}
-                  onChange={(event) => {
-                    const moduleId = event.target.value;
-                    setSelection({ boardId, moduleId, recordId: "" });
-                    setQuery({ boardId, moduleId, search: "", offset: 0 });
-                    setSearchDraft("");
-                  }}
-                >
-                  <option value="">Choose a source</option>
-                  {sourcePage?.items.map((source) => (
-                    <option key={source.id} value={source.id}>
-                      {source.name}
-                    </option>
-                  ))}
-                </select>
-                {sources?.key === sourceKey && sources.error && (
-                  <p role="alert" className="text-destructive text-sm">
-                    {sources.error}
-                  </p>
-                )}
-                {sourcePage &&
-                  (sourcePage.pagination.hasMore || sourceOffset > 0) && (
-                    <nav
-                      aria-label="Record source pages"
-                      className="flex items-center gap-2"
-                    >
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={sourceOffset === 0 || pending}
-                        onClick={() => {
-                          setSelection({ boardId, moduleId: "", recordId: "" });
-                          setQuery({
-                            boardId,
-                            moduleId: "",
-                            search: "",
-                            offset: 0,
-                          });
-                          setSourcePaging({
-                            boardId,
-                            offset: Math.max(0, sourceOffset - PAGE_SIZE),
-                          });
-                        }}
-                      >
-                        Previous sources
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={!sourcePage.pagination.hasMore || pending}
-                        onClick={() => {
-                          setSelection({ boardId, moduleId: "", recordId: "" });
-                          setQuery({
-                            boardId,
-                            moduleId: "",
-                            search: "",
-                            offset: 0,
-                          });
-                          setSourcePaging({
-                            boardId,
-                            offset: sourceOffset + PAGE_SIZE,
-                          });
-                        }}
-                      >
-                        Next sources
-                      </Button>
-                    </nav>
-                  )}
-                {selectedModuleId && (
-                  <>
-                    <form
-                      className="flex flex-wrap items-end gap-2"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        setSelection((value) => ({ ...value, recordId: "" }));
-                        setQuery({
-                          boardId,
-                          moduleId: selectedModuleId,
-                          search: searchDraft,
-                          offset: 0,
-                        });
-                      }}
-                    >
-                      <label
-                        htmlFor="board-placement-search"
-                        className="flex min-w-48 flex-1 flex-col gap-1 text-sm font-medium"
-                      >
-                        Find a record
-                        <Input
-                          id="board-placement-search"
-                          value={searchDraft}
-                          maxLength={240}
-                          disabled={pending || conflict}
-                          onChange={(event) =>
-                            setSearchDraft(event.target.value)
-                          }
-                        />
-                      </label>
-                      <Button
-                        type="submit"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={pending || conflict}
-                      >
-                        Search
-                      </Button>
-                    </form>
-                    <label
-                      htmlFor="board-placement-record"
-                      className="text-sm font-medium"
-                    >
-                      Record
-                    </label>
-                    <select
-                      id="board-placement-record"
-                      className="border-input bg-background min-h-11 rounded-md border px-3"
-                      value={selectedRecord?.id ?? ""}
-                      disabled={!recordPage || pending || conflict}
-                      onChange={(event) =>
-                        setSelection((value) => ({
-                          ...value,
-                          recordId: event.target.value,
-                        }))
-                      }
-                    >
-                      <option value="">Choose a record</option>
-                      {recordPage?.choices.map((choice) => (
-                        <option key={choice.id} value={choice.id}>
-                          {choice.label}
-                        </option>
-                      ))}
-                    </select>
-                    {records?.key === recordKey && records.error && (
-                      <p role="alert" className="text-destructive text-sm">
-                        {records.error}
-                      </p>
+              <div className="flex flex-wrap items-center gap-3 sm:justify-end">
+                <div className="flex items-center gap-2">
+                  <label
+                    htmlFor={`board-placement-page-size-${pageSizeControlId}`}
+                    className="text-muted-foreground text-sm"
+                  >
+                    Rows per page
+                  </label>
+                  <NativeSelect
+                    id={`board-placement-page-size-${pageSizeControlId}`}
+                    aria-label="Rows per page"
+                    className="w-20 [&_select]:min-h-11"
+                    value={String(placementPageSize)}
+                    disabled={pending || currentWorkspace.status === "loading"}
+                    onChange={(event) => {
+                      const nextPageSize = PLACEMENT_PAGE_SIZE_OPTIONS.find(
+                        (option) =>
+                          String(option) === event.currentTarget.value,
+                      );
+                      if (nextPageSize === undefined) return;
+                      setPlacementPageSize(nextPageSize);
+                      setPlacementPaging({ boardId, offset: 0 });
+                    }}
+                  >
+                    {PLACEMENT_PAGE_SIZE_OPTIONS.map((option) => (
+                      <NativeSelectOption key={option} value={String(option)}>
+                        {option}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </div>
+                {pending || currentWorkspace.status === "loading" ? (
+                  <span className="text-muted-foreground text-sm">
+                    Loading pages…
+                  </span>
+                ) : (
+                  <PaginationControls
+                    ariaLabel="Linked record pages"
+                    className="w-auto"
+                    pageCount={Math.max(
+                      1,
+                      Math.ceil(page.pagination.total / placementPageSize),
                     )}
-                    {recordPage && (recordPage.hasMore || query.offset > 0) && (
+                    pageIndex={Math.floor(
+                      page.pagination.offset / placementPageSize,
+                    )}
+                    onPageIndexChange={(nextPageIndex) =>
+                      setPlacementPaging({
+                        boardId,
+                        offset: nextPageIndex * placementPageSize,
+                      })
+                    }
+                  />
+                )}
+              </div>
+            </div>
+            {canEdit && pickerOpen && (
+              <DialogContent className="max-w-xl">
+                <DialogHeader>
+                  <DialogTitle>Add record shortcut</DialogTitle>
+                  <DialogDescription>
+                    Choose a source and record you can already open. This does
+                    not change record access or copy record data to the Board.
+                  </DialogDescription>
+                </DialogHeader>
+                {mutationError && (
+                  <Alert variant="destructive">
+                    <span>
+                      {mutationError}
+                      {conflict
+                        ? " Refresh the latest shortcuts before choosing whether to retry."
+                        : ""}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="ml-2 min-h-11"
+                      disabled={pending}
+                      onClick={() => setRefresh((value) => value + 1)}
+                    >
+                      {conflict ? "Refresh latest shortcuts" : "Retry"}
+                    </Button>
+                  </Alert>
+                )}
+                <div className="mt-4 flex flex-col gap-3">
+                  <label
+                    htmlFor="board-placement-source"
+                    className="text-sm font-medium"
+                  >
+                    Record source
+                  </label>
+                  <select
+                    id="board-placement-source"
+                    className="border-input bg-background min-h-11 rounded-md border px-3"
+                    value={selectedModuleId}
+                    disabled={!sourcePage || pending || conflict}
+                    onChange={(event) => {
+                      const moduleId = event.target.value;
+                      setSelection({ boardId, moduleId, recordId: "" });
+                      setQuery({ boardId, moduleId, search: "", offset: 0 });
+                      setSearchDraft("");
+                    }}
+                  >
+                    <option value="">Choose a source</option>
+                    {sourcePage?.items.map((source) => (
+                      <option key={source.id} value={source.id}>
+                        {source.name}
+                      </option>
+                    ))}
+                  </select>
+                  {sources?.key === sourceKey && sources.error && (
+                    <Alert variant="destructive">
+                      <span>{sources.error}</span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="ml-2 min-h-11"
+                        disabled={pending}
+                        onClick={() => setRefresh((value) => value + 1)}
+                      >
+                        Retry sources
+                      </Button>
+                    </Alert>
+                  )}
+                  {sourcePage &&
+                    (sourcePage.pagination.hasMore || sourceOffset > 0) && (
                       <nav
-                        aria-label="Record candidate pages"
+                        aria-label="Record source pages"
                         className="flex items-center gap-2"
                       >
                         <Button
                           type="button"
                           variant="outline"
                           className="min-h-11"
-                          disabled={query.offset === 0 || pending}
+                          disabled={sourceOffset === 0 || pending}
                           onClick={() => {
-                            setSelection((value) => ({
-                              ...value,
+                            setSelection({
+                              boardId,
+                              moduleId: "",
                               recordId: "",
-                            }));
-                            setQuery((value) => ({
-                              ...value,
-                              offset: Math.max(0, value.offset - PAGE_SIZE),
-                            }));
+                            });
+                            setQuery({
+                              boardId,
+                              moduleId: "",
+                              search: "",
+                              offset: 0,
+                            });
+                            setSourcePaging({
+                              boardId,
+                              offset: Math.max(0, sourceOffset - PAGE_SIZE),
+                            });
                           }}
                         >
-                          Previous records
+                          Previous sources
                         </Button>
                         <Button
                           type="button"
                           variant="outline"
                           className="min-h-11"
-                          disabled={!recordPage.hasMore || pending}
+                          disabled={!sourcePage.pagination.hasMore || pending}
                           onClick={() => {
-                            setSelection((value) => ({
-                              ...value,
+                            setSelection({
+                              boardId,
+                              moduleId: "",
                               recordId: "",
-                            }));
-                            setQuery((value) => ({
-                              ...value,
-                              offset: value.offset + PAGE_SIZE,
-                            }));
+                            });
+                            setQuery({
+                              boardId,
+                              moduleId: "",
+                              search: "",
+                              offset: 0,
+                            });
+                            setSourcePaging({
+                              boardId,
+                              offset: sourceOffset + PAGE_SIZE,
+                            });
                           }}
                         >
-                          Next records
+                          Next sources
                         </Button>
                       </nav>
                     )}
-                    {recordPage && recordPage.choices.length === 0 && (
-                      <p
-                        role="status"
-                        className="text-muted-foreground text-sm"
+                  {selectedModuleId && (
+                    <>
+                      <form
+                        className="flex flex-wrap items-end gap-2"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          setSelection((value) => ({ ...value, recordId: "" }));
+                          setQuery({
+                            boardId,
+                            moduleId: selectedModuleId,
+                            search: searchDraft,
+                            offset: 0,
+                          });
+                        }}
                       >
-                        No records match this search.
-                      </p>
-                    )}
-                    {alreadyLinked && (
-                      <p
-                        role="status"
-                        className="text-muted-foreground text-sm"
+                        <label
+                          htmlFor="board-placement-search"
+                          className="flex min-w-48 flex-1 flex-col gap-1 text-sm font-medium"
+                        >
+                          Find a record
+                          <Input
+                            id="board-placement-search"
+                            value={searchDraft}
+                            maxLength={240}
+                            disabled={pending || conflict}
+                            onChange={(event) =>
+                              setSearchDraft(event.target.value)
+                            }
+                          />
+                        </label>
+                        <Button
+                          type="submit"
+                          variant="outline"
+                          className="min-h-11"
+                          disabled={pending || conflict}
+                        >
+                          Search
+                        </Button>
+                      </form>
+                      <label
+                        htmlFor="board-placement-record"
+                        className="text-sm font-medium"
                       >
-                        This record is already linked on this page.
-                      </p>
-                    )}
-                    <Button
-                      type="button"
-                      className="min-h-11 self-start"
-                      disabled={
-                        !selectedRecord || alreadyLinked || pending || conflict
-                      }
-                      onClick={() => {
-                        if (selectedRecord)
-                          void mutate(() =>
-                            createBoardPlacement(
-                              boardId,
-                              page.boardRevision,
-                              selectedRecord.id,
-                            ),
-                          );
-                      }}
-                    >
-                      Add shortcut
-                    </Button>
-                  </>
-                )}
-              </div>
-            </section>
-          )}
-        </>
-      )}
-    </div>
+                        Record
+                      </label>
+                      <select
+                        id="board-placement-record"
+                        className="border-input bg-background min-h-11 rounded-md border px-3"
+                        value={selectedRecord?.id ?? ""}
+                        disabled={!recordPage || pending || conflict}
+                        onChange={(event) =>
+                          setSelection((value) => ({
+                            ...value,
+                            recordId: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Choose a record</option>
+                        {recordPage?.choices.map((choice) => (
+                          <option key={choice.id} value={choice.id}>
+                            {choice.label}
+                          </option>
+                        ))}
+                      </select>
+                      {records?.key === recordKey && records.error && (
+                        <Alert variant="destructive">
+                          <span>{records.error}</span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="ml-2 min-h-11"
+                            disabled={pending}
+                            onClick={() => setRefresh((value) => value + 1)}
+                          >
+                            Retry records
+                          </Button>
+                        </Alert>
+                      )}
+                      {recordPage &&
+                        (recordPage.hasMore || query.offset > 0) && (
+                          <nav
+                            aria-label="Record candidate pages"
+                            className="flex items-center gap-2"
+                          >
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="min-h-11"
+                              disabled={query.offset === 0 || pending}
+                              onClick={() => {
+                                setSelection((value) => ({
+                                  ...value,
+                                  recordId: "",
+                                }));
+                                setQuery((value) => ({
+                                  ...value,
+                                  offset: Math.max(0, value.offset - PAGE_SIZE),
+                                }));
+                              }}
+                            >
+                              Previous records
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="min-h-11"
+                              disabled={!recordPage.hasMore || pending}
+                              onClick={() => {
+                                setSelection((value) => ({
+                                  ...value,
+                                  recordId: "",
+                                }));
+                                setQuery((value) => ({
+                                  ...value,
+                                  offset: value.offset + PAGE_SIZE,
+                                }));
+                              }}
+                            >
+                              Next records
+                            </Button>
+                          </nav>
+                        )}
+                      {recordPage && recordPage.choices.length === 0 && (
+                        <p
+                          role="status"
+                          className="text-muted-foreground text-sm"
+                        >
+                          No records match this search.
+                        </p>
+                      )}
+                      {alreadyLinked && (
+                        <p
+                          role="status"
+                          className="text-muted-foreground text-sm"
+                        >
+                          This record is already linked on this page.
+                        </p>
+                      )}
+                      <Button
+                        type="button"
+                        className="min-h-11 self-start"
+                        disabled={
+                          !selectedRecord ||
+                          alreadyLinked ||
+                          pending ||
+                          conflict
+                        }
+                        onClick={() => {
+                          if (selectedRecord)
+                            void mutate(
+                              () =>
+                                createBoardPlacement(
+                                  boardId,
+                                  page.boardRevision,
+                                  selectedRecord.id,
+                                ),
+                              () => setPickerOpen(false),
+                            );
+                        }}
+                      >
+                        Add shortcut
+                      </Button>
+                    </>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={pending}
+                    onClick={() => setPickerOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            )}
+          </>
+        )}
+      </div>
+    </Dialog>
   );
 }

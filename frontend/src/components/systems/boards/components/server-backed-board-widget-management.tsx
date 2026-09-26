@@ -273,9 +273,12 @@ export function ServerBoardWidgetManagement({
               }
               className="border-input bg-card text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2"
             >
-              <option value="half">Half width</option>
+              <option value="half">Standard</option>
               <option value="full">Full width</option>
             </select>
+            <p className="text-muted-foreground text-xs">
+              Standard cards adapt to the available space.
+            </p>
           </div>
           <label
             htmlFor={pinnedId}

@@ -62,7 +62,10 @@ export type BoardManagementView = {
   notice: string | null;
 };
 
-type Props =
+type Props = {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+} & (
   | { mode: "create"; onCreated: (board: BoardManagementBoard) => void }
   | {
       mode: "manage";
@@ -70,7 +73,8 @@ type Props =
       onUpdated: (board: BoardManagementBoard) => void;
       onAccessDenied: (boardId: string) => void;
       onPurged: (boardId: string) => void;
-    };
+    }
+);
 
 const blankDraft: BoardManagementDraft = {
   name: "",
@@ -740,7 +744,9 @@ export function ServerBoardManagementDisplay({
 function ManagementInstance(props: Props) {
   const mode = props.mode;
   const incomingBoard = mode === "manage" ? props.board : null;
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = props.open ?? internalOpen;
+  const setOpen = props.onOpenChange ?? setInternalOpen;
   const [discardOpen, setDiscardOpen] = useState(false);
   const [confirmation, setConfirmation] = useState<
     "archive" | "restore" | null
@@ -1268,14 +1274,16 @@ function ManagementInstance(props: Props) {
 
   return (
     <>
-      <Button
-        type="button"
-        variant="outline"
-        className="min-h-11"
-        onClick={() => setOpen(true)}
-      >
-        {mode === "create" ? "New Board" : "Manage Board"}
-      </Button>
+      {props.open === undefined && (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          onClick={() => setOpen(true)}
+        >
+          {mode === "create" ? "New Board" : "Manage Board"}
+        </Button>
+      )}
       <Sheet
         open={open}
         onOpenChange={(next) => {

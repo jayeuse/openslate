@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  RefreshCw,
+  Search,
+} from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -12,6 +19,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ApiError } from "@/lib/api";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import {
@@ -819,38 +832,172 @@ export function ServerBackedBoardCalendar({
     setSelectedDate(`${next}-01`);
   }
 
+  function editEvent(event: BoardEvent) {
+    if (!mayEditEvent(event)) return;
+    setEditorError(null);
+    setEditorNotice(null);
+    setConflict(null);
+    setDraft(boardEventDraftFromEvent(event));
+  }
+
+  function canArchiveEvent(event: BoardEvent): boolean {
+    return (
+      !activeDraft &&
+      prepareBoardEventLifecycleAction(
+        event,
+        boardId,
+        calendarPage?.boardRevision ?? 0,
+        currentAccess,
+        boardActive,
+        "archive",
+      ) !== null
+    );
+  }
+
+  function displayCalendarEvents(date?: string, compact = false) {
+    if (!calendarPage || !calendarWindow) return null;
+    return (
+      <ServerBoardCalendarDisplay
+        page={calendarPage}
+        window={calendarWindow}
+        date={date}
+        compact={compact}
+        includeAttachments
+        canEditEvent={mayEditEvent}
+        onEditEvent={editEvent}
+        canArchiveEvent={canArchiveEvent}
+        onArchiveEvent={(event) => beginLifecycle("archive", event)}
+      />
+    );
+  }
+
   return (
     <section
       aria-label="Board calendar"
       className="flex min-w-0 flex-col gap-4"
     >
-      {workspaceDateError && (
-        <Alert variant="warning">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span>
-              {workspaceToday
-                ? "The Workspace date could not be refreshed. The last loaded date is still in use."
-                : workspaceDateError}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={() => setWorkspaceDateRetry((value) => value + 1)}
-            >
-              Retry Workspace date
-            </Button>
+      <header className="space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="space-y-1">
+            <h2 className="text-2xl font-semibold tracking-tight">Calendar</h2>
+            <p className="text-muted-foreground">
+              Plan upcoming work and keep track of your reminders.
+            </p>
           </div>
-        </Alert>
-      )}
-      {!calendarWindow && !workspaceDateError && (
-        <p role="status" className="text-muted-foreground">
-          Loading the Workspace date…
-        </p>
+          <div className="flex flex-wrap items-center gap-2">
+            {(canManage || canEdit) && !activeDraft && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      aria-label="Event lists"
+                    />
+                  }
+                >
+                  Event lists
+                  <ChevronDown aria-hidden="true" data-icon="inline-end" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canEdit && (
+                    <DropdownMenuItem
+                      className="min-h-11"
+                      onClick={() => {
+                        setMyEventsOffset(0);
+                        setMyEventsState(null);
+                        setMyEventsRetry((value) => value + 1);
+                        setView("mine");
+                      }}
+                    >
+                      My events
+                    </DropdownMenuItem>
+                  )}
+                  {canManage && (
+                    <DropdownMenuItem
+                      className="min-h-11"
+                      onClick={() => {
+                        setArchivedState(null);
+                        setView("archived");
+                      }}
+                    >
+                      Archived events
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {view !== "archived" && canEdit && calendarPage && !activeDraft && (
+              <Button
+                type="button"
+                className="min-h-11"
+                onClick={() => {
+                  setEditorError(null);
+                  setEditorNotice(null);
+                  setConflict(null);
+                  setDraft(
+                    newBoardEventDraft(
+                      boardId,
+                      calendarPage.boardRevision,
+                      selectedCalendarDate,
+                    ),
+                  );
+                }}
+              >
+                <Plus data-icon="inline-start" /> New event
+              </Button>
+            )}
+          </div>
+        </div>
+        {workspaceDateError && (
+          <Alert variant="warning">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                {workspaceToday
+                  ? "The Workspace date could not be refreshed. The last loaded date is still in use."
+                  : workspaceDateError}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => setWorkspaceDateRetry((value) => value + 1)}
+              >
+                Retry Workspace date
+              </Button>
+            </div>
+          </Alert>
+        )}
+        {!calendarWindow && !workspaceDateError && (
+          <p role="status" className="text-muted-foreground">
+            Loading the Workspace date…
+          </p>
+        )}
+      </header>
+      {view !== "archived" && view !== "mine" && calendarWindow && (
+        <label className="grid min-w-0 gap-1 text-sm font-medium">
+          <span>Search events</span>
+          <span className="relative block min-w-0">
+            <Search
+              aria-hidden="true"
+              className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+            />
+            <input
+              type="search"
+              className="border-input bg-background min-h-11 w-full min-w-0 rounded-md border py-2 pr-3 pl-10 font-normal"
+              maxLength={100}
+              value={search}
+              disabled={activeDraft !== null}
+              onChange={(event) => setSearch(event.currentTarget.value)}
+            />
+          </span>
+        </label>
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
           <Button
+            type="button"
             variant="ghost"
             size="icon"
             className="size-11"
@@ -867,6 +1014,7 @@ export function ServerBackedBoardCalendar({
             {calendarWindow?.label ?? "Calendar"}
           </h2>
           <Button
+            type="button"
             variant="ghost"
             size="icon"
             className="size-11"
@@ -877,6 +1025,7 @@ export function ServerBackedBoardCalendar({
             <ChevronRight aria-hidden="true" />
           </Button>
           <Button
+            type="button"
             variant="outline"
             className="ml-2 min-h-11"
             disabled={workspaceToday === null}
@@ -891,6 +1040,7 @@ export function ServerBackedBoardCalendar({
         </div>
         <div role="group" aria-label="Calendar view" className="flex gap-1">
           <Button
+            type="button"
             variant={view === "agenda" ? "secondary" : "ghost"}
             className="min-h-11"
             aria-pressed={view === "agenda"}
@@ -899,6 +1049,7 @@ export function ServerBackedBoardCalendar({
             Agenda
           </Button>
           <Button
+            type="button"
             variant={view === "month" ? "secondary" : "ghost"}
             className="min-h-11"
             aria-pressed={view === "month"}
@@ -906,49 +1057,8 @@ export function ServerBackedBoardCalendar({
           >
             Month
           </Button>
-          {canManage && !activeDraft && (
-            <Button
-              variant={view === "archived" ? "secondary" : "ghost"}
-              className="min-h-11"
-              aria-pressed={view === "archived"}
-              onClick={() => {
-                setArchivedState(null);
-                setView("archived");
-              }}
-            >
-              Archived events
-            </Button>
-          )}
-          {canEdit && !activeDraft && (
-            <Button
-              variant={view === "mine" ? "secondary" : "ghost"}
-              className="min-h-11"
-              aria-pressed={view === "mine"}
-              onClick={() => {
-                setMyEventsOffset(0);
-                setMyEventsState(null);
-                setMyEventsRetry((value) => value + 1);
-                setView("mine");
-              }}
-            >
-              My events
-            </Button>
-          )}
         </div>
       </div>
-      {view !== "archived" && view !== "mine" && calendarWindow && (
-        <label className="grid max-w-xl gap-1 text-sm font-medium">
-          <span>Search events</span>
-          <input
-            type="search"
-            className="border-input bg-background min-h-11 rounded-md border px-3 font-normal"
-            maxLength={100}
-            value={search}
-            disabled={activeDraft !== null}
-            onChange={(event) => setSearch(event.currentTarget.value)}
-          />
-        </label>
-      )}
       {editorNotice && <Alert role="status">{editorNotice}</Alert>}
       {lifecycleNotice && <Alert role="status">{lifecycleNotice}</Alert>}
       {accessFailed && (
@@ -963,28 +1073,6 @@ export function ServerBackedBoardCalendar({
             Retry access
           </Button>
         </Alert>
-      )}
-      {view !== "archived" && canEdit && calendarPage && !activeDraft && (
-        <div className="flex justify-end">
-          <Button
-            type="button"
-            className="min-h-11"
-            onClick={() => {
-              setEditorError(null);
-              setEditorNotice(null);
-              setConflict(null);
-              setDraft(
-                newBoardEventDraft(
-                  boardId,
-                  calendarPage.boardRevision,
-                  selectedCalendarDate,
-                ),
-              );
-            }}
-          >
-            New event
-          </Button>
-        </div>
       )}
       {activeDraft && (
         <ServerBoardEventEditorForm
@@ -1249,49 +1337,47 @@ export function ServerBackedBoardCalendar({
               {calendarPage.items.length === 1 ? "occurrence" : "occurrences"}
               {state.status === "loading" ? " · Refreshing…" : ""}
             </p>
-            {view === "month" && (
-              <MonthGrid
-                window={calendarWindow}
-                page={calendarPage}
-                selectedDate={selectedCalendarDate}
-                today={workspaceToday}
-                onSelect={setSelectedDate}
-              />
-            )}
-            <div id="server-board-calendar-day">
-              <ServerBoardCalendarDisplay
-                page={calendarPage}
-                window={calendarWindow}
-                date={view === "month" ? selectedCalendarDate : undefined}
-                includeAttachments
-                canEditEvent={mayEditEvent}
-                onEditEvent={(event) => {
-                  if (!mayEditEvent(event)) return;
-                  setEditorError(null);
-                  setEditorNotice(null);
-                  setConflict(null);
-                  setDraft(boardEventDraftFromEvent(event));
-                }}
-                canArchiveEvent={(event) =>
-                  !activeDraft &&
-                  prepareBoardEventLifecycleAction(
-                    event,
-                    boardId,
-                    calendarPage.boardRevision,
-                    currentAccess,
-                    boardActive,
-                    "archive",
-                  ) !== null
+            <div
+              className={
+                view === "month"
+                  ? "grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] xl:items-start"
+                  : "min-w-0 space-y-4"
+              }
+            >
+              <div className="min-w-0">
+                {view === "month" ? (
+                  <MonthGrid
+                    window={calendarWindow}
+                    page={calendarPage}
+                    selectedDate={selectedCalendarDate}
+                    today={workspaceToday}
+                    onSelect={setSelectedDate}
+                  />
+                ) : (
+                  <div id="server-board-calendar-day">
+                    {displayCalendarEvents()}
+                  </div>
+                )}
+              </div>
+              <aside
+                aria-label={
+                  view === "month" ? "Selected day and reminders" : "Reminders"
                 }
-                onArchiveEvent={(event) => beginLifecycle("archive", event)}
-              />
+                className="min-w-0 space-y-4"
+              >
+                {view === "month" && (
+                  <div id="server-board-calendar-day">
+                    {displayCalendarEvents(selectedCalendarDate, true)}
+                  </div>
+                )}
+                <ServerBoardReminders
+                  boardId={boardId}
+                  boardActive={boardActive}
+                  occurrences={calendarPage.items}
+                  refreshKey={calendarPage.boardRevision}
+                />
+              </aside>
             </div>
-            <ServerBoardReminders
-              boardId={boardId}
-              boardActive={boardActive}
-              occurrences={calendarPage.items}
-              refreshKey={calendarPage.boardRevision}
-            />
           </>
         )}
       {view === "archived" && canManage && archivedPage && (

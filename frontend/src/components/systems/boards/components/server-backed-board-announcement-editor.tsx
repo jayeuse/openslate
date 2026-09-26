@@ -7,6 +7,22 @@ import {
   type ChangeEvent,
   type FormEvent,
 } from "react";
+import { ChevronDown, FileText, Plus, X } from "lucide-react";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import type { BoardAnnouncement } from "../adapters/board-announcements-api";
 import type { BoardAttachmentVersions } from "../adapters/board-files-api";
 import {
@@ -20,6 +36,7 @@ import {
   validAnnouncementLinks,
 } from "../hooks/use-server-board-announcement-editor";
 import type { AnnouncementEditorForm } from "../hooks/announcement-editor-state";
+import { ConfirmAction } from "./ui";
 export type { AnnouncementEditorForm };
 
 export type AnnouncementEditorView = {
@@ -79,6 +96,7 @@ export function ServerBoardAnnouncementEditorDisplay({
   onAttachmentBusyChange,
   onRecordLinkBusyChange,
   refreshAttachmentVersions,
+  showNewButton = true,
 }: {
   boardId: string;
   view: AnnouncementEditorView;
@@ -96,6 +114,7 @@ export function ServerBoardAnnouncementEditorDisplay({
   onAttachmentBusyChange: (busy: boolean) => void;
   onRecordLinkBusyChange: (busy: boolean) => void;
   refreshAttachmentVersions: () => Promise<BoardAttachmentVersions>;
+  showNewButton?: boolean;
 }) {
   const heading = createElement(
     "h2",
@@ -193,16 +212,18 @@ export function ServerBoardAnnouncementEditorDisplay({
           },
           "Refresh announcements",
         ),
-        createElement(
-          "button",
-          {
-            type: "button",
-            onClick: onNew,
-            disabled: view.pending || view.dirty || view.scheduleDirty,
-            className: secondaryClass,
-          },
-          "New announcement",
-        ),
+        showNewButton
+          ? createElement(
+              "button",
+              {
+                type: "button",
+                onClick: onNew,
+                disabled: view.pending || view.dirty || view.scheduleDirty,
+                className: secondaryClass,
+              },
+              "New announcement",
+            )
+          : null,
       ),
     ),
     view.error
@@ -806,6 +827,8 @@ export function ServerBackedBoardAnnouncementEditor({
     pending: boolean,
   ) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
   const editor = useServerBoardAnnouncementEditor({
     boardId,
     boardRevision,
@@ -830,30 +853,165 @@ export function ServerBackedBoardAnnouncementEditor({
     () => () => onDraftStateChange?.(boardId, false, false),
     [boardId, onDraftStateChange],
   );
-  return createElement(ServerBoardAnnouncementEditorDisplay, {
-    boardId,
-    view: editor.view,
-    onNew: editor.newDraft,
-    onSelect: editor.selectDraft,
-    onChange: editor.changeForm,
-    onSave: () => {
-      void editor.save();
-    },
-    onPublish: () => {
-      void editor.publish();
-    },
-    onSchedule: () => {
-      void editor.schedule();
-    },
-    onCancelSchedule: () => {
-      void editor.cancelSchedule();
-    },
-    onScheduleTimeChange: editor.changeScheduleTime,
-    onRetry: editor.retry,
-    onClose: editor.close,
-    onPage: editor.page,
-    onAttachmentBusyChange: editor.setAttachmentPending,
-    onRecordLinkBusyChange: editor.setRecordLinkPending,
-    refreshAttachmentVersions: editor.refreshAttachmentVersions,
-  });
+  const view = editor.view;
+  const canEdit = view.active && view.status === "ready" && view.canEdit;
+  const hasUnsavedChanges = view.dirty || view.scheduleDirty;
+
+  function requestClose() {
+    if (view.pending) return;
+    if (hasUnsavedChanges) {
+      setDiscardOpen(true);
+      return;
+    }
+    editor.close();
+    setOpen(false);
+  }
+
+  function discardChanges() {
+    if (view.pending) return;
+    editor.close();
+    setDiscardOpen(false);
+    setOpen(false);
+  }
+
+  return (
+    <>
+      {canEdit ? (
+        <div className="inline-flex items-stretch">
+          <Button
+            type="button"
+            variant="default"
+            className="min-h-11 rounded-r-none"
+            disabled={view.pending || hasUnsavedChanges}
+            onClick={() => {
+              editor.newDraft();
+              setOpen(true);
+            }}
+          >
+            <Plus data-icon="inline-start" aria-hidden="true" />
+            New announcement
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="default"
+                  size="icon"
+                  className="border-primary-foreground/20 min-h-11 min-w-11 rounded-l-none border-l"
+                  aria-label="More announcement actions"
+                  disabled={view.pending}
+                />
+              }
+            >
+              <ChevronDown aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" aria-label="Announcement actions">
+              <DropdownMenuItem
+                disabled={view.pending}
+                onClick={() => setOpen(true)}
+              >
+                <FileText aria-hidden="true" />
+                Edit drafts
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      ) : !open && !view.active ? (
+        <p className="text-muted-foreground text-sm">
+          This Board is archived and read-only.
+        </p>
+      ) : !open && view.status === "loading" ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          Checking announcement editing access…
+        </p>
+      ) : !open && view.status === "error" ? (
+        <Alert variant="destructive">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>
+              {view.error ?? "Editable announcements are unavailable."}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={editor.retry}
+            >
+              Retry
+            </Button>
+          </div>
+        </Alert>
+      ) : !open && (view.status === "denied" || !view.canEdit) ? (
+        <p className="text-muted-foreground text-sm">
+          Announcement editing is unavailable. Check your Board access.
+        </p>
+      ) : null}
+      <Sheet
+        open={open}
+        dismissible={!view.pending}
+        onOpenChange={(nextOpen) => {
+          if (nextOpen) setOpen(true);
+          else requestClose();
+        }}
+      >
+        <SheetContent
+          side="right"
+          className="w-full max-w-none gap-6 overflow-y-auto sm:max-w-5xl"
+        >
+          <SheetHeader className="pr-12">
+            <SheetTitle>Announcement editor</SheetTitle>
+            <SheetDescription>
+              Create an announcement or choose an existing one you can edit.
+            </SheetDescription>
+          </SheetHeader>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Close announcement editor"
+            className="absolute top-3 right-3 size-11"
+            disabled={view.pending}
+            onClick={requestClose}
+          >
+            <X aria-hidden="true" />
+          </Button>
+          <ServerBoardAnnouncementEditorDisplay
+            boardId={boardId}
+            view={view}
+            onNew={editor.newDraft}
+            onSelect={editor.selectDraft}
+            onChange={editor.changeForm}
+            onSave={() => {
+              void editor.save();
+            }}
+            onPublish={() => {
+              void editor.publish();
+            }}
+            onSchedule={() => {
+              void editor.schedule();
+            }}
+            onCancelSchedule={() => {
+              void editor.cancelSchedule();
+            }}
+            onScheduleTimeChange={editor.changeScheduleTime}
+            onRetry={editor.retry}
+            onClose={requestClose}
+            onPage={editor.page}
+            onAttachmentBusyChange={editor.setAttachmentPending}
+            onRecordLinkBusyChange={editor.setRecordLinkPending}
+            refreshAttachmentVersions={editor.refreshAttachmentVersions}
+          />
+        </SheetContent>
+      </Sheet>
+      <ConfirmAction
+        open={discardOpen}
+        title="Discard unsaved announcement changes?"
+        description="Your unsaved title, message, audience, schedule, and links will be discarded. Saved announcement content will stay unchanged."
+        action="Discard changes"
+        onCancel={() => setDiscardOpen(false)}
+        onConfirm={discardChanges}
+        disabled={view.pending}
+      />
+    </>
+  );
 }
