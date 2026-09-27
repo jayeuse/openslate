@@ -244,6 +244,7 @@ export function moduleTableAttrs(
     };
     {
       attrs[`sep${i}`] = {
+        "data-sandbox-detail": "field",
         x1: 0,
         y1: rowTop,
         x2: width,
@@ -253,6 +254,8 @@ export function moduleTableAttrs(
       };
     }
     attrs[`name${i}`] = {
+      // Field detail hides in the overview (SANDBOX_ZOOM.overview).
+      "data-sandbox-detail": "field",
       pointerEvents: "none",
       x: 26,
       y: rowCenter,
@@ -269,6 +272,7 @@ export function moduleTableAttrs(
     // Required fields have a filled marker, optional fields a hollow one;
     // the canvas key names both.
     attrs[`marker${i}`] = {
+      "data-sandbox-detail": "field",
       cx: 14,
       cy: rowCenter,
       r: field === undefined ? 0 : 3,
@@ -279,6 +283,7 @@ export function moduleTableAttrs(
       "aria-hidden": "true",
     };
     attrs[`type${i}`] = {
+      "data-sandbox-detail": "field",
       pointerEvents: "none",
       x: width - 10,
       y: rowCenter,
@@ -401,11 +406,21 @@ export function getModulePorts(
 }
 
 /**
- * Zoom range for the canvas. The whole diagram scales uniformly (like an ERD)
- * and the floor keeps 12px canvas text at 6px or more on screen; the minimap
- * gives the overview beyond it.
+ * Zoom range for the canvas. The whole diagram scales uniformly (like an ERD).
+ * Below `overview`, field rows and line labels would be too small to read, so
+ * the canvas switches to an overview: field text and line labels hide, and
+ * each department's name and module count show at screen size. The floor
+ * lets Fit show a whole organization.
  */
-export const SANDBOX_ZOOM = { min: 0.5, max: 1.5, fitMin: 0.5 } as const;
+export const SANDBOX_ZOOM = {
+  min: 0.15,
+  max: 1.5,
+  fitMin: 0.15,
+  overview: 0.6,
+} as const;
+
+/** Room above department frames for the overview's name cards. */
+export const SANDBOX_OVERVIEW_LABEL_SPACE = 56;
 
 /**
  * Base X6 graph options for the sandbox canvas: a themed surface, panning,

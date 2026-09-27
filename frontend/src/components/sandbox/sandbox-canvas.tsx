@@ -20,8 +20,10 @@ import {
 import { canConnect } from "@/lib/sandbox/rules";
 import {
   MODULE_TABLE,
+  departmentTone,
   SANDBOX_GRID_MAJOR_SIZE,
   SANDBOX_GRID_SIZE,
+  SANDBOX_OVERVIEW_LABEL_SPACE,
   SANDBOX_ZOOM,
   snapSandboxPosition,
 } from "@/lib/sandbox/x6-adapter";
@@ -76,16 +78,32 @@ export interface SandboxCanvasApi {
   /** Fits the design; false when it is larger than the view at the floor. */
   fit: () => boolean;
   /**
-   * The opening view: 100% zoom with the design's top-left 24px in, so table
-   * and field names are readable. The minimap and Fit show the rest.
+   * The opening view: 100% zoom on one department, 24px in, so table and
+   * field names are readable. The minimap and Fit show the rest. With a
+   * focus id, it opens on that module's (or department's) department and
+   * keeps the module in view; with `trace`, it also pins the module's
+   * connections, for "Show on canvas". Without one, it opens on the
+   * busiest department.
    */
-  start: () => void;
+  start: (options?: { focusId?: string | null; trace?: boolean }) => void;
+  /** Clears a trace pinned by `start({ trace: true })`. */
+  clearTrace: () => void;
   center: () => void;
   /** Places a newly-created node, or queues its position until it is rendered. */
   placeNode: (nodeId: string, position: { x: number; y: number }) => void;
 }
 
 export type { SandboxDropKind } from "./sandbox-canvas-graph";
+
+type OverviewLabel = {
+  id: string;
+  name: string;
+  modules: number;
+  tone: number;
+  left: number;
+  top: number;
+  width: number;
+};
 
 export interface SandboxCanvasProps {
   state: SandboxState;
@@ -111,6 +129,8 @@ export interface SandboxCanvasProps {
   ) => SandboxCommand;
   onConnect: (sourceModuleId: string, targetModuleId: string) => void;
   onMove: (nodeId: string, parentId: string | null) => void;
+  /** A click on empty canvas cleared a pinned "Show on canvas" trace. */
+  onTraceCleared?: () => void;
   graphRef?: MutableRefObject<SandboxCanvasApi | null>;
   pending?: boolean;
 }
@@ -130,6 +150,7 @@ interface SandboxCanvasCallbacks {
   onDrop: SandboxCanvasProps["onDrop"];
   onConnect: (sourceModuleId: string, targetModuleId: string) => void;
   onMove: (nodeId: string, parentId: string | null) => void;
+  onTraceCleared?: () => void;
 }
 
 const CANVAS_BACKGROUND =
@@ -167,6 +188,7 @@ export function SandboxCanvas({
   onDrop,
   onConnect,
   onMove,
+  onTraceCleared,
   graphRef,
   pending = false,
 }: SandboxCanvasProps) {
@@ -182,6 +204,11 @@ export function SandboxCanvas({
   const syncingRef = useRef(false);
   const appliedLayoutRef = useRef<SandboxCanvasLayout | undefined>(undefined);
   const [editor, setEditor] = useState<CanvasEditor | null>(null);
+  // Department names at screen size while the canvas is in its overview.
+  const [overviewLabels, setOverviewLabels] = useState<OverviewLabel[] | null>(
+    null,
+  );
+  const updateOverviewRef = useRef<() => void>(() => undefined);
   const editorRef = useRef<CanvasEditor | null>(null);
   const editorCommitRef = useRef<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -199,6 +226,7 @@ export function SandboxCanvas({
     onDrop,
     onConnect,
     onMove,
+    onTraceCleared,
   });
   const stateRef = useRef(state);
   const traceRef = useRef<SandboxCanvasTrace | null>(null);
@@ -221,6 +249,7 @@ export function SandboxCanvas({
       onDrop,
       onConnect,
       onMove,
+      onTraceCleared,
     };
     stateRef.current = state;
   });
@@ -335,14 +364,49 @@ export function SandboxCanvas({
       editorRef.current = next;
       setEditor(next);
     };
+    // Below the overview zoom, field rows and line labels are too small to
+    // read: CSS hides them (data-canvas-detail), and each department's name
+    // and module count are drawn at screen size above its frame.
+    const updateOverview = (): void => {
+      const overview = graph.zoom() < SANDBOX_ZOOM.overview - 0.001;
+      container.dataset.canvasDetail = overview ? "overview" : "full";
+      if (!overview) {
+        setOverviewLabels(null);
+        return;
+      }
+      const matrix = graph.matrix();
+      const scale = Math.abs(matrix.a || 1);
+      const labels: OverviewLabel[] = [];
+      for (const [
+        index,
+        department,
+      ] of stateRef.current.departments.entries()) {
+        const node = graph.getCellById(department.id);
+        if (node === null || !node.isNode()) continue;
+        const box = node.getBBox();
+        labels.push({
+          id: department.id,
+          name: department.name,
+          modules: department.moduleIds.length,
+          tone: departmentTone(index),
+          left: box.x * scale + (matrix.e || 0),
+          top: box.y * scale + (matrix.f || 0),
+          width: box.width * scale,
+        });
+      }
+      setOverviewLabels(labels);
+    };
+    updateOverviewRef.current = updateOverview;
     const updateScale = (): void => {
       updateGridVisual();
       emitViewState();
       reanchorEditor();
+      updateOverview();
     };
     const updateTranslate = (): void => {
       updateGridVisual();
       reanchorEditor();
+      updateOverview();
     };
     graph.on("scale", updateScale);
     graph.on("translate", updateTranslate);
@@ -536,8 +600,29 @@ export function SandboxCanvas({
         resetZoom: () => {
           graph.zoom(1, { absolute: true });
         },
-        start: () => {
+        start: (options) => {
           graph.zoom(1, { absolute: true });
+          const focusCell = options?.focusId
+            ? graph.getCellById(options.focusId)
+            : null;
+          const focusNode =
+            focusCell !== null && focusCell.isNode() ? focusCell : null;
+          const focusModule =
+            focusNode !== null && nodeKindOf(focusNode) === "module"
+              ? focusNode
+              : null;
+          const focusDepartment =
+            focusModule !== null
+              ? (() => {
+                  const parent = focusModule.getParent();
+                  return parent !== null && parent.isNode() ? parent : null;
+                })()
+              : focusNode !== null && nodeKindOf(focusNode) === "department"
+                ? focusNode
+                : null;
+          traceRef.current?.pin(
+            options?.trace && focusModule !== null ? focusModule.id : null,
+          );
           const departments = graph
             .getNodes()
             .filter((node) => nodeKindOf(node) === "department");
@@ -559,27 +644,51 @@ export function SandboxCanvas({
               ).length;
             return ids.size + lines;
           };
-          const anchor = departments.reduce<Node | null>(
-            (best, department) =>
-              best === null || busyness(department) > busyness(best)
-                ? department
-                : best,
-            null,
-          );
+          const anchor =
+            focusDepartment ??
+            departments.reduce<Node | null>(
+              (best, department) =>
+                best === null || busyness(department) > busyness(best)
+                  ? department
+                  : best,
+              null,
+            );
           const box = anchor?.getBBox() ?? graph.getCellsBBox(graph.getNodes());
           if (box === null) return;
           if (anchor === null || box.width + 48 <= container.clientWidth) {
-            graph.translate(24 - box.x, 24 - box.y);
+            // Keep a focused module in view: when it sits below the fold,
+            // lift the department so the module's top is 72px down.
+            const moduleBox = focusModule?.getBBox();
+            const dy =
+              moduleBox &&
+              moduleBox.y + moduleBox.height - box.y + 24 >
+                container.clientHeight
+                ? 72 - moduleBox.y
+                : 24 - box.y;
+            graph.translate(24 - box.x, dy);
             return;
           }
-          // A narrow canvas cannot hold the department, so show its first
-          // table whole, with the department head above it.
-          const first = [...modulesOf(anchor)].sort(
-            (a, b) =>
-              a.getBBox().y - b.getBBox().y || a.getBBox().x - b.getBBox().x,
-          )[0];
+          // A narrow canvas cannot hold the department, so show one table
+          // whole (the focused one, or the first), with the department head
+          // above it when it fits.
+          const first =
+            focusModule ??
+            [...modulesOf(anchor)].sort(
+              (a, b) =>
+                a.getBBox().y - b.getBBox().y || a.getBBox().x - b.getBBox().x,
+            )[0];
           const target = first?.getBBox() ?? box;
-          graph.translate(16 - target.x, 16 - box.y);
+          const top =
+            target.y + target.height - box.y + 16 > container.clientHeight
+              ? target.y - 16
+              : box.y;
+          // Keep the department's left edge (and its name) in view when the
+          // table still fits beside it.
+          const left =
+            target.x + target.width - box.x + 32 <= container.clientWidth
+              ? box.x
+              : target.x;
+          graph.translate(16 - left, 16 - top);
         },
         fit: () => {
           graph.zoomToFit({
@@ -587,9 +696,19 @@ export function SandboxCanvas({
             minScale: SANDBOX_ZOOM.fitMin,
             maxScale: 1,
           });
+          // In the overview the name cards sit above the frames, so leave
+          // room for them at the top.
+          const overview = graph.zoom() < SANDBOX_ZOOM.overview - 0.001;
+          const top = overview ? SANDBOX_OVERVIEW_LABEL_SPACE : 24;
+          if (overview)
+            graph.zoomToFit({
+              padding: { top, left: 24, right: 24, bottom: 24 },
+              minScale: SANDBOX_ZOOM.fitMin,
+              maxScale: 1,
+            });
           if (graph.zoom() > SANDBOX_ZOOM.fitMin + 0.001) return true;
           // At the floor the design is larger than the view: show its start,
-          // 24px in from the top-left, measured from the department frames.
+          // in from the top-left, measured from the department frames.
           const departments = graph
             .getNodes()
             .filter((node) => nodeKindOf(node) === "department");
@@ -598,12 +717,15 @@ export function SandboxCanvas({
           );
           if (box !== null) {
             const scale = graph.zoom();
-            graph.translate(24 - box.x * scale, 24 - box.y * scale);
+            graph.translate(24 - box.x * scale, top - box.y * scale);
           }
           return false;
         },
         center: () => {
           graph.centerContent();
+        },
+        clearTrace: () => {
+          traceRef.current?.pin(null);
         },
         placeNode: (nodeId, position) => {
           const snappedPosition = position;
@@ -625,7 +747,11 @@ export function SandboxCanvas({
       state: stateRef,
     });
 
-    const trace = bindSandboxCanvasTrace({ graph, state: stateRef });
+    const trace = bindSandboxCanvasTrace({
+      graph,
+      state: stateRef,
+      onPinCleared: () => callbacksRef.current.onTraceCleared?.(),
+    });
     traceRef.current = trace;
 
     const cleanupResizeInteractions = bindSandboxCanvasResizeInteractions({
@@ -909,6 +1035,7 @@ export function SandboxCanvas({
       syncing: syncingRef,
     });
     traceRef.current?.refresh();
+    updateOverviewRef.current();
   }, [dropTargetId, layout, movingNodeId, state]);
 
   async function commitEditor(value: string): Promise<void> {
@@ -1079,7 +1206,7 @@ export function SandboxCanvas({
       />
       {state.modules.length > 0 ? (
         // Closed by default so the key never covers tables; it opens upward.
-        <details className="group absolute bottom-3 left-3 z-10 hidden sm:block">
+        <details className="group absolute bottom-3 left-3 z-10">
           <summary className="border-border bg-card text-muted-foreground hover:text-foreground flex min-h-6 cursor-pointer list-none items-center rounded-md border px-2.5 text-xs shadow-sm [&::-webkit-details-marker]:hidden">
             Key
           </summary>
@@ -1132,8 +1259,45 @@ export function SandboxCanvas({
                 <span>{label}</span>
               </li>
             ))}
+            <li className="border-border col-span-2 max-w-72 border-t pt-1">
+              A module is a list of one kind of record. A line links records in
+              two modules.
+            </li>
           </ul>
         </details>
+      ) : null}
+      {overviewLabels !== null ? (
+        // Visual only: the SVG department names stay in the accessibility
+        // tree, and the Structure panel lists every department.
+        <div
+          aria-hidden="true"
+          data-testid="sandbox-overview-labels"
+          className="pointer-events-none absolute inset-0 z-[5] overflow-hidden"
+        >
+          {overviewLabels.map((label) => (
+            <div
+              key={label.id}
+              className="border-border bg-card text-foreground absolute grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-1.5 rounded-[var(--radius)] border px-2 py-1 shadow-sm"
+              // Above the frame, so the card never covers its tables.
+              style={{
+                left: label.left,
+                top: Math.max(4, label.top - SANDBOX_OVERVIEW_LABEL_SPACE + 4),
+                maxWidth: Math.max(label.width, 112),
+              }}
+            >
+              <span
+                className="size-2.5 shrink-0 rounded-sm"
+                style={{ backgroundColor: `var(--dept-${label.tone})` }}
+              />
+              <span className="truncate text-sm font-semibold">
+                {label.name}
+              </span>
+              <span className="text-muted-foreground col-start-2 text-xs">
+                {label.modules} {label.modules === 1 ? "module" : "modules"}
+              </span>
+            </div>
+          ))}
+        </div>
       ) : null}
       <p id="sandbox-canvas-keyboard-alternative" className="sr-only">
         Select canvas items with a pointer or their field controls. Use the

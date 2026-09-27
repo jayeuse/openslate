@@ -56,9 +56,9 @@ export function SavedViewFilterControls({
       className="flex flex-col gap-4"
     >
       <div>
-        <h3 id="openview-filter-controls-heading" className="font-medium">
+        <h2 id="openview-filter-controls-heading" className="font-medium">
           Filter conditions
-        </h3>
+        </h2>
         <p className="text-muted-foreground text-sm">
           Match all conditions or any condition, then add or update a filter.
         </p>

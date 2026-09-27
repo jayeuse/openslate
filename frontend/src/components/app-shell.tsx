@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type CSSProperties,
@@ -430,10 +431,13 @@ function AppSidebarHeader({ collapsed }: { collapsed: boolean }) {
   );
 }
 
+const commsDescription = "Messages and channels";
+
 function AppCommsLink({ collapsed }: { collapsed: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
   const active = pathname === "/comms" || pathname.startsWith("/comms/");
+  const descriptionId = useId();
 
   return (
     <SidebarMenu>
@@ -450,11 +454,22 @@ function AppCommsLink({ collapsed }: { collapsed: boolean }) {
           isActive={active}
           aria-current={active ? "page" : undefined}
           aria-label="OpenComms"
-          title={collapsed ? "OpenComms" : undefined}
-          className="min-h-11"
+          aria-describedby={collapsed ? undefined : descriptionId}
+          title={collapsed ? `OpenComms — ${commsDescription}` : undefined}
+          className={cn("min-h-11", !collapsed && "h-auto py-1.5")}
         >
           <MessageSquare aria-hidden="true" />
-          <span>OpenComms</span>
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate">OpenComms</span>
+            {!collapsed ? (
+              <span
+                id={descriptionId}
+                className="text-sidebar-muted truncate text-xs font-normal"
+              >
+                {commsDescription}
+              </span>
+            ) : null}
+          </span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

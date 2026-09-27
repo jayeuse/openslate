@@ -36,7 +36,7 @@ export default function LoginPage() {
     } catch (error) {
       setError(
         error instanceof ApiError && error.status === 401
-          ? "Invalid identifier or password."
+          ? "That email, username, or password is not right."
           : "Unable to sign in. Check your connection and try again.",
       );
     } finally {
@@ -123,7 +123,8 @@ export default function LoginPage() {
                 }
               />
               <p className="text-muted-foreground text-xs">
-                Use the credentials provisioned for your administrator account.
+                Use the email or username and password your administrator gave
+                you.
               </p>
               <a
                 className="text-primary inline-block text-sm font-medium hover:underline"

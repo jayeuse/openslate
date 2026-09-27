@@ -309,3 +309,16 @@ test("the workspace location names the open section and links its workspace", ()
   });
   expect(getWorkspaceLocation("/comms", new URLSearchParams())).toBeNull();
 });
+
+test("every workspace describes what it holds in one short line", () => {
+  const groups = getWorkspaceNavigation("/sandbox", new URLSearchParams());
+
+  expect(groups.map((group) => [group.id, group.description])).toEqual([
+    ["sandbox", "Design departments and records"],
+    ["boards", "Team pages and events"],
+    ["access", "Who can see and change what"],
+    ["openview", "Browse records and reports"],
+    ["manage", "Organization settings and audit"],
+    ["platform", "Account, files, and alerts"],
+  ]);
+});

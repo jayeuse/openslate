@@ -1,5 +1,6 @@
 import { Point, routerPresets } from "@antv/x6";
 import type { Graph, History, Node } from "@antv/x6";
+import { placeEdgeLabels } from "./sandbox-canvas-labels";
 import {
   fieldsForModule,
   type SandboxCanvasLayout,
@@ -386,6 +387,7 @@ export function synchronizeSandboxCanvas({
         graph.select(selectedId);
       }
     }
+    placeEdgeLabels(graph);
   } finally {
     history.enable();
     syncing.current = false;

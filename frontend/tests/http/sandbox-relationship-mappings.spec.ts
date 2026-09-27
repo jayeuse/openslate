@@ -18,6 +18,8 @@ type SandboxOptions = {
   hasUnpublishedChanges?: boolean;
   publishedHash?: string | null;
   testRuns?: unknown[];
+  /** The draft revision the session starts at. */
+  revision?: number;
   saveDelay?: Promise<void>;
   publicationDelay?: Promise<void>;
   issues?: Array<{ code: string; message: string; targetId: string | null }>;
@@ -59,7 +61,7 @@ async function openAuthenticatedSandbox(
   designFixture: Design = configuredSandboxDesign,
   options: SandboxOptions = {},
 ) {
-  let revision = 1;
+  let revision = options.revision ?? 1;
   let documentReads = 0;
   let documentWrites = 0;
   let versions = options.versions ?? [];
@@ -339,7 +341,7 @@ test("an empty Sandbox renders no placeholder entities and can create its first 
 
   await expect(
     page.getByText(
-      "0 departments · 0 modules · 0 fields · 0 relationships · 0 rules",
+      "0 departments · 0 modules · 0 fields · 0 relationships · 0 automations",
     ),
   ).toHaveCount(2);
   await expect(page.getByText("Service requests", { exact: true })).toHaveCount(
@@ -409,14 +411,14 @@ test("the canvas zoom range keeps a spread design legible", async ({
 
   await page.getByRole("tab", { name: "Canvas" }).click();
   await page.getByRole("button", { name: "Fit canvas" }).click();
-  await expect.poll(zoom).toBe(50);
+  await expect.poll(zoom).toBe(15);
 
   await expect(page.getByRole("button", { name: "Zoom out" })).toHaveAttribute(
     "aria-disabled",
     "true",
   );
   await expect(page.getByRole("status", { name: "Canvas action" })).toHaveText(
-    "Canvas at 50%. Part of the design is out of view.",
+    "Canvas at 15%. Part of the design is out of view.",
   );
 });
 
@@ -830,7 +832,6 @@ test("the publish review groups changes and keeps Publish in reach", async ({
   );
 
   await page.getByRole("button", { name: "Review & Publish" }).click();
-  await page.getByRole("button", { name: "Review changes" }).click();
   const dialog = page.getByRole("dialog", { name: "Review and publish" });
   await expect(dialog.getByRole("heading", { name: "Changes" })).toBeVisible();
   await expect(
@@ -947,7 +948,6 @@ test("a rejected password is reported beside Publish, not above the list", async
     }),
   );
   await page.getByRole("button", { name: "Review & Publish" }).click();
-  await page.getByRole("button", { name: "Review changes" }).click();
   const dialog = page.getByRole("dialog", { name: "Review and publish" });
   const password = dialog.getByLabel("Your password");
   await expect(
@@ -1015,7 +1015,6 @@ test("a pending publication review protects browser exits", async ({
     .toBe(false);
 
   await page.getByRole("button", { name: "Review & Publish" }).click();
-  await page.getByRole("button", { name: "Review changes" }).click();
 
   try {
     await expect
@@ -1377,8 +1376,8 @@ test("automation flow preview and summary follow the unsaved rule draft", async 
   await page.getByRole("link", { name: "Automations", exact: true }).click();
 
   const flow = page.getByRole("region", { name: "Flow preview" });
-  const summary = page.getByRole("region", { name: "Rule summary" });
-  const settings = page.getByRole("region", { name: "Rule settings" });
+  const summary = page.getByRole("region", { name: "Automation summary" });
+  const settings = page.getByRole("region", { name: "Automation settings" });
   await expect(settings).toBeVisible();
   await expect(
     flow.getByRole("button", { name: "Edit trigger" }),
@@ -1475,7 +1474,7 @@ test("Automation Studio layout screenshots can be captured for theme and viewpor
   await page
     .getByLabel("Trigger", { exact: true })
     .selectOption("field-changed");
-  const settings = page.getByRole("region", { name: "Rule settings" });
+  const settings = page.getByRole("region", { name: "Automation settings" });
   await settings
     .getByLabel("Trigger module")
     .selectOption({ label: "Service requests" });
@@ -1530,12 +1529,12 @@ test("automation panels resize with their requested minimum widths and remain us
   await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Automations", exact: true }).click();
   const list = page.getByRole("complementary", { name: "Automation list" });
-  const settings = page.getByRole("region", { name: "Rule settings" });
+  const settings = page.getByRole("region", { name: "Automation settings" });
   const listHandle = page.getByRole("separator", {
     name: "Resize automation list",
   });
   const settingsHandle = page.getByRole("separator", {
-    name: "Resize rule settings",
+    name: "Resize automation settings",
   });
   await expect(listHandle).toBeVisible();
   const width = async (locator: typeof list) =>
@@ -1879,7 +1878,7 @@ test("Test comparisons use saved inputs, preserve typed values, and distinguish 
     .getByRole("button", { name: "All result fields", exact: true })
     .click();
   await expect(comparison.getByRole("row", { name: /Priority/ })).toContainText(
-    "Not returned",
+    "No value",
   );
   await page
     .getByRole("region", { name: "Recent test results", exact: true })
@@ -2324,4 +2323,82 @@ test("History change groups keep large comparisons scannable without hiding acce
       });
     }
   }
+});
+
+test("below 60% the canvas shows a department overview", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page);
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const zoom = async () =>
+    Number.parseInt(
+      await page.getByRole("status", { name: "Canvas zoom" }).innerText(),
+      10,
+    );
+  await expect(canvas).toHaveAttribute("data-canvas-detail", "full");
+  const overview = page.getByTestId("sandbox-overview-labels");
+  await expect(overview).toHaveCount(0);
+
+  while ((await zoom()) >= 60)
+    await page.getByRole("button", { name: "Zoom out" }).click();
+  await expect(canvas).toHaveAttribute("data-canvas-detail", "overview");
+  await expect(overview.getByText("Operations")).toBeVisible();
+  await expect(
+    canvas.locator('[data-sandbox-detail="field"]').first(),
+  ).toBeHidden();
+
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect.poll(zoom).toBeGreaterThanOrEqual(60);
+  await expect(canvas).toHaveAttribute("data-canvas-detail", "full");
+  await expect(overview).toHaveCount(0);
+});
+
+test("a Test result from an older draft says so and can show its module on the canvas", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const repeated = {
+    code: "automation_invalid",
+    message: "A set field action has an invalid value.",
+    targetId: null,
+  };
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    revision: 2,
+    testRuns: [
+      {
+        id: "00000000-0000-4000-8000-000000000009",
+        createdAt: "2026-09-21T00:01:00Z",
+        documentRevision: 1,
+        input: { moduleId: "sample-requests", values: {} },
+        event: { kind: "record-created" },
+        automationIds: null,
+        result: {
+          values: {},
+          routes: [],
+          automationTraces: [],
+          issues: [repeated, repeated, repeated],
+        },
+      },
+    ],
+  });
+  await page.goto("/sandbox?section=test");
+  const outcome = page.getByRole("region", { name: "Test outcome" });
+  await expect(
+    outcome.getByText("This result is from an older draft."),
+  ).toBeVisible();
+  await expect(
+    outcome.getByRole("button", { name: "Run again" }),
+  ).toBeVisible();
+  await expect(outcome.getByRole("listitem")).toHaveCount(1);
+  await expect(outcome.getByRole("listitem")).toContainText("(3 times)");
+
+  await outcome.getByRole("button", { name: "Show module on canvas" }).click();
+  await expect(page).toHaveURL(/section=build/);
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const cell = (id: string) => canvas.locator(`.x6-cell[data-cell-id="${id}"]`);
+  await expect(cell("sample-requests")).toHaveAttribute("data-trace", "on");
+  await expect(cell("sample-uses")).toHaveAttribute("data-trace", "on");
+  await expect(cell("sample-requests")).toBeInViewport();
+  await expect(
+    page.getByRole("complementary", { name: "Design inspector" }),
+  ).toContainText("Service requests");
 });

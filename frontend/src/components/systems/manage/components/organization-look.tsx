@@ -83,7 +83,7 @@ export function OrganizationLook() {
       <h2 id={headingId} className="text-lg font-semibold tracking-tight">
         Organization look
       </h2>
-      <p className="text-muted-foreground mt-1 max-w-2xl text-sm leading-6">
+      <p className="text-muted-foreground mt-1 max-w-prose text-sm leading-6">
         Choose how OpenSlate looks for your organization. Words, layout, and how
         things work stay the same. Each person still picks light or dark.
       </p>

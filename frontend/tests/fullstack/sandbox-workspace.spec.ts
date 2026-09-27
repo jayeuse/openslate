@@ -33,7 +33,6 @@ async function applyTemplate(page: Page, name: string) {
 }
 
 async function publishDraft(page: Page, password: string) {
-  await page.getByRole("button", { name: "Review & Publish" }).click();
   const preview = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname ===
@@ -41,7 +40,8 @@ async function publishDraft(page: Page, password: string) {
       response.request().method() === "POST",
     { timeout: 45_000 },
   );
-  await page.getByRole("button", { name: "Review changes" }).click();
+  // Opening the dialog starts the review; no second click is needed.
+  await page.getByRole("button", { name: "Review & Publish" }).click();
   expect((await preview).status()).toBe(200);
   await expect(page.getByRole("heading", { name: "Changes" })).toBeVisible();
   await page.getByLabel("Your password").fill(password);

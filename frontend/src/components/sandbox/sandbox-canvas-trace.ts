@@ -27,28 +27,39 @@ export function tracedCellIds(
 export type SandboxCanvasTrace = {
   /** Reapply the marks after a sync, which can re-render cell views. */
   refresh: () => void;
+  /**
+   * Trace a cell while nothing is hovered, for "Show on canvas" from another
+   * view. A blank click clears it. Null clears it too.
+   */
+  pin: (cellId: string | null) => void;
   dispose: () => void;
 };
 
 /**
  * Hovering a module or relationship marks its connections `data-trace="on"`
  * and fades other modules and relationships (`data-trace="dim"`). Department
- * frames stay as context. The page CSS animates opacity only.
+ * frames stay as context. The page CSS animates opacity only. A pinned cell
+ * traces the same way whenever nothing is hovered.
  */
 export function bindSandboxCanvasTrace({
   graph,
   state,
+  onPinCleared,
 }: {
   graph: Graph;
   state: { readonly current: SandboxState };
+  /** A click on empty canvas cleared a pinned trace. */
+  onPinCleared?: () => void;
 }): SandboxCanvasTrace {
   let hovered: string | null = null;
+  let pinned: string | null = null;
   const departmentIds = () =>
     new Set(state.current.departments.map((item) => item.id));
 
   const refresh = () => {
+    const target = hovered ?? pinned;
     const traced =
-      hovered === null ? null : tracedCellIds(state.current, hovered);
+      target === null ? null : tracedCellIds(state.current, target);
     const departments = departmentIds();
     for (const cell of graph.getCells()) {
       const container = graph.findViewByCell(cell)?.container;
@@ -73,9 +84,12 @@ export function bindSandboxCanvasTrace({
     refresh();
   };
   const clear = () => {
-    if (hovered === null) return;
+    if (hovered === null && pinned === null) return;
+    const wasPinned = pinned !== null;
     hovered = null;
+    pinned = null;
     refresh();
+    if (wasPinned) onPinCleared?.();
   };
   // Moving from a department frame onto a module inside it can fire the
   // frame's leave after the module's enter, so only the hovered cell clears.
@@ -90,6 +104,10 @@ export function bindSandboxCanvasTrace({
   graph.on("blank:click", clear);
   return {
     refresh,
+    pin: (cellId) => {
+      pinned = cellId;
+      refresh();
+    },
     dispose: () => {
       graph.off("cell:mouseenter", enter);
       graph.off("cell:mouseleave", leave);

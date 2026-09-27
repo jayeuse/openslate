@@ -26,6 +26,7 @@ import {
   type SandboxDocumentV2,
 } from "./domain/document";
 import type { SandboxOrganizationTemplate } from "./domain/templates";
+import { openingModuleId } from "./domain/opening-module";
 import { canvasFieldId } from "./helpers/bridge";
 import { clearSandboxViewPreferences } from "./helpers/view-preferences";
 import { Designer } from "./components/designer";
@@ -111,6 +112,8 @@ function sectionHref(
     ([, label]) => label === section,
   )?.[0];
   const params = new URLSearchParams(current);
+  // A trace is a one-time "Show on canvas" request, not part of the view.
+  params.delete("trace");
   params.set("section", slug ?? "build");
   return `/sandbox?${params.toString()}`;
 }
@@ -204,9 +207,15 @@ export default function SandboxPage() {
     ).values(),
   );
   const requestedFocusTarget = search.get("inspect");
+  const traceTarget = search.get("trace");
   const linkedSelection =
-    requestedFocusTarget ?? search.get("module") ?? search.get("department");
-  const requestedSelection = linkedSelection ?? design.modules[0]?.id ?? "";
+    requestedFocusTarget ??
+    traceTarget ??
+    search.get("module") ??
+    search.get("department");
+  // With no link, open on the first module of the busiest department, the
+  // same department the canvas opens on.
+  const requestedSelection = linkedSelection ?? openingModuleId(design) ?? "";
   const status = publishStatus(session, design, Boolean(conflict));
 
   const refreshVersions = useCallback(async () => {
@@ -801,8 +810,10 @@ export default function SandboxPage() {
         <Designer
           key={`${requestedSelection}-${sandboxGeneration}`}
           initialSelected={requestedSelection}
-          inspectOnOpen={linkedSelection !== null}
+          inspectOnOpen={linkedSelection !== null && traceTarget === null}
           focusTargetId={requestedFocusTarget}
+          traceTargetId={traceTarget}
+          onBackToTest={() => navigate("Test")}
           design={design}
           change={change}
           initializeLayout={initializeLayout}
@@ -848,6 +859,15 @@ export default function SandboxPage() {
             setTestRuns([]);
           }}
           onPendingChange={setTestPending}
+          draftRevision={session.revision}
+          onShowOnCanvas={(moduleId) => {
+            const params = new URLSearchParams(search.toString());
+            for (const key of ["inspect", "module", "department", "rule"])
+              params.delete(key);
+            params.set("trace", moduleId);
+            params.set("section", "build");
+            router.push(`/sandbox?${params.toString()}`, { scroll: false });
+          }}
         />
       ) : null}
       {section === "History" ? (

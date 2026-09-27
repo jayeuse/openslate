@@ -146,9 +146,9 @@ export function boardSearchEmptyCopy(
           "Try another search, clear the search, or choose an archived Board from the switcher.",
       }
     : {
-        title: "No active Boards available",
+        title: "No active Boards yet",
         description:
-          "Choose an archived Board from the switcher, or ask a Board manager to create or share one.",
+          "Create a Board to share updates, announcements, and dates with your team.",
       };
 }
 
@@ -418,6 +418,12 @@ function ServerBackedBoardsContent() {
     (resource.candidate !== null &&
       board === null &&
       resource.detail.status === "error");
+  const noBoards =
+    !appliedSearch &&
+    !resource.list.error &&
+    currentListPage !== null &&
+    currentListPage !== undefined &&
+    currentListPage.pagination.total === 0;
   const emptyCopy = boardSearchEmptyCopy(
     appliedSearch,
     currentListPage?.pagination.count ?? 0,
@@ -490,7 +496,7 @@ function ServerBackedBoardsContent() {
                     }
                   >
                     <span className="truncate">
-                      {board?.name ?? "Choose a board"}
+                      {board?.name ?? (noBoards ? "Boards" : "Choose a board")}
                     </span>
                     <ChevronDown
                       className="size-4 shrink-0"
@@ -694,7 +700,9 @@ function ServerBackedBoardsContent() {
               {board?.description ||
                 (board
                   ? "Your team's updates, events, and records."
-                  : "Choose an accessible Board to get started.")}
+                  : noBoards
+                    ? "Create your first Board to share updates with your team."
+                    : "Choose a Board to get started.")}
             </p>
           </div>
         </div>
@@ -997,6 +1005,28 @@ function ServerBackedBoardsContent() {
               <RefreshCw data-icon="inline-start" /> Retry Board
             </Button>
           )}
+          {/* The same actions as the Board menu, so an empty workspace has a
+              first step in view. The server still decides who may create. */}
+          {!unavailable &&
+            !resource.list.error &&
+            !appliedSearch &&
+            noBoards && (
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button
+                  className="min-h-11"
+                  onClick={() => setManagementMode("create")}
+                >
+                  New Board
+                </Button>
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={() => setTemplatesOpen(true)}
+                >
+                  Use a template
+                </Button>
+              </div>
+            )}
         </BoardEmpty>
       ) : (
         <>

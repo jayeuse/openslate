@@ -7,6 +7,7 @@ export type WorkspaceNavigationItem = {
 export type WorkspaceNavigationGroup = {
   id: string;
   label: string;
+  description?: string;
   href: string;
   items: readonly WorkspaceNavigationItem[];
 };
@@ -14,6 +15,7 @@ export type WorkspaceNavigationGroup = {
 type WorkspaceNavigationDefinition = {
   id: string;
   label: string;
+  description?: string;
   pathname: string;
   queryKey: "section" | "view";
   defaultItem: string;
@@ -24,6 +26,7 @@ const workspaceNavigationDefinitions = [
   {
     id: "sandbox",
     label: "Sandbox",
+    description: "Design departments and records",
     pathname: "/sandbox",
     queryKey: "section",
     defaultItem: "build",
@@ -37,6 +40,7 @@ const workspaceNavigationDefinitions = [
   {
     id: "boards",
     label: "Boards",
+    description: "Team pages and events",
     pathname: "/boards",
     queryKey: "section",
     defaultItem: "overview",
@@ -49,6 +53,7 @@ const workspaceNavigationDefinitions = [
   {
     id: "access",
     label: "Access",
+    description: "Who can see and change what",
     pathname: "/access",
     queryKey: "view",
     defaultItem: "overview",
@@ -61,6 +66,7 @@ const workspaceNavigationDefinitions = [
   {
     id: "openview",
     label: "OpenView",
+    description: "Browse records and reports",
     pathname: "/openview",
     queryKey: "section",
     defaultItem: "views",
@@ -74,6 +80,7 @@ const workspaceNavigationDefinitions = [
   {
     id: "manage",
     label: "Manage",
+    description: "Organization settings and audit",
     pathname: "/manage",
     queryKey: "view",
     defaultItem: "organization",
@@ -87,6 +94,7 @@ const workspaceNavigationDefinitions = [
   {
     id: "platform",
     label: "Platform",
+    description: "Account, files, and alerts",
     pathname: "/platform",
     queryKey: "section",
     defaultItem: "search",
@@ -224,6 +232,7 @@ export function getWorkspaceNavigation(
     return {
       id: definition.id,
       label: definition.label,
+      description: definition.description,
       href: defaultItem?.href ?? definition.pathname,
       items,
     };

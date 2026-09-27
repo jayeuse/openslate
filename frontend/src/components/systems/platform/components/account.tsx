@@ -216,8 +216,8 @@ export default function Account({
         <div className="space-y-3">
           <h3 className="font-medium">Password change</h3>
           <p className="text-muted-foreground text-sm">
-            Use the provided credential to review this action. Your sign-in
-            password will not change; never enter it here.
+            Review the new password shown below. Your sign-in password will not
+            change, so never type it here.
           </p>
           <div className="rounded-lg border p-3 text-sm">
             New password: •••••••••••• · Strength: strong

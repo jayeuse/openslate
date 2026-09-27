@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
   PublishChangeGroups,
@@ -84,7 +85,9 @@ export function ReviewPublishDialog({
   );
   const [password, setPassword] = useState("");
   const [note, setNote] = useState("");
-  const [pending, setPending] = useState(false);
+  // One request at a time: loading the review, or publishing it.
+  const [busy, setBusy] = useState<"review" | "publish" | null>(null);
+  const pending = busy !== null;
   const [idempotencyKey, setIdempotencyKey] = useState("");
   // Review errors show above the list; publish errors show in the footer,
   // next to the password and Publish that caused them.
@@ -94,8 +97,15 @@ export function ReviewPublishDialog({
   const passwordId = useId();
   const passwordHintId = useId();
   const noteId = useId();
+  // Each open (and each new draft revision) gets one automatic review. The
+  // round number also drops a review that finishes after the dialog closed.
+  const round = useRef(0);
+  const autoReviewed = useRef<number | null>(null);
+  const localBlocked = localBlockers.length > 0;
 
   useEffect(() => {
+    round.current += 1;
+    autoReviewed.current = null;
     if (!open) return;
     setPreview(null);
     setError("");
@@ -107,16 +117,24 @@ export function ReviewPublishDialog({
   useEffect(() => () => onPendingChange?.(false), [onPendingChange]);
 
   async function review() {
-    setPending(true);
+    const current = round.current;
+    setBusy("review");
     setError("");
     try {
-      setPreview(await onPreview());
+      const next = await onPreview();
+      if (round.current === current) setPreview(next);
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (round.current === current) setError(errorMessage(reason));
     } finally {
-      setPending(false);
+      setBusy(null);
     }
   }
+  useEffect(() => {
+    if (!open || disabled || localBlocked || pending) return;
+    if (autoReviewed.current === round.current) return;
+    autoReviewed.current = round.current;
+    void review();
+  }, [open, expectedRevision, disabled, localBlocked, pending]);
   async function publish() {
     if (
       !preview ||
@@ -125,7 +143,7 @@ export function ReviewPublishDialog({
       localBlockers.length
     )
       return;
-    setPending(true);
+    setBusy("publish");
     setPublishError("");
     setPasswordRejected(false);
     try {
@@ -147,7 +165,7 @@ export function ReviewPublishDialog({
       setPublishError(errorMessage(reason));
       setPasswordRejected(errorCode(reason) === "invalid_password");
     } finally {
-      setPending(false);
+      setBusy(null);
     }
   }
   const blockers = [
@@ -162,8 +180,23 @@ export function ReviewPublishDialog({
       : !password
         ? "Enter your password to publish."
         : "";
+  // Cancel stays available while the review loads; only a publish in flight
+  // holds the dialog open.
+  const cancel = (
+    <Button
+      variant="outline"
+      className="min-h-11"
+      disabled={busy === "publish"}
+      onClick={() => onOpenChange(false)}
+    >
+      Cancel
+    </Button>
+  );
   return (
-    <Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => busy !== "publish" && onOpenChange(next)}
+    >
       {/* The body scrolls; the footer stays outside it, so focused controls
           are never hidden behind it. */}
       <DialogContent className="flex flex-col overflow-hidden p-0 sm:max-w-2xl">
@@ -190,13 +223,22 @@ export function ReviewPublishDialog({
               </ul>
             </Alert>
           ) : null}
-          {!preview ? (
+          {busy === "review" ? (
+            <div role="status" className="grid gap-3">
+              <p className="text-muted-foreground text-sm">
+                Preparing your review…
+              </p>
+              <Skeleton className="h-5 w-40" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : !preview ? (
             <Button
-              className="min-h-11"
-              disabled={disabled || pending || localBlockers.length > 0}
+              className="min-h-11 justify-self-start"
+              disabled={disabled || localBlocked}
               onClick={() => void review()}
             >
-              {pending ? "Preparing review…" : "Review changes"}
+              {error ? "Try again" : "Review changes"}
             </Button>
           ) : (
             <>
@@ -248,58 +290,58 @@ export function ReviewPublishDialog({
             </>
           )}
         </div>
-        {preview ? (
-          <div className="border-border grid gap-2 border-t px-5 py-4">
-            <div className="flex flex-wrap items-end gap-3">
-              <Field className="min-w-48 flex-1">
-                <FieldLabel htmlFor={passwordId}>Your password</FieldLabel>
-                <Input
-                  id={passwordId}
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  aria-invalid={passwordRejected || undefined}
-                  aria-describedby={footerHint ? passwordHintId : undefined}
-                  onChange={(event) => {
-                    setPassword(event.target.value);
-                    setPasswordRejected(false);
-                  }}
-                  disabled={pending || blocked}
-                />
-              </Field>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={pending}
-                  onClick={() => onOpenChange(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  className="min-h-11"
-                  disabled={disabled || pending || blocked || !password}
-                  onClick={() => void publish()}
-                >
-                  {pending ? "Publishing…" : "Publish changes"}
-                </Button>
-              </div>
-            </div>
-            {footerHint ? (
-              <p
-                id={passwordHintId}
-                role={publishError ? "alert" : undefined}
-                className={
-                  publishError || blocked
-                    ? "text-danger-text text-sm"
-                    : "text-muted-foreground text-sm"
-                }
-              >
-                {footerHint}
+        <div className="border-border grid gap-2 border-t px-5 py-4">
+          {preview ? (
+            <>
+              <p className="text-muted-foreground text-sm">
+                Your team sees these changes as soon as you publish.
               </p>
-            ) : null}
-          </div>
-        ) : null}
+              <div className="flex flex-wrap items-end gap-3">
+                <Field className="min-w-48 flex-1">
+                  <FieldLabel htmlFor={passwordId}>Your password</FieldLabel>
+                  <Input
+                    id={passwordId}
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    aria-invalid={passwordRejected || undefined}
+                    aria-describedby={footerHint ? passwordHintId : undefined}
+                    onChange={(event) => {
+                      setPassword(event.target.value);
+                      setPasswordRejected(false);
+                    }}
+                    disabled={pending || blocked}
+                  />
+                </Field>
+                <div className="flex gap-2">
+                  {cancel}
+                  <Button
+                    className="min-h-11"
+                    disabled={disabled || pending || blocked || !password}
+                    onClick={() => void publish()}
+                  >
+                    {busy === "publish" ? "Publishing…" : "Publish changes"}
+                  </Button>
+                </div>
+              </div>
+              {footerHint ? (
+                <p
+                  id={passwordHintId}
+                  role={publishError ? "alert" : undefined}
+                  className={
+                    publishError || blocked
+                      ? "text-danger-text text-sm"
+                      : "text-muted-foreground text-sm"
+                  }
+                >
+                  {footerHint}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <div className="flex justify-end">{cancel}</div>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

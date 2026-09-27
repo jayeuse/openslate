@@ -344,6 +344,13 @@ function BoardsContent({
       action();
     }
   }
+  const canCreateBoard = !preview && controller.can(null, "manage");
+
+  function startNewBoard() {
+    setBrowsing(false);
+    guarded(() => setCreating({}));
+  }
+
   function beginEdit(settings = false) {
     if (!editable || !board) return;
     allowNextUnload.current = false;
@@ -666,11 +673,8 @@ function BoardsContent({
               <Button
                 variant="outline"
                 className="min-h-11"
-                disabled={!!preview || !controller.can(null, "manage")}
-                onClick={() => {
-                  setBrowsing(false);
-                  guarded(() => setCreating({}));
-                }}
+                disabled={!canCreateBoard}
+                onClick={startNewBoard}
               >
                 <Plus data-icon="inline-start" /> New board
               </Button>
@@ -825,10 +829,18 @@ function BoardsContent({
           description={
             requestedId
               ? "This board may have been removed or your current identity may not have access. Choose another board above."
-              : "Create a private board to start arranging widgets, announcements, and events."
+              : canCreateBoard
+                ? "Create a board to share updates, announcements, and dates with your team."
+                : "Ask a board manager to create a board or share one with you."
           }
           icon={<LayoutDashboard />}
-        />
+        >
+          {!requestedId && canCreateBoard && (
+            <Button className="min-h-11" onClick={startNewBoard}>
+              <Plus data-icon="inline-start" /> New board
+            </Button>
+          )}
+        </BoardEmpty>
       ) : (
         <>
           {board.status === "archived" && (

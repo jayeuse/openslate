@@ -8,6 +8,7 @@ import {
   FileInput,
   GitBranch,
   ListChecks,
+  Waypoints,
 } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ import type {
   SandboxFieldValue,
 } from "../domain/document";
 import type { SandboxTestEvent, SandboxTestRun } from "../state/api";
+import type { TestRunSummary } from "../domain/test-run-summary";
 
 function fieldName(
   design: SandboxDocumentDesign,
@@ -137,14 +139,22 @@ function Connector() {
 type OutcomeProps = {
   design: SandboxDocumentDesign;
   run: SandboxTestRun | undefined;
+  summary: TestRunSummary | null;
   currentModuleId: string;
+  pending: boolean;
   onShowField: (id: string) => void;
+  onRunAgain: (run: SandboxTestRun) => void;
+  onShowOnCanvas: (moduleId: string) => void;
 };
 export function TestOutcome({
   design,
   run,
+  summary,
   currentModuleId,
+  pending,
   onShowField,
+  onRunAgain,
+  onShowOnCanvas,
 }: OutcomeProps) {
   if (!run)
     return (
@@ -168,18 +178,61 @@ export function TestOutcome({
   const rows = comparisonRows(run);
   const changed = rows.filter((row) => row.changed);
   const missing = rows.filter((row) => row.after === undefined).length;
+  const stale = summary?.stale ?? null;
+  const issues = summary?.issues ?? [];
   return (
     <section aria-label="Test outcome" className="min-w-0">
-      <h3 className="font-semibold">Test result</h3>
-      <p className="text-muted-foreground mt-1 text-xs">
-        Draft revision {run.documentRevision} ·{" "}
-        <time dateTime={run.createdAt}>
-          {new Date(run.createdAt).toLocaleString()}
-        </time>
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="font-semibold">Test result</h3>
+          <p className="text-muted-foreground mt-1 text-xs">
+            <time dateTime={run.createdAt}>
+              {new Date(run.createdAt).toLocaleString()}
+            </time>
+          </p>
+        </div>
+        {stale !== "module-gone" && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="min-h-9"
+            onClick={() => onShowOnCanvas(run.input.moduleId)}
+          >
+            <Waypoints aria-hidden="true" />
+            Show module on canvas
+          </Button>
+        )}
+      </div>
+      {stale && (
+        <Alert className="mt-4">
+          <p className="font-medium">
+            {stale === "module-gone"
+              ? "The module this test used was removed or closed."
+              : "This result is from an older draft."}
+          </p>
+          <p className="text-muted-foreground mt-1 text-sm">
+            {stale === "module-gone"
+              ? "Choose a module in Test setup and run a new test."
+              : "Run the test again to check the current draft."}
+          </p>
+          {stale === "older-draft" && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-3 min-h-9"
+              disabled={pending}
+              onClick={() => onRunAgain(run)}
+            >
+              {pending ? "Running…" : "Run again"}
+            </Button>
+          )}
+        </Alert>
+      )}
       <p className="mt-4 text-lg font-semibold">
         {run.result.issues.length
-          ? "This test needs attention"
+          ? stale
+            ? "Issues from this earlier test"
+            : "This test needs attention"
           : changed.length
             ? `${changed.length} field${changed.length === 1 ? "" : "s"} changed in this test`
             : "No field changes in this test"}
@@ -187,19 +240,34 @@ export function TestOutcome({
       {run.result.issues.length > 0 && (
         <Alert variant="warning" className="mt-4">
           <p className="mb-2 font-medium">
-            Review these issues before relying on the result.
+            {stale
+              ? "These were found in the earlier test. The current draft may differ."
+              : "Review these issues before relying on the result."}
           </p>
           <ul className="space-y-3">
-            {run.result.issues.map((issue, index) => {
-              const field = design.modules
-                .find((item) => item.id === currentModuleId)
-                ?.fields.find(
-                  (item) => item.id === issue.targetId && !item.closed,
-                );
+            {issues.map((issue) => {
+              const field =
+                issue.subject?.kind === "field" &&
+                currentModuleId === run.input.moduleId
+                  ? issue.subject
+                  : null;
               return (
-                <li key={`${issue.code}-${index}`} className="text-sm">
-                  <p>{issue.message}</p>
-                  {field && currentModuleId === run.input.moduleId && (
+                <li key={issue.key} className="text-sm">
+                  <p>
+                    {issue.subject && (
+                      <span className="font-medium">
+                        {issue.subject.name}:{" "}
+                      </span>
+                    )}
+                    {issue.message}
+                    {issue.count > 1 && (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        ({issue.count} times)
+                      </span>
+                    )}
+                  </p>
+                  {field && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -245,16 +313,16 @@ export function TestOutcome({
             </ol>
           ) : (
             <p className="text-muted-foreground">
-              No automation outcomes were returned.
+              No automations ran in this test.
             </p>
           )}
         </Stage>
         <Connector />
         <Stage title="Result" icon={<Check />}>
           <p>
-            {changed.length} returned field
-            {changed.length === 1 ? " value differs" : " values differ"} from
-            the input.
+            {changed.length} field
+            {changed.length === 1 ? " value is" : " values are"} different after
+            the test.
           </p>
           {changed.slice(0, 3).map((row) => (
             <p key={row.id}>
@@ -262,7 +330,7 @@ export function TestOutcome({
                 {fieldName(design, run.input.moduleId, row.id)}:{" "}
               </span>
               {displayValue(row.before, "Not provided")} →{" "}
-              {displayValue(row.after, "Not returned")}
+              {displayValue(row.after, "No value")}
             </p>
           ))}
           {changed.length > 3 && (
@@ -272,8 +340,8 @@ export function TestOutcome({
           )}
           {missing > 0 && (
             <p className="text-warning">
-              {missing} input field{missing === 1 ? " has" : "s have"} no
-              returned value. Review all result fields.
+              {missing} field{missing === 1 ? " has" : "s have"} no value after
+              the test. Review all result fields.
             </p>
           )}
         </Stage>
@@ -281,9 +349,8 @@ export function TestOutcome({
       <div className="border-border border-t pt-4">
         <h4 className="text-sm font-semibold">How to read this result</h4>
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
-          Outcomes are reported by the test engine. Field comparison shows the
-          final returned values, including any changes from subsequent
-          automation steps.
+          Field comparison shows each value after the test, including changes
+          that later automations made.
         </p>
         <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
           Editing inputs does not change this result. Run the test again to
@@ -380,7 +447,7 @@ export function TestComparison({
           {visible.length ? (
             <Table className="mt-4 table-fixed text-left [overflow-wrap:anywhere]">
               <TableCaption className="sr-only mt-0">
-                Saved test input and returned values
+                Saved test input and values after the test
               </TableCaption>
               <TableHeader className="border-border text-muted-foreground border-b">
                 <TableRow className="hover:bg-transparent">
@@ -433,7 +500,7 @@ export function TestComparison({
                       {displayValue(row.before, "Not provided")}
                     </TableCell>
                     <TableCell className="h-auto py-3 pr-0 pl-1 align-top whitespace-pre-wrap">
-                      {displayValue(row.after, "Not returned")}
+                      {displayValue(row.after, "No value")}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -442,8 +509,8 @@ export function TestComparison({
           ) : (
             <p className="text-muted-foreground my-6 text-sm">
               {showAll
-                ? "No field values were returned for comparison."
-                : "No returned field changes."}
+                ? "No field values to compare."
+                : "No field values changed."}
             </p>
           )}
           {visible.length > limit && (
@@ -457,7 +524,7 @@ export function TestComparison({
           )}
           <p className="text-muted-foreground mt-4 text-xs">
             {unchanged} field{unchanged === 1 ? "" : "s"} unchanged
-            {missing ? ` · ${missing} not returned` : ""}
+            {missing ? ` · ${missing} with no value after the test` : ""}
           </p>
           <div className="border-border mt-6 border-t pt-4">
             <p className="text-sm font-medium">Live workspace unchanged</p>
@@ -506,8 +573,7 @@ export function TestComparison({
             </Collapsible>
           </section>
           <p className="text-muted-foreground mt-4 text-xs">
-            Field names reflect the current setup. This result belongs to draft
-            revision {run.documentRevision}.
+            Field names reflect the current setup.
           </p>
         </>
       )}

@@ -20,6 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import type { AccessController } from "../state/controller";
 import { displayIdentityStatus } from "../domain/policy";
 
@@ -424,8 +425,14 @@ export function OverviewView({ controller, onNavigate }: OverviewViewProps) {
                     Activity is not shown here.
                   </p>
                   <p className="text-muted-foreground mt-1 text-sm">
-                    Open Manage, then Audit, to review recorded activity.
+                    Recorded activity is kept in the audit log.
                   </p>
+                  <Button asChild variant="outline" className="mt-3 min-h-11">
+                    <GuardedWorkspaceLink href="/manage?view=audit">
+                      Open audit log
+                      <ArrowRight aria-hidden="true" />
+                    </GuardedWorkspaceLink>
+                  </Button>
                 </div>
               ) : (
                 <ol className="divide-y">

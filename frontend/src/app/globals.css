@@ -476,6 +476,30 @@ textarea {
   stroke-width: 2px;
 }
 
+/* Overview (below SANDBOX_ZOOM.overview): field text and line labels are too
+   small to read, so they hide; the canvas draws department names at screen
+   size instead (sandbox-canvas.tsx). Row fills stay, so modules keep their
+   shape. */
+[data-canvas-detail="overview"]
+  :is([data-sandbox-detail="field"], [data-sandbox-detail="department"]) {
+  visibility: hidden;
+}
+
+[data-canvas-detail="overview"] .x6-edge-label {
+  display: none;
+}
+
+/* At overview scale a 2px selection stroke shrinks to a hairline, so the
+   selected table keeps a screen-sized action ring. */
+.sandbox-ui
+  [data-canvas-detail="overview"]
+  .x6-cell
+  [data-sandbox-kind="module"][data-selected="true"] {
+  stroke: var(--action);
+  stroke-width: 2.5px;
+  vector-effect: non-scaling-stroke;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sandbox-ui [data-sandbox-line="true"] {
     animation: none;

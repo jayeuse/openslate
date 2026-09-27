@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -167,6 +167,8 @@ export function Designer({
   initialSelected,
   inspectOnOpen,
   focusTargetId,
+  traceTargetId,
+  onBackToTest,
   design,
   change,
   initializeLayout,
@@ -181,6 +183,9 @@ export function Designer({
   /** A link asked for one item, so narrow screens open on its Properties. */
   inspectOnOpen: boolean;
   focusTargetId: string | null;
+  /** "Show on canvas" asked to light this module's connections. */
+  traceTargetId: string | null;
+  onBackToTest: () => void;
   design: Design;
   change: (
     d: DesignUpdate,
@@ -221,6 +226,22 @@ export function Designer({
   });
   const [canvasHelpOpen, setCanvasHelpOpen] = useState(false);
   const [canvasAction, setCanvasAction] = useState("Canvas ready.");
+  // A visible note on the canvas: what a pinned trace shows, or that Fit
+  // could not show the whole design.
+  const [canvasNotice, setCanvasNotice] = useState<"trace" | "partial" | null>(
+    traceTargetId ? "trace" : null,
+  );
+  function fitCanvas(): void {
+    const fitted = graphRef.current?.fit() ?? true;
+    setCanvasAction(
+      fitted
+        ? "Canvas fitted."
+        : `Canvas at ${Math.round(SANDBOX_ZOOM.fitMin * 100)}%. Part of the design is out of view.`,
+    );
+    setCanvasNotice((current) =>
+      current === "trace" ? current : fitted ? null : "partial",
+    );
+  }
   const pendingMove = useRef<{ id: string; department: string } | null>(null);
   const [deleteTarget, setDeleteTarget] =
     useState<SandboxInspectorTarget | null>(null);
@@ -286,17 +307,30 @@ export function Designer({
     });
     return () => cancelAnimationFrame(frame);
   }, [structureSignature]);
+  // The canvas opens on the selected item's department, so the canvas and
+  // Properties describe the same thing.
+  const selectedRef = useRef(initialSelected);
+  const startCanvas = useCallback(() => {
+    const focusId = selectedRef.current;
+    graphRef.current?.start({
+      focusId,
+      trace: traceTargetId !== null && traceTargetId === focusId,
+    });
+  }, [traceTargetId]);
   useEffect(() => {
     if (wide) return;
     const frame = requestAnimationFrame(() => {
-      if (canvasFrameRef.current?.clientWidth) graphRef.current?.start();
+      if (canvasFrameRef.current?.clientWidth) startCanvas();
     });
     return () => cancelAnimationFrame(frame);
-  }, [pane, wide]);
+  }, [pane, wide, startCanvas]);
   function selectItem(id: string) {
     setSelected(id);
   }
   const [selected, setSelected] = useState(initialSelected);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
   const [editor, setEditor] = useState("");
   const [editingRelationship, setEditingRelationship] = useState<string | null>(
     null,
@@ -468,8 +502,7 @@ export function Designer({
       } else if (event.key === "0") {
         event.preventDefault();
         setPane("Canvas");
-        requestAnimationFrame(() => graphRef.current?.fit());
-        setCanvasAction("Canvas fitted.");
+        requestAnimationFrame(fitCanvas);
       } else if (event.key === "Delete" && keyboardTarget) {
         event.preventDefault();
         requestDelete(keyboardTarget);
@@ -1446,6 +1479,28 @@ export function Designer({
               ? "Start with a department. A department groups the work of one team."
               : "Select a department or module on the canvas or in Structure to see and change its settings."}
           </p>
+          <dl className="text-muted-foreground grid gap-1 text-sm">
+            <div>
+              <dt className="text-foreground inline font-medium">Module: </dt>
+              <dd className="inline">
+                a list of one kind of record, such as orders or customers.
+              </dd>
+            </div>
+            <div>
+              <dt className="text-foreground inline font-medium">
+                Relationship:{" "}
+              </dt>
+              <dd className="inline">
+                a line that links records in two modules.
+              </dd>
+            </div>
+            <div>
+              <dt className="text-foreground inline font-medium">Handoff: </dt>
+              <dd className="inline">
+                a dashed line, where work passes to another department.
+              </dd>
+            </div>
+          </dl>
           <Button
             variant="outline"
             className="self-start"
@@ -1487,6 +1542,7 @@ export function Designer({
             variant="outline"
             className="w-full justify-start"
             disabled={pending}
+            aria-describedby="sandbox-lifecycle-note"
             onClick={async () => {
               if (selectedModule) {
                 await toggleLifecycle({
@@ -1503,6 +1559,14 @@ export function Designer({
           >
             {`${(selectedModule ?? department)?.closed ? "Reopen" : "Close"} ${selectedModule ? "module" : "department"}`}
           </Button>
+          <p
+            id="sandbox-lifecycle-note"
+            className="text-muted-foreground -mt-2 text-xs"
+          >
+            {(selectedModule ?? department)?.closed
+              ? "Reopening lets people add new records again."
+              : "Stops new records. Keeps existing data. You can reopen it."}
+          </p>
           {selectedModule && (
             <>
               <div className="border-border flex flex-col gap-2 border-t pt-4">
@@ -1857,7 +1921,7 @@ export function Designer({
                   (previousSize !== undefined && previousSize.inPixels > 0)
                 )
                   return;
-                requestAnimationFrame(() => graphRef.current?.start());
+                requestAnimationFrame(startCanvas);
               }}
               className="h-full w-full min-w-0"
             >
@@ -1907,14 +1971,7 @@ export function Designer({
                       className="min-h-11"
                       variant="outline"
                       aria-label="Fit canvas"
-                      onClick={() => {
-                        const fitted = graphRef.current?.fit() ?? true;
-                        setCanvasAction(
-                          fitted
-                            ? "Canvas fitted."
-                            : `Canvas at ${Math.round(SANDBOX_ZOOM.fitMin * 100)}%. Part of the design is out of view.`,
-                        );
-                      }}
+                      onClick={fitCanvas}
                     >
                       <Maximize2 aria-hidden="true" />
                       Fit
@@ -2078,6 +2135,39 @@ export function Designer({
                     </p>
                   </section>
                 ) : null}
+                {canvasNotice ? (
+                  <div className="border-border bg-muted flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b px-4 py-1 text-sm">
+                    <span className="min-w-0">
+                      {canvasNotice === "trace"
+                        ? `Showing ${design.modules.find((item) => item.id === traceTargetId)?.name ?? "the tested module"} and its links from Test.`
+                        : "Part of the design is out of view. Drag the canvas to see the rest."}
+                    </span>
+                    <span className="flex gap-1">
+                      {canvasNotice === "trace" ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="min-h-9"
+                          onClick={onBackToTest}
+                        >
+                          Back to result
+                        </Button>
+                      ) : null}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="min-h-9"
+                        onClick={() => {
+                          if (canvasNotice === "trace")
+                            graphRef.current?.clearTrace();
+                          setCanvasNotice(null);
+                        }}
+                      >
+                        {canvasNotice === "trace" ? "Clear" : "Dismiss"}
+                      </Button>
+                    </span>
+                  </div>
+                ) : null}
                 <div
                   ref={canvasFrameRef}
                   data-empty={designIsEmpty || undefined}
@@ -2093,6 +2183,11 @@ export function Designer({
                     />
                   ) : null}
                   <SandboxCanvas
+                    onTraceCleared={() =>
+                      setCanvasNotice((current) =>
+                        current === "trace" ? null : current,
+                      )
+                    }
                     state={projected}
                     layout={design.layout ?? compactDefaultLayout}
                     graphRef={graphRef}

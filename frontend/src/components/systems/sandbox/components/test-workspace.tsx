@@ -9,6 +9,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { TestComparison, TestOutcome } from "./test-run-result";
+import { summarizeTestRun } from "../domain/test-run-summary";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -37,6 +38,9 @@ type Props = {
   }) => Promise<void>;
   onClear: () => Promise<void>;
   onPendingChange?: (pending: boolean) => void;
+  /** The draft's current revision, to tell results from older drafts. */
+  draftRevision: number;
+  onShowOnCanvas: (moduleId: string) => void;
 };
 
 function moduleFields(design: SandboxDocumentDesign, moduleId: string) {
@@ -66,6 +70,8 @@ export function TestWorkspace({
   onRun,
   onClear,
   onPendingChange,
+  draftRevision,
+  onShowOnCanvas,
 }: Props) {
   const initialModule = design.modules.find((item) => !item.closed)?.id ?? "";
   const [moduleId, setModuleId] = useState(initialModule);
@@ -96,6 +102,9 @@ export function TestWorkspace({
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [focusFieldId, setFocusFieldId] = useState<string | null>(null);
   const selectedRun = runs.find((item) => item.id === selectedRunId) ?? runs[0];
+  const selectedSummary = selectedRun
+    ? summarizeTestRun(selectedRun, design, automations, draftRevision)
+    : null;
   useEffect(() => {
     const element = workspaceRef.current;
     if (!element) return;
@@ -239,15 +248,19 @@ export function TestWorkspace({
       setError("Enter the previous number before running this test.");
       return;
     }
+    await submit({
+      moduleId,
+      values,
+      event,
+      ...(automationMode === "selected" ? { automationIds } : {}),
+    });
+  }
+
+  async function submit(input: Parameters<Props["onRun"]>[0]) {
     setPending(true);
     setError("");
     try {
-      await onRun({
-        moduleId,
-        values,
-        event,
-        ...(automationMode === "selected" ? { automationIds } : {}),
-      });
+      await onRun(input);
       setSelectedRunId(null);
     } catch (reason) {
       setError(
@@ -453,7 +466,7 @@ export function TestWorkspace({
                   <legend className="text-sm font-medium">Automations</legend>
                   <Field>
                     <FieldLabel htmlFor={automationModeLabelId}>
-                      Automations to test
+                      Choose which to run
                     </FieldLabel>
                     <NativeSelect
                       id={automationModeLabelId}
@@ -502,9 +515,8 @@ export function TestWorkspace({
                     Temporary field values
                   </legend>
                   <p className="text-muted-foreground mb-2 text-xs">
-                    Relevant shows required fields and fields used by the
-                    selected event, automations, or mappings. Hidden inputs keep
-                    their values.
+                    Relevant: required fields and fields your automations use.
+                    Hidden fields keep their values.
                   </p>
                   <SearchField
                     label="Find a field"
@@ -687,6 +699,19 @@ export function TestWorkspace({
               <TestOutcome
                 design={design}
                 run={selectedRun}
+                summary={selectedSummary}
+                pending={pending || clearing}
+                onRunAgain={(previous) =>
+                  void submit({
+                    moduleId: previous.input.moduleId,
+                    values: previous.input.values,
+                    event: previous.event,
+                    ...(previous.automationIds
+                      ? { automationIds: previous.automationIds }
+                      : {}),
+                  })
+                }
+                onShowOnCanvas={onShowOnCanvas}
                 currentModuleId={moduleId}
                 onShowField={(id) => {
                   setSearch(

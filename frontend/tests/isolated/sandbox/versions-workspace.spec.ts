@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   canonicalVersionChanges,
+  versionCompareHint,
   validVersionSelection,
 } from "../../../src/components/systems/sandbox/components/versions-workspace";
 import type { SandboxVersion } from "../../../src/components/systems/sandbox/state/api";
@@ -51,9 +52,10 @@ test("version comparison includes changes in every canonical automation conditio
     assignee: "Operations",
   });
 
-  expect(canonicalVersionChanges(before, after)).toContain(
-    "Automation changed: Notify team",
-  );
+  const changes = canonicalVersionChanges(before, after);
+  expect(
+    changes.filter((change) => change === "Automation changed: Notify team"),
+  ).toHaveLength(1);
 });
 
 test("version comparison includes canonical scenario changes", () => {
@@ -76,4 +78,21 @@ test("version selections recover when history is added or a selection disappears
   expect(validVersionSelection(versions, "", "first")).toBe("first");
   expect(validVersionSelection(versions, "deleted", "last")).toBe("second");
   expect(validVersionSelection(versions, "first", "last")).toBe("first");
+});
+
+test("the compare hint names the chosen pair instead of asking for two versions", () => {
+  const versions = [
+    { id: "first", label: "Before import", sequence: 2 },
+    { id: "second", label: "Published", sequence: 5 },
+  ] as SandboxVersion[];
+
+  expect(versionCompareHint(versions.slice(0, 1), "first", "first")).toBe(
+    "Save at least two versions to compare them.",
+  );
+  expect(versionCompareHint(versions, "first", "first")).toBe(
+    "Choose two different versions to compare.",
+  );
+  expect(versionCompareHint(versions, "first", "second")).toBe(
+    "Ready to compare Before import (v2) with Published (v5).",
+  );
 });

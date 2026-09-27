@@ -57,7 +57,7 @@ export const SANDBOX_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
     name: "Inventory & procurement",
     category: "Supply chain",
     description:
-      "A purchasing, receiving, warehouse, stock-level, and movement baseline for businesses that buy, store, issue, or resell physical goods.",
+      "For businesses that buy, store, and resell goods. Tracks purchases, deliveries received, warehouse stock, and stock moves.",
     recommendedFor: [
       "Distributors and wholesalers",
       "Retail stockrooms",
@@ -226,7 +226,7 @@ export const SANDBOX_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
     name: "Finance, accounting & sales",
     category: "Revenue operations",
     description:
-      "An integrated lead-to-cash and accounting-close baseline connecting customers, commercial activity, billing, collections, expenses, and journals.",
+      "For businesses that sell to customers and keep their own books. Tracks customers, sales, invoices, payments, expenses, and accounts.",
     recommendedFor: [
       "B2B service companies",
       "Trading businesses",
@@ -402,7 +402,7 @@ export const SANDBOX_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
     name: "Retail & commerce",
     category: "Omnichannel retail",
     description:
-      "A catalog-to-order baseline for stores and online sellers, including customer orders, line items, fulfillment, shipments, returns, and service exceptions.",
+      "For businesses that sell in stores or online. Tracks products, customer orders, shipping, returns, and customer problems.",
     recommendedFor: [
       "Multi-branch retailers",
       "Online sellers",
@@ -568,7 +568,7 @@ export const SANDBOX_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
     name: "Professional services",
     category: "Project delivery",
     description:
-      "A client-to-cash model for consultancies, agencies, and contractors managing engagements, project delivery, tasks, time, expenses, and invoices.",
+      "For businesses that do client work, such as consultants, agencies, and contractors. Tracks projects, tasks, time, expenses, and invoices.",
     recommendedFor: [
       "Consulting firms",
       "Creative and digital agencies",
@@ -727,7 +727,7 @@ export const SANDBOX_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
     name: "Field service & maintenance",
     category: "Service operations",
     description:
-      "An end-to-end service baseline for installed assets, work dispatch, technicians, inspections, parts consumption, completion, and customer billing.",
+      "For businesses that install and repair equipment on site. Tracks customer equipment, jobs, technicians, inspections, parts used, and billing.",
     recommendedFor: [
       "Equipment maintenance providers",
       "Facilities teams",
@@ -914,7 +914,7 @@ export const SANDBOX_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
     name: "Light manufacturing",
     category: "Production operations",
     description:
-      "A production baseline connecting product definitions, bills of material, production orders, work centers, material issues, quality, and finished receipts.",
+      "For businesses that make products in small batches. Tracks products, parts lists, production orders, work stations, materials used, quality checks, and finished goods.",
     recommendedFor: [
       "Fabricators and assemblers",
       "Food and consumer-goods producers",
