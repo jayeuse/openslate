@@ -449,7 +449,11 @@ test("a Views denial stays in force while its Retry is in flight", async ({
   await expect.poll(() => api.catalogReads.length).toBe(2);
 
   api.denyCatalog(true);
-  await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
+  // Module-scoped changes carry their module (D10); the notice still applies.
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "modules",
+    module_id: moduleId,
+  });
   await expect(denial.first()).toBeVisible();
   await expect(source).toHaveCount(0);
 
