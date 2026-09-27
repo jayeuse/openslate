@@ -19,8 +19,10 @@ import {
 } from "@/components/ui/empty";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { LoadingRegion } from "@/components/ui/loading-region";
 import { Select } from "@/components/ui/select";
 import type { OpenViewReport } from "../adapters/reports-api";
+import { SavedReportsListSkeleton } from "./openview-skeletons";
 
 type SavedReportsPanelProps = {
   reports: OpenViewReport[];
@@ -103,95 +105,98 @@ export function SavedReportsPanel({
             </Button>
           </Alert>
         ) : null}
-        {loading && reports.length === 0 ? (
-          <p role="status" className="text-muted-foreground text-sm">
-            Loading Reports…
-          </p>
-        ) : null}
-        {!loading && reports.length === 0 && !error ? (
-          <Empty>
-            <EmptyHeader>
-              <EmptyTitle>No saved Reports</EmptyTitle>
-              <EmptyDescription>
-                Choose a data source and fields to create your first Report.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        ) : null}
-        <ul className="flex min-w-0 flex-col gap-2">
-          {reports.map((report) => (
-            <li key={report.id} className="flex min-w-0 gap-2">
-              <Button
-                type="button"
-                variant={
-                  selectedReportId === report.id ? "secondary" : "outline"
-                }
-                className="min-h-11 min-w-0 flex-1 justify-start text-left"
-                disabled={Boolean(actionPending)}
-                onClick={() => onOpenReport(report)}
-              >
-                <span className="min-w-0 truncate">{report.name}</span>
-                {report.isDeleted ? (
-                  <Badge variant="outline" className="ml-auto">
-                    Archived
-                  </Badge>
-                ) : null}
-              </Button>
+        <LoadingRegion
+          loading={loading && reports.length === 0}
+          label="Loading Reports…"
+          skeleton={<SavedReportsListSkeleton />}
+        >
+          <div className="flex flex-col gap-4">
+            {!loading && reports.length === 0 && !error ? (
+              <Empty>
+                <EmptyHeader>
+                  <EmptyTitle>No saved Reports</EmptyTitle>
+                  <EmptyDescription>
+                    Choose a data source and fields to create your first Report.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : null}
+            <ul className="flex min-w-0 flex-col gap-2">
+              {reports.map((report) => (
+                <li key={report.id} className="flex min-w-0 gap-2">
+                  <Button
+                    type="button"
+                    variant={
+                      selectedReportId === report.id ? "secondary" : "outline"
+                    }
+                    className="min-h-11 min-w-0 flex-1 justify-start text-left"
+                    disabled={Boolean(actionPending)}
+                    onClick={() => onOpenReport(report)}
+                  >
+                    <span className="min-w-0 truncate">{report.name}</span>
+                    {report.isDeleted ? (
+                      <Badge variant="outline" className="ml-auto">
+                        Archived
+                      </Badge>
+                    ) : null}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={Boolean(actionPending) || report.isDeleted}
+                    onClick={() => onDuplicateReport(report.id)}
+                  >
+                    Duplicate
+                  </Button>
+                </li>
+              ))}
+            </ul>
+            {!showArchived && reports.length > 0 ? (
+              <div className="flex flex-wrap items-end gap-2">
+                <Field className="min-w-48 flex-1">
+                  <FieldLabel htmlFor="report-template-source">
+                    Start from saved Report
+                  </FieldLabel>
+                  <Select
+                    id="report-template-source"
+                    value={templateReportId}
+                    onValueChange={onTemplateReportChange}
+                    placeholder="Choose a saved Report"
+                    disabled={Boolean(actionPending)}
+                  >
+                    {reports
+                      .filter((report) => !report.isDeleted)
+                      .map((report) => (
+                        <option key={report.id} value={report.id}>
+                          {report.name}
+                        </option>
+                      ))}
+                  </Select>
+                </Field>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={!templateReportId || Boolean(actionPending)}
+                  onClick={onStartFromTemplate}
+                >
+                  Start from saved Report
+                </Button>
+              </div>
+            ) : null}
+            {hasMore ? (
               <Button
                 type="button"
                 variant="outline"
-                className="min-h-11"
-                disabled={Boolean(actionPending) || report.isDeleted}
-                onClick={() => onDuplicateReport(report.id)}
+                disabled={loading}
+                onClick={onLoadMore}
               >
-                Duplicate
+                Load more Reports
               </Button>
-            </li>
-          ))}
-        </ul>
-        {!showArchived && reports.length > 0 ? (
-          <div className="flex flex-wrap items-end gap-2">
-            <Field className="min-w-48 flex-1">
-              <FieldLabel htmlFor="report-template-source">
-                Start from saved Report
-              </FieldLabel>
-              <Select
-                id="report-template-source"
-                value={templateReportId}
-                onValueChange={onTemplateReportChange}
-                placeholder="Choose a saved Report"
-                disabled={Boolean(actionPending)}
-              >
-                {reports
-                  .filter((report) => !report.isDeleted)
-                  .map((report) => (
-                    <option key={report.id} value={report.id}>
-                      {report.name}
-                    </option>
-                  ))}
-              </Select>
-            </Field>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              disabled={!templateReportId || Boolean(actionPending)}
-              onClick={onStartFromTemplate}
-            >
-              Start from saved Report
-            </Button>
+            ) : null}
           </div>
-        ) : null}
-        {hasMore ? (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={loading}
-            onClick={onLoadMore}
-          >
-            Load more Reports
-          </Button>
-        ) : null}
+        </LoadingRegion>
         <div className="border-border border-t pt-3">
           <Button
             type="button"

@@ -8,8 +8,13 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
-import { getAuthMe, type AuthMe } from "@/lib/auth-api";
+import type { AuthMe } from "@/lib/auth-api";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -58,13 +63,22 @@ import {
   getOpenViewReportConflict,
   listOpenViewReportRuns,
   listOpenViewReports,
-  listOpenViewSharedReportRuns,
   restoreOpenViewReport,
   updateOpenViewReport,
   type OpenViewReport,
   type OpenViewReportRun,
   type OpenViewSharedReportRun,
 } from "../adapters/reports-api";
+import {
+  authMeOptions,
+  CATALOG_PAGE_SIZE,
+  catalogFirstPageOptions,
+  fieldsFirstPageOptions,
+  openViewKeys,
+  REPORT_PAGE_SIZE as PAGE_SIZE,
+  reportListOptions,
+  sharedRunsOptions,
+} from "../adapters/openview-queries";
 import {
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
@@ -90,8 +104,14 @@ import {
 } from "./report-run-panels";
 import { SavedReportsPanel } from "./saved-reports-panel";
 
-const PAGE_SIZE = 25;
-const CATALOG_PAGE_SIZE = 100;
+// Pages loaded with "Load more" extend the cached first page they follow. A
+// refetch replaces that page and drops them, like the former reload did.
+type PageExtension<T> = {
+  base: unknown;
+  items: T[];
+  hasMore: boolean;
+  nextOffset: number;
+};
 
 function safeMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
@@ -141,30 +161,28 @@ function reportAudienceLabel(audience: ReportDraft["audience"]): string {
 }
 
 export default function ServerBackedReports() {
-  const [currentIdentity, setCurrentIdentity] = useState<AuthMe | null>(null);
-  const [currentIdentityLoading, setCurrentIdentityLoading] = useState(true);
-  const [currentIdentityError, setCurrentIdentityError] = useState("");
-  const [reports, setReports] = useState<OpenViewReport[]>([]);
+  const queryClient = useQueryClient();
+  const identityQuery = useQuery(authMeOptions());
+  const currentIdentity: AuthMe | null = identityQuery.data ?? null;
+  const currentIdentityLoading = identityQuery.isPending;
+  const currentIdentityError = identityQuery.isError
+    ? "Your Report audience could not be confirmed. Reload to try again."
+    : "";
   const [showArchived, setShowArchived] = useState(false);
   const [templateReportId, setTemplateReportId] = useState("");
-  const [listLoading, setListLoading] = useState(true);
-  const [listError, setListError] = useState("");
-  const [listOffset, setListOffset] = useState(0);
-  const [listHasMore, setListHasMore] = useState(false);
-  const [listRefresh, setListRefresh] = useState(0);
-  const [sources, setSources] = useState<OpenViewDataSource[]>([]);
-  const [sourcesHasMore, setSourcesHasMore] = useState(false);
-  const [sourcesOffset, setSourcesOffset] = useState(0);
-  const [sourcesLoading, setSourcesLoading] = useState(true);
-  const [sourcesError, setSourcesError] = useState("");
-  const [sourcesRefresh, setSourcesRefresh] = useState(0);
-  const [fields, setFields] = useState<OpenViewDataSourceField[]>([]);
-  const [fieldsForModule, setFieldsForModule] = useState("");
-  const [fieldsHasMore, setFieldsHasMore] = useState(false);
-  const [fieldsOffset, setFieldsOffset] = useState(0);
-  const [fieldsLoading, setFieldsLoading] = useState(false);
-  const [fieldsError, setFieldsError] = useState("");
-  const [fieldsRefresh, setFieldsRefresh] = useState(0);
+  const [listExtension, setListExtension] =
+    useState<PageExtension<OpenViewReport> | null>(null);
+  const [listLoadingMore, setListLoadingMore] = useState(false);
+  const [listMoreFailedFor, setListMoreFailedFor] = useState<unknown>(null);
+  const [sourcesExtension, setSourcesExtension] =
+    useState<PageExtension<OpenViewDataSource> | null>(null);
+  const [sourcesLoadingMore, setSourcesLoadingMore] = useState(false);
+  const [sourcesMoreFailedFor, setSourcesMoreFailedFor] =
+    useState<unknown>(null);
+  const [fieldsExtension, setFieldsExtension] =
+    useState<PageExtension<OpenViewDataSourceField> | null>(null);
+  const [fieldsLoadingMore, setFieldsLoadingMore] = useState(false);
+  const [fieldsMoreFailedFor, setFieldsMoreFailedFor] = useState<unknown>(null);
   const [baselineReport, setBaselineReport] = useState<OpenViewReport | null>(
     null,
   );
@@ -174,7 +192,6 @@ export default function ServerBackedReports() {
   );
   const [actionPending, setActionPending] = useState("");
   const actionRef = useRef(false);
-  const moduleIdRef = useRef("");
   const runRetryRef = useRef<{ reportId: string; key: string } | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -189,13 +206,9 @@ export default function ServerBackedReports() {
   const [runsPageSize, setRunsPageSize] = useState(PAGE_SIZE);
   const [runsTotal, setRunsTotal] = useState(0);
   const [runsRefresh, setRunsRefresh] = useState(0);
-  const [sharedRuns, setSharedRuns] = useState<OpenViewSharedReportRun[]>([]);
-  const [sharedLoading, setSharedLoading] = useState(true);
-  const [sharedError, setSharedError] = useState("");
+  const [sharedActionError, setSharedActionError] = useState("");
   const [sharedOffset, setSharedOffset] = useState(0);
   const [sharedPageSize, setSharedPageSize] = useState(PAGE_SIZE);
-  const [sharedTotal, setSharedTotal] = useState(0);
-  const [sharedRefresh, setSharedRefresh] = useState(0);
   const [pendingNavigation, setPendingNavigation] = useState<{
     resume: () => void;
   } | null>(null);
@@ -224,145 +237,161 @@ export default function ServerBackedReports() {
   );
   useWorkspaceNavigationGuard(navigationGuard);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    let active = true;
-    void getAuthMe(controller.signal)
-      .then((identity) => {
-        if (active) {
-          setCurrentIdentity(identity);
-          setCurrentIdentityError("");
-        }
-      })
-      .catch(() => {
-        if (active)
-          setCurrentIdentityError(
-            "Your Report audience could not be confirmed. Reload to try again.",
-          );
-      })
-      .finally(() => {
-        if (active) setCurrentIdentityLoading(false);
+  // Saved Reports: the cached first page for the archive filter, plus pages
+  // loaded with "Load more".
+  const listDeleted = showArchived ? "include" : "exclude";
+  const listQuery = useQuery(reportListOptions(listDeleted));
+  const listBase = listQuery.data;
+  const listMore =
+    listExtension && listExtension.base === listBase ? listExtension : null;
+  const reports = listBase
+    ? [
+        ...listBase.items,
+        ...(listMore?.items ?? []).filter(
+          (item) => !listBase.items.some((report) => report.id === item.id),
+        ),
+      ]
+    : [];
+  const listHasMore = listMore
+    ? listMore.hasMore
+    : (listBase?.pagination.hasMore ?? false);
+  const listLoading = listQuery.isFetching || listLoadingMore;
+  const listMoreFailed = Boolean(listBase) && listMoreFailedFor === listBase;
+  const listError =
+    listMoreFailed || (listQuery.isError && !listQuery.isFetching)
+      ? "Reports could not be loaded. Try again."
+      : "";
+
+  // Available outputs: one cached page per offset and size. The previous
+  // page's total holds the pager steady while the next page loads.
+  const sharedQuery = useQuery({
+    ...sharedRunsOptions(sharedOffset, sharedPageSize),
+    placeholderData: keepPreviousData,
+  });
+  const sharedRuns: OpenViewSharedReportRun[] = sharedQuery.isPlaceholderData
+    ? []
+    : (sharedQuery.data?.items ?? []);
+  const sharedTotal = sharedQuery.data?.pagination.total ?? 0;
+  const sharedLoading = sharedQuery.isFetching;
+  const sharedError =
+    sharedActionError ||
+    (sharedQuery.isError && !sharedQuery.isFetching
+      ? "Available runs could not be loaded. Try again."
+      : "");
+
+  // Data sources and fields for the recipe editor: cached first pages plus
+  // pages loaded with "Load more".
+  const sourcesQuery = useQuery(catalogFirstPageOptions());
+  const sourcesBase = sourcesQuery.data;
+  const sourcesMore =
+    sourcesExtension && sourcesExtension.base === sourcesBase
+      ? sourcesExtension
+      : null;
+  const sources = [
+    ...(sourcesBase?.items ?? []),
+    ...(sourcesMore?.items ?? []),
+  ];
+  const sourcesHasMore = sourcesMore
+    ? sourcesMore.hasMore
+    : (sourcesBase?.pagination.hasMore ?? false);
+  const sourcesOffset = sourcesMore
+    ? sourcesMore.nextOffset
+    : (sourcesBase?.pagination.count ?? 0);
+  const sourcesLoading = sourcesQuery.isFetching || sourcesLoadingMore;
+  const sourcesError =
+    Boolean(sourcesBase) && sourcesMoreFailedFor === sourcesBase
+      ? "More data sources could not be loaded. Try again."
+      : sourcesQuery.isError && !sourcesQuery.isFetching
+        ? "Data sources could not be loaded. Try again."
+        : "";
+
+  const fieldsQuery = useQuery(fieldsFirstPageOptions(draft.moduleId));
+  const fieldsBase = draft.moduleId ? fieldsQuery.data : undefined;
+  const fieldsMore =
+    fieldsExtension && fieldsBase && fieldsExtension.base === fieldsBase
+      ? fieldsExtension
+      : null;
+  const fields = [...(fieldsBase?.items ?? []), ...(fieldsMore?.items ?? [])];
+  const fieldsForModule = fieldsBase ? draft.moduleId : "";
+  const fieldsHasMore = fieldsMore
+    ? fieldsMore.hasMore
+    : (fieldsBase?.pagination.hasMore ?? false);
+  const fieldsOffset = fieldsMore
+    ? fieldsMore.nextOffset
+    : (fieldsBase?.pagination.count ?? 0);
+  const fieldsLoading =
+    (Boolean(draft.moduleId) && fieldsQuery.isFetching) || fieldsLoadingMore;
+  const fieldsError =
+    Boolean(fieldsBase) && fieldsMoreFailedFor === fieldsBase
+      ? "More fields could not be loaded. Try again."
+      : draft.moduleId && fieldsQuery.isError && !fieldsQuery.isFetching
+        ? "Fields could not be loaded. Try again."
+        : "";
+
+  function refreshReportList(): void {
+    setListExtension(null);
+    setListMoreFailedFor(null);
+    void queryClient.invalidateQueries({ queryKey: openViewKeys.reportLists });
+  }
+
+  /** Applies a local Report change to the listed pages without a reload. */
+  function patchReports(
+    update: (current: OpenViewReport[]) => OpenViewReport[],
+  ): void {
+    const next = queryClient.setQueryData(
+      reportListOptions(listDeleted).queryKey,
+      (page) => (page ? { ...page, items: update(page.items) } : page),
+    );
+    setListExtension((current) =>
+      current && current.base === listBase
+        ? { ...current, base: next, items: update(current.items) }
+        : current,
+    );
+  }
+
+  async function loadMoreReports(): Promise<void> {
+    if (!listBase || listLoadingMore) return;
+    const base = listBase;
+    const loaded = listMore?.items ?? [];
+    setListLoadingMore(true);
+    setListMoreFailedFor(null);
+    try {
+      const page = await listOpenViewReports({
+        limit: PAGE_SIZE,
+        offset: reports.length,
+        deleted: listDeleted,
       });
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, []);
-
-  useEffect(() => {
-    moduleIdRef.current = draft.moduleId;
-  }, [draft.moduleId]);
-
-  useEffect(() => {
-    let active = true;
-    void listOpenViewReports({
-      limit: PAGE_SIZE,
-      offset: listOffset,
-      deleted: showArchived ? "include" : "exclude",
-    })
-      .then((page) => {
-        if (!active) return;
-        setReports((current) =>
-          listOffset === 0
-            ? page.items
-            : [
-                ...current,
-                ...page.items.filter(
-                  (item) => !current.some((report) => report.id === item.id),
-                ),
-              ],
-        );
-        setListHasMore(page.pagination.hasMore);
-        setListError("");
-      })
-      .catch(() => {
-        if (active) setListError("Reports could not be loaded. Try again.");
-      })
-      .finally(() => {
-        if (active) setListLoading(false);
+      const known = [...base.items, ...loaded];
+      setListExtension({
+        base,
+        items: [
+          ...loaded,
+          ...page.items.filter(
+            (item) => !known.some((report) => report.id === item.id),
+          ),
+        ],
+        hasMore: page.pagination.hasMore,
+        nextOffset: 0,
       });
-    return () => {
-      active = false;
-    };
-  }, [listOffset, listRefresh, showArchived]);
+    } catch {
+      setListMoreFailedFor(base);
+    } finally {
+      setListLoadingMore(false);
+    }
+  }
 
-  useEffect(() => {
-    let active = true;
-    void listOpenViewSharedReportRuns({
-      limit: sharedPageSize,
-      offset: sharedOffset,
-    })
-      .then((page) => {
-        if (!active) return;
-        setSharedRuns(page.items);
-        setSharedTotal(page.pagination.total);
-        setSharedError("");
-      })
-      .catch(() => {
-        if (active)
-          setSharedError("Available runs could not be loaded. Try again.");
-      })
-      .finally(() => {
-        if (active) setSharedLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [sharedOffset, sharedPageSize, sharedRefresh]);
-
-  useEffect(() => {
-    let active = true;
-    void listOpenViewDataSources({ limit: CATALOG_PAGE_SIZE, offset: 0 })
-      .then((page) => {
-        if (!active) return;
-        setSources(page.items);
-        setSourcesHasMore(page.pagination.hasMore);
-        setSourcesOffset(page.pagination.count);
-        setSourcesError("");
-      })
-      .catch(() => {
-        if (active)
-          setSourcesError("Data sources could not be loaded. Try again.");
-      })
-      .finally(() => {
-        if (active) setSourcesLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [sourcesRefresh]);
-
-  useEffect(() => {
-    if (!draft.moduleId) {
-      setFields([]);
-      setFieldsForModule("");
+  function refreshSharedRuns(): void {
+    setSharedActionError("");
+    if (sharedOffset === 0) {
+      void sharedQuery.refetch();
       return;
     }
-    const moduleId = draft.moduleId;
-    let active = true;
-    setFieldsLoading(true);
-    setFieldsError("");
-    void listOpenViewDataSourceFields(moduleId, {
-      limit: CATALOG_PAGE_SIZE,
-      offset: 0,
-    })
-      .then((page) => {
-        if (!active) return;
-        setFields(page.items);
-        setFieldsForModule(moduleId);
-        setFieldsHasMore(page.pagination.hasMore);
-        setFieldsOffset(page.pagination.count);
-      })
-      .catch(() => {
-        if (active) setFieldsError("Fields could not be loaded. Try again.");
-      })
-      .finally(() => {
-        if (active) setFieldsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [draft.moduleId, fieldsRefresh]);
+    void queryClient.invalidateQueries({
+      queryKey: openViewKeys.sharedRuns,
+      refetchType: "none",
+    });
+    setSharedOffset(0);
+  }
 
   useEffect(() => {
     if (!baselineReport || baselineReport.isDeleted) {
@@ -522,43 +551,53 @@ export default function ServerBackedReports() {
   }
 
   async function loadMoreSources(): Promise<void> {
-    if (sourcesLoading || !sourcesHasMore) return;
-    setSourcesLoading(true);
+    if (sourcesLoading || !sourcesHasMore || !sourcesBase) return;
+    const base = sourcesBase;
+    const loaded = sourcesMore?.items ?? [];
+    setSourcesLoadingMore(true);
     try {
       const page = await listOpenViewDataSources({
         limit: CATALOG_PAGE_SIZE,
         offset: sourcesOffset,
       });
-      setSources((current) => [...current, ...page.items]);
-      setSourcesOffset((current) => current + page.pagination.count);
-      setSourcesHasMore(page.pagination.hasMore);
-      setSourcesError("");
+      setSourcesExtension({
+        base,
+        items: [...loaded, ...page.items],
+        hasMore: page.pagination.hasMore,
+        nextOffset: sourcesOffset + page.pagination.count,
+      });
+      setSourcesMoreFailedFor(null);
     } catch {
-      setSourcesError("More data sources could not be loaded. Try again.");
+      setSourcesMoreFailedFor(base);
     } finally {
-      setSourcesLoading(false);
+      setSourcesLoadingMore(false);
     }
   }
 
   async function loadMoreFields(): Promise<void> {
-    if (fieldsLoading || !fieldsHasMore || !draft.moduleId) return;
-    const moduleId = draft.moduleId;
-    setFieldsLoading(true);
+    if (fieldsLoading || !fieldsHasMore || !draft.moduleId || !fieldsBase)
+      return;
+    const base = fieldsBase;
+    const loaded = fieldsMore?.items ?? [];
+    setFieldsLoadingMore(true);
     try {
-      const page = await listOpenViewDataSourceFields(moduleId, {
+      const page = await listOpenViewDataSourceFields(draft.moduleId, {
         limit: CATALOG_PAGE_SIZE,
         offset: fieldsOffset,
       });
-      if (moduleId !== moduleIdRef.current) return;
-      setFields((current) => [...current, ...page.items]);
-      setFieldsOffset((current) => current + page.pagination.count);
-      setFieldsHasMore(page.pagination.hasMore);
-      setFieldsError("");
+      // A result for a source that is no longer chosen is ignored, because
+      // its base page is no longer the one shown.
+      setFieldsExtension({
+        base,
+        items: [...loaded, ...page.items],
+        hasMore: page.pagination.hasMore,
+        nextOffset: fieldsOffset + page.pagination.count,
+      });
+      setFieldsMoreFailedFor(null);
     } catch {
-      if (moduleId === moduleIdRef.current)
-        setFieldsError("More fields could not be loaded. Try again.");
+      setFieldsMoreFailedFor(base);
     } finally {
-      if (moduleId === moduleIdRef.current) setFieldsLoading(false);
+      setFieldsLoadingMore(false);
     }
   }
 
@@ -595,12 +634,11 @@ export default function ServerBackedReports() {
       setBaselineDraft(nextDraft);
       setRecipeEditorOpen(false);
       setActiveReportTab("saved-outputs");
-      setReports((current) => [
+      patchReports((current) => [
         saved,
         ...current.filter((report) => report.id !== saved.id),
       ]);
-      setListOffset(0);
-      setListRefresh((current) => current + 1);
+      refreshReportList();
       setStale(false);
       setNotice(baselineReport ? "Report saved." : "Report created.");
       runRetryRef.current = null;
@@ -640,7 +678,7 @@ export default function ServerBackedReports() {
       setBaselineDraft(nextDraft);
       setStale(false);
       setNotice("Latest Report loaded.");
-      setReports((current) =>
+      patchReports((current) =>
         current.map((report) => (report.id === latest.id ? latest : report)),
       );
     } catch (reason) {
@@ -693,11 +731,10 @@ export default function ServerBackedReports() {
       setDraft(nextDraft);
       setRecipeEditorOpen(false);
       setActiveReportTab("saved-outputs");
-      setReports((current) =>
+      patchReports((current) =>
         current.map((report) => (report.id === updated.id ? updated : report)),
       );
-      setListOffset(0);
-      setListRefresh((current) => current + 1);
+      refreshReportList();
       setNotice(updated.isDeleted ? "Report archived." : "Report restored.");
       runRetryRef.current = null;
     } catch (reason) {
@@ -741,9 +778,7 @@ export default function ServerBackedReports() {
       setRunsTotal((current) => current + 1);
       setRunsOffset(0);
       setRunsRefresh((current) => current + 1);
-      if (sharedOffset !== 0) setSharedRuns([]);
-      setSharedOffset(0);
-      setSharedRefresh((current) => current + 1);
+      refreshSharedRuns();
       setNotice(
         `Report run saved with ${run.rowCount} ${run.rowCount === 1 ? "row" : "rows"}.`,
       );
@@ -766,7 +801,7 @@ export default function ServerBackedReports() {
   ): Promise<void> {
     if (!beginAction(`${action}:${run.id}`)) return;
     const isSharedRun = "reportName" in run;
-    if (isSharedRun) setSharedError("");
+    if (isSharedRun) setSharedActionError("");
     const printWindow = action === "print" ? window.open("", "_blank") : null;
     if (printWindow) printWindow.opener = null;
     try {
@@ -802,7 +837,7 @@ export default function ServerBackedReports() {
               reason,
               "The saved Report output could not be opened. Try again.",
             );
-      if (isSharedRun) setSharedError(message);
+      if (isSharedRun) setSharedActionError(message);
       else setError(message);
     } finally {
       endAction();
@@ -892,17 +927,17 @@ export default function ServerBackedReports() {
             hasMore={listHasMore}
             onShowArchivedChange={(show) => {
               setShowArchived(show);
-              setListOffset(0);
-              setListLoading(true);
+              setListExtension(null);
+              setListMoreFailedFor(null);
             }}
             onRefresh={() => {
-              setListOffset(0);
-              setListLoading(true);
-              setListRefresh((current) => current + 1);
+              setListExtension(null);
+              setListMoreFailedFor(null);
+              void listQuery.refetch();
             }}
             onRetry={() => {
-              setListLoading(true);
-              setListRefresh((current) => current + 1);
+              if (listMoreFailed) void loadMoreReports();
+              else void listQuery.refetch();
             }}
             onOpenReport={openReport}
             onDuplicateReport={(reportId) => {
@@ -912,10 +947,7 @@ export default function ServerBackedReports() {
             onStartFromTemplate={() => {
               void startFromSavedReport(templateReportId);
             }}
-            onLoadMore={() => {
-              setListLoading(true);
-              setListOffset(reports.length);
-            }}
+            onLoadMore={() => void loadMoreReports()}
             onOpenAvailableOutputs={() => setAvailableOutputsOpen(true)}
           />
         </div>
@@ -1174,10 +1206,15 @@ export default function ServerBackedReports() {
         fieldsLoading={fieldsLoading}
         fieldsError={fieldsError}
         onRetrySources={() => {
-          setSourcesLoading(true);
-          setSourcesRefresh((current) => current + 1);
+          setSourcesExtension(null);
+          setSourcesMoreFailedFor(null);
+          void sourcesQuery.refetch();
         }}
-        onRetryFields={() => setFieldsRefresh((current) => current + 1)}
+        onRetryFields={() => {
+          setFieldsExtension(null);
+          setFieldsMoreFailedFor(null);
+          void fieldsQuery.refetch();
+        }}
         loadMoreSources={loadMoreSources}
         loadMoreFields={loadMoreFields}
         saveReport={saveReport}
@@ -1209,25 +1246,18 @@ export default function ServerBackedReports() {
               totalCount={sharedTotal}
               pageSize={sharedPageSize}
               onPageIndexChange={(pageIndex) => {
-                setSharedRuns([]);
-                setSharedLoading(true);
+                setSharedActionError("");
                 setSharedOffset(pageIndex * sharedPageSize);
               }}
               onPageSizeChange={(pageSize) => {
-                setSharedRuns([]);
-                setSharedLoading(true);
+                setSharedActionError("");
                 setSharedPageSize(pageSize);
                 setSharedOffset(0);
               }}
-              onRefresh={() => {
-                if (sharedOffset !== 0) setSharedRuns([]);
-                setSharedOffset(0);
-                setSharedLoading(true);
-                setSharedRefresh((current) => current + 1);
-              }}
+              onRefresh={refreshSharedRuns}
               onRetry={() => {
-                setSharedLoading(true);
-                setSharedRefresh((current) => current + 1);
+                setSharedActionError("");
+                void sharedQuery.refetch();
               }}
               onOutputRun={outputRun}
             />

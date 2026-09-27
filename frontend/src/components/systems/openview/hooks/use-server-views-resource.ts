@@ -1,8 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError } from "@/lib/api";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type SetStateAction,
+} from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
+import {
+  audienceOptions,
+  boundedCatalogOptions,
+  invalidatesRecords,
+  isAuthorizationDenied,
+  moduleWorkspaceOptions,
+  openViewKeys,
+  type ModuleWorkspace,
+} from "../adapters/openview-queries";
 import {
   listOpenViewAudienceOptions,
   listOpenViewDataSourceFields,
@@ -11,26 +26,10 @@ import {
   listOpenViewSavedViews,
   type OpenViewAudienceOption,
   type OpenViewDataSource,
-  type OpenViewDataSourceField,
-  type OpenViewPage,
-  type OpenViewPersonalDefault,
   type OpenViewSavedView,
 } from "../adapters/views-api";
 
-export type ModuleWorkspace = {
-  moduleId: string;
-  fields: OpenViewDataSourceField[];
-  fieldsHasMore: boolean;
-  fieldsNextOffset: number;
-  views: OpenViewSavedView[];
-  viewsHasMore: boolean;
-  viewsNextOffset: number;
-  defaults: OpenViewPersonalDefault[];
-  defaultsHasMore: boolean;
-  defaultsNextOffset: number;
-};
-
-type ItemBatch<T> = { items: T[]; hasMore: boolean; nextOffset: number };
+export type { ModuleWorkspace };
 
 function mergeViewsById(
   current: OpenViewSavedView[],
@@ -41,259 +40,175 @@ function mergeViewsById(
   return [...views.values()];
 }
 
-async function boundedItems<T>(
-  read: (options: {
-    limit: number;
-    offset: number;
-  }) => Promise<OpenViewPage<T>>,
-): Promise<ItemBatch<T>> {
-  const items: T[] = [];
-  let offset = 0;
-  for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
-    const page = await read({ limit: 100, offset });
-    items.push(...page.items);
-    if (!page.pagination.hasMore || page.items.length === 0)
-      return { items, hasMore: false, nextOffset: offset + page.items.length };
-    offset += page.pagination.count;
-  }
-  return { items, hasMore: true, nextOffset: offset };
-}
-
 function messageFor(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return error.message;
   return fallback;
 }
 
-function isAuthorizationDenied(error: unknown): boolean {
-  return error instanceof ApiError && [401, 403].includes(error.status);
-}
+const NO_AUDIENCES: OpenViewAudienceOption[] = [];
 
-const CATALOG_ENTITIES = new Set([
-  "departments",
-  "fields",
-  "modules",
-  "workspace_profiles",
-]);
-const VIEW_METADATA_ENTITIES = new Set(["saved_views", "saved_view_defaults"]);
+const AUTHORIZATION_ERROR =
+  "OpenView data is unavailable. Sign in or ask for access, then retry.";
+
+// Pages loaded with "Load more" extend the cached first batch. They belong to
+// the batch they extend: a refetch replaces the batch and drops them.
+type CatalogExtension = {
+  base: unknown;
+  items: OpenViewDataSource[];
+  hasMore: boolean;
+  nextOffset: number;
+};
+type AudienceExtension = {
+  base: unknown;
+  items: OpenViewAudienceOption[];
+  roleHasMore: boolean;
+  roleNextOffset: number;
+  userHasMore: boolean;
+  userNextOffset: number;
+  error: string | null;
+};
 
 export function useServerViewsResource(requestedModule: string | null) {
-  const [catalog, setCatalog] = useState<OpenViewDataSource[] | null>(null);
-  const [catalogHasMore, setCatalogHasMore] = useState(false);
-  const [catalogNextOffset, setCatalogNextOffset] = useState(0);
-  const [audiences, setAudiences] = useState<OpenViewAudienceOption[]>([]);
-  const [roleOptionsHasMore, setRoleOptionsHasMore] = useState(false);
-  const [roleOptionsNextOffset, setRoleOptionsNextOffset] = useState(0);
-  const [userOptionsHasMore, setUserOptionsHasMore] = useState(false);
-  const [userOptionsNextOffset, setUserOptionsNextOffset] = useState(0);
-  const [catalogLoading, setCatalogLoading] = useState(true);
-  const [catalogError, setCatalogError] = useState("");
-  const [catalogRetry, setCatalogRetry] = useState(0);
-  // Role and person choices only feed sharing, so their failure stays scoped
-  // to the save dialog instead of blocking the catalog.
-  const [audienceError, setAudienceError] = useState("");
-  const [audienceLoading, setAudienceLoading] = useState(true);
-  const [audienceRetry, setAudienceRetry] = useState(0);
-  const [moduleWorkspace, setModuleWorkspace] =
-    useState<ModuleWorkspace | null>(null);
-  const [moduleLoading, setModuleLoading] = useState(false);
-  const [moduleError, setModuleError] = useState("");
-  const [moduleRetry, setModuleRetry] = useState(0);
+  const queryClient = useQueryClient();
+  const catalogQuery = useQuery(boundedCatalogOptions());
+  const audienceQuery = useQuery(audienceOptions());
+  const [catalogExtension, setCatalogExtension] =
+    useState<CatalogExtension | null>(null);
+  const [audienceExtension, setAudienceExtension] =
+    useState<AudienceExtension | null>(null);
   const [metadataLoadingMore, setMetadataLoadingMore] = useState(false);
   const [metadataError, setMetadataError] = useState("");
   const [metadataRetryTarget, setMetadataRetryTarget] = useState<
     "catalog" | "module" | null
   >(null);
   const [recordInvalidation, setRecordInvalidation] = useState(0);
-  const [authorizationDenied, setAuthorizationDenied] = useState(false);
-  const catalogRequest = useRef(0);
-  const audienceRequest = useRef(0);
-  const moduleRequest = useRef(0);
 
-  const markAuthorizationDenied = useCallback(() => {
-    catalogRequest.current += 1;
-    audienceRequest.current += 1;
-    moduleRequest.current += 1;
-    setAuthorizationDenied(true);
-    setCatalog(null);
-    setCatalogLoading(false);
-    setCatalogHasMore(false);
-    setCatalogNextOffset(0);
-    setAudiences([]);
-    setAudienceError("");
-    setModuleWorkspace(null);
-    setModuleLoading(false);
-    setCatalogError(
-      "OpenView data is unavailable. Sign in or ask for access, then retry.",
-    );
-    setModuleError(
-      "OpenView data is unavailable. Sign in or ask for access, then retry.",
-    );
-  }, []);
-
+  // Record results are not cached reads; they refresh through this counter.
+  // Cached reads refresh through OpenViewQuerySync on the same stream.
   useEffect(
     () =>
       subscribeOpenViewInvalidations((event) => {
-        if (event.type === "resync") {
+        if (event.type === "resync" || invalidatesRecords(event.entity))
           setRecordInvalidation((value) => value + 1);
-          setCatalogRetry((value) => value + 1);
-          setModuleRetry((value) => value + 1);
-          return;
-        }
-        if (event.entity === "records" || event.entity === "relationships") {
-          setRecordInvalidation((value) => value + 1);
-        }
-        if (CATALOG_ENTITIES.has(event.entity)) {
-          setRecordInvalidation((value) => value + 1);
-          setCatalogRetry((value) => value + 1);
-          setModuleRetry((value) => value + 1);
-          return;
-        }
-        if (VIEW_METADATA_ENTITIES.has(event.entity))
-          setModuleRetry((value) => value + 1);
       }),
     [],
   );
 
-  useEffect(() => {
-    const request = ++catalogRequest.current;
-    setCatalogLoading(true);
-    setCatalogError("");
-    void boundedItems((options) => listOpenViewDataSources(options))
-      .then((sources) => {
-        if (request !== catalogRequest.current) return;
-        setAuthorizationDenied(false);
-        setCatalog(sources.items);
-        setCatalogHasMore(sources.hasMore);
-        setCatalogNextOffset(sources.nextOffset);
-      })
-      .catch((error: unknown) => {
-        if (request !== catalogRequest.current) return;
-        if (isAuthorizationDenied(error)) {
-          markAuthorizationDenied();
-          return;
-        }
-        setCatalogError(
-          messageFor(error, "The OpenView catalog could not be loaded."),
-        );
-      })
-      .finally(() => {
-        if (request === catalogRequest.current) setCatalogLoading(false);
-      });
-    return () => {
-      catalogRequest.current += 1;
-    };
-  }, [catalogRetry, markAuthorizationDenied]);
+  const catalogBatch = catalogQuery.data;
+  const catalogMore =
+    catalogExtension && catalogExtension.base === catalogBatch
+      ? catalogExtension
+      : null;
+  // The workspace keys effects (route sync, deep-link lookup) on the
+  // catalog and audience arrays, so they keep one identity per loaded batch,
+  // as the former state did.
+  const loadedCatalog = useMemo(
+    () =>
+      catalogBatch
+        ? [...catalogBatch.items, ...(catalogMore?.items ?? [])]
+        : null,
+    [catalogBatch, catalogMore],
+  );
+  const catalogHasMore = catalogMore
+    ? catalogMore.hasMore
+    : (catalogBatch?.hasMore ?? false);
+  const catalogNextOffset = catalogMore
+    ? catalogMore.nextOffset
+    : (catalogBatch?.nextOffset ?? 0);
 
-  useEffect(() => {
-    const request = ++audienceRequest.current;
-    // A retry keeps the current message until the lists load or fail again.
-    setAudienceLoading(true);
-    void Promise.allSettled([
-      boundedItems((options) => listOpenViewAudienceOptions("role", options)),
-      boundedItems((options) => listOpenViewAudienceOptions("user", options)),
-    ]).then(([roles, people]) => {
-      if (request !== audienceRequest.current) return;
-      if (
-        [roles, people].some(
-          (result) =>
-            result.status === "rejected" &&
-            isAuthorizationDenied(result.reason),
-        )
-      ) {
-        setAudienceLoading(false);
-        markAuthorizationDenied();
-        return;
-      }
-      if (roles.status === "fulfilled") {
-        setAudiences((current) => [
-          ...current.filter((item) => item.kind !== "role"),
-          ...roles.value.items,
-        ]);
-        setRoleOptionsHasMore(roles.value.hasMore);
-        setRoleOptionsNextOffset(roles.value.nextOffset);
-      }
-      if (people.status === "fulfilled") {
-        setAudiences((current) => [
-          ...current.filter((item) => item.kind !== "identity"),
-          ...people.value.items,
-        ]);
-        setUserOptionsHasMore(people.value.hasMore);
-        setUserOptionsNextOffset(people.value.nextOffset);
-      }
-      setAudienceError(
-        roles.status === "rejected" || people.status === "rejected"
-          ? "Roles and people could not be loaded. You can still share with Only me or Everyone."
-          : "",
-      );
-      setAudienceLoading(false);
-    });
-    return () => {
-      audienceRequest.current += 1;
-    };
-  }, [audienceRetry, catalogRetry, markAuthorizationDenied]);
+  // The module follows the loaded catalog even while access is denied, so a
+  // retry can clear a denial from any of the three reads.
+  const loadedModuleId = loadedCatalog?.length
+    ? loadedCatalog.some((source) => source.id === requestedModule)
+      ? (requestedModule ?? undefined)
+      : loadedCatalog[0]?.id
+    : undefined;
+  const moduleQuery = useQuery(moduleWorkspaceOptions(loadedModuleId ?? ""));
 
-  const retryAudiences = useCallback(
-    () => setAudienceRetry((value) => value + 1),
-    [],
+  // A settled error counts; a retry in flight clears its message first.
+  const settledError = (query: { error: unknown; isFetching: boolean }) =>
+    query.isFetching ? null : query.error;
+  const authorizationDenied = [catalogQuery, audienceQuery, moduleQuery].some(
+    (query) => isAuthorizationDenied(settledError(query)),
   );
 
-  const moduleId = useMemo(() => {
-    if (!catalog?.length) return undefined;
-    return catalog.some((source) => source.id === requestedModule)
-      ? (requestedModule ?? undefined)
-      : catalog[0]?.id;
-  }, [catalog, requestedModule]);
+  const catalog = authorizationDenied ? null : loadedCatalog;
+  const catalogLoading = catalogQuery.isFetching;
+  const catalogLoadError = settledError(catalogQuery);
+  const catalogError = authorizationDenied
+    ? AUTHORIZATION_ERROR
+    : catalogLoadError
+      ? messageFor(
+          catalogLoadError,
+          "The OpenView catalog could not be loaded.",
+        )
+      : "";
+  const moduleId = authorizationDenied ? undefined : loadedModuleId;
+  const moduleWorkspace = authorizationDenied
+    ? null
+    : (moduleQuery.data ?? null);
+  const moduleLoading = moduleQuery.isFetching;
+  const moduleLoadError = settledError(moduleQuery);
+  const moduleError = authorizationDenied
+    ? AUTHORIZATION_ERROR
+    : moduleLoadError
+      ? messageFor(moduleLoadError, "The data source could not be loaded.")
+      : "";
 
-  useEffect(() => {
-    if (!moduleId) return;
-    const request = ++moduleRequest.current;
-    setModuleLoading(true);
-    setModuleError("");
-    void Promise.all([
-      boundedItems((options) =>
-        listOpenViewDataSourceFields(moduleId, options),
-      ),
-      boundedItems((options) =>
-        listOpenViewSavedViews({ moduleId, deleted: "include", ...options }),
-      ),
-      boundedItems((options) => listOpenViewPersonalDefaults(options)),
-    ])
-      .then(([fields, views, defaults]) => {
-        if (request !== moduleRequest.current) return;
-        setAuthorizationDenied(false);
-        setModuleWorkspace({
-          moduleId,
-          fields: fields.items,
-          fieldsHasMore: fields.hasMore,
-          fieldsNextOffset: fields.nextOffset,
-          views: views.items,
-          viewsHasMore: views.hasMore,
-          viewsNextOffset: views.nextOffset,
-          defaults: defaults.items,
-          defaultsHasMore: defaults.hasMore,
-          defaultsNextOffset: defaults.nextOffset,
-        });
-      })
-      .catch((error: unknown) => {
-        if (request !== moduleRequest.current) return;
-        if (isAuthorizationDenied(error)) {
-          markAuthorizationDenied();
-          return;
-        }
-        setModuleError(
-          messageFor(error, "The data source could not be loaded."),
-        );
-      })
-      .finally(() => {
-        if (request === moduleRequest.current) setModuleLoading(false);
-      });
-    return () => {
-      moduleRequest.current += 1;
-    };
-  }, [markAuthorizationDenied, moduleId, moduleRetry]);
+  const audienceLists = audienceQuery.data;
+  const audienceMore =
+    audienceExtension && audienceExtension.base === audienceLists
+      ? audienceExtension
+      : null;
+  const loadedAudiences = useMemo(
+    () => [
+      ...(audienceLists?.roles?.items ?? []),
+      ...(audienceLists?.people?.items ?? []),
+      ...(audienceMore?.items ?? []),
+    ],
+    [audienceLists, audienceMore],
+  );
+  const audiences = authorizationDenied ? NO_AUDIENCES : loadedAudiences;
+  const roleOptionsHasMore = audienceMore
+    ? audienceMore.roleHasMore
+    : (audienceLists?.roles?.hasMore ?? false);
+  const roleOptionsNextOffset = audienceMore
+    ? audienceMore.roleNextOffset
+    : (audienceLists?.roles?.nextOffset ?? 0);
+  const userOptionsHasMore = audienceMore
+    ? audienceMore.userHasMore
+    : (audienceLists?.people?.hasMore ?? false);
+  const userOptionsNextOffset = audienceMore
+    ? audienceMore.userNextOffset
+    : (audienceLists?.people?.nextOffset ?? 0);
+  const audienceError = authorizationDenied
+    ? ""
+    : (audienceMore?.error ??
+      (audienceLists?.failed
+        ? "Roles and people could not be loaded. You can still share with Only me or Everyone."
+        : ""));
+  const audienceLoading = audienceQuery.isFetching;
+
+  const retryAudiences = useCallback(() => {
+    void audienceQuery.refetch();
+  }, [audienceQuery]);
+
+  // Saved-view commands update the cached workspace of the module they
+  // belong to; each updater ignores a workspace for another module.
+  const setModuleWorkspace = useCallback(
+    (action: SetStateAction<ModuleWorkspace | null>) => {
+      queryClient.setQueriesData<ModuleWorkspace>(
+        { queryKey: openViewKeys.moduleWorkspaces },
+        (previous) =>
+          (typeof action === "function" ? action(previous ?? null) : action) ??
+          undefined,
+      );
+    },
+    [queryClient],
+  );
 
   const loadMoreCatalog = useCallback(async () => {
-    if (!catalogHasMore || metadataLoadingMore) return;
+    if (!catalogHasMore || metadataLoadingMore || !catalogBatch) return;
     setMetadataLoadingMore(true);
     setMetadataError("");
     setMetadataRetryTarget(null);
@@ -302,9 +217,15 @@ export function useServerViewsResource(requestedModule: string | null) {
         limit: 100,
         offset: catalogNextOffset,
       });
-      setCatalog((current) => [...(current ?? []), ...page.items]);
-      setCatalogHasMore(page.pagination.hasMore);
-      setCatalogNextOffset(catalogNextOffset + page.pagination.count);
+      setCatalogExtension((current) => ({
+        base: catalogBatch,
+        items: [
+          ...(current?.base === catalogBatch ? current.items : []),
+          ...page.items,
+        ],
+        hasMore: page.pagination.hasMore,
+        nextOffset: catalogNextOffset + page.pagination.count,
+      }));
     } catch (error) {
       setMetadataRetryTarget("catalog");
       setMetadataError(
@@ -313,7 +234,7 @@ export function useServerViewsResource(requestedModule: string | null) {
     } finally {
       setMetadataLoadingMore(false);
     }
-  }, [catalogHasMore, catalogNextOffset, metadataLoadingMore]);
+  }, [catalogBatch, catalogHasMore, catalogNextOffset, metadataLoadingMore]);
 
   const loadMoreModuleMetadata = useCallback(async () => {
     if (!moduleId || !moduleWorkspace || metadataLoadingMore) return;
@@ -382,13 +303,23 @@ export function useServerViewsResource(requestedModule: string | null) {
     } finally {
       setMetadataLoadingMore(false);
     }
-  }, [metadataLoadingMore, moduleId, moduleWorkspace]);
+  }, [metadataLoadingMore, moduleId, moduleWorkspace, setModuleWorkspace]);
 
   const loadMoreAudienceOptions = useCallback(async () => {
     if (metadataLoadingMore || (!roleOptionsHasMore && !userOptionsHasMore))
       return;
+    const base = audienceLists;
     setMetadataLoadingMore(true);
-    setAudienceError("");
+    const extension: AudienceExtension = {
+      base,
+      items: audienceMore?.items ?? [],
+      roleHasMore: roleOptionsHasMore,
+      roleNextOffset: roleOptionsNextOffset,
+      userHasMore: userOptionsHasMore,
+      userNextOffset: userOptionsNextOffset,
+      error: "",
+    };
+    setAudienceExtension(extension);
     try {
       const [roles, users] = await Promise.all([
         roleOptionsHasMore
@@ -404,31 +335,38 @@ export function useServerViewsResource(requestedModule: string | null) {
             })
           : Promise.resolve(null),
       ]);
-      setAudiences((current) => [
-        ...current,
-        ...(roles?.items ?? []),
-        ...(users?.items ?? []),
-      ]);
-      if (roles) {
-        setRoleOptionsHasMore(roles.pagination.hasMore);
-        setRoleOptionsNextOffset(
-          roleOptionsNextOffset + roles.pagination.count,
-        );
-      }
-      if (users) {
-        setUserOptionsHasMore(users.pagination.hasMore);
-        setUserOptionsNextOffset(
-          userOptionsNextOffset + users.pagination.count,
-        );
-      }
+      setAudienceExtension({
+        ...extension,
+        items: [
+          ...extension.items,
+          ...(roles?.items ?? []),
+          ...(users?.items ?? []),
+        ],
+        ...(roles
+          ? {
+              roleHasMore: roles.pagination.hasMore,
+              roleNextOffset: roleOptionsNextOffset + roles.pagination.count,
+            }
+          : {}),
+        ...(users
+          ? {
+              userHasMore: users.pagination.hasMore,
+              userNextOffset: userOptionsNextOffset + users.pagination.count,
+            }
+          : {}),
+      });
     } catch {
-      setAudienceError(
-        "More roles and people could not be loaded. You can still share with the choices shown.",
-      );
+      setAudienceExtension({
+        ...extension,
+        error:
+          "More roles and people could not be loaded. You can still share with the choices shown.",
+      });
     } finally {
       setMetadataLoadingMore(false);
     }
   }, [
+    audienceLists,
+    audienceMore,
     metadataLoadingMore,
     roleOptionsHasMore,
     roleOptionsNextOffset,
@@ -437,12 +375,16 @@ export function useServerViewsResource(requestedModule: string | null) {
   ]);
 
   const refreshModule = useCallback(() => {
-    setModuleRetry((value) => value + 1);
-  }, []);
+    void moduleQuery.refetch();
+  }, [moduleQuery]);
 
   const retryCatalog = useCallback(() => {
-    setCatalogRetry((value) => value + 1);
-  }, []);
+    // Role and person choices reload with the catalog, as a denial may have
+    // come from any read.
+    void catalogQuery.refetch();
+    void audienceQuery.refetch();
+    if (moduleQuery.isError) void moduleQuery.refetch();
+  }, [audienceQuery, catalogQuery, moduleQuery]);
 
   const retryMetadata = useCallback(() => {
     if (metadataRetryTarget === "catalog") void loadMoreCatalog();
@@ -475,6 +417,5 @@ export function useServerViewsResource(requestedModule: string | null) {
     retryCatalog,
     recordInvalidation,
     authorizationDenied,
-    markAuthorizationDenied,
   };
 }

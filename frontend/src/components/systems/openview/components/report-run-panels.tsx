@@ -24,12 +24,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { LoadingRegion } from "@/components/ui/loading-region";
 import { TablePagination } from "@/components/ui/table-pagination";
 import type {
   OpenViewReport,
   OpenViewReportRun,
   OpenViewSharedReportRun,
 } from "../adapters/reports-api";
+import { AvailableOutputsSkeleton } from "./openview-skeletons";
 
 export type ReportOutputAction = "download" | "print";
 
@@ -286,32 +288,33 @@ export function AvailableReportRunsPanel({
           </Button>
         </Alert>
       ) : null}
-      {loading && runs.length === 0 ? (
-        <p role="status" className="text-muted-foreground text-sm">
-          Loading available outputs…
-        </p>
-      ) : null}
-      {!loading && runs.length === 0 && !error ? (
-        <p className="text-muted-foreground text-sm">
-          No outputs are available to this account.
-        </p>
-      ) : null}
-      {runs.length > 0 ? (
-        <ReportRunsTable
-          runs={runs}
-          showReportName
-          actionPending={actionPending}
-          offset={offset}
-          totalCount={totalCount}
-          pageSize={pageSize}
-          paginationLabel="Available output pages"
-          onPageIndexChange={onPageIndexChange}
-          onPageSizeChange={onPageSizeChange}
-          onOutputRun={(run, runName, action) => {
-            if ("reportName" in run) return onOutputRun(run, runName, action);
-          }}
-        />
-      ) : null}
+      <LoadingRegion
+        loading={loading && runs.length === 0}
+        label="Loading available outputs…"
+        skeleton={<AvailableOutputsSkeleton />}
+      >
+        {!loading && runs.length === 0 && !error ? (
+          <p className="text-muted-foreground text-sm">
+            No outputs are available to this account.
+          </p>
+        ) : null}
+        {runs.length > 0 ? (
+          <ReportRunsTable
+            runs={runs}
+            showReportName
+            actionPending={actionPending}
+            offset={offset}
+            totalCount={totalCount}
+            pageSize={pageSize}
+            paginationLabel="Available output pages"
+            onPageIndexChange={onPageIndexChange}
+            onPageSizeChange={onPageSizeChange}
+            onOutputRun={(run, runName, action) => {
+              if ("reportName" in run) return onOutputRun(run, runName, action);
+            }}
+          />
+        ) : null}
+      </LoadingRegion>
     </div>
   );
 }

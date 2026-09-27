@@ -1,0 +1,427 @@
+import { expect, test, type Page } from "@playwright/test";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
+
+const userA = "00000000-0000-4000-8000-000000000101";
+const userB = "00000000-0000-4000-8000-000000000201";
+const departmentId = "00000000-0000-4000-8000-000000000102";
+const moduleId = "00000000-0000-4000-8000-000000000103";
+const fieldId = "00000000-0000-4000-8000-000000000104";
+const timestamp = "2026-09-24T00:00:00Z";
+
+function pageOf<T>(items: T[], limit = 25) {
+  return {
+    items,
+    pagination: {
+      limit,
+      offset: 0,
+      count: items.length,
+      total: items.length,
+      has_more: false,
+    },
+  };
+}
+
+function report(id: string, ownerId: string, name: string) {
+  return {
+    id,
+    owner_id: ownerId,
+    module_id: moduleId,
+    name,
+    subtitle: null,
+    revision: 1,
+    recipe: {
+      version: 1,
+      fields: [{ field_id: fieldId, expected_type: "text" }],
+      filters: [],
+      logic: "and",
+      sorts: [],
+      group_by: null,
+      include_row_count: false,
+    },
+    audience: { kind: "private", role_id: null, user_id: null },
+    is_deleted: false,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+}
+
+const reportsByUser: Record<string, ReturnType<typeof report>[]> = {
+  [userA]: [
+    report("00000000-0000-4000-8000-000000000105", userA, "Alpha report"),
+  ],
+  [userB]: [
+    report("00000000-0000-4000-8000-000000000205", userB, "Beta report"),
+  ],
+};
+
+type Api = {
+  /** GET /api/reports list reads, in order. */
+  reportLists: string[];
+  /** GET /api/views/data-sources catalog reads, in order. */
+  catalogReads: string[];
+  setUser(user: string): void;
+  /** Holds Reports list responses until the returned release is called. */
+  holdLists(): () => void;
+};
+
+// Mocks the reads behind Reports and Charts for one signed-in person at a
+// time. Counts are per read path so a test can prove what a revisit or an
+// invalidation requested.
+async function installOpenViewApi(page: Page): Promise<Api> {
+  let activeUser = userA;
+  let listHold: Promise<void> | null = null;
+  const reportLists: string[] = [];
+  const catalogReads: string[] = [];
+  await installOpenViewEventSource(page);
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        authenticated: true,
+        user_id: activeUser,
+        setup_required: false,
+      }),
+    }),
+  );
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: activeUser,
+        role_id: departmentId,
+        role: "member",
+        permissions: ["records.read", "records.write"],
+      }),
+    }),
+  );
+  await page.route("**/api/charts/preferences", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ config: null }),
+    }),
+  );
+  await page.route("**/api/views/data-sources**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/views/data-sources") {
+      catalogReads.push(route.request().url());
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(
+          pageOf(
+            [{ id: moduleId, name: "Assets", department_id: departmentId }],
+            100,
+          ),
+        ),
+      });
+    }
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        pageOf(
+          [
+            {
+              id: fieldId,
+              module_id: moduleId,
+              name: "Asset",
+              type: "text",
+              required: true,
+              position: 0,
+              config: {},
+            },
+          ],
+          100,
+        ),
+      ),
+    });
+  });
+  await page.route("**/api/reports**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/reports/shared-runs")
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(pageOf([])),
+      });
+    if (path === "/api/reports" && request.method() === "GET") {
+      reportLists.push(request.url());
+      const user = activeUser;
+      if (listHold) await listHold;
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(pageOf(reportsByUser[user] ?? [])),
+      });
+    }
+    return route.fulfill({ status: 404, body: "{}" });
+  });
+  return {
+    reportLists,
+    catalogReads,
+    setUser(user) {
+      activeUser = user;
+    },
+    holdLists() {
+      let release: () => void = () => {};
+      listHold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
+  };
+}
+
+type LoadingProbe = {
+  busyAt: number | null;
+  statusAt: number | null;
+};
+
+// Records, in page time, when a loading region first reserves its space and
+// when its skeleton label is first announced, so a test can prove the delay
+// and prove that a fast or cached load never announces one.
+async function installLoadingProbe(page: Page, label: string) {
+  await page.addInitScript((statusLabel) => {
+    const probe: LoadingProbe = { busyAt: null, statusAt: null };
+    (window as Window & { __loadingProbe?: LoadingProbe }).__loadingProbe =
+      probe;
+    new MutationObserver(() => {
+      const now = performance.now();
+      if (
+        probe.busyAt === null &&
+        document.querySelector('[data-slot="loading-region"][aria-busy="true"]')
+      )
+        probe.busyAt = now;
+      if (
+        probe.statusAt === null &&
+        [...document.querySelectorAll('[role="status"]')].some(
+          (element) => element.textContent === statusLabel,
+        )
+      )
+        probe.statusAt = now;
+    }).observe(document, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["aria-busy"],
+    });
+  }, label);
+}
+
+function readLoadingProbe(page: Page) {
+  return page.evaluate(
+    () =>
+      (window as Window & { __loadingProbe?: LoadingProbe }).__loadingProbe ??
+      null,
+  );
+}
+
+function resetLoadingProbe(page: Page) {
+  return page.evaluate(() => {
+    const probe = (window as Window & { __loadingProbe?: LoadingProbe })
+      .__loadingProbe;
+    if (probe) {
+      probe.busyAt = null;
+      probe.statusAt = null;
+    }
+  });
+}
+
+// Counts invalidation streams the page opens across section changes.
+async function countEventStreams(page: Page) {
+  await page.addInitScript(() => {
+    const Harness = window.EventSource;
+    const counted = window as Window & { __eventStreams?: number };
+    counted.__eventStreams = 0;
+    class CountedEventSource extends Harness {
+      constructor(url: string | URL, init?: EventSourceInit) {
+        super(url, init);
+        counted.__eventStreams = (counted.__eventStreams ?? 0) + 1;
+      }
+    }
+    Object.defineProperty(window, "EventSource", {
+      configurable: true,
+      value: CountedEventSource,
+    });
+  });
+}
+
+function sidebarLink(page: Page, name: string) {
+  return page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name, exact: true });
+}
+
+test("revisiting Reports within the cache window shows its list at once without a new request", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  await installLoadingProbe(page, "Loading Reports…");
+  await countEventStreams(page);
+  await page.goto("/openview?section=reports");
+  await expect(
+    page.getByRole("button", { name: "Alpha report" }),
+  ).toBeVisible();
+  expect(api.reportLists).toHaveLength(1);
+  // Development Strict Mode may open and close a first stream on mount, so
+  // the claim is that section changes open no further stream.
+  const streamsAfterFirstLoad = await page.evaluate(
+    () => (window as Window & { __eventStreams?: number }).__eventStreams,
+  );
+
+  await sidebarLink(page, "Charts").click();
+  await expect(page).toHaveURL(/section=charts/);
+  await expect(page.getByRole("heading", { name: "Charts" })).toBeVisible();
+
+  await resetLoadingProbe(page);
+  await sidebarLink(page, "Reports").click();
+  await expect(page).toHaveURL(/section=reports/);
+  await expect(
+    page.getByRole("button", { name: "Alpha report" }),
+  ).toBeVisible();
+  // Client navigation keeps the cache (a page.goto would reload the tab).
+  expect(api.reportLists).toHaveLength(1);
+  const probe = await readLoadingProbe(page);
+  expect(probe?.busyAt).toBeNull();
+  expect(probe?.statusAt).toBeNull();
+  // Both sections shared the stream that was already open.
+  expect(
+    await page.evaluate(
+      () => (window as Window & { __eventStreams?: number }).__eventStreams,
+    ),
+  ).toBe(streamsAfterFirstLoad);
+});
+
+test("server invalidations and Refresh still reload cached OpenView reads", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  await page.goto("/openview?section=reports");
+  await expect(
+    page.getByRole("button", { name: "Alpha report" }),
+  ).toBeVisible();
+  await expect.poll(() => api.catalogReads.length).toBe(1);
+  expect(api.reportLists).toHaveLength(1);
+  // The server opens every stream with a resync, which the client skips
+  // because it has just loaded; the harness stream does not send it itself.
+  await sendOpenViewEvent(page, "resync");
+
+  // A saved-view change does not touch the catalog or the Reports list.
+  await sendOpenViewEvent(page, "invalidate", { entity: "saved_views" });
+  // A catalog change reloads the data-source catalog only.
+  await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
+  await expect.poll(() => api.catalogReads.length).toBe(2);
+  expect(api.reportLists).toHaveLength(1);
+
+  // A resync reloads every cached OpenView read in view.
+  await sendOpenViewEvent(page, "resync");
+  await expect.poll(() => api.reportLists.length).toBe(2);
+  await expect.poll(() => api.catalogReads.length).toBe(3);
+
+  await page.getByRole("button", { name: "Refresh Reports" }).click();
+  await expect.poll(() => api.reportLists.length).toBe(3);
+  await expect(
+    page.getByRole("button", { name: "Alpha report" }),
+  ).toBeVisible();
+});
+
+// The page's timers run on a paused clock, so the skeleton delay is exact.
+async function pauseClock(page: Page) {
+  await page.clock.install({ time: new Date("2026-09-27T09:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-09-27T09:00:01Z"));
+}
+
+test("a slow Reports list shows its skeleton only after the reserve delay", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  const release = api.holdLists();
+  await pauseClock(page);
+  await page.goto("/openview?section=reports");
+
+  // The page frame renders at once, outside the loading region.
+  await expect(
+    page.getByRole("heading", { name: "Reports", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "New Report" })).toBeVisible();
+  await expect(
+    page.locator('[data-slot="loading-region"][aria-busy="true"]'),
+  ).toHaveCount(1);
+  const label = page.getByRole("status").filter({
+    hasText: "Loading Reports…",
+  });
+  await page.clock.runFor(250);
+  await expect(label).toHaveCount(0);
+  await page.clock.runFor(100);
+  await expect(label).toBeVisible();
+
+  const listed = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/reports",
+  );
+  release();
+  await listed;
+  const content = page.getByRole("button", { name: "Alpha report" });
+  // Shown at 300ms, the skeleton stays until at least 600ms.
+  await page.clock.runFor(100);
+  await expect(label).toBeVisible();
+  await expect(content).toHaveCount(0);
+  await page.clock.runFor(200);
+  await expect
+    .poll(
+      async () => {
+        await page.clock.runFor(1);
+        return content.count();
+      },
+      { intervals: [50] },
+    )
+    .toBe(1);
+  await expect(label).toHaveCount(0);
+});
+
+test("a fast Reports list never announces a skeleton", async ({ page }) => {
+  const api = await installOpenViewApi(page);
+  const release = api.holdLists();
+  await pauseClock(page);
+  await page.goto("/openview?section=reports");
+  await expect(
+    page.locator('[data-slot="loading-region"][aria-busy="true"]'),
+  ).toHaveCount(1);
+  await page.clock.runFor(200);
+  release();
+  // The query cache hands results over on a zero-delay timer.
+  await expect
+    .poll(
+      async () => {
+        await page.clock.runFor(1);
+        return page.getByRole("button", { name: "Alpha report" }).count();
+      },
+      { intervals: [50] },
+    )
+    .toBe(1);
+  await page.clock.runFor(1_000);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Loading Reports…" }),
+  ).toHaveCount(0);
+});
+
+test("a different account never sees the previous account's cached Reports", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  await page.goto("/openview?section=reports");
+  await expect(
+    page.getByRole("button", { name: "Alpha report" }),
+  ).toBeVisible();
+  expect(api.reportLists).toHaveLength(1);
+
+  // The tab returns under another account; the session gate re-verifies.
+  api.setUser(userB);
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+
+  await expect(page.getByRole("button", { name: "Beta report" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Alpha report" })).toHaveCount(
+    0,
+  );
+  // The new account read its own list instead of reusing the cached one.
+  expect(api.reportLists).toHaveLength(2);
+});

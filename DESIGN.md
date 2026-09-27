@@ -528,6 +528,14 @@ Motion answers what a person did; it never decorates and never makes them wait. 
 - **Groups and panels.** Sidebar groups open and close by height over `--motion-base`, with the chevron turning; the sidebar collapses over `--motion-base`; the phone menu sheet enters over `--motion-slow` and leaves over `--motion-base`.
 - **Signatures.** Each look's title signature plays once when Publish succeeds (`data-signature="play"` on the Sandbox page title), never on load or navigation.
 
+### Loading
+
+- **Frame first.** A page renders its title, description, and actions at once. Only the part that waits for data loads.
+- **One pattern.** Data regions use `LoadingRegion` (`components/ui/loading-region.tsx`) with a skeleton built from `Skeleton` that matches the real layout: the same rows, panes, and heights, so nothing moves when data arrives.
+- **No flash.** For the first 300ms the skeleton holds the space but stays invisible, so a fast load shows no placeholder. After that it shows for at least 300ms. Data that replaces a loading state fades in over `--motion-fast`; cached data appears at once.
+- **Screen readers.** The region is `aria-busy` while it loads, and a `role="status"` label speaks only once the skeleton shows.
+- **Reduced motion.** The skeleton stops pulsing and content appears without the fade.
+
 ### Named Rules
 
 **The Still Shell Rule.** Navigation changes the page body, never the frame around it. The sidebar, top bar, and page ground are the fixed reference that tells a person only the content changed.

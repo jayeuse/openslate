@@ -114,3 +114,85 @@ test("Board content sections stay on the authorized UUID and fail closed when co
     page.getByRole("heading", { name: "Manager-visible announcement" }),
   ).toHaveCount(0);
 });
+
+/**
+ * Holds the Board list request until the test releases it, with the page's
+ * timers on a paused clock, so the skeleton delay and minimum are exact.
+ */
+async function openBoardsWithHeldList(page: Page) {
+  await installServerBoards(page);
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/boards**", async (route) => {
+    if (new URL(route.request().url()).pathname === "/api/boards") await held;
+    await route.fallback();
+  });
+  await page.clock.install({ time: new Date("2026-09-27T09:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-09-27T09:00:01Z"));
+  await page.goto("/boards");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Boards" }),
+  ).toBeVisible();
+  const region = page.locator('[data-slot="loading-region"]');
+  await expect(region).toHaveAttribute("aria-busy", "true");
+  return {
+    region,
+    label: page.getByRole("status").filter({ hasText: "Loading Boards" }),
+    release,
+  };
+}
+
+test("a slow Board list shows its skeleton only after 300ms, and for at least 300ms", async ({
+  page,
+}) => {
+  const { region, label, release } = await openBoardsWithHeldList(page);
+  // The loading shell never shows sample Board content.
+  const loadingHtml = await page.locator("main").innerHTML();
+  expect(loadingHtml).not.toContain("Organization board");
+  expect(loadingHtml).not.toContain("sample-board");
+
+  await page.clock.runFor(250);
+  await expect(label).toHaveCount(0);
+  await page.clock.runFor(100);
+  await expect(label).toHaveCount(1);
+
+  // The list arrives 50ms after the skeleton shows; the skeleton stays to 300ms.
+  await page.clock.runFor(50);
+  const listed = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/boards",
+  );
+  release();
+  await listed;
+  await page.clock.runFor(100);
+  await expect(label).toHaveCount(1);
+  // The frame already names the Board; the region still holds its skeleton.
+  await expect(region).toHaveAttribute("aria-busy", "true");
+  await page.clock.runFor(200);
+  await expect
+    .poll(
+      async () => {
+        await page.clock.runFor(1);
+        return region.getAttribute("aria-busy");
+      },
+      { intervals: [50] },
+    )
+    .toBe("false");
+  await expect(
+    region.getByRole("region", { name: "Board calendar" }),
+  ).toBeVisible();
+  await expect(label).toHaveCount(0);
+});
+
+test("a Board list that arrives within 300ms never shows the skeleton", async ({
+  page,
+}) => {
+  const { region, label, release } = await openBoardsWithHeldList(page);
+  await page.clock.runFor(200);
+  release();
+  await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
+  await expect(region).toHaveAttribute("aria-busy", "false");
+  await page.clock.runFor(1_000);
+  await expect(label).toHaveCount(0);
+});

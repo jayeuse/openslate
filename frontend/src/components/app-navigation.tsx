@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
   ChevronRight,
@@ -21,6 +22,7 @@ import {
   isWorkspaceNavigationItemActive,
 } from "@/components/workspace-navigation";
 import { useWorkspaceNavigationRequest } from "@/components/workspace-navigation-guard";
+import { prefetchOpenViewSection } from "@/components/systems/openview/adapters/openview-queries";
 import {
   Collapsible,
   CollapsibleContent,
@@ -66,6 +68,7 @@ export function AppNavigation({
   onExpandSidebar,
 }: AppNavigationProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const requestNavigation = useWorkspaceNavigationRequest();
   const descriptionIdPrefix = useId();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -169,10 +172,12 @@ export function AppNavigation({
   }, []);
 
   function schedulePrefetch(href: string) {
-    if (prefetchedRoutes.current.has(href) || prefetchTimers.current.has(href))
-      return;
+    if (prefetchTimers.current.has(href)) return;
     const timer = setTimeout(() => {
       prefetchTimers.current.delete(href);
+      // Data can go stale between visits, so each intent may refresh it;
+      // the cache skips reads that are still fresh.
+      prefetchOpenViewSection(queryClient, href);
       if (prefetchedRoutes.current.has(href)) return;
       prefetchedRoutes.current.add(href);
       if (prefetchedRoutes.current.size > MAX_PREFETCHED_ROUTES) {
