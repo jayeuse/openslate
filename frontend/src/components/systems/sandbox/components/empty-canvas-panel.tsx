@@ -18,12 +18,14 @@ export function EmptyCanvasPanel({
   return (
     <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center p-4">
       <section
+        data-slot="card"
         aria-labelledby="sandbox-empty-canvas-title"
-        className="bg-card border-border pointer-events-auto flex w-full max-w-md flex-col gap-4 rounded-xl border p-5 shadow-sm sm:p-6"
+        className="bg-card border-card-edge pointer-events-auto flex w-full max-w-md flex-col gap-4 rounded-xl border p-5 shadow-sm sm:p-6"
       >
         <EmptyCanvasSketch />
         <div className="flex flex-col gap-1.5">
           <h2
+            data-slot="section-title"
             id="sandbox-empty-canvas-title"
             className="text-base font-semibold tracking-tight"
           >

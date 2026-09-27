@@ -228,7 +228,10 @@
 }
 
 /* Titles are printed in condensed navy with a heavy rule beneath. */
-[data-theme="triplicate"] [data-slot="page-title"] {
+/* A title can wrap its own switcher button (Boards), which would reset
+   case and weight, so the button takes the title's type too. */
+[data-theme="triplicate"]
+  :is([data-slot="page-title"], [data-slot="page-title"] > button) {
   font-stretch: 88%;
   font-weight: 800;
   letter-spacing: -0.01em;
@@ -260,7 +263,14 @@
   }
 }
 
-[data-theme="triplicate"] [data-slot="card-title"] {
+/* Card, section, and empty-state titles share one treatment, so a heading
+   reads the same whether or not it sits in a card. */
+[data-theme="triplicate"]
+  :is(
+    [data-slot="card-title"],
+    [data-slot="section-title"],
+    [data-slot="empty-title"]
+  ) {
   font-stretch: 90%;
   font-weight: 700;
 }

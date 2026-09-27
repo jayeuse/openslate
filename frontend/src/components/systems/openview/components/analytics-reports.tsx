@@ -385,7 +385,9 @@ export function Reports({
       controls={
         <FieldGroup>
           <div>
-            <h2 className="font-semibold">Report builder</h2>
+            <h2 data-slot="section-title" className="font-semibold">
+              Report builder
+            </h2>
             <p className="text-muted-foreground mt-1 text-sm">
               Shape an operational report, then save the recipe for reuse.
             </p>
@@ -705,7 +707,9 @@ export function Reports({
           <Separator className="my-6" />
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="font-semibold">Export</h3>
+              <h3 data-slot="section-title" className="font-semibold">
+                Export
+              </h3>
               <p className="text-muted-foreground text-sm">
                 Exports include only this preview, its selected fields, and its
                 current filters.

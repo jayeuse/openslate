@@ -37,6 +37,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -481,6 +482,7 @@ function ServerBackedBoardsContent() {
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <h1
+                data-slot="page-title"
                 className="min-w-0 flex-1"
                 aria-label={board?.name ?? "Boards"}
               >
@@ -527,7 +529,7 @@ function ServerBackedBoardsContent() {
                       >
                         Search accessible Boards
                       </label>
-                      <input
+                      <Input
                         id="board-switch-search"
                         type="search"
                         maxLength={100}
@@ -535,7 +537,7 @@ function ServerBackedBoardsContent() {
                         onChange={(event) =>
                           setSearchDraft(event.currentTarget.value)
                         }
-                        className="border-input bg-background text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2"
+                        className="bg-background text-foreground min-h-11 rounded-md focus-visible:outline-offset-2"
                       />
                       <div className="flex flex-wrap gap-2">
                         <Button
@@ -1046,7 +1048,10 @@ function ServerBackedBoardsContent() {
             <div className="flex min-w-0 flex-col gap-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-2xl font-semibold tracking-tight">
+                  <h2
+                    data-slot="section-title"
+                    className="text-2xl font-semibold tracking-tight"
+                  >
                     Announcements
                   </h2>
                   <p className="text-muted-foreground mt-1 text-sm">
@@ -1119,7 +1124,10 @@ function ServerBackedBoardsContent() {
             <div className="flex min-w-0 flex-col gap-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-2xl font-semibold tracking-tight">
+                  <h2
+                    data-slot="section-title"
+                    className="text-2xl font-semibold tracking-tight"
+                  >
                     Board overview
                   </h2>
                   <p className="text-muted-foreground mt-1 text-sm">

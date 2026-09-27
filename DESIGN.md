@@ -273,7 +273,7 @@ Wrong: `{theme === "triplicate" && <span>Stamped</span>}` (theme-only markup, an
 **The Skin Place Rule.** A look restyles only through tokens and the named hooks. A new skin place is a shared hook that every look can use, added to the component once. The hooks are:
 
 - **Shell:** `data-skin="page"` on `main#main-content`, `data-skin="topbar"` on the app header, and `data-slot="sidebar"`, `data-slot="sidebar-container"`, and `data-slot="sidebar-inner"` on the sidebar.
-- **Type:** `data-slot="page-title"` (PageHeader), `card-title`, `field-label`, and `table-head`.
+- **Type:** `data-slot="page-title"` (one per page, on its h1), `section-title` (a heading for a part of a page that is not a card), `card-title`, `empty-title`, `field-label`, and `table-head`. A hand-made title or panel without its hook does not change with the look, so use the shared component or add the hook.
 - **Containers:** `data-slot="card"`, `card-header`, `dialog-content`, `sheet-content`, and `dropdown-menu-content`.
 - **Controls:** `data-slot="button"` (with `data-variant` and `data-size`), `input`, `select`, and `textarea`.
 - **Status and navigation:** `data-slot="badge"` (with `data-variant`), `alert` (with `data-variant`), `tabs-list`, and `tabs-trigger` (with `data-active`).
@@ -393,7 +393,7 @@ Wrong: a new chip tint that is checked only in Slate light.
 ### Hierarchy
 
 - **Headline** (600, 24px, 30px from 640px up, line height 1.25, -0.035em): page titles only, through `PageHeader` (`data-slot="page-title"`). One per page.
-- **Title Large** (600, 18px, 28px line, tight tracking): section headings inside a page, such as "Organization look".
+- **Title Large** (600, 18px, 28px line, tight tracking): section headings inside a page, such as "Organization look" (`data-slot="section-title"`).
 - **Title** (600, 16px): card titles (`data-slot="card-title"`).
 - **Body** (400, 14px, 20px line; descriptions use a 24px line and a 672px maximum width): the default text size for content, tables, and descriptions.
 - **Control** (500, 14px): buttons, tabs, field labels, table heads.
@@ -402,9 +402,9 @@ Wrong: a new chip tint that is checked only in Slate light.
 
 ### Skin places for type
 
-- Whiteboard: page titles at weight 700 with -0.01em tracking; card titles, buttons, chips, field labels, table heads, and the open tab at weight 700.
-- Triplicate: page titles at 88% width, weight 800, -0.01em tracking; card titles at 90% width, weight 700; field labels and table heads at 12px, 78% width, weight 700, 0.06em tracking, in `--ink-muted`; chips at 80% width, weight 800, 0.05em tracking; buttons at weight 650 with 0.01em tracking; ledger line numbers at 12px, 75% width, weight 700.
-- Stockroom: page titles in the stencil face, uppercase, weight 800, 0.03em tracking; card titles at 85% width, weight 800; field labels and table heads at 75% width, weight 800, 0.05em tracking; buttons at 88% width, weight 700; chips in the code face at 75% width, weight 600, 0.04em tracking.
+- Whiteboard: page titles at weight 700 with -0.01em tracking; card, section, and empty-state titles, buttons, chips, field labels, table heads, and the open tab at weight 700.
+- Triplicate: page titles at 88% width, weight 800, -0.01em tracking; card, section, and empty-state titles at 90% width, weight 700; field labels and table heads at 12px, 78% width, weight 700, 0.06em tracking, in `--ink-muted`; chips at 80% width, weight 800, 0.05em tracking; buttons at weight 650 with 0.01em tracking; ledger line numbers at 12px, 75% width, weight 700.
+- Stockroom: page titles in the stencil face, uppercase, weight 800, 0.03em tracking; card, section, and empty-state titles at 85% width, weight 800; field labels and table heads at 75% width, weight 800, 0.05em tracking; buttons at 88% width, weight 700; chips in the code face at 75% width, weight 600, 0.04em tracking.
 
 ### Named Rules
 

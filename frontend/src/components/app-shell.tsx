@@ -186,7 +186,9 @@ export function AppShell({
     return (
       <main className="bg-background text-foreground grid min-h-screen place-items-center">
         <div className="max-w-md px-6 text-center">
-          <h1 className="text-xl font-semibold">Signed out</h1>
+          <h1 data-slot="page-title" className="text-xl font-semibold">
+            Signed out
+          </h1>
           <p className="mt-3 text-sm" role="alert">
             We could not clear saved Access drafts in this tab. Close this tab
             before another person signs in, or clear this site&apos;s session

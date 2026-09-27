@@ -245,7 +245,11 @@ export function IdentityAccessCheck({
       className="flex flex-col gap-3"
     >
       <div>
-        <h3 id="identity-check-title" className="font-semibold">
+        <h3
+          data-slot="section-title"
+          id="identity-check-title"
+          className="font-semibold"
+        >
           Check access
         </h3>
         <p className="text-muted-foreground mt-1 text-sm">
@@ -419,7 +423,12 @@ export function IdentityAccessCheck({
               >
                 <details className="group">
                   <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 focus-visible:outline-2 focus-visible:outline-offset-2">
-                    <h3 className="text-sm font-semibold">Check context</h3>
+                    <h3
+                      data-slot="section-title"
+                      className="text-sm font-semibold"
+                    >
+                      Check context
+                    </h3>
                     <ChevronDown
                       aria-hidden="true"
                       className="size-4 group-open:rotate-180"
@@ -513,7 +522,7 @@ export function IdentityAccessCheck({
                 aria-hidden="true"
                 className="text-muted-foreground size-6"
               />
-              <h3 className="font-semibold">
+              <h3 data-slot="section-title" className="font-semibold">
                 {status === "checking"
                   ? "Checking current access…"
                   : error

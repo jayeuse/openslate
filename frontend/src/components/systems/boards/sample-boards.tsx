@@ -598,7 +598,10 @@ function BoardsContent({
       >
         <div className="w-full min-w-0 sm:w-auto sm:flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight break-words sm:text-3xl">
+            <h1
+              data-slot="page-title"
+              className="text-2xl font-semibold tracking-tight break-words sm:text-3xl"
+            >
               {board?.name ?? "Boards"}
             </h1>
             {board?.status === "archived" && (

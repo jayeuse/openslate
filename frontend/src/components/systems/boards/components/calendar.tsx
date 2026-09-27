@@ -871,6 +871,7 @@ function UpNextList({
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <div>
           <h3
+            data-slot="section-title"
             id="board-calendar-up-next-heading"
             className="text-sm font-semibold"
           >
@@ -977,7 +978,10 @@ function EventList({
     );
   }
   return (
-    <div className="divide-border bg-card divide-y overflow-hidden rounded-xl border">
+    <div
+      data-slot="card"
+      className="divide-border border-card-edge bg-card shadow-card divide-y overflow-hidden rounded-xl border"
+    >
       {occurrences.map((occurrence) => (
         <EventOccurrenceCard
           key={`${occurrence.event.id}:${occurrence.date}`}
@@ -2025,7 +2029,11 @@ export function BoardCalendar({
         >
           <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h3 id="board-agenda-heading" className="text-lg font-semibold">
+              <h3
+                data-slot="section-title"
+                id="board-agenda-heading"
+                className="text-lg font-semibold"
+              >
                 Upcoming agenda
               </h3>
               <p className="text-muted-foreground text-sm">
@@ -2073,6 +2081,7 @@ export function BoardCalendar({
           <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h3
+                data-slot="section-title"
                 id="board-archived-events-heading"
                 className="text-lg font-semibold"
               >

@@ -148,7 +148,10 @@ export function IdentityPreview({
             <div className="flex min-w-0 items-center gap-4">
               <IdentityMark kind={identity.kind} />
               <div className="min-w-0 flex-1 space-y-1">
-                <h2 className="text-xl font-semibold tracking-tight break-words">
+                <h2
+                  data-slot="section-title"
+                  className="text-xl font-semibold tracking-tight break-words"
+                >
                   {identity.name}
                 </h2>
                 <p className="text-muted-foreground text-sm break-words">
@@ -247,7 +250,11 @@ export function IdentityPreview({
                 </dl>
 
                 <section className="space-y-2" aria-labelledby="identity-about">
-                  <h3 id="identity-about" className="font-semibold">
+                  <h3
+                    data-slot="section-title"
+                    id="identity-about"
+                    className="font-semibold"
+                  >
                     About
                   </h3>
                   <p className="text-muted-foreground text-sm">{description}</p>

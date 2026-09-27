@@ -228,7 +228,10 @@
 }
 
 /* Page titles get a hand-drawn marker underline. */
-[data-theme="whiteboard"] [data-slot="page-title"] {
+/* A title can wrap its own switcher button (Boards), which would reset
+   case and weight, so the button takes the title's type too. */
+[data-theme="whiteboard"]
+  :is([data-slot="page-title"], [data-slot="page-title"] > button) {
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -260,7 +263,14 @@
   }
 }
 
-[data-theme="whiteboard"] [data-slot="card-title"] {
+/* Card, section, and empty-state titles share one treatment, so a heading
+   reads the same whether or not it sits in a card. */
+[data-theme="whiteboard"]
+  :is(
+    [data-slot="card-title"],
+    [data-slot="section-title"],
+    [data-slot="empty-title"]
+  ) {
   font-weight: 700;
 }
 

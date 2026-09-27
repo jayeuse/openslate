@@ -181,7 +181,12 @@ export function SectionHeading({
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+        <h2
+          data-slot="section-title"
+          className="text-xl font-semibold tracking-tight"
+        >
+          {title}
+        </h2>
         <p className="text-muted-foreground mt-1 max-w-3xl text-sm md:sr-only">
           {description}
         </p>

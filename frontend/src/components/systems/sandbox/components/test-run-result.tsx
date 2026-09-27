@@ -53,7 +53,10 @@ function Stage({
   children: ReactNode;
 }) {
   return (
-    <div className="bg-card border-border rounded-xl border p-4">
+    <div
+      data-slot="card"
+      className="bg-card border-card-edge shadow-card rounded-xl border p-4"
+    >
       <div className="text-muted-foreground mb-2 flex items-center gap-2 text-xs font-medium">
         <span aria-hidden="true" className="[&_svg]:size-4">
           {icon}
@@ -138,7 +141,9 @@ export function TestOutcome({
   if (!run)
     return (
       <section aria-label="Test outcome" className="min-w-0">
-        <h3 className="font-semibold">Test outcome</h3>
+        <h3 data-slot="section-title" className="font-semibold">
+          Test outcome
+        </h3>
         <div className="border-border mt-5 rounded-xl border border-dashed px-5 py-10">
           <ListChecks
             className="text-muted-foreground mb-4 size-6"
@@ -163,7 +168,9 @@ export function TestOutcome({
     <section aria-label="Test outcome" className="min-w-0">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="font-semibold">Test result</h3>
+          <h3 data-slot="section-title" className="font-semibold">
+            Test result
+          </h3>
           <p className="text-muted-foreground mt-1 text-xs">
             <time dateTime={run.createdAt}>
               {new Date(run.createdAt).toLocaleString()}
@@ -397,7 +404,9 @@ export function TestComparison({
   const visible = showAll ? rows : changed;
   return (
     <section aria-label="Field comparison" className="min-w-0">
-      <h3 className="font-semibold">Field comparison</h3>
+      <h3 data-slot="section-title" className="font-semibold">
+        Field comparison
+      </h3>
       <p className="text-muted-foreground mt-2 text-sm">
         Compare the inputs used with the test result.
       </p>

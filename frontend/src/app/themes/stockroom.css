@@ -245,14 +245,24 @@
   }
 }
 
-[data-theme="stockroom"] [data-slot="page-title"] {
+/* A title can wrap its own switcher button (Boards), which would reset
+   case and weight, so the button takes the title's type too. */
+[data-theme="stockroom"]
+  :is([data-slot="page-title"], [data-slot="page-title"] > button) {
   font-family: var(--font-stencil), var(--font-ui), sans-serif;
   text-transform: uppercase;
   font-weight: 800;
   letter-spacing: 0.03em;
 }
 
-[data-theme="stockroom"] [data-slot="card-title"] {
+/* Card, section, and empty-state titles share one treatment, so a heading
+   reads the same whether or not it sits in a card. */
+[data-theme="stockroom"]
+  :is(
+    [data-slot="card-title"],
+    [data-slot="section-title"],
+    [data-slot="empty-title"]
+  ) {
   font-stretch: 85%;
   font-weight: 800;
 }

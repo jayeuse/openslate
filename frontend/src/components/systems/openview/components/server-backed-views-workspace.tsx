@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { SearchFilterToolbar } from "@/components/ui/search-filter-toolbar";
 import {
   Dialog,
@@ -2021,7 +2022,10 @@ export default function ServerBackedViewsWorkspace({
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <OpenViewHeader />
-      <header className="bg-card flex flex-wrap items-end justify-between gap-3 rounded-[var(--radius)] border p-4 sm:p-5">
+      <header
+        data-slot="card"
+        className="bg-card border-card-edge shadow-card flex flex-wrap items-end justify-between gap-3 rounded-[var(--radius)] border p-4 sm:p-5"
+      >
         <div className="min-w-0 flex-1 sm:max-w-sm">
           <Field>
             <FieldLabel htmlFor="openview-data-source">Data source</FieldLabel>
@@ -2283,8 +2287,8 @@ export default function ServerBackedViewsWorkspace({
         </Empty>
       ) : (
         <>
-          <section
-            className="bg-card flex min-w-0 flex-col gap-4 rounded-[var(--radius)] border p-4 sm:p-5"
+          <Card
+            className="flex min-w-0 flex-col gap-4 self-auto p-4 sm:p-5"
             aria-label="View controls"
           >
             <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
@@ -2787,7 +2791,7 @@ export default function ServerBackedViewsWorkspace({
                 )}
               </TabsContent>
             </Tabs>
-          </section>
+          </Card>
 
           <Dialog
             open={openViewPanel !== null}

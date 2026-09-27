@@ -431,7 +431,9 @@ export function TestWorkspace({
               aria-label="Test setup"
               className="bg-card border-border border-b p-4 @min-[1100px]/test:h-full @min-[1100px]/test:overflow-y-auto @min-[1100px]/test:border-b-0"
             >
-              <h3 className="font-semibold">Test setup</h3>
+              <h3 data-slot="section-title" className="font-semibold">
+                Test setup
+              </h3>
               <p className="text-muted-foreground mt-2 mb-5 text-sm">
                 Choose what happens, then set the values to try.
               </p>
@@ -861,7 +863,12 @@ export function TestWorkspace({
                 className="border-border mt-6 border-t pt-4"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold">Recent results</h3>
+                  <h3
+                    data-slot="section-title"
+                    className="text-sm font-semibold"
+                  >
+                    Recent results
+                  </h3>
                   {runs.length > 0 && (
                     <Button
                       variant="ghost"

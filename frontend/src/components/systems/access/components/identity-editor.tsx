@@ -54,6 +54,15 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
 import {
   applyPatch,
@@ -779,53 +788,53 @@ export function IdentityEditor({
                             Possible match {index + 1}: {current?.name}
                           </p>
                         )}
-                        <div className="overflow-x-auto">
-                          <table className="w-full min-w-[27rem] border-collapse text-left text-xs">
-                            <caption className="sr-only">
-                              Saved and current identity values
-                            </caption>
-                            <thead>
-                              <tr className="border-b">
-                                <th scope="col" className="py-2 pr-2">
-                                  Field
-                                </th>
-                                <th scope="col" className="px-2 py-2">
-                                  Saved draft
-                                </th>
-                                <th scope="col" className="py-2 pl-2">
-                                  {comparisonFresh
-                                    ? "Current Access"
-                                    : "Last available Access"}
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {comparisonFields(draft.kind).map((field) => (
-                                <tr
-                                  key={field}
-                                  className="border-b last:border-0"
+                        <Table className="min-w-[27rem] border-collapse text-left text-xs">
+                          <TableCaption className="sr-only">
+                            Saved and current identity values
+                          </TableCaption>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead
+                                scope="col"
+                                className="h-auto py-2 pr-2 pl-0 whitespace-normal"
+                              >
+                                Field
+                              </TableHead>
+                              <TableHead
+                                scope="col"
+                                className="h-auto px-2 py-2 whitespace-normal"
+                              >
+                                Saved draft
+                              </TableHead>
+                              <TableHead
+                                scope="col"
+                                className="h-auto py-2 pr-0 pl-2 whitespace-normal"
+                              >
+                                {comparisonFresh
+                                  ? "Current Access"
+                                  : "Last available Access"}
+                              </TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {comparisonFields(draft.kind).map((field) => (
+                              <TableRow key={field}>
+                                <TableHead
+                                  scope="row"
+                                  className="h-auto py-2 pr-2 pl-0 align-top font-medium whitespace-normal"
                                 >
-                                  <th
-                                    scope="row"
-                                    className="py-2 pr-2 align-top font-medium"
-                                  >
-                                    {fieldLabels[field]}
-                                  </th>
-                                  <td className="px-2 py-2 align-top break-words">
-                                    {comparisonValue(draft, field, controller)}
-                                  </td>
-                                  <td className="py-2 pl-2 align-top break-words">
-                                    {comparisonValue(
-                                      current,
-                                      field,
-                                      controller,
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
+                                  {fieldLabels[field]}
+                                </TableHead>
+                                <TableCell className="px-2 py-2 align-top break-words whitespace-normal">
+                                  {comparisonValue(draft, field, controller)}
+                                </TableCell>
+                                <TableCell className="py-2 pr-0 pl-2 align-top break-words whitespace-normal">
+                                  {comparisonValue(current, field, controller)}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
                       </div>
                     ),
                   )}
@@ -1204,6 +1213,7 @@ export function IdentityEditor({
                     className="space-y-3 border-t pt-5"
                   >
                     <h3
+                      data-slot="section-title"
                       id={`${nameId}-access-actions`}
                       className="text-sm font-semibold"
                     >
@@ -1294,6 +1304,7 @@ export function IdentityEditor({
                   >
                     <div className="flex items-center justify-between gap-3">
                       <h3
+                        data-slot="section-title"
                         id={`${nameId}-sessions`}
                         className="text-sm font-semibold"
                       >
@@ -1397,6 +1408,7 @@ export function IdentityEditor({
                     className="space-y-3 border-t pt-5"
                   >
                     <h3
+                      data-slot="section-title"
                       id={`${nameId}-danger`}
                       className="text-destructive text-sm font-semibold"
                     >

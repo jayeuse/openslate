@@ -185,7 +185,9 @@ export function AutomationFlow({
   return (
     <>
       <section aria-label="Flow preview" className="min-w-0">
-        <h3 className="font-semibold">Flow preview</h3>
+        <h3 data-slot="section-title" className="font-semibold">
+          Flow preview
+        </h3>
         <p className="text-muted-foreground mt-1 text-sm">
           Select a step to edit its settings.
         </p>
@@ -274,7 +276,9 @@ export function AutomationFlow({
         aria-label="Automation summary"
         className="border-border min-w-0 border-t pt-5"
       >
-        <h3 className="font-semibold">Automation summary</h3>
+        <h3 data-slot="section-title" className="font-semibold">
+          Automation summary
+        </h3>
         <div className="mt-3 space-y-2 text-sm leading-relaxed [overflow-wrap:anywhere] break-words whitespace-pre-wrap">
           <p>
             {automation.trigger.kind === "schedule"

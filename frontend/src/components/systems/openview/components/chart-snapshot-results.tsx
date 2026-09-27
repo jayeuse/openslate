@@ -363,7 +363,7 @@ export function ChartSnapshotResults({
         />
       </Card>
       <div className="hidden print:block">
-        <h1 className="mb-2 text-xl font-semibold">
+        <h1 data-slot="section-title" className="mb-2 text-xl font-semibold">
           {applied.sourceName} — {applied.labelName} chart data
         </h1>
         <p className="mb-4 text-sm">

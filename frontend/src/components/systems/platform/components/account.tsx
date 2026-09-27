@@ -198,7 +198,9 @@ export default function Account({
           ) : null,
         )}
         <div className="space-y-3 border-t pt-4">
-          <h3 className="font-medium">Team presence</h3>
+          <h3 data-slot="section-title" className="font-medium">
+            Team presence
+          </h3>
           {[
             ["Morgan Kim", "Available"],
             ["Alex Lee", "Busy"],
@@ -214,7 +216,9 @@ export default function Account({
       </Panel>
       <Panel title="Account security">
         <div className="space-y-3">
-          <h3 className="font-medium">Password change</h3>
+          <h3 data-slot="section-title" className="font-medium">
+            Password change
+          </h3>
           <p className="text-muted-foreground text-sm">
             Review the new password shown below. Your sign-in password will not
             change, so never type it here.
@@ -235,7 +239,9 @@ export default function Account({
           )}
         </div>
         <div className="space-y-3 border-t pt-4">
-          <h3 className="font-medium">Device sessions</h3>
+          <h3 data-slot="section-title" className="font-medium">
+            Device sessions
+          </h3>
           <p className="text-muted-foreground text-sm">
             Ending a listed session will not sign out that device.
           </p>

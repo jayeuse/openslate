@@ -5,6 +5,14 @@ import { sampleOperationMessage } from "../../shared/runtime/sample-async";
 import type { Person } from "../../access/domain/model";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Action, Choice, Panel } from "../../shared/components/ui";
 import type { PlatformCommandResult } from "../adapters/runtime";
 import type { PlatformImportRow } from "../domain/model";
@@ -152,7 +160,9 @@ export default function ImportExport({
         </Action>
         {preview && (
           <div className="space-y-4">
-            <h3 className="font-medium">Import validation</h3>
+            <h3 data-slot="section-title" className="font-medium">
+              Import validation
+            </h3>
             {mapped.map((row) => (
               <div key={row.row} className="rounded-lg border p-3 text-sm">
                 {row.title ? (
@@ -259,30 +269,39 @@ export default function ImportExport({
         </Action>
         {exporting && (
           <section className="space-y-3">
-            <h3 className="font-semibold">
+            <h3 data-slot="section-title" className="font-semibold">
               {format} export preview · {exportRows?.length ?? 0} records
             </h3>
             <div className="overflow-x-auto rounded-lg border">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-muted">
-                  <tr>
+              <Table className="text-left text-sm">
+                <TableHeader className="bg-muted">
+                  <TableRow>
                     {["Title", "Customer", "Status"].map((value) => (
-                      <th key={value} className="p-3">
+                      <TableHead
+                        key={value}
+                        className="h-auto p-3 whitespace-normal"
+                      >
                         {value}
-                      </th>
+                      </TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {(exportRows ?? []).map((record) => (
-                    <tr key={record.id} className="border-t">
-                      <td className="p-3">{record.title}</td>
-                      <td className="p-3">{record.customer}</td>
-                      <td className="p-3">{record.status}</td>
-                    </tr>
+                    <TableRow key={record.id}>
+                      <TableCell className="p-3 whitespace-normal">
+                        {record.title}
+                      </TableCell>
+                      <TableCell className="p-3 whitespace-normal">
+                        {record.customer}
+                      </TableCell>
+                      <TableCell className="p-3 whitespace-normal">
+                        {record.status}
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
             <Action
               onClick={() => {

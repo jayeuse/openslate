@@ -373,7 +373,9 @@ function BoardGrantsForBoard({
               void saveGrant();
             }}
           >
-            <h3 className="font-semibold">Add grant rule</h3>
+            <h3 data-slot="section-title" className="font-semibold">
+              Add grant rule
+            </h3>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label
@@ -383,6 +385,7 @@ function BoardGrantsForBoard({
                   Who
                 </label>
                 <select
+                  data-slot="select"
                   id={`${id}-principal`}
                   className="border-input bg-card min-h-11 w-full rounded-md border px-3"
                   value={principalType}
@@ -405,6 +408,7 @@ function BoardGrantsForBoard({
                   Decision
                 </label>
                 <select
+                  data-slot="select"
                   id={`${id}-effect`}
                   className="border-input bg-card min-h-11 w-full rounded-md border px-3"
                   value={effect}
@@ -423,6 +427,7 @@ function BoardGrantsForBoard({
                   Board permission
                 </label>
                 <select
+                  data-slot="select"
                   id={`${id}-permission`}
                   className="border-input bg-card min-h-11 w-full rounded-md border px-3"
                   value={permission}
@@ -471,6 +476,7 @@ function BoardGrantsForBoard({
                   Role
                 </label>
                 <select
+                  data-slot="select"
                   id={`${id}-role`}
                   className="border-input bg-card min-h-11 w-full max-w-md rounded-md border px-3"
                   value={selectedRole?.id ?? ""}
@@ -571,6 +577,7 @@ function BoardGrantsForBoard({
                       Person
                     </label>
                     <select
+                      data-slot="select"
                       id={`${id}-user`}
                       className="border-input bg-card min-h-11 w-full max-w-md rounded-md border px-3"
                       value={selectedUser?.id ?? ""}

@@ -25,6 +25,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import {
@@ -879,7 +880,12 @@ export function ServerBackedBoardCalendar({
       <header className="space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="space-y-1">
-            <h2 className="text-2xl font-semibold tracking-tight">Calendar</h2>
+            <h2
+              data-slot="section-title"
+              className="text-2xl font-semibold tracking-tight"
+            >
+              Calendar
+            </h2>
             <p className="text-muted-foreground">
               Plan upcoming work and keep track of your reminders.
             </p>
@@ -983,9 +989,9 @@ export function ServerBackedBoardCalendar({
               aria-hidden="true"
               className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
             />
-            <input
+            <Input
               type="search"
-              className="border-input bg-background min-h-11 w-full min-w-0 rounded-md border py-2 pr-3 pl-10 font-normal"
+              className="bg-background text-foreground min-h-11 min-w-0 rounded-md py-2 pr-3 pl-10 font-normal"
               maxLength={100}
               value={search}
               disabled={activeDraft !== null}
@@ -1008,6 +1014,7 @@ export function ServerBackedBoardCalendar({
             <ChevronLeft aria-hidden="true" />
           </Button>
           <h2
+            data-slot="section-title"
             className="min-w-32 text-center text-lg font-semibold"
             aria-live="polite"
           >

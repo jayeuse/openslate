@@ -1545,7 +1545,10 @@ export default function SampleComms() {
                           Create category
                         </Action>
                         <div className="mt-5 flex items-center justify-between px-2">
-                          <h2 className="text-muted-foreground text-xs font-semibold">
+                          <h2
+                            data-slot="section-title"
+                            className="text-muted-foreground text-xs font-semibold"
+                          >
                             Direct messages
                           </h2>
                           <Action
@@ -1640,7 +1643,10 @@ export default function SampleComms() {
                           hasChannel={!!channel}
                           onSelect={openWorkspaceSetting}
                         />
-                        <h2 className="truncate text-sm font-semibold">
+                        <h2
+                          data-slot="section-title"
+                          className="truncate text-sm font-semibold"
+                        >
                           {channel?.name ??
                             direct?.user ??
                             "Choose a conversation"}

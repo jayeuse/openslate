@@ -128,7 +128,11 @@ export function DashboardWidgetResults({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 id="dashboard-widget-preview" className="text-lg font-semibold">
+          <h2
+            data-slot="section-title"
+            id="dashboard-widget-preview"
+            className="text-lg font-semibold"
+          >
             {title}
           </h2>
           <p className="text-muted-foreground text-sm">
@@ -179,7 +183,9 @@ export function DashboardWidgetResults({
         snapshot.data.kind === "aggregate" &&
         widget.widgetType === "workload" ? (
         <div className="flex min-w-0 flex-col gap-3">
-          <h3 className="font-semibold">Workload breakdown</h3>
+          <h3 data-slot="section-title" className="font-semibold">
+            Workload breakdown
+          </h3>
           <div className="min-w-0 overflow-x-auto">
             <Table aria-label="Workload breakdown">
               <TableCaption>
@@ -283,7 +289,7 @@ export function DashboardWidgetResults({
             />
           </div>
           <div className="flex min-w-0 flex-col gap-3">
-            <h3 className="font-semibold">
+            <h3 data-slot="section-title" className="font-semibold">
               {activeIsDateSeries
                 ? "Complete date series data"
                 : "Complete aggregate data"}

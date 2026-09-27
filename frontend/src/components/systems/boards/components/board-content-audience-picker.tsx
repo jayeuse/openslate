@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   listBoardContentAudienceTargets,
   type BoardContentAudienceChoice,
@@ -81,6 +84,7 @@ export function BoardContentAudiencePicker({
         Audience
       </label>
       <select
+        data-slot="select"
         id={`${id}-kind`}
         className="border-input bg-background text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2"
         value={selection.kind}
@@ -107,9 +111,9 @@ export function BoardContentAudiencePicker({
           <label className="block text-sm font-medium" htmlFor={`${id}-search`}>
             Search {kind === "user" ? "people" : `${kind}s`}
           </label>
-          <input
+          <Input
             id={`${id}-search`}
-            className="border-input bg-background text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2"
+            className="bg-background text-foreground min-h-11 rounded-md focus-visible:outline-offset-2"
             value={search}
             maxLength={100}
             disabled={disabled}
@@ -126,6 +130,7 @@ export function BoardContentAudiencePicker({
                 : "Department"}
           </label>
           <select
+            data-slot="select"
             id={`${id}-target`}
             className="border-input bg-background text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2"
             value={selectedTarget ?? ""}
@@ -160,22 +165,26 @@ export function BoardContentAudiencePicker({
           )}
           {choices.status === "ready" && (
             <div className="flex items-center gap-2">
-              <button
+              <Button
                 type="button"
-                className="border-border min-h-11 rounded-md border px-3 text-sm disabled:opacity-50"
+                variant="outline"
+                size="sm"
+                className="min-h-11 rounded-md text-sm"
                 disabled={disabled || offset === 0}
                 onClick={() => setOffset(Math.max(0, offset - 25))}
               >
                 Previous
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="border-border min-h-11 rounded-md border px-3 text-sm disabled:opacity-50"
+                variant="outline"
+                size="sm"
+                className="min-h-11 rounded-md text-sm"
                 disabled={disabled || !choices.hasMore}
                 onClick={() => setOffset(offset + 25)}
               >
                 Next
-              </button>
+              </Button>
             </div>
           )}
           <p className="text-muted-foreground text-xs">

@@ -5,6 +5,7 @@ import type {
   OpenViewGroupSelector,
 } from "../adapters/analytics-api";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { TablePagination } from "@/components/ui/table-pagination";
 
 type GroupOption = {
@@ -50,13 +51,18 @@ export function LiveGroupedResults({
   onNextPage,
 }: LiveGroupedResultsProps) {
   return (
-    <section
+    <Card
       aria-label="Grouping results"
-      className="bg-card min-w-0 overflow-hidden rounded-[var(--radius)] border"
+      className="min-w-0 self-auto overflow-hidden"
     >
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
+      <div
+        data-slot="card-header"
+        className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3"
+      >
         <div>
-          <h2 className="font-medium">Groups by {fieldName}</h2>
+          <h2 data-slot="section-title" className="font-medium">
+            Groups by {fieldName}
+          </h2>
           <p className="text-muted-foreground text-sm">
             Counts include all matching records. Only the selected group’s page
             of records is loaded.
@@ -134,6 +140,6 @@ export function LiveGroupedResults({
           disabled={loading || Boolean(error) || pending}
         />
       ) : null}
-    </section>
+    </Card>
   );
 }

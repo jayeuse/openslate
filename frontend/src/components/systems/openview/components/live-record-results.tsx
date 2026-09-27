@@ -5,6 +5,7 @@ import type {
   OpenViewPresentation,
   OpenViewRecord,
 } from "../adapters/views-api";
+import { Card } from "@/components/ui/card";
 import { TablePagination } from "@/components/ui/table-pagination";
 import {
   Table,
@@ -70,13 +71,18 @@ export function LiveRecordResults({
   onPageSizeChange,
 }: LiveRecordResultsProps) {
   return (
-    <section
-      className="bg-card min-w-0 overflow-hidden rounded-[var(--radius)] border"
+    <Card
+      className="min-w-0 self-auto overflow-hidden"
       aria-label="Record results"
     >
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
+      <div
+        data-slot="card-header"
+        className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"
+      >
         <div>
-          <h2 className="font-medium">{title}</h2>
+          <h2 data-slot="section-title" className="font-medium">
+            {title}
+          </h2>
           <p className="text-muted-foreground text-sm">
             {page.total} {scopeLabel} · live workspace data
           </p>
@@ -165,6 +171,6 @@ export function LiveRecordResults({
         onPageSizeChange={onPageSizeChange}
         disabled={page.loading || pending}
       />
-    </section>
+    </Card>
   );
 }

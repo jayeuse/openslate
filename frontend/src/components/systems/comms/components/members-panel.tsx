@@ -34,7 +34,7 @@ export function MembersPanel({
       className="flex flex-col gap-3 p-4"
     >
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">
+        <h3 data-slot="section-title" className="text-sm font-semibold">
           Members{" "}
           <span className="text-muted-foreground">{members.length}</span>
         </h3>

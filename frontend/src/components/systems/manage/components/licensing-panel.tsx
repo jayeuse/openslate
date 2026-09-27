@@ -61,6 +61,7 @@ export function LicensingPanel({
       <div className="flex flex-col gap-5">
         <header className="flex flex-col gap-1">
           <h2
+            data-slot="section-title"
             id="manage-licensing-heading"
             className="text-xl font-semibold tracking-tight"
           >
@@ -85,7 +86,9 @@ export function LicensingPanel({
         <div className="space-y-5 border-t pt-5">
           <div className="space-y-2">
             <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-sm">
-              <h3 className="font-medium">Active users</h3>
+              <h3 data-slot="section-title" className="font-medium">
+                Active users
+              </h3>
               <span className="font-medium tabular-nums">
                 {activeUsers} / {seatLimit}
               </span>
@@ -110,7 +113,9 @@ export function LicensingPanel({
 
           <div className="space-y-2">
             <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-sm">
-              <h3 className="font-medium">Storage preview</h3>
+              <h3 data-slot="section-title" className="font-medium">
+                Storage preview
+              </h3>
               <span className="font-medium tabular-nums">
                 1.2 / {storageLimit} GB
               </span>
@@ -188,6 +193,7 @@ export function LicenseTierComparison({
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2
+            data-slot="section-title"
             id="license-tier-heading"
             className="text-xl font-semibold tracking-tight"
           >

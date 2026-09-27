@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { ApiError } from "@/lib/api";
 import {
@@ -282,13 +283,18 @@ export function LiveKanban({
   const requestError = currentSnapshot?.error ?? "";
 
   return (
-    <section
+    <Card
       aria-label="Kanban results"
-      className="bg-card min-w-0 overflow-hidden rounded-[var(--radius)] border"
+      className="min-w-0 self-auto overflow-hidden"
     >
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
+      <div
+        data-slot="card-header"
+        className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3"
+      >
         <div>
-          <h2 className="font-medium">Kanban lanes</h2>
+          <h2 data-slot="section-title" className="font-medium">
+            Kanban lanes
+          </h2>
           <p className="text-muted-foreground text-sm">
             Lane counts are from the server. Records load only for the selected
             lane.
@@ -403,7 +409,7 @@ export function LiveKanban({
         >
           <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
             <div>
-              <h2 className="font-medium">
+              <h2 data-slot="section-title" className="font-medium">
                 {selectedGroupDetails
                   ? groupLabel(
                       selectedGroupDetails.value,
@@ -502,6 +508,6 @@ export function LiveKanban({
           </div>
         </section>
       ) : null}
-    </section>
+    </Card>
   );
 }

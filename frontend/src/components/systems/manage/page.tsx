@@ -442,7 +442,9 @@ function ManageContent() {
   if (manage.resource.status !== "ready")
     return (
       <section className="space-y-4">
-        <h1 className="text-2xl font-semibold">Manage</h1>
+        <h1 data-slot="page-title" className="text-2xl font-semibold">
+          Manage
+        </h1>
         {manage.resource.status === "loading" ? (
           <p role="status">Loading management settings…</p>
         ) : (
@@ -598,7 +600,9 @@ function ManageContent() {
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="font-semibold">Account policy</h2>
+                      <h2 data-slot="section-title" className="font-semibold">
+                        Account policy
+                      </h2>
                       {manage.dirty("security") ? (
                         <Badge variant="warning">Unsaved changes</Badge>
                       ) : null}
@@ -629,7 +633,9 @@ function ManageContent() {
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="font-semibold">Snapshot schedule</h2>
+                      <h2 data-slot="section-title" className="font-semibold">
+                        Snapshot schedule
+                      </h2>
                       {manage.dirty("backup") ? (
                         <Badge variant="warning">Unsaved changes</Badge>
                       ) : null}

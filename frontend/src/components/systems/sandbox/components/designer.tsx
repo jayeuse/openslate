@@ -1485,7 +1485,10 @@ export function Designer({
     >
       {inspectedItem ? (
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-lg font-semibold break-words">
+          <h2
+            data-slot="section-title"
+            className="text-lg font-semibold break-words"
+          >
             {inspectedItem.name}
           </h2>
           <Badge variant="outline">
@@ -1494,7 +1497,9 @@ export function Designer({
         </div>
       ) : editor && editor !== "relationship" ? null : (
         <div className="flex flex-col gap-2">
-          <h2 className="text-lg font-semibold">Nothing selected</h2>
+          <h2 data-slot="section-title" className="text-lg font-semibold">
+            Nothing selected
+          </h2>
           <p className="text-muted-foreground text-sm">
             {design.departments.length === 0
               ? "Start with a department. A department groups the work of one team."
@@ -1613,7 +1618,12 @@ export function Designer({
               </div>
               <div className="border-border flex flex-col gap-3 border-t pt-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">Fields</h3>
+                  <h3
+                    data-slot="section-title"
+                    className="text-sm font-semibold"
+                  >
+                    Fields
+                  </h3>
                   <Button
                     size="sm"
                     variant="outline"
@@ -1761,7 +1771,9 @@ export function Designer({
                 ))}
               </div>
               <div className="border-border flex flex-col gap-3 border-t pt-4">
-                <h3 className="text-sm font-semibold">Relationships</h3>
+                <h3 data-slot="section-title" className="text-sm font-semibold">
+                  Relationships
+                </h3>
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -1899,7 +1911,7 @@ export function Designer({
         <ResizablePanelGroup
           orientation="horizontal"
           elementRef={panelGroupElementRef}
-          className="sandbox-ui border-border bg-card overflow-hidden rounded-xl border [--canvas-grid-major:var(--rule-strong)] [--canvas-grid:var(--border)] max-xl:h-auto xl:h-full"
+          className="sandbox-ui border-card-edge bg-card shadow-card overflow-hidden rounded-xl border [--canvas-grid-major:var(--rule-strong)] [--canvas-grid:var(--border)] max-xl:h-auto xl:h-full"
           onLayoutChanged={(layout, meta) => {
             if (
               !meta.isUserInteraction ||
@@ -2128,6 +2140,7 @@ export function Designer({
                     className="bg-muted/40 border-b px-4 py-3 text-xs"
                   >
                     <h3
+                      data-slot="section-title"
                       id="sandbox-canvas-help-title"
                       className="font-semibold"
                     >

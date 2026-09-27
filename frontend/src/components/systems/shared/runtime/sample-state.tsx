@@ -103,7 +103,7 @@ class SampleRecovery extends Component<
     if (this.state.failed)
       return (
         <section role="alert" className="rounded-lg border p-6">
-          <h1 className="text-xl font-semibold">
+          <h1 data-slot="page-title" className="text-xl font-semibold">
             Workspace data could not be opened
           </h1>
           <p className="text-muted-foreground mt-2 text-sm">
