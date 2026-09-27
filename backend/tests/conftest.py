@@ -30,8 +30,6 @@ def _guard_integration_database(database_url: str) -> None:
         assert_runner_database_url(database_url, allowed_roles=frozenset({"openslate_runtime"}))
     elif database_url == os.getenv("MIGRATION_DATABASE_URL"):
         assert_runner_database_url(database_url, allowed_roles=frozenset({"openslate_owner"}))
-    elif database_url == os.getenv("TEST_INSPECTOR_DATABASE_URL"):
-        assert_runner_database_url(database_url, allowed_roles=frozenset({"openslate_inspector"}))
     else:
         assert_runner_database_url(database_url)
 
@@ -47,14 +45,12 @@ def _guard_direct_database_tests(request):
     if request.node.get_closest_marker("integration") and os.getenv("TEST_DATABASE_URL"):
         _guard_integration_database(os.environ["TEST_DATABASE_URL"])
         _guard_integration_database(os.getenv("MIGRATION_DATABASE_URL", ""))
-        _guard_integration_database(os.getenv("TEST_INSPECTOR_DATABASE_URL", ""))
 
 
 def pytest_collection_modifyitems(session, config, items):
     if os.getenv("OPENSLATE_REQUIRE_DATABASE_TESTS") == "true":
         _guard_integration_database(os.getenv("TEST_DATABASE_URL", ""))
         _guard_integration_database(os.getenv("MIGRATION_DATABASE_URL", ""))
-        _guard_integration_database(os.getenv("TEST_INSPECTOR_DATABASE_URL", ""))
 
 
 def pytest_sessionfinish(session, exitstatus):

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
@@ -34,20 +36,12 @@ class DeveloperCommandTests(unittest.TestCase):
 
     def test_named_commands_expand_to_the_supported_compose_actions(self) -> None:
         expected = {
-            "db": ["up", "-d", "postgres"],
-            "pgweb": ["--profile", "db-ui", "up", "-d", "--force-recreate", "pgweb"],
+            "db": ["up", "-d"],
+            "studio": ["up", "-d", "api-gw"],
             "caddy": ["--profile", "gateway", "up", "-d", "--force-recreate", "caddy"],
-            "containers": [
-                "--profile",
-                "db-ui",
-                "up",
-                "-d",
-                "--force-recreate",
-                "postgres",
-                "pgweb",
-            ],
-            "status": ["--profile", "db-ui", "ps"],
-            "stop": ["--profile", "db-ui", "stop"],
+            "containers": ["up", "-d"],
+            "status": ["ps"],
+            "stop": ["stop"],
         }
 
         for name, compose_arguments in expected.items():
@@ -62,17 +56,17 @@ class DeveloperCommandTests(unittest.TestCase):
     def test_main_runs_from_the_repository_root_and_returns_the_child_status(self) -> None:
         runner = Mock(return_value=subprocess.CompletedProcess([], 7))
 
-        result = dev.main(["pgweb"], runner=runner)
+        result = dev.main(["studio"], runner=runner)
 
         self.assertEqual(result, 7)
         self.assertEqual(runner.call_args.kwargs["cwd"], ROOT)
         self.assertFalse(runner.call_args.kwargs["check"])
-        self.assertEqual(runner.call_args.args[0], dev.build_command("pgweb"))
+        self.assertEqual(runner.call_args.args[0], dev.build_command("studio"))
 
     def test_stop_can_target_one_named_container(self) -> None:
         self.assertEqual(
-            dev.build_command("stop", "pgweb")[-4:],
-            ["--profile", "db-ui", "stop", "pgweb"],
+            dev.build_command("stop", "studio")[-2:],
+            ["stop", "studio"],
         )
 
     def test_caddy_is_an_explicit_opt_in_action(self) -> None:
@@ -84,6 +78,30 @@ class DeveloperCommandTests(unittest.TestCase):
             dev.build_command("stop", "caddy")[-4:],
             ["--profile", "gateway", "stop", "caddy"],
         )
+
+    def test_separate_installation_file_is_forwarded_to_environment_wrapper(self) -> None:
+        selected = ROOT / ".agent-runtime/new-install.env"
+        command = dev.build_command("db", env_file=selected)
+        self.assertEqual(command[-5:], ["--env-file", str(selected), "compose", "up", "-d"])
+
+    def test_relative_installation_file_uses_callers_directory(self) -> None:
+        runner = Mock(return_value=subprocess.CompletedProcess([], 0))
+        original_directory = Path.cwd()
+        with tempfile.TemporaryDirectory() as temporary:
+            try:
+                os.chdir(temporary)
+                selected = Path.cwd() / "private" / "install.env"
+                result = dev.main(["--env-file", "private/install.env", "db"], runner=runner)
+            finally:
+                os.chdir(original_directory)
+
+            self.assertEqual(result, 0)
+            self.assertEqual(
+                runner.call_args.args[0][-5:],
+                ["--env-file", str(selected), "compose", "up", "-d"],
+            )
+            self.assertEqual(runner.call_args.kwargs["cwd"], ROOT)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -250,11 +250,21 @@ def test_file_capacity_is_acquired_before_buffering_and_released_on_denial() -> 
 def test_readiness_returns_generic_status_and_disables_caching(monkeypatch) -> None:
     import app.main as main
 
-    monkeypatch.setattr(main, "is_database_ready", lambda: False)
+    snapshot = {
+        "status": "not_ready",
+        "components": {
+            "database": {"status": "unavailable", "required": True},
+            "auth": {"status": "ready", "required": True},
+            "storage": {"status": "ready", "required": True},
+            "smtp": {"status": "ready", "required": True},
+            "scanner": {"status": "not_configured", "required": False},
+        },
+    }
+    monkeypatch.setattr(main, "get_readiness_snapshot", lambda: snapshot)
     response = TestClient(create_app()).get("/api/ready")
 
     assert response.status_code == 503
-    assert response.json() == {"status": "not_ready"}
+    assert response.json() == snapshot
     assert response.headers["Cache-Control"] == "no-store"
 
 

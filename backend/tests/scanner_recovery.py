@@ -27,7 +27,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.systems.platform.files.worker import LEADER_LOCK
-from tests.postgres_runtime import assert_runner_database_url
+from tests.postgres_runtime import POSTGRES_DATABASE, assert_runner_database_url
 
 if TYPE_CHECKING:
     from tests.scanner_runtime import DisposableScanner
@@ -49,7 +49,7 @@ def _guard(
     except RuntimeError:
         disposable_database = False
     else:
-        disposable_database = target.path == "/openslate"
+        disposable_database = target.path == f"/{POSTGRES_DATABASE}"
     if (
         re.fullmatch(r"[a-f0-9]{32}", scanner.run_id) is None
         or not disposable_database
@@ -77,7 +77,7 @@ def _headers(application_env: dict[str, str], identity: dict[str, str]) -> dict[
     with httpx.Client(timeout=10, trust_env=False) as client:
         response = client.post(
             API + "/api/auth/token",
-            json={"identifier": identity["email"], "password": identity["password"]},
+            json={"email": identity["email"], "password": identity["password"]},
         )
     if response.status_code != 200:
         raise RuntimeError("Recovery fixture authentication failed")
@@ -190,7 +190,7 @@ def _replace_engine(scanner: "DisposableScanner") -> None:
 def verify_worker_recovery(
     scanner: "DisposableScanner", application_env: dict[str, str], admin_identity: dict[str, str]
 ) -> None:
-    """Run only after normal release journeys; outer DisposableScanner owns cleanup."""
+    """Run after normal file acceptance; outer DisposableScanner owns cleanup."""
     _guard(scanner, application_env, admin_identity)
     content = _large_png()
     scanner._run(["stop", "--time", "5", scanner.worker], timeout=15)

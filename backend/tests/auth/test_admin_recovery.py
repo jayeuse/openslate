@@ -1,3 +1,5 @@
+"""Elevated administrator recovery sends provider email without a local secret."""
+
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
@@ -7,9 +9,9 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.systems.access.identity.admin_recovery as recovery
-from app.core.security.passwords import hash_password, verify_password
+from app.core.integrations.supabase_auth import ProviderUser
 from app.systems.access.identity.admin_recovery import LocalRecoveryError, recover_local_admin
-from app.systems.access.identity.models import IdentityCredential, IdentitySession
+from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import IdentityKind, Role, User, UserRole, UserStatus
 
 
@@ -19,6 +21,7 @@ def _admin() -> User:
         id=uuid7(),
         email="admin@example.com",
         username="admin",
+        supabase_user_id=uuid7(),
         status=UserStatus.ACTIVE.value,
         role_id=role.id,
         role=role,
@@ -32,109 +35,61 @@ def test_recovery_refuses_nonlocal_or_non_elevated(local: bool, elevated: bool) 
         recover_local_admin(Mock(spec=Session), uuid7(), local_invocation=local, elevated=elevated)
 
 
-def test_recovery_refuses_non_admin_target() -> None:
+def test_recovery_refuses_unbound_or_ineligible_administrator() -> None:
     user = _admin()
-    user.role = Role(id=uuid7(), role=UserRole.MEMBER, permissions={})
+    user.supabase_user_id = None
     db = Mock(spec=Session)
     db.scalar.return_value = user
-
     with pytest.raises(LocalRecoveryError):
         recover_local_admin(db, user.id, local_invocation=True, elevated=True)
-
-    db.rollback.assert_called_once()
-
-
-@pytest.mark.parametrize("identity_kind,expires_at", [
-    (IdentityKind.GUEST.value, None),
-    (IdentityKind.INTERNAL.value, datetime.now(UTC)),
-])
-def test_recovery_refuses_guest_or_expired_administrator_target(
-    identity_kind: str, expires_at: datetime | None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    user = _admin()
-    user.identity_kind = identity_kind
-    user.expires_at = expires_at
-    credential = IdentityCredential(
-        user_id=user.id,
-        password_digest=hash_password("initial recovery password"),
-        must_change_password=False,
-        temporary_password_expires_at=None,
-        password_changed_at=datetime.now(UTC) - timedelta(days=1),
-    )
-    db = Mock(spec=Session)
-    db.scalar.return_value = user
-    db.get.return_value = credential
-    db.scalars.return_value = []
-    monkeypatch.setattr(recovery, "generated_temporary_password", lambda: "recover-secret-123")
-    monkeypatch.setattr(recovery, "append_security_event", Mock())
-
-    with pytest.raises(LocalRecoveryError):
-        recover_local_admin(db, user.id, local_invocation=True, elevated=True)
-
-    db.rollback.assert_called_once()
+    db.commit.assert_not_called()
 
 
-def test_recovery_rotates_to_a_temporary_secret_revokes_sessions_and_records_safe_event(
+def test_recovery_revokes_sessions_then_sends_provider_email(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user = _admin()
-    now = datetime.now(UTC).replace(microsecond=0)
-    credential = IdentityCredential(
-        user_id=user.id,
-        password_digest=hash_password("initial recovery password"),
-        must_change_password=False,
-        temporary_password_expires_at=None,
-        password_changed_at=now - timedelta(days=1),
-    )
-    existing_session = IdentitySession(
+    session = IdentitySession(
         id=uuid7(),
         user_id=user.id,
-        refresh_token_digest="active-refresh-digest",
-        csrf_token_digest="active-csrf-digest",
-        expires_at=now + timedelta(days=7),
+        refresh_token_digest="digest",
+        csrf_token_digest="csrf",
+        expires_at=datetime.now(UTC) + timedelta(days=7),
     )
     db = Mock(spec=Session)
     db.scalar.return_value = user
-    db.get.return_value = credential
-    db.scalars.return_value = [existing_session]
-    event = Mock()
-    monkeypatch.setattr(recovery, "generated_temporary_password", lambda: "recover-secret-123")
-    monkeypatch.setattr(recovery, "append_security_event", event)
+    db.scalars.return_value = [session]
+    events: list[str] = []
+    db.commit.side_effect = lambda: events.append("commit")
+    client = Mock()
+    client.get_admin_user.return_value = ProviderUser(user.supabase_user_id, None, user.email)
+    client.request_recovery.side_effect = lambda _email: events.append("mail")
+    monkeypatch.setattr(recovery, "get_supabase_auth_client", lambda: client, raising=False)
+    monkeypatch.setattr(recovery, "append_security_event", lambda *_a: None)
+    monkeypatch.setattr(
+        recovery, "append_committed_security_event", lambda *_a: None, raising=False
+    )
 
     result = recover_local_admin(db, user.id, local_invocation=True, elevated=True)
 
-    assert result.temporary_password == "recover-secret-123"
-    assert verify_password(result.temporary_password, credential.password_digest)
-    assert credential.must_change_password is True
-    assert credential.temporary_password_expires_at == credential.password_changed_at + timedelta(
-        hours=24
-    )
-    assert user.tokens_valid_after == credential.password_changed_at
-    assert existing_session.revoked_at == credential.password_changed_at
-    db.commit.assert_called_once()
-    payload = event.call_args.args[1]
-    assert "recover-secret-123" not in str(payload)
+    assert result.user_id == user.id
+    assert not hasattr(result, "temporary_password")
+    assert session.revoked_at is not None
+    assert events == ["commit", "mail"]
+    client.request_recovery.assert_called_once_with(user.email)
 
 
-def test_recovery_rolls_back_the_password_when_security_event_cannot_commit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_recovery_commit_failure_does_not_send_mail(monkeypatch: pytest.MonkeyPatch) -> None:
     user = _admin()
-    credential = IdentityCredential(
-        user_id=user.id,
-        password_digest=hash_password("initial recovery password"),
-        must_change_password=False,
-        temporary_password_expires_at=None,
-        password_changed_at=datetime.now(UTC) - timedelta(days=1),
-    )
     db = Mock(spec=Session)
     db.scalar.return_value = user
-    db.get.return_value = credential
     db.scalars.return_value = []
-    db.commit.side_effect = SQLAlchemyError("event write failed")
-    monkeypatch.setattr(recovery, "append_security_event", Mock())
+    db.commit.side_effect = SQLAlchemyError("offline")
+    client = Mock()
+    client.get_admin_user.return_value = ProviderUser(user.supabase_user_id, None, user.email)
+    monkeypatch.setattr(recovery, "get_supabase_auth_client", lambda: client, raising=False)
+    monkeypatch.setattr(recovery, "append_security_event", lambda *_a: None)
 
     with pytest.raises(LocalRecoveryError):
         recover_local_admin(db, user.id, local_invocation=True, elevated=True)
-
-    db.rollback.assert_called_once()
+    client.request_recovery.assert_not_called()

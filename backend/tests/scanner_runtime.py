@@ -25,7 +25,6 @@ from tests.postgres_runtime import (
 BASE_IMAGE_DIGEST = "sha256:488ff88a78d9769efa7e1bac7028419b696d54cecdae1b696c6c7cd670b3bb4b"
 MANIFEST = "/run/scanner-manifest.json"
 WORKER_DATABASE_MANIFEST = "/run/openslate-test-database.json"
-WORKER_STORAGE_ROOT = "/run/openslate-private-files"
 
 
 class DisposableScanner:
@@ -70,14 +69,6 @@ class DisposableScanner:
         owner = "uid=100,gid=101" if engine else f"uid={os.getuid()},gid={os.getgid()}"
         flags += ["--tmpfs", f"/tmp:rw,noexec,nosuid,size=128m,{owner},mode=1770"]
         return flags + ["--label", f"openslate.test.run={self.run_id}"]
-
-    def _worker_storage_root(self, application_env: dict[str, str]) -> Path:
-        storage_root = self.private / "private-files"
-        if application_env.get("FILES_STORAGE_ROOT") != str(storage_root):
-            raise RuntimeError("Worker requires disposable private storage")
-        if self.private.is_symlink() or storage_root.is_symlink() or not storage_root.is_dir():
-            raise RuntimeError("Worker requires disposable private storage")
-        return storage_root
 
     def _remove_container(self, name: str) -> None:
         present = subprocess.run(
@@ -163,6 +154,11 @@ class DisposableScanner:
             ),
         )
         shutil.copytree(self.root / "contracts", context / "contracts", dirs_exist_ok=True)
+        shutil.copytree(
+            self.root / "infra/supabase/templates",
+            context / "infra/supabase/templates",
+            dirs_exist_ok=True,
+        )
         for image, dockerfile in (
             (self.image, "clamav.Dockerfile"),
             (self.backend_image, "backend.Dockerfile"),
@@ -411,7 +407,6 @@ class DisposableScanner:
         acknowledge_engine_replacement: bool = False,
     ) -> None:
         assert_scanner_worker_database(application_env)
-        storage_root = self._worker_storage_root(application_env)
         worker_database_url, worker_database_manifest, self.database_network = (
             prepare_scanner_worker_database(
                 application_env,
@@ -428,7 +423,6 @@ class DisposableScanner:
             database_url=worker_database_url,
             database_manifest_path=WORKER_DATABASE_MANIFEST,
             scanner_manifest_path=MANIFEST,
-            storage_root=WORKER_STORAGE_ROOT,
         )
         if self.egress not in self.networks:
             self.networks.append(self.egress)
@@ -449,8 +443,6 @@ class DisposableScanner:
                 self.egress,
                 "--env-file",
                 str(credentials),
-                "--mount",
-                f"type=bind,src={storage_root},dst={WORKER_STORAGE_ROOT}",
                 "--mount",
                 f"type=bind,src={worker_database_manifest},dst={WORKER_DATABASE_MANIFEST},readonly",
                 "--mount",

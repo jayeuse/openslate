@@ -60,8 +60,7 @@ jobs:
           ../packaging/backup/restore_installation.py
       - name: Run packaging backup contracts
         run: >-
-          uv run pytest ../packaging/backup/tests/test_backup_installation.py
-          ../packaging/backup/tests/test_restore_installation.py
+          uv run pytest ../packaging/backup/tests
           --no-cov --basetemp .backup-contracts
       - name: Verify test selection and tooling
         run: uv run python -m unittest discover -s ../tests/tooling -t .. -p 'test_*.py'
@@ -87,10 +86,12 @@ jobs:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --locked
-      - name: Complete disposable PostgreSQL tests and coverage gates
+      - name: Complete disposable Supabase tests and coverage gates
         env:
           COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}
         run: uv run python -m tests.fullstack_runner --backend-coverage-only
+      - name: Verify committed provider reset on a separate disposable stack
+        run: uv run python -m tests.fullstack_runner --reset-acceptance-only
       - name: Upload compact backend coverage evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -103,6 +104,7 @@ jobs:
             backend/test-results/coverage/gate.json
             backend/test-results/coverage/operational-coverage.json
             backend/test-results/coverage/summary.json
+            backend/test-results/batches/*.json
           if-no-files-found: ignore
           retention-days: 14
 

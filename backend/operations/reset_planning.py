@@ -28,10 +28,10 @@ if __package__:
         _ACCESS_POLICY_VERSION_STATEMENT,
         _ALEMBIC_HEAD_STATEMENT,
         _COUNT_STATEMENTS,
-        _CREDENTIAL_STATEMENT,
         _EFFECTIVE_ADMIN_PROFILES_STATEMENT,
         _PROFILE_DELETE_COUNTS_STATEMENT,
         _PROFILE_STATEMENT,
+        _PROVIDER_SUBJECTS_STATEMENT,
         _PUBLIC_TABLES_STATEMENT,
         _ROLES_STATEMENT,
         _WORKSPACE_STATEMENT,
@@ -41,7 +41,6 @@ if __package__:
         EXPECTED_DATABASE_USER,
         AccessPolicyDefaultsSnapshot,
         AccessPolicyVersionSnapshot,
-        CredentialSnapshot,
         ProfileSnapshot,
         ResetError,
         ResetPlan,
@@ -55,10 +54,10 @@ else:
         _ACCESS_POLICY_VERSION_STATEMENT,
         _ALEMBIC_HEAD_STATEMENT,
         _COUNT_STATEMENTS,
-        _CREDENTIAL_STATEMENT,
         _EFFECTIVE_ADMIN_PROFILES_STATEMENT,
         _PROFILE_DELETE_COUNTS_STATEMENT,
         _PROFILE_STATEMENT,
+        _PROVIDER_SUBJECTS_STATEMENT,
         _PUBLIC_TABLES_STATEMENT,
         _ROLES_STATEMENT,
         _WORKSPACE_STATEMENT,
@@ -68,7 +67,6 @@ else:
         EXPECTED_DATABASE_USER,
         AccessPolicyDefaultsSnapshot,
         AccessPolicyVersionSnapshot,
-        CredentialSnapshot,
         ProfileSnapshot,
         ResetError,
         ResetPlan,
@@ -194,28 +192,42 @@ def _read_alembic_head(connection: Any) -> str:
 
 def _read_profile(connection: Any, user_id: UUID) -> ProfileSnapshot:
     rows = _fetchall(connection, _PROFILE_STATEMENT, (user_id,))
-    if len(rows) != 1 or len(rows[0]) != 18:
+    if len(rows) != 1 or len(rows[0]) != 19:
         raise ResetError("The administrator profile is missing or ambiguous")
     row = rows[0]
     return ProfileSnapshot(
         id=_as_uuid(row[0]), created_at=row[1], deleted_at=row[2], is_deleted=row[3],
-        updated_at=row[4], performed_by=row[5], email=row[6], username=row[7],
-        status=row[8], role_id=_as_uuid(row[9]), display_name=row[10], identity_kind=row[11],
-        job_title=row[12], sponsor_user_id=_as_uuid(row[13]) if row[13] is not None else None,
-        expires_at=row[14], invitation_sent_at=row[15], invitation_accepted_at=row[16],
-        tokens_valid_after=row[17],
+        updated_at=row[4], performed_by=row[5], email=row[6],
+        supabase_user_id=_as_uuid(row[7]) if row[7] is not None else None,
+        username=row[8], status=row[9], role_id=_as_uuid(row[10]), display_name=row[11],
+        identity_kind=row[12], job_title=row[13],
+        sponsor_user_id=_as_uuid(row[14]) if row[14] is not None else None,
+        expires_at=row[15], invitation_sent_at=row[16], invitation_accepted_at=row[17],
+        tokens_valid_after=row[18],
     )
 
 
-def _read_credential(connection: Any, user_id: UUID) -> CredentialSnapshot:
-    rows = _fetchall(connection, _CREDENTIAL_STATEMENT, (user_id,))
-    if len(rows) != 1 or len(rows[0]) != 5:
-        raise ResetError("The administrator credential is missing or ambiguous")
-    row = rows[0]
-    return CredentialSnapshot(
-        user_id=_as_uuid(row[0]), password_digest=row[1], must_change_password=row[2],
-        temporary_password_expires_at=row[3], password_changed_at=row[4],
-    )
+def _read_provider_subjects(
+    connection: Any, preserved_id: UUID, preserved_provider_id: UUID,
+) -> tuple[tuple[UUID, UUID | None], ...]:
+    rows = _fetchall(connection, _PROVIDER_SUBJECTS_STATEMENT, (preserved_id,))
+    subjects: list[tuple[UUID, UUID | None]] = []
+    seen_app: set[UUID] = set()
+    seen_provider: set[UUID] = {preserved_provider_id}
+    for row in rows:
+        if len(row) != 2:
+            raise ResetError("The provider subject mapping is invalid")
+        app_id = _as_uuid(row[0])
+        provider_id = _as_uuid(row[1]) if row[1] is not None else None
+        if app_id == preserved_id or app_id in seen_app or (
+            provider_id is not None and provider_id in seen_provider
+        ):
+            raise ResetError("The provider subject mapping is ambiguous")
+        seen_app.add(app_id)
+        if provider_id is not None:
+            seen_provider.add(provider_id)
+        subjects.append((app_id, provider_id))
+    return tuple(sorted(subjects, key=lambda item: str(item[0])))
 
 
 def _read_workspace(connection: Any) -> WorkspaceSnapshot:
@@ -324,7 +336,11 @@ def _impact_digest(plan: ResetPlan) -> str:
         "profiles_to_delete": plan.profiles_to_delete,
         "inactive_admin_profiles_to_delete": plan.inactive_admin_profiles_to_delete,
         "profile": stable_snapshot_payload(plan.profile_snapshot),
-        "credential": stable_snapshot_payload(plan.credential_snapshot),
+        "preserved_admin_provider_id": str(plan.preserved_admin_provider_id),
+        "provider_subjects": [
+            [str(app_id), str(provider_id) if provider_id is not None else None]
+            for app_id, provider_id in plan.provider_subjects
+        ],
         "admin_role": stable_snapshot_payload(plan.admin_role_snapshot),
         "member_role": stable_snapshot_payload(plan.member_role_snapshot),
         "workspace": stable_snapshot_payload(plan.workspace_snapshot),
@@ -363,9 +379,11 @@ def build_reset_plan(
             raise ResetError("The administrator email must resolve to one active local user")
         admin_id = _as_uuid(rows[0][0])
         profile = read_profile_fn(connection, admin_id)
-        credential = _read_credential(connection, admin_id)
-        if profile.id != admin_id or credential.user_id != admin_id:
-            raise ResetError("The administrator identity is not active and preserved")
+        if profile.id != admin_id or profile.supabase_user_id is None:
+            raise ResetError("The administrator provider identity is not active and preserved")
+        provider_subjects = _read_provider_subjects(
+            connection, admin_id, profile.supabase_user_id
+        )
         if (
             profile.identity_kind != "internal"
             or profile.sponsor_user_id is not None
@@ -395,6 +413,8 @@ def build_reset_plan(
         if _fetchall(connection, _EFFECTIVE_ADMIN_PROFILES_STATEMENT, (admin_id,)):
             raise ResetError("Another effective administrator profile exists")
         delete_counts = _read_profile_delete_counts(connection, admin_id)
+        if len(provider_subjects) != delete_counts[0]:
+            raise ResetError("The provider subject inventory does not match the profiles")
         counts = dict(_read_counts(connection))
         counts.update(
             profiles_to_delete=delete_counts[0],
@@ -407,10 +427,11 @@ def build_reset_plan(
             inactive_admin_profiles_to_delete=delete_counts[1],
             impact_digest="",
             preserved_admin_id=admin_id,
+            preserved_admin_provider_id=profile.supabase_user_id,
+            provider_subjects=provider_subjects,
             preserved_admin_role_id=admin_roles[0].id,
             preserved_member_role_id=member_roles[0].id,
             profile_snapshot=profile,
-            credential_snapshot=credential,
             admin_role_snapshot=admin_roles[0],
             member_role_snapshot=member_roles[0],
             workspace_snapshot=workspace,

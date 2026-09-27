@@ -1,17 +1,71 @@
 # Error Handling and Recovery
 
-> **Scope:** Current application errors and known operational limits.
+> **Scope:** Current error boundaries, failure behavior, and recovery limits.
 
-Routes roll back their transaction before translating expected database errors. Authentication errors remain generic. Invalid Origin/CSRF input is rejected without a refresh attempt. Invalid or replayed refresh tokens revoke or clear the browser session as appropriate; retry is not an authorization bypass.
+## Application and provider errors
 
-Identity failures such as invalid credentials, expired action token, incomplete setup, inactive user, or rate limit have controlled responses and durable local state where needed. With optional SMTP enabled, invitation and recovery payloads are encrypted in the local outbox and a bounded worker records retry, cancellation, and terminal transport failures. SMTP is at least once: a delivery record only establishes the worker's transport result, never recipient receipt or action-token use.
+FastAPI owns the application HTTP boundary in [`main.py`](../../backend/app/main.py).
+Database operation failures produce a generic `503 Database unavailable`; unexpected
+failures produce a generic `500`. Responses carry a request identifier, while structured
+logs record a bounded reason code instead of exception text or request contents.
+Expected route errors remain route-specific. Invalid Origin or CSRF input is rejected
+without refreshing a session.
 
-File write, read, promotion, and deletion errors return controlled storage failures. Digest/size mismatch, unsafe filesystem state, scanner unavailability, and uncertain scan work fail closed. Promotion and database metadata cannot be made one transaction, so recovery procedures must inspect both the row and object state.
+The provider boundary in
+[`supabase_auth.py`](../../backend/app/core/integrations/supabase_auth.py) verifies
+provider identity, while FastAPI resolves the explicitly bound OpenSlate profile, checks
+its current eligibility, and evaluates application authorization. A missing, inactive,
+or revoked application profile is denied even when the provider credential is valid.
+Provider unavailability is an availability error, not evidence of invalid credentials.
+Provider metadata does not grant application roles or permissions. See [Authentication
+and Authorization](08-authentication-authorization.md) and
+[Infrastructure](11-infrastructure.md).
 
-SSE notification failure never undoes an already committed mutation. Clients resynchronize with authorized API reads. A stalled stream is closed so it releases its subscription capacity.
+## Private files and scanning
 
-Guarded encrypted backup and manual database/filesystem restore utilities
-provide a recovery foundation. Customer-facing recovery remains incomplete:
-signed installer retry, a supported restore workflow and cross-host validation
-remain deployment work. Current local reset operations are development-only
-and are not a recovery guarantee. See [Deployment Architecture](12-deployment-architecture.md).
+OpenSlate stores file metadata in PostgreSQL and bytes in the private Supabase Storage
+buckets. FastAPI authorizes transfers; browsers receive no Storage credentials or direct
+object URLs. Uploaded bytes enter quarantine, where the worker verifies the stored size
+and digest and scans the exact content with ClamAV. Only a verified clean object may be
+promoted to the ready bucket and made downloadable.
+
+Storage, scanner, and database changes do not share a transaction. A timeout, digest
+mismatch, rejected write, scanner failure, uncertain promotion, or uncertain cleanup
+therefore fails closed: the application does not expose an unverified object as ready.
+Durable operation and object state remain available for reconciliation. Retrying a
+partially completed operation must verify the existing immutable bytes rather than
+assume that the prior request did nothing. The Storage adapter and scan state machine
+are implemented in
+[`supabase_storage.py`](../../backend/app/systems/platform/files/supabase_storage.py)
+and [`scan_processing.py`](../../backend/app/systems/platform/files/scan_processing.py).
+File access and recovery flows are described in [Runtime Flows](13-runtime-flows.md).
+
+Invitation and recovery email are sent through Supabase Auth using the configured SMTP
+service. OpenSlate has no local SMTP outbox; provider or SMTP outages can delay those
+actions. Application session revocation remains effective even when a provider sign-out
+call is unavailable.
+
+## Events
+
+[`hub.py`](../../backend/app/systems/platform/events/hub.py) uses PostgreSQL
+`LISTEN`/`NOTIFY` to carry opaque invalidations to authenticated SSE clients. A
+notification failure does not roll back a committed mutation. Clients refetch through
+authorized FastAPI endpoints; stalled streams close and reconnect under the normal
+access checks. SSE is not an audit log or a source of row data. Supabase Realtime is not
+enabled.
+
+## Backup and restore
+
+The version 3 offline Restic workflow captures a stopped installation's physical
+provider volumes and required secret/configuration bundle. Restore requires a full
+snapshot ID, a new Compose project and instance identity, a fresh target directory, and
+exact confirmation. Validation and finalization happen before ingress is opened;
+restored OpenSlate sessions are invalidated. Follow the [restore
+runbook](../../infra/supabase/RESTORE.md) and [deployment recovery
+contract](12-deployment-architecture.md#backup-restore-and-persistent-data).
+
+Those artifacts and command-level checks are a recovery foundation, not proof of
+physical recovery. A real isolated physical restore and post-reboot recovery have not
+been accepted on Linux; Windows restore and reboot acceptance remain pending until a
+Windows host is available. Retention and off-host repository policy remain operator
+responsibilities.

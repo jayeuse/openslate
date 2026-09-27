@@ -297,7 +297,7 @@ def test_concurrent_claim_skips_locked_due_row_and_claims_next():
         engine.dispose()
 
 
-def test_scheduling_tables_keep_runtime_write_and_inspector_read_only(integration_owner_db):
+def test_scheduling_tables_grant_runtime_access_and_block_provider_roles(integration_owner_db):
     connection = integration_owner_db.connection()
     statement = text("SELECT has_table_privilege(:role, :table_name, :privilege)")
     for table_name in ("public.scheduled_work", "public.in_app_notifications"):
@@ -305,12 +305,12 @@ def test_scheduling_tables_keep_runtime_write_and_inspector_read_only(integratio
             assert connection.scalar(
                 statement,
                 {"role": "openslate_runtime", "table_name": table_name, "privilege": privilege},
-            )
-            assert connection.scalar(
-                statement,
-                {
-                    "role": "openslate_inspector",
-                    "table_name": table_name,
-                    "privilege": privilege,
-                },
-            ) is (privilege == "SELECT")
+            ) is True
+            for role in ("anon", "authenticated", "service_role"):
+                assert (
+                    connection.scalar(
+                        statement,
+                        {"role": role, "table_name": table_name, "privilege": privilege},
+                    )
+                    is False
+                )

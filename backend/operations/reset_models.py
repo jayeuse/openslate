@@ -40,9 +40,6 @@ APPLICATION_TABLES = (
     "fields",
     "files",
     "in_app_notifications",
-    "identity_action_tokens",
-    "identity_credentials",
-    "identity_delivery_outbox",
     "identity_rate_limit_buckets",
     "identity_sessions",
     "lifecycle_confirmation_challenges",
@@ -82,7 +79,6 @@ NON_PRESERVED_TABLES = tuple(
     for table in APPLICATION_TABLES
     if table
     not in {
-        "identity_credentials",
         "access_policy_defaults",
         "access_policy_versions",
         "roles",
@@ -101,8 +97,6 @@ DELETE_ORDER = (
     "access_rules",
     "access_groups",
     "identity_sessions",
-    "identity_delivery_outbox",
-    "identity_action_tokens",
     "identity_rate_limit_buckets",
     "lifecycle_confirmation_challenges",
     "lifecycle_rate_limit_failures",
@@ -169,15 +163,13 @@ SELECT table_name FROM information_schema.tables
 _ALEMBIC_HEAD_STATEMENT = "SELECT version_num FROM public.alembic_version"
 _PROFILE_STATEMENT = """
 SELECT id, created_at, deleted_at, is_deleted, updated_at, performed_by,
-       email, username, status, role_id, display_name, identity_kind, job_title,
+       email, supabase_user_id, username, status, role_id, display_name, identity_kind, job_title,
        sponsor_user_id, expires_at, invitation_sent_at, invitation_accepted_at,
        tokens_valid_after
   FROM public.users WHERE id = %s
 """
-_CREDENTIAL_STATEMENT = """
-SELECT user_id, password_digest, must_change_password,
-       temporary_password_expires_at, password_changed_at
-  FROM public.identity_credentials WHERE user_id = %s
+_PROVIDER_SUBJECTS_STATEMENT = """
+SELECT id, supabase_user_id FROM public.users WHERE id <> %s ORDER BY id
 """
 _WORKSPACE_STATEMENT = """
 SELECT id, singleton_key, display_name, legal_name, description, contact_email,
@@ -227,10 +219,9 @@ LOCK TABLE public.alembic_version, public.audit_logs,
  public.board_templates, public.board_widgets, public.boards,
  public.dashboard_defaults, public.dashboard_widgets, public.dashboards,
  public.departments, public.fields,
- public.files, public.in_app_notifications, public.identity_action_tokens,
+ public.files, public.in_app_notifications,
  public.openview_chart_preferences,
- public.identity_delivery_outbox,
- public.identity_credentials, public.identity_rate_limit_buckets, public.identity_sessions,
+ public.identity_rate_limit_buckets, public.identity_sessions,
  public.access_default_departments, public.access_default_groups, public.access_group_members,
  public.access_groups, public.access_policy_defaults, public.access_policy_versions,
  public.access_rules,
@@ -263,6 +254,7 @@ class ProfileSnapshot:
     updated_at: object
     performed_by: object
     email: object
+    supabase_user_id: UUID | None
     username: object
     status: object
     role_id: UUID
@@ -274,15 +266,6 @@ class ProfileSnapshot:
     invitation_sent_at: object
     invitation_accepted_at: object
     tokens_valid_after: object
-
-
-@dataclass(frozen=True)
-class CredentialSnapshot:
-    user_id: UUID
-    password_digest: object
-    must_change_password: object
-    temporary_password_expires_at: object
-    password_changed_at: object
 
 
 @dataclass(frozen=True)
@@ -382,10 +365,11 @@ class ResetPlan:
     inactive_admin_profiles_to_delete: int
     impact_digest: str
     preserved_admin_id: UUID
+    preserved_admin_provider_id: UUID
+    provider_subjects: tuple[tuple[UUID, UUID | None], ...]
     preserved_admin_role_id: UUID
     preserved_member_role_id: UUID
     profile_snapshot: ProfileSnapshot
-    credential_snapshot: CredentialSnapshot
     admin_role_snapshot: RoleSnapshot
     member_role_snapshot: RoleSnapshot
     workspace_snapshot: WorkspaceSnapshot

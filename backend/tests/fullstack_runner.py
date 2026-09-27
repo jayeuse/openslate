@@ -16,13 +16,14 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config.instance import assert_instance_target, instance_target_for_process
+from app.core.config.provider_instance import assert_provider_instance
 from app.core.database import model_registry  # noqa: F401
 
 if __package__:
@@ -62,21 +63,17 @@ def runtime_database_environment(database_env: dict[str, str]) -> dict[str, str]
     return {"DATABASE_URL": database_env["DATABASE_URL"]}
 
 
-def browser_acceptance_command() -> list[str]:
-    """Run the one owned full-stack suite for normal and scanner-only acceptance."""
-    return [
+def browser_acceptance_command(*, browser_only: bool = False) -> list[str]:
+    """Keep scanner-free auth repair separate from complete scanner-backed acceptance."""
+    command = [
         "npx",
         "playwright",
         "test",
         "--config=playwright.fullstack.config.ts",
     ]
-
-
-def prepare_private_file_storage(private: Path) -> Path:
-    """Create the scanner-visible private root before FastAPI and its worker start."""
-    storage_root = private / "private-files"
-    storage_root.mkdir(mode=0o700)
-    return storage_root
+    if browser_only:
+        command.append("tests/fullstack/auth-session.spec.ts")
+    return command
 
 
 def measure_admission():
@@ -131,10 +128,12 @@ def wait_for(url, process, *, verify: bool = True):
 
 def seed(owner_url, run_id, database_environment):
     """Owner-only fixture setup, guarded by a brand-new empty application DB."""
-    from app.systems.access.identity.service import create_credential
     from app.systems.access.users.models import Role, User, UserStatus
 
     target = instance_target_for_process(owner_url, "openslate_owner", database_environment)
+    assert_provider_instance(
+        database_environment, database_url=owner_url, expected_user="openslate_owner"
+    )
     engine = create_engine(owner_url)
     identities = {}
     try:
@@ -158,7 +157,15 @@ def seed(owner_url, run_id, database_environment):
                 )
                 db.add(user)
                 db.flush()
-                create_credential(db, user.id, password)
+                with httpx.Client(timeout=10, follow_redirects=False) as provider:
+                    response = provider.post(
+                        database_environment["SUPABASE_URL"] + "/auth/v1/admin/users",
+                        headers={"apikey": database_environment["SUPABASE_SECRET_KEY"]},
+                        json={"email": email, "password": password, "email_confirm": True},
+                    )
+                if response.status_code not in {200, 201}:
+                    raise RuntimeError("Disposable Auth user provisioning failed")
+                user.supabase_user_id = UUID(response.json()["id"])
                 identities[role] = {"email": email, "password": password, "id": str(user.id)}
             db.commit()
     finally:
@@ -169,17 +176,26 @@ def seed(owner_url, run_id, database_environment):
 def main(arguments=()):
     arguments = tuple(arguments)
     batch = parse_batch(arguments, BACKEND)
+    reset_only = arguments == ("--reset-acceptance-only",)
+    if reset_only:
+        batch = {
+            "targets": ["tests/reset_application_data/provider_reset_acceptance.py"],
+            "layer": "integration",
+            "interactive": False,
+        }
     if not batch and arguments not in (
         (),
         ("--scanner-only",),
         ("--backend-coverage-only",),
         ("--acceptance-only",),
+        ("--browser-only",),
     ):
         raise SystemExit("Usage: fullstack_runner.py [mode]")
     backend_only = batch is not None or arguments == ("--backend-coverage-only",)
     scanner_only = arguments == ("--scanner-only",)
     acceptance_only = arguments == ("--acceptance-only",)
-    if not scanner_only and batch is None and not acceptance_only:
+    browser_only = arguments == ("--browser-only",)
+    if not scanner_only and batch is None and not acceptance_only and not browser_only:
         output = BACKEND / "test-results/coverage"
         if output.exists():
             shutil.rmtree(output)
@@ -201,6 +217,8 @@ def main(arguments=()):
     failure_type = failure_message = None
     result_path = summary_path(BACKEND, FRONTEND, batch=batch, backend_only=backend_only)
     base_env = {"PATH": os.environ["PATH"], "OPENSLATE_ENV_SOURCE": "process"}
+    if reset_only:
+        base_env["OPENSLATE_TEST_RESET_ACCEPTANCE"] = "1"
     # Browser binaries remain in the installer's cache while runtime HOME is private.
     browser_cache = Path.home() / ("Library/Caches" if sys.platform == "darwin" else ".cache")
     if sys.platform == "linux":
@@ -212,7 +230,6 @@ def main(arguments=()):
     base_env["HOME"] = str(private / "home")
     (private / "tmp").mkdir(mode=0o700)
     base_env["TMPDIR"] = str(private / "tmp")
-    private_files = prepare_private_file_storage(private)
     log = (private / "process.log").open("w")
 
     def run(command, cwd, env=base_env, capture=False):
@@ -232,11 +249,13 @@ def main(arguments=()):
         postgres = DisposablePostgres(private, run_id, base_env, log)
         postgres.start()
         database_env = postgres.urls()
+        provider_env = postgres.provider_environment()
         database_manifest = postgres.write_manifest()
         owner_url = database_env["MIGRATION_DATABASE_URL"]
         migration_env = {
             **base_env,
             **database_env,
+            **provider_env,
             "ENVIRONMENT": "test",
             "E2E_ALLOW_MUTATIONS": "true",
             "OPENSLATE_FULLSTACK_RUN_ID": run_id,
@@ -256,20 +275,17 @@ def main(arguments=()):
         api_env = {
             **base_env,
             **runtime_database_environment(database_env),
+            **provider_env,
             "ENVIRONMENT": "test",
             "E2E_ALLOW_MUTATIONS": "true",
             "OPENSLATE_FULLSTACK_RUN_ID": run_id,
             "OPENSLATE_TEST_DATABASE_MANIFEST": str(database_manifest),
-            "AUTH_JWT_SECRET": secrets.token_urlsafe(48),
-            "AUTH_JWT_ISSUER": "http://openslate.test",
-            "AUTH_JWT_AUDIENCE": "openslate-api",
-            "AUTH_ACCESS_TOKEN_MINUTES": "15",
+            "PUBLICATION_SIGNING_KEY": secrets.token_urlsafe(48),
             "AUTH_REFRESH_TOKEN_DAYS": "7",
             "LIFECYCLE_PURGE_ENABLED": "false",
             "SECURITY_EVENT_SERVER_KEY": secrets.token_urlsafe(32),
             "PUBLIC_ORIGIN": WEB,
             "LOG_DIR": str(private / "api-logs"),
-            "FILES_STORAGE_ROOT": str(private_files),
             "REQUEST_BODY_MAX_BYTES": "1048576",
             "DATABASE_POOL_SIZE": "5",
             "DATABASE_MAX_OVERFLOW": "5",
@@ -285,7 +301,13 @@ def main(arguments=()):
             "SERVER_MAX_CONCURRENCY": str(RUNNER_CONCURRENCY_LIMIT),
             "SERVER_KEEP_ALIVE_SECONDS": "5",
         }
-        if not scanner_only and not acceptance_only:
+        stage = "private Storage initialization"
+        run(
+            [sys.executable, "operations/provision_storage.py", "--confirm"],
+            BACKEND,
+            api_env,
+        )
+        if not scanner_only and not acceptance_only and not browser_only:
             stage = "backend batch" if batch else "backend regression and coverage gate"
             execute = run_backend_batches if batch else run_backend_coverage
             result = execute(
@@ -296,7 +318,6 @@ def main(arguments=()):
                     **api_env,
                     "MIGRATION_DATABASE_URL": owner_url,
                     "TEST_DATABASE_URL": database_env["DATABASE_URL"],
-                    "TEST_INSPECTOR_DATABASE_URL": database_env["DATABASE_INSPECTOR_URL"],
                 },
                 run_id,
                 *([batch] if batch else []),
@@ -304,10 +325,11 @@ def main(arguments=()):
         if backend_only:
             result = result if batch else 0
         else:
-            stage = "official scanner generation"
-            scanner = DisposableScanner(ROOT, private, run_id, base_env, log)
-            scanner_observations = scanner.observations
-            scanner.start()
+            if not browser_only:
+                stage = "official scanner generation"
+                scanner = DisposableScanner(ROOT, private, run_id, base_env, log)
+                scanner_observations = scanner.observations
+                scanner.start()
             stage = "dedicated identities"
             identities = seed(owner_url, run_id, migration_env)
             fixture = private / "fixture.json"
@@ -316,6 +338,7 @@ def main(arguments=()):
                     {
                         "runId": run_id,
                         "baseURL": WEB,
+                        "mailpitUrl": postgres.mail_url,
                         **identities,
                     }
                 )
@@ -348,14 +371,28 @@ def main(arguments=()):
                 )
             )
             wait_for(API + "/api/ready", processes[-1])
-            stage = "automatic scan worker"
-            scanner.start_worker(api_env, postgres.network)
+            if scanner is not None:
+                stage = "automatic scan worker"
+                scanner.start_worker(api_env, postgres.network)
             stage = "bounded admission and recovery"
             admission = measure_admission()
             stage = "Caddy gateway startup"
             caddy = DisposableCaddy(private, run_id, base_env, log)
             caddy.start()
             wait_for(WEB + "/login", caddy, verify=False)
+            if scanner is not None:
+                stage = "scanned private downloads"
+                if __package__:
+                    from .scanner_acceptance import verify_scanned_downloads
+                else:
+                    from scanner_acceptance import verify_scanned_downloads
+                verify_scanned_downloads(scanner, api_env, identities)
+                stage = "real worker crash recovery"
+                if __package__:
+                    from .scanner_recovery import verify_worker_recovery
+                else:
+                    from scanner_recovery import verify_worker_recovery
+                verify_worker_recovery(scanner, api_env, identities["admin"])
             stage = "browser acceptance"
             test_env = {
                 **base_env,
@@ -365,22 +402,19 @@ def main(arguments=()):
                 "E2E_ALLOW_MUTATIONS": "true",
                 "PLAYWRIGHT_NO_COPY_PROMPT": "1",
             }
-            run(browser_acceptance_command(), FRONTEND, test_env)
+            run(browser_acceptance_command(browser_only=browser_only), FRONTEND, test_env)
             browser_completed = True
-            stage = "real worker crash recovery"
-            if __package__:
-                from .scanner_recovery import verify_worker_recovery
-            else:
-                from scanner_recovery import verify_worker_recovery
-            verify_worker_recovery(scanner, api_env, identities["admin"])
-            stage = "read-only operational checker"
-            try:
-                run([sys.executable, "operations/check_operational_health.py"], BACKEND, api_env)
-                checker_exit = 0
-            except subprocess.CalledProcessError as error:
-                checker_exit = error.returncode
-                if checker_exit != 1:
-                    raise
+            if not browser_only:
+                stage = "read-only operational checker"
+                try:
+                    run(
+                        [sys.executable, "operations/check_operational_health.py"], BACKEND, api_env
+                    )
+                    checker_exit = 0
+                except subprocess.CalledProcessError as error:
+                    checker_exit = error.returncode
+                    if checker_exit != 1:
+                        raise
             result = 0
     except Exception as error:
         failure_type = type(error).__name__
@@ -433,6 +467,7 @@ def main(arguments=()):
                 scanner_only=scanner_only,
                 stage=stage,
                 browser_completed=browser_completed,
+                browser_only=browser_only,
                 admission=admission,
                 checker_exit=checker_exit,
                 scanner_observations=scanner_observations,
@@ -441,7 +476,10 @@ def main(arguments=()):
             )
         finally:
             log.close()
-            shutil.rmtree(private)
+            if result == 0:
+                shutil.rmtree(private)
+            else:
+                print(f"Private failure diagnostics retained at {private}")
     if result == 0:
         print(
             "Backend batch session PASS (no coverage gate)."

@@ -1,4 +1,4 @@
-"""Provision the first administrator through local OpenSlate Identity."""
+"""Reserve the first administrator and send a Supabase email invitation."""
 
 import argparse
 import sys
@@ -17,18 +17,20 @@ if __package__ in {None, ""}:
 
 from app.common.normalization import normalize_email, normalize_username
 from app.core.config import Settings, get_admin_settings, get_settings
+from app.core.config.environment import environment_inputs
 from app.core.config.instance import (
     assert_database_url,
     assert_instance_target,
     instance_target_for_process,
 )
+from app.core.config.provider_instance import assert_provider_instance
+from app.core.config.settings import DOTENV_PATH
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
-from app.systems.access.identity.service import replace_password
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import Role, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
-from app.systems.access.users.service import invite_user
+from app.systems.access.users.service import invite_user, reconcile_invitation
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 
 LOCAL_ENVIRONMENTS = frozenset({"development", "dev", "local"})
@@ -124,14 +126,14 @@ def _is_exact_admin_reservation(user: User, invitation: InvitationCreate, admin_
         user.role_id == admin_role.id
         and user.status == UserStatus.PENDING.value
         and not user.is_deleted
-        and user.invitation_sent_at is not None
+        and user.provider_invitation_operation_id is not None
         and user.invitation_accepted_at is None
         and normalized_email == invitation.email
         and normalized_username == invitation.username
     )
 
 
-def _provision(settings: Settings, invitation: InvitationCreate, password: str) -> BootstrapResult:
+def _provision(settings: Settings, invitation: InvitationCreate) -> BootstrapResult:
     with AuditSession(get_engine()) as db:
         db.info[AUDIT_CONTEXT_KEY] = AuditContext()
         _, admin_role = _validate_schema_and_roles(db)
@@ -144,8 +146,7 @@ def _provision(settings: Settings, invitation: InvitationCreate, password: str) 
                     admin_role,
                     excluded_user_id=existing_profile.id,
                 ):
-                    replace_password(db, existing_profile, password, temporary=True)
-                    db.commit()
+                    reconcile_invitation(db, existing_profile.id, actor_id=None, bootstrap=True)
                     return BootstrapResult(
                         existing_profile.id,
                         existing_profile.email,
@@ -164,7 +165,6 @@ def _provision(settings: Settings, invitation: InvitationCreate, password: str) 
                 invitation.model_copy(update={"role_id": admin_role.id}),
                 actor_id=None,
                 bootstrap=True,
-                temporary_password=password,
             )
             return BootstrapResult(user.id, user.email, user.username, user.status)
         except (InvitationError, SQLAlchemyError) as error:
@@ -184,10 +184,13 @@ def main(argv: Sequence[str] | None = None) -> None:
             assert_database_url(settings.database_url, target, expected_user="openslate_runtime")
             with get_engine().connect() as connection:
                 assert_instance_target(connection, target, expected_user="openslate_runtime")
-        password = admin.admin_password.get_secret_value()
         invitation = _invitation(admin.admin_email, admin.admin_username)
         _validate_confirmation(settings, args.confirm)
-        result = _provision(settings, invitation, password)
+        assert_provider_instance(
+            environment_inputs(DOTENV_PATH), database_url=settings.database_url,
+            expected_user="openslate_runtime",
+        )
+        result = _provision(settings, invitation)
     except SystemExit:
         raise
     except Exception:
@@ -198,6 +201,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         f"user_id={result.user_id} email={result.email} "
         f"username={result.username} status={result.status}"
     )
+    print("Complete the emailed invitation to activate the administrator account.")
 
 
 if __name__ == "__main__":

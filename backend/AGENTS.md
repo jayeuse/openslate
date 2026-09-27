@@ -1,12 +1,12 @@
 # Backend Guide
 
-FastAPI application data API: Python 3.12, synchronous SQLAlchemy 2 + Alembic, and local Identity in PostgreSQL. Run commands from `backend/` (`uv run ...`); the project is not installed as a package.
+FastAPI application data API: Python 3.12, synchronous SQLAlchemy 2 + Alembic, and Supabase Auth identity mapped to OpenSlate profiles and revocable application sessions. Supabase Database is PostgreSQL. Run commands from `backend/` (`uv run ...`); the project is not installed as a package.
 
 The deployment profile is one full stack per client (single tenant, micro–medium SMB, on-premise first). Keep the synchronous stack; do not introduce async SQLAlchemy, keyset pagination, or tenant-scoped schemas without an explicit decision.
 
 ## Layout
 
-- `app/core/` owns cross-cutting infrastructure: typed config, database/`AuditSession`/model registry, JWT security, middleware, and integrations.
+- `app/core/` owns cross-cutting infrastructure: typed config, database/`AuditSession`/model registry, Supabase JWT verification and Auth integration, middleware, and other integrations.
 - `app/common/` owns shared dependencies/auth, standard listing, documented exceptions, and normalization.
 - `app/systems/<page>/<capability>/` owns domain features (`models.py`, `schemas.py`, `router.py`); add `service.py` only for coordination such as locking or multi-entity invariants.
 - `sandbox` owns departments, modules, fields, records, relationships, and lifecycle; `access` owns auth and users; `openview` owns views; `manage` owns workspace and audit; `platform` owns files. `reports`, `businesses`, and `admin` remain nested placeholders, while `boards` and `comms` remain reserved. This physical grouping does not restrict cross-domain audit, lifecycle, or file services. Read `migrations/AGENTS.md` before schema work.
@@ -24,7 +24,7 @@ The deployment profile is one full stack per client (single tenant, micro–medi
 - Domain models inherit `app.core.base_model.BaseModel` (`UUIDv7 id`, timestamps, soft-delete fields, and `performed_by`). Audit/lifecycle support tables inherit `Base` directly and disable audit.
 - Register every ORM model in `app/core/database/model_registry.py`; Alembic autogenerate only sees imported registry models.
 - Schema flow is models → `migrations/AGENTS.md` → `uv run alembic revision --autogenerate` → review → `uv run alembic upgrade head` and `uv run alembic check`.
-- Identity, session, action-token, and rate-limit tables are application-owned models and must be registered like other ORM models.
+- OpenSlate user/profile, revocable session, and rate-limit tables are application-owned models and must be registered like other ORM models. Supabase Auth and Storage schemas remain provider-owned; do not map them as application models or migrate their tables. The runtime's narrow read of provider session identity is an explicit integration exception, not application ownership.
 - Soft delete is explicit (`is_deleted`/`deleted_at`); `BaseModel` does not filter automatically. Deleted-aware lists use `execute_standard_list`.
 
 ## Mutations and audit
@@ -45,8 +45,8 @@ The deployment profile is one full stack per client (single tenant, micro–medi
 
 - Follow the root non-negotiable test workflow: focused case, passing feature batch, affected PostgreSQL integration, then pre-push gates. Run full suites only when preparing to push; edits, commits, and routine handoffs use focused checks.
 - Run `COVERAGE_BASE_REF=<base-ref> uv run python -m tests.fullstack_runner --backend-coverage-only` for the full backend coverage gate only when preparing to push. The configured pytest default is 90%; the runner includes complete disposable PostgreSQL tests and the changed-line gate. Use `uv run pytest --no-cov -k <name>` for focused iteration; this does not satisfy the coverage gate.
-- PostgreSQL integration tests require the runner-owned disposable PostgreSQL database at the current Alembic head, explicit mutation flag, generated run identity, and private credentials manifest. Never reuse a personal database. Tests use `pytest.mark.integration`; override `get_db`/`get_current_user` with `dependency_overrides` and build rows with local `make_*` helpers, not a factory module.
-- `operations/` contains backend-owned operator commands. `bootstrap_admin.py` invites the first administrator once; `provision_database_role.py` creates least-privilege `openslate_runtime` and the optional read-only `openslate_inspector` login (reads canonical root `.env`); `seed_sample_data.py` seeds through the API with an admin token; `reset_application_data.py` is dry-run by default and requires `--execute`, a TTY, and exact digest confirmation. Repository-wide automation remains in root `scripts/`.
+- PostgreSQL integration tests require the runner-owned disposable Supabase stack and application database at the current Alembic head, explicit mutation flag, generated run identity, and private provider/database credentials manifest. Never reuse a personal or customer instance. Tests use `pytest.mark.integration`; override `get_db`/`get_current_user` with `dependency_overrides` and build rows with local `make_*` helpers, not a factory module.
+- `operations/` contains backend-owned operator commands. `supabase_keys.py --output <new-private-path>` creates a new owner-only key file without printing values; it does not assemble the full installation environment. `provision_database_role.py` provisions the application owner/runtime roles and narrowly scoped Auth-session read; `provision_storage.py` creates the private quarantine and ready buckets; `bootstrap_admin.py` sends the first administrator's provider invitation after the API is available. `seed_sample_data.py` seeds through the API with an admin token; `reset_application_data.py` is dry-run by default and requires `--execute`, a TTY, and exact digest confirmation. Repository-wide automation remains in root `scripts/`.
 
 ## TDD and coverage
 

@@ -1,4 +1,8 @@
-"""Private Report recipe migration contract on disposable PostgreSQL."""
+"""Report recipe catalog and runtime contracts on the active Supabase baseline.
+
+Recipe HTTP behavior is covered by ``tests/reports/test_report_routes.py``. The retired
+vanilla upgrade/downgrade transition is not part of the fresh-install path.
+"""
 
 import json
 from uuid import UUID
@@ -10,84 +14,50 @@ from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from tests.conftest import guarded_create_engine
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
-
-SOURCE_REVISION = "c5f6d66fe368"
-TARGET_REVISION = "8d2c4f1a7b90"
-ACCESS_HEAD_REVISION = "2bf95b237416"
+from tests.operations.migration_support import guarded_migration_environment
 
 
 @pytest.mark.integration
-def test_report_recipe_migration_preserves_source_schema_and_downgrades_narrowly() -> None:
+def test_report_recipe_schema_constraints_and_runtime_access_on_active_baseline() -> None:
     environment = guarded_migration_environment()
     owner_engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
     runtime_engine = guarded_create_engine(environment["TEST_DATABASE_URL"])
-    inspector_engine = guarded_create_engine(environment["TEST_INSPECTOR_DATABASE_URL"])
-    ids = {
-        name: uuid7()
-        for name in (
-            "source_user",
-            "report_owner",
-            "audit_actor",
-            "department",
-            "module",
-            "board",
-            "dashboard",
-            "report",
-        )
-    }
+    ids = {name: uuid7() for name in ("owner", "audit_actor", "department", "module", "report")}
 
     try:
-        run_alembic(environment, "downgrade", SOURCE_REVISION)
-        with owner_engine.connect() as connection:
-            _assert_source_head(connection, ids, seeded=False)
         _seed_source_rows(owner_engine, ids)
-
-        run_alembic(environment, "upgrade", TARGET_REVISION)
         with owner_engine.connect() as connection:
-            _assert_alembic_revision(connection, TARGET_REVISION)
             _assert_report_schema(connection)
-            _assert_source_rows(connection, ids)
-            _assert_report_privileges(connection)
+            _assert_runtime_privileges(connection)
 
-        _assert_runtime_insert_and_inspector_read(runtime_engine, inspector_engine, ids)
+        _assert_runtime_insert_and_owner_read(runtime_engine, owner_engine, ids)
         _assert_report_constraints(owner_engine, ids)
-
-        run_alembic(environment, "downgrade", SOURCE_REVISION)
-        with owner_engine.connect() as connection:
-            assert connection.scalar(text("SELECT to_regclass('public.reports')")) is None
-            _assert_alembic_revision(connection, SOURCE_REVISION)
-            _assert_source_rows(connection, ids)
     finally:
-        try:
-            run_alembic(environment, "upgrade", "head")
-        finally:
-            _delete_source_rows(owner_engine, ids)
-            inspector_engine.dispose()
-            runtime_engine.dispose()
-            owner_engine.dispose()
+        _delete_source_rows(owner_engine, ids)
+        runtime_engine.dispose()
+        owner_engine.dispose()
 
 
 def _seed_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
     with engine.begin() as connection:
-        member_role = connection.scalar(text("SELECT id FROM public.roles WHERE role = 'member'"))
-        assert member_role is not None
-        for name in ("source_user", "report_owner", "audit_actor"):
+        role_id = connection.scalar(text("SELECT id FROM public.roles WHERE role = 'member'"))
+        assert role_id is not None
+        for key in ("owner", "audit_actor"):
             connection.execute(
                 text(
                     "INSERT INTO public.users (id, email, username, status, role_id) "
                     "VALUES (:id, :email, :username, 'active', :role_id)"
                 ),
                 {
-                    "id": ids[name],
-                    "email": f"report-{ids[name].hex}@example.test",
-                    "username": f"report-{ids[name].hex}",
-                    "role_id": member_role,
+                    "id": ids[key],
+                    "email": f"report-baseline-{ids[key].hex}@example.test",
+                    "username": f"report_baseline_{ids[key].hex}",
+                    "role_id": role_id,
                 },
             )
         connection.execute(
             text("INSERT INTO public.departments (id, department_name) VALUES (:id, :name)"),
-            {"id": ids["department"], "name": f"Report migration {ids['department'].hex}"},
+            {"id": ids["department"], "name": f"Report baseline {ids['department'].hex}"},
         )
         connection.execute(
             text(
@@ -97,60 +67,9 @@ def _seed_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
             {
                 "id": ids["module"],
                 "department_id": ids["department"],
-                "name": f"Report migration {ids['module'].hex}",
+                "name": f"Report baseline {ids['module'].hex}",
             },
         )
-        connection.execute(
-            text(
-                "INSERT INTO public.boards "
-                "(id, owner_id, name, status, default_section, revision) "
-                "VALUES (:id, :owner_id, 'Source Board', 'active', 'overview', 3)"
-            ),
-            {"id": ids["board"], "owner_id": ids["source_user"]},
-        )
-        connection.execute(
-            text(
-                "INSERT INTO public.dashboards (id, owner_id, name, revision) "
-                "VALUES (:id, :owner_id, 'Source Dashboard', 4)"
-            ),
-            {"id": ids["dashboard"], "owner_id": ids["source_user"]},
-        )
-
-
-def _assert_source_head(connection: Connection, ids: dict[str, UUID], *, seeded: bool) -> None:
-    _assert_alembic_revision(connection, SOURCE_REVISION)
-    assert connection.scalar(text("SELECT to_regclass('public.boards')")) == "boards"
-    assert connection.scalar(text("SELECT to_regclass('public.dashboards')")) == "dashboards"
-    if seeded:
-        _assert_source_rows(connection, ids)
-
-
-def _assert_alembic_revision(connection: Connection, revision: str) -> None:
-    applied = set(connection.execute(text("SELECT version_num FROM alembic_version")).scalars())
-    assert applied == {ACCESS_HEAD_REVISION, revision}
-
-
-def _assert_source_rows(connection: Connection, ids: dict[str, UUID]) -> None:
-    assert (
-        connection.scalar(
-            text("SELECT name FROM public.boards WHERE id = :id"), {"id": ids["board"]}
-        )
-        == "Source Board"
-    )
-    assert (
-        connection.scalar(
-            text("SELECT name FROM public.dashboards WHERE id = :id"),
-            {"id": ids["dashboard"]},
-        )
-        == "Source Dashboard"
-    )
-    assert (
-        connection.scalar(
-            text("SELECT module_name FROM public.modules WHERE id = :id"),
-            {"id": ids["module"]},
-        )
-        == f"Report migration {ids['module'].hex}"
-    )
 
 
 def _assert_report_schema(connection: Connection) -> None:
@@ -164,35 +83,60 @@ def _assert_report_schema(connection: Connection) -> None:
             )
         ).mappings()
     }
+    assert set(columns) == {
+        "id",
+        "created_at",
+        "deleted_at",
+        "is_deleted",
+        "updated_at",
+        "performed_by",
+        "owner_id",
+        "module_id",
+        "name",
+        "subtitle",
+        "audience_kind",
+        "audience_role_id",
+        "audience_user_id",
+        "revision",
+        "recipe",
+    }
     assert columns["recipe"]["udt_name"] == "jsonb"
     assert columns["recipe"]["is_nullable"] == "NO"
     assert columns["revision"]["column_default"] == "1"
-    assert columns["subtitle"]["is_nullable"] == "YES"
     assert columns["owner_id"]["is_nullable"] == "NO"
     assert columns["module_id"]["is_nullable"] == "NO"
-    assert len(columns) == 12
+    assert columns["subtitle"]["is_nullable"] == "YES"
+    assert columns["audience_role_id"]["is_nullable"] == "YES"
+    assert columns["audience_user_id"]["is_nullable"] == "YES"
 
     constraints = {
         row["conname"]: row
         for row in connection.execute(
             text(
-                "SELECT conname, contype, confdeltype, "
-                "pg_get_constraintdef(oid) AS definition FROM pg_constraint "
+                "SELECT conname, contype, confdeltype FROM pg_constraint "
                 "WHERE conrelid = 'public.reports'::regclass"
             )
         ).mappings()
     }
     expected = {
         "reports_pkey": "p",
+        "ck_reports_audience": "c",
         "ck_reports_name_nonempty": "c",
         "ck_reports_revision_positive": "c",
-        "fk_reports_owner_id_users": "f",
+        "fk_reports_audience_role_id_roles": "f",
+        "fk_reports_audience_user_id_users": "f",
         "fk_reports_module_id_modules": "f",
+        "fk_reports_owner_id_users": "f",
         "fk_reports_performed_by_users": "f",
     }
     assert {name: constraints[name]["contype"] for name in expected} == expected
-    assert constraints["fk_reports_owner_id_users"]["confdeltype"] == "r"
-    assert constraints["fk_reports_module_id_modules"]["confdeltype"] == "r"
+    for name in (
+        "fk_reports_audience_role_id_roles",
+        "fk_reports_audience_user_id_users",
+        "fk_reports_module_id_modules",
+        "fk_reports_owner_id_users",
+    ):
+        assert constraints[name]["confdeltype"] == "r"
     assert constraints["fk_reports_performed_by_users"]["confdeltype"] == "n"
 
     indexes = {
@@ -204,41 +148,25 @@ def _assert_report_schema(connection: Connection) -> None:
             )
         ).mappings()
     }
-    assert set(indexes) == {"reports_pkey", "ix_reports_module", "ix_reports_owner_module"}
+    assert set(indexes) == {
+        "reports_pkey",
+        "ix_reports_audience_role_id",
+        "ix_reports_audience_user_id",
+        "ix_reports_module",
+        "ix_reports_owner_module",
+    }
     assert "(module_id)" in indexes["ix_reports_module"]
     assert "(owner_id, module_id)" in indexes["ix_reports_owner_module"]
 
 
-def _assert_report_privileges(connection: Connection) -> None:
-    privileges = (
-        connection.execute(
-            text(
-                "SELECT has_table_privilege('openslate_runtime', 'public.reports', 'SELECT') "
-                "AS runtime_select, "
-                "has_table_privilege('openslate_runtime', 'public.reports', 'INSERT') "
-                "AS runtime_insert, "
-                "has_table_privilege('openslate_runtime', 'public.reports', 'UPDATE') "
-                "AS runtime_update, "
-                "has_table_privilege('openslate_runtime', 'public.reports', 'DELETE') "
-                "AS runtime_delete, "
-                "has_table_privilege('openslate_inspector', 'public.reports', 'SELECT') "
-                "AS inspector_select, "
-                "has_table_privilege('openslate_inspector', 'public.reports', 'INSERT') "
-                "AS inspector_insert"
-            )
-        )
-        .mappings()
-        .one()
-    )
-    assert all(
-        privileges[f"runtime_{action}"] for action in ("select", "insert", "update", "delete")
-    )
-    assert privileges["inspector_select"] is True
-    assert privileges["inspector_insert"] is False
+def _assert_runtime_privileges(connection: Connection) -> None:
+    statement = text("SELECT has_table_privilege('openslate_runtime', 'public.reports', :action)")
+    for action in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+        assert connection.scalar(statement, {"action": action}) is True
 
 
-def _assert_runtime_insert_and_inspector_read(
-    runtime_engine: Engine, inspector_engine: Engine, ids: dict[str, UUID]
+def _assert_runtime_insert_and_owner_read(
+    runtime_engine: Engine, owner_engine: Engine, ids: dict[str, UUID]
 ) -> None:
     with runtime_engine.begin() as connection:
         connection.execute(
@@ -248,18 +176,18 @@ def _assert_runtime_insert_and_inspector_read(
             ),
             {
                 "id": ids["report"],
-                "owner_id": ids["report_owner"],
+                "owner_id": ids["owner"],
                 "module_id": ids["module"],
                 "name": "Private monthly report",
                 "recipe": json.dumps({"version": 1, "fields": []}),
                 "actor_id": ids["audit_actor"],
             },
         )
-    with inspector_engine.connect() as connection:
+    with owner_engine.connect() as connection:
         row = (
             connection.execute(
                 text(
-                    "SELECT owner_id, module_id, revision, recipe "
+                    "SELECT owner_id, module_id, revision, recipe, audience_kind "
                     "FROM public.reports WHERE id = :id"
                 ),
                 {"id": ids["report"]},
@@ -268,10 +196,11 @@ def _assert_runtime_insert_and_inspector_read(
             .one()
         )
     assert dict(row) == {
-        "owner_id": ids["report_owner"],
+        "owner_id": ids["owner"],
         "module_id": ids["module"],
         "revision": 1,
         "recipe": {"version": 1, "fields": []},
+        "audience_kind": "private",
     }
 
 
@@ -288,7 +217,7 @@ def _assert_report_constraints(engine: Engine, ids: dict[str, UUID]) -> None:
                         ),
                         {
                             "id": uuid7(),
-                            "owner_id": ids["report_owner"],
+                            "owner_id": ids["owner"],
                             "module_id": ids["module"],
                             "name": name,
                             "revision": revision,
@@ -296,17 +225,16 @@ def _assert_report_constraints(engine: Engine, ids: dict[str, UUID]) -> None:
                     )
 
     with engine.begin() as connection:
+        for key in ("owner",):
+            with pytest.raises(IntegrityError):
+                with connection.begin_nested():
+                    connection.execute(
+                        text("DELETE FROM public.users WHERE id = :id"), {"id": ids[key]}
+                    )
         with pytest.raises(IntegrityError):
             with connection.begin_nested():
                 connection.execute(
-                    text("DELETE FROM public.users WHERE id = :id"),
-                    {"id": ids["report_owner"]},
-                )
-        with pytest.raises(IntegrityError):
-            with connection.begin_nested():
-                connection.execute(
-                    text("DELETE FROM public.modules WHERE id = :id"),
-                    {"id": ids["module"]},
+                    text("DELETE FROM public.modules WHERE id = :id"), {"id": ids["module"]}
                 )
         connection.execute(
             text("DELETE FROM public.users WHERE id = :id"), {"id": ids["audit_actor"]}
@@ -322,20 +250,12 @@ def _assert_report_constraints(engine: Engine, ids: dict[str, UUID]) -> None:
 
 def _delete_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
     with engine.begin() as connection:
-        if connection.scalar(text("SELECT to_regclass('public.reports')")) is not None:
-            connection.execute(
-                text("DELETE FROM public.reports WHERE id = :id"), {"id": ids["report"]}
-            )
-        connection.execute(text("DELETE FROM public.boards WHERE id = :id"), {"id": ids["board"]})
-        connection.execute(
-            text("DELETE FROM public.dashboards WHERE id = :id"), {"id": ids["dashboard"]}
-        )
+        connection.execute(text("DELETE FROM public.reports WHERE id = :id"), {"id": ids["report"]})
         connection.execute(text("DELETE FROM public.modules WHERE id = :id"), {"id": ids["module"]})
         connection.execute(
-            text("DELETE FROM public.departments WHERE id = :id"),
-            {"id": ids["department"]},
+            text("DELETE FROM public.departments WHERE id = :id"), {"id": ids["department"]}
         )
         connection.execute(
             text("DELETE FROM public.users WHERE id = ANY(:ids)"),
-            {"ids": [ids["source_user"], ids["report_owner"], ids["audit_actor"]]},
+            {"ids": [ids["owner"], ids["audit_actor"]]},
         )

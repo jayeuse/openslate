@@ -33,11 +33,13 @@ def _write_export(root: Path) -> None:
 def _static_client(
     monkeypatch: pytest.MonkeyPatch, root: Path, *, environment: str = "test"
 ) -> TestClient:
-    settings = Settings(
-        **settings_values(environment=environment, web_assets_root=root), _env_file=None
-    )
+    values = settings_values(environment=environment, web_assets_root=root)
+    if environment == "development":
+        values["public_origin"] = "http://localhost:3000"
+        values["auth_jwt_issuer"] = values["public_origin"]
+    settings = Settings(**values, _env_file=None)
     monkeypatch.setattr(main, "get_settings", lambda: settings)
-    return TestClient(main.create_app())
+    return TestClient(main.create_app(), base_url="http://localhost")
 
 
 def test_static_site_serves_only_known_html_and_exact_files(monkeypatch, tmp_path: Path) -> None:
@@ -92,6 +94,22 @@ def test_static_site_sets_csp_security_and_cache_headers(monkeypatch, tmp_path: 
     assert page.headers["X-Frame-Options"] == "DENY"
     assert page.headers["Permissions-Policy"].endswith("payment=()")
     assert "Access-Control-Allow-Origin" not in api.headers
+
+
+@pytest.mark.parametrize("environment", ["test", "development"])
+def test_auth_action_documents_never_cache_or_send_referrers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, environment: str,
+) -> None:
+    _write_export(tmp_path)
+    (tmp_path / "auth").mkdir()
+    for name in ("setup", "recovery"):
+        (tmp_path / "auth" / f"{name}.html").write_text("<html>Action</html>")
+    client = _static_client(monkeypatch, tmp_path, environment=environment)
+    for name in ("setup", "recovery"):
+        response = client.get(f"/auth/{name}")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["referrer-policy"] == "no-referrer"
 
 
 def test_static_site_denies_path_escape_and_symlink_escape(monkeypatch, tmp_path: Path) -> None:

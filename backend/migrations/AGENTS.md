@@ -1,6 +1,6 @@
 # Migrations Guide
 
-`backend/migrations/` is Alembic-owned and records schema state derived from application models. Never invent schema here.
+`backend/migrations/` is Alembic-owned and records only OpenSlate application schema state derived from application models. Supabase Database is PostgreSQL, but Auth, Storage, and other provider schemas are initialized and upgraded by Supabase; never model or migrate those provider-owned tables here.
 
 ## Required workflow
 
@@ -15,6 +15,7 @@ Every schema change starts in `backend/app/systems/<page>/<capability>/models.py
 
 - Do not hand-write a migration as the starting point of a schema change.
 - Do not change schema with raw SQL and call it complete; schema changes flow from models through Alembic.
-- Changes that need PostgreSQL roles, grants, functions, or data backfills still start with the model change; add those operations deliberately to the generated revision. The runtime model has no managed-schema dependency.
+- Changes that need application roles, grants, functions, or data backfills still start with the model change; add those operations deliberately to the generated revision. Keep operations inside the application schema and the documented OpenSlate grants. The runtime model has no provider-schema ownership.
 - Never edit an applied revision.
-- The vanilla PostgreSQL baseline is an intentionally new root revision for disposable development data. Do not edit it after it has been applied; use a reviewed forward migration or backup restoration for repair.
+- Fresh Supabase installations use `c4ec36fc30cc` as the active application baseline. The previous vanilla PostgreSQL chain is preserved under `migrations/history/vanilla_postgresql/` and is not part of the active Alembic graph. This migration starts from a fresh application database; do not stamp an existing legacy database onto the new lineage or imply that it imports old data.
+- Treat the Supabase application baseline as immutable once applied. Repair it through a reviewed forward migration or a supported backup restoration, never by editing the baseline or modifying provider-owned objects.

@@ -28,7 +28,6 @@ if __package__:
         _read_access_policy_defaults,
         _read_access_policy_version,
         _read_alembic_head,
-        _read_credential,
         _read_profile,
         _read_roles,
         _read_workspace,
@@ -54,7 +53,6 @@ else:
         _read_access_policy_defaults,
         _read_access_policy_version,
         _read_alembic_head,
-        _read_credential,
         _read_profile,
         _read_roles,
         _read_workspace,
@@ -195,10 +193,6 @@ def _validate_postconditions(
     ):
         raise ResetError("The workspace reset postcondition was not met")
 
-    credential = _read_credential(connection, plan.preserved_admin_id)
-    if stable_snapshot_payload(credential) != stable_snapshot_payload(plan.credential_snapshot):
-        raise ResetError("The preserved administrator credential changed")
-
     policy_defaults = _read_access_policy_defaults(connection)
     if (
         policy_defaults.id != plan.access_policy_defaults_snapshot.id
@@ -242,6 +236,7 @@ def apply_reset(
     stdin_is_tty: bool = False,
     confirmation: str | None = None,
     storage: Any | None = None,
+    auth: Any | None = None,
     read_profile_fn: Callable[..., Any] | None = None,
     read_roles_fn: Callable[..., Any] | None = None,
     build_plan_fn: Callable[..., ResetPlan] | None = None,
@@ -255,22 +250,62 @@ def apply_reset(
         raise ResetError("An exact impact-digest confirmation is required")
     if storage is None:
         raise ResetError("Storage cleanup must be configured for execute mode")
+    if auth is None:
+        raise ResetError("Auth cleanup must be configured for execute mode")
 
     committed = False
+    sql_commit_started = False
+    provider_cleanup_started = False
+    provider_cleanup_completed = False
+    reset_lock_held = False
+    scanner_lock_held = False
     try:
+        # The dry run may have left a read transaction open. Session advisory
+        # locks survive transaction boundaries, so no table lock spans HTTP.
+        connection.rollback()
+        reset_lock_held = _single_value(
+            connection, "SELECT pg_try_advisory_lock(%s)", (_RESET_ADVISORY_LOCK_KEY,)
+        ) is True
+        if not reset_lock_held:
+            raise ResetError("Another application reset is running")
+        scanner_lock_held = _single_value(
+            connection, "SELECT pg_try_advisory_lock(%s)", (_SCANNER_LEADER_LOCK_KEY,)
+        ) is True
+        if not scanner_lock_held:
+            raise ResetError("The scanner worker must be stopped before reset")
+        connection.commit()
+
+        preflight_plan = (build_plan_fn or build_reset_plan)(
+            connection, plan.sample_email, storage_object_keys=storage.list_object_keys()
+        )
+        if preflight_plan.impact_digest != plan.impact_digest:
+            raise ResetError("The reset plan changed; run a fresh dry run and confirmation")
+        connection.commit()
+        auth.require_present(plan.preserved_admin_provider_id)
+        provider_cleanup_started = True
+        try:
+            auth.delete_and_verify_missing(
+                tuple(provider_id for _, provider_id in plan.provider_subjects
+                      if provider_id is not None)
+            )
+        except Exception:
+            raise ResetError(
+                "Provider account cleanup is incomplete; application profiles were retained; "
+                "run a fresh dry run before retrying"
+            ) from None
+        provider_cleanup_completed = True
+
+        # Re-inventory Storage before taking the short application table lock.
+        # The final cleanup rechecks the same snapshot after SQL commit.
+        final_storage_keys = storage.list_object_keys()
+
         _begin_transaction(connection)
         _execute(connection, "SET LOCAL lock_timeout = '5s'")
         _execute(connection, "SET LOCAL statement_timeout = '30s'")
-        _execute(connection, "SELECT pg_advisory_xact_lock(%s)", (_RESET_ADVISORY_LOCK_KEY,))
-        scanner_stopped = _single_value(
-            connection, "SELECT pg_try_advisory_xact_lock(%s)", (_SCANNER_LEADER_LOCK_KEY,)
-        )
-        if scanner_stopped is not True:
-            raise ResetError("The scanner worker must be stopped before reset")
         _execute(connection, _LOCK_APPLICATION_STATEMENT)
 
         locked_plan = (build_plan_fn or build_reset_plan)(
-            connection, plan.sample_email, storage_object_keys=storage.list_object_keys()
+            connection, plan.sample_email, storage_object_keys=final_storage_keys
         )
         if locked_plan.impact_digest != plan.impact_digest:
             raise ResetError("The reset plan changed; run a fresh dry run and confirmation")
@@ -288,11 +323,6 @@ def apply_reset(
             _execute(connection, f"DELETE FROM public.{table_name}")
         _reset_access_policy_singletons(connection, locked_plan)
         _reset_sandbox_workspace(connection)
-        _execute(
-            connection,
-            "DELETE FROM public.identity_credentials WHERE user_id <> %s",
-            (locked_plan.preserved_admin_id,),
-        )
         _execute(
             connection,
             "DELETE FROM public.users WHERE identity_kind = 'guest' AND id <> %s",
@@ -314,15 +344,9 @@ def apply_reset(
             read_profile_fn=read_profile_fn,
             read_roles_fn=read_roles_fn,
         )
+        sql_commit_started = True
         connection.commit()
         committed = True
-    except ResetError:
-        _rollback_safely(connection)
-        raise
-    except Exception:
-        _rollback_safely(connection)
-        raise ResetError("Unable to apply application-data reset") from None
-    if committed:
         try:
             storage.delete_and_verify_empty(locked_plan.storage_object_keys)
         except Exception:
@@ -335,3 +359,44 @@ def apply_reset(
                 f"({remaining} private files remain); "
                 "run a fresh dry run before retrying"
             ) from None
+    except ResetError:
+        _rollback_safely(connection)
+        if sql_commit_started and not committed:
+            raise ResetError(
+                "Provider cleanup finished but the database commit outcome is uncertain; "
+                "inspect the installation before retrying"
+            ) from None
+        if provider_cleanup_completed and not committed:
+            raise ResetError(
+                "Provider accounts were deleted but application profiles were retained; "
+                "run a fresh dry run before retrying"
+            ) from None
+        raise
+    except Exception:
+        _rollback_safely(connection)
+        if sql_commit_started and not committed:
+            raise ResetError(
+                "Provider cleanup finished but the database commit outcome is uncertain; "
+                "inspect the installation before retrying"
+            ) from None
+        if provider_cleanup_started and not committed:
+            raise ResetError(
+                "Provider accounts may have been deleted but application profiles were retained; "
+                "run a fresh dry run before retrying"
+            ) from None
+        raise ResetError("Unable to apply application-data reset") from None
+    finally:
+        if scanner_lock_held or reset_lock_held:
+            _rollback_safely(connection)
+            try:
+                if scanner_lock_held:
+                    _execute(
+                        connection, "SELECT pg_advisory_unlock(%s)", (_SCANNER_LEADER_LOCK_KEY,)
+                    )
+                if reset_lock_held:
+                    _execute(
+                        connection, "SELECT pg_advisory_unlock(%s)", (_RESET_ADVISORY_LOCK_KEY,)
+                    )
+                connection.commit()
+            except Exception:
+                _rollback_safely(connection)

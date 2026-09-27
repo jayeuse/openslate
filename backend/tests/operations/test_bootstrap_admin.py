@@ -58,7 +58,8 @@ def test_bootstrap_invites_once_and_recovers_the_exact_pending_reservation(
         email=invitation.email,
         username=invitation.username,
         is_deleted=False,
-        invitation_sent_at=object() if existing_profile else None,
+        invitation_sent_at=None,
+        provider_invitation_operation_id=uuid7(),
         invitation_accepted_at=None,
     )
     database = MagicMock()
@@ -69,25 +70,24 @@ def test_bootstrap_invites_once_and_recovers_the_exact_pending_reservation(
     monkeypatch.setattr(bootstrap, "get_engine", lambda: object())
     invite = Mock(return_value=profile)
     monkeypatch.setattr(bootstrap, "invite_user", invite)
-    replace = Mock()
-    monkeypatch.setattr(bootstrap, "replace_password", replace)
+    reconcile = Mock(return_value=profile)
+    monkeypatch.setattr(bootstrap, "reconcile_invitation", reconcile, raising=False)
     if admin_count:
         with pytest.raises(bootstrap.BootstrapError):
-            bootstrap._provision(Mock(spec=Settings), invitation, "temporary-password")
+            bootstrap._provision(Mock(spec=Settings), invitation)
         invite.assert_not_called()
-        replace.assert_not_called()
+        reconcile.assert_not_called()
     elif existing_profile:
-        result = bootstrap._provision(Mock(spec=Settings), invitation, "temporary-password")
+        result = bootstrap._provision(Mock(spec=Settings), invitation)
         assert result == bootstrap.BootstrapResult(
             user_id=profile.id,
             email=profile.email,
             username=profile.username,
             status=profile.status,
         )
-        replace.assert_called_once_with(database, profile, "temporary-password", temporary=True)
-        database.commit.assert_called_once()
+        reconcile.assert_called_once_with(database, profile.id, actor_id=None, bootstrap=True)
     else:
-        result = bootstrap._provision(Mock(spec=Settings), invitation, "temporary-password")
+        result = bootstrap._provision(Mock(spec=Settings), invitation)
         assert result == bootstrap.BootstrapResult(
             user_id=profile.id,
             email=profile.email,

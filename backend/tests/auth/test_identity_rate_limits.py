@@ -1,17 +1,17 @@
-"""Durable local-identity rate-limit behavior."""
+"""Durable backend admission budgets around provider authentication."""
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
 from app.systems.access.identity.models import IdentityRateLimitBucket
-from app.systems.access.identity.rate_limits import invitation_completion_permitted
-from app.systems.access.identity.service import (
-    InvalidCredentials,
-    _record_failed_login,
-    authenticate_password,
+from app.systems.access.identity.rate_limits import (
+    invitation_completion_permitted,
+    record_attempt,
     recovery_request_permitted,
 )
 
@@ -28,7 +28,7 @@ def test_expired_rate_bucket_is_reset_in_place() -> None:
     db = Mock(spec=Session)
     db.get.return_value = bucket
 
-    _record_failed_login(db, "fingerprint", bucket, now)
+    record_attempt(db, "fingerprint", bucket, now)
 
     assert bucket.attempt_count == 1
     assert bucket.window_started_at == now
@@ -36,24 +36,22 @@ def test_expired_rate_bucket_is_reset_in_place() -> None:
     db.add.assert_not_called()
 
 
-def test_first_failed_login_cleans_stale_buckets_before_locking_its_fingerprint(
+def test_rate_limit_fingerprints_use_the_stable_backend_security_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    now = datetime.now(UTC)
-    db = Mock(spec=Session)
-    db.get.return_value = None
-    db.scalar.return_value = None
-    db.scalars.return_value = []
-    monkeypatch.setattr(
-        "app.systems.access.identity.service._login_fingerprint", lambda *_args: "a" * 64
+    from app.systems.access.identity.rate_limits import rate_limit_fingerprint
+
+    settings = SimpleNamespace(
+        supabase_secret_key=SecretStr("first-provider-key"),
+        security_event_server_key=SecretStr("first-backend-key"),
     )
-
-    with pytest.raises(InvalidCredentials):
-        authenticate_password(db, "person@example.com", "wrong password", now=now)
-
-    assert [call[0] for call in db.method_calls[:3]] == ["scalars", "execute", "get"]
-    assert "pg_advisory_xact_lock" in str(db.execute.call_args.args[0])
-    db.add.assert_called_once()
+    monkeypatch.setattr("app.systems.access.identity.rate_limits.get_settings", lambda: settings)
+    first = rate_limit_fingerprint("login", "person@example.test", "127.0.0.1")
+    settings.security_event_server_key = SecretStr("rotated-backend-key")
+    second = rate_limit_fingerprint("login", "person@example.test", "127.0.0.1")
+    assert first != second
+    settings.supabase_secret_key = SecretStr("rotated-provider-key")
+    assert rate_limit_fingerprint("login", "person@example.test", "127.0.0.1") == second
 
 
 def test_recovery_budget_blocks_by_source_without_creating_or_rotating_a_token(
@@ -80,7 +78,9 @@ def test_recovery_budget_blocks_by_source_without_creating_or_rotating_a_token(
     record = Mock()
     monkeypatch.setattr("app.systems.access.identity.rate_limits.record_attempt", record)
 
-    assert not recovery_request_permitted(db, "person@example.test", source="127.0.0.1", now=now)
+    assert not recovery_request_permitted(
+        db, "person@example.test", source="127.0.0.1", now_value=now
+    )
     record.assert_not_called()
 
 
@@ -142,7 +142,7 @@ def test_recovery_budget_resets_expired_recipient_and_source_windows(
         lambda _db, fingerprint: buckets[fingerprint],
     )
 
-    assert recovery_request_permitted(db, "person@example.test", source="127.0.0.1", now=now)
+    assert recovery_request_permitted(db, "person@example.test", source="127.0.0.1", now_value=now)
     assert all(
         bucket.attempt_count == 1 and bucket.blocked_until is None for bucket in buckets.values()
     )

@@ -3,18 +3,42 @@
 > **Scope:** FastAPI application boundaries and request execution.
 
 `app/main.py` assembles API routers, configuration, database lifecycle, audit
-listeners, the event hub, and process-local automation, scheduling, and optional
-email workers. The file scanner is a separate operator-started process. The
-stack is FastAPI with synchronous SQLAlchemy 2; browsers never access the
-application database directly.
+listeners, the event hub, and process-local automation, report-scheduling, and
+provider-signout workers. Supabase Auth delivers invitation and recovery mail;
+the file scanner is a separate operator-started process. The stack is FastAPI
+with synchronous SQLAlchemy 2; browsers never access the application database
+directly.
 
-`app/core/` holds configuration, database, security, middleware, and audit-aware session infrastructure. `app/common/` holds shared dependencies and list behavior. `app/systems/<area>/<capability>/` owns domain models, schemas, routers, and coordination services.
+`app/core/` holds configuration, database, Supabase Auth integration and JWT
+verification, middleware, and audit-aware session infrastructure. `app/common/`
+holds shared dependencies and list behavior. `app/systems/<area>/<capability>/`
+owns domain models, schemas, routers, and coordination services.
 
-Identity is a FastAPI module. Passwords use Argon2. Access tokens are short-lived FastAPI-signed JWTs; refresh tokens rotate and are checked against server-side sessions. Browser endpoints issue HttpOnly cookies and require Origin plus CSRF validation. Bearer-token routes remain available for CLI use.
+Alembic evolves only OpenSlate's application schema. [`backend/migrations/env.py`](../../backend/migrations/env.py) limits reflection to application-owned objects through [`application_migration_scope`](../../backend/app/core/database/migration_scope.py); Supabase owns Auth, Storage, and other provider schemas. Fresh installs start from the Supabase application baseline, with the former vanilla PostgreSQL lineage kept outside the active migration graph. See [data architecture](06-data-architecture.md#schema-workflow).
 
-The events module maintains authenticated SSE subscriptions. Commit-time audit listeners publish opaque PostgreSQL notifications. Event streams reauthorize subscribers, have bounded queues and send timeouts, and contain invalidation data only.
+[`SupabaseAuthClient`](../../backend/app/core/integrations/supabase_auth.py)
+verifies email/password credentials and provider JWTs.
+[`login_with_provider`](../../backend/app/systems/access/identity/provider_login.py)
+admits only a provider subject explicitly bound to an eligible OpenSlate
+profile; [`resolve_provider_session`](../../backend/app/systems/access/identity/provider_sessions.py)
+rechecks provider liveness, local expiry, and revocation. `identity_sessions`
+store a digest of the opaque application refresh handle and encrypted provider
+access/refresh tokens. Browser access and refresh cookies are HttpOnly, while
+state-changing requests require Origin and CSRF validation. CLI bearer-token
+routes use the same provider and local-session admission.
 
-File services use the local storage backend, quarantine uploads, verify digest and size, invoke the scanner, and publish only clean bytes. The storage root is server-only and every public file operation is authorized by FastAPI.
+The events module maintains authenticated SSE subscriptions. Commit-time audit
+listeners publish opaque PostgreSQL notifications on Supabase Database through
+[`publisher.py`](../../backend/app/systems/platform/events/publisher.py).
+[`hub.py`](../../backend/app/systems/platform/events/hub.py) reauthorizes
+subscribers and bounds queues. Event streams contain invalidation data only.
+Supabase Realtime is not the current transport.
+
+File services use the server-only [Supabase Storage adapter](../../backend/app/systems/platform/files/supabase_storage.py)
+and private quarantine/ready buckets. They verify digest and size, invoke the
+separate [scanner worker](../../backend/app/systems/platform/files/worker.py),
+and expose only verified clean bytes. Every public file operation is
+authorized by FastAPI; no local-filesystem storage mode is supported.
 
 ## Process and request lifetimes
 
@@ -30,8 +54,13 @@ request receives its own `AuditSession`; the cached engine and bounded pool are
 shared, but sessions and mutable request state are not. Routes and coordinating
 services own commits and rollbacks. Middleware supplies request IDs, request-body
 and transfer admission controls, safe database/error responses, response headers
-and duration logging. Readiness uses a separate bounded pool and a single-flight
-probe; see [configuration](17-configuration.md) for the resource settings.
+and duration logging. `/api/ready` uses a separate read-only database pool and shared
+bounded probe work in [`readiness.py`](../../backend/app/core/readiness.py). It reports
+Database, Auth, Storage, SMTP configuration, and scanner states without provider bodies
+or credentials. Production requires scanner engine health and worker leadership;
+the scanner is optional in development/test. Mail delivery and deployment acceptance
+need separate verification. See
+[configuration](17-configuration.md) for the resource settings.
 
 Authentication resolves persisted session and user state. Capability-protected
 operations then obtain the current locked Access policy snapshot rather than
@@ -48,7 +77,7 @@ services add their object, audience and lifecycle checks. See
 | OpenView | Saved Views, Chart preferences, Dashboards, report definitions, frozen runs and schedules | `app/systems/openview/` |
 | Boards | Grants, content, announcements, events/reminders, widgets, attachments, record links and configuration portability | `app/systems/boards/` |
 | Manage | Workspace profile, transactional audit and security-event inspection | `app/systems/manage/` |
-| Platform | Private files, authenticated invalidations, in-app scheduled-work references and optional email delivery | `app/systems/platform/` |
+| Platform | Private Storage files, authenticated invalidations, and in-app scheduled-work references | `app/systems/platform/` |
 
 Comms remains reserved. Report and Dashboard configurations do not grant access
 to their source Records. Report capture uses a repeatable-read snapshot, then
@@ -89,13 +118,14 @@ The implementation is `platform/scheduling/notification_router.py`.
 
 ## Background ownership and failure boundaries
 
-The lifespan owns the PostgreSQL event listener and the automation and
-Report/Board scheduling threads. Each worker creates its own sessions, claims
-bounded durable work, and applies its existing lease/retry rules. Automatic
+The lifespan owns the PostgreSQL event listener, automation and Report/Board
+scheduling threads, and provider sign-out retries. Each worker creates its own
+sessions, claims bounded durable work, and applies its existing lease/retry
+rules. Automatic
 automation and scheduling threads are disabled in `ENVIRONMENT=test`; their
-bounded `run_once` entrypoints support explicit isolated verification. SMTP
-delivery starts only when configured and does not provide report-recipient email
-fanout. The separate `app.systems.platform.files.worker` process owns scanner
+bounded `run_once` entrypoints support explicit isolated verification.
+Invitation and recovery email use Supabase Auth rather than an application SMTP
+outbox. The separate `app.systems.platform.files.worker` process owns scanner
 leadership and file-job recovery.
 
 Audit records share the business transaction. Invalidation publication happens
@@ -105,6 +135,8 @@ session-affine connection are additional to the application pool. SSE streams
 have bounded queues, connection limits, reauthorization and send deadlines.
 
 Shutdown signals and joins background resources before disposing shared database
-resources. Filesystem and database operations cannot form one atomic transaction;
-file state, digest checks, leases and cleanup routines provide the recovery
-boundary. See [error handling and recovery](15-error-handling-and-recovery.md).
+resources. Supabase Storage and database operations cannot form one atomic
+transaction; file state, digest checks, leases and cleanup routines provide the
+recovery boundary. Production deployment and Windows runtime acceptance remain
+incomplete. See [error handling and recovery](15-error-handling-and-recovery.md)
+and the [Supabase implementation plan](../../infra/supabase/PLAN.md).

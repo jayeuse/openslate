@@ -1,17 +1,24 @@
 # Architecture Risks
 
-> **Scope:** Active risks and concrete mitigations.
+> **Scope:** Active engineering and operating risks with concrete mitigations.
 
 | Risk | Current state | Mitigation required |
 | --- | --- | --- |
-| Workspace features are largely sample state | Visible UI behavior can differ from durable backend behavior | Connect features deliberately and test their API contract |
-| Native customer deployment is unproven | No signed installer, service management, or LAN matrix | Complete Windows/macOS packaged acceptance gates |
-| Static UI and API must ship together | The FastAPI-only payload needs the matching generated frontend export | Build the export into the server artifact and fail startup when `WEB_ASSETS_ROOT` is missing or invalid |
-| Recovery is only partially proven | Guarded encrypted backup creation exists, but real-tool full database/private-file recovery and Windows controls are unverified | Test restore on clean Windows/macOS targets and document key recovery |
-| SMTP delivery depends on customer infrastructure | The optional encrypted outbox and worker are implemented; delivery is disabled by default and SMTP is at least once | Validate the selected SMTP service and make duplicate one-time-link delivery harmless |
-| Filesystem and database backup must stay consistent | File bytes do not share a transaction with metadata | Snapshot/restore both stores together and verify representative files |
-| Single organization trust domain | No shared-tenant isolation promise | Keep mutually untrusted organizations in separate deployments |
-| SSE is invalidation only | Clients can miss an event | Treat resync/refetch as required normal behavior |
-| Scanner availability is operationally sensitive | New files must not become readable on uncertainty | Keep quarantine and worker recovery fail closed |
+| Workspace features are largely sample state | Visible UI behavior can differ from durable backend behavior | Connect features deliberately and verify their API authority and persistence contracts |
+| Static UI and API must ship together | FastAPI serves the generated frontend export from the server image | Build the export into the matching server artifact and fail startup when `WEB_ASSETS_ROOT` is missing or invalid |
+| Single-organization trust boundary | Each Compose installation serves one client; shared multi-tenant isolation is not implemented | Keep mutually untrusted organizations in separate deployments |
+| Provider identity can be confused with application access | Supabase Auth authenticates; it does not assign OpenSlate roles or resource access | Require an explicit provider-subject/profile binding and evaluate current application eligibility and authorization in FastAPI on each request |
+| Provider and application schema ownership can overlap | Supabase owns provider schemas; Alembic owns OpenSlate application schema | Keep migration scope and bootstrap/runtime grants explicit; test migrations against the pinned provider release without changing provider-owned objects |
+| Storage and PostgreSQL updates are not atomic | File bytes live in provider Storage while metadata and scan state live in PostgreSQL | Preserve immutable private quarantine/ready objects, verify bytes and digests, fail closed on uncertainty, and reconcile split operations |
+| Scanner availability is operationally sensitive | Files must not become readable when scan execution, cleanup, or promotion is uncertain | Keep quarantine and worker recovery fail closed; monitor ClamAV definitions and worker state; validate host restart and recovery |
+| Installation recovery is only partially accepted | A guarded five-volume Restic restore with a separate target exercised database-only session finalization and post-restore application/file access using Linux containers on macOS Docker Desktop; native Linux host boot/reboot and Windows restore behavior remain pending | Verify host startup, restart, and restore on native Linux and Windows targets; retain off-host encrypted repository copies and document retention/key recovery |
+| Windows operation is pending | The intended server path is Docker Desktop/WSL2 with Linux containers; no Windows host has completed acceptance | Verify startup, reboot, persistent volumes, scanner, ingress, and restore on a Windows host before claiming support as accepted |
+| Readiness signals can overstate installation health | `/api/ready` reports database, Auth, Storage, SMTP-configuration, and scanner component states with environment-specific requiredness. A disposable production Compose rehearsal exercised bounded Auth, Storage, and scanner failure/recovery paths, but SMTP presence is not delivery and an engine probe plus worker lock is not queue progress | Keep schema, mail-delivery, queue-progress, customer-specific TLS, host-platform, and release acceptance checks separate; verify the target installation before relying on readiness |
+| Studio has broad operator authority | Supabase Studio replaces pgweb and is more privileged than the retired read-only inspector | Keep its access loopback-bound and authenticated; do not expose it as a public application surface |
+| Email actions depend on provider SMTP | Invitations and recovery are delivered through Supabase Auth; OpenSlate has no local delivery outbox | Configure and monitor an installation-owned SMTP service and test failure/retry behavior |
+| SSE events can be missed | PostgreSQL notifications are opaque invalidations, not durable client delivery | Treat authorized refetch/resynchronization as normal and recheck access on reconnect |
+| Future Realtime use has unresolved access design | Supabase Realtime is not started; the current app uses authenticated SSE | Before adding it, decide how channel membership, role/group changes, revocation, and protected payloads stay consistent with FastAPI authorization |
+| Hosted deployment is a separate product target | Current topology is one self-hosted Compose installation per client | Make explicit hosting, tenancy, operations, secret delivery, backup, and release decisions before implementing a hosted service |
 
-These are current engineering risks, not evidence that a hosted product or installer is available.
+These are current engineering risks, not evidence that a hosted product or fully
+accepted client release is available.

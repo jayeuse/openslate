@@ -163,21 +163,21 @@ def test_reset_deletes_all_announcement_personal_state_before_announcements_and_
 
 def test_reset_rejects_urls_that_do_not_match_the_attested_instance() -> None:
     target = InstanceTarget(
-        instance_id="openslate-boards-a1b2c3d4",
+        instance_id="openslate-supabase-a1b2c3d4",
         host="127.0.0.1",
-        port=55322,
-        database="openslate_boards",
+        port=55432,
+        database="postgres",
         attestation_path=Path("/tmp/instance.json"),
     )
-    local = "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55322/openslate_boards"
+    local = "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55432/postgres"
     assert reset.validate_local_database_url(local, target) is None
     with pytest.raises(reset.ResetError):
         reset.validate_local_database_url(local)
     for url in (
         local.replace("127.0.0.1", "remote.example"),
         local.replace("openslate_owner", "openslate_runtime"),
-        local.replace("55322", "54322"),
-        local.replace("openslate_boards", "openslate"),
+        local.replace("55432", "54322"),
+        local.replace("/postgres", "/other_database"),
     ):
         with pytest.raises(reset.ResetError):
             reset.validate_local_database_url(url, target)

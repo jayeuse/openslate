@@ -13,12 +13,15 @@ from starlette.responses import JSONResponse, Response
 
 from app.core.config import get_settings
 from app.core.config.development import is_relaxed_development
+from app.core.config.environment import environment_inputs
 from app.core.config.instance import (
     assert_database_url,
     assert_instance_target,
     instance_identity_for_process,
     instance_target_for_process,
 )
+from app.core.config.provider_instance import assert_provider_instance
+from app.core.config.settings import DOTENV_PATH
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import dispose_database_resources, get_engine
 from app.core.middleware.file_transfers import (
@@ -33,9 +36,13 @@ from app.core.middleware.request_context import (
 )
 from app.core.middleware.trusted_hosts import ExactTrustedHostMiddleware
 from app.core.observability import configure_observability_logging, log_event
-from app.core.readiness import dispose_readiness_resources, is_database_ready
+from app.core.readiness import (
+    dispose_readiness_resources,
+    get_readiness_snapshot,
+)
 from app.core.static_site import StaticSite
 from app.systems.access.auth.aggregate_router import router as auth_router
+from app.systems.access.identity.provider_signout_worker import ProviderSignoutWorker
 from app.systems.access.policy import router as access_policy_router
 from app.systems.boards.access_preview_router import router as board_access_preview_router
 from app.systems.boards.activity_router import router as board_activity_router
@@ -80,7 +87,6 @@ from app.systems.platform.files.board_router import router as board_files_router
 from app.systems.platform.files.lifecycle_router import router as file_lifecycle_router
 from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router as files_router
-from app.systems.platform.notifications.worker import SmtpOutboxWorker
 from app.systems.platform.scheduling.notification_router import router as notifications_router
 from app.systems.platform.scheduling.worker import ReportSchedulingWorker
 from app.systems.sandbox.automations.router import router as sandbox_automations_router
@@ -155,23 +161,34 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         assert_database_url(settings.database_url, target, expected_user="openslate_runtime")
         with get_engine().connect() as connection:
             assert_instance_target(connection, target, expected_user="openslate_runtime")
+        assert_provider_instance(
+            environment_inputs(DOTENV_PATH), database_url=settings.database_url,
+            expected_user="openslate_runtime",
+        )
     app.state.events_listener.start()
-    app.state.smtp_outbox_worker.start()
     app.state.automation_worker.start()
     report_worker = getattr(app.state, "report_scheduling_worker", None)
+    signout_worker = getattr(app.state, "provider_signout_worker", None)
     try:
+        if signout_worker is not None:
+            signout_worker.start()
         if report_worker is not None:
             report_worker.start()
         yield
     finally:
+        signout_stopped = signout_worker.stop() if signout_worker is not None else True
         report_stopped = report_worker.stop() if report_worker is not None else True
         automation_stopped = app.state.automation_worker.stop()
-        app.state.smtp_outbox_worker.stop()
         app.state.events_listener.stop()
-        if automation_stopped and report_stopped:
+        if automation_stopped and report_stopped and signout_stopped:
             dispose_readiness_resources()
             dispose_database_resources()
         else:
+            if not signout_stopped:
+                log_event(
+                    "operational_attention", reason_code="provider_signout_shutdown_incomplete",
+                    upstream="supabase-auth",
+                )
             if not automation_stopped:
                 log_event(
                     "operational_attention",
@@ -205,15 +222,22 @@ def create_app() -> FastAPI:
     events_hub = EventHub(max_subscribers=subscriber_capacity(settings.server_max_concurrency))
     app.state.events_hub = events_hub
     app.state.events_listener = PostgresInvalidationListener(events_hub)
-    app.state.smtp_outbox_worker = SmtpOutboxWorker(settings)
     app.state.automation_worker = AutomationWorker(settings)
     app.state.report_scheduling_worker = ReportSchedulingWorker(settings)
+    app.state.provider_signout_worker = ProviderSignoutWorker(settings)
 
     relaxed_development = is_relaxed_development(settings)
     if not relaxed_development:
         app.add_middleware(
             ExactTrustedHostMiddleware,
             allowed_hosts=_trusted_hosts(settings.public_origin, environment=settings.environment),
+            read_only_host_paths={
+                host: (
+                    "/api/auth/email-templates/invite.html",
+                    "/api/auth/email-templates/recovery.html",
+                )
+                for host in ("api", "host.docker.internal")
+            },
         )
     app.add_middleware(FileDispatchMiddleware)
 
@@ -300,6 +324,9 @@ def create_app() -> FastAPI:
         try:
             if request.url.path.startswith("/api"):
                 response.headers.setdefault("Cache-Control", "no-store")
+            if request.url.path.rstrip("/") in {"/auth/setup", "/auth/recovery"}:
+                response.headers["Cache-Control"] = "no-store"
+                response.headers["Referrer-Policy"] = "no-referrer"
             if not relaxed_development:
                 _add_security_headers(response)
             response.headers.update(_request_headers(context))
@@ -374,15 +401,10 @@ def create_app() -> FastAPI:
 
     @app.get("/api/ready", tags=["system"])
     def ready() -> JSONResponse:
-        if is_database_ready():
-            return JSONResponse(
-                status_code=200,
-                content={"status": "ready"},
-                headers={"Cache-Control": "no-store"},
-            )
+        snapshot = get_readiness_snapshot()
         return JSONResponse(
-            status_code=503,
-            content={"status": "not_ready"},
+            status_code=200 if snapshot["status"] == "ready" else 503,
+            content=snapshot,
             headers={"Cache-Control": "no-store"},
         )
 

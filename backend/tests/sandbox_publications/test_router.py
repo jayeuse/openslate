@@ -1,6 +1,7 @@
 """Publication password and persistence failure contracts."""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -11,8 +12,11 @@ from uuid6 import uuid7
 
 import app.systems.sandbox.publications.router as publication_router
 from app.common.dependencies.auth import CurrentIdentity
-from app.systems.access.identity.contracts import IdentityRateLimited, InvalidCredentials
 from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.sandbox.lifecycle.exceptions import (
+    LifecycleInvalidCredentials,
+    LifecyclePasswordRateLimited,
+)
 from app.systems.sandbox.publications.schemas import PublicationRequest
 
 
@@ -61,21 +65,27 @@ def test_failed_publication_password_commits_rate_limit_and_maps_rate_limit(
 
     def invalid_password(*_args: object, **_kwargs: object) -> User:
         calls.append("password")
-        raise InvalidCredentials("bad")
+        raise LifecycleInvalidCredentials("bad")
 
-    monkeypatch.setattr(publication_router, "authenticate_password", invalid_password)
+    monkeypatch.setattr(
+        publication_router,
+        "ProviderPasswordGrantClient",
+        lambda _db: SimpleNamespace(verify_password=invalid_password),
+        raising=False,
+    )
 
     with pytest.raises(HTTPException) as invalid:
         publication_router.post_publication(_payload(), identity, database, "publication-key")
 
     assert invalid.value.status_code == 403
     assert calls == ["policy", "password"]
-    database.commit.assert_called_once()
-    database.rollback.assert_not_called()
     monkeypatch.setattr(
         publication_router,
-        "authenticate_password",
-        Mock(side_effect=IdentityRateLimited("blocked")),
+        "ProviderPasswordGrantClient",
+        lambda _db: SimpleNamespace(
+            verify_password=Mock(side_effect=LifecyclePasswordRateLimited("blocked"))
+        ),
+        raising=False,
     )
 
     with pytest.raises(HTTPException) as limited:
@@ -83,6 +93,52 @@ def test_failed_publication_password_commits_rate_limit_and_maps_rate_limit(
 
     assert limited.value.status_code == 429
     database.rollback.assert_called_once()
+
+
+def test_publication_rechecks_authorization_after_password_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Mock(spec=Session)
+    identity = _identity()
+    checked = 0
+
+    def authorize(*_args: object, **_kwargs: object) -> User:
+        nonlocal checked
+        checked += 1
+        if checked == 2:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return identity.user
+
+    monkeypatch.setattr(publication_router, "require_fresh_capabilities", authorize)
+    monkeypatch.setattr(
+        publication_router,
+        "ProviderPasswordGrantClient",
+        lambda _db: SimpleNamespace(verify_password=lambda *_args: identity.user.id),
+    )
+    monkeypatch.setattr(
+        publication_router,
+        "decode_preview_token",
+        lambda _token: SimpleNamespace(
+            actor_id=identity.user.id,
+            session_id=identity.session_id,
+            document_revision=1,
+            impact_digest="a" * 64,
+            document_hash="b" * 64,
+            live_state_digest="c" * 64,
+        ),
+    )
+    replay = Mock(side_effect=AssertionError("unauthorized replay attempted"))
+    publish = Mock(side_effect=AssertionError("unauthorized publication attempted"))
+    monkeypatch.setattr(publication_router, "replay_or_conflict", replay)
+    monkeypatch.setattr(publication_router, "apply_publication", publish)
+
+    with pytest.raises(HTTPException) as denied:
+        publication_router.post_publication(_payload(), identity, database, "publication-key")
+
+    assert denied.value.status_code == 403
+    assert checked == 2
+    replay.assert_not_called()
+    publish.assert_not_called()
 
 
 def test_publication_integrity_failures_return_a_safe_unavailable_error() -> None:

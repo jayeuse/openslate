@@ -1,153 +1,31 @@
-"""Board placement source-head migration on runner-owned PostgreSQL."""
-
-from uuid import UUID
+"""Board placement schema and privilege contracts on the fresh baseline."""
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy import select, text
+from sqlalchemy.engine import Connection
 from uuid6 import uuid7
 
-from tests.conftest import guarded_create_engine
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
+from app.systems.access.users.models import Role, User
+from app.systems.boards.models import Board
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.models import Record
 
-SOURCE_REVISION = "7d91afabd5db"
-TARGET_REVISION = "4363b796c30a"
-ACCESS_HEAD_REVISION = "2bf95b237416"
+SUPABASE_DATABASE_ROLES = ("anon", "authenticated", "service_role")
+TABLE_ACTIONS = ("SELECT", "INSERT", "UPDATE", "DELETE")
+PLACEMENTS_TABLE = "public.board_record_placements"
 
 
 @pytest.mark.integration
-def test_board_placement_upgrade_preserves_source_and_limits_privileges() -> None:
-    environment = guarded_migration_environment()
-    owner_engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
-    runtime_engine = guarded_create_engine(environment["TEST_DATABASE_URL"])
-    inspector_engine = guarded_create_engine(environment["TEST_INSPECTOR_DATABASE_URL"])
-    ids = {
-        name: uuid7() for name in ("owner", "department", "module", "record", "board", "placement")
-    }
-
-    try:
-        run_alembic(environment, "downgrade", SOURCE_REVISION)
-        _seed_source_rows(owner_engine, ids)
-
-        run_alembic(environment, "upgrade", TARGET_REVISION)
-        with owner_engine.connect() as connection:
-            applied_revisions = set(
-                connection.scalars(text("SELECT version_num FROM alembic_version"))
-            )
-            assert applied_revisions == {ACCESS_HEAD_REVISION, TARGET_REVISION}
-            _assert_source_rows(connection, ids)
-            _assert_placement_schema_and_privileges(connection)
-
-        with runtime_engine.begin() as connection:
-            connection.execute(
-                text(
-                    "INSERT INTO public.board_record_placements "
-                    "(id, board_id, record_id, performed_by) "
-                    "VALUES (:id, :board_id, :record_id, :performed_by)"
-                ),
-                {
-                    "id": ids["placement"],
-                    "board_id": ids["board"],
-                    "record_id": ids["record"],
-                    "performed_by": ids["owner"],
-                },
-            )
-        with inspector_engine.connect() as connection:
-            assert connection.execute(
-                text(
-                    "SELECT board_id, record_id, performed_by "
-                    "FROM public.board_record_placements WHERE id = :id"
-                ),
-                {"id": ids["placement"]},
-            ).one() == (ids["board"], ids["record"], ids["owner"])
-
-        run_alembic(environment, "downgrade", SOURCE_REVISION)
-        with owner_engine.connect() as connection:
-            applied_revisions = set(
-                connection.scalars(text("SELECT version_num FROM alembic_version"))
-            )
-            assert applied_revisions == {ACCESS_HEAD_REVISION, SOURCE_REVISION}
-            assert (
-                connection.scalar(text("SELECT to_regclass('public.board_record_placements')"))
-                is None
-            )
-            _assert_source_rows(connection, ids)
-    finally:
-        try:
-            run_alembic(environment, "upgrade", "head")
-        finally:
-            _delete_source_rows(owner_engine, ids)
-            inspector_engine.dispose()
-            runtime_engine.dispose()
-            owner_engine.dispose()
-
-
-def _seed_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
-    with engine.begin() as connection:
-        role_id = connection.scalar(text("SELECT id FROM public.roles WHERE role = 'member'"))
-        assert role_id is not None
-        connection.execute(
-            text(
-                "INSERT INTO public.users (id, email, username, status, role_id) "
-                "VALUES (:id, :email, :username, 'active', :role_id)"
-            ),
-            {
-                "id": ids["owner"],
-                "email": f"placement-migration-{ids['owner'].hex}@example.test",
-                "username": f"placement-migration-{ids['owner'].hex}",
-                "role_id": role_id,
-            },
-        )
-        connection.execute(
-            text("INSERT INTO public.departments (id, department_name) VALUES (:id, :name)"),
-            {"id": ids["department"], "name": "Placement migration source"},
-        )
-        connection.execute(
-            text(
-                "INSERT INTO public.modules (id, department_id, module_name) "
-                "VALUES (:id, :department_id, :name)"
-            ),
-            {
-                "id": ids["module"],
-                "department_id": ids["department"],
-                "name": "Existing records",
-            },
-        )
-        connection.execute(
-            text(
-                "INSERT INTO public.records (id, module_id, is_deleted) "
-                "VALUES (:id, :module_id, true)"
-            ),
-            {"id": ids["record"], "module_id": ids["module"]},
-        )
-        connection.execute(
-            text(
-                "INSERT INTO public.boards (id, owner_id, department_id, name, status) "
-                "VALUES (:id, :owner_id, :department_id, :name, 'archived')"
-            ),
-            {
-                "id": ids["board"],
-                "owner_id": ids["owner"],
-                "department_id": ids["department"],
-                "name": "Existing archived Board",
-            },
-        )
-
-
-def _assert_source_rows(connection: Connection, ids: dict[str, UUID]) -> None:
-    assert connection.execute(
-        text("SELECT owner_id, department_id, name, status FROM public.boards WHERE id = :id"),
-        {"id": ids["board"]},
-    ).one() == (
-        ids["owner"],
-        ids["department"],
-        "Existing archived Board",
-        "archived",
-    )
-    assert connection.execute(
-        text("SELECT module_id, is_deleted FROM public.records WHERE id = :id"),
-        {"id": ids["record"]},
-    ).one() == (ids["module"], True)
+def test_board_placement_baseline_preserves_schema_and_application_role_boundaries(
+    integration_owner_db,
+    integration_db,
+) -> None:
+    # Source-head data preservation and downgrade transitions are archived with the old chain.
+    connection = integration_owner_db.connection()
+    assert connection.scalar(text("SELECT to_regclass(:table)"), {"table": PLACEMENTS_TABLE})
+    _assert_placement_schema_and_privileges(connection)
+    _assert_runtime_role_can_create_and_read_placements(integration_db)
 
 
 def _assert_placement_schema_and_privileges(connection: Connection) -> None:
@@ -156,8 +34,9 @@ def _assert_placement_schema_and_privileges(connection: Connection) -> None:
         for row in connection.execute(
             text(
                 "SELECT conname, contype, confdeltype FROM pg_constraint "
-                "WHERE conrelid = 'public.board_record_placements'::regclass"
-            )
+                "WHERE conrelid = CAST(:table AS regclass)"
+            ),
+            {"table": PLACEMENTS_TABLE},
         ).mappings()
     }
     assert constraints["uq_board_record_placements_board_record"]["contype"] == "u"
@@ -174,57 +53,66 @@ def _assert_placement_schema_and_privileges(connection: Connection) -> None:
         )
         == 1
     )
-    for action in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+    for action in TABLE_ACTIONS:
         assert (
             connection.scalar(
-                text(
-                    "SELECT has_table_privilege('openslate_runtime', "
-                    "'public.board_record_placements', :action)"
-                ),
-                {"action": action},
+                text("SELECT has_table_privilege('openslate_runtime', :table, :action)"),
+                {"table": PLACEMENTS_TABLE, "action": action},
             )
             is True
         )
-    assert (
-        connection.scalar(
-            text(
-                "SELECT has_table_privilege('openslate_inspector', "
-                "'public.board_record_placements', 'SELECT')"
-            )
-        )
-        is True
+    for role in SUPABASE_DATABASE_ROLES:
+        for action in TABLE_ACTIONS:
+            assert (
+                connection.scalar(
+                    text("SELECT has_table_privilege(:role, :table, :action)"),
+                    {"role": role, "table": PLACEMENTS_TABLE, "action": action},
+                )
+                is False
+            ), f"Supabase database role {role} must not access board_record_placements"
+
+
+def _assert_runtime_role_can_create_and_read_placements(db) -> None:
+    role = db.scalar(select(Role).where(Role.role == "member"))
+    assert role is not None
+    user_id = uuid7()
+    user = User(
+        id=user_id,
+        email=f"placement-baseline-{user_id.hex}@example.test",
+        username=f"placement_baseline_{user_id.hex[:12]}",
+        status="active",
+        role_id=role.id,
     )
-    for action in ("INSERT", "UPDATE", "DELETE"):
-        assert (
-            connection.scalar(
-                text(
-                    "SELECT has_table_privilege('openslate_inspector', "
-                    "'public.board_record_placements', :action)"
-                ),
-                {"action": action},
-            )
-            is False
-        )
+    department = Department(department_name=f"Placement baseline {uuid7().hex}")
+    db.add_all([user, department])
+    db.flush()
 
+    module = Module(department_id=department.id, module_name="Placement baseline")
+    board = Board(owner_id=user.id, department_id=department.id, name="Placement baseline")
+    db.add_all([module, board])
+    db.flush()
+    record = Record(module_id=module.id)
+    db.add(record)
+    db.flush()
 
-def _delete_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
-    with engine.begin() as connection:
-        if (
-            connection.scalar(text("SELECT to_regclass('public.board_record_placements')"))
-            is not None
-        ):
-            connection.execute(
-                text("DELETE FROM public.board_record_placements WHERE id = :id"),
-                {"id": ids["placement"]},
-            )
-        for table, key in (
-            ("boards", "board"),
-            ("records", "record"),
-            ("modules", "module"),
-            ("departments", "department"),
-            ("users", "owner"),
-        ):
-            connection.execute(
-                text(f"DELETE FROM public.{table} WHERE id = :id"),
-                {"id": ids[key]},
-            )
+    placement_id = uuid7()
+    db.connection().execute(
+        text(
+            "INSERT INTO public.board_record_placements "
+            "(id, board_id, record_id, performed_by) "
+            "VALUES (:id, :board_id, :record_id, :performed_by)"
+        ),
+        {
+            "id": placement_id,
+            "board_id": board.id,
+            "record_id": record.id,
+            "performed_by": user.id,
+        },
+    )
+    assert db.connection().execute(
+        text(
+            "SELECT board_id, record_id, performed_by "
+            "FROM public.board_record_placements WHERE id = :id"
+        ),
+        {"id": placement_id},
+    ).one() == (board.id, record.id, user.id)

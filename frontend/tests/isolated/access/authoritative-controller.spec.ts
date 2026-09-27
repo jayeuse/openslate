@@ -376,7 +376,7 @@ test("uses the authoritative administrator role and paginates sessions only on d
   ]);
 });
 
-test("creates an invited identity, reloads after confirmation, and never returns a temporary password", async () => {
+test("creates an email invitation and reloads after confirmation", async () => {
   const current = snapshot();
   let request: unknown;
   let reloads = 0;
@@ -420,8 +420,7 @@ test("creates an invited identity, reloads after confirmation, and never returns
             is_deleted: false,
             performed_by: null,
           },
-          delivery: "temporary_password",
-          temporary_password: "never-return-this-password",
+          delivery: "email",
         };
       },
     }),
@@ -441,7 +440,6 @@ test("creates an invited identity, reloads after confirmation, and never returns
     department_ids: [],
     primary_department_id: null,
   });
-  expect(JSON.stringify(result)).not.toContain("never-return-this-password");
   expect(reloads).toBe(1);
 });
 
@@ -722,7 +720,6 @@ test("allows resending a revoked invitation and refreshes its status", async () 
             performed_by: null,
           },
           delivery: "email",
-          temporary_password: null,
         };
       },
     }),

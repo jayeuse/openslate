@@ -313,7 +313,7 @@ def test_failed_report_thread_start_still_cleans_up_lifespan(monkeypatch) -> Non
         asyncio.run(exercise())
 
     failed_thread.join.assert_not_called()
-    assert order == ["automation_stop", "smtp_stop", "events_stop", "readiness", "database"]
+    assert order == ["automation_stop", "events_stop", "readiness", "database"]
 
 
 def test_lifespan_does_not_dispose_pool_when_report_worker_remains_alive(monkeypatch) -> None:

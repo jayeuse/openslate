@@ -1,18 +1,27 @@
-"""Local password verification used only for lifecycle step-up checks."""
+"""Provider password verification used only for lifecycle step-up checks."""
 
 from typing import Protocol
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, joinedload
 
-from app.systems.access.identity.service import (
-    IdentityRateLimited,
-    InvalidCredentials,
-    authenticate_password,
+from app.core.base_model import utc_now
+from app.core.integrations.supabase_auth import (
+    InvalidProviderCredentials,
+    SupabaseAuthClient,
+    SupabaseAuthUnavailable,
+    get_supabase_auth_client,
 )
+from app.systems.access.identity import rate_limits
+from app.systems.access.identity.eligibility import is_identity_eligible
+from app.systems.access.users.eligibility import is_established_user
+from app.systems.access.users.models import User, UserStatus
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleInvalidCredentials,
     LifecyclePasswordRateLimited,
+    LifecyclePasswordServiceUnavailable,
 )
 
 
@@ -21,19 +30,88 @@ class PasswordGrantClient(Protocol):
         """Verify credentials and return the local identity."""
 
 
-class LocalPasswordGrantClient:
-    """Verify a password locally without issuing a temporary browser session."""
+class ProviderPasswordGrantClient:
+    """Verify a provider password without admitting its temporary session."""
 
-    def __init__(self, db: Session) -> None:
+    def __init__(
+        self,
+        db: Session,
+        *,
+        client: SupabaseAuthClient | None = None,
+        enforce_rate_limit: bool = True,
+    ) -> None:
         self._db = db
+        self._client = client or get_supabase_auth_client()
+        self._enforce_rate_limit = enforce_rate_limit
 
     def verify_password(self, email: str, password: str) -> UUID:
+        timestamp = utc_now()
+        fingerprint = None
+        bucket = None
         try:
-            return authenticate_password(self._db, email, password).id
-        except InvalidCredentials as error:
+            if self._enforce_rate_limit:
+                rate_limits.cleanup_expired_buckets(self._db, now_value=timestamp)
+                fingerprint = rate_limits.login_fingerprint(email, None)
+                bucket = rate_limits.lock_bucket(self._db, fingerprint)
+                if (
+                    bucket is not None
+                    and bucket.blocked_until is not None
+                    and bucket.blocked_until > timestamp
+                ):
+                    raise LifecyclePasswordRateLimited("Password verification is rate limited")
+            tokens = self._client.password_grant(email, password)
+        except InvalidProviderCredentials as error:
+            if fingerprint is not None:
+                rate_limits.record_attempt(self._db, fingerprint, bucket, timestamp)
+                self._db.commit()
             raise LifecycleInvalidCredentials("The supplied password is invalid") from error
-        except IdentityRateLimited as error:
-            raise LifecyclePasswordRateLimited("Password verification is rate limited") from error
+        except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+            self._db.rollback()
+            raise LifecyclePasswordServiceUnavailable("Password service unavailable") from error
+        try:
+            provider_user = self._client.get_user(tokens.access_token)
+            if (
+                provider_user.id != tokens.user_id
+                or provider_user.email != email
+                or not provider_user.is_eligible()
+            ):
+                raise LifecycleInvalidCredentials("The supplied password is invalid")
+            local = self._db.scalar(
+                select(User)
+                .options(joinedload(User.role))
+                .where(User.supabase_user_id == provider_user.id)
+            )
+            if (
+                local is None
+                or local.email != email
+                or local.status != UserStatus.ACTIVE.value
+                or not is_identity_eligible(local)
+                or not is_established_user(local)
+                or local.role is None
+                or local.role.is_deleted
+            ):
+                raise LifecycleInvalidCredentials("The supplied password is invalid")
+            if bucket is not None:
+                self._db.delete(bucket)
+            self._db.commit()
+            return local.id
+        except InvalidProviderCredentials as error:
+            if fingerprint is not None:
+                rate_limits.record_attempt(self._db, fingerprint, bucket, timestamp)
+                self._db.commit()
+            raise LifecycleInvalidCredentials("The supplied password is invalid") from error
+        except LifecycleInvalidCredentials:
+            if fingerprint is not None:
+                rate_limits.record_attempt(self._db, fingerprint, bucket, timestamp)
+                self._db.commit()
+            raise
+        except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+            raise LifecyclePasswordServiceUnavailable("Password service unavailable") from error
+        finally:
+            try:
+                self._client.sign_out(tokens.access_token, scope="local")
+            except (InvalidProviderCredentials, SupabaseAuthUnavailable):
+                pass
 
 
-__all__ = ["LocalPasswordGrantClient", "PasswordGrantClient"]
+__all__ = ["PasswordGrantClient", "ProviderPasswordGrantClient"]

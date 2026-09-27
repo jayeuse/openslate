@@ -150,8 +150,7 @@ def _add_backend_steps(steps: list[Step]) -> None:
                     "uv",
                     "run",
                     "pytest",
-                    "../packaging/backup/tests/test_backup_installation.py",
-                    "../packaging/backup/tests/test_restore_installation.py",
+                    "../packaging/backup/tests",
                     "--no-cov",
                     "--basetemp",
                     ".backup-contracts",
@@ -196,6 +195,24 @@ def _add_backend_steps(steps: list[Step]) -> None:
             lane="backend",
             serial_group=SERIAL_BACKEND_STACK,
             needs_base=True,
+        )
+    )
+    steps.append(
+        Step(
+            name="provider-reset-acceptance",
+            gate="backend",
+            phase="resource",
+            cwd="backend",
+            command=(
+                "uv",
+                "run",
+                "python",
+                "-m",
+                "tests.fullstack_runner",
+                "--reset-acceptance-only",
+            ),
+            lane="backend",
+            serial_group=SERIAL_BACKEND_STACK,
         )
     )
 

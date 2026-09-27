@@ -18,7 +18,7 @@ def test_standalone_fullstack_runner_loads_complete_model_registry() -> None:
             "-c",
             "from sqlalchemy.orm import configure_mappers; "
             "import tests.fullstack_runner; "
-            "from app.systems.access.identity.service import create_credential; "
+            "from app.core.integrations.supabase_auth import SupabaseAuthClient; "
             "from app.systems.access.users.models import Role, User, UserStatus; "
             "configure_mappers()",
         ],
@@ -32,6 +32,7 @@ def test_standalone_fullstack_runner_loads_complete_model_registry() -> None:
 
 class _RunnerPostgres:
     network = "test-network"
+    mail_url = "http://127.0.0.1:58998"
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -43,13 +44,21 @@ class _RunnerPostgres:
         return {
             "DATABASE_URL": "postgresql+psycopg://runtime@127.0.0.1/openslate",
             "MIGRATION_DATABASE_URL": "postgresql+psycopg://owner@127.0.0.1/openslate",
-            "DATABASE_INSPECTOR_URL": "postgresql+psycopg://inspector@127.0.0.1/openslate",
         }
 
     def write_manifest(self) -> Path:
         manifest = self.root / "database.json"
         manifest.write_text("{}")
         return manifest
+
+    def provider_environment(self) -> dict[str, str]:
+        return {
+            "SUPABASE_URL": "http://127.0.0.1:58999",
+            "SUPABASE_AUTH_ISSUER": "http://127.0.0.1:58999/auth/v1",
+            "SUPABASE_PUBLISHABLE_KEY": "synthetic-public-key",
+            "SUPABASE_SECRET_KEY": "synthetic-provider-key",
+            "SUPABASE_SESSION_ENCRYPTION_KEY": "synthetic-session-key",
+        }
 
     def stop(self) -> None:
         pass
@@ -223,7 +232,7 @@ def test_gateway_config_preserves_single_origin_routes_with_container_host_upstr
     assert "{{" not in rendered
 
 
-def test_browser_acceptance_command_runs_the_owned_fullstack_suite_in_every_mode() -> None:
+def test_browser_acceptance_command_runs_full_suite_for_scanner_backed_acceptance() -> None:
     command = runner.browser_acceptance_command()
 
     assert command == [
@@ -234,7 +243,7 @@ def test_browser_acceptance_command_runs_the_owned_fullstack_suite_in_every_mode
     ]
 
 
-def test_partial_postgres_startup_cleans_only_its_labeled_volume_and_network(
+def test_partial_supabase_startup_cleans_only_its_labeled_volume_and_network(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     log = (tmp_path / "process.log").open("w")
@@ -246,15 +255,44 @@ def test_partial_postgres_startup_cleans_only_its_labeled_volume_and_network(
         if arguments[0] == "inspect":
             raise subprocess.CalledProcessError(1, arguments)
         if arguments[:2] == ["volume", "inspect"]:
-            return subprocess.CompletedProcess(arguments, 0, json.dumps([{
-                "Name": runtime.volume, "Labels": {
-                    "openslate.test.run": runtime.run_id,
-                    "openslate.test.worktree": runtime.worktree,
-                },
-            }]))
-        if arguments[:2] == ["network", "inspect"]:
+            if arguments[2] != runtime.volume:
+                raise subprocess.CalledProcessError(1, arguments)
             return subprocess.CompletedProcess(
-                arguments, 0, f"{runtime.run_id} {runtime.worktree}"
+                arguments,
+                0,
+                json.dumps(
+                    [
+                        {
+                            "Name": runtime.volume,
+                            "Labels": {
+                                "openslate.test.run": runtime.run_id,
+                                "openslate.test.worktree": runtime.worktree,
+                                "com.docker.compose.project": runtime.project,
+                                "com.docker.compose.volume": "supabase-db-data",
+                            },
+                        }
+                    ]
+                ),
+            )
+        if arguments[:2] == ["network", "inspect"]:
+            if arguments[2] != runtime.network:
+                raise subprocess.CalledProcessError(1, arguments)
+            return subprocess.CompletedProcess(
+                arguments,
+                0,
+                json.dumps(
+                    [
+                        {
+                            "Name": runtime.network,
+                            "Labels": {
+                                "openslate.test.run": runtime.run_id,
+                                "openslate.test.worktree": runtime.worktree,
+                                "com.docker.compose.project": runtime.project,
+                                "com.docker.compose.network": "provider",
+                            },
+                        }
+                    ]
+                ),
             )
         return subprocess.CompletedProcess(arguments, 0, "")
 
@@ -290,14 +328,6 @@ def test_runtime_environment_excludes_bootstrap_and_migration_connections() -> N
     assert runner.runtime_database_environment(values) == {"DATABASE_URL": "runtime-private"}
 
 
-def test_private_file_storage_is_created_before_the_scanner_worker_starts(tmp_path: Path) -> None:
-    storage_root = runner.prepare_private_file_storage(tmp_path)
-
-    assert storage_root == tmp_path / "private-files"
-    assert storage_root.is_dir()
-    assert storage_root.stat().st_mode & 0o077 == 0
-
-
 def test_backend_coverage_does_not_require_an_unbuilt_static_export(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -313,12 +343,21 @@ def test_backend_coverage_does_not_require_an_unbuilt_static_export(
     monkeypatch.setattr(runner, "FRONTEND", tmp_path / "frontend-without-export")
 
     def coverage(_run, _backend, _private, environment, _run_id) -> int:
+        assert [sys.executable, "operations/provision_storage.py", "--confirm"] in commands, (
+            "Private buckets must be provisioned before file integration tests"
+        )
         observed.update(environment)
         return 0
 
     monkeypatch.setattr(runner, "run_backend_coverage", coverage)
 
     assert runner.main(["--backend-coverage-only"]) == 0
+    provider_url = observed.get("SUPABASE_URL")
+    provider_issuer = observed.get("SUPABASE_AUTH_ISSUER")
+    provider_key_matches = observed.get("SUPABASE_SECRET_KEY") == "synthetic-provider-key"
+    assert provider_url == "http://127.0.0.1:58999"
+    assert provider_issuer == "http://127.0.0.1:58999/auth/v1"
+    assert provider_key_matches
     assert "WEB_ASSETS_ROOT" not in observed
     assert ["npm", "run", "build", "--", "--webpack"] not in commands
 
@@ -339,7 +378,7 @@ def test_fullstack_stops_before_fastapi_when_static_build_fails(
     monkeypatch.setattr(runner.subprocess, "Popen", start_fastapi)
 
     assert runner.main([]) == 1
-    assert commands[-1] == ["npm", "run", "build", "--", "--webpack"]
+    assert ["npm", "run", "build", "--", "--webpack"] in commands
     start_fastapi.assert_not_called()
     scanner.stop.assert_called_once()
 
@@ -407,6 +446,7 @@ def test_fullstack_summary_preserves_result_and_observations_contract(tmp_path: 
         "backend_tests_rerun": False,
         "stage": "browser acceptance",
         "browser_tests": [{"test": "login journey", "status": "failed"}],
+        "browser_completed": False,
         "backend_failures": ["tests/auth/test_login.py::test_rejects_unknown_user"],
         "backend_counts": {"tests": "2", "failures": "1", "errors": "0", "skipped": "0"},
         "resource_observations": {"pool_checkout_wait_seconds": 0.25},
@@ -416,3 +456,27 @@ def test_fullstack_summary_preserves_result_and_observations_contract(tmp_path: 
         "failure_type": "RuntimeError",
         "failure_message": "expected failure",
     }
+
+
+def test_completed_browser_command_does_not_invent_a_named_test_result(tmp_path: Path) -> None:
+    (tmp_path / "process.log").write_text("1 passed (2s)\n")
+    path = tmp_path / "summary.json"
+    fullstack_summary.write_fullstack_summary(
+        path,
+        tmp_path,
+        result=0,
+        batch=None,
+        backend_only=False,
+        acceptance_only=True,
+        scanner_only=False,
+        stage="browser acceptance",
+        browser_completed=True,
+        admission={},
+        checker_exit=None,
+        scanner_observations={},
+        failure_type=None,
+        failure_message=None,
+    )
+    result = json.loads(path.read_text())
+    assert result["browser_tests"] == []
+    assert result["browser_completed"] is True

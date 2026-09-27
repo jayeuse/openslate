@@ -12,11 +12,14 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings
+from app.core.config.environment import environment_inputs
 from app.core.config.instance import (
     assert_database_url,
     assert_instance_target,
     instance_target_for_process,
 )
+from app.core.config.provider_instance import assert_provider_instance
+from app.core.config.settings import DOTENV_PATH
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
 from app.systems.access.identity.admin_recovery import LocalRecoveryError, recover_local_admin
@@ -39,6 +42,11 @@ def main(argv: list[str] | None = None) -> None:
         with get_engine().connect() as connection:
             assert_instance_target(connection, target, expected_user="openslate_runtime")
     try:
+        assert_provider_instance(
+            environment_inputs(DOTENV_PATH),
+            database_url=settings.database_url,
+            expected_user="openslate_runtime",
+        )
         with AuditSession(get_engine()) as db:
             result = recover_local_admin(
                 db, args.user_id, local_invocation=True, elevated=is_elevated()
@@ -47,7 +55,8 @@ def main(argv: list[str] | None = None) -> None:
         if isinstance(error, LocalRecoveryError):
             raise SystemExit("Administrator recovery was refused") from None
         raise SystemExit("Administrator recovery failed") from None
-    print(f"user_id={result.user_id} temporary_password={result.temporary_password}")
+    print(f"user_id={result.user_id} recovery_email_requested=true")
+    print("Complete the emailed recovery link to choose a new password.")
 
 
 if __name__ == "__main__":

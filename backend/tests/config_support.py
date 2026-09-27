@@ -4,19 +4,24 @@ from __future__ import annotations
 
 from typing import Any
 
+from cryptography.fernet import Fernet
+
+_SESSION_ENCRYPTION_KEY = Fernet.generate_key().decode("ascii")
+
 
 def settings_values(**overrides: Any) -> dict[str, Any]:
     values: dict[str, Any] = {
         "environment": "test",
         "log_dir": "/tmp/openslate-test-logs",
         "database_url": "postgresql+psycopg://test:test-password@127.0.0.1/test",
-        "auth_jwt_secret": "a" * 64,
-        "auth_jwt_issuer": "http://openslate.test",
-        "auth_jwt_audience": "openslate-api",
-        "smtp_enabled": False,
+        "supabase_url": "http://127.0.0.1:58000",
+        "supabase_publishable_key": "sb_publishable_isolated_test_only",
+        "supabase_secret_key": "sb_secret_isolated_test_only",
+        "supabase_auth_issuer": "http://127.0.0.1:58000/auth/v1",
+        "supabase_session_encryption_key": _SESSION_ENCRYPTION_KEY,
+        "publication_signing_key": "a" * 64,
         "security_event_server_key": "test-security-event-key",
         "lifecycle_purge_enabled": False,
-        "files_storage_root": "/tmp/openslate-test-files",
         "public_origin": "http://frontend.test",
         "request_body_max_bytes": 1_048_576,
         "database_pool_size": 5,

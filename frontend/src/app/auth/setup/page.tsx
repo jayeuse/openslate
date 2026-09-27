@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowRight, KeyRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -14,7 +14,7 @@ import {
   FieldError,
 } from "@/components/ui/field";
 import { ApiError } from "@/lib/api";
-import { changePassword, completeInvitation } from "@/lib/auth-api";
+import { completeInvitation } from "@/lib/auth-api";
 import {
   consumeInvitationToken,
   retainInvitationToken,
@@ -31,26 +31,40 @@ function classifySetupFailure(error: unknown): SetupFailure {
 
 export default function AuthSetupPage() {
   const router = useRouter();
+  const invitationVersion = useRef(0);
   const [invitationToken, setInvitationToken] = useState<string | null>(null);
-  const [temporaryPasswordSetup, setTemporaryPasswordSetup] = useState(false);
   const [hydrated, setHydrated] = useState(false);
-  useEffect(() => {
-    const captured = consumeInvitationToken(window.location, window.history);
-    setInvitationToken((current) => retainInvitationToken(current, captured));
-    setTemporaryPasswordSetup(
-      new URLSearchParams(window.location.search).get("temporary") === "1",
-    );
-    setHydrated(true);
-  }, []);
-  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [mismatch, setMismatch] = useState(false);
   const [error, setError] = useState("");
   const [failure, setFailure] = useState<SetupFailure | null>(null);
   const [pending, setPending] = useState(false);
-  const missingInvitationLink =
-    hydrated && !temporaryPasswordSetup && !invitationToken;
+  useEffect(() => {
+    function captureInitialLink() {
+      const captured = consumeInvitationToken(window.location, window.history);
+      setInvitationToken((current) => retainInvitationToken(current, captured));
+    }
+    function captureNewLink() {
+      invitationVersion.current += 1;
+      setInvitationToken(
+        consumeInvitationToken(window.location, window.history),
+      );
+      setPassword("");
+      setConfirmation("");
+      setMismatch(false);
+      setError("");
+      setFailure(null);
+      setPending(false);
+    }
+    captureInitialLink();
+    setHydrated(true);
+    window.addEventListener("hashchange", captureNewLink);
+    return () => {
+      window.removeEventListener("hashchange", captureNewLink);
+    };
+  }, []);
+  const missingInvitationLink = hydrated && !invitationToken;
   const setupFailure = missingInvitationLink ? "session" : failure;
   const setupError = missingInvitationLink
     ? "This invitation link is invalid or incomplete. Request a new invitation."
@@ -60,7 +74,7 @@ export default function AuthSetupPage() {
     event.preventDefault();
     if (pending || setupFailure === "session" || setupFailure === "uncertain")
       return;
-    if (!invitationToken && !temporaryPasswordSetup) {
+    if (!invitationToken) {
       setFailure("session");
       setError(
         "This invitation link is invalid or incomplete. Request a new invitation.",
@@ -75,15 +89,13 @@ export default function AuthSetupPage() {
     setError("");
     setFailure(null);
     setPending(true);
+    const submittedVersion = invitationVersion.current;
     try {
-      if (temporaryPasswordSetup) {
-        await changePassword(currentPassword, password);
-        router.replace("/openview");
-      } else {
-        await completeInvitation(invitationToken as string, password);
-        router.replace("/login");
-      }
+      await completeInvitation(invitationToken, password);
+      if (submittedVersion !== invitationVersion.current) return;
+      router.replace("/login");
     } catch (error) {
+      if (submittedVersion !== invitationVersion.current) return;
       const kind = classifySetupFailure(error);
       setFailure(kind);
       if (kind === "session")
@@ -103,7 +115,7 @@ export default function AuthSetupPage() {
           "We could not set that password. Check the requirements and try again.",
         );
     } finally {
-      setPending(false);
+      if (submittedVersion === invitationVersion.current) setPending(false);
     }
   }
 
@@ -123,15 +135,9 @@ export default function AuthSetupPage() {
           <div className="bg-accent text-accent-foreground mb-5 grid size-11 place-items-center rounded-full">
             <KeyRound size={20} aria-hidden="true" />
           </div>
-          <h1 className="text-2xl font-semibold">
-            {temporaryPasswordSetup
-              ? "Change your password"
-              : "Set your password"}
-          </h1>
+          <h1 className="text-2xl font-semibold">Set your password</h1>
           <p className="text-muted-foreground mt-2 text-sm">
-            {temporaryPasswordSetup
-              ? "Choose a password to finish setting up your account."
-              : "Finish setting up your invited OpenSlate account."}
+            Finish setting up your invited OpenSlate account.
           </p>
         </div>
         {setupError && (
@@ -147,31 +153,6 @@ export default function AuthSetupPage() {
           </div>
         )}
         <form className="space-y-5" onSubmit={submit}>
-          {temporaryPasswordSetup ? (
-            <Field className="space-y-2">
-              <FieldLabel htmlFor="current-password">
-                Temporary password
-              </FieldLabel>
-              <FieldControl
-                render={
-                  <Input
-                    id="current-password"
-                    type="password"
-                    disabled={
-                      !hydrated ||
-                      pending ||
-                      setupFailure === "session" ||
-                      setupFailure === "uncertain"
-                    }
-                    autoComplete="current-password"
-                    required
-                    value={currentPassword}
-                    onChange={(event) => setCurrentPassword(event.target.value)}
-                  />
-                }
-              />
-            </Field>
-          ) : null}
           <Field className="space-y-2">
             <FieldLabel htmlFor="password">Password</FieldLabel>
             <FieldControl

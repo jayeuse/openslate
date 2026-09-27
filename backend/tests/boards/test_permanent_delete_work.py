@@ -13,7 +13,6 @@ from uuid6 import uuid7
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.main import app as application
-from app.systems.access.identity.service import create_credential
 from app.systems.access.users.models import Role, User
 from app.systems.boards import lifecycle_router
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
@@ -27,6 +26,7 @@ from app.systems.platform.scheduling.models import (
     WorkKind,
     WorkState,
 )
+from tests.boards.provider_accounts import create_password_account
 
 pytestmark = pytest.mark.integration
 
@@ -43,9 +43,12 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     role = db.scalar(select(Role).where(Role.role == "admin"))
     assert role is not None
     actor_id = uuid7()
+    email = f"board-work-purge-{actor_id.hex}@example.test"
+    provider_user_id = create_password_account(db, email=email, password=password)
     actor = User(
         id=actor_id,
-        email=f"board-work-purge-{actor_id.hex}@example.test",
+        email=email,
+        supabase_user_id=provider_user_id,
         username=f"board_work_purge_{actor_id.hex[:12]}",
         status="active",
         role_id=role.id,
@@ -53,7 +56,6 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     )
     db.add(actor)
     db.flush()
-    create_credential(db, actor.id, password)
     set_audit_actor(db, actor.id)
     board = Board(owner_id=actor.id, name="Purge work board", status="archived")
     db.add(board)

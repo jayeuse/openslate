@@ -1,13 +1,12 @@
-"""Create and verify an encrypted OpenSlate installation backup.
+"""Offline, encrypted backup of one self-hosted Supabase installation.
 
-This module deliberately has no FastAPI imports.  An operator invokes it only
-after placing the API and scanner in the documented stopped maintenance state.
+The operator stops every installation container first. This command only reads
+the owned volumes, writes a single Restic snapshot, and verifies that snapshot.
 """
 
 from __future__ import annotations
 
 import argparse
-import contextlib
 import hashlib
 import json
 import os
@@ -20,69 +19,76 @@ import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path, PureWindowsPath
-from urllib.parse import unquote, urlsplit
+from pathlib import Path
+from typing import cast
 
-_CONFIG_FIELDS = frozenset(
-    {
-        "version",
-        "installation_id",
-        "database_url",
-        "pg_password_file",
-        "restic_repository",
-        "restic_password_file",
-        "staging_directory",
-        "completion_marker",
-        "maintenance_state_file",
-        "maintenance_lock_file",
-        "maintenance_max_age_seconds",
-        "private_file_roots",
-        "initialize_repository",
-    }
+_FIELDS = {
+    "version",
+    "installation_id",
+    "project_name",
+    "deployment",
+    "compose_root",
+    "provider_env_file",
+    "app_env_file",
+    "caddy_config_file",
+    "tls_directory",
+    "restic_repository",
+    "restic_password_file",
+    "staging_directory",
+    "completion_marker",
+}
+_PROJECT = re.compile(r"^[a-z][a-z0-9_-]{1,62}$")
+_IDENTITY = re.compile(r"^[a-z0-9][a-z0-9_-]{1,62}$")
+_SNAPSHOT = re.compile(r"^[0-9a-f]{64}$")
+_BASE_VOLUMES = (
+    "supabase-db-data",
+    "supabase-db-config",
+    "supabase-storage-data",
+    "supabase-studio-snippets",
 )
-_SNAPSHOT_ID = re.compile(r"^[0-9a-f]{8,64}$")
-_SCHEMA_REVISION = re.compile(r"^[0-9A-Za-z_.-]{1,128}$")
-_INSTALLATION_ID = re.compile(r"^[0-9a-f]{8,64}$")
-_ROOT_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-_CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
+_BASE_SERVICES = {
+    "db",
+    "auth",
+    "rest",
+    "storage",
+    "imgproxy",
+    "meta",
+    "studio",
+    "api-gw",
+    "provider-volume-init",
+}
+_PRODUCTION_SERVICES = {"api", "scanner-worker", "clamav", "caddy"}
 
 
 class BackupError(RuntimeError):
-    """An unsafe or incomplete backup operation."""
-
-
-@dataclass(frozen=True)
-class DatabaseTarget:
-    url: str
-    host: str
-    port: int
-    database: str
-    username: str
+    """An installation backup or restore safety condition was not met."""
 
 
 @dataclass(frozen=True)
 class BackupConfig:
-    version: int
     installation_id: str
-    database: DatabaseTarget
-    pg_password_file: Path
+    project_name: str
+    deployment: str
+    compose_root: Path
+    provider_env_file: Path
+    app_env_file: Path | None
+    caddy_config_file: Path | None
+    tls_directory: Path | None
     restic_repository: Path
     restic_password_file: Path
     staging_directory: Path
     completion_marker: Path
-    maintenance_state_file: Path
-    maintenance_lock_file: Path
-    maintenance_max_age_seconds: int
-    private_file_roots: tuple[Path, ...]
-    private_file_root_ids: tuple[str, ...]
-    initialize_repository: bool
 
-    @staticmethod
-    def _is_absolute_path(value: str, *, platform_name: str | None = None) -> bool:
-        platform = platform_name or sys.platform
-        if platform.startswith("win"):
-            return PureWindowsPath(value).is_absolute()
-        return Path(value).is_absolute()
+    @property
+    def volume_names(self) -> tuple[str, ...]:
+        return (*_BASE_VOLUMES, *(("caddy-data",) if self.deployment == "production" else ()))
+
+    @property
+    def compose_files(self) -> tuple[Path, Path]:
+        overlay = (
+            "compose.production.yaml" if self.deployment == "production" else "compose.dev.yaml"
+        )
+        return self.compose_root / "compose.yaml", self.compose_root / overlay
 
 
 @dataclass(frozen=True)
@@ -92,451 +98,318 @@ class BackupResult:
     completed_at: str
 
 
-def _expect_string(value: object, name: str) -> str:
-    if not isinstance(value, str) or not value or value.strip() != value or "\x00" in value:
-        raise BackupError(f"{name} must be a non-empty string")
-    return value
+def _absolute(value: object, label: str) -> Path:
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise BackupError(f"{label} must be an absolute path")
+    path = Path(value)
+    if not path.is_absolute():
+        raise BackupError(f"{label} must be an absolute path")
+    return path
 
 
-def _no_control_characters(value: str, name: str) -> str:
-    if any(character in value for character in ("\r", "\n", "\x00")):
-        raise BackupError(f"{name} cannot contain CR, LF, or NUL")
-    return value
+def _optional_path(value: object, label: str) -> Path | None:
+    return None if value is None else _absolute(value, label)
 
 
-def _native_path(value: object, name: str, *, platform_name: str | None = None) -> Path:
-    text = _expect_string(value, name)
-    if not BackupConfig._is_absolute_path(text, platform_name=platform_name):
-        raise BackupError(f"{name} must be an absolute path")
-    return Path(text)
-
-
-def _parse_database_url(value: object) -> DatabaseTarget:
-    url = _expect_string(value, "database_url")
-    if any(character.isspace() for character in url):
-        raise BackupError("database_url cannot contain whitespace")
-    try:
-        parsed = urlsplit(url)
-        port = parsed.port
-    except ValueError as error:
-        raise BackupError("database_url has an invalid host or port") from error
-    if parsed.scheme != "postgresql":
-        raise BackupError("database_url must be a PostgreSQL psycopg URL")
-    if parsed.password is not None:
-        raise BackupError("database_url must not contain a password")
-    if not parsed.hostname or not parsed.username or parsed.fragment or parsed.query:
-        raise BackupError("database_url must contain host and username without query or fragment")
-    if "%" in parsed.hostname:
-        raise BackupError("database host cannot use percent encoding")
-    host = _no_control_characters(parsed.hostname, "database host")
-    username = _no_control_characters(unquote(parsed.username), "database username")
-    database = _no_control_characters(unquote(parsed.path.lstrip("/")), "database name")
-    if not database or "/" in database or "\\" in database:
-        raise BackupError("database_url must name exactly one database")
-    return DatabaseTarget(
-        url=url,
-        host=host,
-        port=port or 5432,
-        database=database,
-        username=username,
-    )
-
-
-def _parse_repository(value: object, *, platform_name: str | None = None) -> Path:
-    repository = _native_path(value, "restic_repository", platform_name=platform_name)
-    if "@" in str(repository) or "://" in str(repository):
-        raise BackupError("restic_repository must be a local absolute path")
-    return repository
-
-
-def parse_config(path: Path, *, platform_name: str | None = None) -> BackupConfig:
-    """Read a strict, secret-free installation operations configuration."""
-
+def parse_config(path: Path) -> BackupConfig:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise BackupError("cannot read backup configuration") from error
-    if not isinstance(raw, dict) or frozenset(raw) != _CONFIG_FIELDS:
-        raise BackupError("backup configuration must contain exactly the documented fields")
-    version = raw["version"]
-    if version not in (1, 2) or isinstance(version, bool):
-        raise BackupError("backup configuration version must be 1 or 2")
-    roots = raw["private_file_roots"]
-    if not isinstance(roots, list) or not roots:
-        raise BackupError("private_file_roots must contain at least one path")
-    root_ids: list[str] = []
-    root_paths: list[Path] = []
-    for item in roots:
-        if version == 1:
-            root_paths.append(
-                _native_path(item, "private_file_roots entry", platform_name=platform_name)
-            )
-            continue
-        if not isinstance(item, dict) or frozenset(item) != {"id", "path"}:
-            raise BackupError("private_file_roots entries must contain id and path")
-        root_id = _expect_string(item["id"], "private_file_roots id")
-        if not _ROOT_ID.fullmatch(root_id) or root_id in root_ids:
-            raise BackupError("private_file_roots ids must be unique safe logical names")
-        root_ids.append(root_id)
-        root_paths.append(
-            _native_path(item["path"], "private_file_roots path", platform_name=platform_name)
-        )
-    if not isinstance(raw["initialize_repository"], bool):
-        raise BackupError("initialize_repository must be a boolean")
-    installation_id = _expect_string(raw["installation_id"], "installation_id")
-    if not _INSTALLATION_ID.fullmatch(installation_id):
-        raise BackupError("installation_id must be a lowercase hexadecimal identifier")
-    max_age = raw["maintenance_max_age_seconds"]
-    if not isinstance(max_age, int) or isinstance(max_age, bool) or not 1 <= max_age <= 3600:
-        raise BackupError("maintenance_max_age_seconds must be between 1 and 3600")
-    return BackupConfig(
-        version=version,
-        installation_id=installation_id,
-        database=_parse_database_url(raw["database_url"]),
-        pg_password_file=_native_path(
-            raw["pg_password_file"], "pg_password_file", platform_name=platform_name
-        ),
-        restic_repository=_parse_repository(raw["restic_repository"], platform_name=platform_name),
-        restic_password_file=_native_path(
-            raw["restic_password_file"], "restic_password_file", platform_name=platform_name
-        ),
-        staging_directory=_native_path(
-            raw["staging_directory"], "staging_directory", platform_name=platform_name
-        ),
-        completion_marker=_native_path(
-            raw["completion_marker"], "completion_marker", platform_name=platform_name
-        ),
-        maintenance_state_file=_native_path(
-            raw["maintenance_state_file"], "maintenance_state_file", platform_name=platform_name
-        ),
-        maintenance_lock_file=_native_path(
-            raw["maintenance_lock_file"], "maintenance_lock_file", platform_name=platform_name
-        ),
-        maintenance_max_age_seconds=max_age,
-        private_file_roots=tuple(root_paths),
-        private_file_root_ids=tuple(root_ids),
-        initialize_repository=raw["initialize_repository"],
+    if not isinstance(raw, dict) or set(raw) != _FIELDS:
+        raise BackupError("backup configuration must contain exactly the version 3 fields")
+    if type(raw["version"]) is not int or raw["version"] != 3:
+        raise BackupError("only Supabase backup configuration version 3 is supported")
+    identity = raw["installation_id"]
+    project = raw["project_name"]
+    deployment = raw["deployment"]
+    if not isinstance(identity, str) or not _IDENTITY.fullmatch(identity):
+        raise BackupError("installation_id is invalid")
+    if not isinstance(project, str) or not _PROJECT.fullmatch(project):
+        raise BackupError("project_name is invalid")
+    if deployment not in {"development", "production"}:
+        raise BackupError("deployment must be development or production")
+    config = BackupConfig(
+        installation_id=identity,
+        project_name=project,
+        deployment=deployment,
+        compose_root=_absolute(raw["compose_root"], "compose_root"),
+        provider_env_file=_absolute(raw["provider_env_file"], "provider_env_file"),
+        app_env_file=_optional_path(raw["app_env_file"], "app_env_file"),
+        caddy_config_file=_optional_path(raw["caddy_config_file"], "caddy_config_file"),
+        tls_directory=_optional_path(raw["tls_directory"], "tls_directory"),
+        restic_repository=_absolute(raw["restic_repository"], "restic_repository"),
+        restic_password_file=_absolute(raw["restic_password_file"], "restic_password_file"),
+        staging_directory=_absolute(raw["staging_directory"], "staging_directory"),
+        completion_marker=_absolute(raw["completion_marker"], "completion_marker"),
     )
+    if deployment == "production" and not all(
+        (config.app_env_file, config.caddy_config_file, config.tls_directory)
+    ):
+        raise BackupError(
+            "production backup requires app environment, Caddy configuration, and TLS directory"
+        )
+    if deployment == "development" and any(
+        (config.app_env_file, config.caddy_config_file, config.tls_directory)
+    ):
+        raise BackupError("development backup cannot include production-only private material")
+    return config
 
 
-def _assert_no_symlink(path: Path, name: str) -> None:
+def _assert_no_symlink(path: Path, label: str) -> None:
     current = path
     while True:
         if current.is_symlink():
-            raise BackupError(f"{name} cannot be a symlink or sit below one")
+            raise BackupError(f"{label} cannot contain a symlink")
         if current.parent == current:
             return
         current = current.parent
 
 
-def _assert_secure_ownership(details: os.stat_result, name: str, *, file: bool) -> None:
+def _private(path: Path, label: str, *, directory: bool) -> Path:
     if os.name == "nt":
-        raise BackupError("Windows ACL verification is unavailable; refusing backup")
-    owner = os.geteuid()
-    if details.st_uid not in {0, owner}:
-        raise BackupError(f"{name} has an unexpected owner")
-    unsafe_mode = 0o077 if file else 0o022
-    if details.st_mode & unsafe_mode:
-        raise BackupError(f"{name} is not private")
-
-
-def _assert_secure_ancestors(path: Path, name: str) -> None:
-    current = path.parent
-    while True:
-        try:
-            details = current.stat()
-        except OSError as error:
-            raise BackupError(f"{name} has an unreadable ancestor") from error
-        if not stat.S_ISDIR(details.st_mode):
-            raise BackupError(f"{name} has an invalid ancestor")
-        _assert_secure_ownership(details, f"{name} ancestor", file=False)
-        if current.parent == current:
-            return
-        current = current.parent
-
-
-def _assert_private_file(path: Path, name: str) -> os.stat_result:
-    _assert_no_symlink(path, name)
-    _assert_secure_ancestors(path, name)
+        raise BackupError(
+            "run the backup command in Linux or WSL2; native Windows ACL admission is unavailable"
+        )
+    _assert_no_symlink(path, label)
     try:
         details = path.stat()
     except OSError as error:
-        raise BackupError(f"{name} cannot be read") from error
-    if not stat.S_ISREG(details.st_mode):
-        raise BackupError(f"{name} must be a regular file")
-    _assert_secure_ownership(details, name, file=True)
-    return details
-
-
-def _assert_safe_directory(path: Path, name: str) -> Path:
-    _assert_no_symlink(path, name)
-    _assert_secure_ancestors(path, name)
-    try:
-        resolved = path.resolve(strict=True)
-    except OSError as error:
-        raise BackupError(f"{name} does not exist") from error
-    if not resolved.is_dir() or resolved.parent == resolved:
-        raise BackupError(f"{name} must be a non-root directory")
-    _assert_no_symlink(resolved, name)
-    try:
-        _assert_secure_ownership(resolved.stat(), name, file=False)
-    except OSError as error:
-        raise BackupError(f"{name} cannot be read") from error
-    return resolved
-
-
-@dataclass
-class DirectoryGuard:
-    """A directory handle retained while a sensitive operation uses that location."""
-
-    path: Path
-    descriptor: int
-    identity: tuple[int, int]
-    name: str
-
-    @classmethod
-    def acquire(cls, path: Path, name: str) -> DirectoryGuard:
-        secured = _assert_safe_directory(path, name)
-        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-        try:
-            descriptor = os.open(secured, flags)
-        except OSError as error:
-            raise BackupError(f"cannot retain {name} handle") from error
-        details = os.fstat(descriptor)
-        return cls(secured, descriptor, (details.st_dev, details.st_ino), name)
-
-    def revalidate(self) -> None:
-        try:
-            details = os.fstat(self.descriptor)
-            current = self.path.stat()
-        except OSError as error:
-            raise BackupError(f"{self.name} changed during backup") from error
-        opened_identity = (details.st_dev, details.st_ino)
-        current_identity = (current.st_dev, current.st_ino)
-        if opened_identity != self.identity or current_identity != self.identity:
-            raise BackupError(f"{self.name} changed during backup")
-        _assert_safe_directory(self.path, self.name)
-
-    def close(self) -> None:
-        with contextlib.suppress(OSError):
-            os.close(self.descriptor)
-
-
-def _safe_open(path: Path, name: str, *, writable: bool = False) -> int:
-    flags = os.O_RDWR if writable else os.O_RDONLY
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as error:
-        raise BackupError(f"cannot open {name}") from error
-    try:
-        details = os.fstat(descriptor)
-        current = path.stat()
-        if not stat.S_ISREG(details.st_mode) or (details.st_dev, details.st_ino) != (
-            current.st_dev,
-            current.st_ino,
-        ):
-            raise BackupError(f"{name} changed while it was opened")
-        _assert_private_file(path, name)
-        return descriptor
-    except Exception:
-        os.close(descriptor)
-        raise
-
-
-def _read_descriptor(descriptor: int, name: str) -> bytes:
-    try:
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        chunks: list[bytes] = []
-        while chunk := os.read(descriptor, 4096):
-            chunks.append(chunk)
-            if sum(len(part) for part in chunks) > 16384:
-                raise BackupError(f"{name} is too large")
-    except OSError as error:
-        raise BackupError(f"cannot read {name}") from error
-    return b"".join(chunks)
-
-
-def _assert_descriptor_current(descriptor: int, path: Path, name: str) -> None:
-    try:
-        opened = os.fstat(descriptor)
-        current = path.stat()
-    except OSError as error:
-        raise BackupError(f"{name} changed during backup") from error
-    if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
-        raise BackupError(f"{name} changed during backup")
-
-
-def _parse_maintenance_state(
-    raw: bytes, config: BackupConfig, now: datetime, *, require_fresh: bool
-) -> None:
-    try:
-        state = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise BackupError("cannot read maintenance state") from error
-    if not isinstance(state, dict) or set(state) != {
-        "installation_id",
-        "maintenance",
-        "fastapi",
-        "scanner",
-        "issued_at",
-    }:
-        raise BackupError("maintenance state has an invalid format")
-    if (
-        state["installation_id"] != config.installation_id
-        or state["maintenance"] is not True
-        or state["fastapi"] != "stopped"
-        or state["scanner"] != "stopped"
-        or not isinstance(state["issued_at"], str)
+        raise BackupError(f"{label} is unavailable") from error
+    if directory != stat.S_ISDIR(details.st_mode) or (
+        not directory and not stat.S_ISREG(details.st_mode)
     ):
-        raise BackupError("FastAPI and scanner must be stopped in maintenance state before backup")
-    try:
-        issued_at = datetime.fromisoformat(state["issued_at"].replace("Z", "+00:00"))
-    except ValueError as error:
-        raise BackupError("maintenance state issued_at is invalid") from error
-    if issued_at.tzinfo is None:
-        raise BackupError("maintenance state issued_at must include a timezone")
-    if require_fresh:
-        age = (now.astimezone(UTC) - issued_at.astimezone(UTC)).total_seconds()
-        if age < -30 or age > config.maintenance_max_age_seconds:
-            raise BackupError("maintenance state is stale or from the future")
+        raise BackupError(f"{label} has the wrong filesystem type")
+    if details.st_uid not in {0, os.geteuid()} or details.st_mode & (0o022 if directory else 0o077):
+        raise BackupError(f"{label} is not owner-controlled")
+    return path.resolve(strict=True)
 
 
-@dataclass
-class MaintenanceLease:
-    """A held advisory lock that every local service must respect before resuming."""
-
-    config: BackupConfig
-    state_path: Path
-    lock_path: Path
-    state_descriptor: int
-    lock_descriptor: int
-    state_digest: str
-    lock_digest: str
-    now: Callable[[], datetime]
-
-    @classmethod
-    def acquire(cls, config: BackupConfig, now: Callable[[], datetime]) -> MaintenanceLease:
-        _assert_private_file(config.maintenance_state_file, "maintenance_state_file")
-        _assert_private_file(config.maintenance_lock_file, "maintenance_lock_file")
-        state_descriptor = _safe_open(config.maintenance_state_file, "maintenance_state_file")
-        try:
-            lock_descriptor = _safe_open(
-                config.maintenance_lock_file, "maintenance_lock_file", writable=True
-            )
-        except Exception:
-            os.close(state_descriptor)
-            raise
-        try:
-            if os.name == "nt":
-                raise BackupError(
-                    "Windows maintenance lock verification is unavailable; refusing backup"
-                )
-            import fcntl
-
-            try:
-                fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as error:
-                raise BackupError("backup already in progress") from error
-            except OSError as error:
-                raise BackupError("cannot acquire maintenance lock") from error
-            state = _read_descriptor(state_descriptor, "maintenance_state_file")
-            lock = _read_descriptor(lock_descriptor, "maintenance_lock_file")
-            _parse_maintenance_state(state, config, now(), require_fresh=True)
-            if lock != (config.installation_id + "\n").encode("ascii"):
-                raise BackupError("maintenance lock is not bound to this installation")
-            return cls(
-                config=config,
-                state_path=config.maintenance_state_file,
-                lock_path=config.maintenance_lock_file,
-                state_descriptor=state_descriptor,
-                lock_descriptor=lock_descriptor,
-                state_digest=hashlib.sha256(state).hexdigest(),
-                lock_digest=hashlib.sha256(lock).hexdigest(),
-                now=now,
-            )
-        except Exception:
-            with contextlib.suppress(OSError):
-                os.close(lock_descriptor)
-            os.close(state_descriptor)
-            raise
-
-    def revalidate(self) -> None:
-        _assert_private_file(self.state_path, "maintenance_state_file")
-        _assert_private_file(self.lock_path, "maintenance_lock_file")
-        _assert_descriptor_current(self.state_descriptor, self.state_path, "maintenance_state_file")
-        _assert_descriptor_current(self.lock_descriptor, self.lock_path, "maintenance_lock_file")
-        state = _read_descriptor(self.state_descriptor, "maintenance_state_file")
-        lock = _read_descriptor(self.lock_descriptor, "maintenance_lock_file")
-        _parse_maintenance_state(state, self.config, self.now(), require_fresh=False)
-        state_digest = hashlib.sha256(state).hexdigest()
-        lock_digest = hashlib.sha256(lock).hexdigest()
-        if state_digest != self.state_digest or lock_digest != self.lock_digest:
-            raise BackupError("maintenance proof changed during backup")
-
-    def close(self) -> None:
-        with contextlib.suppress(OSError):
-            import fcntl
-
-            fcntl.flock(self.lock_descriptor, fcntl.LOCK_UN)
-        with contextlib.suppress(OSError):
-            os.close(self.lock_descriptor)
-        with contextlib.suppress(OSError):
-            os.close(self.state_descriptor)
-
-
-def _is_within(child: Path, parent: Path) -> bool:
-    try:
-        child.relative_to(parent)
-    except ValueError:
-        return False
-    return True
-
-
-def _validate_runtime_paths(
-    config: BackupConfig, config_path: Path
-) -> tuple[Path, tuple[Path, ...], Path]:
-    _assert_private_file(config_path, "backup configuration")
-    _assert_private_file(config.pg_password_file, "pg_password_file")
-    _assert_private_file(config.restic_password_file, "restic_password_file")
-    staging = _assert_safe_directory(config.staging_directory, "staging_directory")
-    repository = _assert_safe_directory(config.restic_repository, "restic_repository")
-    password_files = (
-        config.pg_password_file.resolve(strict=True),
-        config.restic_password_file.resolve(strict=True),
-    )
-    if any(_is_within(password_file, repository) for password_file in password_files):
-        raise BackupError("password files cannot be inside restic_repository")
-    roots = tuple(
-        _assert_safe_directory(root, "private_file_root") for root in config.private_file_roots
-    )
-    marker_parent = _assert_safe_directory(
-        config.completion_marker.parent, "completion_marker parent"
-    )
-    _assert_no_symlink(config.completion_marker, "completion_marker")
-    protected_inputs = {
-        config_path.resolve(strict=True),
-        config.pg_password_file.resolve(strict=True),
-        config.restic_password_file.resolve(strict=True),
-        config.maintenance_state_file.resolve(strict=True),
-        config.maintenance_lock_file.resolve(strict=True),
-    }
-    marker = config.completion_marker.resolve(strict=False)
-    if marker in protected_inputs:
-        raise BackupError("completion_marker must be distinct from protected operation inputs")
+def _separate(config: BackupConfig, config_path: Path) -> None:
+    sources = [config.provider_env_file, config.restic_password_file, config_path]
+    sources.extend(path for path in (config.app_env_file, config.caddy_config_file) if path)
+    directories = [config.compose_root, config.restic_repository, config.staging_directory]
+    if config.tls_directory:
+        directories.append(config.tls_directory)
+    for source in sources:
+        _private(source, source.name, directory=False)
+    for directory in directories:
+        _private(directory, directory.name, directory=True)
+    _private(config.completion_marker.parent, "completion marker parent", directory=True)
+    _assert_no_symlink(config.completion_marker, "completion marker")
     if config.completion_marker.exists():
-        raise BackupError("completion_marker already exists and will not be overwritten")
-    if any(_is_within(root, staging) or _is_within(staging, root) for root in roots):
-        raise BackupError("staging_directory cannot overlap a private file root")
-    if any(_is_within(repository, root) or _is_within(root, repository) for root in roots):
-        raise BackupError("restic_repository cannot overlap a private file root")
-    if _is_within(repository, staging) or _is_within(staging, repository):
-        raise BackupError("restic_repository cannot overlap staging_directory")
-    if not _is_within(marker, marker_parent):
-        raise BackupError("completion_marker must be directly contained by its parent")
-    if any(_is_within(marker, protected) for protected in (*roots, staging, repository)):
-        raise BackupError("completion_marker cannot be inside backup sources or staging")
-    return staging, roots, repository
+        raise BackupError("completion marker already exists")
+    resolved = [path.resolve() for path in sources + directories]
+    if len(resolved) != len(set(resolved)):
+        raise BackupError("backup inputs and operation directories must be distinct")
+    repository = config.restic_repository.resolve()
+    staging = config.staging_directory.resolve()
+    if repository.is_relative_to(staging) or staging.is_relative_to(repository):
+        raise BackupError("Restic repository and staging directory overlap")
+    recursive_inputs = [config.compose_root.resolve()]
+    if config.tls_directory:
+        recursive_inputs.append(config.tls_directory.resolve())
+    if any(
+        operation.is_relative_to(source) or source.is_relative_to(operation)
+        for operation in (repository, staging)
+        for source in recursive_inputs
+    ):
+        raise BackupError("backup operation directories overlap recursively copied inputs")
+    for source in sources:
+        if source.resolve().is_relative_to(repository):
+            raise BackupError("private inputs cannot be inside the Restic repository")
+    if config.completion_marker.resolve().is_relative_to(
+        repository
+    ) or config.completion_marker.resolve().is_relative_to(staging):
+        raise BackupError("completion marker cannot be inside the repository or staging directory")
+
+
+def _env() -> dict[str, str]:
+    return {key: os.environ[key] for key in ("PATH",) if key in os.environ}
+
+
+def _command(
+    args: list[str], *, env: Mapping[str, str] | None = None
+) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(args, env=dict(env or _env()), capture_output=True, check=False)
+
+
+def _run(
+    runner: Callable[..., subprocess.CompletedProcess[bytes]],
+    args: list[str],
+    label: str,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> bytes:
+    try:
+        result = runner(args, env=dict(env or _env()))
+    except OSError as error:
+        raise BackupError(f"{label} is unavailable") from error
+    if result.returncode:
+        raise BackupError(f"{label} failed")
+    return result.stdout
+
+
+def _json_output(data: bytes, label: str) -> object:
+    try:
+        return json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise BackupError(f"{label} returned invalid JSON") from error
+
+
+def _docker_inventory(
+    runner: Callable[..., subprocess.CompletedProcess[bytes]], noun: str, project: str
+) -> list[dict[str, object]]:
+    if noun == "container":
+        names = _run(
+            runner,
+            ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={project}"],
+            "Docker container inventory",
+        )
+    elif noun == "volume":
+        names = _run(
+            runner,
+            [
+                "docker",
+                "volume",
+                "ls",
+                "-q",
+                "--filter",
+                f"label=com.docker.compose.project={project}",
+            ],
+            "Docker volume inventory",
+        )
+    else:
+        names = _run(
+            runner,
+            [
+                "docker",
+                "network",
+                "ls",
+                "-q",
+                "--filter",
+                f"label=com.docker.compose.project={project}",
+            ],
+            "Docker network inventory",
+        )
+    identifiers = [line for line in names.decode("ascii").splitlines() if line]
+    if not identifiers:
+        return []
+    data = _json_output(
+        _run(runner, ["docker", noun, "inspect", *identifiers], f"Docker {noun} inspect"),
+        f"Docker {noun} inspect",
+    )
+    if (
+        not isinstance(data, list)
+        or len(data) != len(identifiers)
+        or any(not isinstance(item, dict) for item in data)
+    ):
+        raise BackupError(f"Docker {noun} inventory is inconsistent")
+    return data
+
+
+def _labels(item: Mapping[str, object], *, container: bool) -> dict[str, str]:
+    config = item.get("Config") if container else item
+    if not isinstance(config, dict) or not isinstance(config.get("Labels"), dict):
+        raise BackupError("Docker resource labels are unavailable")
+    labels = config["Labels"]
+    if any(not isinstance(key, str) or not isinstance(value, str) for key, value in labels.items()):
+        raise BackupError("Docker resource labels are invalid")
+    return cast(dict[str, str], labels)
+
+
+def _project_inventory(
+    config: BackupConfig, runner: Callable[..., subprocess.CompletedProcess[bytes]]
+) -> dict[str, object]:
+    containers = _docker_inventory(runner, "container", config.project_name)
+    volumes = _docker_inventory(runner, "volume", config.project_name)
+    expected_services = _BASE_SERVICES | (
+        _PRODUCTION_SERVICES if config.deployment == "production" else {"mailpit"}
+    )
+    services: dict[str, dict[str, str]] = {}
+    for item in containers:
+        labels = _labels(item, container=True)
+        service = labels.get("com.docker.compose.service")
+        state = item.get("State")
+        container_config = item.get("Config")
+        image_ref = container_config.get("Image") if isinstance(container_config, dict) else None
+        image_id = item.get("Image")
+        if (
+            labels.get("com.docker.compose.project") != config.project_name
+            or service not in expected_services
+            or service in services
+        ):
+            raise BackupError("source project has unexpected containers")
+        if not isinstance(state, dict) or state.get("Status") != "exited":
+            raise BackupError(
+                "all source-project containers, including PostgreSQL, must be stopped"
+            )
+        if (
+            not isinstance(image_ref, str)
+            or not image_ref
+            or not isinstance(image_id, str)
+            or not image_id.startswith("sha256:")
+        ):
+            raise BackupError("source container image identity is unavailable")
+        services[service] = {"ref": image_ref, "id": image_id}
+    if set(services) != expected_services:
+        raise BackupError("source project service inventory is incomplete")
+    owned: dict[str, str] = {}
+    for item in volumes:
+        labels = _labels(item, container=False)
+        logical = labels.get("com.docker.compose.volume")
+        name = item.get("Name")
+        if (
+            labels.get("com.docker.compose.project") != config.project_name
+            or logical not in config.volume_names
+            or name != f"{config.project_name}_{logical}"
+            or logical in owned
+        ):
+            raise BackupError("source project has unexpected named volumes")
+        owned[logical] = name
+    if set(owned) != set(config.volume_names):
+        raise BackupError("source project durable volume inventory is incomplete")
+    return {"services": services, "volumes": owned}
+
+
+def _compose_images(
+    config: BackupConfig, runner: Callable[..., subprocess.CompletedProcess[bytes]]
+) -> dict[str, str]:
+    base, overlay = config.compose_files
+    data = _json_output(
+        _run(
+            runner,
+            [
+                "docker",
+                "compose",
+                "--project-name",
+                config.project_name,
+                "--env-file",
+                str(config.provider_env_file),
+                "-f",
+                str(base),
+                "-f",
+                str(overlay),
+                "config",
+                "--format",
+                "json",
+            ],
+            "Compose configuration",
+        ),
+        "Compose configuration",
+    )
+    if not isinstance(data, dict) or not isinstance(data.get("services"), dict):
+        raise BackupError("Compose service inventory is invalid")
+    images: dict[str, str] = {}
+    for service, service_config in data["services"].items():
+        if (
+            not isinstance(service, str)
+            or not isinstance(service_config, dict)
+            or not isinstance(service_config.get("image"), str)
+        ):
+            raise BackupError("Compose service image is invalid")
+        images[service] = service_config["image"]
+    return images
 
 
 def _sha256(path: Path) -> str:
@@ -547,492 +420,248 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _tree_hash(root: Path) -> tuple[str, int, int]:
-    digest = hashlib.sha256()
-    file_count = 0
-    total_bytes = 0
+def _copy_file(source: Path, target: Path, *, private: bool) -> None:
+    if private:
+        _private(source, source.name, directory=False)
+    elif not source.is_file() or source.is_symlink():
+        raise BackupError("Compose asset is not a regular file")
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with source.open("rb") as incoming, target.open("xb") as outgoing:
+        shutil.copyfileobj(incoming, outgoing)
+    target.chmod(0o600)
 
-    def relative_name(candidate: Path) -> str:
-        return candidate.relative_to(root).as_posix()
 
-    candidates = sorted(root.rglob("*"), key=relative_name)
-    for item in candidates:
-        if item.is_symlink():
-            raise BackupError("private file roots cannot contain symlinks")
+def _copy_directory(source: Path, target: Path, *, private: bool) -> None:
+    if private:
+        _private(source, source.name, directory=True)
+    elif not source.is_dir() or source.is_symlink():
+        raise BackupError("Compose asset directory is invalid")
+    target.mkdir(mode=0o700, parents=True)
+    for item in source.rglob("*"):
+        _assert_no_symlink(item, item.name)
+        destination = target / item.relative_to(source)
         if item.is_dir():
-            continue
-        if not item.is_file():
-            raise BackupError("private file roots can contain only regular files and directories")
-        relative = item.relative_to(root).as_posix().encode("utf-8")
-        item_hash = _sha256(item).encode("ascii")
-        digest.update(len(relative).to_bytes(8, "big"))
-        digest.update(relative)
-        digest.update(item_hash)
-        size = item.stat().st_size
-        digest.update(size.to_bytes(8, "big"))
-        file_count += 1
-        total_bytes += size
-    return digest.hexdigest(), file_count, total_bytes
-
-
-def _escaped_pgpass(value: str) -> str:
-    return value.replace("\\", "\\\\").replace(":", "\\:")
-
-
-def _pgpass_field(value: str, name: str) -> str:
-    value = _no_control_characters(value, name)
-    if not value:
-        raise BackupError(f"{name} cannot be empty")
-    return value
-
-
-def _write_pgpass(config: BackupConfig, directory: Path) -> Path:
-    try:
-        password = config.pg_password_file.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as error:
-        raise BackupError("cannot read pg_password_file") from error
-    if password.endswith("\r\n"):
-        password = password[:-2]
-    elif password.endswith("\n"):
-        password = password[:-1]
-    password = _pgpass_field(password, "pg_password_file")
-    descriptor, raw_path = tempfile.mkstemp(prefix="pgpass-", dir=directory)
-    pgpass = Path(raw_path)
-    try:
-        if os.name == "nt":
-            os.chmod(pgpass, stat.S_IREAD | stat.S_IWRITE)
+            destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+        elif item.is_file():
+            _copy_file(item, destination, private=private)
         else:
-            os.fchmod(descriptor, 0o600)
-        line = ":".join(
-            _escaped_pgpass(value)
-            for value in (
-                _pgpass_field(config.database.host, "database host"),
-                _pgpass_field(str(config.database.port), "database port"),
-                _pgpass_field(config.database.database, "database name"),
-                _pgpass_field(config.database.username, "database username"),
-                password,
+            raise BackupError("private directory contains unsupported entries")
+
+
+def _export_volume(volume: str, image: str, destination: Path) -> None:
+    # PostgreSQL and provider users own private files; the source mount stays read-only.
+    args = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "DAC_READ_SEARCH",
+        "--security-opt",
+        "no-new-privileges",
+        "--user",
+        "0:0",
+        "--mount",
+        f"type=volume,source={volume},target=/source,readonly",
+        "--entrypoint",
+        "tar",
+        image,
+        "-C",
+        "/source",
+        "-cpf",
+        "-",
+        ".",
+    ]
+    with destination.open("xb") as output:
+        destination.chmod(0o600)
+        try:
+            result = subprocess.run(
+                args, env=_env(), stdout=output, stderr=subprocess.PIPE, check=False
             )
-        )
-        os.write(descriptor, (line + "\n").encode("utf-8"))
-    finally:
-        os.close(descriptor)
-    return pgpass
-
-
-def _run(
-    command_runner: _CommandRunner, args: Sequence[str], *, env: Mapping[str, str], label: str
-) -> subprocess.CompletedProcess[str]:
-    try:
-        result = command_runner(list(args), env=dict(env))
-    except OSError as error:
-        raise BackupError(f"{label} is unavailable") from error
-    if result.returncode != 0:
-        raise BackupError(f"{label} failed")
-    return result
-
-
-def _subprocess_runner(args: list[str], *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, check=False, capture_output=True, text=True, env=env)
-
-
-def _minimal_environment() -> dict[str, str]:
-    names = {"PATH"}
-    if os.name == "nt":
-        names.update({"SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"})
-    return {name: os.environ[name] for name in names if name in os.environ}
-
-
-def _pg_environment(pgpass: Path) -> dict[str, str]:
-    environment = _minimal_environment()
-    environment["PGPASSFILE"] = str(pgpass)
-    environment["PGCONNECT_TIMEOUT"] = "15"
-    return environment
-
-
-def _restic_environment(config: BackupConfig, cache_dir: Path) -> dict[str, str]:
-    environment = _minimal_environment()
-    environment["RESTIC_REPOSITORY"] = str(config.restic_repository)
-    environment["RESTIC_PASSWORD_FILE"] = str(config.restic_password_file)
-    environment["RESTIC_CACHE_DIR"] = str(cache_dir)
-    return environment
-
-
-def _run_with_lease(
-    lease: MaintenanceLease,
-    command_runner: _CommandRunner,
-    args: Sequence[str],
-    *,
-    env: Mapping[str, str],
-    label: str,
-    guards: Sequence[DirectoryGuard] = (),
-) -> subprocess.CompletedProcess[str]:
-    lease.revalidate()
-    for guard in guards:
-        guard.revalidate()
-    result = _run(command_runner, args, env=env, label=label)
-    lease.revalidate()
-    for guard in guards:
-        guard.revalidate()
-    return result
-
-
-def _repository_initialized(
-    lease: MaintenanceLease,
-    command_runner: _CommandRunner,
-    config: BackupConfig,
-    cache_dir: Path,
-    guards: Sequence[DirectoryGuard],
-) -> bool:
-    environment = _restic_environment(config, cache_dir)
-    lease.revalidate()
-    for guard in guards:
-        guard.revalidate()
-    try:
-        result = command_runner(["restic", "cat", "config", "--json"], env=environment)
-    except OSError as error:
-        raise BackupError("restic is unavailable") from error
-    lease.revalidate()
-    for guard in guards:
-        guard.revalidate()
-    return result.returncode == 0
-
-
-def _read_alembic_revision(
-    lease: MaintenanceLease,
-    command_runner: _CommandRunner,
-    config: BackupConfig,
-    pgpass: Path,
-    guards: Sequence[DirectoryGuard],
-) -> str:
-    """Read the one schema revision that the backup actually contains."""
-
-    result = _run_with_lease(
-        lease,
-        command_runner,
-        [
-            "psql",
-            "--no-psqlrc",
-            "--tuples-only",
-            "--no-align",
-            "--dbname",
-            config.database.url,
-            "--command",
-            "SELECT version_num FROM alembic_version",
-        ],
-        env=_pg_environment(pgpass),
-        label="Alembic revision lookup",
-        guards=guards,
-    )
-    revisions = [line for line in result.stdout.splitlines() if line]
-    if (
-        len(revisions) != 1
-        or revisions[0] == "replace-with-current-alembic-revision"
-        or not _SCHEMA_REVISION.fullmatch(revisions[0])
-    ):
-        raise BackupError("Alembic revision lookup returned an invalid result")
-    return revisions[0]
-
-
-def _snapshot_id(output: str) -> str:
-    for line in output.splitlines():
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        value = payload.get("snapshot_id") if isinstance(payload, dict) else None
-        if isinstance(value, str) and _SNAPSHOT_ID.fullmatch(value):
-            return value
-    raise BackupError("restic backup did not return a snapshot identifier")
-
-
-def _restored_path(target: Path, source: Path) -> Path:
-    return target / source.relative_to(source.anchor)
-
-
-def _write_manifest(
-    path: Path,
-    *,
-    config: BackupConfig,
-    dump: Path,
-    roots: tuple[Path, ...],
-    created_at: str,
-    schema_revision: str,
-) -> str:
-    inventories = []
-    for index, root in enumerate(roots):
-        root_hash, file_count, total_bytes = _tree_hash(root)
-        inventory = {
-            "root_id": (
-                config.private_file_root_ids[index]
-                if config.version == 2
-                else hashlib.sha256(str(root).encode("utf-8")).hexdigest()
-            ),
-            "tree_sha256": root_hash,
-            "file_count": file_count,
-            "total_bytes": total_bytes,
-        }
-        if config.version == 2:
-            inventory["source_path"] = str(root)
-            inventory["path_flavor"] = "windows" if os.name == "nt" else "posix"
-        inventories.append(inventory)
-    payload = {
-        "format_version": config.version,
-        "created_at": created_at,
-        "schema_revision": schema_revision,
-        "database": {
-            "host": config.database.host,
-            "port": config.database.port,
-            "database": config.database.database,
-            "username": config.database.username,
-        },
-        "dump": {"format": "pg_dump_custom", "sha256": _sha256(dump), "bytes": dump.stat().st_size},
-        "private_file_roots": inventories,
-    }
-    if config.version == 2:
-        payload["installation_id"] = config.installation_id
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
-    path.write_bytes(encoded)
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _atomic_marker(path: Path, result: BackupResult) -> None:
-    payload = (
-        json.dumps(
-            {
-                "format_version": 1,
-                "snapshot_id": result.snapshot_id,
-                "manifest_sha256": result.manifest_sha256,
-                "completed_at": result.completed_at,
-                "backup_verified": True,
-                "verification_scope": (
-                    "repository-check, manifest-and-dump-restore-hashes, pg-restore-list"
-                ),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        + b"\n"
-    )
-    descriptor, temp_name = tempfile.mkstemp(prefix=".backup-marker-", dir=path.parent)
-    temporary = Path(temp_name)
-    try:
-        if os.name == "nt":
-            os.chmod(temporary, stat.S_IREAD | stat.S_IWRITE)
-        else:
-            os.fchmod(descriptor, 0o600)
-        os.write(descriptor, payload)
-        os.fsync(descriptor)
-        os.close(descriptor)
-        descriptor = -1
-        os.replace(temporary, path)
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        temporary.unlink(missing_ok=True)
-
-
-def _cleanup_run_directory(run_directory: Path, pgpass: Path | None) -> None:
-    """Remove sensitive stage artifacts before any success marker is published."""
-
-    failures: list[OSError] = []
-    targets = [pgpass, run_directory / "database.dump", run_directory / "manifest.json"]
-    for target in targets:
-        if target is None:
-            continue
-        try:
-            target.unlink(missing_ok=True)
         except OSError as error:
-            failures.append(error)
-    restore = run_directory / "restore"
+            raise BackupError("Docker volume export is unavailable") from error
+    if result.returncode:
+        raise BackupError("Docker volume export failed")
+
+
+def _restic_env(config: BackupConfig, run_dir: Path) -> dict[str, str]:
+    cache = run_dir / "restic-cache"
+    cache.mkdir(mode=0o700)
+    return {
+        **_env(),
+        "RESTIC_CACHE_DIR": str(cache),
+        "RESTIC_REPOSITORY": str(config.restic_repository),
+        "RESTIC_PASSWORD_FILE": str(config.restic_password_file),
+    }
+
+
+def _snapshot_id(data: bytes) -> str:
+    snapshots: list[str] = []
+    for line in data.splitlines():
+        payload = _json_output(line, "Restic backup summary")
+        if isinstance(payload, dict) and payload.get("message_type") == "summary":
+            value = payload.get("snapshot_id")
+            if isinstance(value, str) and _SNAPSHOT.fullmatch(value):
+                snapshots.append(value)
+    if len(snapshots) != 1:
+        raise BackupError("Restic backup did not report exactly one full snapshot ID")
+    return snapshots[0]
+
+
+def _manifest_files(bundle: Path) -> dict[str, dict[str, object]]:
+    files: dict[str, dict[str, object]] = {}
+    for file in sorted(bundle.rglob("*")):
+        if file.is_symlink():
+            raise BackupError("backup bundle contains a symlink")
+        if file.is_file() and file.name != "manifest.json":
+            files[file.relative_to(bundle).as_posix()] = {
+                "sha256": _sha256(file),
+                "bytes": file.stat().st_size,
+            }
+        elif not file.is_file() and not file.is_dir():
+            raise BackupError("backup bundle contains an unsupported entry")
+    return files
+
+
+def _atomic_json(path: Path, payload: dict[str, object]) -> None:
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
-        if restore.exists():
-            shutil.rmtree(restore)
-        if run_directory.exists():
-            shutil.rmtree(run_directory)
-    except OSError as error:
-        failures.append(error)
-    if run_directory.exists() or failures:
-        raise BackupError("backup staging cleanup failed")
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(payload, output, sort_keys=True)
+            output.flush()
+            os.fsync(output.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def run_backup(
     config_path: Path,
     *,
-    command_runner: _CommandRunner = _subprocess_runner,
-    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    command_runner: Callable[..., subprocess.CompletedProcess[bytes]] = _command,
 ) -> BackupResult:
-    """Create one restic snapshot and prove its database artifacts can be restored."""
-
     config = parse_config(config_path)
-    staging_root, roots, repository = _validate_runtime_paths(config, config_path)
-    lease = MaintenanceLease.acquire(config, now)
-    staging_guard: DirectoryGuard | None = None
-    repository_guard: DirectoryGuard | None = None
-    marker_guard: DirectoryGuard | None = None
+    _separate(config, config_path)
+    for path in config.compose_files:
+        if not path.is_file() or path.is_symlink():
+            raise BackupError("selected Compose file is unavailable")
+    if config.tls_directory:
+        _private(config.tls_directory, "TLS directory", directory=True)
+    inventory = _project_inventory(config, command_runner)
+    images = _compose_images(config, command_runner)
+    service_images = inventory["services"]
+    if not isinstance(service_images, dict) or set(images) != set(service_images):
+        raise BackupError("Compose and stopped container services differ")
+    for service, details in service_images.items():
+        if not isinstance(details, dict) or images[service] != details["ref"]:
+            raise BackupError("stopped container image differs from pinned Compose configuration")
+    # Do not allow mutable tags for the provider and DB recovery boundary.
+    for service in _BASE_SERVICES - {"provider-volume-init"}:
+        if "@sha256:" not in images[service]:
+            raise BackupError("provider image is not digest-pinned")
+    run_dir = Path(
+        tempfile.mkdtemp(prefix="openslate-supabase-backup-", dir=config.staging_directory)
+    )
+    run_dir.chmod(0o700)
     try:
-        staging_guard = DirectoryGuard.acquire(staging_root, "staging_directory")
-        repository_guard = DirectoryGuard.acquire(repository, "restic_repository")
-        marker_guard = DirectoryGuard.acquire(
-            config.completion_marker.parent, "completion_marker parent"
+        bundle = run_dir / "bundle"
+        bundle.mkdir(mode=0o700)
+        (bundle / "volumes").mkdir(mode=0o700)
+        for logical, name in cast(dict[str, str], inventory["volumes"]).items():
+            if _project_inventory(config, command_runner) != inventory:
+                raise BackupError("source project changed during volume export")
+            _export_volume(name, images["db"], bundle / "volumes" / f"{logical}.tar")
+        if _project_inventory(config, command_runner) != inventory:
+            raise BackupError("source project changed during volume export")
+        _copy_file(config.provider_env_file, bundle / "private" / "provider.env", private=True)
+        if config.app_env_file:
+            _copy_file(config.app_env_file, bundle / "private" / "app.env", private=True)
+        if config.caddy_config_file:
+            _copy_file(config.caddy_config_file, bundle / "private" / "Caddyfile", private=True)
+        if config.tls_directory:
+            _copy_directory(config.tls_directory, bundle / "private" / "tls", private=True)
+        for source in config.compose_files:
+            _copy_file(source, bundle / "compose" / source.name, private=False)
+        for name in ("upstream", "templates"):
+            _copy_directory(config.compose_root / name, bundle / "compose" / name, private=False)
+        files = _manifest_files(bundle)
+        manifest = {
+            "format_version": 3,
+            "source_installation_id": config.installation_id,
+            "source_project": config.project_name,
+            "deployment": config.deployment,
+            "created_at": datetime.now(UTC).isoformat(),
+            "images": service_images,
+            "volumes": inventory["volumes"],
+            "files": files,
+        }
+        manifest_path = bundle / "manifest.json"
+        _atomic_json(manifest_path, manifest)
+        manifest_hash = _sha256(manifest_path)
+        env = _restic_env(config, run_dir)
+        _run(command_runner, ["restic", "cat", "config"], "Restic repository admission", env=env)
+        backup_output = _run(
+            command_runner, ["restic", "backup", "--json", str(bundle)], "Restic backup", env=env
         )
-    except Exception:
-        for guard in (marker_guard, repository_guard, staging_guard):
-            if guard is not None:
-                guard.close()
-        lease.close()
-        raise
-    assert staging_guard is not None and repository_guard is not None and marker_guard is not None
-    guards = (staging_guard, repository_guard, marker_guard)
-    run_directory = Path()
-    pgpass: Path | None = None
-    try:
-        staging_guard.revalidate()
-        run_directory = Path(tempfile.mkdtemp(prefix="openslate-backup-", dir=staging_guard.path))
-        repository_guard.revalidate()
-        marker_guard.revalidate()
-        run_directory.chmod(0o700)
-        dump = run_directory / "database.dump"
-        manifest = run_directory / "manifest.json"
-        pgpass = _write_pgpass(config, run_directory)
-        schema_revision = _read_alembic_revision(lease, command_runner, config, pgpass, guards)
-        _run_with_lease(
-            lease,
-            command_runner,
-            [
-                "pg_dump",
-                "--format=custom",
-                "--file",
-                str(dump),
-                "--no-owner",
-                "--no-privileges",
-                "--dbname",
-                config.database.url,
-            ],
-            env=_pg_environment(pgpass),
-            label="pg_dump",
-            guards=guards,
+        snapshot_id = _snapshot_id(backup_output)
+        _run(
+            command_runner, ["restic", "check", "--read-data"], "Restic data verification", env=env
         )
-        dump_revision = _read_alembic_revision(lease, command_runner, config, pgpass, guards)
-        if dump_revision != schema_revision:
-            raise BackupError("Alembic revision changed while creating database dump")
-        completed_at = now().astimezone(UTC).isoformat().replace("+00:00", "Z")
-        manifest_hash = _write_manifest(
-            manifest,
-            config=config,
-            dump=dump,
-            roots=roots,
-            created_at=completed_at,
-            schema_revision=schema_revision,
-        )
-        cache_dir = run_directory / "restic-cache"
-        cache_dir.mkdir(mode=0o700)
-        restic_environment = _restic_environment(config, cache_dir)
-        if not _repository_initialized(lease, command_runner, config, cache_dir, guards):
-            if not config.initialize_repository:
-                raise BackupError("restic repository is not initialized")
-            _run_with_lease(
-                lease,
-                command_runner,
-                ["restic", "init"],
-                env=restic_environment,
-                label="restic init",
-                guards=guards,
-            )
-            if not _repository_initialized(lease, command_runner, config, cache_dir, guards):
-                raise BackupError("restic repository initialization could not be verified")
-        backup = _run_with_lease(
-            lease,
-            command_runner,
-            [
-                "restic",
-                "backup",
-                "--json",
-                str(dump),
-                str(manifest),
-                *(str(root) for root in roots),
-            ],
-            env=restic_environment,
-            label="restic backup",
-            guards=guards,
-        )
-        snapshot_id = _snapshot_id(backup.stdout)
-        _run_with_lease(
-            lease,
-            command_runner,
-            ["restic", "check"],
-            env=restic_environment,
-            label="restic check",
-            guards=guards,
-        )
-        restore_root = run_directory / "restore"
-        restore_root.mkdir(mode=0o700)
-        _run_with_lease(
-            lease,
+        verify = run_dir / "verify"
+        verify.mkdir(mode=0o700)
+        _run(
             command_runner,
             [
                 "restic",
                 "restore",
                 snapshot_id,
                 "--target",
-                str(restore_root),
+                str(verify),
                 "--include",
-                str(dump),
-                "--include",
-                str(manifest),
+                str(manifest_path),
             ],
-            env=restic_environment,
-            label="restic restore verification",
-            guards=guards,
+            "Restic manifest restore",
+            env=env,
         )
-        restored_dump = _restored_path(restore_root, dump)
-        restored_manifest = _restored_path(restore_root, manifest)
-        if not restored_dump.is_file() or not restored_manifest.is_file():
-            raise BackupError("restic restore verification did not restore required artifacts")
-        if _sha256(restored_dump) != _sha256(dump) or _sha256(restored_manifest) != manifest_hash:
-            raise BackupError("restic restore verification hash mismatch")
-        _run_with_lease(
-            lease,
-            command_runner,
-            ["pg_restore", "--list", str(restored_dump)],
-            env=_minimal_environment(),
-            label="pg_restore validation",
-            guards=guards,
-        )
-        result = BackupResult(
-            snapshot_id=snapshot_id,
-            manifest_sha256=manifest_hash,
-            completed_at=completed_at,
-        )
-        lease.revalidate()
-        staging_guard.revalidate()
-        _cleanup_run_directory(run_directory, pgpass)
-        run_directory = Path()
-        lease.revalidate()
-        repository_guard.revalidate()
-        marker_guard.revalidate()
-        _atomic_marker(config.completion_marker, result)
-        return result
+        restored = verify / manifest_path.relative_to(manifest_path.anchor)
+        if not restored.is_file() or _sha256(restored) != manifest_hash:
+            raise BackupError("Restic manifest restore did not match the source")
+        if _project_inventory(config, command_runner) != inventory:
+            raise BackupError("source project changed during backup verification")
+        result = BackupResult(snapshot_id, manifest_hash, datetime.now(UTC).isoformat())
     finally:
-        try:
-            if run_directory != Path():
-                _cleanup_run_directory(run_directory, pgpass)
-        finally:
-            marker_guard.close()
-            repository_guard.close()
-            staging_guard.close()
-            lease.close()
+        shutil.rmtree(run_dir)
+    _atomic_json(
+        config.completion_marker,
+        {
+            "format_version": 3,
+            "snapshot_id": snapshot_id,
+            "manifest_sha256": manifest_hash,
+            "source_installation_id": config.installation_id,
+            "source_project": config.project_name,
+            "completed_at": result.completed_at,
+        },
+    )
+    return result
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--config", required=True, type=Path, help="Protected local backup config JSON"
-    )
+    parser.add_argument("--config", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
         result = run_backup(args.config)
-    except BackupError as error:
-        print(f"Backup failed: {error}", file=sys.stderr)
+    except (BackupError, OSError) as error:
+        detail = (
+            str(error)
+            if isinstance(error, BackupError)
+            else "protected filesystem operation failed"
+        )
+        print(f"Backup failed: {detail}", file=sys.stderr)
         return 1
     print(f"Backup complete: snapshot {result.snapshot_id}")
     return 0

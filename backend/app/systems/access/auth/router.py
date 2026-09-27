@@ -4,7 +4,6 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -14,10 +13,14 @@ from app.common.dependencies import (
     get_current_user,
     require_roles,
 )
-from app.core.base_model import utc_now
 from app.core.config import get_settings
 from app.core.config.development import browser_origin_is_permitted, is_relaxed_development
 from app.core.database import get_db
+from app.core.integrations.supabase_auth import (
+    InvalidProviderCredentials,
+    SupabaseAuthUnavailable,
+    get_supabase_auth_client,
+)
 from app.systems.access.auth.cookies import (
     clear_browser_session as _clear_browser_session,
 )
@@ -37,9 +40,23 @@ from app.systems.access.auth.request_security import (
     require_completed_identity as _require_completed_identity,
 )
 from app.systems.access.auth.request_security import source as _source
-from app.systems.access.identity import eligibility, recovery
-from app.systems.access.identity.models import ActionTokenPurpose
-from app.systems.access.identity.rate_limits import invitation_completion_permitted
+from app.systems.access.auth.template_router import router as template_router
+from app.systems.access.identity import provider_actions
+from app.systems.access.identity.contracts import (
+    ActionTokenInvalid,
+    IdentityRateLimited,
+    InvalidCredentials,
+)
+from app.systems.access.identity.provider_login import login_with_provider
+from app.systems.access.identity.provider_sessions import (
+    refresh_provider_session,
+    revoke_provider_refresh_session,
+)
+from app.systems.access.identity.provider_signout import attempt_provider_signout
+from app.systems.access.identity.rate_limits import (
+    invitation_completion_permitted,
+    recovery_request_permitted,
+)
 from app.systems.access.identity.schemas import (
     ActionTokenCompleteRequest,
     LoginRequest,
@@ -48,31 +65,14 @@ from app.systems.access.identity.schemas import (
     RefreshTokenRequest,
     TokenResponse,
 )
-from app.systems.access.identity.service import (
-    ActionTokenInvalid,
-    IdentityRateLimited,
-    InvalidCredentials,
-    RefreshReplayDetected,
-    authenticate_password,
-    consume_action_token,
-    issue_session,
-    recovery_request_permitted,
-    refresh_session,
-    replace_password,
-    revoke_refresh_session,
-    revoke_session,
-)
-from app.systems.access.identity.service import (
-    revoke_user_sessions as revoke_user_sessions,
-)
+from app.systems.access.identity.session_revocation import revoke_session, revoke_user_sessions
 from app.systems.access.users.acceptance import (
-    append_invitation_acceptance_success,
     begin_invitation_acceptance,
     record_invitation_acceptance_failure,
 )
 from app.systems.access.users.account_operations import router as account_operations_router
 from app.systems.access.users.coordination import InvitationConflict, InvitationError
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserRole
 from app.systems.access.users.permissions import effective_permissions
 from app.systems.access.users.roles_router import router as roles_router
 from app.systems.access.users.router import router as users_router
@@ -84,10 +84,9 @@ from app.systems.access.users.schemas import (
     UserResponse,
 )
 from app.systems.access.users.service import (
-    create_invitation,
-    resend_invitation_delivery,
+    invite_user,
+    resend_invitation,
 )
-from app.systems.platform.notifications.outbox import delivery_status, smtp_delivery_enabled
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 router = APIRouter()
@@ -119,14 +118,15 @@ def login(
 ) -> dict[str, bool]:
     _require_browser_origin(request)
     try:
-        user = authenticate_password(
+        issued = login_with_provider(
             db,
-            payload.identifier,
+            payload.email,
             payload.password,
+            get_supabase_auth_client(),
             source=_source(request),
+            user_agent=request.headers.get("user-agent"),
             enforce_rate_limit=_anonymous_rate_limits_enabled(),
         )
-        issued = issue_session(db, user, user_agent=request.headers.get("user-agent"))
         db.commit()
     except IdentityRateLimited as error:
         db.rollback()
@@ -138,6 +138,9 @@ def login(
     except InvalidCredentials as error:
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid authentication credentials") from error
+    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Authentication service unavailable") from error
     _set_browser_session(response, issued.access_token, issued.refresh_token, issued.csrf_token)
     return {"authenticated": True, "setup_required": issued.setup_only}
 
@@ -154,14 +157,14 @@ def refresh(
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
     csrf_token = _require_refresh_csrf(request)
     try:
-        issued = refresh_session(db, raw_refresh, csrf_token=csrf_token)
-        db.commit()
-    except RefreshReplayDetected:
-        db.commit()
-        return _cleared_auth_error()
+        issued = refresh_provider_session(
+            db, raw_refresh, get_supabase_auth_client(), csrf_token=csrf_token
+        )
     except InvalidCredentials:
-        db.commit()
         return _cleared_auth_error()
+    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Authentication service unavailable") from error
     _set_browser_session(response, issued.access_token, issued.refresh_token, issued.csrf_token)
     return {"authenticated": True, "setup_required": issued.setup_only}
 
@@ -174,17 +177,15 @@ def issue_bearer_token(
 ) -> TokenResponse:
     _reject_mixed_credentials(request)
     try:
-        user = authenticate_password(
+        issued = login_with_provider(
             db,
-            payload.identifier,
+            payload.email,
             payload.password,
+            get_supabase_auth_client(),
             source=_source(request),
+            user_agent=request.headers.get("user-agent"),
             enforce_rate_limit=_anonymous_rate_limits_enabled(),
         )
-        issued = issue_session(db, user, user_agent=request.headers.get("user-agent"))
-        if issued.setup_only:
-            db.rollback()
-            raise HTTPException(status_code=403, detail="Password setup required")
         db.commit()
     except IdentityRateLimited as error:
         db.rollback()
@@ -192,6 +193,9 @@ def issue_bearer_token(
     except InvalidCredentials as error:
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid authentication credentials") from error
+    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Authentication service unavailable") from error
     return TokenResponse(access_token=issued.access_token, refresh_token=issued.refresh_token)
 
 
@@ -203,14 +207,12 @@ def refresh_bearer_token(
 ) -> TokenResponse:
     _reject_mixed_credentials(request)
     try:
-        issued = refresh_session(db, payload.refresh_token)
-        db.commit()
-    except RefreshReplayDetected as error:
-        db.commit()
-        raise HTTPException(status_code=401, detail="Invalid authentication credentials") from error
+        issued = refresh_provider_session(db, payload.refresh_token, get_supabase_auth_client())
     except InvalidCredentials as error:
-        db.commit()
         raise HTTPException(status_code=401, detail="Invalid authentication credentials") from error
+    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Authentication service unavailable") from error
     return TokenResponse(access_token=issued.access_token, refresh_token=issued.refresh_token)
 
 
@@ -223,20 +225,29 @@ def logout(
     _reject_mixed_credentials(request)
     if request.cookies.get("openslate_access") or request.cookies.get("openslate_refresh"):
         _require_browser_origin(request)
-    try:
-        identity = get_current_identity(request, _bearer_credentials(request), db)
-        revoke_session(db, identity.session_id, identity.user.id)
-    except HTTPException:
-        raw_refresh = request.cookies.get("openslate_refresh")
-        if raw_refresh is not None:
-            csrf_token = _require_refresh_csrf(request)
-            if not revoke_refresh_session(db, raw_refresh, csrf_token=csrf_token):
-                db.rollback()
-                _clear_browser_session(response)
-                raise HTTPException(
-                    status_code=401, detail="Invalid authentication credentials"
-                ) from None
+    session_id: UUID | None = None
+    raw_refresh = request.cookies.get("openslate_refresh")
+    if raw_refresh is not None:
+        csrf_token = _require_refresh_csrf(request)
+        session_id = revoke_provider_refresh_session(db, raw_refresh, csrf_token=csrf_token)
+        if session_id is None:
+            db.rollback()
+            _clear_browser_session(response)
+            raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+    else:
+        try:
+            identity = get_current_identity(request, _bearer_credentials(request), db)
+            if revoke_session(db, identity.session_id, identity.user.id):
+                session_id = identity.session_id
+        except HTTPException as error:
+            if error.status_code != 401:
+                raise
     db.commit()
+    if session_id is not None:
+        try:
+            attempt_provider_signout(db, session_id, get_supabase_auth_client())
+        except SQLAlchemyError:
+            db.rollback()
     _clear_browser_session(response)
     return response
 
@@ -250,7 +261,7 @@ def invite(
     db: Annotated[Session, Depends(get_db)],
 ) -> InvitationResponse:
     try:
-        issued = create_invitation(db, payload, actor_id=admin.id)
+        user = invite_user(db, payload, actor_id=admin.id)
     except InvitationConflict as error:
         raise HTTPException(
             status_code=409, detail="Email or username is already in use"
@@ -258,9 +269,8 @@ def invite(
     except InvitationError as error:
         raise HTTPException(status_code=409, detail="Unable to create invitation") from error
     return InvitationResponse(
-        user=UserResponse.model_validate(issued.user),
-        delivery=issued.delivery,
-        temporary_password=issued.temporary_password,
+        user=UserResponse.model_validate(user),
+        delivery="email",
     )
 
 
@@ -272,19 +282,12 @@ def resend_invite(
     db: Annotated[Session, Depends(get_db)],
 ) -> InvitationResponse:
     try:
-        issued = resend_invitation_delivery(
-            db,
-            user_id,
-            actor_id=admin.id,
-            delivery=payload.delivery,
-            temporary_password=payload.temporary_password,
-        )
+        user = resend_invitation(db, user_id, actor_id=admin.id)
     except InvitationError as error:
         raise HTTPException(status_code=409, detail="Unable to resend invitation") from error
     return InvitationResponse(
-        user=UserResponse.model_validate(issued.user),
-        delivery=issued.delivery,
-        temporary_password=issued.temporary_password,
+        user=UserResponse.model_validate(user),
+        delivery="email",
     )
 
 
@@ -306,26 +309,14 @@ def session_status(
 ) -> dict[str, object]:
     try:
         identity = get_current_identity(request, None, db)
-    except HTTPException:
+    except HTTPException as error:
+        if error.status_code != 401:
+            raise
         return {"authenticated": False}
     return {
         "authenticated": True,
         "user_id": identity.user.id,
         "setup_required": identity.setup_only,
-    }
-
-
-@auth_router.get("/delivery-status")
-def smtp_delivery_status(
-    _: Annotated[User, Depends(require_roles(UserRole.ADMIN))],
-    request: Request,
-    db: Annotated[Session, Depends(get_db)],
-) -> dict[str, object]:
-    status_value = delivery_status(db)
-    return {
-        "enabled": status_value.enabled,
-        "running": request.app.state.smtp_outbox_worker.running,
-        "state_counts": status_value.state_counts,
     }
 
 
@@ -366,31 +357,37 @@ def change_password(
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, bool]:
-    timestamp = utc_now()
+    identity = _require_completed_identity(identity)
+    bearer = _bearer_credentials(request)
+    access_token = (
+        request.cookies.get("openslate_access")
+        if identity.cookie_authenticated
+        else bearer.credentials
+        if bearer is not None
+        else None
+    )
+    if access_token is None:
+        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
     try:
-        authenticated = authenticate_password(
+        provider_actions.change_password(
             db,
-            identity.user.email,
+            identity.user,
+            identity.session_id,
+            access_token,
             payload.current_password,
-            source=_source(request),
-            now=timestamp,
+            payload.password,
+            get_supabase_auth_client(),
         )
-        if authenticated.id != identity.user.id:
-            raise InvalidCredentials("Invalid credentials")
-        replace_password(db, identity.user, payload.password, now=timestamp)
-        issued = issue_session(db, identity.user, now=timestamp)
-        db.commit()
+    except (InvalidCredentials, InvalidProviderCredentials) as error:
+        db.rollback()
+        raise HTTPException(status_code=403, detail="Password cannot be changed") from error
     except IdentityRateLimited as error:
         db.rollback()
         raise HTTPException(status_code=429, detail="Password cannot be changed") from error
-    except InvalidCredentials as error:
-        db.commit()
-        raise HTTPException(status_code=403, detail="Password cannot be changed") from error
-    except ValueError as error:
+    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
         db.rollback()
-        raise HTTPException(status_code=403, detail="Password cannot be changed") from error
-    _set_browser_session(response, issued.access_token, issued.refresh_token, issued.csrf_token)
-    return {"authenticated": True, "setup_required": issued.setup_only}
+        raise HTTPException(status_code=503, detail="Password service unavailable") from error
+    return {"authenticated": True, "setup_required": False}
 
 
 @auth_router.post("/recovery/request", status_code=status.HTTP_204_NO_CONTENT)
@@ -400,22 +397,20 @@ def request_recovery(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     _require_browser_origin(request)
-    identifier = payload.identifier.strip().lower()
-    user = db.scalar(select(User).where(or_(User.email == identifier, User.username == identifier)))
-    if (
-        smtp_delivery_enabled()
-        and recovery_request_permitted(
-            db,
-            identifier,
-            source=_source(request),
-            enforce_rate_limit=_anonymous_rate_limits_enabled(),
+    try:
+        permitted = (
+            recovery_request_permitted(db, payload.email, source=_source(request))
+            if _anonymous_rate_limits_enabled()
+            else True
         )
-        and user is not None
-        and eligibility.is_identity_eligible(user)
-        and user.status == UserStatus.ACTIVE.value
-    ):
-        recovery.queue_recovery_delivery(db, user.id)
-    db.commit()
+        db.commit()
+        if permitted:
+            # Provider recovery deliberately handles known and unknown emails alike.
+            # Local admission still requires an explicitly bound active user.
+            get_supabase_auth_client().request_recovery(payload.email)
+    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Recovery service unavailable") from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -427,15 +422,15 @@ def complete_recovery(
 ) -> Response:
     _require_browser_origin(request)
     try:
-        action = consume_action_token(db, payload.token, ActionTokenPurpose.RECOVERY)
-        user = db.get(User, action.user_id, with_for_update=True)
-        if user is None or user.is_deleted or user.status != UserStatus.ACTIVE.value:
-            raise ActionTokenInvalid("Token is invalid")
-        replace_password(db, user, payload.password)
-        db.commit()
-    except (ActionTokenInvalid, ValueError) as error:
+        provider_actions.complete_recovery(
+            db, payload.token_hash, payload.password, get_supabase_auth_client()
+        )
+    except (ActionTokenInvalid, InvalidProviderCredentials) as error:
         db.rollback()
         raise HTTPException(status_code=400, detail="Recovery token is invalid") from error
+    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Recovery service unavailable") from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -464,28 +459,17 @@ def complete_invitation(
             detail="Invitation completion is unavailable",
             headers={"Retry-After": "900"},
         )
-    operation_id = begin_invitation_acceptance(None)
-    user_id: UUID | None = None
     try:
-        action = consume_action_token(db, payload.token, ActionTokenPurpose.INVITATION)
-        user_id = action.user_id
-        user = db.get(User, action.user_id, with_for_update=True)
-        if user is None or user.is_deleted or user.status != UserStatus.PENDING.value:
-            raise ActionTokenInvalid("Token is invalid")
-        replace_password(db, user, payload.password)
-        user.status = UserStatus.ACTIVE.value
-        user.invitation_accepted_at = utc_now()
-        append_invitation_acceptance_success(db, operation_id, user.id)
-        db.commit()
-    except (ActionTokenInvalid, ValueError) as error:
-        db.rollback()
-        record_invitation_acceptance_failure(operation_id, user_id, "invitation token is invalid")
-        raise HTTPException(status_code=400, detail="Invitation token is invalid") from error
-    except SQLAlchemyError as error:
-        db.rollback()
-        record_invitation_acceptance_failure(
-            operation_id, user_id, "unable to finalize invitation acceptance"
+        provider_actions.complete_invitation(
+            db, payload.token_hash, payload.password, get_supabase_auth_client()
         )
+    except (InvitationError, InvalidProviderCredentials) as error:
+        db.rollback()
+        operation_id = begin_invitation_acceptance(None)
+        record_invitation_acceptance_failure(operation_id, None, "invitation token is invalid")
+        raise HTTPException(status_code=400, detail="Invitation token is invalid") from error
+    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+        db.rollback()
         raise HTTPException(
             status_code=503, detail="Invitation completion is unavailable"
         ) from error
@@ -493,6 +477,7 @@ def complete_invitation(
 
 
 router.include_router(auth_router)
+router.include_router(template_router)
 router.include_router(users_router)
 router.include_router(account_operations_router)
 router.include_router(roles_router)

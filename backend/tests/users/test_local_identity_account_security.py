@@ -1,4 +1,4 @@
-"""Account-security behavior for users with local Identity credentials."""
+"""Application account security with Supabase-owned authentication."""
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
@@ -13,8 +13,8 @@ import app.systems.access.users.account_operations as account_operations
 import app.systems.access.users.coordination as coordination
 import app.systems.access.users.roles_router as roles_router
 import app.systems.access.users.service as user_service
-from app.systems.access.identity.models import ActionTokenPurpose
-from app.systems.access.identity.service import ActionTokenInvalid, consume_action_token
+from app.core.integrations.supabase_auth import InvalidProviderCredentials
+from app.systems.access.identity.provider_actions import complete_invitation
 from app.systems.access.policy.models import AccessPolicyDefaults
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import Role, UserRole, UserStatus
@@ -43,7 +43,7 @@ def no_service_identity_references(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize("operation", ["disable", "delete"])
-def test_account_security_state_changes_invalidate_action_tokens(
+def test_account_security_state_changes_revoke_provider_backed_sessions(
     monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
     admin_role = _role(UserRole.ADMIN)
@@ -52,8 +52,8 @@ def test_account_security_state_changes_invalidate_action_tokens(
     db = Mock(spec=Session)
     db.scalar.side_effect = [admin_role, actor, member]
     db.scalars.return_value = []
-    invalidate = Mock()
-    monkeypatch.setattr(account_operations, "invalidate_action_tokens", invalidate)
+    revoke = Mock()
+    monkeypatch.setattr(account_operations, "revoke_user_sessions", revoke, raising=False)
     monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
 
     if operation == "disable":
@@ -61,81 +61,39 @@ def test_account_security_state_changes_invalidate_action_tokens(
     else:
         account_operations.delete_user(member.id, actor, db)
 
-    invalidate.assert_called_once_with(db, member.id)
+    revoke.assert_called_once_with(db, member.id, except_session_id=None)
 
 
-def test_temporary_resend_maps_common_password_to_a_safe_domain_error() -> None:
-    admin_role = _role(UserRole.ADMIN)
-    admin = _user(admin_role)
-    pending = _user(_role(), status=UserStatus.PENDING)
-    credential = Mock()
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [admin_role, admin, pending]
-    db.get.return_value = credential
-
-    with pytest.raises(InvitationError, match="Temporary password"):
-        user_service.resend_invitation_delivery(
-            db,
-            pending.id,
-            actor_id=admin.id,
-            delivery="temporary_password",
-            temporary_password="passwordpassword",
-        )
-
-    db.rollback.assert_called_once()
-
-
-def test_resend_invalidates_the_previous_invitation_token(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("deleted", [False, True])
+def test_resend_rejects_non_pending_or_deleted_profiles(
+    monkeypatch: pytest.MonkeyPatch, deleted: bool
 ) -> None:
     admin_role = _role(UserRole.ADMIN)
     admin = _user(admin_role)
-    member = _role()
-    pending = _user(member, status=UserStatus.PENDING)
-    pending.invitation_sent_at = datetime.now(UTC)
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [admin_role, admin, pending]
-    issued = Mock(return_value="replacement")
-    monkeypatch.setattr(user_service, "issue_action_token", issued)
-    monkeypatch.setattr(user_service, "load_invitation_expiry_days", lambda _db: 7)
-
-    result = user_service.resend_invitation(db, pending.id, actor_id=admin.id)
-
-    assert result is pending
-    issued.assert_called_once_with(
-        db,
-        pending.id,
-        ActionTokenPurpose.INVITATION,
-        created_by=admin.id,
-        invitation_lifetime=timedelta(days=7),
-    )
-    db.commit.assert_called_once()
-
-
-def test_resend_rejects_non_pending_or_deleted_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
-    admin_role = _role(UserRole.ADMIN)
-    admin = _user(admin_role)
-    active = _user(_role())
+    active = _user(_role(), deleted=deleted)
     db = Mock(spec=Session)
     db.scalar.side_effect = [admin_role, admin, active]
-    monkeypatch.setattr(user_service, "load_invitation_expiry_days", lambda _db: 7)
+    provider = Mock()
 
     with pytest.raises(InvitationError, match="not pending"):
-        user_service.resend_invitation(db, active.id, actor_id=admin.id)
+        user_service.resend_invitation(db, active.id, actor_id=admin.id, client=provider)
+
+    provider.admin_send_invitation.assert_not_called()
 
     db.commit.assert_not_called()
 
 
-def test_consumed_or_expired_action_token_cannot_complete_twice() -> None:
-    action = Mock()
-    action.purpose = ActionTokenPurpose.INVITATION
-    action.consumed_at = datetime.now(UTC)
-    action.expires_at = datetime.now(UTC)
+def test_provider_rejected_invitation_cannot_change_account_or_password() -> None:
     db = Mock(spec=Session)
-    db.scalar.return_value = action
+    provider = Mock()
+    provider.verify_email_action.side_effect = InvalidProviderCredentials("expired or consumed")
 
-    with pytest.raises(ActionTokenInvalid):
-        consume_action_token(db, "raw", ActionTokenPurpose.INVITATION)
+    with pytest.raises(InvitationError, match="Invitation token is invalid"):
+        complete_invitation(db, "a" * 56, "new password", provider)
+
+    provider.update_password.assert_not_called()
+    db.commit.assert_not_called()
+    db.scalar.assert_not_called()
 
 
 def test_pending_user_cannot_be_enabled_or_disabled_by_administrator() -> None:
@@ -197,9 +155,7 @@ def test_only_durable_administrator_cannot_be_disabled_when_another_will_expire(
     monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
 
     with pytest.raises(HTTPException) as error:
-        account_operations.update_user(
-            target.id, UserUpdate(status=UserStatus.DISABLED), actor, db
-        )
+        account_operations.update_user(target.id, UserUpdate(status=UserStatus.DISABLED), actor, db)
 
     assert error.value.status_code == 409
     assert target.status == UserStatus.ACTIVE.value

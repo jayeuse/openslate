@@ -189,7 +189,7 @@ def test_registered_close_password_callback_starts_without_request_transaction(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.LocalPasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
             PasswordClient,
         )
         closed = client.request(
@@ -226,7 +226,7 @@ def test_registered_close_rejects_invalid_confirmation_without_provider_call(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.LocalPasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
             PasswordClient,
         )
         response = client.request(
@@ -271,7 +271,7 @@ def test_registered_close_maps_provider_failure_and_consumed_token_replay(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.LocalPasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
             FailingPasswordClient,
         )
         failed = client.request(
@@ -293,7 +293,7 @@ def test_registered_close_maps_provider_failure_and_consumed_token_replay(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.LocalPasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
             PasswordClient,
         )
         closed = client.request(
@@ -345,7 +345,7 @@ def test_registered_close_rejects_plan_drift_after_provider_success(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.LocalPasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
             PasswordClient,
         )
         response = client.request(
@@ -393,7 +393,7 @@ def test_registered_module_purge_succeeds_when_enabled(
             lambda: SimpleNamespace(lifecycle_purge_enabled=True),
         )
         monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.LocalPasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
             PasswordClient,
         )
         closed = client.request(
@@ -455,7 +455,7 @@ def test_registered_purge_refuses_when_disabled_before_provider(
             lambda: SimpleNamespace(lifecycle_purge_enabled=False),
         )
         monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.LocalPasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
             PasswordClient,
         )
         response = client.request("POST", f"/api/modules/{module.json()['id']}/purge/preview")
