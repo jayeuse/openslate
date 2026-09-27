@@ -420,8 +420,10 @@ textarea {
 
 ::view-transition-new(.nav-down),
 ::view-transition-new(.nav-up) {
-  animation: nav-enter var(--motion-base) var(--ease-out)
-    calc(var(--motion-fast) * 0.5) both;
+  /* The new page waits for the old one to leave, so text never doubles up
+     in a cross-fade. */
+  animation: nav-enter var(--motion-base) var(--ease-out) var(--motion-fast)
+    both;
 }
 
 ::view-transition-old(.nav-down),
@@ -456,13 +458,6 @@ textarea {
   :root[data-theme] {
     --nav-travel-x: 0px;
     --nav-travel-y: 0px;
-  }
-
-  /* Each look's arrival signature (a drawn underline, a sprayed title)
-     shows in its finished state. */
-  :root[data-theme] [data-slot="page-title"],
-  :root[data-theme] [data-slot="page-title"]::after {
-    animation: none;
   }
 }
 

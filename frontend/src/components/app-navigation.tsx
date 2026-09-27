@@ -58,6 +58,9 @@ const groupIcons = {
 
 const PREFETCH_INTENT_DELAY_MS = 120;
 const MAX_PREFETCHED_ROUTES = 12;
+// How long after a change of place the fill keeps gliding (covers a group
+// opening in the same move); outside it, the fill tracks its label directly.
+const INDICATOR_GLIDE_WINDOW_MS = 450;
 
 interface AppNavigationProps {
   pathname: string;
@@ -92,28 +95,55 @@ export function AppNavigation({
   const navRef = useRef<HTMLElement>(null);
   const indicatorRef = useRef<HTMLSpanElement>(null);
 
-  // The active item's fill is one element under the list that glides to the
-  // active link. It lives in the page (not in a view transition layer), so
-  // it stays under the labels and inside the sidebar's scroll clipping, and
-  // it follows groups as they open and close.
+  // The active section's fill is one element under the list. It lives in the
+  // page (not in a view-transition layer), so it stays under the labels and
+  // inside the sidebar's scroll clipping. It glides when the place changes;
+  // when groups open or close around it, it moves with its label frame by
+  // frame, and a closing group clips it like it clips the label.
+  const placedKey = useRef<string | null>(null);
+  const glideUntil = useRef(0);
+  const lastTarget = useRef("");
   useEffect(() => {
     const nav = navRef.current;
     const indicator = indicatorRef.current;
     if (!nav || !indicator) return;
+    if (placedKey.current !== null && placedKey.current !== currentKey)
+      glideUntil.current = performance.now() + INDICATOR_GLIDE_WINDOW_MS;
+    placedKey.current = currentKey;
     const place = () => {
       const active = nav.querySelector<HTMLElement>(
         '[data-slot="sidebar-menu-sub-button"][aria-current="page"]',
       );
       if (!active || collapsed) {
         indicator.style.opacity = "0";
+        lastTarget.current = "";
         return;
       }
       const navBox = nav.getBoundingClientRect();
       const box = active.getBoundingClientRect();
-      indicator.style.opacity = "1";
-      indicator.style.transform = `translate(${box.left - navBox.left}px, ${box.top - navBox.top}px)`;
+      const panel = active
+        .closest('[data-slot="collapsible-content"]')
+        ?.getBoundingClientRect();
+      const top = Math.max(box.top, panel?.top ?? box.top);
+      const height = Math.max(
+        0,
+        Math.min(box.bottom, panel?.bottom ?? box.bottom) - top,
+      );
+      const x = box.left - navBox.left;
+      const y = top - navBox.top;
+      const target = `${x},${y},${box.width},${height}`;
+      // ResizeObserver also reports the size it starts with; an unchanged
+      // target must not restart (or cut short) a glide.
+      if (target === lastTarget.current) return;
+      lastTarget.current = target;
+      const glide =
+        indicator.dataset.ready === "true" &&
+        performance.now() < glideUntil.current;
+      indicator.style.transition = glide ? "" : "none";
+      indicator.style.opacity = height > 0 ? "1" : "0";
+      indicator.style.transform = `translate(${x}px, ${y}px)`;
       indicator.style.width = `${box.width}px`;
-      indicator.style.height = `${box.height}px`;
+      indicator.style.height = `${height}px`;
     };
     place();
     // Glide only after the first placement, so it never flies in on load.
