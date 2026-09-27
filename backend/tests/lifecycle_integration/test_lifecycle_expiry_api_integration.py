@@ -61,7 +61,7 @@ def test_registered_close_rejects_expired_challenge_before_password_provider(
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.LocalPasswordGrantClient",
+            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
             PasswordClient,
         )
         response = client.request(

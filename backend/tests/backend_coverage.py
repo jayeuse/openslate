@@ -31,7 +31,6 @@ def run_backend_coverage(run, backend, private, environment, run_id):
     for name, role in (
         ("TEST_DATABASE_URL", "openslate_runtime"),
         ("MIGRATION_DATABASE_URL", "openslate_owner"),
-        ("TEST_INSPECTOR_DATABASE_URL", "openslate_inspector"),
     ):
         assert_runner_database_url(
             environment[name], environment, allowed_roles=frozenset({role})
@@ -147,7 +146,6 @@ if __name__ == "__main__":
         for name in (
             "TEST_DATABASE_URL",
             "MIGRATION_DATABASE_URL",
-            "TEST_INSPECTOR_DATABASE_URL",
         )
     ):
         raise SystemExit("Coverage requires runner-owned PostgreSQL database URLs")

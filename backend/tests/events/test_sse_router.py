@@ -1,6 +1,7 @@
 """SSE transport contracts for opaque invalidation delivery."""
 
 import asyncio
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.core.database import get_db
 from app.systems.access.users.permissions import Capability
+from app.systems.platform.events import router as events_router
 from app.systems.platform.events.hub import EventHub
 from app.systems.platform.events.models import InvalidationEvent
 from app.systems.platform.events.router import (
@@ -154,18 +156,45 @@ def test_events_endpoint_requires_authenticated_user() -> None:
     assert response.status_code == 401
 
 
-def test_event_principal_rejects_setup_only_token(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.systems.platform.events.router.decode_token",
-        lambda *_args: {"setup": True},
+def test_unbound_provider_identity_cannot_open_event_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    claims = SimpleNamespace(user_id="provider-user", session_id="provider-session")
+    verified: list[str] = []
+    resolved: list[object] = []
+
+    class ProviderAuth:
+        def verify_access_token(self, token: str) -> object:
+            verified.append(token)
+            return claims
+
+    provider = ProviderAuth()
+
+    @contextmanager
+    def session(_engine: object):
+        yield object()
+
+    def resolve_provider_session(_db: object, identity: object, client: object) -> None:
+        assert client is provider
+        resolved.append(identity)
+        return None
+
+    monkeypatch.setattr(events_router, "get_supabase_auth_client", lambda: provider)
+    monkeypatch.setattr(events_router, "get_engine", lambda: "engine")
+    monkeypatch.setattr(events_router, "AuditSession", session)
+    monkeypatch.setattr(events_router, "resolve_provider_session", resolve_provider_session)
+
+    application = FastAPI()
+    application.state.events_hub = EventHub()
+    application.include_router(router, prefix="/api")
+
+    response = TestClient(application).get(
+        "/api/events", headers={"authorization": "Bearer provider-token"}
     )
-    request = SimpleNamespace(cookies={})
-    bearer = SimpleNamespace(credentials="token")
 
-    with pytest.raises(Exception) as error:
-        get_event_principal(request, bearer)
-
-    assert getattr(error.value, "status_code", None) == 401
+    assert response.status_code == 401
+    assert "provider-token" in verified
+    assert resolved == [claims]
 
 
 @pytest.mark.parametrize(
@@ -188,9 +217,7 @@ def test_event_principal_rejects_setup_only_token(monkeypatch) -> None:
 def test_cookie_event_principal_checks_browser_origin_before_stream(
     monkeypatch, headers: dict[str, str], allowed: bool
 ) -> None:
-    monkeypatch.setattr(
-        "app.systems.platform.events.router.decode_token", lambda *_args: {"setup": False}
-    )
+    _install_provider_auth(monkeypatch, "cookie")
     monkeypatch.setattr(
         "app.systems.platform.events.router.browser_origin_is_permitted",
         lambda _settings, origin: origin in {"https://app.example", "http://localhost:3001"},
@@ -212,9 +239,7 @@ def test_cookie_event_principal_checks_browser_origin_before_stream(
 
 
 def test_bearer_event_principal_does_not_require_browser_origin(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.systems.platform.events.router.decode_token", lambda *_args: {"setup": False}
-    )
+    _install_provider_auth(monkeypatch, "bearer")
     request = SimpleNamespace(cookies={}, headers={})
 
     assert get_event_principal(request, SimpleNamespace(credentials="bearer")) == EventPrincipal(
@@ -249,6 +274,15 @@ def test_stalled_asgi_send_cancels_the_stream_and_releases_admission_slot() -> N
 
 async def _not_disconnected() -> bool:
     return False
+
+
+def _install_provider_auth(monkeypatch: pytest.MonkeyPatch, expected_token: str) -> None:
+    class ProviderAuth:
+        def verify_access_token(self, token: str) -> object:
+            assert token == expected_token
+            return object()
+
+    monkeypatch.setattr(events_router, "get_supabase_auth_client", ProviderAuth)
 
 
 def _sequence_authorizer(*users: object | None):

@@ -14,12 +14,9 @@ from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.sandbox.departments.models import Department
-from tests.conftest import guarded_create_engine
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
-SOURCE_REVISION = "33f6b3cea25b"
-TARGET_REVISION = "18958e485e0c"
-ACCESS_HEAD_REVISION = "2bf95b237416"
+SUPABASE_DATABASE_ROLES = ("anon", "authenticated", "service_role")
+TABLE_ACTIONS = ("SELECT", "INSERT", "UPDATE", "DELETE")
 
 
 def test_board_event_series_is_registered_for_migrations() -> None:
@@ -152,29 +149,32 @@ def test_event_series_enforces_temporal_audience_and_recurrence_modes(integratio
 
 
 @pytest.mark.integration
-def test_event_migration_preserves_personal_head_and_least_privilege_roles() -> None:
-    environment = guarded_migration_environment()
-    owner_engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
-    try:
-        run_alembic(environment, "downgrade", SOURCE_REVISION)
-        with owner_engine.connect() as connection:
-            assert connection.scalar(text("SELECT to_regclass('public.board_events')")) is None
-            assert connection.scalar(text("SELECT to_regclass('public.board_homes')")) is not None
-        run_alembic(environment, "upgrade", TARGET_REVISION)
-        with owner_engine.connect() as connection:
-            applied_revisions = set(
-                connection.scalars(text("SELECT version_num FROM alembic_version"))
-            )
-            assert applied_revisions == {ACCESS_HEAD_REVISION, TARGET_REVISION}
-            _assert_event_schema_and_privileges(connection)
-    finally:
-        try:
-            run_alembic(environment, "upgrade", "head")
-        finally:
-            owner_engine.dispose()
+def test_event_baseline_preserves_temporal_schema_and_supabase_role_boundaries(
+    integration_owner_db,
+) -> None:
+    # The old source-head upgrade is archived; verify the event series in the fresh baseline.
+    connection = integration_owner_db.connection()
+    assert connection.scalar(text("SELECT to_regclass('public.board_events')")) is not None
+    _assert_event_schema_and_privileges(connection)
 
 
 def _assert_event_schema_and_privileges(connection: Connection) -> None:
+    expected_indexes = {
+        "ix_board_events_board_id",
+        "ix_board_events_author_id",
+        "ix_board_events_audience_role_id",
+        "ix_board_events_audience_user_id",
+        "ix_board_events_audience_department_id",
+    }
+    actual_indexes = set(
+        connection.scalars(
+            text(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' "
+                "AND tablename = 'board_events'"
+            )
+        )
+    )
+    assert expected_indexes <= actual_indexes
     constraints = {
         row.conname: (row.contype, row.confdeltype)
         for row in connection.execute(
@@ -211,7 +211,7 @@ def _assert_event_schema_and_privileges(connection: Connection) -> None:
     assert columns["start_date"] == columns["end_date"] == "date"
     assert columns["repeat_until"] == "date"
     assert columns["start_at"] == columns["end_at"] == "timestamp with time zone"
-    for action in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+    for action in TABLE_ACTIONS:
         assert (
             connection.scalar(
                 text("SELECT has_table_privilege('openslate_runtime', :table, :action)"),
@@ -219,19 +219,12 @@ def _assert_event_schema_and_privileges(connection: Connection) -> None:
             )
             is True
         )
-    assert (
-        connection.scalar(
-            text(
-                "SELECT has_table_privilege('openslate_inspector', 'public.board_events', 'SELECT')"
-            )
-        )
-        is True
-    )
-    for action in ("INSERT", "UPDATE", "DELETE"):
-        assert (
-            connection.scalar(
-                text("SELECT has_table_privilege('openslate_inspector', :table, :action)"),
-                {"table": "public.board_events", "action": action},
-            )
-            is False
-        )
+    for role in SUPABASE_DATABASE_ROLES:
+        for action in TABLE_ACTIONS:
+            assert (
+                connection.scalar(
+                    text("SELECT has_table_privilege(:role, :table, :action)"),
+                    {"role": role, "table": "public.board_events", "action": action},
+                )
+                is False
+            ), f"Supabase database role {role} must not access board_events"

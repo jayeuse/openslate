@@ -308,13 +308,15 @@ def reconcile(
             token is None
             or digest is None
             or size is None
-            or quarantine is None
             or ready is None
-            or (quarantine.size, quarantine.digest) != (size, digest)
+            or (
+                quarantine is not None
+                and (quarantine.size, quarantine.digest) != (size, digest)
+            )
             or (ready.size, ready.digest) != (size, digest)
         ):
             raise error("scan_execution_unresolved", "Scanner execution requires operator recovery")
-        # Both exact locations prove that promotion completed before metadata did.
+        # Exact ready bytes establish promotion; any remaining quarantine copy must match.
         # Re-run the scanner under a fresh claim instead of trusting an uncommitted verdict.
         file = _current(db, file_id, token, "pending_scan")
         if file.is_deleted:

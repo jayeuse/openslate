@@ -13,25 +13,17 @@ ROOT: Final = Path(__file__).resolve().parents[1]
 ENVIRONMENT_HELPER: Final = ROOT / "scripts" / "environment.py"
 
 _ACTIONS: Final[dict[str, tuple[str, ...]]] = {
-    "db": ("up", "-d", "postgres"),
-    "pgweb": ("--profile", "db-ui", "up", "-d", "--force-recreate", "pgweb"),
+    "db": ("up", "-d"),
+    "studio": ("up", "-d", "api-gw"),
     "caddy": ("--profile", "gateway", "up", "-d", "--force-recreate", "caddy"),
-    "containers": (
-        "--profile",
-        "db-ui",
-        "up",
-        "-d",
-        "--force-recreate",
-        "postgres",
-        "pgweb",
-    ),
-    "status": ("--profile", "db-ui", "ps"),
-    "stop": ("--profile", "db-ui", "stop"),
+    "containers": ("up", "-d"),
+    "status": ("ps",),
+    "stop": ("stop",),
 }
 
 _STOP_TARGETS: Final[dict[str, tuple[str, ...]]] = {
-    "db": ("stop", "postgres"),
-    "pgweb": ("--profile", "db-ui", "stop", "pgweb"),
+    "db": _ACTIONS["stop"],
+    "studio": ("stop", "studio"),
     "caddy": ("--profile", "gateway", "stop", "caddy"),
     "containers": _ACTIONS["stop"],
 }
@@ -39,7 +31,9 @@ _STOP_TARGETS: Final[dict[str, tuple[str, ...]]] = {
 CommandRunner = Callable[..., subprocess.CompletedProcess[object]]
 
 
-def build_command(action: str, target: str | None = None) -> list[str]:
+def build_command(
+    action: str, target: str | None = None, *, env_file: Path | None = None
+) -> list[str]:
     """Expand one public developer action into the canonical environment helper."""
     if action != "stop" and target is not None:
         raise ValueError("only stop accepts a container target")
@@ -51,6 +45,7 @@ def build_command(action: str, target: str | None = None) -> list[str]:
         str(ROOT / "backend"),
         "python",
         str(ENVIRONMENT_HELPER),
+        *(["--env-file", str(env_file)] if env_file is not None else []),
         "compose",
         *arguments,
     ]
@@ -62,6 +57,7 @@ def main(
     runner: CommandRunner = subprocess.run,
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--env-file", type=Path, help="private installation environment file")
     parser.add_argument(
         "action",
         choices=tuple(_ACTIONS),
@@ -76,8 +72,13 @@ def main(
     options = parser.parse_args(argv)
     if options.action != "stop" and options.target is not None:
         parser.error("a container target can only follow stop")
+    # Bind the caller's path before uv changes the child working directory.
+    # absolute() preserves a final symlink for environment.py's lstat guard.
+    env_file = options.env_file.absolute() if options.env_file is not None else None
     return runner(
-        build_command(options.action, options.target), cwd=ROOT, check=False
+        build_command(options.action, options.target, env_file=env_file),
+        cwd=ROOT,
+        check=False,
     ).returncode
 
 

@@ -10,7 +10,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies import require_fresh_exact_admin, require_roles
 from app.core.database import get_db
-from app.systems.access.identity.service import invalidate_action_tokens
+from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.coordination import (
     ProfileValidationError,
     advance_token_cutoff,
@@ -317,7 +317,7 @@ def _disable_user(
         user.username = payload.username
     user.status = UserStatus.DISABLED.value
     advance_token_cutoff(user)
-    invalidate_action_tokens(db, user.id)
+    revoke_user_sessions(db, user.id, except_session_id=None)
     try:
         commit(db, "Username unavailable")
     except HTTPException as error:
@@ -371,7 +371,7 @@ def delete_user(
     if user.status != UserStatus.PENDING.value:
         user.status = UserStatus.DISABLED.value
     advance_token_cutoff(user)
-    invalidate_action_tokens(db, user.id)
+    revoke_user_sessions(db, user.id, except_session_id=None)
     _record_outcome(
         "user.authentication_disable",
         SecurityEventOutcome.ATTEMPT,

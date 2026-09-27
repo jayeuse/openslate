@@ -25,7 +25,7 @@ function fixture(): Fixture {
 async function signIn(page: Page) {
   const credentials = fixture().admin;
   await page.goto("/login");
-  await page.getByLabel("Email or username").fill(credentials.email);
+  await page.getByLabel("Email", { exact: true }).fill(credentials.email);
   await page.getByLabel("Password").fill(credentials.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/openview$/);

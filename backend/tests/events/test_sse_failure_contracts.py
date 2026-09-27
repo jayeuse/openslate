@@ -8,6 +8,7 @@ import psycopg
 import pytest
 from fastapi import HTTPException
 
+from app.core.integrations.supabase_auth import InvalidProviderToken
 from app.systems.access.users.permissions import Capability
 from app.systems.platform.events import router as events_router
 from app.systems.platform.events.hub import EventHub, PostgresInvalidationListener
@@ -81,10 +82,18 @@ def test_event_principal_rejects_ambiguous_credentials_and_returns_one_verified_
     with pytest.raises(HTTPException, match="Invalid authentication credentials"):
         get_event_principal(cookie_request, bearer)
 
-    monkeypatch.setattr(events_router, "decode_token", lambda *_args: {"sub": "user"})
+    verified: list[str] = []
+
+    class ProviderAuth:
+        def verify_access_token(self, token: str) -> object:
+            verified.append(token)
+            return object()
+
+    monkeypatch.setattr(events_router, "get_supabase_auth_client", ProviderAuth)
     principal = get_event_principal(SimpleNamespace(cookies={}), bearer)
 
     assert principal == EventPrincipal("bearer-token")
+    assert verified == ["bearer-token"]
 
 
 def test_events_endpoint_fails_closed_for_missing_hub_revocation_and_capacity(
@@ -249,30 +258,54 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def exercise() -> None:
-        principal = EventPrincipal("token")
-        monkeypatch.setattr(events_router, "decode_token", lambda *_args: None)
-        assert await reauthorize_event_principal(principal) is None
+        invalid_principal = EventPrincipal("invalid-token")
+        valid_principal = EventPrincipal("valid-token")
 
         expected = _user({})
         entered: list[object] = []
+        exited: list[object] = []
+        claims = SimpleNamespace(user_id="provider-user", session_id="provider-session")
+
+        class ProviderAuth:
+            def verify_access_token(self, token: str) -> object:
+                if token == "invalid-token":
+                    raise InvalidProviderToken("invalid provider token")
+                assert token == "valid-token"
+                return claims
+
+        provider = ProviderAuth()
+        monkeypatch.setattr(events_router, "get_supabase_auth_client", lambda: provider)
 
         class Session:
             def __init__(self, engine: object) -> None:
+                assert engine == "engine"
                 entered.append(engine)
 
             def __enter__(self) -> object:
-                return self
+                return database
 
             def __exit__(self, *_args: object) -> None:
-                return None
+                exited.append(database)
 
-        monkeypatch.setattr(events_router, "decode_token", lambda *_args: {"sub": "user"})
+        database = object()
+
+        def resolve_provider_session(
+            db: object, verified_claims: object, client: object
+        ) -> tuple[object, object]:
+            assert db is database
+            assert verified_claims is claims
+            assert client is provider
+            return expected, object()
+
         monkeypatch.setattr(events_router, "get_engine", lambda: "engine")
         monkeypatch.setattr(events_router, "AuditSession", Session)
-        monkeypatch.setattr(events_router, "validate_access_session", lambda *_args: expected)
+        monkeypatch.setattr(events_router, "resolve_provider_session", resolve_provider_session)
 
-        assert await reauthorize_event_principal(principal) is expected
+        assert await reauthorize_event_principal(invalid_principal) is None
+        assert entered == exited == []
+        assert await reauthorize_event_principal(valid_principal) is expected
         assert entered == ["engine"]
+        assert exited == [database]
 
     asyncio.run(exercise())
 

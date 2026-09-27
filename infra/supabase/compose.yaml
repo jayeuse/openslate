@@ -1,0 +1,359 @@
+# Pinned from Supabase self-hosted/v0.8.2; see README.md for provenance and
+# the deliberately narrowed API gateway. Supply --project-name for each instance.
+services:
+  db:
+    image: supabase/postgres:17.6.1.136@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: "5432"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: postgres
+      PGDATABASE: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate a per-installation POSTGRES_PASSWORD}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Generate a per-installation POSTGRES_PASSWORD}
+      JWT_EXP: ${JWT_EXPIRY:-900}
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - cluster_name=${OPENSLATE_INSTANCE_ID:?Set the owned OpenSlate instance ID}
+      - -c
+      - log_min_messages=fatal
+    volumes:
+      - supabase-db-data:/var/lib/postgresql/data
+      - supabase-db-config:/etc/postgresql-custom
+      - ./upstream/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
+      - ./upstream/db/webhooks.sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql:ro
+      - ./upstream/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+      - ./upstream/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+      - ./upstream/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:ro
+      - ./upstream/db/logs.sql:/docker-entrypoint-initdb.d/migrations/99-logs.sql:ro
+      - ./upstream/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - provider
+      - operator
+
+  auth:
+    image: supabase/gotrue:v2.196.0@sha256:c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL:?Set the external Auth issuer URL}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD}@db:5432/postgres
+      GOTRUE_SITE_URL: ${SITE_URL:?Set the OpenSlate browser origin}
+      GOTRUE_URI_ALLOW_LIST: ${SITE_URL:?Set the OpenSlate browser origin}/auth/*
+      GOTRUE_DISABLE_SIGNUP: "true"
+      GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: "true"
+      GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "10"
+      GOTRUE_SECURITY_REFRESH_TOKEN_ALGORITHM_VERSION: "2"
+      GOTRUE_SECURITY_REFRESH_TOKEN_ALLOW_REUSE: "false"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "false"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-900}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET:?Generate JWT_SECRET}
+      GOTRUE_JWT_KEYS: ${JWT_KEYS:?Generate the private Auth signing key set}
+      GOTRUE_JWT_ISSUER: ${API_EXTERNAL_URL:?Set the external Auth issuer URL}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:?Set the invitation sender email}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:?Set an SMTP host}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:?Set an SMTP port}
+      GOTRUE_SMTP_USER: ${SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-OpenSlate}
+      GOTRUE_MAILER_TEMPLATES_INVITE: ${AUTH_TEMPLATE_BASE_URL:?Set the internal template URL}/invite.html
+      GOTRUE_MAILER_TEMPLATES_RECOVERY: ${AUTH_TEMPLATE_BASE_URL:?Set the internal template URL}/recovery.html
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/v1/verify
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - provider
+      - mail-egress
+
+  rest:
+    image: postgrest/postgrest:v14.17@sha256:c9dc201e555f5d8e37e7f39cdd4df0229774996e213bfd7de8d10ac609030f2c
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMAS: storage
+      PGRST_DB_EXTRA_SEARCH_PATH: public,extensions
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_JWKS:?Generate the public verification JWKS}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY:-900}
+      PGRST_ADMIN_SERVER_HOST: localhost
+      PGRST_ADMIN_SERVER_PORT: "3001"
+    command: [postgrest]
+    healthcheck:
+      test: ["CMD", "postgrest", "--ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - provider
+
+  imgproxy:
+    image: darthsim/imgproxy:v3.31.4@sha256:73c5dda13199745b0d2d00e4149d4a589c5b2e205dbf335ca05eca8276b54712
+    restart: unless-stopped
+    environment:
+      IMGPROXY_BIND: :5001
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
+      IMGPROXY_USE_ETAG: "true"
+      IMGPROXY_AUTO_WEBP: "false"
+      IMGPROXY_MAX_SRC_RESOLUTION: "16.8"
+    volumes:
+      - supabase-storage-data:/var/lib/storage:ro
+    healthcheck:
+      test: ["CMD", "imgproxy", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - provider
+
+  # The official Storage/Studio images leave new named volumes root-owned.
+  # This one-shot owner setup lets their long-running processes stay non-root.
+  provider-volume-init:
+    image: supabase/storage-api:v1.74.0@sha256:f1546fac6d1c7e345428ac904bfaa7be7cecd50a1f549fe1cf38c628a7b15c85
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown 1000:1000 /var/lib/storage /app/snippets"]
+    restart: "no"
+    user: "0:0"
+    volumes:
+      - supabase-storage-data:/var/lib/storage
+      - supabase-studio-snippets:/app/snippets
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - provider
+
+  storage:
+    image: supabase/storage-api:v1.74.0@sha256:f1546fac6d1c7e345428ac904bfaa7be7cecd50a1f549fe1cf38c628a7b15c85
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_healthy
+      imgproxy:
+        condition: service_healthy
+      provider-volume-init:
+        condition: service_completed_successfully
+    environment:
+      ANON_KEY: ${ANON_KEY:?Generate the legacy anon key}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY:?Generate the legacy service key}
+      POSTGREST_URL: http://rest:3000
+      AUTH_JWT_SECRET: ${JWT_SECRET:?Generate JWT_SECRET}
+      JWT_JWKS: ${JWT_JWKS:?Generate the public verification JWKS}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD}@db:5432/postgres
+      STORAGE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL:?Set the operator gateway URL}
+      REQUEST_ALLOW_X_FORWARDED_PATH: "true"
+      FILE_SIZE_LIMIT: "52428800"
+      STORAGE_BACKEND: file
+      GLOBAL_S3_BUCKET: stub
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: local
+      ENABLE_IMAGE_TRANSFORMATION: "true"
+      IMGPROXY_URL: http://imgproxy:5001
+    volumes:
+      - supabase-storage-data:/var/lib/storage
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://storage:5000/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - provider
+
+  meta:
+    image: supabase/postgres-meta:v0.99.0@sha256:9a079ac1c94d89629262822a4bd1902d5b1be4adb464e5a0a8fd078aaed72158
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: "8080"
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: "5432"
+      PG_META_DB_NAME: postgres
+      PG_META_DB_USER: postgres
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD}
+      CRYPTO_KEY: ${PG_META_CRYPTO_KEY:?Generate PG_META_CRYPTO_KEY}
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - operator
+
+  studio:
+    image: supabase/studio:2026.09.07-sha-7996410@sha256:94a2a9d2906e8b4109e55159a62e241c3044709a492913ea8edd34b14973d288
+    restart: unless-stopped
+    depends_on:
+      meta:
+        condition: service_started
+      provider-volume-init:
+        condition: service_completed_successfully
+    environment:
+      HOSTNAME: 0.0.0.0
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD}
+      POSTGRES_USER_READ_WRITE: postgres
+      PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY:?Generate PG_META_CRYPTO_KEY}
+      PGRST_DB_SCHEMAS: storage
+      PGRST_DB_EXTRA_SEARCH_PATH: public,extensions
+      DEFAULT_ORGANIZATION_NAME: ${STUDIO_DEFAULT_ORGANIZATION:-OpenSlate}
+      DEFAULT_PROJECT_NAME: ${STUDIO_DEFAULT_PROJECT:-OpenSlate}
+      SUPABASE_URL: http://api-gw:8000
+      SUPABASE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL:?Set the operator gateway URL}
+      SUPABASE_ANON_KEY: ${ANON_KEY:?Generate ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY:?Generate SERVICE_ROLE_KEY}
+      AUTH_JWT_SECRET: ${JWT_SECRET:?Generate JWT_SECRET}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?Generate a publishable key}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:?Generate a server secret key}
+      ENABLED_FEATURES_LOGS_ALL: "false"
+      SNIPPETS_MANAGEMENT_FOLDER: /app/snippets
+    volumes:
+      - supabase-studio-snippets:/app/snippets
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/api/platform/profile').then((r) => {if (r.status !== 200) throw new Error(r.status)})\""]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - operator
+      - studio-ingress
+
+  api-gw:
+    image: envoyproxy/envoy:v1.39.1@sha256:57e14a549d7bd43c8d3f6d03e8cfa653e037d4b38e133acd9b54f38c524401b4
+    restart: unless-stopped
+    depends_on:
+      auth:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+      studio:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SUPABASE_API_PORT:-58000}:8000"
+    volumes:
+      - ./upstream/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./upstream/envoy/cds.yaml:/etc/envoy/cds.yaml:ro
+      - ./upstream/envoy/lds.template.yaml:/etc/envoy/lds.template.yaml:ro
+      - ./upstream/envoy/docker-entrypoint.sh:/docker-entrypoint.sh:ro
+    environment:
+      ANON_KEY: ${ANON_KEY:?Generate ANON_KEY}
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?Generate SERVICE_ROLE_KEY}
+      ANON_KEY_ASYMMETRIC: ${ANON_KEY_ASYMMETRIC:?Generate asymmetric anon key}
+      SERVICE_ROLE_KEY_ASYMMETRIC: ${SERVICE_ROLE_KEY_ASYMMETRIC:?Generate asymmetric service key}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?Generate a publishable key}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:?Generate a server secret key}
+      SUPABASE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL:?Set the operator gateway URL}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:?Set a Studio username}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?Generate a Studio password}
+    entrypoint: ["/bin/sh", "/docker-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/8000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - provider
+      - studio-ingress
+      # Docker Desktop needs a non-internal network to activate loopback
+      # publication; this network carries no other provider services.
+      - gateway-host
+
+volumes:
+  supabase-db-data:
+  supabase-db-config:
+  supabase-storage-data:
+  supabase-studio-snippets:
+
+networks:
+  provider:
+    internal: true
+  operator:
+    internal: true
+  studio-ingress:
+    internal: true
+  mail-egress:
+  gateway-host:

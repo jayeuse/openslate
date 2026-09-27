@@ -68,12 +68,17 @@ class CiScopeTests(unittest.TestCase):
                 self.assertTrue(scope.decisions["server_image"].run)
 
     def test_backend_changes_keep_backend_and_unified_server_image_gates(self):
-        scope = ci_scope.classify_paths(
-            ["backend/app/systems/users/service.py"], base_ref="base"
-        )
-        self.assertTrue(scope.decisions["backend"].run)
-        self.assertTrue(scope.decisions["server_image"].run)
-        self.assertFalse(scope.decisions["frontend"].run)
+        for path in (
+            "backend/app/systems/users/service.py",
+            "infra/supabase/compose.yaml",
+            "infra/supabase/upstream/db/roles.sql",
+            "infra/supabase/upstream/envoy/lds.template.yaml",
+        ):
+            with self.subTest(path=path):
+                scope = ci_scope.classify_paths([path], base_ref="base")
+                self.assertTrue(scope.decisions["backend"].run)
+                self.assertTrue(scope.decisions["server_image"].run)
+                self.assertFalse(scope.decisions["frontend"].run)
 
     def test_shared_docker_context_rebuilds_the_unified_server_image(self):
         scope = ci_scope.classify_paths([".dockerignore"], base_ref="base")

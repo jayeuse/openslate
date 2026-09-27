@@ -11,6 +11,7 @@ from uuid6 import uuid7
 
 import app.systems.access.users.account_operations as account_operations
 import app.systems.access.users.service as user_service
+from app.core.integrations.supabase_auth import ProviderUser
 from app.systems.access.policy.service import CreationDefaults
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import (
@@ -233,10 +234,31 @@ def test_guest_invitation_persists_profile_and_deduplicated_department_membershi
         SimpleNamespace(id=department_a),
         SimpleNamespace(id=department_b),
     ]
-    monkeypatch.setattr(user_service, "create_credential", Mock())
     monkeypatch.setattr(user_service, "append_security_event", Mock())
+    provider = Mock()
+    provider_id = uuid7()
 
-    user = user_service.invite_user(db, payload, bootstrap=True)
+    def created_profile():
+        return next(
+            call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], User)
+        )
+
+    db.flush.side_effect = lambda: setattr(created_profile(), "id", uuid7())
+    monkeypatch.setattr(user_service, "get_user", lambda *_args: created_profile())
+    provider.admin_create_invitation_user.side_effect = lambda email, local_id, operation_id: (
+        ProviderUser(
+            provider_id,
+            None,
+            email,
+            {
+                "openslate_user_id": str(local_id),
+                "openslate_invitation_operation_id": str(operation_id),
+            },
+        )
+    )
+    provider.admin_send_invitation.return_value = ProviderUser(provider_id, None, payload.email)
+
+    user = user_service.invite_user(db, payload, bootstrap=True, client=provider)
 
     assert user.display_name == "Guest person"
     assert user.identity_kind == IdentityKind.GUEST.value
@@ -249,4 +271,5 @@ def test_guest_invitation_persists_profile_and_deduplicated_department_membershi
         (department_b, True),
         (department_a, False),
     ]
-    db.commit.assert_called_once()
+    assert user.supabase_user_id == provider_id
+    assert user.status == UserStatus.PENDING.value

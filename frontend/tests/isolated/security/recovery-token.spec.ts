@@ -11,7 +11,7 @@ test("takes a recovery token from the fragment and removes it immediately", () =
   const calls: Array<[unknown, string, string]> = [];
   const token = consumeRecoveryToken(
     {
-      hash: "#token=opaque-recovery-token",
+      hash: "#token_hash=opaque-recovery-token&type=recovery",
       pathname: "/auth/recovery",
       search: "",
     } as Location,
@@ -28,9 +28,33 @@ test("takes a recovery token from the fragment and removes it immediately", () =
   expect(calls).toEqual([[null, "", "/auth/recovery"]]);
 });
 
+for (const hash of [
+  "#token_hash=recovery&type=invite",
+  "#token_hash=first&token_hash=second&type=recovery",
+  "#token_hash=recovery&type=recovery&type=recovery",
+  "#token_hash=%ZZ&type=recovery",
+]) {
+  test(`rejects and clears a malformed recovery fragment: ${hash}`, () => {
+    const calls: string[] = [];
+    expect(
+      consumeRecoveryToken(
+        { hash, pathname: "/auth/recovery", search: "" } as Location,
+        {
+          replaceState: (
+            _state: unknown,
+            _title: string,
+            url: string | URL | null | undefined,
+          ) => calls.push(String(url)),
+        } as unknown as History,
+      ),
+    ).toBeNull();
+    expect(calls).toEqual(["/auth/recovery"]);
+  });
+}
+
 test("keeps a captured recovery token when StrictMode repeats the state updater", () => {
   const location = {
-    hash: "#token=opaque-recovery-token",
+    hash: "#token_hash=opaque-recovery-token&type=recovery",
     pathname: "/auth/recovery",
     search: "",
   };

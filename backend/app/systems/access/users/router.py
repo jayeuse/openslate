@@ -33,7 +33,7 @@ from app.systems.access.users.schemas import (
     UserResponse,
 )
 from app.systems.access.users.service import (
-    create_invitation,
+    invite_user,
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -100,7 +100,7 @@ def create_user(
     db: Annotated[Session, Depends(get_db)],
 ) -> InvitationResponse:
     try:
-        issued = create_invitation(
+        user = invite_user(
             db,
             InvitationCreate(**payload.model_dump()),
             actor_id=admin.id,
@@ -118,7 +118,6 @@ def create_user(
             detail="Unable to send invitation",
         ) from error
     return InvitationResponse(
-        user=UserResponse.model_validate(issued.user),
-        delivery=issued.delivery,
-        temporary_password=issued.temporary_password,
+        user=UserResponse.model_validate(user),
+        delivery="email",
     )

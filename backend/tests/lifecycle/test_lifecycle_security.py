@@ -1,14 +1,22 @@
 from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import UUID
 
 import pytest
 
+import app.systems.sandbox.lifecycle.password as password_module
+from app.core.integrations.supabase_auth import (
+    ProviderTokens,
+    ProviderUser,
+    SupabaseAuthUnavailable,
+)
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleActorBlocked,
     LifecycleInvalidCredentials,
     LifecyclePasswordRateLimited,
+    LifecyclePasswordServiceUnavailable,
 )
 from app.systems.sandbox.lifecycle.models import (
     LifecycleChallengeStatus,
@@ -16,7 +24,7 @@ from app.systems.sandbox.lifecycle.models import (
     LifecycleOperation,
     LifecycleRateLimitBucket,
 )
-from app.systems.sandbox.lifecycle.password import LocalPasswordGrantClient
+from app.systems.sandbox.lifecycle.password import ProviderPasswordGrantClient
 from app.systems.sandbox.lifecycle.service import begin_verification, hash_challenge_token
 
 CHALLENGE_TOKEN = token_urlsafe(32)
@@ -94,45 +102,73 @@ def test_in_flight_verifications_reserve_the_actor_failure_budget() -> None:
     db.rollback.assert_called_once()
 
 
-def test_local_password_grant_returns_the_authenticated_identity(
+def test_provider_password_grant_returns_only_the_explicitly_bound_local_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock()
-    monkeypatch.setattr(
-        "app.systems.sandbox.lifecycle.password.authenticate_password",
-        lambda *_args: type("User", (), {"id": ACTOR_ID})(),
+    provider_id = UUID("00000000-0000-0000-0000-000000000124")
+    local = SimpleNamespace(
+        id=ACTOR_ID,
+        supabase_user_id=provider_id,
+        email="actor@example.com",
+        is_deleted=False,
+        expires_at=None,
+        status="active",
+        invitation_sent_at=None,
+        role=SimpleNamespace(is_deleted=False),
     )
+    db.scalar.return_value = local
+    client = Mock()
+    client.password_grant.return_value = ProviderTokens("access", "refresh", provider_id, 600)
+    client.get_user.return_value = ProviderUser(provider_id, None, local.email)
 
-    returned_id = LocalPasswordGrantClient(db).verify_password(
-        "actor@example.com", CONFIRMATION_PASSWORD
-    )
+    returned_id = ProviderPasswordGrantClient(
+        db, client=client, enforce_rate_limit=False
+    ).verify_password("actor@example.com", CONFIRMATION_PASSWORD)
 
     assert returned_id == ACTOR_ID
+    client.sign_out.assert_called_once_with("access", scope="local")
 
 
-@pytest.mark.parametrize(
-    ("exception", "expected"),
-    [
-        ("InvalidCredentials", LifecycleInvalidCredentials),
-        ("IdentityRateLimited", LifecyclePasswordRateLimited),
-    ],
-)
-def test_local_password_grant_maps_identity_failures(
+def test_provider_password_grant_rejects_an_unbound_provider_identity(
     monkeypatch: pytest.MonkeyPatch,
-    exception: str,
-    expected: type[Exception],
 ) -> None:
-    from app.systems.access.identity.service import IdentityRateLimited, InvalidCredentials
+    db = Mock()
+    db.scalar.return_value = None
+    client = Mock()
+    client.password_grant.return_value = ProviderTokens("access", "refresh", ACTOR_ID, 600)
+    client.get_user.return_value = ProviderUser(ACTOR_ID, None, "actor@example.com")
 
-    failure = (
-        InvalidCredentials("invalid")
-        if exception == "InvalidCredentials"
-        else IdentityRateLimited("rate")
-    )
-    monkeypatch.setattr(
-        "app.systems.sandbox.lifecycle.password.authenticate_password",
-        Mock(side_effect=failure),
-    )
+    with pytest.raises(LifecycleInvalidCredentials):
+        ProviderPasswordGrantClient(db, client=client, enforce_rate_limit=False).verify_password(
+            "actor@example.com", CONFIRMATION_PASSWORD
+        )
 
-    with pytest.raises(expected):
-        LocalPasswordGrantClient(Mock()).verify_password("actor@example.com", CONFIRMATION_PASSWORD)
+
+def test_provider_password_outage_is_an_explicit_step_up_failure() -> None:
+    client = Mock()
+    client.password_grant.side_effect = SupabaseAuthUnavailable("offline")
+    with pytest.raises(LifecyclePasswordServiceUnavailable):
+        ProviderPasswordGrantClient(
+            Mock(), client=client, enforce_rate_limit=False
+        ).verify_password("actor@example.com", CONFIRMATION_PASSWORD)
+
+
+def test_provider_password_step_up_preserves_backend_attempt_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blocked = SimpleNamespace(blocked_until=datetime.now(UTC) + timedelta(minutes=1))
+    budget = SimpleNamespace(
+        cleanup_expired_buckets=lambda *_a, **_kw: None,
+        login_fingerprint=lambda *_a: "fingerprint",
+        lock_bucket=lambda *_a: blocked,
+    )
+    monkeypatch.setattr(password_module, "rate_limits", budget, raising=False)
+    client = Mock()
+
+    with pytest.raises(LifecyclePasswordRateLimited):
+        ProviderPasswordGrantClient(Mock(), client=client).verify_password(
+            "actor@example.com", CONFIRMATION_PASSWORD
+        )
+
+    client.password_grant.assert_not_called()

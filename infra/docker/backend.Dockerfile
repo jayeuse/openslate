@@ -40,6 +40,7 @@ WORKDIR /app
 RUN useradd --create-home --uid 10001 appuser
 COPY --from=backend-builder --chown=appuser:appuser /app /app
 COPY --from=frontend-builder --chown=appuser:appuser /workspace/frontend/out /app/web
+COPY --chown=appuser:appuser infra/supabase/templates/ /infra/supabase/templates/
 
 USER appuser
 

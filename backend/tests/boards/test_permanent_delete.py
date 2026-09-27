@@ -15,7 +15,6 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.identity.service import create_credential
 from app.systems.access.users.models import Role, User
 from app.systems.boards import lifecycle_router
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
@@ -40,6 +39,7 @@ from app.systems.sandbox.lifecycle.schemas import (
 )
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.boards.provider_accounts import create_password_account
 
 pytestmark = pytest.mark.integration
 
@@ -51,9 +51,16 @@ def _actor(db: Session, *, admin: bool, password: str | None = None) -> User:
         db.add(role)
         db.flush()
     user_id = uuid7()
+    email = f"board-purge-{user_id.hex}@example.test"
+    provider_user_id = (
+        create_password_account(db, email=email, password=password)
+        if password is not None
+        else None
+    )
     actor = User(
         id=user_id,
-        email=f"board-purge-{user_id.hex}@example.test",
+        email=email,
+        supabase_user_id=provider_user_id,
         username=f"purge_{user_id.hex[:12]}",
         status="active",
         role_id=role.id,
@@ -61,8 +68,6 @@ def _actor(db: Session, *, admin: bool, password: str | None = None) -> User:
     )
     db.add(actor)
     db.flush()
-    if password is not None:
-        create_credential(db, actor.id, password)
     return actor
 
 

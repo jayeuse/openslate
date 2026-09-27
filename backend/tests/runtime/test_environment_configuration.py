@@ -72,7 +72,7 @@ def test_operation_loaders_read_canonical_values_and_report_missing_names(
 ) -> None:
     environment = tmp_path / ".env"
     environment.write_text(
-        "ADMIN_EMAIL=admin@example.test\nADMIN_USERNAME=admin\nADMIN_PASSWORD=test-password\n"
+        "ADMIN_EMAIL=admin@example.test\nADMIN_USERNAME=admin\n"
         "ENVIRONMENT=test\nDATABASE_URL=postgresql+psycopg://openslate_runtime:pass@127.0.0.1/db\n"
         "MIGRATION_DATABASE_URL=postgresql+psycopg://openslate_owner:pass@127.0.0.1/db\n"
         "DATABASE_BOOTSTRAP_URL=postgresql+psycopg://postgres:pass@127.0.0.1/db\n",
@@ -87,12 +87,12 @@ def test_operation_loaders_read_canonical_values_and_report_missing_names(
     environment.write_text("ADMIN_EMAIL=admin@example.test\n", encoding="utf-8")
     with pytest.raises(ConfigurationError) as error:
         get_admin_settings()
-    assert str(error.value) == "Invalid configuration: ADMIN_PASSWORD, ADMIN_USERNAME"
+    assert str(error.value) == "Invalid configuration: ADMIN_USERNAME"
 
 
 def test_settings_rejects_blank_and_malformed_canonical_values() -> None:
     values = settings_values(
-        auth_jwt_secret=" ",
+        publication_signing_key=" ",
         backend_port="not-a-port",
         log_dir="relative-logs",
         public_origin="not-a-url",
@@ -104,7 +104,7 @@ def test_settings_rejects_blank_and_malformed_canonical_values() -> None:
         Settings(**values, _env_file=None)
 
     rendered = str(error.value)
-    assert "auth_jwt_secret" in rendered
+    assert "publication_signing_key" in rendered
     assert "backend_port" in rendered
     assert "log_dir" in rendered
     assert "public_origin" in rendered
@@ -119,11 +119,11 @@ def test_settings_rejects_the_removed_cors_origins_runtime_setting() -> None:
         Settings(**settings_values(CORS_ORIGINS='["https://legacy.example.test"]'), _env_file=None)
 
 
-def test_settings_rejects_an_undersized_jwt_signing_secret() -> None:
+def test_settings_rejects_an_undersized_publication_signing_key() -> None:
     with pytest.raises(ValidationError) as error:
-        Settings(**settings_values(auth_jwt_secret="too-short"), _env_file=None)
+        Settings(**settings_values(publication_signing_key="too-short"), _env_file=None)
 
-    assert "auth_jwt_secret" in str(error.value)
+    assert "publication_signing_key" in str(error.value)
 
 
 @pytest.mark.parametrize("concurrency", [1, 2])
@@ -155,7 +155,7 @@ def test_missing_local_admin_values_cannot_be_filled_from_the_shell(
     with pytest.raises(ConfigurationError) as error:
         get_admin_settings()
 
-    assert str(error.value) == "Invalid configuration: ADMIN_PASSWORD, ADMIN_USERNAME"
+    assert str(error.value) == "Invalid configuration: ADMIN_USERNAME"
 
 
 def test_migration_requires_its_owner_url_without_runtime_fallback(

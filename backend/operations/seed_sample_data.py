@@ -230,15 +230,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "email": email,
                     "username": username,
                     "role_id": role_ids[role_name],
-                    "delivery": "temporary_password",
                 },
             )
             if invitation is None:
                 raise RuntimeError(f"Invitation returned no response: {username}")
-            temporary_password = invitation.get("temporary_password")
-            if not isinstance(temporary_password, str) or not temporary_password:
-                raise RuntimeError(f"Invitation returned no temporary password: {username}")
-            print(f"sample_user={username} temporary_password={temporary_password}")
+            print(f"sample_user={username} invitation_requested")
 
     department_ids: dict[str, str] = {}
     for logical_id, name in DEPARTMENT_SPECS.items():

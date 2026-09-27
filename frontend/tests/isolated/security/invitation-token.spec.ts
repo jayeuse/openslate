@@ -9,7 +9,7 @@ test("takes an invitation token from the URL fragment and removes it immediately
   const calls: Array<[unknown, string, string]> = [];
   const token = consumeInvitationToken(
     {
-      hash: "#token=opaque-invitation-token",
+      hash: "#token_hash=opaque-invitation-token&type=invite",
       pathname: "/auth/setup",
       search: "",
     } as Location,
@@ -31,19 +31,66 @@ test("does not treat query or unrelated fragment content as an invitation token"
   };
   expect(
     consumeInvitationToken(
-      {
-        hash: "#step=complete",
-        pathname: "/auth/setup",
-        search: "?token=no",
-      } as Location,
+      { hash: "", pathname: "/auth/setup", search: "" } as Location,
       { replaceState } as unknown as History,
     ),
   ).toBeNull();
 });
 
+for (const hash of [
+  "#token_hash=invite&type=recovery",
+  "#token_hash=first&token_hash=second&type=invite",
+  "#token_hash=invite&type=invite&type=invite",
+  "#token_hash=&type=invite",
+  "#token_hash=%ZZ&type=invite",
+  "#token=legacy&type=invite",
+]) {
+  test(`rejects and clears a malformed invitation fragment: ${hash}`, () => {
+    const calls: string[] = [];
+    expect(
+      consumeInvitationToken(
+        {
+          hash,
+          pathname: "/auth/setup",
+          search: "?token_hash=query-secret",
+        } as Location,
+        {
+          replaceState: (
+            _state: unknown,
+            _title: string,
+            url: string | URL | null | undefined,
+          ) => calls.push(String(url)),
+        } as unknown as History,
+      ),
+    ).toBeNull();
+    expect(calls).toEqual(["/auth/setup"]);
+  });
+}
+
+test("never accepts a query-string invitation credential", () => {
+  const calls: string[] = [];
+  expect(
+    consumeInvitationToken(
+      {
+        hash: "",
+        pathname: "/auth/setup",
+        search: "?token_hash=query-secret&type=invite",
+      } as Location,
+      {
+        replaceState: (
+          _state: unknown,
+          _title: string,
+          url: string | URL | null | undefined,
+        ) => calls.push(String(url)),
+      } as unknown as History,
+    ),
+  ).toBeNull();
+  expect(calls).toEqual(["/auth/setup"]);
+});
+
 test("keeps a captured token when React repeats the pure state updater", () => {
   const location = {
-    hash: "#token=opaque-invitation-token",
+    hash: "#token_hash=opaque-invitation-token&type=invite",
     pathname: "/auth/setup",
     search: "",
   };

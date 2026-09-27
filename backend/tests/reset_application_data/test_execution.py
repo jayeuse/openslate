@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.core.config.instance import InstanceTarget
+from app.core.config.instance import InstanceTarget, InstanceTargetError
 from operations import reset_application_data as reset
 from operations import reset_execution as execution
 from operations import reset_planning
@@ -22,6 +22,8 @@ def _plan() -> SimpleNamespace:
         profiles_to_delete=0,
         inactive_admin_profiles_to_delete=0,
         preserved_admin_id=uuid4(),
+        preserved_admin_provider_id=uuid4(),
+        provider_subjects=((uuid4(), uuid4()),),
         preserved_admin_role_id=uuid4(),
         preserved_member_role_id=uuid4(),
         profile_snapshot=SimpleNamespace(id=uuid4()),
@@ -51,6 +53,15 @@ def test_reset_impact_digest_includes_access_singleton_snapshots() -> None:
 
     assert reset_planning._impact_digest(changed_defaults) != plan.impact_digest
     assert reset_planning._impact_digest(changed_version) != plan.impact_digest
+
+
+def test_reset_impact_digest_freezes_provider_subject_mapping() -> None:
+    plan = _plan()
+    changed = SimpleNamespace(**vars(plan))
+    app_id, _ = plan.provider_subjects[0]
+    changed.provider_subjects = ((app_id, uuid4()),)
+
+    assert reset_planning._impact_digest(changed) != reset_planning._impact_digest(plan)
 
 
 def test_reset_defaults_to_dry_run_without_database_work() -> None:
@@ -95,7 +106,14 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
     plan = _plan()
     database = Mock()
     storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
-    storage.delete_and_verify_empty.side_effect = RuntimeError("unavailable")
+    events: list[str] = []
+    database.commit.side_effect = lambda: events.append("commit")
+
+    def storage_failure(_: object) -> None:
+        events.append("storage_cleanup")
+        raise RuntimeError("unavailable")
+
+    storage.delete_and_verify_empty.side_effect = storage_failure
     statements: list[str] = []
     monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
     monkeypatch.setattr(
@@ -111,11 +129,11 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
             stdin_is_tty=True,
             confirmation=plan.impact_digest,
             storage=storage,
+            auth=Mock(),
             build_plan_fn=lambda *_, **__: plan,
         )
 
-    assert database.commit.call_count == 1
-    database.rollback.assert_not_called()
+    assert events.index("commit") < events.index("storage_cleanup")
     assert statements.index("DELETE FROM public.identity_sessions") < statements.index(
         "DELETE FROM public.users WHERE id <> %s"
     )
@@ -134,22 +152,160 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
     )
 
 
+def test_provider_accounts_are_deleted_before_application_profiles(monkeypatch) -> None:
+    plan = _plan()
+    events: list[str] = []
+    database = Mock()
+    storage = Mock()
+
+    def list_storage() -> tuple[str, ...]:
+        events.append("storage_inventory")
+        return plan.storage_object_keys
+
+    storage.list_object_keys.side_effect = list_storage
+    auth = Mock()
+    auth.require_present.side_effect = lambda _: events.append("admin_checked")
+    auth.delete_and_verify_missing.side_effect = lambda _: events.append("provider_deleted")
+    monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
+    monkeypatch.setattr(
+        execution, "_execute", lambda _, statement, *args: events.append(statement)
+    )
+    monkeypatch.setattr(execution, "_single_value", lambda *_: True)
+    monkeypatch.setattr(execution, "_validate_postconditions", lambda *_args, **_kwargs: None)
+
+    execution.apply_reset(
+        database, plan, execute=True, stdin_is_tty=True, confirmation=plan.impact_digest,
+        storage=storage, auth=auth, build_plan_fn=lambda *_, **__: plan,
+    )
+
+    auth.require_present.assert_called_once_with(plan.preserved_admin_provider_id)
+    auth.delete_and_verify_missing.assert_called_once_with(
+        (plan.provider_subjects[0][1],)
+    )
+    assert events.index("provider_deleted") < events.index(
+        "DELETE FROM public.users WHERE id <> %s"
+    )
+    assert max(index for index, event in enumerate(events) if event == "storage_inventory") < (
+        events.index(reset._LOCK_APPLICATION_STATEMENT)
+    )
+
+
+def test_provider_failure_keeps_application_profiles_for_safe_retry(monkeypatch) -> None:
+    plan = _plan()
+    database = Mock()
+    storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
+    auth = Mock()
+    auth.delete_and_verify_missing.side_effect = RuntimeError("provider error")
+    statements: list[str] = []
+    monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
+    monkeypatch.setattr(
+        execution, "_execute", lambda _, statement, *args: statements.append(statement)
+    )
+    monkeypatch.setattr(execution, "_single_value", lambda *_: True)
+
+    with pytest.raises(reset.ResetError, match="Provider account cleanup is incomplete"):
+        execution.apply_reset(
+            database, plan, execute=True, stdin_is_tty=True,
+            confirmation=plan.impact_digest, storage=storage, auth=auth,
+            build_plan_fn=lambda *_, **__: plan,
+        )
+
+    assert not any(statement.startswith("DELETE FROM public.users") for statement in statements)
+    storage.delete_and_verify_empty.assert_not_called()
+
+
+def test_database_failure_after_provider_cleanup_reports_partial_reset(monkeypatch) -> None:
+    plan = _plan()
+    database = Mock()
+    storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
+    auth = Mock()
+    monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
+
+    def execute(_, statement, *_args):
+        if statement.startswith("UPDATE public.workspace_profiles"):
+            raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(execution, "_execute", execute)
+    monkeypatch.setattr(execution, "_single_value", lambda *_: True)
+
+    with pytest.raises(reset.ResetError, match="Provider accounts.*profiles were retained"):
+        execution.apply_reset(
+            database, plan, execute=True, stdin_is_tty=True,
+            confirmation=plan.impact_digest, storage=storage, auth=auth,
+            build_plan_fn=lambda *_, **__: plan,
+        )
+
+    auth.delete_and_verify_missing.assert_called_once()
+    database.rollback.assert_called()
+    storage.delete_and_verify_empty.assert_not_called()
+
+
+def test_plan_drift_after_auth_cleanup_keeps_profiles_and_reports_partial(monkeypatch) -> None:
+    plan = _plan()
+    changed = SimpleNamespace(**vars(plan))
+    changed.impact_digest = "changed"
+    database = Mock()
+    storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
+    auth = Mock()
+    statements: list[str] = []
+    monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
+    monkeypatch.setattr(
+        execution, "_execute", lambda _, statement, *args: statements.append(statement)
+    )
+    monkeypatch.setattr(execution, "_single_value", lambda *_: True)
+    plans = iter((plan, changed))
+
+    with pytest.raises(reset.ResetError, match="Provider accounts.*profiles were retained"):
+        execution.apply_reset(
+            database, plan, execute=True, stdin_is_tty=True,
+            confirmation=plan.impact_digest, storage=storage, auth=auth,
+            build_plan_fn=lambda *_, **__: next(plans),
+        )
+
+    assert not any(statement.startswith("DELETE FROM public.users") for statement in statements)
+    storage.delete_and_verify_empty.assert_not_called()
+
+
+def test_ambiguous_database_commit_does_not_claim_profiles_were_retained(monkeypatch) -> None:
+    plan = _plan()
+    database = Mock()
+    database.commit.side_effect = [None, None, RuntimeError("connection lost")]
+    storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
+    auth = Mock()
+    monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
+    monkeypatch.setattr(execution, "_execute", lambda *_args: None)
+    monkeypatch.setattr(execution, "_single_value", lambda *_: True)
+    monkeypatch.setattr(execution, "_validate_postconditions", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(reset.ResetError, match="database commit outcome is uncertain"):
+        execution.apply_reset(
+            database, plan, execute=True, stdin_is_tty=True,
+            confirmation=plan.impact_digest, storage=storage, auth=auth,
+            build_plan_fn=lambda *_, **__: plan,
+        )
+
+    auth.delete_and_verify_missing.assert_called_once()
+    storage.delete_and_verify_empty.assert_not_called()
+
+
 def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
     monkeypatch, tmp_path
 ) -> None:
-    url = "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55322/openslate_boards"
+    url = "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55432/postgres"
     target = InstanceTarget(
-        instance_id="openslate-boards-a1b2c3d4",
+        instance_id="openslate-supabase-a1b2c3d4",
         host="127.0.0.1",
-        port=55322,
-        database="openslate_boards",
+        port=55432,
+        database="postgres",
         attestation_path=tmp_path / "instance.json",
     )
     values = {
         "ENVIRONMENT": "development",
         "MIGRATION_DATABASE_URL": url,
         "ADMIN_EMAIL": "admin@example.test",
-        "FILES_STORAGE_ROOT": str(tmp_path),
+        "SUPABASE_URL": "http://127.0.0.1:58000",
+        "SUPABASE_SECRET_KEY": "fake-secret",
+        "SUPABASE_TIMEOUT_SECONDS": "2",
         "BACKEND_BIND_HOST": "127.0.0.1",
         "BACKEND_PORT": "8000",
     }
@@ -159,7 +315,9 @@ def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
     monkeypatch.setattr(reset, "environment_inputs", lambda path: seen_paths.append(path) or values)
     monkeypatch.setattr(reset, "instance_target_for_process", lambda *_args: target)
     monkeypatch.setattr(reset, "connect", lambda _url: connection)
-    monkeypatch.setattr(reset, "ResetStorage", lambda _root: storage)
+    monkeypatch.setattr(reset, "ResetStorage", lambda *_args: storage)
+    monkeypatch.setattr(reset, "ResetAuth", lambda *_args: Mock())
+    monkeypatch.setattr(reset, "assert_provider_instance", Mock())
     monkeypatch.setattr(reset, "build_reset_plan", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(reset, "_print_plan", lambda _plan: None)
     monkeypatch.setattr(reset, "assert_psycopg_target", Mock())
@@ -171,6 +329,34 @@ def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
         connection, target, expected_user="openslate_owner"
     )
     connection.close.assert_called_once()
+
+
+def test_reset_refuses_unbound_provider_before_privileged_calls(monkeypatch) -> None:
+    values = {
+        "ENVIRONMENT": "development",
+        "MIGRATION_DATABASE_URL": (
+            "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55432/postgres"
+        ),
+        "ADMIN_EMAIL": "admin@example.test",
+        "BACKEND_BIND_HOST": "127.0.0.1",
+        "BACKEND_PORT": "8000",
+        "SUPABASE_URL": "http://127.0.0.1:58000",
+        "SUPABASE_SECRET_KEY": "fake-secret",
+        "SUPABASE_TIMEOUT_SECONDS": "2",
+    }
+    connect = Mock()
+    guard = Mock(side_effect=InstanceTargetError("provider mismatch"))
+    monkeypatch.setattr(reset, "environment_inputs", lambda _: values)
+    monkeypatch.setattr(reset, "instance_target_for_process", lambda *_: Mock())
+    monkeypatch.setattr(reset, "validate_local_database_url", lambda *_a, **_k: None)
+    monkeypatch.setattr(reset, "assert_provider_instance", guard, raising=False)
+    monkeypatch.setattr(reset, "connect", connect)
+
+    with pytest.raises(SystemExit, match="provider mismatch"):
+        reset.main([])
+
+    guard.assert_called_once()
+    connect.assert_not_called()
 
 
 @pytest.mark.parametrize("environment", ["production", "prod"])

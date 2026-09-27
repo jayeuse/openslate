@@ -1,4 +1,4 @@
-"""Guarded local recovery for an active OpenSlate administrator."""
+"""Guarded provider recovery for an active OpenSlate administrator."""
 
 from dataclasses import dataclass
 from uuid import UUID
@@ -9,12 +9,21 @@ from sqlalchemy.orm import Session, joinedload
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
+from app.core.integrations.supabase_auth import (
+    InvalidProviderCredentials,
+    SupabaseAuthUnavailable,
+    get_supabase_auth_client,
+)
 from app.systems.access.identity.eligibility import is_identity_eligible, is_internal_identity
-from app.systems.access.identity.service import generated_temporary_password, replace_password
+from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.service import (
+    SecurityEventPersistenceError,
+    append_committed_security_event,
+    append_security_event,
+)
 
 
 class LocalRecoveryError(RuntimeError):
@@ -24,7 +33,6 @@ class LocalRecoveryError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class RecoveredAdmin:
     user_id: UUID
-    temporary_password: str
 
 
 def recover_local_admin(
@@ -34,6 +42,8 @@ def recover_local_admin(
     local_invocation: bool,
     elevated: bool,
 ) -> RecoveredAdmin:
+    """Revoke app sessions, then email recovery through the bound provider account."""
+
     if not local_invocation or not elevated:
         raise LocalRecoveryError("Local elevated administrator recovery is required")
     timestamp = utc_now()
@@ -51,17 +61,25 @@ def recover_local_admin(
         or user.role is None
         or user.role.is_deleted
         or user.role.role != UserRole.ADMIN
+        or user.supabase_user_id is None
     ):
         db.rollback()
         raise LocalRecoveryError("Target is not an active administrator")
-    secret = generated_temporary_password()
+    provider = get_supabase_auth_client()
     try:
-        replace_password(db, user, secret, temporary=True, now=timestamp)
+        provider_user = provider.get_admin_user(user.supabase_user_id)
+        if (
+            provider_user.id != user.supabase_user_id
+            or provider_user.email != user.email
+            or not provider_user.is_eligible(now=timestamp)
+        ):
+            raise LocalRecoveryError("Provider administrator does not match")
+        revoke_user_sessions(db, user.id, except_session_id=None, now=timestamp)
         append_security_event(
             db,
             SecurityEventIngestRequest(
                 event_type="identity.local_admin_recovery",
-                outcome=SecurityEventOutcome.SUCCESS,
+                outcome=SecurityEventOutcome.ATTEMPT,
                 source="identity.admin_recovery",
                 operation_id=uuid7(),
                 subject_id=user.id,
@@ -69,7 +87,24 @@ def recover_local_admin(
             ),
         )
         db.commit()
-    except SQLAlchemyError as error:
+    except (InvalidProviderCredentials, SupabaseAuthUnavailable, SQLAlchemyError) as error:
         db.rollback()
         raise LocalRecoveryError("Administrator recovery failed") from error
-    return RecoveredAdmin(user.id, secret)
+    except LocalRecoveryError:
+        db.rollback()
+        raise
+    try:
+        provider.request_recovery(user.email)
+        append_committed_security_event(
+            SecurityEventIngestRequest(
+                event_type="identity.local_admin_recovery",
+                outcome=SecurityEventOutcome.SUCCESS,
+                source="identity.admin_recovery",
+                operation_id=uuid7(),
+                subject_id=user.id,
+                reason="provider recovery email requested",
+            )
+        )
+    except (SupabaseAuthUnavailable, SecurityEventPersistenceError) as error:
+        raise LocalRecoveryError("Administrator recovery failed") from error
+    return RecoveredAdmin(user.id)

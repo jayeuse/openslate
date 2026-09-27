@@ -1,66 +1,5 @@
-# Development uses host-run FastAPI and a local-only Next.js HMR server. pgweb is optional.
+# Optional Caddy gateway; Supabase services live in infra/supabase/compose.yaml.
 services:
-  postgres:
-    image: postgres:17@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232
-    init: true
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DATABASE:?POSTGRES_DATABASE is required}
-      POSTGRES_PASSWORD: ${POSTGRES_BOOTSTRAP_PASSWORD:?POSTGRES_BOOTSTRAP_PASSWORD is required}
-    command:
-      ["postgres", "-c", "password_encryption=scram-sha-256", "-c", "cluster_name=${OPENSLATE_INSTANCE_ID:?OPENSLATE_INSTANCE_ID is required}"]
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:?POSTGRES_PORT is required}:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-    networks:
-      - default
-      - database-ui
-
-  pgweb:
-    image: sosedoff/pgweb:0.17.0@sha256:a5256d416e2e8b92d69a4459058e3eca33a9f075d8325491644411d0bc3bd70b
-    profiles: ["db-ui"]
-    init: true
-    restart: unless-stopped
-    user: "1000:1000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command:
-      - --host=postgres
-      - --port=5432
-      - --user=openslate_inspector
-      - --db=${POSTGRES_DATABASE:-openslate}
-      - --passfile=/run/secrets/pgweb_pgpass
-      - --ssl=disable
-      - --readonly
-      - --lock-session
-      - --no-ssh
-      - --skip-open
-      - --query-timeout=30
-    ports:
-      - "${PGWEB_BIND_HOST:-127.0.0.1}:${PGWEB_PORT:-8081}:8081"
-    secrets:
-      - source: pgweb_pgpass
-        target: pgweb_pgpass
-        mode: 0444
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=16m
-      - /home/pgweb/.pgweb:rw,noexec,nosuid,nodev,size=1m
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    networks:
-      - database-ui
-      - pgweb-host
-
   caddy:
     build:
       context: .
@@ -99,15 +38,7 @@ services:
       - gateway-host
 
 volumes:
-  postgres-data:
   caddy-data:
 
-secrets:
-  pgweb_pgpass:
-    file: ${PGWEB_PASSFILE_PATH:-.env.example}
-
 networks:
-  database-ui:
-    internal: true
-  pgweb-host:
   gateway-host:

@@ -7,14 +7,19 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import StreamingResponse
 from starlette.types import Send
 
 from app.core.config import get_settings
 from app.core.config.development import browser_origin_is_permitted
 from app.core.database.session import AuditSession, get_engine
-from app.core.security.tokens import TokenType, decode_token
-from app.systems.access.identity.service import validate_access_session
+from app.core.integrations.supabase_auth import (
+    InvalidProviderToken,
+    SupabaseAuthUnavailable,
+    get_supabase_auth_client,
+)
+from app.systems.access.identity.provider_sessions import resolve_provider_session
 from app.systems.access.users.models import User
 from app.systems.platform.events.hub import EventHub, EventSubscription, SubscriberLimitReached
 
@@ -102,9 +107,12 @@ def get_event_principal(
     raw_token = cookie_token or bearer_token
     if raw_token is None:
         raise _unauthorized()
-    claims = decode_token(raw_token, TokenType.ACCESS)
-    if claims is None or claims.get("setup") is True:
-        raise _unauthorized()
+    try:
+        get_supabase_auth_client().verify_access_token(raw_token)
+    except InvalidProviderToken as error:
+        raise _unauthorized() from error
+    except SupabaseAuthUnavailable as error:
+        raise HTTPException(status_code=503, detail="Event authorization unavailable") from error
     return EventPrincipal(raw_token)
 
 
@@ -151,9 +159,17 @@ async def event_stream(
     """Send resyncs while reauthorizing outside the request session lifetime."""
 
     check_identity = reauthorize or reauthorize_event_principal
+
+    async def checked_identity() -> object | None:
+        try:
+            return await check_identity(principal)
+        except HTTPException:
+            # Headers are already sent; close the stream on an outage.
+            return None
+
     active_subscription = subscription
     try:
-        user = initial_user if initial_user is not None else await check_identity(principal)
+        user = initial_user if initial_user is not None else await checked_identity()
         if user is None:
             return
         if active_subscription is None:
@@ -166,7 +182,7 @@ async def event_stream(
             try:
                 event = await asyncio.wait_for(active_subscription.queue.get(), heartbeat_seconds)
             except TimeoutError:
-                user = await check_identity(principal)
+                user = await checked_identity()
                 if user is None:
                     return
                 if hub.refresh_subscription(active_subscription, user):
@@ -177,13 +193,13 @@ async def event_stream(
             if active_subscription.closed:
                 return
             if event is None:
-                user = await check_identity(principal)
+                user = await checked_identity()
                 if user is None:
                     return
                 hub.refresh_subscription(active_subscription, user)
                 yield b"event: resync\ndata: {}\n\n"
                 continue
-            user = await check_identity(principal)
+            user = await checked_identity()
             if user is None:
                 return
             if hub.refresh_subscription(active_subscription, user):
@@ -204,11 +220,19 @@ async def reauthorize_event_principal(principal: EventPrincipal) -> User | None:
 
 
 def _reauthorize_in_database(principal: EventPrincipal) -> User | None:
-    claims = decode_token(principal.access_token, TokenType.ACCESS)
-    if claims is None or claims.get("setup") is True:
+    client = get_supabase_auth_client()
+    try:
+        claims = client.verify_access_token(principal.access_token)
+    except InvalidProviderToken:
         return None
-    with AuditSession(get_engine()) as db:
-        return validate_access_session(db, claims)
+    except SupabaseAuthUnavailable as error:
+        raise HTTPException(status_code=503, detail="Event authorization unavailable") from error
+    try:
+        with AuditSession(get_engine()) as db:
+            resolved = resolve_provider_session(db, claims, client)
+            return resolved[0] if resolved is not None else None
+    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+        raise HTTPException(status_code=503, detail="Event authorization unavailable") from error
 
 
 def _unauthorized() -> HTTPException:

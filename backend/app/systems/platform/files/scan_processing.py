@@ -296,6 +296,10 @@ def process_next(
         return False
     try:
         content = storage.read_quarantine(claim.key)
+        if content is None:
+            # Promotion can remove quarantine before a metadata commit fails. A fresh
+            # claim must inspect exact ready bytes again before recording a verdict.
+            content = storage.download(claim.key)
     except StorageCleanupUncertain as exc:
         try:
             finish_attempt(db, claim, clock(), failure="scan_unavailable")

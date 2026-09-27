@@ -1,0 +1,204 @@
+# One client installation. Render Caddyfile and provision the application roles,
+# schema, private app environment, and immutable scanner generation before up.
+# The base Compose file owns provider services; this overlay adds OpenSlate.
+services:
+  db:
+    # A production application uses db:5432 on the provider network. Keep the
+    # database out of host networking even if a future base file adds a port.
+    ports: !reset []
+
+  api:
+    image: ${OPENSLATE_SERVER_IMAGE:?Set a versioned OpenSlate server image name}
+    build:
+      context: ../..
+      dockerfile: infra/docker/backend.Dockerfile
+    restart: unless-stopped
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+      api-gw:
+        condition: service_healthy
+    env_file:
+      - path: ${OPENSLATE_APP_ENV_FILE:?Set an owner-only application env file}
+        required: true
+    environment:
+      ENVIRONMENT: production
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DATABASE: postgres
+      BACKEND_BIND_HOST: 0.0.0.0
+      BACKEND_PORT: "8000"
+      SUPABASE_URL: http://api-gw:8000
+      SUPABASE_AUTH_ISSUER: ${API_EXTERNAL_URL:?Set the installation Auth issuer}
+      SMTP_HOST: ${SMTP_HOST:?Set an SMTP host}
+      SMTP_PORT: ${SMTP_PORT:?Set an SMTP port}
+      SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:?Set the invitation sender email}
+      FILES_CLAMAV_HOST: clamav
+      FILES_CLAMAV_PORT: "3310"
+      FILES_CLAMAV_MANIFEST_PATH: /run/openslate/scanner/manifest.json
+      LOG_DIR: /var/log/openslate/api
+    volumes:
+      - type: bind
+        source: ${OPENSLATE_LOG_ROOT:?Set a private writable log directory}
+        target: /var/log/openslate
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SCANNER_MANIFEST_PATH:?Set the verified ClamAV manifest path}
+        target: /run/openslate/scanner/manifest.json
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - provider
+      - app-private
+      - scanner-private
+
+  clamav:
+    image: ${OPENSLATE_CLAMAV_IMAGE:?Set a versioned OpenSlate ClamAV image name}
+    build:
+      context: ../..
+      dockerfile: infra/docker/clamav.Dockerfile
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      FILES_CLAMAV_PORT: "3310"
+    volumes:
+      - type: bind
+        source: ${SCANNER_DEFINITIONS_DIR:?Set a verified ClamAV definitions directory}
+        target: /var/lib/clamav
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m,uid=100,gid=101
+    user: "100:101"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 4g
+    cpus: 2
+    logging:
+      driver: none
+    networks:
+      - scanner-private
+
+  scanner-worker:
+    image: ${OPENSLATE_SERVER_IMAGE:?Set a versioned OpenSlate server image name}
+    command: ["python", "-m", "app.systems.platform.files.worker"]
+    # This process has no HTTP server; do not inherit the API image's probe.
+    healthcheck:
+      disable: true
+    # WorkerHalted intentionally exits on unresolved scans. An operator must
+    # inspect and resume it; automatic restarts must not loop over that state.
+    restart: "no"
+    init: true
+    depends_on:
+      api:
+        condition: service_healthy
+      clamav:
+        condition: service_started
+    env_file:
+      - path: ${OPENSLATE_APP_ENV_FILE:?Set an owner-only application env file}
+        required: true
+    environment:
+      ENVIRONMENT: production
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DATABASE: postgres
+      SUPABASE_URL: http://api-gw:8000
+      SUPABASE_AUTH_ISSUER: ${API_EXTERNAL_URL:?Set the installation Auth issuer}
+      LOG_DIR: /var/log/openslate/worker
+      FILES_CLAMAV_HOST: clamav
+      FILES_CLAMAV_PORT: "3310"
+      FILES_CLAMAV_MANIFEST_PATH: /run/openslate/scanner/manifest.json
+    volumes:
+      - type: bind
+        source: ${OPENSLATE_LOG_ROOT:?Set a private writable log directory}
+        target: /var/log/openslate
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SCANNER_MANIFEST_PATH:?Set the verified ClamAV manifest path}
+        target: /run/openslate/scanner/manifest.json
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - provider
+      - scanner-private
+
+  caddy:
+    image: ${OPENSLATE_CADDY_IMAGE:?Set a versioned OpenSlate Caddy image name}
+    build:
+      context: ../..
+      dockerfile: infra/docker/caddy.Dockerfile
+    restart: unless-stopped
+    init: true
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${CADDY_PUBLIC_BIND_HOST:-0.0.0.0}:${CADDY_HTTPS_PORT:-443}:${CADDY_HTTPS_PORT:-443}"
+    volumes:
+      - type: bind
+        source: ${CADDY_CONFIG_PATH:?Render an OpenSlate production Caddyfile first}
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CADDY_TLS_DIR:-../../infra/caddy/reference}
+        target: /run/caddy-tls
+        read_only: true
+        bind:
+          create_host_path: false
+      - caddy-data:/data
+    read_only: true
+    tmpfs:
+      - /config:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000,mode=700
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Let the non-root Caddy process bind container port 443 without NET_BIND_SERVICE.
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 1
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --spider http://127.0.0.1:3449/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks:
+      - app-private
+      - public-ingress
+
+volumes:
+  caddy-data:
+
+networks:
+  app-private:
+    internal: true
+  scanner-private:
+    internal: true
+  public-ingress:

@@ -1,4 +1,5 @@
 """Lifecycle operation persistence models."""
+
 from app.systems.sandbox.lifecycle.planner import (
     LifecyclePlan,
     LifecycleScope,
@@ -29,7 +30,7 @@ __all__ = [
     "reopen_lifecycle",
     "purge_lifecycle",
 ]
-from app.systems.sandbox.lifecycle.password import LocalPasswordGrantClient, PasswordGrantClient
+from app.systems.sandbox.lifecycle.password import PasswordGrantClient, ProviderPasswordGrantClient
 from app.systems.sandbox.lifecycle.service import (
     begin_verification,
     consume_challenge,
@@ -44,7 +45,7 @@ from app.systems.sandbox.lifecycle.service import (
 
 __all__ = [
     "PasswordGrantClient",
-    "LocalPasswordGrantClient",
+    "ProviderPasswordGrantClient",
     "begin_verification",
     "consume_challenge",
     "expire_challenge",

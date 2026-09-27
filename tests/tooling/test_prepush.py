@@ -17,6 +17,20 @@ def all_gate_scope() -> ci_scope.ChangeScope:
 
 
 class PrepushTests(unittest.TestCase):
+    def test_destructive_provider_reset_has_a_required_separate_backend_phase(self):
+        plan = prepush.build_plan(all_gate_scope(), Path("/repo"))
+        names = [step.name for step in plan.steps]
+        self.assertIn("provider-reset-acceptance", names)
+        reset = plan.steps[names.index("provider-reset-acceptance")]
+        self.assertEqual(
+            reset.command,
+            ("uv", "run", "python", "-m", "tests.fullstack_runner", "--reset-acceptance-only"),
+        )
+        self.assertEqual(
+            (reset.cwd, reset.lane, reset.serial_group), ("backend", "backend", "backend-postgres")
+        )
+        self.assertLess(names.index("backend-coverage"), names.index(reset.name))
+
     def test_plan_keeps_frontend_lean_and_backend_independent(self):
         plan = prepush.build_plan(all_gate_scope(), Path("/repo"))
         names = [step.name for step in plan.steps]
@@ -68,8 +82,7 @@ class PrepushTests(unittest.TestCase):
                 "uv",
                 "run",
                 "pytest",
-                "../packaging/backup/tests/test_backup_installation.py",
-                "../packaging/backup/tests/test_restore_installation.py",
+                "../packaging/backup/tests",
                 "--no-cov",
                 "--basetemp",
                 ".backup-contracts",

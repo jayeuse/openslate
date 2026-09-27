@@ -11,12 +11,9 @@ from app.systems.access.users.models import Role, User
 from app.systems.boards.models import Board
 from app.systems.boards.personal_models import BoardFavorite, BoardHome
 from app.systems.manage.audit.models import AuditAction, AuditLog
-from tests.conftest import guarded_create_engine
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
-SOURCE_REVISION = "1d9ef36b7646"
-TARGET_REVISION = "33f6b3cea25b"
-ACCESS_HEAD_REVISION = "2bf95b237416"
+SUPABASE_DATABASE_ROLES = ("anon", "authenticated", "service_role")
+TABLE_ACTIONS = ("SELECT", "INSERT", "UPDATE", "DELETE")
 
 
 def test_board_personal_tables_are_registered_for_migrations() -> None:
@@ -102,30 +99,14 @@ def test_personal_rows_enforce_unique_scope_restrict_deletion_and_survive_archiv
 
 
 @pytest.mark.integration
-def test_personal_migration_keeps_source_schema_and_least_privilege_roles() -> None:
-    environment = guarded_migration_environment()
-    owner_engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
-    try:
-        run_alembic(environment, "downgrade", SOURCE_REVISION)
-        with owner_engine.connect() as connection:
-            assert connection.scalar(text("SELECT to_regclass('public.board_favorites')")) is None
-            assert connection.scalar(text("SELECT to_regclass('public.board_homes')")) is None
-            assert (
-                connection.scalar(text("SELECT to_regclass('public.board_templates')")) is not None
-            )
-        run_alembic(environment, "upgrade", TARGET_REVISION)
-        with owner_engine.connect() as connection:
-            applied_revisions = set(
-                connection.scalars(text("SELECT version_num FROM alembic_version"))
-            )
-            assert applied_revisions == {ACCESS_HEAD_REVISION, TARGET_REVISION}
-            for table in ("board_favorites", "board_homes"):
-                _assert_personal_schema_and_privileges(connection, table)
-    finally:
-        try:
-            run_alembic(environment, "upgrade", "head")
-        finally:
-            owner_engine.dispose()
+def test_personal_baseline_keeps_scoped_constraints_and_supabase_role_boundaries(
+    integration_owner_db,
+) -> None:
+    # The old sequential migration is archived; fresh installs contain all Board tables together.
+    connection = integration_owner_db.connection()
+    for table in ("board_favorites", "board_homes"):
+        assert connection.scalar(text("SELECT to_regclass(:name)"), {"name": f"public.{table}"})
+        _assert_personal_schema_and_privileges(connection, table)
 
 
 def _assert_personal_schema_and_privileges(connection: Connection, table: str) -> None:
@@ -152,7 +133,7 @@ def _assert_personal_schema_and_privileges(connection: Connection, table: str) -
         )
         is not None
     )
-    for action in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+    for action in TABLE_ACTIONS:
         assert (
             connection.scalar(
                 text("SELECT has_table_privilege('openslate_runtime', :table, :action)"),
@@ -160,18 +141,12 @@ def _assert_personal_schema_and_privileges(connection: Connection, table: str) -
             )
             is True
         )
-    assert (
-        connection.scalar(
-            text("SELECT has_table_privilege('openslate_inspector', :table, 'SELECT')"),
-            {"table": f"public.{table}"},
-        )
-        is True
-    )
-    for action in ("INSERT", "UPDATE", "DELETE"):
-        assert (
-            connection.scalar(
-                text("SELECT has_table_privilege('openslate_inspector', :table, :action)"),
-                {"table": f"public.{table}", "action": action},
-            )
-            is False
-        )
+    for role in SUPABASE_DATABASE_ROLES:
+        for action in TABLE_ACTIONS:
+            assert (
+                connection.scalar(
+                    text("SELECT has_table_privilege(:role, :table, :action)"),
+                    {"role": role, "table": f"public.{table}", "action": action},
+                )
+                is False
+            ), f"Supabase database role {role} must not access {table}"

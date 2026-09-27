@@ -1,17 +1,15 @@
 {
-  "version": 2,
-  "installation_id": "00000000000000000000000000000000",
-  "database_url": "postgresql://openslate_owner@127.0.0.1:5432/openslate",
-  "pg_password_file": "/protected/openslate/pg-password",
+  "version": 3,
+  "installation_id": "client-a",
+  "project_name": "openslate-client-a",
+  "deployment": "production",
+  "compose_root": "/opt/openslate/infra/supabase",
+  "provider_env_file": "/protected/openslate/provider.env",
+  "app_env_file": "/protected/openslate/app.env",
+  "caddy_config_file": "/protected/openslate/Caddyfile",
+  "tls_directory": "/protected/openslate/tls",
   "restic_repository": "/protected/openslate/restic-repository",
   "restic_password_file": "/protected/openslate/restic-password",
   "staging_directory": "/protected/openslate/backup-staging",
-  "completion_marker": "/protected/openslate/backup-state/first-backup.json",
-  "maintenance_state_file": "/protected/openslate/maintenance-state.json",
-  "maintenance_lock_file": "/protected/openslate/maintenance.lock",
-  "maintenance_max_age_seconds": 300,
-  "private_file_roots": [
-    {"id": "private_files", "path": "/protected/openslate/private-files"}
-  ],
-  "initialize_repository": true
+  "completion_marker": "/protected/openslate/backup-state/first-backup.json"
 }

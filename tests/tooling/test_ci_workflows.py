@@ -71,14 +71,19 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("scope=openslate-server", source)
         self.assertIn("Build unified FastAPI server image", source)
 
+    def test_backend_requires_a_separate_destructive_reset_acceptance_run(self):
+        source = self.source("backend.yml")
+        command = "uv run python -m tests.fullstack_runner --reset-acceptance-only"
+        self.assertIn(command, source)
+        self.assertLess(source.index("--backend-coverage-only"), source.index(command))
+
     def test_backend_quality_covers_packaging_backup_contracts(self):
         source = self.source("backend.yml")
 
         self.assertIn("../packaging/backup", source)
         self.assertIn("../packaging/backup/backup_installation.py", source)
         self.assertIn("../packaging/backup/restore_installation.py", source)
-        self.assertIn("../packaging/backup/tests/test_backup_installation.py", source)
-        self.assertIn("../packaging/backup/tests/test_restore_installation.py", source)
+        self.assertIn("uv run pytest ../packaging/backup/tests\n", source)
         self.assertIn("--no-cov --basetemp .backup-contracts", source)
         self.assertIn("../tests/tooling", source)
         self.assertIn("../scripts/environment.py", source)

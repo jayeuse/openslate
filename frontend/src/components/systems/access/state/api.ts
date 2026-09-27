@@ -210,7 +210,7 @@ export function createAccessUser(
   const { signal, ...payload } = request;
   return apiFetch("/auth/invitations", invitationSchema, {
     method: "POST",
-    body: JSON.stringify({ ...payload, delivery: "email" }),
+    body: JSON.stringify(payload),
     signal,
   });
 }
@@ -247,10 +247,7 @@ export function restoreAccessUser(
   });
 }
 
-/**
- * Resend through the email delivery path. The Access controller deliberately
- * does not surface temporary passwords returned by invitation endpoints.
- */
+/** Request another Supabase invitation email. */
 export function resendAccessInvitation(
   userId: string,
   options: RequestOptions = {},
@@ -260,7 +257,7 @@ export function resendAccessInvitation(
     invitationSchema,
     {
       method: "POST",
-      body: JSON.stringify({ delivery: "email" }),
+      body: JSON.stringify({}),
       signal: options.signal,
     },
   );

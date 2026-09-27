@@ -77,7 +77,7 @@ class _FakeSeedApiClient:
             return {"id": f"role-{payload['role']}"}
         if path == "/api/users":
             self.invitation_payloads.append(dict(payload))
-            return {"id": f"user-{self.next_id}", "temporary_password": "sample-secret"}
+            return {"id": f"user-{self.next_id}", "status": "pending"}
         self.next_id += 1
         if path == "/api/records":
             return {"id": f"record-{self.next_id}", "data": payload["data"]}
@@ -217,7 +217,7 @@ def test_sample_seed_allows_an_empty_workspace_with_only_default_roles(
     assert any(method in {"PATCH", "POST"} for method, _path, _query in client.calls[5:])
 
 
-def test_sample_users_request_and_print_each_temporary_password_once(
+def test_sample_users_request_email_invitations_without_temporary_credentials(
     monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     client = _FakeSeedApiClient("https://api.example.test")
@@ -226,7 +226,6 @@ def test_sample_users_request_and_print_each_temporary_password_once(
 
     output = capsys.readouterr().out
     assert client.invitation_payloads
-    assert all(
-        payload["delivery"] == "temporary_password" for payload in client.invitation_payloads
-    )
-    assert output.count("temporary_password=sample-secret") == len(client.invitation_payloads)
+    assert all("delivery" not in payload for payload in client.invitation_payloads)
+    assert "password" not in output
+    assert output.count("invitation_requested") == len(client.invitation_payloads)

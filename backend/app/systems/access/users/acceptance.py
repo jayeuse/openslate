@@ -142,10 +142,10 @@ def accept_verified_invitation(
     try:
         append_invitation_acceptance_success(db, operation_id, user_id)
         db.commit()
-    except SQLAlchemyError as error:
+    except SQLAlchemyError:
         db.rollback()
         record_invitation_acceptance_failure(
             operation_id, user_id, "unable to finalize invitation acceptance"
         )
-        raise InvitationError("Unable to finalize invitation acceptance") from error
+        raise
     return profile

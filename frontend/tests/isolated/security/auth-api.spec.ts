@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 
 import {
-  changePassword,
   completeRecovery,
   completeInvitation,
   getAuthMe,
@@ -60,17 +59,13 @@ test("authentication actions use direct FastAPI routes without browser tokens", 
     return Response.json({ authenticated: true, setup_required: false });
   };
   try {
-    await signIn("operator", "correct horse battery staple");
+    await signIn("operator@example.test", "correct horse battery staple");
     await getSessionStatus();
-    await changePassword(
-      "temporary correct horse battery staple",
-      "new correct horse battery staple",
-    );
     await completeInvitation(
       "invitation-token",
       "new correct horse battery staple",
     );
-    await requestRecovery("operator");
+    await requestRecovery("operator@example.test");
     await completeRecovery(
       "recovery-token",
       "new correct horse battery staple",
@@ -80,29 +75,24 @@ test("authentication actions use direct FastAPI routes without browser tokens", 
     expect(requests.map(({ input }) => input)).toEqual([
       "/api/auth/login",
       "/api/auth/session",
-      "/api/auth/password/change",
       "/api/auth/invitations/complete",
       "/api/auth/recovery/request",
       "/api/auth/recovery/complete",
       "/api/auth/logout",
     ]);
     expect(JSON.parse(String(requests[0].init?.body))).toEqual({
-      identifier: "operator",
+      email: "operator@example.test",
       password: "correct horse battery staple",
     });
     expect(JSON.parse(String(requests[2].init?.body))).toEqual({
-      current_password: "temporary correct horse battery staple",
+      token_hash: "invitation-token",
       password: "new correct horse battery staple",
     });
     expect(JSON.parse(String(requests[3].init?.body))).toEqual({
-      token: "invitation-token",
-      password: "new correct horse battery staple",
+      email: "operator@example.test",
     });
     expect(JSON.parse(String(requests[4].init?.body))).toEqual({
-      identifier: "operator",
-    });
-    expect(JSON.parse(String(requests[5].init?.body))).toEqual({
-      token: "recovery-token",
+      token_hash: "recovery-token",
       password: "new correct horse battery staple",
     });
     for (const request of requests) {
@@ -125,7 +115,9 @@ test("invalid login does not attempt a refresh", async () => {
     );
   };
   try {
-    await expect(signIn("operator", "wrong password")).rejects.toMatchObject({
+    await expect(
+      signIn("operator@example.test", "wrong password"),
+    ).rejects.toMatchObject({
       status: 401,
     });
     expect(requests).toEqual(["/api/auth/login"]);
@@ -143,15 +135,18 @@ test("recovery requests expose no account-specific result to the browser", async
   };
   try {
     await expect(
-      Promise.all([requestRecovery("operator"), requestRecovery("unknown")]),
+      Promise.all([
+        requestRecovery("operator@example.test"),
+        requestRecovery("unknown@example.test"),
+      ]),
     ).resolves.toEqual([null, null]);
     expect(requests.map(({ input }) => input)).toEqual([
       "/api/auth/recovery/request",
       "/api/auth/recovery/request",
     ]);
     expect(requests.map(({ init }) => JSON.parse(String(init?.body)))).toEqual([
-      { identifier: "operator" },
-      { identifier: "unknown" },
+      { email: "operator@example.test" },
+      { email: "unknown@example.test" },
     ]);
   } finally {
     globalThis.fetch = originalFetch;
@@ -185,8 +180,8 @@ for (const status of [400, 422]) {
       expect(
         requests.map(({ init }) => JSON.parse(String(init?.body))),
       ).toEqual([
-        { token: "recovery-token", password: "valid recovery password" },
-        { token: "recovery-token", password: "valid recovery password" },
+        { token_hash: "recovery-token", password: "valid recovery password" },
+        { token_hash: "recovery-token", password: "valid recovery password" },
       ]);
     } finally {
       globalThis.fetch = originalFetch;

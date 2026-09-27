@@ -167,6 +167,7 @@ def test_lifespan_keeps_database_pool_when_automation_worker_is_alive(monkeypatc
     dispose_database = Mock()
     dispose_readiness = Mock()
     monkeypatch.setattr(main, "configure_observability_logging", lambda: None)
+    monkeypatch.setattr(main, "instance_target_for_process", lambda *_args: None)
     monkeypatch.setattr(main, "dispose_database_resources", dispose_database)
     monkeypatch.setattr(main, "dispose_readiness_resources", dispose_readiness)
 

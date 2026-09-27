@@ -1,0 +1,33 @@
+# Use with compose.yaml for disposable development and test instances.
+# Set SMTP_HOST=mailpit and SMTP_PORT=1025 in the installation env file.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${SUPABASE_DB_PORT:-55432}:5432"
+    networks:
+      - provider
+      - operator
+      - db-host
+
+  mailpit:
+    image: axllent/mailpit:v1.27.9@sha256:b004cc0672d0692f097ba8ab9e5956ae08eeafee3d0a6bf2ab239750101ac538
+    restart: unless-stopped
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_SMTP_BIND_ADDR: 0.0.0.0:1025
+      MP_UI_BIND_ADDR: 0.0.0.0:8025
+    ports:
+      - "127.0.0.1:${SUPABASE_MAIL_PORT:-58025}:8025"
+    tmpfs:
+      - /data:rw,noexec,nosuid,nodev,size=64m,uid=1000,gid=1000
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - mail-egress
+
+networks:
+  db-host:

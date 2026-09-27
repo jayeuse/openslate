@@ -11,8 +11,11 @@ import app.main as main
 from app import __main__ as entrypoint
 from app.core.config import Settings
 from app.core.config.development import browser_origin_is_permitted, is_relaxed_development
+from app.core.integrations.supabase_auth import InvalidProviderCredentials
+from app.systems.access.identity import rate_limits
+from app.systems.access.identity.contracts import InvalidCredentials
+from app.systems.access.identity.provider_login import login_with_provider
 from app.systems.access.identity.rate_limits import invitation_completion_permitted
-from app.systems.access.identity.service import InvalidCredentials, authenticate_password
 from tests.config_support import settings_values
 
 
@@ -21,7 +24,6 @@ def _development_settings(**overrides: object) -> Settings:
     values = settings_values(
         environment="development",
         public_origin=public_origin,
-        auth_jwt_issuer=public_origin,
         backend_bind_host="127.0.0.1",
     )
     values.update(overrides)
@@ -84,12 +86,13 @@ def test_loopback_development_allows_private_and_link_local_http_public_origins(
     assert _development_settings(public_origin=public_origin).public_origin == public_origin
 
 
-def test_loopback_development_requires_canonical_issuer_origin_equality() -> None:
-    with pytest.raises(ValueError, match="AUTH_JWT_ISSUER"):
-        _development_settings(
-            public_origin="http://localhost:3000/",
-            auth_jwt_issuer="http://localhost:3000/",
-        )
+def test_loopback_development_keeps_provider_issuer_independent_from_browser_origin() -> None:
+    settings = _development_settings(
+        public_origin="http://localhost:3000/",
+        supabase_auth_issuer="http://127.0.0.1:8000/auth/v1",
+    )
+    assert settings.public_origin == "http://localhost:3000"
+    assert settings.supabase_auth_issuer == "http://127.0.0.1:8000/auth/v1"
 
 
 def test_loopback_development_omits_generic_security_headers_and_trusted_host_check(
@@ -130,21 +133,18 @@ def test_loopback_development_skips_anonymous_identity_rate_limit_storage(
     cleanup = Mock()
     lock = Mock()
     record = Mock()
-    monkeypatch.setattr(
-        "app.systems.access.identity.service._cleanup_expired_rate_limit_buckets", cleanup
-    )
-    monkeypatch.setattr("app.systems.access.identity.service._lock_rate_limit_bucket", lock)
-    monkeypatch.setattr("app.systems.access.identity.service._record_failed_login", record)
-    monkeypatch.setattr("app.systems.access.identity.service.verify_password", lambda *_args: False)
+    monkeypatch.setattr(rate_limits, "cleanup_expired_buckets", cleanup)
+    monkeypatch.setattr(rate_limits, "lock_bucket", lock)
+    monkeypatch.setattr(rate_limits, "record_attempt", record)
+    provider = Mock()
+    provider.password_grant.side_effect = InvalidProviderCredentials("invalid")
 
     with pytest.raises(InvalidCredentials):
-        authenticate_password(
-            db, "unknown@example.test", "wrong password", enforce_rate_limit=False
+        login_with_provider(
+            db, "unknown@example.test", "wrong password", provider, enforce_rate_limit=False
         )
 
-    assert invitation_completion_permitted(
-        db, source="127.0.0.1", enforce_rate_limit=False
-    )
+    assert invitation_completion_permitted(db, source="127.0.0.1", enforce_rate_limit=False)
     cleanup.assert_not_called()
     lock.assert_not_called()
     record.assert_not_called()

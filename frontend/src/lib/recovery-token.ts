@@ -1,15 +1,10 @@
-type RecoveryLocation = Pick<Location, "hash" | "pathname" | "search">;
-type RecoveryHistory = Pick<History, "replaceState">;
+import { consumeActionToken } from "@/lib/action-token";
 
 export function consumeRecoveryToken(
-  location: RecoveryLocation,
-  history: RecoveryHistory,
+  location: Pick<Location, "hash" | "pathname" | "search">,
+  history: Pick<History, "replaceState">,
 ): string | null {
-  if (!location.hash.startsWith("#")) return null;
-  const token = new URLSearchParams(location.hash.slice(1)).get("token");
-  if (!token) return null;
-  history.replaceState(null, "", `${location.pathname}${location.search}`);
-  return token;
+  return consumeActionToken(location, history, "recovery");
 }
 
 export function retainRecoveryToken(

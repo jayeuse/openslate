@@ -81,6 +81,8 @@ class User(BaseModel):
     )
 
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    supabase_user_id: Mapped[UUID | None] = mapped_column(nullable=True, unique=True, index=True)
+    provider_invitation_operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
 
     username: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)

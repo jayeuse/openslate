@@ -6,60 +6,40 @@ from uuid import UUID
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
-from sqlalchemy.exc import IntegrityError, ProgrammingError
+from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from tests.conftest import guarded_create_engine
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
-
-SOURCE_REVISION = "500bf45291e6"
-TARGET_REVISION = "c5f6d66fe368"
+from tests.operations.migration_support import guarded_migration_environment
 
 
 @pytest.mark.integration
-def test_dashboard_foundation_preserves_boards_and_downgrades_narrowly() -> None:
+def test_dashboard_baseline_installs_catalog_constraints_and_runtime_access() -> None:
     environment = guarded_migration_environment()
     owner_engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
     runtime_engine = guarded_create_engine(environment["TEST_DATABASE_URL"])
-    inspector_engine = guarded_create_engine(environment["TEST_INSPECTOR_DATABASE_URL"])
     ids = {
         "user": uuid7(),
-        "board": uuid7(),
         "dashboard": uuid7(),
         "runtime_dashboard": uuid7(),
     }
 
     try:
-        run_alembic(environment, "downgrade", SOURCE_REVISION)
-        _seed_source_board(owner_engine, ids)
+        _seed_dashboard_owner(owner_engine, ids)
 
-        run_alembic(environment, "upgrade", TARGET_REVISION)
         with owner_engine.connect() as connection:
             _assert_dashboard_schema(connection)
-            _assert_existing_board(connection, ids)
             _assert_dashboard_privileges(connection)
 
         _assert_dashboard_constraints(owner_engine, ids)
-        _assert_runtime_and_inspector_access(
-            runtime_engine, inspector_engine, ids["dashboard"], ids
-        )
-
-        run_alembic(environment, "downgrade", SOURCE_REVISION)
-        with owner_engine.connect() as connection:
-            assert connection.scalar(text("SELECT to_regclass('public.dashboards')")) is None
-            assert connection.scalar(text("SELECT to_regclass('public.dashboard_widgets')")) is None
-            _assert_existing_board(connection, ids)
+        _assert_runtime_write_and_read(runtime_engine, ids)
     finally:
-        try:
-            run_alembic(environment, "upgrade", "head")
-        finally:
-            _delete_test_rows(owner_engine, ids)
-            inspector_engine.dispose()
-            runtime_engine.dispose()
-            owner_engine.dispose()
+        _delete_test_rows(owner_engine, ids)
+        runtime_engine.dispose()
+        owner_engine.dispose()
 
 
-def _seed_source_board(engine: Engine, ids: dict[str, UUID]) -> None:
+def _seed_dashboard_owner(engine: Engine, ids: dict[str, UUID]) -> None:
     with engine.begin() as connection:
         role_id = connection.scalar(text("SELECT id FROM public.roles WHERE role = 'admin'"))
         assert role_id is not None
@@ -75,33 +55,6 @@ def _seed_source_board(engine: Engine, ids: dict[str, UUID]) -> None:
                 "role_id": role_id,
             },
         )
-        connection.execute(
-            text(
-                "INSERT INTO public.boards "
-                "(id, owner_id, name, status, default_section, revision, performed_by) "
-                "VALUES (:id, :owner_id, 'Before Dashboard migration', 'active', "
-                "'overview', 4, :performed_by)"
-            ),
-            {"id": ids["board"], "owner_id": ids["user"], "performed_by": ids["user"]},
-        )
-
-
-def _assert_existing_board(connection: Connection, ids: dict[str, UUID]) -> None:
-    board = connection.execute(
-        text(
-            "SELECT owner_id, name, status, default_section, revision, performed_by "
-            "FROM public.boards WHERE id = :id"
-        ),
-        {"id": ids["board"]},
-    ).one()
-    assert board == (
-        ids["user"],
-        "Before Dashboard migration",
-        "active",
-        "overview",
-        4,
-        ids["user"],
-    )
 
 
 def _assert_dashboard_schema(connection: Connection) -> None:
@@ -171,37 +124,21 @@ def _assert_dashboard_schema(connection: Connection) -> None:
 
 
 def _assert_dashboard_privileges(connection: Connection) -> None:
-    grants = (
-        connection.execute(
-            text(
-                "SELECT has_table_privilege('openslate_runtime', 'public.dashboards', 'SELECT') "
-                "AS runtime_select, "
-                "has_table_privilege('openslate_runtime', 'public.dashboards', 'INSERT') "
-                "AS runtime_insert, "
-                "has_table_privilege('openslate_runtime', 'public.dashboards', 'UPDATE') "
-                "AS runtime_update, "
-                "has_table_privilege('openslate_runtime', 'public.dashboards', 'DELETE') "
-                "AS runtime_delete, "
-                "has_table_privilege('openslate_inspector', 'public.dashboards', 'SELECT') "
-                "AS inspector_select, "
-                "has_table_privilege('openslate_inspector', 'public.dashboards', 'INSERT') "
-                "AS inspector_insert, "
-                "has_table_privilege('openslate_runtime', 'public.dashboard_widgets', 'INSERT') "
-                "AS widget_runtime_insert, "
-                "has_table_privilege('openslate_inspector', 'public.dashboard_widgets', 'SELECT') "
-                "AS widget_inspector_select"
-            )
-        )
-        .mappings()
-        .one()
-    )
-    assert all(
-        grants[f"runtime_{operation}"] for operation in ("select", "insert", "update", "delete")
-    )
-    assert grants["inspector_select"] is True
-    assert grants["inspector_insert"] is False
-    assert grants["widget_runtime_insert"] is True
-    assert grants["widget_inspector_select"] is True
+    statement = text("SELECT has_table_privilege(:role, :table, :privilege)")
+    for table in ("public.dashboards", "public.dashboard_widgets"):
+        for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+            assert connection.scalar(
+                statement,
+                {"role": "openslate_runtime", "table": table, "privilege": privilege},
+            ) is True
+            for role in ("anon", "authenticated", "service_role"):
+                assert (
+                    connection.scalar(
+                        statement,
+                        {"role": role, "table": table, "privilege": privilege},
+                    )
+                    is False
+                )
 
 
 def _assert_dashboard_constraints(engine: Engine, ids: dict[str, UUID]) -> None:
@@ -286,27 +223,18 @@ def _insert_widget(
     )
 
 
-def _assert_runtime_and_inspector_access(
-    runtime_engine: Engine,
-    inspector_engine: Engine,
-    dashboard_id: UUID,
-    ids: dict[str, UUID],
-) -> None:
+def _assert_runtime_write_and_read(runtime_engine: Engine, ids: dict[str, UUID]) -> None:
     with runtime_engine.begin() as connection:
         _insert_dashboard(connection, ids["runtime_dashboard"], ids["user"])
 
-    with inspector_engine.connect() as connection:
+    with runtime_engine.connect() as connection:
         assert (
             connection.scalar(
                 text("SELECT name FROM public.dashboards WHERE id = :id"),
-                {"id": dashboard_id},
+                {"id": ids["runtime_dashboard"]},
             )
             == "Migration Dashboard"
         )
-
-    with pytest.raises(ProgrammingError):
-        with inspector_engine.begin() as connection:
-            _insert_dashboard(connection, uuid7(), ids["user"])
 
 
 def _delete_test_rows(engine: Engine, ids: dict[str, UUID]) -> None:
@@ -330,5 +258,4 @@ def _delete_test_rows(engine: Engine, ids: dict[str, UUID]) -> None:
                 "runtime_dashboard_id": ids["runtime_dashboard"],
             },
         )
-        connection.execute(text("DELETE FROM public.boards WHERE id = :id"), {"id": ids["board"]})
         connection.execute(text("DELETE FROM public.users WHERE id = :id"), {"id": ids["user"]})

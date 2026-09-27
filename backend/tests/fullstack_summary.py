@@ -68,6 +68,7 @@ def write_fullstack_summary(
     scanner_observations: dict[str, Any],
     failure_type: str | None,
     failure_message: str | None,
+    browser_only: bool = False,
 ) -> None:
     """Persist the result without exposing the private runtime environment."""
     backend_counts, resource_observations = _junit_observations(private)
@@ -78,7 +79,9 @@ def write_fullstack_summary(
             {
                 "result": "passed" if result == 0 else "failed",
                 "scope": (
-                    "backend-batch"
+                    "browser-only"
+                    if browser_only
+                    else "backend-batch"
                     if batch
                     else "backend-coverage-only"
                     if backend_only
@@ -88,14 +91,12 @@ def write_fullstack_summary(
                     if scanner_only
                     else "full"
                 ),
-                "backend_tests_rerun": not scanner_only and not acceptance_only,
+                "backend_tests_rerun": not scanner_only
+                and not acceptance_only
+                and not browser_only,
                 "stage": stage,
-                "browser_tests": browser_results
-                or (
-                    [{"test": "auth-session.spec.ts", "status": "passed"}]
-                    if browser_completed
-                    else []
-                ),
+                "browser_tests": browser_results,
+                "browser_completed": browser_completed,
                 "backend_failures": backend_failures,
                 "backend_counts": backend_counts,
                 "resource_observations": resource_observations,
