@@ -127,12 +127,16 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       body: JSON.stringify({ config: null }),
     }),
   );
-  await page.route("**/api/views/audience-options**", (route) =>
-    route.fulfill({
+  // Audience options need records.read like the catalog, so they follow
+  // the catalog's refusal and hold.
+  await page.route("**/api/views/audience-options**", async (route) => {
+    if (catalogHold) await catalogHold;
+    if (catalogDenied) return route.fulfill(forbidden);
+    return route.fulfill({
       contentType: "application/json",
       body: JSON.stringify(pageOf([], 100)),
-    }),
-  );
+    });
+  });
   await page.route("**/api/views/data-sources**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/views/data-sources") {
@@ -677,6 +681,75 @@ test("a cold read in flight when the stream connects reads again", async ({
   await expect(
     page.getByRole("button", { name: "Alpha report" }),
   ).toBeVisible();
+});
+
+test("a cold read in flight during a later resync reads again", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  const release = api.holdLists();
+  await page.goto("/openview?section=reports");
+  await expect.poll(() => api.reportLists.length).toBe(1);
+  // The opening resync restarts the cold read once.
+  await sendOpenViewEvent(page, "resync");
+  await expect.poll(() => api.reportLists.length).toBe(2);
+  // A later resync (a stream interruption) restarts it again.
+  await sendOpenViewEvent(page, "resync");
+  await expect.poll(() => api.reportLists.length).toBe(3);
+  release();
+  await expect(
+    page.getByRole("button", { name: "Alpha report" }),
+  ).toBeVisible();
+});
+
+test("a refusal hides an opened Report, not only the list", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "Alpha report" }).click();
+  const main = page.locator("main");
+  await expect(main.getByText("Alpha report")).not.toHaveCount(0);
+
+  api.denyLists(true);
+  await page.getByRole("button", { name: "Refresh Reports" }).click();
+  await expect(
+    page.getByText(
+      "OpenView data is unavailable. Sign in or ask for access, then retry.",
+    ),
+  ).not.toHaveCount(0);
+  await expect(main.getByText("Alpha report")).toHaveCount(0);
+});
+
+test("a refusal seen in Dashboards hides the cached Views catalog", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  await page.goto("/openview?section=views");
+  const source = page.locator("option", { hasText: "Assets" });
+  await expect(source).toHaveCount(1);
+
+  // Dashboards reads the catalog itself, without the cache, and is refused.
+  api.denyCatalog(true);
+  const reads = api.catalogReads.length;
+  await sidebarLink(page, "Dashboards").click();
+  await expect.poll(() => api.catalogReads.length).toBeGreaterThan(reads);
+
+  // Back in Views the cached catalog reads again. While those reads are
+  // out, the refusal Dashboards saw already hides the cached names.
+  const release = api.holdCatalog();
+  const before = api.catalogReads.length;
+  await sidebarLink(page, "Views").click();
+  await expect(page).toHaveURL(/section=views/);
+  await expect.poll(() => api.catalogReads.length).toBeGreaterThan(before);
+  await expect(source).toHaveCount(0);
+  release();
+  await expect(source).toHaveCount(0);
+
+  // An authorized read started after the refusal restores them.
+  api.denyCatalog(false);
+  await page.getByRole("button", { name: "Retry catalog" }).click();
+  await expect(source).toHaveCount(1);
 });
 
 test("server invalidations and Refresh still reload cached OpenView reads", async ({

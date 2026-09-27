@@ -55,7 +55,9 @@ export const openViewKeys = {
   sharedRuns: ["openview", "reports", "shared-runs"] as const,
   sharedRunsPage: (offset: number, limit: number) =>
     ["openview", "reports", "shared-runs", { offset, limit }] as const,
-  authMe: () => ["openview", "auth-me"] as const,
+  /** The signed-in identity. It needs only a session, not records.read, so
+   *  it sits outside the "openview" prefix and its access latch. */
+  authMe: () => ["auth", "me"] as const,
 };
 
 export type ItemBatch<T> = { items: T[]; hasMore: boolean; nextOffset: number };

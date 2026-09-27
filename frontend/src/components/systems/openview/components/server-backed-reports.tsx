@@ -438,7 +438,7 @@ export default function ServerBackedReports() {
   }
 
   useEffect(() => {
-    if (!baselineReport || baselineReport.isDeleted) {
+    if (accessDenied || !baselineReport || baselineReport.isDeleted) {
       setRuns([]);
       setRunsTotal(0);
       setRunsLoading(false);
@@ -468,6 +468,7 @@ export default function ServerBackedReports() {
       active = false;
     };
   }, [
+    accessDenied,
     baselineReport?.id,
     baselineReport?.isDeleted,
     runsOffset,
@@ -1002,7 +1003,15 @@ export default function ServerBackedReports() {
         </div>
 
         <div className="flex min-w-0 flex-col gap-6">
-          {showReportSummary ? (
+          {/* A refusal hides the opened Report too; the draft stays in
+              state and returns once an authorized read succeeds. */}
+          {accessDenied ? (
+            <Alert variant="destructive">
+              OpenView data is unavailable. Sign in or ask for access, then
+              retry.
+            </Alert>
+          ) : null}
+          {accessDenied ? null : showReportSummary ? (
             <Card className="min-w-0">
               <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
@@ -1161,7 +1170,7 @@ export default function ServerBackedReports() {
             </Card>
           )}
 
-          {baselineReport && !baselineReport.isDeleted ? (
+          {!accessDenied && baselineReport && !baselineReport.isDeleted ? (
             <Tabs
               value={activeReportTab}
               onValueChange={setActiveReportTab}

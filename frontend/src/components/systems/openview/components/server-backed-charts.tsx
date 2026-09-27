@@ -208,7 +208,7 @@ export default function ServerBackedCharts() {
       sources.some((source) => source.id === preferenceConfig.moduleId)
     )
       setChosenModuleId(preferenceConfig.moduleId);
-    else if (preferenceConfig)
+    else if (preferenceConfig && !sourcesDenied)
       setPreferenceMessage(
         "Saved chart settings refer to a data source you can no longer access.",
       );

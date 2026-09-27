@@ -22,7 +22,9 @@ type AccessLatch = {
 
 const latches = new WeakMap<QueryClient, AccessLatch>();
 
-function isOpenViewKey(queryKey: readonly unknown[]): boolean {
+// Only reads under the "openview" prefix need records.read; the signed-in
+// identity (openViewKeys.authMe) lives outside it.
+function isGatedKey(queryKey: readonly unknown[]): boolean {
   return queryKey[0] === "openview";
 }
 
@@ -47,8 +49,7 @@ function latchFor(client: QueryClient): AccessLatch {
   latches.set(client, latch);
   // The client lives as long as the verified account, so the watch does too.
   client.getQueryCache().subscribe((event) => {
-    if (event.type !== "updated" || !isOpenViewKey(event.query.queryKey))
-      return;
+    if (event.type !== "updated" || !isGatedKey(event.query.queryKey)) return;
     const { action, query } = event;
     if (action.type === "fetch") {
       latch.sequence += 1;
@@ -57,6 +58,9 @@ function latchFor(client: QueryClient): AccessLatch {
       denyOpenViewAccess(client);
     } else if (
       action.type === "success" &&
+      // A manual cache write (after a save) is not an authorized read: a
+      // person can keep records.write after losing records.read.
+      !action.manual &&
       latch.deniedAtSequence !== null &&
       (latch.startedAt.get(query.queryHash) ?? 0) > latch.deniedAtSequence
     ) {
@@ -75,16 +79,24 @@ export function watchOpenViewAccess(client: QueryClient): void {
 
 /**
  * Records a refusal. Reads already in flight started before it, so they are
- * cancelled: a cancelled read settles as an error, never as a success.
+ * cancelled: a reverted cancel restores the read's previous state (which the
+ * latch hides) and never settles as a success.
  */
 export function denyOpenViewAccess(client: QueryClient): void {
   const latch = latchFor(client);
   latch.deniedAtSequence = latch.sequence;
-  for (const query of client
-    .getQueryCache()
-    .findAll({ queryKey: ["openview"], fetchStatus: "fetching" }))
-    void query.cancel({ revert: false });
+  for (const query of client.getQueryCache().findAll({
+    queryKey: ["openview"],
+    fetchStatus: "fetching",
+    predicate: (query) => isGatedKey(query.queryKey),
+  }))
+    void query.cancel({ revert: true });
   notify(latch);
+}
+
+/** Whether OpenView access is refused for an account's cache. */
+export function isOpenViewAccessDenied(client: QueryClient): boolean {
+  return latchFor(client).deniedAtSequence !== null;
 }
 
 /** Whether OpenView access is refused for the signed-in account. */

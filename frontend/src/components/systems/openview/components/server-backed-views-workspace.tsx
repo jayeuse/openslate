@@ -2148,7 +2148,10 @@ export default function ServerBackedViewsWorkspace({
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <span>
-                {catalogError} Previously loaded catalog data remains available.
+                {catalogError}
+                {catalog?.length
+                  ? " Previously loaded catalog data remains available."
+                  : ""}
               </span>
               <Button
                 type="button"
@@ -2184,7 +2187,10 @@ export default function ServerBackedViewsWorkspace({
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <span>
-                {moduleError} Previously loaded data remains available.
+                {moduleError}
+                {currentWorkspace
+                  ? " Previously loaded data remains available."
+                  : ""}
               </span>
               <Button
                 type="button"

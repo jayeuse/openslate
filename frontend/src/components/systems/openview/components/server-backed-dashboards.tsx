@@ -34,7 +34,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
+import { denyOpenViewAccess } from "../adapters/openview-access";
 import {
   archiveOpenViewDashboard,
   createOpenViewDashboard,
@@ -228,10 +230,17 @@ function isAccessDenied(error: unknown): boolean {
   return error instanceof ApiError && [401, 403].includes(error.status);
 }
 
+// Every Dashboards read needs records.read, like the cached OpenView reads,
+// so a refusal here refuses them too (openview-access.ts).
+function noteRefusal(client: { current: QueryClient }, error: unknown): void {
+  if (isAccessDenied(error)) denyOpenViewAccess(client.current);
+}
+
 export default function ServerBackedDashboards() {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClientRef = useRef(useQueryClient());
   const urlState = parseOpenViewUrl(`${pathname}?${searchParams.toString()}`);
   const routeDashboardId =
     urlState.section === "dashboards" ? urlState.dashboard : undefined;
@@ -371,6 +380,7 @@ export default function ServerBackedDashboards() {
           { scroll: false },
         );
       } catch (error) {
+        noteRefusal(queryClientRef, error);
         if (dashboardDefaultRequestSequence.current === sequence)
           setDashboardDefaultError(
             safeMessage(error, "The default Dashboard could not be loaded."),
@@ -403,6 +413,7 @@ export default function ServerBackedDashboards() {
         setDashboardListHasMore(page.pagination.hasMore);
       })
       .catch((error: unknown) => {
+        noteRefusal(queryClientRef, error);
         if (active && dashboardListRequestSequence.current === sequence)
           setDashboardListError(
             safeMessage(error, "Dashboards could not be loaded."),
@@ -428,6 +439,7 @@ export default function ServerBackedDashboards() {
         setCatalogError("");
       })
       .catch((error: unknown) => {
+        noteRefusal(queryClientRef, error);
         if (active)
           setCatalogError(
             safeMessage(
@@ -482,6 +494,7 @@ export default function ServerBackedDashboards() {
         );
       })
       .catch((error: unknown) => {
+        noteRefusal(queryClientRef, error);
         if (active && fieldRequestSequence.current === sequence)
           setCatalogError(
             safeMessage(error, "The field catalog could not be loaded."),
@@ -520,6 +533,7 @@ export default function ServerBackedDashboards() {
         applyDashboard(dashboard);
       })
       .catch((error: unknown) => {
+        noteRefusal(queryClientRef, error);
         if (active && routeLoadSequence.current === sequence) {
           setSelectedDashboard(null);
           setDashboardError(
@@ -742,6 +756,7 @@ export default function ServerBackedDashboards() {
           );
       })
       .catch((error: unknown) => {
+        noteRefusal(queryClientRef, error);
         if (!active || requestSequence.current !== sequence) return;
         if (
           isAccessDenied(error) &&
@@ -963,6 +978,7 @@ export default function ServerBackedDashboards() {
       setDashboards((current) => [...current, ...page.items]);
       setDashboardListHasMore(page.pagination.hasMore);
     } catch (error) {
+      noteRefusal(queryClientRef, error);
       if (dashboardListRequestSequence.current !== sequence) return;
       setDashboardListError(
         safeMessage(error, "More Dashboards could not be loaded."),
@@ -985,6 +1001,7 @@ export default function ServerBackedDashboards() {
       setCatalogSourceOffset((current) => current + page.items.length);
       setCatalogSourcesHasMore(page.pagination.hasMore);
     } catch (error) {
+      noteRefusal(queryClientRef, error);
       setCatalogError(
         safeMessage(error, "More data sources could not be loaded."),
       );
@@ -1013,6 +1030,7 @@ export default function ServerBackedDashboards() {
       setFieldOffset(offset + page.items.length);
       setFieldsHasMore(page.pagination.hasMore);
     } catch (error) {
+      noteRefusal(queryClientRef, error);
       if (fieldRequestSequence.current !== sequence) return;
       setCatalogError(safeMessage(error, "More fields could not be loaded."));
     } finally {
@@ -1350,6 +1368,7 @@ export default function ServerBackedDashboards() {
       applyDashboard(await getOpenViewDashboard(selectedDashboard.id));
       setNotice("Dashboard reloaded.");
     } catch (error) {
+      noteRefusal(queryClientRef, error);
       setDashboardError(
         safeMessage(error, "The Dashboard could not be reloaded."),
       );
@@ -1477,6 +1496,7 @@ export default function ServerBackedDashboards() {
           );
       })
       .catch((error: unknown) => {
+        noteRefusal(queryClientRef, error);
         if (requestSequence.current !== sequence) return;
         if (
           isAccessDenied(error) &&

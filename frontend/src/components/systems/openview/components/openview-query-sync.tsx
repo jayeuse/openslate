@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
-import { useQueryClient, type Query } from "@tanstack/react-query";
+import {
+  useQueryClient,
+  type Query,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
 import {
   openViewKeys,
@@ -25,41 +29,37 @@ export function OpenViewQuerySync({ active }: { active: boolean }) {
     // before.
     const notChartPreferences = (query: Query) =>
       query.queryKey[1] !== openViewKeys.chartPreferences()[1];
+    // Reads again every cached read under `queryKey` that `matches`. A read
+    // in flight with data is restarted by invalidation, but one with no data
+    // is not (TanStack reuses its request), and it may have read before the
+    // change: cancel it first so the refetch starts after the event.
+    const refresh = (
+      queryKey: QueryKey,
+      matches: (query: Query) => boolean,
+    ) => {
+      const cold = client
+        .getQueryCache()
+        .findAll({ queryKey, fetchStatus: "fetching" })
+        .filter((query) => matches(query) && query.state.data === undefined);
+      void Promise.all(
+        cold.map((query) => query.cancel({ revert: true })),
+      ).then(() => client.invalidateQueries({ queryKey, predicate: matches }));
+    };
+    const everyRead = () => true;
     const unsubscribe = subscribeOpenViewInvalidations(
       (event) => {
         if (event.type === "resync") {
-          void client.invalidateQueries({
-            queryKey: openViewKeys.all,
-            predicate: notChartPreferences,
-          });
+          refresh(openViewKeys.all, notChartPreferences);
           return;
         }
         for (const queryKey of openViewKeysForEntity(event.entity))
-          void client.invalidateQueries({ queryKey });
+          refresh(queryKey, everyRead);
       },
-      () => {
-        // Every read that exists now started before the stream connected (a
-        // hover prefetch, an earlier visit, or a read that overlapped the
-        // handshake), so it may have missed a change: read it again. Reads
-        // that start after this moment are covered by the stream. A read
-        // still in flight with no data would not restart on invalidation,
-        // so it is cancelled first.
-        const overlapping = client
-          .getQueryCache()
-          .findAll({ queryKey: openViewKeys.all, fetchStatus: "fetching" })
-          .filter(
-            (query) =>
-              notChartPreferences(query) && query.state.data === undefined,
-          );
-        void Promise.all(
-          overlapping.map((query) => query.cancel({ revert: true })),
-        ).then(() =>
-          client.invalidateQueries({
-            queryKey: openViewKeys.all,
-            predicate: notChartPreferences,
-          }),
-        );
-      },
+      // Every read that exists now started before the stream connected (a
+      // hover prefetch, an earlier visit, or a read that overlapped the
+      // handshake), so it may have missed a change: read it again. Reads
+      // that start after this moment are covered by the stream.
+      () => refresh(openViewKeys.all, notChartPreferences),
     );
     return () => {
       unsubscribe();
