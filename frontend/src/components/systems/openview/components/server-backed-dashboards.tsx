@@ -1637,8 +1637,11 @@ export default function ServerBackedDashboards() {
             className="mt-3 min-h-11"
             variant="outline"
             onClick={() => {
+              // Retry every read the section shows, including the active
+              // widget whose refusal may have set the latch.
               refreshDashboardList();
               retryCatalog();
+              refreshActiveSnapshot();
             }}
           >
             Retry

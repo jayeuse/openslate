@@ -2943,7 +2943,9 @@ test("a refused Dashboard read hides the retained Dashboard and offers Retry", a
   await expect(page.getByRole("heading", { name: "Operations" })).toHaveCount(
     0,
   );
-  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  // Retry reads the refused widget again, not only the list and catalog.
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(table.locator("tbody tr")).toHaveCount(25);
 });
 
 test("duplicating a Dashboard creates an independent copy and keeps the source default", async ({
