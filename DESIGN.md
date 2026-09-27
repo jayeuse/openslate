@@ -516,7 +516,7 @@ Motion answers what a person did; it never decorates and never makes them wait. 
 
 | Look       | fast / base / slow | Signature (after a successful Publish)                |
 | ---------- | ------------------ | ----------------------------------------------------- |
-| Slate      | 140 / 220 / 360ms  | none; the active sidebar item and tab mark glide      |
+| Slate      | 140 / 220 / 360ms  | none                                                  |
 | Whiteboard | 110 / 180 / 320ms  | the page-title marker underline draws from the left   |
 | Triplicate | 120 / 200 / 340ms  | the page-title rule is written in one even stroke     |
 | Stockroom  | 160 / 260 / 420ms  | the stencilled page title is sprayed on from the left |

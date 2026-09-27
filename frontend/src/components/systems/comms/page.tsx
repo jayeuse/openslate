@@ -1683,10 +1683,7 @@ export default function SampleComms() {
                             Create category
                           </Action>
                           <div className="mt-5 flex items-center justify-between px-2">
-                            <h2
-                              data-slot="section-title"
-                              className="text-muted-foreground text-xs font-semibold"
-                            >
+                            <h2 className="text-muted-foreground text-xs font-semibold">
                               Direct messages
                             </h2>
                             <Action
