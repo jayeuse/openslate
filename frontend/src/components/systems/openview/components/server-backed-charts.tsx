@@ -448,7 +448,7 @@ export default function ServerBackedCharts() {
       });
     } catch (error) {
       if (isAuthorizationDenied(error)) {
-        recordPageDenial(queryClient, [openViewKeys.catalog], error);
+        void recordPageDenial(queryClient, [openViewKeys.catalog], error);
       } else {
         setMetadataError(
           formatError(error, "More data sources could not be loaded."),
@@ -481,7 +481,7 @@ export default function ServerBackedCharts() {
       });
     } catch (error) {
       if (isAuthorizationDenied(error)) {
-        recordPageDenial(queryClient, moduleFieldKeys(moduleId), error);
+        void recordPageDenial(queryClient, moduleFieldKeys(moduleId), error);
       } else {
         setMetadataError(
           formatError(error, "More data-source fields could not be loaded."),

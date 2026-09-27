@@ -413,7 +413,7 @@ export default function ServerBackedReports() {
       });
     } catch (error) {
       if (isAuthorizationDenied(error))
-        recordPageDenial(queryClient, [openViewKeys.reportLists], error);
+        void recordPageDenial(queryClient, [openViewKeys.reportLists], error);
       else setListMoreFailedFor(mark);
     } finally {
       setListLoadingMore(false);
@@ -609,7 +609,7 @@ export default function ServerBackedReports() {
       setSourcesMoreFailedFor(null);
     } catch (error) {
       if (isAuthorizationDenied(error))
-        recordPageDenial(queryClient, [openViewKeys.catalog], error);
+        void recordPageDenial(queryClient, [openViewKeys.catalog], error);
       else setSourcesMoreFailedFor(mark);
     } finally {
       setSourcesLoadingMore(false);
@@ -639,7 +639,7 @@ export default function ServerBackedReports() {
       setFieldsMoreFailedFor(null);
     } catch (error) {
       if (isAuthorizationDenied(error))
-        recordPageDenial(queryClient, moduleFieldKeys(moduleId), error);
+        void recordPageDenial(queryClient, moduleFieldKeys(moduleId), error);
       else setFieldsMoreFailedFor(mark);
     } finally {
       setFieldsLoadingMore(false);

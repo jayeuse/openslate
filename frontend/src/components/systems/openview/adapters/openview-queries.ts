@@ -117,15 +117,22 @@ export function moduleFieldKeys(moduleId: string): QueryKey[] {
   ];
 }
 
-/** Records a refused "Load more" page on every cached read it extends. */
-export function recordPageDenial(
+/**
+ * Records a refused "Load more" page on every cached read it extends. A read
+ * of the collection already in flight started before the refusal, so it is
+ * cancelled: only a read started after the refusal may clear it.
+ */
+export async function recordPageDenial(
   client: QueryClient,
   queryKeys: readonly QueryKey[],
   error: ApiError,
-): void {
-  const now = Date.now();
-  for (const queryKey of queryKeys)
-    for (const query of client.getQueryCache().findAll({ queryKey }))
+): Promise<void> {
+  const queries = queryKeys.flatMap((queryKey) =>
+    client.getQueryCache().findAll({ queryKey }),
+  );
+  const deny = () => {
+    const now = Date.now();
+    for (const query of queries)
       query.setState({
         data: undefined,
         dataUpdatedAt: 0,
@@ -135,8 +142,18 @@ export function recordPageDenial(
         fetchFailureCount: query.state.fetchFailureCount + 1,
         fetchFailureReason: error,
         status: "error",
+        fetchStatus: "idle",
         isInvalidated: true,
       });
+  };
+  const inFlight = queries.filter(
+    (query) => query.state.fetchStatus === "fetching",
+  );
+  deny();
+  // A cancelled fetch settles as an error, never as a success; record the
+  // refusal again once it has.
+  await Promise.all(inFlight.map((query) => query.cancel({ revert: false })));
+  if (inFlight.length > 0) deny();
 }
 
 export type ModuleWorkspace = {

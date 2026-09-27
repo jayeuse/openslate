@@ -560,6 +560,38 @@ test("an invalidation drops loaded catalog pages even when the first page is unc
   await expect(equipment).toHaveCount(0);
 });
 
+test("a refused catalog page outlasts a first-page read already in flight", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  api.refuseLaterCatalogPages();
+  await page.goto("/openview?section=charts");
+  const source = page.locator("option", { hasText: "Assets" });
+  await expect(source).toHaveCount(1);
+  await sendOpenViewEvent(page, "resync");
+  await expect.poll(() => api.catalogReads.length).toBe(2);
+
+  // A catalog change starts a first-page read that has not returned yet.
+  const release = api.holdCatalog();
+  await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
+  await expect.poll(() => api.catalogReads.length).toBe(3);
+
+  // The next page is refused while that read is still out.
+  await page.getByRole("button", { name: "Load more data sources" }).click();
+  await expect(source).toHaveCount(0);
+
+  // The older read started before the refusal, so it cannot clear it.
+  release();
+  await expect(
+    page.getByRole("button", { name: "Retry catalog" }),
+  ).toBeVisible();
+  await expect(source).toHaveCount(0);
+
+  // A read started after the refusal can.
+  await page.getByRole("button", { name: "Retry catalog" }).click();
+  await expect(source).toHaveCount(1);
+});
+
 test("a refused catalog refresh hides data sources from a new Report recipe", async ({
   page,
 }) => {

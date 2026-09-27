@@ -238,7 +238,7 @@ export function useServerViewsResource(requestedModule: string | null) {
       }));
     } catch (error) {
       if (isAuthorizationDenied(error)) {
-        recordPageDenial(queryClient, [openViewKeys.catalog], error);
+        void recordPageDenial(queryClient, [openViewKeys.catalog], error);
         return;
       }
       setMetadataRetryTarget("catalog");
@@ -317,7 +317,7 @@ export function useServerViewsResource(requestedModule: string | null) {
       });
     } catch (error) {
       if (isAuthorizationDenied(error)) {
-        recordPageDenial(queryClient, moduleFieldKeys(moduleId), error);
+        void recordPageDenial(queryClient, moduleFieldKeys(moduleId), error);
         return;
       }
       setMetadataRetryTarget("module");
@@ -387,7 +387,7 @@ export function useServerViewsResource(requestedModule: string | null) {
       });
     } catch (error) {
       if (isAuthorizationDenied(error)) {
-        recordPageDenial(queryClient, [openViewKeys.audiences()], error);
+        void recordPageDenial(queryClient, [openViewKeys.audiences()], error);
         return;
       }
       setAudienceExtension({
