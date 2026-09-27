@@ -27,82 +27,22 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import type { SandboxDocumentDesign } from "../domain/document";
+import type { SandboxTestRun } from "../state/api";
+import {
+  comparisonRows,
+  describeTrigger,
+  displayValue,
+  eventDescription,
+  fieldName,
+  moduleName,
+  type TestRunSummary,
+} from "../domain/test-run-summary";
 import type {
-  SandboxDocumentDesign,
-  SandboxFieldValue,
+  SandboxAutomation,
+  SandboxAutomationTrigger,
 } from "../domain/document";
-import type { SandboxTestEvent, SandboxTestRun } from "../state/api";
-import type { TestRunSummary } from "../domain/test-run-summary";
 
-function fieldName(
-  design: SandboxDocumentDesign,
-  moduleId: string,
-  fieldId: string,
-) {
-  return (
-    design.modules
-      .find((item) => item.id === moduleId)
-      ?.fields.find((field) => field.id === fieldId)?.name ??
-    "Unavailable field"
-  );
-}
-function moduleName(design: SandboxDocumentDesign, moduleId: string) {
-  return (
-    design.modules.find((item) => item.id === moduleId)?.name ??
-    "Unavailable module"
-  );
-}
-function displayValue(
-  value: SandboxFieldValue | undefined,
-  missing: string,
-): string {
-  if (value === undefined) return missing;
-  if (value === null) return "No value";
-  if (value === true) return "Yes";
-  if (value === false) return "No";
-  if (value === "") return "Empty text";
-  return String(value);
-}
-function comparisonRows(run: SandboxTestRun) {
-  return Array.from(
-    new Set([
-      ...Object.keys(run.input.values),
-      ...Object.keys(run.result.values),
-    ]),
-  ).map((id) => {
-    const before = run.input.values[id];
-    const after = run.result.values[id];
-    return {
-      id,
-      before,
-      after,
-      changed: after !== undefined && !Object.is(before, after),
-    };
-  });
-}
-function eventDescription(
-  design: SandboxDocumentDesign,
-  run: SandboxTestRun,
-): string {
-  const event: SandboxTestEvent = run.event;
-  if (event.kind === "record-created") return "An item is added";
-  if (event.kind === "field-changed")
-    return `${fieldName(design, run.input.moduleId, event.fieldId)} changes`;
-  if (event.kind === "threshold-crossed")
-    return `${fieldName(design, run.input.moduleId, event.fieldId)} crosses a threshold from ${displayValue(event.previousValue, "Not provided")}`;
-  const days = [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-  ];
-  return event.frequency === "daily"
-    ? `Daily schedule at ${event.time}`
-    : `Weekly schedule: ${days[(event.weekday ?? 0) - 1] ?? "day not specified"}, ${event.time}`;
-}
 function Stage({
   title,
   icon,
@@ -136,6 +76,40 @@ function Connector() {
   );
 }
 
+/** Why an automation did not run, with a way to test the event that runs it. */
+function NotTriggeredReason({
+  automation,
+  design,
+  testedModuleId,
+  pending,
+  onTryTrigger,
+}: {
+  automation: SandboxAutomation | undefined;
+  design: SandboxDocumentDesign;
+  testedModuleId: string;
+  pending: boolean;
+  onTryTrigger: (trigger: SandboxAutomationTrigger) => void;
+}) {
+  if (!automation) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="text-muted-foreground">
+        {describeTrigger(automation.trigger, design, testedModuleId)}
+      </span>
+      <Button
+        variant="outline"
+        size="sm"
+        className="min-h-9"
+        disabled={pending}
+        aria-label={`Test ${automation.name} instead`}
+        onClick={() => onTryTrigger(automation.trigger)}
+      >
+        Test this instead
+      </Button>
+    </div>
+  );
+}
+
 type OutcomeProps = {
   design: SandboxDocumentDesign;
   run: SandboxTestRun | undefined;
@@ -144,7 +118,10 @@ type OutcomeProps = {
   pending: boolean;
   onShowField: (id: string) => void;
   onRunAgain: (run: SandboxTestRun) => void;
-  onShowOnCanvas: (moduleId: string) => void;
+  onShowOnCanvas: (run: SandboxTestRun) => void;
+  automations: readonly SandboxAutomation[];
+  /** Set up the next test with this automation's trigger. */
+  onTryTrigger: (trigger: SandboxAutomationTrigger) => void;
 };
 export function TestOutcome({
   design,
@@ -155,6 +132,8 @@ export function TestOutcome({
   onShowField,
   onRunAgain,
   onShowOnCanvas,
+  automations,
+  onTryTrigger,
 }: OutcomeProps) {
   if (!run)
     return (
@@ -196,10 +175,10 @@ export function TestOutcome({
             variant="outline"
             size="sm"
             className="min-h-9"
-            onClick={() => onShowOnCanvas(run.input.moduleId)}
+            onClick={() => onShowOnCanvas(run)}
           >
             <Waypoints aria-hidden="true" />
-            Show module on canvas
+            Show test on canvas
           </Button>
         )}
       </div>
@@ -308,6 +287,17 @@ export function TestOutcome({
                       ? "Applied in test"
                       : trace.outcome}
                   </p>
+                  {trace.outcome === "Not triggered" ? (
+                    <NotTriggeredReason
+                      automation={automations.find(
+                        (item) => item.id === trace.automationId,
+                      )}
+                      design={design}
+                      testedModuleId={run.input.moduleId}
+                      pending={pending}
+                      onTryTrigger={onTryTrigger}
+                    />
+                  ) : null}
                 </li>
               ))}
             </ol>

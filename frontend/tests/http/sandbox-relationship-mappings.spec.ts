@@ -2391,7 +2391,7 @@ test("a Test result from an older draft says so and can show its module on the c
   await expect(outcome.getByRole("listitem")).toHaveCount(1);
   await expect(outcome.getByRole("listitem")).toContainText("(3 times)");
 
-  await outcome.getByRole("button", { name: "Show module on canvas" }).click();
+  await outcome.getByRole("button", { name: "Show test on canvas" }).click();
   await expect(page).toHaveURL(/section=build/);
   const canvas = page.getByRole("region", { name: "Organization canvas" });
   const cell = (id: string) => canvas.locator(`.x6-cell[data-cell-id="${id}"]`);
@@ -2401,4 +2401,61 @@ test("a Test result from an older draft says so and can show its module on the c
   await expect(
     page.getByRole("complementary", { name: "Design inspector" }),
   ).toContainText("Service requests");
+});
+
+test("a Test run plays out on the canvas in three still steps", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    testRuns: [
+      {
+        id: "00000000-0000-4000-8000-000000000010",
+        createdAt: "2026-09-21T00:02:00Z",
+        documentRevision: 1,
+        input: {
+          moduleId: "sample-requests",
+          values: { "sample-field-Status": "Open" },
+        },
+        event: { kind: "field-changed", fieldId: "sample-field-Status" },
+        automationIds: null,
+        result: {
+          values: {
+            "sample-field-Status": "Open",
+            "sample-field-Priority": "High",
+          },
+          routes: [],
+          automationTraces: [],
+          issues: [],
+        },
+      },
+    ],
+  });
+  await page.goto("/sandbox?section=test");
+  await page
+    .getByRole("region", { name: "Test outcome" })
+    .getByRole("button", { name: "Show test on canvas" })
+    .click();
+
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const row = (field: string) =>
+    canvas.locator(
+      `[data-field-id="sandbox-field:sample-requests:${encodeURIComponent(`sample-field-${field}`)}"]`,
+    );
+  await expect(page.getByText("Step 1 of 3: What happened")).toBeVisible();
+  await expect(page.getByText("Status changes", { exact: true })).toBeVisible();
+  await expect(row("Status")).toHaveAttribute("data-test-mark", "trigger");
+  await expect(row("Priority")).not.toHaveAttribute("data-test-mark");
+
+  await page.getByRole("button", { name: "Next step" }).click();
+  await expect(page.getByText("Step 2 of 3: Automations")).toBeVisible();
+  await page.getByRole("button", { name: "Next step" }).click();
+  await expect(page.getByText("Step 3 of 3: Result")).toBeVisible();
+  await expect(page.getByText("Priority: Not provided → High")).toBeVisible();
+  await expect(row("Priority")).toHaveAttribute("data-test-mark", "changed");
+  await expect(page.getByRole("button", { name: "Next step" })).toBeDisabled();
+
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(row("Status")).not.toHaveAttribute("data-test-mark");
+  await expect(page.getByText("Step 3 of 3: Result")).toBeHidden();
 });

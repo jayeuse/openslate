@@ -41,6 +41,9 @@ const PAIRS = [
   ["canvas-type-ink", "canvas-row-stripe", 4.5],
   ["canvas-label-ink", "canvas-label-fill", 4.5],
   ["canvas-field-ink", "canvas-row-stripe", 4.5],
+  // Rows a Test run changed take the action tint on the canvas.
+  ["canvas-field-ink", "action-tint", 4.5],
+  ["canvas-type-ink", "action-tint", 4.5],
   ["data-ink", "card", 4.5],
   ["data-ink", "background", 4.5],
   ["button-ink", "card", 4.5],

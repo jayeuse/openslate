@@ -66,8 +66,10 @@
   --canvas-label-fill: #ffffff;
   --canvas-label-frame: #8d959d;
   --canvas-label-ink: #1c1e21;
-  --dept-1: #8a7a4f;
-  --dept-2: #4f6d7a;
+  /* Identity marks keep Slate's department order (violet, teal, amber,
+     rose), muted like paint on steel. */
+  --dept-1: #7d6f9a;
+  --dept-2: #4f7a74;
   --dept-3: #9a6b3f;
   --dept-4: #8a5d66;
   --dept-1-band: #c8cdd2;
@@ -153,6 +155,8 @@
   --canvas-dept-frame: #5d656c;
   --canvas-dept-ink: #ecedea;
   --canvas-module-fill: #6b5538;
+  /* Changed test rows sit on a darker base, so light type ink stays AA. */
+  --canvas-test-fill: color-mix(in srgb, var(--action) 20%, #453622);
   --canvas-module-frame: #8a6d48;
   --canvas-module-ink: #f3ede4;
   --canvas-row-rule: #7d6446;
@@ -162,8 +166,8 @@
   --canvas-label-fill: #24282c;
   --canvas-label-frame: #5d656c;
   --canvas-label-ink: #ecedea;
-  --dept-1: #b8a672;
-  --dept-2: #7d9aa6;
+  --dept-1: #a89cc4;
+  --dept-2: #7fa9a2;
   --dept-3: #c39468;
   --dept-4: #b98a93;
   --dept-1-band: #3a4046;

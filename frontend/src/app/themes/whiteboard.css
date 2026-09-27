@@ -67,18 +67,20 @@
   --canvas-label-fill: #fafbfc;
   --canvas-label-frame: #fafbfc;
   --canvas-label-ink: #1b1f23;
-  --dept-1: #dfc168;
-  --dept-2: #bbade0;
+  /* Department colors keep Slate's order (violet, teal, amber, rose) in
+     marker pastels, so a department is recognizable in every look. */
+  --dept-1: #bbade0;
+  --dept-2: #8fcfc6;
   --dept-3: #edbb8f;
-  --dept-4: #c8baa6;
+  --dept-4: #e8a9b8;
   --dept-1-band: var(--dept-1);
   --dept-2-band: var(--dept-2);
   --dept-3-band: var(--dept-3);
   --dept-4-band: var(--dept-4);
-  --dept-1-card: #f4eacb;
-  --dept-2-card: #e9e3f6;
+  --dept-1-card: #e9e3f6;
+  --dept-2-card: #dcf1ee;
   --dept-3-card: #f9e6d4;
-  --dept-4-card: #ece5db;
+  --dept-4-card: #f8e3e8;
   /* Full-strength materials. Modules are cards in their department's
      tint on the white board. */
   --data-ink: var(--ink);
@@ -163,18 +165,18 @@
   --canvas-label-fill: #1f2729;
   --canvas-label-frame: #1f2729;
   --canvas-label-ink: #eff2ee;
-  --dept-1: #c9ad57;
-  --dept-2: #a497cf;
+  --dept-1: #a497cf;
+  --dept-2: #6fb3aa;
   --dept-3: #d4a273;
-  --dept-4: #b5a792;
+  --dept-4: #cf8e9e;
   --dept-1-band: var(--dept-1);
   --dept-2-band: var(--dept-2);
   --dept-3-band: var(--dept-3);
   --dept-4-band: var(--dept-4);
-  --dept-1-card: #3a3524;
-  --dept-2-card: #302c40;
+  --dept-1-card: #302c40;
+  --dept-2-card: #233634;
   --dept-3-card: #3d3024;
-  --dept-4-card: #35312b;
+  --dept-4-card: #3b2a30;
   --data-ink: var(--ink);
   --button-edge: #7a8887;
   --button-ink: var(--ink);

@@ -142,6 +142,12 @@
   --dept-3-stripe: var(--canvas-row-stripe);
   --dept-4-stripe: var(--canvas-row-stripe);
   --canvas-field-ink: var(--canvas-module-ink);
+  /* Rows a Test run changed (sandbox-canvas-trace.ts). */
+  --canvas-test-fill: color-mix(
+    in srgb,
+    var(--action) 18%,
+    var(--canvas-module-fill)
+  );
   /* Values people type into inputs and text areas. */
   --data-ink: var(--ink);
   /* Outline button material. --button-edge falls back to --border where
@@ -474,6 +480,23 @@ textarea {
 .sandbox-ui .x6-edge[data-trace="on"] [data-sandbox-line] {
   stroke: var(--action);
   stroke-width: 2px;
+}
+
+/* A Test run shown on the canvas marks its trigger field with a solid
+   action outline and the fields it changed with an action fill and a dashed
+   action outline, so the two marks differ by pattern, not only by hue
+   (sandbox-canvas-trace.ts). A field can carry both. */
+.sandbox-ui [data-field-id][data-test-mark~="changed"] {
+  fill: var(--canvas-test-fill);
+  stroke: var(--action);
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 3;
+}
+
+.sandbox-ui [data-field-id][data-test-mark~="trigger"] {
+  stroke: var(--action);
+  stroke-width: 2.5px;
+  stroke-dasharray: none;
 }
 
 /* Overview (below SANDBOX_ZOOM.overview): field text and line labels are too

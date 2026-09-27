@@ -331,16 +331,22 @@ The canvas has its own layer so a look can restyle the Sandbox without new marku
 
 Four identity colors per look (`--dept-1` to `--dept-4`), cycled in department order. Each department also has four fills:
 
-| Token             | Fills                 | Slate                  | Whiteboard            | Triplicate                         | Stockroom                            |
-| ----------------- | --------------------- | ---------------------- | --------------------- | ---------------------------------- | ------------------------------------ |
-| `--dept-n`        | identity mark         | identity hue           | pastel marker hue     | identity hue                       | identity hue                         |
-| `--dept-n-band`   | department head       | `--canvas-dept-fill`   | the pastel `--dept-n` | paper tint                         | one steel band for all               |
-| `--dept-n-card`   | module header         | `--surface-sunken`     | light pastel tint     | the same paper tint                | paper end label (white in light)     |
-| `--dept-n-sheet`  | department frame body | `--canvas-dept-fill`   | `--canvas-dept-fill`  | paper tint (department 2 is plain) | `--canvas-dept-fill`                 |
-| `--dept-n-module` | module body           | `--canvas-module-fill` | `--dept-n-card`       | `--dept-n-sheet`                   | kraft (`--canvas-module-fill`)       |
-| `--dept-n-stripe` | alternate field rows  | `--canvas-row-stripe`  | `--dept-n-card`       | `--dept-n-sheet`                   | darker kraft (`--canvas-row-stripe`) |
+| Token             | Fills                 | Slate                  | Whiteboard            | Triplicate          | Stockroom                            |
+| ----------------- | --------------------- | ---------------------- | --------------------- | ------------------- | ------------------------------------ |
+| `--dept-n`        | identity mark         | identity hue           | pastel marker hue     | identity hue        | identity hue                         |
+| `--dept-n-band`   | department head       | `--canvas-dept-fill`   | the pastel `--dept-n` | paper tint          | one steel band for all               |
+| `--dept-n-card`   | module header         | `--surface-sunken`     | light pastel tint     | the same paper tint | paper end label (white in light)     |
+| `--dept-n-sheet`  | department frame body | `--canvas-dept-fill`   | `--canvas-dept-fill`  | paper tint          | `--canvas-dept-fill`                 |
+| `--dept-n-module` | module body           | `--canvas-module-fill` | `--dept-n-card`       | `--dept-n-sheet`    | kraft (`--canvas-module-fill`)       |
+| `--dept-n-stripe` | alternate field rows  | `--canvas-row-stripe`  | `--dept-n-card`       | `--dept-n-sheet`    | darker kraft (`--canvas-row-stripe`) |
 
 Slate and Stockroom stripe alternate field rows; Whiteboard and Triplicate set the stripe equal to the module body, so their rows are divided by `--canvas-row-rule` only.
+
+**The Same Department Rule.** Department color is meaning: it tells an owner which department a table belongs to. Every look keeps Slate's hue order (1 violet, 2 teal, 3 amber, 4 rose) and changes only lightness and strength for its material: marker pastels in Whiteboard, paper tints in Triplicate, muted paint on steel in Stockroom.
+
+Correct: Whiteboard's `--dept-2` is a teal marker pastel (`#8fcfc6`), so Commerce stays teal-family in every look.
+
+Wrong: Whiteboard's `--dept-2` is lavender, so Commerce is teal in Slate and lavender on the board.
 
 ### Look-private tokens
 
@@ -453,7 +459,7 @@ Correct: `--lift: 0 2px 0 rgb(28 30 33 / 0.14);` (Stockroom).
 
 Wrong: `--lift: 4px 4px 0 var(--ink);`
 
-**The Selection Lifts Rule.** On the canvas, state lift belongs to selection: the selected department or module takes `--lift-filter` and a heavier stroke. A look may give a node kind a resting material lift (Whiteboard modules, Triplicate departments, Stockroom's shelf lip), and it is the same on every node of that kind. Hovering a module or a line traces its connections: the rest dims to 35% opacity in 150ms, the traced lines turn `--action` at 2px (3.4px in Whiteboard), and nothing moves. "Show on canvas" from a Test result pins the same trace on the tested module (`?trace=`), until a click on empty canvas clears it.
+**The Selection Lifts Rule.** On the canvas, state lift belongs to selection: the selected department or module takes `--lift-filter` and a heavier stroke. A look may give a node kind a resting material lift (Whiteboard modules, Triplicate departments, Stockroom's shelf lip), and it is the same on every node of that kind. Hovering a module or a line traces its connections: the rest dims to 35% opacity in 150ms, the traced lines turn `--action` at 2px (3.4px in Whiteboard), and nothing moves. "Show test on canvas" from a Test result pins the same trace on the tested module (`?trace=` and `?run=`) and plays the run as three still steps in a strip above the canvas (What happened, Automations, Result) with Previous step, Next step, Back to result, and Clear, plus a one-line legend. The strip repeats the result's caveats (an older draft, open issues). The trigger field row takes a solid 2.5px `--action` outline; changed rows take `--canvas-test-fill` (the action color mixed into the module fill; Stockroom dark mixes it into a darker base to keep type ink AA) and a dashed 1.5px `--action` outline, so the marks differ by pattern, not only hue. A field can carry both. Rows also carry an `aria-description` ("started the test", "changed in the test"). Each step keeps the earlier marks, and nothing moves. Clear, or a click on empty canvas, removes the trace and the marks; Back to result reopens the same run on its module and event.
 
 Correct: `.sandbox-ui .x6-cell[data-trace="dim"] { opacity: 0.35; }`
 

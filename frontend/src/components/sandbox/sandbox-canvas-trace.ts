@@ -32,6 +32,11 @@ export type SandboxCanvasTrace = {
    * view. A blank click clears it. Null clears it too.
    */
   pin: (cellId: string | null) => void;
+  /**
+   * Marks field rows (by canvas field id) for a Test run: "trigger" or
+   * "changed". Null clears the marks. Marks survive re-renders.
+   */
+  markFields: (marks: Readonly<Record<string, string>> | null) => void;
   dispose: () => void;
 };
 
@@ -53,6 +58,7 @@ export function bindSandboxCanvasTrace({
 }): SandboxCanvasTrace {
   let hovered: string | null = null;
   let pinned: string | null = null;
+  let fieldMarks: Readonly<Record<string, string>> | null = null;
   const departmentIds = () =>
     new Set(state.current.departments.map((item) => item.id));
 
@@ -64,6 +70,25 @@ export function bindSandboxCanvasTrace({
     for (const cell of graph.getCells()) {
       const container = graph.findViewByCell(cell)?.container;
       if (!container) continue;
+      for (const row of container.querySelectorAll("[data-field-id]")) {
+        const mark = fieldMarks?.[row.getAttribute("data-field-id") ?? ""];
+        if (mark) {
+          row.setAttribute("data-test-mark", mark);
+          // Say the mark too, not only show it.
+          row.setAttribute(
+            "aria-description",
+            [
+              mark.includes("trigger") ? "started the test" : "",
+              mark.includes("changed") ? "changed in the test" : "",
+            ]
+              .filter(Boolean)
+              .join(", "),
+          );
+        } else {
+          row.removeAttribute("data-test-mark");
+          row.removeAttribute("aria-description");
+        }
+      }
       if (traced === null || departments.has(cell.id))
         container.removeAttribute("data-trace");
       else
@@ -88,6 +113,7 @@ export function bindSandboxCanvasTrace({
     const wasPinned = pinned !== null;
     hovered = null;
     pinned = null;
+    fieldMarks = null;
     refresh();
     if (wasPinned) onPinCleared?.();
   };
@@ -106,6 +132,10 @@ export function bindSandboxCanvasTrace({
     refresh,
     pin: (cellId) => {
       pinned = cellId;
+      refresh();
+    },
+    markFields: (marks) => {
+      fieldMarks = marks;
       refresh();
     },
     dispose: () => {

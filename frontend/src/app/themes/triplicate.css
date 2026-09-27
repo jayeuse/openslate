@@ -65,13 +65,15 @@
   --canvas-label-fill: #fefefc;
   --canvas-label-frame: #1e2d55;
   --canvas-label-ink: #1e2d55;
-  --dept-1: #b8993a;
-  --dept-2: #8e96aa;
-  --dept-3: #5e9a74;
+  /* Carbon copies keep Slate's department order (violet, teal, amber,
+     rose) as paper tints. */
+  --dept-1: #8e7fb8;
+  --dept-2: #4f978f;
+  --dept-3: #b8993a;
   --dept-4: #c0808b;
-  --dept-1-band: #f6f0d6;
-  --dept-2-band: #eef0f4;
-  --dept-3-band: #e3efe6;
+  --dept-1-band: #ece8f6;
+  --dept-2-band: #e1efec;
+  --dept-3-band: #f6f0d6;
   --dept-4-band: #f5e6e8;
   --dept-1-card: var(--dept-1-band);
   --dept-2-card: var(--dept-2-band);
@@ -82,9 +84,9 @@
   --button-edge: var(--action);
   --button-ink: var(--action);
   --canvas-field-ink: #2343c4;
-  --dept-1-sheet: #f6f0d6;
-  --dept-2-sheet: #fefefc;
-  --dept-3-sheet: #e3efe6;
+  --dept-1-sheet: #ece8f6;
+  --dept-2-sheet: #e1efec;
+  --dept-3-sheet: #f6f0d6;
   --dept-4-sheet: #f5e6e8;
   --dept-1-module: var(--dept-1-sheet);
   --dept-2-module: var(--dept-2-sheet);
@@ -157,13 +159,13 @@
   --canvas-label-fill: #171c35;
   --canvas-label-frame: #6d77a1;
   --canvas-label-ink: #e8eaf2;
-  --dept-1: #d4b85c;
-  --dept-2: #a4abc4;
-  --dept-3: #7fbf96;
+  --dept-1: #aea3d6;
+  --dept-2: #74b8af;
+  --dept-3: #d4b85c;
   --dept-4: #d9a0aa;
-  --dept-1-band: #2c2a1c;
-  --dept-2-band: #232846;
-  --dept-3-band: #1c2e25;
+  --dept-1-band: #28243f;
+  --dept-2-band: #1b2e2c;
+  --dept-3-band: #2c2a1c;
   --dept-4-band: #33222a;
   --dept-1-card: var(--dept-1-band);
   --dept-2-card: var(--dept-2-band);
@@ -173,9 +175,9 @@
   --button-edge: var(--action);
   --button-ink: var(--action);
   --canvas-field-ink: #b8c6f5;
-  --dept-1-sheet: #26241a;
-  --dept-2-sheet: #1c223f;
-  --dept-3-sheet: #1a2a22;
+  --dept-1-sheet: #221f38;
+  --dept-2-sheet: #182927;
+  --dept-3-sheet: #26241a;
   --dept-4-sheet: #2c1f26;
   --dept-1-module: var(--dept-1-sheet);
   --dept-2-module: var(--dept-2-sheet);

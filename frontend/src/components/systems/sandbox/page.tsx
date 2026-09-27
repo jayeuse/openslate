@@ -27,6 +27,7 @@ import {
 } from "./domain/document";
 import type { SandboxOrganizationTemplate } from "./domain/templates";
 import { openingModuleId } from "./domain/opening-module";
+import { summarizeTestRun, testTraceSteps } from "./domain/test-run-summary";
 import { canvasFieldId } from "./helpers/bridge";
 import { clearSandboxViewPreferences } from "./helpers/view-preferences";
 import { Designer } from "./components/designer";
@@ -114,6 +115,7 @@ function sectionHref(
   const params = new URLSearchParams(current);
   // A trace is a one-time "Show on canvas" request, not part of the view.
   params.delete("trace");
+  params.delete("run");
   params.set("section", slug ?? "build");
   return `/sandbox?${params.toString()}`;
 }
@@ -208,6 +210,20 @@ export default function SandboxPage() {
   );
   const requestedFocusTarget = search.get("inspect");
   const traceTarget = search.get("trace");
+  const traceRun = testRuns.find((item) => item.id === search.get("run"));
+  const traceSteps =
+    traceTarget && traceRun && session
+      ? testTraceSteps(
+          traceRun,
+          session.document.design,
+          summarizeTestRun(
+            traceRun,
+            session.document.design,
+            session.document.automations,
+            session.revision,
+          ),
+        )
+      : null;
   const linkedSelection =
     requestedFocusTarget ??
     traceTarget ??
@@ -813,7 +829,14 @@ export default function SandboxPage() {
           inspectOnOpen={linkedSelection !== null && traceTarget === null}
           focusTargetId={requestedFocusTarget}
           traceTargetId={traceTarget}
-          onBackToTest={() => navigate("Test")}
+          traceSteps={traceSteps}
+          onBackToTest={() => {
+            // Return to the same result: keep the run, drop the trace.
+            const params = new URLSearchParams(search.toString());
+            params.delete("trace");
+            params.set("section", "test");
+            router.push(`/sandbox?${params.toString()}`, { scroll: false });
+          }}
           design={design}
           change={change}
           initializeLayout={initializeLayout}
@@ -860,11 +883,13 @@ export default function SandboxPage() {
           }}
           onPendingChange={setTestPending}
           draftRevision={session.revision}
-          onShowOnCanvas={(moduleId) => {
+          initialRunId={search.get("run")}
+          onShowOnCanvas={(run) => {
             const params = new URLSearchParams(search.toString());
             for (const key of ["inspect", "module", "department", "rule"])
               params.delete(key);
-            params.set("trace", moduleId);
+            params.set("trace", run.input.moduleId);
+            params.set("run", run.id);
             params.set("section", "build");
             router.push(`/sandbox?${params.toString()}`, { scroll: false });
           }}

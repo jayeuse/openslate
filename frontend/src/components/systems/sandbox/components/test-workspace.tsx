@@ -9,7 +9,11 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { TestComparison, TestOutcome } from "./test-run-result";
-import { summarizeTestRun } from "../domain/test-run-summary";
+import {
+  defaultTestTrigger,
+  summarizeTestRun,
+} from "../domain/test-run-summary";
+import type { SandboxAutomationTrigger } from "../domain/document";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -40,7 +44,9 @@ type Props = {
   onPendingChange?: (pending: boolean) => void;
   /** The draft's current revision, to tell results from older drafts. */
   draftRevision: number;
-  onShowOnCanvas: (moduleId: string) => void;
+  /** A result to open on, such as the one "Back to result" returns to. */
+  initialRunId?: string | null;
+  onShowOnCanvas: (run: SandboxTestRun) => void;
 };
 
 function moduleFields(design: SandboxDocumentDesign, moduleId: string) {
@@ -63,6 +69,35 @@ function defaultValues(
   );
 }
 
+function savedValuesKey(moduleId: string) {
+  return `openslate.sandbox.test-values:${moduleId}`;
+}
+
+/** Saved test values for a module, kept only for fields that still exist. */
+function readSavedValues(
+  design: SandboxDocumentDesign,
+  moduleId: string,
+): Record<string, SandboxFieldValue> | null {
+  try {
+    const raw = sessionStorage.getItem(savedValuesKey(moduleId));
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const defaults = defaultValues(design, moduleId);
+    for (const [id, value] of Object.entries(parsed)) {
+      if (
+        id in defaults &&
+        (value === null ||
+          ["string", "number", "boolean"].includes(typeof value))
+      )
+        defaults[id] = value as SandboxFieldValue;
+    }
+    return defaults;
+  } catch {
+    return null;
+  }
+}
+
 export function TestWorkspace({
   design,
   automations,
@@ -71,19 +106,57 @@ export function TestWorkspace({
   onClear,
   onPendingChange,
   draftRevision,
+  initialRunId = null,
   onShowOnCanvas,
 }: Props) {
-  const initialModule = design.modules.find((item) => !item.closed)?.id ?? "";
+  // Returning from the canvas reopens the traced result on its module.
+  const initialRun = runs.find((item) => item.id === initialRunId);
+  const initialModule =
+    initialRun &&
+    design.modules.some(
+      (item) => item.id === initialRun.input.moduleId && !item.closed,
+    )
+      ? initialRun.input.moduleId
+      : (design.modules.find((item) => !item.closed)?.id ?? "");
   const [moduleId, setModuleId] = useState(initialModule);
-  const [values, setValues] = useState<Record<string, SandboxFieldValue>>(() =>
-    defaultValues(design, initialModule),
+  const [values, setValues] = useState<Record<string, SandboxFieldValue>>(
+    () =>
+      readSavedValues(design, initialModule) ??
+      defaultValues(design, initialModule),
   );
-  const [eventKind, setEventKind] =
-    useState<SandboxTestEvent["kind"]>("record-created");
-  const [fieldId, setFieldId] = useState("");
-  const [frequency, setFrequency] = useState<"daily" | "weekly">("daily");
-  const [time, setTime] = useState("09:00");
-  const [weekday, setWeekday] = useState("1");
+  // Typed test values last for the browser tab, like the draft they test.
+  useEffect(() => {
+    if (!moduleId) return;
+    try {
+      sessionStorage.setItem(savedValuesKey(moduleId), JSON.stringify(values));
+    } catch {
+      // Storage can be unavailable; the values still work for this page.
+    }
+  }, [moduleId, values]);
+  // Start on the reopened result's event, or else on the event that runs the
+  // module's first enabled automation, so the first test exercises something.
+  // Both shapes carry kind, fieldId, and the schedule fields read below.
+  const initialTrigger: SandboxTestEvent | SandboxAutomationTrigger | null =
+    initialRun && initialModule === initialRun.input.moduleId
+      ? initialRun.event
+      : defaultTestTrigger(automations, initialModule);
+  const [eventKind, setEventKind] = useState<SandboxTestEvent["kind"]>(
+    initialTrigger?.kind ?? "record-created",
+  );
+  const [fieldId, setFieldId] = useState(
+    initialTrigger && "fieldId" in initialTrigger ? initialTrigger.fieldId : "",
+  );
+  const [frequency, setFrequency] = useState<"daily" | "weekly">(
+    initialTrigger?.kind === "schedule" ? initialTrigger.frequency : "daily",
+  );
+  const [time, setTime] = useState(
+    initialTrigger?.kind === "schedule" ? initialTrigger.time : "09:00",
+  );
+  const [weekday, setWeekday] = useState(
+    initialTrigger?.kind === "schedule" && initialTrigger.weekday
+      ? String(initialTrigger.weekday)
+      : "1",
+  );
   const [previousValue, setPreviousValue] = useState("");
   const [automationMode, setAutomationMode] = useState<"all" | "selected">(
     "all",
@@ -99,12 +172,53 @@ export function TestWorkspace({
   );
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(12);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(
+    initialRun?.id ?? null,
+  );
   const [focusFieldId, setFocusFieldId] = useState<string | null>(null);
   const selectedRun = runs.find((item) => item.id === selectedRunId) ?? runs[0];
   const selectedSummary = selectedRun
     ? summarizeTestRun(selectedRun, design, automations, draftRevision)
     : null;
+  // Issues from the shown result, on the inputs they are about, while the
+  // setup shows that result's module and the result is current.
+  const fieldIssues = new Map(
+    selectedRun &&
+      selectedSummary &&
+      selectedSummary.stale === null &&
+      selectedRun.input.moduleId === moduleId
+      ? selectedSummary.issues.flatMap((issue) =>
+          issue.subject?.kind === "field"
+            ? [[issue.subject.id, issue.message] as const]
+            : [],
+        )
+      : [],
+  );
+
+  function chooseModule(
+    nextModuleId: string,
+    trigger: SandboxAutomationTrigger | null,
+  ) {
+    if (nextModuleId !== moduleId) {
+      setModuleId(nextModuleId);
+      setValues(
+        readSavedValues(design, nextModuleId) ??
+          defaultValues(design, nextModuleId),
+      );
+      setAutomationIds([]);
+      setSearch("");
+      setFilter("relevant");
+      setLimit(12);
+    }
+    setEventKind(trigger?.kind ?? "record-created");
+    setFieldId(trigger && "fieldId" in trigger ? trigger.fieldId : "");
+    setPreviousValue("");
+    if (trigger?.kind === "schedule") {
+      setFrequency(trigger.frequency);
+      setTime(trigger.time);
+      if (trigger.weekday) setWeekday(String(trigger.weekday));
+    }
+  }
   useEffect(() => {
     const element = workspaceRef.current;
     if (!element) return;
@@ -330,15 +444,12 @@ export function TestWorkspace({
                   <NativeSelect
                     id={moduleLabelId}
                     value={moduleId}
-                    onChange={(event) => {
-                      setModuleId(event.target.value);
-                      setValues(defaultValues(design, event.target.value));
-                      setFieldId("");
-                      setAutomationIds([]);
-                      setSearch("");
-                      setFilter("relevant");
-                      setLimit(12);
-                    }}
+                    onChange={(event) =>
+                      chooseModule(
+                        event.target.value,
+                        defaultTestTrigger(automations, event.target.value),
+                      )
+                    }
                   >
                     {design.modules
                       .filter((item) => !item.closed)
@@ -589,6 +700,13 @@ export function TestWorkspace({
                   {matchingFields.slice(0, limit).map((field) => {
                     const fieldControlId = `sandbox-test-${field.id}`;
                     const value = values[field.id] ?? null;
+                    const issue = fieldIssues.get(field.id);
+                    const issueProps = issue
+                      ? {
+                          "aria-invalid": true as const,
+                          "aria-describedby": `${fieldControlId}-issue`,
+                        }
+                      : {};
                     return (
                       <Field key={field.id}>
                         <FieldLabel htmlFor={fieldControlId}>
@@ -597,6 +715,7 @@ export function TestWorkspace({
                         {field.config.kind === "checkbox" ? (
                           <NativeSelect
                             id={fieldControlId}
+                            {...issueProps}
                             value={String(value === true)}
                             onChange={(event) =>
                               setValues({
@@ -615,6 +734,7 @@ export function TestWorkspace({
                         ) : field.config.kind === "select" ? (
                           <NativeSelect
                             id={fieldControlId}
+                            {...issueProps}
                             value={typeof value === "string" ? value : ""}
                             onChange={(event) =>
                               setValues({
@@ -635,6 +755,7 @@ export function TestWorkspace({
                         ) : (
                           <Input
                             id={fieldControlId}
+                            {...issueProps}
                             type={
                               field.config.kind === "number" ||
                               field.config.kind === "integer"
@@ -660,6 +781,14 @@ export function TestWorkspace({
                             }
                           />
                         )}
+                        {issue ? (
+                          <p
+                            id={`${fieldControlId}-issue`}
+                            className="text-destructive text-xs"
+                          >
+                            Last test: {issue}
+                          </p>
+                        ) : null}
                       </Field>
                     );
                   })}
@@ -712,6 +841,11 @@ export function TestWorkspace({
                   })
                 }
                 onShowOnCanvas={onShowOnCanvas}
+                automations={automations}
+                onTryTrigger={(trigger) => {
+                  chooseModule(trigger.moduleId ?? moduleId, trigger);
+                  document.getElementById(moduleLabelId)?.focus();
+                }}
                 currentModuleId={moduleId}
                 onShowField={(id) => {
                   setSearch(

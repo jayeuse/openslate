@@ -86,8 +86,10 @@ export interface SandboxCanvasApi {
    * busiest department.
    */
   start: (options?: { focusId?: string | null; trace?: boolean }) => void;
-  /** Clears a trace pinned by `start({ trace: true })`. */
+  /** Clears a trace pinned by `start({ trace: true })`, and its field marks. */
   clearTrace: () => void;
+  /** Marks field rows (canvas field id → "trigger" | "changed") for a Test run. */
+  markFields: (marks: Readonly<Record<string, string>> | null) => void;
   center: () => void;
   /** Places a newly-created node, or queues its position until it is rendered. */
   placeNode: (nodeId: string, position: { x: number; y: number }) => void;
@@ -726,6 +728,10 @@ export function SandboxCanvas({
         },
         clearTrace: () => {
           traceRef.current?.pin(null);
+          traceRef.current?.markFields(null);
+        },
+        markFields: (marks) => {
+          traceRef.current?.markFields(marks);
         },
         placeNode: (nodeId, position) => {
           const snappedPosition = position;

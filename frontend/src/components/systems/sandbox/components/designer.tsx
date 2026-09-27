@@ -65,6 +65,7 @@ import {
 } from "@/components/sandbox/sandbox-canvas";
 import { SandboxInspector } from "@/components/sandbox/sandbox-inspector";
 import { SANDBOX_ZOOM } from "@/lib/sandbox/x6-adapter";
+import type { TestTraceStep } from "../domain/test-run-summary";
 import type { SandboxDesignTarget as SandboxInspectorTarget } from "../domain/model";
 import { arrangedLayout, resetLayout } from "../helpers/designer-layout";
 import { duplicateDesignTarget } from "../helpers/designer-duplication";
@@ -168,6 +169,7 @@ export function Designer({
   inspectOnOpen,
   focusTargetId,
   traceTargetId,
+  traceSteps,
   onBackToTest,
   design,
   change,
@@ -185,6 +187,8 @@ export function Designer({
   focusTargetId: string | null;
   /** "Show on canvas" asked to light this module's connections. */
   traceTargetId: string | null;
+  /** The Test run shown on the canvas, as still steps. */
+  traceSteps: TestTraceStep[] | null;
   onBackToTest: () => void;
   design: Design;
   change: (
@@ -310,13 +314,30 @@ export function Designer({
   // The canvas opens on the selected item's department, so the canvas and
   // Properties describe the same thing.
   const selectedRef = useRef(initialSelected);
+  const [traceStep, setTraceStep] = useState(0);
+  // Field marks for the shown Test step, keyed by canvas field id.
+  const traceMarks =
+    traceTargetId && traceSteps?.[traceStep]
+      ? Object.fromEntries(
+          Object.entries(traceSteps[traceStep].marks).map(([id, mark]) => [
+            canvasFieldId(traceTargetId, id),
+            mark,
+          ]),
+        )
+      : null;
+  const traceMarksRef = useRef(traceMarks);
+  useEffect(() => {
+    traceMarksRef.current = traceMarks;
+  });
   const startCanvas = useCallback(() => {
     const focusId = selectedRef.current;
-    graphRef.current?.start({
-      focusId,
-      trace: traceTargetId !== null && traceTargetId === focusId,
-    });
+    const trace = traceTargetId !== null && traceTargetId === focusId;
+    graphRef.current?.start({ focusId, trace });
+    if (trace) graphRef.current?.markFields(traceMarksRef.current);
   }, [traceTargetId]);
+  useEffect(() => {
+    if (traceSteps) graphRef.current?.markFields(traceMarksRef.current);
+  }, [traceStep, traceSteps]);
   useEffect(() => {
     if (wide) return;
     const frame = requestAnimationFrame(() => {
@@ -2137,12 +2158,65 @@ export function Designer({
                 ) : null}
                 {canvasNotice ? (
                   <div className="border-border bg-muted flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b px-4 py-1 text-sm">
-                    <span className="min-w-0">
-                      {canvasNotice === "trace"
-                        ? `Showing ${design.modules.find((item) => item.id === traceTargetId)?.name ?? "the tested module"} and its links from Test.`
-                        : "Part of the design is out of view. Drag the canvas to see the rest."}
-                    </span>
-                    <span className="flex gap-1">
+                    {canvasNotice === "trace" && traceSteps?.[traceStep] ? (
+                      <div className="min-w-0 py-1" aria-live="polite">
+                        <p>
+                          <span className="font-medium">
+                            Test of{" "}
+                            {design.modules.find(
+                              (item) => item.id === traceTargetId,
+                            )?.name ?? "the tested module"}
+                          </span>
+                          {" · "}Step {traceStep + 1} of {traceSteps.length}:{" "}
+                          {traceSteps[traceStep].title}
+                        </p>
+                        <ul className="text-muted-foreground text-xs">
+                          {traceSteps[traceStep].lines.map((line) => (
+                            <li key={line}>{line}</li>
+                          ))}
+                        </ul>
+                        <p className="text-muted-foreground mt-0.5 text-xs">
+                          Outlined: the field that started the test. Filled:
+                          values the test changed.
+                        </p>
+                      </div>
+                    ) : (
+                      <span className="min-w-0">
+                        {canvasNotice === "trace"
+                          ? `Showing ${design.modules.find((item) => item.id === traceTargetId)?.name ?? "the tested module"} and its links from Test.`
+                          : "Part of the design is out of view. Drag the canvas to see the rest."}
+                      </span>
+                    )}
+                    <span className="flex flex-wrap gap-1">
+                      {canvasNotice === "trace" && traceSteps ? (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="min-h-9"
+                            // aria-disabled keeps keyboard focus on the
+                            // button at the first and last step.
+                            aria-disabled={traceStep === 0}
+                            onClick={() => {
+                              if (traceStep > 0) setTraceStep(traceStep - 1);
+                            }}
+                          >
+                            Previous step
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="min-h-9"
+                            aria-disabled={traceStep >= traceSteps.length - 1}
+                            onClick={() => {
+                              if (traceStep < traceSteps.length - 1)
+                                setTraceStep(traceStep + 1);
+                            }}
+                          >
+                            Next step
+                          </Button>
+                        </>
+                      ) : null}
                       {canvasNotice === "trace" ? (
                         <Button
                           size="sm"
