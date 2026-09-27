@@ -411,14 +411,14 @@ test("the canvas zoom range keeps a spread design legible", async ({
 
   await page.getByRole("tab", { name: "Canvas" }).click();
   await page.getByRole("button", { name: "Fit canvas" }).click();
-  await expect.poll(zoom).toBe(15);
+  await expect.poll(zoom).toBe(50);
 
   await expect(page.getByRole("button", { name: "Zoom out" })).toHaveAttribute(
     "aria-disabled",
     "true",
   );
   await expect(page.getByRole("status", { name: "Canvas action" })).toHaveText(
-    "Canvas at 15%. Part of the design is out of view.",
+    "Canvas at 50%. Part of the design is out of view.",
   );
 });
 

@@ -406,16 +406,16 @@ export function getModulePorts(
 }
 
 /**
- * Zoom range for the canvas. The whole diagram scales uniformly (like an ERD).
+ * Zoom range for the canvas. The whole diagram scales uniformly (like an ERD)
+ * and the 50% floor keeps tables recognizable; the minimap shows the rest.
  * Below `overview`, field rows and line labels would be too small to read, so
  * the canvas switches to an overview: field text and line labels hide, and
- * each department's name and module count show at screen size. The floor
- * lets Fit show a whole organization.
+ * each department's name and module count show at screen size.
  */
 export const SANDBOX_ZOOM = {
-  min: 0.15,
+  min: 0.5,
   max: 1.5,
-  fitMin: 0.15,
+  fitMin: 0.5,
   overview: 0.6,
 } as const;
 
