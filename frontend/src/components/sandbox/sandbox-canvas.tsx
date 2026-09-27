@@ -20,10 +20,8 @@ import {
 import { canConnect } from "@/lib/sandbox/rules";
 import {
   MODULE_TABLE,
-  departmentTone,
   SANDBOX_GRID_MAJOR_SIZE,
   SANDBOX_GRID_SIZE,
-  SANDBOX_OVERVIEW_LABEL_SPACE,
   SANDBOX_ZOOM,
   snapSandboxPosition,
 } from "@/lib/sandbox/x6-adapter";
@@ -96,16 +94,6 @@ export interface SandboxCanvasApi {
 }
 
 export type { SandboxDropKind } from "./sandbox-canvas-graph";
-
-type OverviewLabel = {
-  id: string;
-  name: string;
-  modules: number;
-  tone: number;
-  left: number;
-  top: number;
-  width: number;
-};
 
 export interface SandboxCanvasProps {
   state: SandboxState;
@@ -206,11 +194,6 @@ export function SandboxCanvas({
   const syncingRef = useRef(false);
   const appliedLayoutRef = useRef<SandboxCanvasLayout | undefined>(undefined);
   const [editor, setEditor] = useState<CanvasEditor | null>(null);
-  // Department names at screen size while the canvas is in its overview.
-  const [overviewLabels, setOverviewLabels] = useState<OverviewLabel[] | null>(
-    null,
-  );
-  const updateOverviewRef = useRef<() => void>(() => undefined);
   const editorRef = useRef<CanvasEditor | null>(null);
   const editorCommitRef = useRef<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -366,49 +349,14 @@ export function SandboxCanvas({
       editorRef.current = next;
       setEditor(next);
     };
-    // Below the overview zoom, field rows and line labels are too small to
-    // read: CSS hides them (data-canvas-detail), and each department's name
-    // and module count are drawn at screen size above its frame.
-    const updateOverview = (): void => {
-      const overview = graph.zoom() < SANDBOX_ZOOM.overview - 0.001;
-      container.dataset.canvasDetail = overview ? "overview" : "full";
-      if (!overview) {
-        setOverviewLabels(null);
-        return;
-      }
-      const matrix = graph.matrix();
-      const scale = Math.abs(matrix.a || 1);
-      const labels: OverviewLabel[] = [];
-      for (const [
-        index,
-        department,
-      ] of stateRef.current.departments.entries()) {
-        const node = graph.getCellById(department.id);
-        if (node === null || !node.isNode()) continue;
-        const box = node.getBBox();
-        labels.push({
-          id: department.id,
-          name: department.name,
-          modules: department.moduleIds.length,
-          tone: departmentTone(index),
-          left: box.x * scale + (matrix.e || 0),
-          top: box.y * scale + (matrix.f || 0),
-          width: box.width * scale,
-        });
-      }
-      setOverviewLabels(labels);
-    };
-    updateOverviewRef.current = updateOverview;
     const updateScale = (): void => {
       updateGridVisual();
       emitViewState();
       reanchorEditor();
-      updateOverview();
     };
     const updateTranslate = (): void => {
       updateGridVisual();
       reanchorEditor();
-      updateOverview();
     };
     graph.on("scale", updateScale);
     graph.on("translate", updateTranslate);
@@ -698,19 +646,9 @@ export function SandboxCanvas({
             minScale: SANDBOX_ZOOM.fitMin,
             maxScale: 1,
           });
-          // In the overview the name cards sit above the frames, so leave
-          // room for them at the top.
-          const overview = graph.zoom() < SANDBOX_ZOOM.overview - 0.001;
-          const top = overview ? SANDBOX_OVERVIEW_LABEL_SPACE : 24;
-          if (overview)
-            graph.zoomToFit({
-              padding: { top, left: 24, right: 24, bottom: 24 },
-              minScale: SANDBOX_ZOOM.fitMin,
-              maxScale: 1,
-            });
           if (graph.zoom() > SANDBOX_ZOOM.fitMin + 0.001) return true;
           // At the floor the design is larger than the view: show its start,
-          // in from the top-left, measured from the department frames.
+          // 24px in from the top-left, measured from the department frames.
           const departments = graph
             .getNodes()
             .filter((node) => nodeKindOf(node) === "department");
@@ -719,7 +657,7 @@ export function SandboxCanvas({
           );
           if (box !== null) {
             const scale = graph.zoom();
-            graph.translate(24 - box.x * scale, top - box.y * scale);
+            graph.translate(24 - box.x * scale, 24 - box.y * scale);
           }
           return false;
         },
@@ -1041,7 +979,6 @@ export function SandboxCanvas({
       syncing: syncingRef,
     });
     traceRef.current?.refresh();
-    updateOverviewRef.current();
   }, [dropTargetId, layout, movingNodeId, state]);
 
   async function commitEditor(value: string): Promise<void> {
@@ -1271,39 +1208,6 @@ export function SandboxCanvas({
             </li>
           </ul>
         </details>
-      ) : null}
-      {overviewLabels !== null ? (
-        // Visual only: the SVG department names stay in the accessibility
-        // tree, and the Structure panel lists every department.
-        <div
-          aria-hidden="true"
-          data-testid="sandbox-overview-labels"
-          className="pointer-events-none absolute inset-0 z-[5] overflow-hidden"
-        >
-          {overviewLabels.map((label) => (
-            <div
-              key={label.id}
-              className="border-border bg-card text-foreground absolute grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-1.5 rounded-[var(--radius)] border px-2 py-1 shadow-sm"
-              // Above the frame, so the card never covers its tables.
-              style={{
-                left: label.left,
-                top: Math.max(4, label.top - SANDBOX_OVERVIEW_LABEL_SPACE + 4),
-                maxWidth: Math.max(label.width, 112),
-              }}
-            >
-              <span
-                className="size-2.5 shrink-0 rounded-sm"
-                style={{ backgroundColor: `var(--dept-${label.tone})` }}
-              />
-              <span className="truncate text-sm font-semibold">
-                {label.name}
-              </span>
-              <span className="text-muted-foreground col-start-2 text-xs">
-                {label.modules} {label.modules === 1 ? "module" : "modules"}
-              </span>
-            </div>
-          ))}
-        </div>
       ) : null}
       <p id="sandbox-canvas-keyboard-alternative" className="sr-only">
         Select canvas items with a pointer or their field controls. Use the

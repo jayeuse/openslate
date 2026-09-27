@@ -2325,33 +2325,6 @@ test("History change groups keep large comparisons scannable without hiding acce
   }
 });
 
-test("below 60% the canvas shows a department overview", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await openAuthenticatedSandbox(page);
-  const canvas = page.getByRole("region", { name: "Organization canvas" });
-  const zoom = async () =>
-    Number.parseInt(
-      await page.getByRole("status", { name: "Canvas zoom" }).innerText(),
-      10,
-    );
-  await expect(canvas).toHaveAttribute("data-canvas-detail", "full");
-  const overview = page.getByTestId("sandbox-overview-labels");
-  await expect(overview).toHaveCount(0);
-
-  while ((await zoom()) >= 60)
-    await page.getByRole("button", { name: "Zoom out" }).click();
-  await expect(canvas).toHaveAttribute("data-canvas-detail", "overview");
-  await expect(overview.getByText("Operations")).toBeVisible();
-  await expect(
-    canvas.locator('[data-sandbox-detail="field"]').first(),
-  ).toBeHidden();
-
-  await page.getByRole("button", { name: "Zoom in" }).click();
-  await expect.poll(zoom).toBeGreaterThanOrEqual(60);
-  await expect(canvas).toHaveAttribute("data-canvas-detail", "full");
-  await expect(overview).toHaveCount(0);
-});
-
 test("a Test result from an older draft says so and can show its module on the canvas", async ({
   page,
 }) => {

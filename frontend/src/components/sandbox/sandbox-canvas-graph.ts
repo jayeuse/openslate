@@ -141,8 +141,6 @@ export function departmentNodeAttrs(
       pointerEvents: "none",
     },
     heading: {
-      // The overview layer shows the name at screen size instead.
-      "data-sandbox-detail": "department",
       x: 26,
       y: 18,
       textAnchor: "start",
@@ -178,7 +176,6 @@ export function departmentNodeAttrs(
       visibility: selected ? "visible" : "hidden",
     },
     subheading: {
-      "data-sandbox-detail": "department",
       x: DEPARTMENT_WIDTH - 12,
       y: 18,
       textAnchor: "end",
