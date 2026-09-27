@@ -2326,6 +2326,35 @@ test("unsaved Dashboard drafts require an explicit keep or discard before naviga
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
+test("switching to archived Dashboards cannot restore stale active rows", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page, dashboard({ widgets: [] }));
+  const gate = requestGate();
+  await page.route("**/api/dashboards?**", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("deleted") === "only") {
+      gate.signalStarted();
+      await gate.wait;
+    }
+    await route.fallback();
+  });
+  await page.goto("/openview?section=dashboards");
+  await selectDashboard(page, dashboardId);
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
+  try {
+    await page.getByRole("button", { name: "Show archived" }).click();
+    await gate.started;
+    await expect(
+      page.getByRole("button", { name: "Restore Operations" }),
+    ).toHaveCount(0);
+    expect(api.writes).toHaveLength(0);
+    gate.release();
+    await expect(page.getByText("No archived Dashboards.")).toBeVisible();
+  } finally {
+    gate.release();
+  }
+});
+
 test("a delayed active Dashboard page cannot enter the archived list", async ({
   page,
 }) => {

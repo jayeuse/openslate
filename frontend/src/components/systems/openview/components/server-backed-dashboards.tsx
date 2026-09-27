@@ -926,6 +926,9 @@ export default function ServerBackedDashboards() {
       return;
     }
     dashboardListRequestSequence.current += 1;
+    setDashboards([]);
+    setDashboardListHasMore(false);
+    setDashboardListLoading(true);
     setDashboardListLoadingMore(false);
     routeLoadSequence.current += 1;
     setShowArchived((value) => !value);
@@ -1663,7 +1666,10 @@ export default function ServerBackedDashboards() {
 
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="truncate text-base font-semibold">
+              <h2
+                data-slot="section-title"
+                className="truncate text-base font-semibold"
+              >
                 {selectedDashboard
                   ? dashboardName || selectedDashboard.name
                   : dashboardName || "No dashboard selected"}
@@ -1910,7 +1916,11 @@ export default function ServerBackedDashboards() {
           className="border-border flex min-w-0 flex-col gap-3 p-4 lg:border-r"
         >
           <div className="flex items-baseline justify-between gap-2">
-            <h2 id="dashboard-widgets" className="text-lg font-semibold">
+            <h2
+              id="dashboard-widgets"
+              data-slot="section-title"
+              className="text-lg font-semibold"
+            >
               Widgets
             </h2>
             <p role="status" className="text-muted-foreground text-sm">
@@ -2067,7 +2077,7 @@ export default function ServerBackedDashboards() {
             />
           ) : (
             <section className="flex min-h-64 min-w-0 flex-col justify-center gap-2">
-              <h2 className="text-lg font-semibold">
+              <h2 data-slot="empty-title" className="text-lg font-semibold">
                 {selectedDashboard
                   ? "No widgets in this Dashboard"
                   : "Select a Dashboard to begin"}
