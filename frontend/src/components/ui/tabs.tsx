@@ -17,6 +17,7 @@ export function Tabs({
 }
 export function TabsList({
   className,
+  children,
   ...props
 }: Omit<ComponentProps<typeof TabsPrimitive.List>, "className"> & {
   className?: string;
@@ -25,11 +26,20 @@ export function TabsList({
     <TabsPrimitive.List
       data-slot="tabs-list"
       className={cn(
-        "bg-muted text-muted-foreground inline-flex w-fit items-center gap-1 rounded-[var(--radius)] p-1",
+        "bg-muted text-muted-foreground relative inline-flex w-fit items-center gap-1 rounded-[var(--radius)] p-1",
         className,
       )}
       {...props}
-    />
+    >
+      {children}
+      {/* The active mark is one element that glides between tabs; each look
+          styles it (a lifted surface, a marker line, an ink rule, a steel
+          tab). */}
+      <TabsPrimitive.Indicator
+        data-slot="tabs-indicator"
+        className="bg-card absolute top-(--active-tab-top) left-(--active-tab-left) h-(--active-tab-height) w-(--active-tab-width) rounded-sm shadow-sm transition-[left,top,width,height] duration-(--motion-base) ease-(--ease-out) motion-reduce:transition-none"
+      />
+    </TabsPrimitive.List>
   );
 }
 export function TabsTrigger({
@@ -42,7 +52,7 @@ export function TabsTrigger({
     <TabsPrimitive.Tab
       data-slot="tabs-trigger"
       className={cn(
-        "focus-visible:outline-ring data-active:bg-card data-active:text-foreground inline-flex items-center justify-center rounded-sm px-3 py-1.5 text-sm font-medium outline-none focus-visible:outline-2 disabled:opacity-50 data-active:shadow-sm",
+        "focus-visible:outline-ring data-active:text-foreground relative z-[1] inline-flex items-center justify-center rounded-sm px-3 py-1.5 text-sm font-medium transition-colors duration-(--motion-fast) outline-none focus-visible:outline-2 disabled:opacity-50",
         className,
       )}
       {...props}

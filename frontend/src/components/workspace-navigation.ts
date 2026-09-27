@@ -291,3 +291,22 @@ export function isWorkspaceNavigationGroupActive(
 ): boolean {
   return group.href.split("?")[0] === pathname;
 }
+
+export type NavigationTransitionType = "nav-down" | "nav-up";
+
+/**
+ * The direction of a sidebar move, for the page handoff animation: moving
+ * to an item lower in the sidebar is "nav-down", higher is "nav-up". Order
+ * keys are `group:item`. Null when there is no move to show.
+ */
+export function navigationTransitionType(
+  order: readonly string[],
+  from: string | null,
+  to: string,
+): NavigationTransitionType | null {
+  if (from === null || from === to) return null;
+  const fromIndex = order.indexOf(from);
+  const toIndex = order.indexOf(to);
+  if (fromIndex < 0 || toIndex < 0) return null;
+  return toIndex > fromIndex ? "nav-down" : "nav-up";
+}

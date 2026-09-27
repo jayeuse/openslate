@@ -93,6 +93,20 @@
   --sandbox-node-border: var(--rule-strong);
   --sandbox-field-stripe: var(--ground);
   --radius: 0.5rem;
+  /* Motion. Durations name the job, not a speed: fast for feedback, base
+     for routine state and navigation, slow for layout and authored moments.
+     Each look sets its own timing and travel below; reduced motion keeps
+     fades and color but removes travel. */
+  --motion-fast: 140ms;
+  --motion-base: 220ms;
+  --motion-slow: 360ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* How far page content travels when you move through the sidebar:
+     x for a sideways handoff, y for a vertical one. */
+  --nav-travel-x: 0px;
+  --nav-travel-y: 10px;
   --font-ui: var(--font-geist-sans);
   --font-code: var(--font-geist-mono);
   /* Card material. Themes set these instead of overriding Card, so a card's
@@ -376,6 +390,87 @@ textarea {
   ):not(:disabled):not([aria-disabled="true"]):focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+/* Navigation motion (React ViewTransition). The shell stays still: only the
+   page body hands off, and the active sidebar item glides to its new place.
+   Moving down the sidebar brings the new page up from below; moving up
+   brings it down from above. Clicks pass through while it runs. */
+::view-transition {
+  pointer-events: none;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+::view-transition-group(.nav-down),
+::view-transition-group(.nav-up) {
+  animation-duration: var(--motion-base);
+  animation-timing-function: var(--ease-out);
+}
+
+::view-transition-old(.nav-down),
+::view-transition-old(.nav-up) {
+  animation: nav-leave var(--motion-fast) var(--ease-in) both;
+}
+
+::view-transition-new(.nav-down),
+::view-transition-new(.nav-up) {
+  animation: nav-enter var(--motion-base) var(--ease-out)
+    calc(var(--motion-fast) * 0.5) both;
+}
+
+::view-transition-old(.nav-down),
+::view-transition-new(.nav-down) {
+  --nav-direction: 1;
+}
+
+::view-transition-old(.nav-up),
+::view-transition-new(.nav-up) {
+  --nav-direction: -1;
+}
+
+@keyframes nav-leave {
+  to {
+    opacity: 0;
+    translate: calc(var(--nav-travel-x) * var(--nav-direction) * -0.5)
+      calc(var(--nav-travel-y) * var(--nav-direction) * -0.5);
+  }
+}
+
+@keyframes nav-enter {
+  from {
+    opacity: 0;
+    translate: calc(var(--nav-travel-x) * var(--nav-direction))
+      calc(var(--nav-travel-y) * var(--nav-direction));
+  }
+}
+
+::view-transition-group(.nav-indicator) {
+  animation-duration: var(--motion-base);
+  animation-timing-function: var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the handoff fade; drop the travel and the glide. */
+  :root,
+  :root[data-theme] {
+    --nav-travel-x: 0px;
+    --nav-travel-y: 0px;
+  }
+
+  ::view-transition-group(.nav-indicator) {
+    animation-duration: 0s;
+  }
+
+  /* Each look's arrival signature (a drawn underline, a sprayed title)
+     shows in its finished state. */
+  [data-slot="page-title"],
+  [data-slot="page-title"]::after {
+    animation: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

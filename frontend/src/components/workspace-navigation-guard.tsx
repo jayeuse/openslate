@@ -3,7 +3,15 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
-import { createContext, useContext, useEffect, useMemo, useRef } from "react";
+import {
+  addTransitionType,
+  createContext,
+  startTransition,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 import type { ComponentProps, ReactNode } from "react";
 
 export type WorkspaceNavigationGuard = (
@@ -101,6 +109,7 @@ type GuardedWorkspaceLinkProps = Omit<
 export function GuardedWorkspaceLink({
   href,
   onAcceptedNavigate,
+  transitionTypes,
   ...props
 }: GuardedWorkspaceLinkProps) {
   const router = useRouter();
@@ -110,10 +119,16 @@ export function GuardedWorkspaceLink({
     <Link
       {...props}
       href={href}
+      transitionTypes={transitionTypes}
       onNavigate={(event) => {
+        // A navigation resumed after a confirmation keeps its transition
+        // types, so it animates like a direct one.
         const resume = () => {
           onAcceptedNavigate?.();
-          router.push(href);
+          startTransition(() => {
+            for (const type of transitionTypes ?? []) addTransitionType(type);
+            router.push(href);
+          });
         };
         const accepted = requestNavigation(href, resume);
         if (!accepted) {

@@ -12,12 +12,22 @@ import {
   ShieldCheck,
   Workflow,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import {
+  ViewTransition,
+  addTransitionType,
+  startTransition,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 
 import {
   getWorkspaceNavigation,
   isWorkspaceNavigationGroupActive,
   isWorkspaceNavigationItemActive,
+  navigationTransitionType,
+  type NavigationTransitionType,
 } from "@/components/workspace-navigation";
 import { useWorkspaceNavigationRequest } from "@/components/workspace-navigation-guard";
 import {
@@ -53,6 +63,11 @@ interface AppNavigationProps {
   searchParams: URLSearchParams;
   collapsed?: boolean;
   onExpandSidebar?: () => void;
+  /**
+   * Names the gliding active-item indicator. The desktop sidebar and the
+   * phone menu each render this list, so each needs its own name.
+   */
+  indicatorName?: string;
 }
 
 export function AppNavigation({
@@ -60,6 +75,7 @@ export function AppNavigation({
   searchParams,
   collapsed = false,
   onExpandSidebar,
+  indicatorName = "sidebar-active-item",
 }: AppNavigationProps) {
   const router = useRouter();
   const requestNavigation = useWorkspaceNavigationRequest();
@@ -75,6 +91,26 @@ export function AppNavigation({
   const activeGroupId = groups.find((group) =>
     isWorkspaceNavigationGroupActive(group, pathname),
   )?.id;
+  // Sidebar order, and the current item in it, give each move a direction.
+  const order = groups.flatMap((group) =>
+    group.items.map((item) => `${group.id}:${item.id}`),
+  );
+  const currentKey =
+    groups
+      .flatMap((group) =>
+        group.items
+          .filter((item) =>
+            isWorkspaceNavigationItemActive(
+              group.id,
+              item.id,
+              pathname,
+              searchParams,
+              hash,
+            ),
+          )
+          .map((item) => `${group.id}:${item.id}`),
+      )
+      .at(0) ?? null;
 
   useEffect(() => {
     const syncHash = () => setHash(window.location.hash);
@@ -121,8 +157,19 @@ export function AppNavigation({
     prefetchTimers.current.delete(href);
   }
 
-  function navigate(href: string, event: { preventDefault: () => void }) {
-    const accepted = requestNavigation(href, () => router.push(href as Route));
+  function navigate(
+    href: string,
+    type: NavigationTransitionType | null,
+    event: { preventDefault: () => void },
+  ) {
+    // A navigation that waits for a confirmation resumes here; it keeps its
+    // direction like a direct one.
+    const accepted = requestNavigation(href, () =>
+      startTransition(() => {
+        if (type) addTransitionType(type);
+        router.push(href as Route);
+      }),
+    );
     if (!accepted) event.preventDefault();
   }
 
@@ -191,12 +238,12 @@ export function AppNavigation({
                   <ChevronRight
                     aria-hidden="true"
                     className={cn(
-                      "ml-auto size-4 transition-transform motion-reduce:transition-none",
+                      "ml-auto size-4 transition-transform duration-(--motion-base) ease-(--ease-out) motion-reduce:transition-none",
                       open && "rotate-90",
                     )}
                   />
                 </CollapsibleTrigger>
-                <CollapsibleContent>
+                <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--motion-base) ease-(--ease-out) data-ending-style:h-0 data-starting-style:h-0 motion-reduce:transition-none">
                   <SidebarMenuSub>
                     {group.items.map((item) => {
                       const itemActive = isWorkspaceNavigationItemActive(
@@ -206,6 +253,11 @@ export function AppNavigation({
                         searchParams,
                         hash,
                       );
+                      const type = navigationTransitionType(
+                        order,
+                        currentKey,
+                        `${group.id}:${item.id}`,
+                      );
                       return (
                         <SidebarMenuSubItem key={item.id}>
                           <SidebarMenuSubButton
@@ -213,8 +265,9 @@ export function AppNavigation({
                               <Link
                                 href={item.href as Route}
                                 prefetch={false}
+                                transitionTypes={type ? [type] : undefined}
                                 onNavigate={(event) =>
-                                  navigate(item.href, event)
+                                  navigate(item.href, type, event)
                                 }
                                 onPointerEnter={() =>
                                   schedulePrefetch(item.href)
@@ -226,8 +279,23 @@ export function AppNavigation({
                             }
                             isActive={itemActive}
                             aria-current={itemActive ? "page" : undefined}
-                            className="min-h-11"
+                            // The active fill is the indicator below, so it
+                            // can glide from item to item.
+                            className="relative isolate min-h-11 data-active:bg-transparent"
                           >
+                            {itemActive ? (
+                              <ViewTransition
+                                name={indicatorName}
+                                share="nav-indicator"
+                                default="none"
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  data-slot="sidebar-active-indicator"
+                                  className="bg-sidebar-accent absolute inset-0 -z-10 rounded-md"
+                                />
+                              </ViewTransition>
+                            ) : null}
                             <span>{item.label}</span>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>

@@ -4,6 +4,7 @@ import {
   getWorkspaceLocation,
   getWorkspaceNavigation,
   isWorkspaceNavigationItemActive,
+  navigationTransitionType,
 } from "../../src/components/workspace-navigation";
 
 function item(
@@ -321,4 +322,19 @@ test("every workspace describes what it holds in one short line", () => {
     ["manage", "Organization settings and audit"],
     ["platform", "Account, files, and alerts"],
   ]);
+});
+
+test("navigation moves the page up or down by sidebar order", () => {
+  const order = ["sandbox:build", "sandbox:test", "access:overview"];
+  expect(
+    navigationTransitionType(order, "sandbox:build", "access:overview"),
+  ).toBe("nav-down");
+  expect(
+    navigationTransitionType(order, "access:overview", "sandbox:test"),
+  ).toBe("nav-up");
+  // Reselecting the current item, or leaving an unknown place, does not move.
+  expect(
+    navigationTransitionType(order, "sandbox:test", "sandbox:test"),
+  ).toBeNull();
+  expect(navigationTransitionType(order, null, "sandbox:test")).toBeNull();
 });

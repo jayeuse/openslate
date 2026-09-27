@@ -200,6 +200,17 @@
   --sr-wall: #16181b;
 }
 
+/* Motion: heavy steel. Pages slide sideways like a drawer on runners, with
+   a long slow-down. */
+:root[data-theme="stockroom"] {
+  --motion-fast: 160ms;
+  --motion-base: 260ms;
+  --motion-slow: 420ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --nav-travel-x: 24px;
+  --nav-travel-y: 0px;
+}
+
 /* Skin places. Stockroom is steel shelving and kraft boxes: steel rails
    and uprights, stencilled page titles, label-maker tags, and paper end
    labels on each box. Page titles change case; labels, table heads, chips,
@@ -221,6 +232,17 @@
 }
 
 /* Page titles are stencilled. */
+/* Signature: the stencilled title is sprayed on from left to right. */
+[data-theme="stockroom"] [data-slot="page-title"] {
+  animation: sr-stencil-spray var(--motion-slow) var(--ease-out) both;
+}
+
+@keyframes sr-stencil-spray {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+}
+
 [data-theme="stockroom"] [data-slot="page-title"] {
   font-family: var(--font-stencil), var(--font-ui), sans-serif;
   text-transform: uppercase;
@@ -279,8 +301,15 @@
 }
 
 [data-theme="stockroom"] [data-slot="tabs-trigger"][data-active] {
-  box-shadow: inset 0 -3px 0 var(--action);
   font-weight: 700;
+}
+
+/* The open tab is a steel tab with an action edge that slides on its rail. */
+[data-theme="stockroom"] [data-slot="tabs-indicator"] {
+  border-radius: 1px;
+  box-shadow:
+    inset 0 -3px 0 var(--action),
+    0 1px 0 var(--sr-steel);
 }
 
 /* Tables are stock sheets: a steel header band and firm rules. */

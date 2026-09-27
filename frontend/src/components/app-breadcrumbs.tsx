@@ -50,7 +50,12 @@ export function AppBreadcrumbs() {
         <BreadcrumbItem className="max-sm:hidden">
           <BreadcrumbLink
             className={crumbTarget}
-            render={<GuardedWorkspaceLink href={"/openview" as Route} />}
+            render={
+              <GuardedWorkspaceLink
+                href={"/openview" as Route}
+                transitionTypes={["nav-up"]}
+              />
+            }
           >
             Workspace
           </BreadcrumbLink>
@@ -64,6 +69,7 @@ export function AppBreadcrumbs() {
                 render={
                   <GuardedWorkspaceLink
                     href={location.workspace.href as Route}
+                    transitionTypes={["nav-up"]}
                   />
                 }
               >

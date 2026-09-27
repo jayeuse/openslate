@@ -191,6 +191,17 @@
   --tp-perforation: #414a73;
 }
 
+/* Motion: crisp paper. The next page arrives like the next sheet of a form
+   pad, sliding up a little further than Slate. */
+:root[data-theme="triplicate"] {
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 340ms;
+  --ease-out: cubic-bezier(0.3, 0.9, 0.2, 1);
+  --nav-travel-x: 0px;
+  --nav-travel-y: 16px;
+}
+
 /* Skin places. Triplicate is a carbon-copy business form: printed navy
    structure, ballpoint blue for what people entered, ruled paper, form
    boxes, perforations, and rubber stamps. Labels, table heads, and chips
@@ -233,6 +244,15 @@
   height: 3px;
   margin-top: 0.4rem;
   background: var(--ink);
+  /* Signature: the rule is written in one even pen stroke on arrival. */
+  transform-origin: left center;
+  animation: tp-rule-write var(--motion-slow) var(--ease-in-out) both;
+}
+
+@keyframes tp-rule-write {
+  from {
+    transform: scaleX(0);
+  }
 }
 
 [data-theme="triplicate"] [data-slot="card-title"] {
@@ -310,9 +330,14 @@
 }
 
 [data-theme="triplicate"] [data-slot="tabs-trigger"][data-active] {
-  background: transparent;
-  box-shadow: inset 0 -3px 0 var(--ink);
   font-weight: 700;
+}
+
+/* The open tab is an ink rule that slides along the form line. */
+[data-theme="triplicate"] [data-slot="tabs-indicator"] {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: inset 0 -3px 0 var(--ink);
 }
 
 /* Tables are ruled ledgers with numbered lines. Only record rows count:

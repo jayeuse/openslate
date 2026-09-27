@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  ViewTransition,
   useEffect,
   useId,
   useRef,
@@ -350,6 +351,7 @@ export function AppShell({
                 <AppNavigation
                   pathname={pathname}
                   searchParams={navigationSearchParams}
+                  indicatorName="sheet-active-item"
                 />
                 <div className="bg-card sticky bottom-0 z-10 -mx-4 mt-auto px-4 pt-3 pb-2">
                   <AppCommsLink collapsed={false} />
@@ -400,7 +402,25 @@ export function AppShell({
                     : "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7",
               )}
             >
-              {children}
+              {/* The page body hands off on sidebar moves (the shell stays
+                  still). Only navigations tagged with a direction animate;
+                  data refreshes and in-page updates do not. */}
+              <ViewTransition
+                update={{
+                  "nav-down": "nav-down",
+                  "nav-up": "nav-up",
+                  default: "none",
+                }}
+                default="none"
+              >
+                <div
+                  className={cn(
+                    (isComms || isAccess) && "flex min-h-0 flex-1 flex-col",
+                  )}
+                >
+                  {children}
+                </div>
+              </ViewTransition>
             </main>
           </div>
         </SidebarProvider>

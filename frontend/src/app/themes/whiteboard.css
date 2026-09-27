@@ -198,6 +198,17 @@
   --wb-grid: #263033;
 }
 
+/* Motion: quick and light, like a marker on a board. Pages hand off with a
+   short vertical move. Timing is the same in light and dark. */
+:root[data-theme="whiteboard"] {
+  --motion-fast: 110ms;
+  --motion-base: 180ms;
+  --motion-slow: 320ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --nav-travel-x: 0px;
+  --nav-travel-y: 8px;
+}
+
 /* Skin places. Whiteboard is the back-office planning board: a gridded
    white board in an aluminium frame, lifted cards on it, tape on
    department heads, and thick marker strokes. */
@@ -232,6 +243,15 @@
   margin-top: 0.35rem;
   border-radius: 999px;
   background: var(--action);
+  /* Signature: the marker underline is drawn when you arrive. */
+  transform-origin: left center;
+  animation: wb-marker-draw var(--motion-slow) var(--ease-out) both;
+}
+
+@keyframes wb-marker-draw {
+  from {
+    transform: scaleX(0);
+  }
 }
 
 [data-theme="whiteboard"] [data-slot="card-title"] {
@@ -272,9 +292,14 @@
 }
 
 [data-theme="whiteboard"] [data-slot="tabs-trigger"][data-active] {
-  background: transparent;
-  box-shadow: inset 0 -4px 0 var(--action);
   font-weight: 700;
+}
+
+/* The open tab is a marker stroke that glides to the next tab. */
+[data-theme="whiteboard"] [data-slot="tabs-indicator"] {
+  background: transparent;
+  border-radius: 2px;
+  box-shadow: inset 0 -4px 0 var(--action);
 }
 
 [data-theme="whiteboard"] [data-slot="table-head"] {

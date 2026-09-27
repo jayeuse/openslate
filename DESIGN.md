@@ -249,7 +249,7 @@ Density is calm and practical: 14px body text, 36px buttons, hairline rules, and
 - Four signals with one meaning each: action, flow, warn, danger.
 - Department identity color is always beside the department name, never alone.
 - Every look passes WCAG AA in light and dark, checked by `npm run check`.
-- Motion is small and functional: color and opacity only, and none under reduced motion.
+- Motion explains where things came from and went: short, directional, and token-timed per look. Reduced motion keeps fades and color but removes travel.
 
 ### The four looks
 
@@ -506,6 +506,41 @@ Correct: `[data-theme="triplicate"] [data-skin="page"] { background-image: repea
 
 Wrong: `[data-theme="whiteboard"] [data-skin="page"] { background: url(board-photo.jpg), linear-gradient(135deg, #fff, #dfe6ec); }` (a photo texture and a glossy sheen), or `backdrop-filter: blur(12px)` on a dialog.
 
+## Motion
+
+Motion explains navigation and state; it never decorates. It is timed by tokens that each look sets, so a look changes how things move without changing what moves.
+
+### Tokens
+
+`--motion-fast` (feedback and exits), `--motion-base` (routine state and navigation), `--motion-slow` (layout and arrival signatures), with `--ease-out` (arrivals), `--ease-in` (exits), and `--ease-in-out` (even strokes). `--nav-travel-x` and `--nav-travel-y` set how far page content travels on a sidebar move.
+
+| Look       | fast / base / slow | Page handoff                                     | Signature                                             |
+| ---------- | ------------------ | ------------------------------------------------ | ----------------------------------------------------- |
+| Slate      | 140 / 220 / 360ms  | 10px vertical                                    | the active sidebar item and tab mark glide            |
+| Whiteboard | 110 / 180 / 320ms  | 8px vertical                                     | the page-title marker underline draws from the left   |
+| Triplicate | 120 / 200 / 340ms  | 16px vertical, like the next sheet of a form pad | the page-title rule is written in one even stroke     |
+| Stockroom  | 160 / 260 / 420ms  | 24px sideways, like a drawer                     | the stencilled page title is sprayed on from the left |
+
+### Navigation
+
+- **Page handoff.** Sidebar links carry a direction (`navigationTransitionType`: moving down the sidebar is `nav-down`, up is `nav-up`; breadcrumbs are `nav-up`). A React `ViewTransition` around the page body in the app shell animates only those navigations: the old page leaves in `--motion-fast`, the new one arrives over `--motion-base` from the direction of travel. The sidebar, top bar, and page ground stay still (`::view-transition-*(root)` does not animate), data refreshes and in-page updates do not animate, and clicks pass through while it runs.
+- **Active item.** The active sidebar item's fill is a named `ViewTransition` element (`sidebar-active-item`, or `sheet-active-item` in the phone menu), so it glides from the old item to the new one.
+- **Groups and panels.** Sidebar groups open and close by height over `--motion-base`, with the chevron turning; the sidebar collapses over `--motion-base`; the phone menu sheet enters over `--motion-slow` and leaves over `--motion-base`.
+
+### Named Rules
+
+**The Still Shell Rule.** Navigation moves the page body, never the frame around it. The sidebar, top bar, and page ground are the fixed reference that tells a person only the content changed.
+
+Correct: `::view-transition-old(root), ::view-transition-new(root) { animation: none; }` with the page body in its own `ViewTransition`.
+
+Wrong: letting the browser's default root cross-fade run, so the whole window, sidebar included, dissolves on every click.
+
+**The Travel Not Meaning Rule.** Reduced motion removes travel (`--nav-travel-*` become 0, glides and arrival signatures stop) but keeps the fades and color changes that say something changed.
+
+Correct: under `prefers-reduced-motion`, the page body still cross-fades on a sidebar move.
+
+Wrong: `animation: none` on every view transition, so a sidebar move gives no sign that the page changed.
+
 ## Components
 
 ### Buttons
@@ -543,10 +578,12 @@ Quiet and direct. A button is text first, with a 16px icon when it helps.
 
 ### Tabs
 
-- **Slate:** a sunken rail (`--surface-sunken`, 4px pad) with the active tab lifted onto `--surface`.
-- **Whiteboard:** no rail (transparent, no pad, 4px gaps). Tabs have a 6px top-only corner; the open tab is transparent with a 4px inset `--action` marker underline at weight 700.
-- **Triplicate:** form sections. The list has no fill and a 1px `--ink` rule under it; tabs are square; the open tab is transparent with a 3px `--ink` underline at weight 700.
-- **Stockroom:** a steel rail (`--sr-steel-lite`, 2px corner, 2px `--sr-steel` inset at the bottom). The open tab keeps the surface lift and adds a 3px `--action` underline at weight 700.
+The open-tab mark is one element, `data-slot="tabs-indicator"` (Base UI's tab indicator), that glides between tabs over `--motion-base`; the open tab itself only changes its ink and weight. Each look styles the indicator:
+
+- **Slate:** a sunken rail (`--surface-sunken`, 4px pad); the indicator is the lifted `--surface` pill.
+- **Whiteboard:** no rail (transparent, no pad, 4px gaps). Tabs have a 6px top-only corner; the indicator is a 4px inset `--action` marker stroke, and the open tab is weight 700.
+- **Triplicate:** form sections. The list has no fill and a 1px `--ink` rule under it; tabs are square; the indicator is a 3px `--ink` rule, and the open tab is weight 700.
+- **Stockroom:** a steel rail (`--sr-steel-lite`, 2px corner, 2px `--sr-steel` inset at the bottom). The indicator is a surface tab with a 3px `--action` edge on a 1px steel lip, and the open tab is weight 700.
 
 ### Notices (Alert)
 
@@ -591,7 +628,7 @@ An ERD-style canvas of the owner's own structure. Departments are named frames o
 - **Do** restyle a look only through tokens and the named skin places, and keep `theme-parity.spec.ts` passing.
 - **Do** keep each signal to its one meaning: action acts, flow shows movement and success, warn asks for attention, danger destroys.
 - **Do** put a department's identity color beside its name every time it appears.
-- **Do** keep canvas motion to color and opacity, and turn it off under `prefers-reduced-motion`.
+- **Do** time every transition with the motion tokens and give it a `prefers-reduced-motion` path that keeps meaning (fades, color) and drops travel.
 - **Do** show `SampleDataNote` on every screen that runs on sample data, and name the real publish state in the Sandbox header.
 
 ### Don't:
