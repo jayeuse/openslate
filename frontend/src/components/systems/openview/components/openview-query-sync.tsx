@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type Query } from "@tanstack/react-query";
 import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
 import {
   openViewKeys,
@@ -20,21 +20,50 @@ export function OpenViewQuerySync({ active }: { active: boolean }) {
   const client = useQueryClient();
   useEffect(() => {
     if (!active) return;
-    const unsubscribe = subscribeOpenViewInvalidations((event) => {
-      if (event.type === "resync") {
-        // Saved chart settings stay as loaded: reloading them can re-apply
-        // settings over a Chart draft being edited, which the stream never
-        // did before.
+    // Saved chart settings stay as loaded: reloading them can re-apply
+    // settings over a Chart draft being edited, which the stream never did
+    // before.
+    const listeningSince = Date.now();
+    const notChartPreferences = (query: Query) =>
+      query.queryKey[1] !== openViewKeys.chartPreferences()[1];
+    const unsubscribe = subscribeOpenViewInvalidations(
+      (event) => {
+        if (event.type === "resync") {
+          void client.invalidateQueries({
+            queryKey: openViewKeys.all,
+            predicate: notChartPreferences,
+          });
+          return;
+        }
+        for (const queryKey of openViewKeysForEntity(event.entity))
+          void client.invalidateQueries({ queryKey });
+      },
+      () => {
+        // Reads cached before OpenView listened (a hover prefetch) could have
+        // missed a change; refresh them once the stream is connected. Reads
+        // already marked stale or in flight refresh on their own. Choose them
+        // first: invalidateQueries applies its predicate again to pick what
+        // to refetch, when every chosen read is already marked stale.
+        const unprotected = new Set(
+          client
+            .getQueryCache()
+            .findAll({ queryKey: openViewKeys.all })
+            .filter(
+              (query) =>
+                notChartPreferences(query) &&
+                query.state.dataUpdatedAt > 0 &&
+                query.state.dataUpdatedAt < listeningSince &&
+                !query.state.isInvalidated &&
+                query.state.fetchStatus !== "fetching",
+            ),
+        );
+        if (unprotected.size === 0) return;
         void client.invalidateQueries({
           queryKey: openViewKeys.all,
-          predicate: (query) =>
-            query.queryKey[1] !== openViewKeys.chartPreferences()[1],
+          predicate: (query) => unprotected.has(query),
         });
-        return;
-      }
-      for (const queryKey of openViewKeysForEntity(event.entity))
-        void client.invalidateQueries({ queryKey });
-    });
+      },
+    );
     return () => {
       unsubscribe();
       void client.invalidateQueries({

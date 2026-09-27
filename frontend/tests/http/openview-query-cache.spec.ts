@@ -292,6 +292,31 @@ test("revisiting Reports within the cache window shows its list at once without 
   ).toBe(streamsAfterFirstLoad);
 });
 
+test("a Reports list prefetched before the stream connects refreshes once it connects", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  // Dashboards does not listen to the stream, so a hover there prefetches
+  // Reports while no stream protects it.
+  await page.goto("/openview?section=dashboards");
+  await sidebarLink(page, "Reports").hover();
+  await expect.poll(() => api.reportLists.length).toBe(1);
+
+  await sidebarLink(page, "Reports").click();
+  await expect(
+    page.getByRole("button", { name: "Alpha report" }),
+  ).toBeVisible();
+  expect(api.reportLists).toHaveLength(1);
+
+  // The server opens every stream with a resync; a change could have landed
+  // between the prefetch and that moment, so the list refreshes once.
+  await sendOpenViewEvent(page, "resync");
+  await expect.poll(() => api.reportLists.length).toBe(2);
+  await expect(
+    page.getByRole("button", { name: "Alpha report" }),
+  ).toBeVisible();
+});
+
 test("server invalidations and Refresh still reload cached OpenView reads", async ({
   page,
 }) => {
