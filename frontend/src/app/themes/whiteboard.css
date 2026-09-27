@@ -59,7 +59,6 @@
   --canvas-dept-frame: #2a2f34;
   --canvas-dept-ink: #1b1f23;
   --canvas-module-fill: #ffffff;
-  --canvas-module-frame: #c9ced3;
   --canvas-module-ink: #1b1f23;
   --canvas-row-rule: #e3e7ea;
   --canvas-row-stripe: #ffffff;
@@ -80,6 +79,27 @@
   --dept-2-card: #e9e3f6;
   --dept-3-card: #f9e6d4;
   --dept-4-card: #ece5db;
+  /* Full-strength materials. Modules are cards in their department's
+     tint on the white board. */
+  --data-ink: var(--ink);
+  --button-edge: #7f8a93;
+  --button-ink: var(--ink);
+  --canvas-field-ink: var(--canvas-module-ink);
+  --canvas-module-frame: transparent;
+  --dept-1-sheet: var(--canvas-dept-fill);
+  --dept-2-sheet: var(--canvas-dept-fill);
+  --dept-3-sheet: var(--canvas-dept-fill);
+  --dept-4-sheet: var(--canvas-dept-fill);
+  --dept-1-module: var(--dept-1-card);
+  --dept-2-module: var(--dept-2-card);
+  --dept-3-module: var(--dept-3-card);
+  --dept-4-module: var(--dept-4-card);
+  --dept-1-stripe: var(--dept-1-card);
+  --dept-2-stripe: var(--dept-2-card);
+  --dept-3-stripe: var(--dept-3-card);
+  --dept-4-stripe: var(--dept-4-card);
+  --wb-board: #fafbfc;
+  --wb-grid: #eef1f3;
 }
 
 .dark[data-theme="whiteboard"],
@@ -125,7 +145,7 @@
   --radius: 0.375rem;
   --font-ui: var(--font-atkinson), system-ui, sans-serif;
   --font-code: var(--font-geist-mono);
-  --card-edge: transparent;
+  --card-edge: var(--rule);
   --card-lift: var(--lift-raised);
   --wb-tape: #d7dcd8;
   --wb-frame: #4a5553;
@@ -135,7 +155,6 @@
   --canvas-dept-frame: #d7dcd8;
   --canvas-dept-ink: #111416;
   --canvas-module-fill: #283135;
-  --canvas-module-frame: #4d5b5a;
   --canvas-module-ink: #eff2ee;
   --canvas-row-rule: #34403f;
   --canvas-row-stripe: #283135;
@@ -156,29 +175,125 @@
   --dept-2-card: #302c40;
   --dept-3-card: #3d3024;
   --dept-4-card: #35312b;
+  --data-ink: var(--ink);
+  --button-edge: #7a8887;
+  --button-ink: var(--ink);
+  --canvas-field-ink: var(--canvas-module-ink);
+  --canvas-module-frame: transparent;
+  --dept-1-sheet: var(--canvas-dept-fill);
+  --dept-2-sheet: var(--canvas-dept-fill);
+  --dept-3-sheet: var(--canvas-dept-fill);
+  --dept-4-sheet: var(--canvas-dept-fill);
+  --dept-1-module: var(--dept-1-card);
+  --dept-2-module: var(--dept-2-card);
+  --dept-3-module: var(--dept-3-card);
+  --dept-4-module: var(--dept-4-card);
+  --dept-1-stripe: var(--dept-1-card);
+  --dept-2-stripe: var(--dept-2-card);
+  --dept-3-stripe: var(--dept-3-card);
+  --dept-4-stripe: var(--dept-4-card);
+  --wb-board: #1f2729;
+  --wb-grid: #263033;
 }
 
-/* Skin places. */
-[data-theme="whiteboard"]
-  :is([data-slot="page-title"], [data-slot="card-title"]) {
+/* Skin places. Whiteboard is the back-office planning board: a gridded
+   white board in an aluminium frame, lifted cards on it, tape on
+   department heads, and thick marker strokes. */
+
+/* The page is the board: a faint marker grid inside an aluminium frame. */
+[data-theme="whiteboard"] [data-skin="page"] {
+  background-color: var(--wb-board);
+  background-image:
+    linear-gradient(var(--wb-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--wb-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  box-shadow:
+    inset 0 0 0 4px var(--wb-frame),
+    inset 0 0 0 5px var(--wb-frame-hi);
+}
+
+[data-theme="whiteboard"] [data-skin="topbar"] {
+  border-bottom: 1px solid var(--wb-frame);
+}
+
+/* Page titles get a hand-drawn marker underline. */
+[data-theme="whiteboard"] [data-slot="page-title"] {
   font-weight: 700;
   letter-spacing: -0.01em;
 }
 
-[data-theme="whiteboard"] [data-slot="badge"] {
+[data-theme="whiteboard"] [data-slot="page-title"]::after {
+  content: "";
+  display: block;
+  width: 4rem;
+  height: 4px;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  background: var(--action);
+}
+
+[data-theme="whiteboard"] [data-slot="card-title"] {
   font-weight: 700;
 }
 
+/* Marker weights: buttons, fields, and chips use thicker strokes. */
+[data-theme="whiteboard"] [data-slot="button"] {
+  font-weight: 700;
+}
+
+[data-theme="whiteboard"] [data-slot="button"][data-variant="outline"] {
+  border-width: 2px;
+}
+
+[data-theme="whiteboard"]
+  :is([data-slot="input"], [data-slot="select"], [data-slot="textarea"]) {
+  border-width: 2px;
+}
+
+[data-theme="whiteboard"] [data-slot="badge"] {
+  font-weight: 700;
+  border-radius: 4px;
+}
+
+[data-theme="whiteboard"] [data-slot="field-label"] {
+  font-weight: 700;
+}
+
+[data-theme="whiteboard"] [data-slot="tabs-list"] {
+  background: transparent;
+  padding: 0;
+  gap: 0.25rem;
+}
+
+[data-theme="whiteboard"] [data-slot="tabs-trigger"] {
+  border-radius: 6px 6px 0 0;
+}
+
 [data-theme="whiteboard"] [data-slot="tabs-trigger"][data-active] {
-  box-shadow: inset 0 -3px 0 var(--action);
+  background: transparent;
+  box-shadow: inset 0 -4px 0 var(--action);
+  font-weight: 700;
 }
 
 [data-theme="whiteboard"] [data-slot="table-head"] {
   font-weight: 700;
+  border-bottom: 2px solid var(--wb-tape);
 }
 
-/* The canvas paints over its frame's own background, so the frame draws
-   on a layer above it that ignores the pointer. */
+[data-theme="whiteboard"] [data-slot="alert"] {
+  border-width: 2px;
+  border-radius: 6px;
+}
+
+[data-theme="whiteboard"]
+  :is([data-slot="dialog-content"], [data-slot="sheet-content"]) {
+  border: 3px solid var(--wb-frame);
+  box-shadow:
+    inset 0 0 0 1px var(--wb-frame-hi),
+    var(--lift-raised);
+}
+
+/* The canvas is the board inside its frame. */
 [data-theme="whiteboard"] [data-skin="canvas-frame"]::after {
   content: "";
   position: absolute;
@@ -186,13 +301,13 @@
   z-index: 20;
   pointer-events: none;
   box-shadow:
-    inset 0 0 0 3px var(--wb-frame),
-    inset 0 0 0 4px var(--wb-frame-hi);
+    inset 0 0 0 4px var(--wb-frame),
+    inset 0 0 0 5px var(--wb-frame-hi);
 }
 
-/* Taped department borders and marker lines. Idle strokes skip selected,
-   moving, and pressed cells, because CSS outranks SVG attributes; state
-   strokes stay heavier than idle ones. */
+/* Department heads are taped strips; modules are cards with a lift.
+   Idle strokes skip selected, moving, and pressed cells, because CSS
+   outranks SVG attributes; state strokes stay heavier than idle ones. */
 [data-theme="whiteboard"]
   .sandbox-ui
   .x6-cell:not([data-sandbox-pressed="true"])
@@ -206,8 +321,12 @@
   stroke-width: 3.5px;
 }
 
+[data-theme="whiteboard"] .sandbox-ui [data-sandbox-kind="module"] {
+  filter: var(--lift-filter);
+}
+
 [data-theme="whiteboard"] .sandbox-ui [data-sandbox-line] {
-  stroke-width: 2.4px;
+  stroke-width: 2.6px;
   stroke-linecap: round;
   animation: none;
 }

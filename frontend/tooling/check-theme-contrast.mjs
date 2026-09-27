@@ -40,9 +40,17 @@ const PAIRS = [
   ["canvas-type-ink", "canvas-module-fill", 4.5],
   ["canvas-type-ink", "canvas-row-stripe", 4.5],
   ["canvas-label-ink", "canvas-label-fill", 4.5],
+  ["canvas-field-ink", "canvas-row-stripe", 4.5],
+  ["data-ink", "card", 4.5],
+  ["data-ink", "background", 4.5],
+  ["button-ink", "card", 4.5],
   ...[1, 2, 3, 4].flatMap((n) => [
     ["canvas-module-ink", `dept-${n}-card`, 4.5],
     ["canvas-dept-ink", `dept-${n}-band`, 4.5],
+    ["canvas-field-ink", `dept-${n}-module`, 4.5],
+    ["canvas-type-ink", `dept-${n}-module`, 4.5],
+    ["canvas-field-ink", `dept-${n}-stripe`, 4.5],
+    ["canvas-type-ink", `dept-${n}-stripe`, 4.5],
   ]),
 ];
 

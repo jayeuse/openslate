@@ -83,9 +83,8 @@ export const MODULE_TABLE_COLORS = {
   bodyFill: "var(--canvas-module-fill, #ffffff)",
   bodyStroke: "var(--canvas-module-frame, #a8b2c1)",
   rowStroke: "var(--canvas-row-rule, #e4e7ec)",
-  stripeFill: "var(--canvas-row-stripe, #f7f8fa)",
   selectedRowFill: "var(--accent, #dce8ff)",
-  nameText: "var(--canvas-module-ink, #1f2d4d)",
+  nameText: "var(--canvas-field-ink, #1f2d4d)",
   typeText: "var(--canvas-type-ink, #555e6c)",
   emptyText: "var(--canvas-type-ink, #555e6c)",
 } as const;
@@ -162,7 +161,7 @@ export function moduleTableAttrs(
             ? "var(--canvas-drop, #eff6ff)"
             : selectedModule
               ? "var(--accent, #edf4ff)"
-              : colors.bodyFill,
+              : `var(--dept-${tone}-module, #ffffff)`,
       stroke:
         feedback === "moving"
           ? "var(--warning, #f59e0b)"
@@ -227,8 +226,8 @@ export function moduleTableAttrs(
       fill: selected
         ? colors.selectedRowFill
         : i % 2 === 1
-          ? colors.stripeFill
-          : colors.bodyFill,
+          ? `var(--dept-${tone}-stripe, #f7f8fa)`
+          : `var(--dept-${tone}-module, #ffffff)`,
       stroke: selected ? "var(--primary, #2563eb)" : "none",
       strokeWidth: selected ? 1 : 0,
       tabindex: field === undefined ? -1 : 0,

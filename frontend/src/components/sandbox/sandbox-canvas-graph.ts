@@ -104,7 +104,7 @@ export function departmentNodeAttrs(
           ? "var(--canvas-drop, #eff6ff)"
           : selected
             ? CANVAS_NODE_SELECTED
-            : "var(--canvas-dept-fill, #ffffff)",
+            : `var(--dept-${tone}-sheet, #ffffff)`,
       stroke: moving
         ? "var(--warning, #f59e0b)"
         : dropTarget || selected

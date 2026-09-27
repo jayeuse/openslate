@@ -96,8 +96,8 @@
   --font-ui: var(--font-geist-sans);
   --font-code: var(--font-geist-mono);
   /* Card material. Themes set these instead of overriding Card, so a card's
-     own border or ring classes still win. */
-  --card-edge: var(--rule);
+     own border or ring classes still win. Slate leaves --card-edge unset;
+     it falls back to --border where it is read. */
   --card-lift: 0 0 #0000;
   /* Canvas skin. Departments, module cards, field rows, lines, and line
      labels; themes restyle the canvas here, not with new markup. */
@@ -128,6 +128,25 @@
   --dept-2-card: var(--surface-sunken);
   --dept-3-card: var(--surface-sunken);
   --dept-4-card: var(--surface-sunken);
+  /* Department sheet (frame fill) and module body fill, per department. */
+  --dept-1-sheet: var(--canvas-dept-fill);
+  --dept-2-sheet: var(--canvas-dept-fill);
+  --dept-3-sheet: var(--canvas-dept-fill);
+  --dept-4-sheet: var(--canvas-dept-fill);
+  --dept-1-module: var(--canvas-module-fill);
+  --dept-2-module: var(--canvas-module-fill);
+  --dept-3-module: var(--canvas-module-fill);
+  --dept-4-module: var(--canvas-module-fill);
+  --dept-1-stripe: var(--canvas-row-stripe);
+  --dept-2-stripe: var(--canvas-row-stripe);
+  --dept-3-stripe: var(--canvas-row-stripe);
+  --dept-4-stripe: var(--canvas-row-stripe);
+  --canvas-field-ink: var(--canvas-module-ink);
+  /* Values people type into inputs and text areas. */
+  --data-ink: var(--ink);
+  /* Outline button material. --button-edge falls back to --border where
+     it is read, so scoped --border overrides (.sandbox-ui) still apply. */
+  --button-ink: var(--foreground);
 }
 
 .dark,
@@ -205,7 +224,7 @@
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-muted: var(--sidebar-muted);
   --color-sidebar-accent: var(--sidebar-accent);
-  --color-card-edge: var(--card-edge);
+  --color-card-edge: var(--card-edge, var(--border));
   --shadow-card: var(--card-lift);
   --color-action-text: var(--action-text);
   --color-action-tint: var(--action-tint);

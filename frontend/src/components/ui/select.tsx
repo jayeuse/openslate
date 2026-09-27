@@ -51,6 +51,7 @@ export function Select({
   return (
     <span className="relative inline-flex w-full items-center">
       <select
+        data-slot="select"
         {...props}
         value={value}
         onChange={(event) => onValueChange(event.target.value)}

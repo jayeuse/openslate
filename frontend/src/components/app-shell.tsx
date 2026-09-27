@@ -350,7 +350,7 @@ export function AppShell({
                   pathname={pathname}
                   searchParams={navigationSearchParams}
                 />
-                <div className="bg-background sticky bottom-0 z-10 -mx-4 mt-auto px-4 pt-3 pb-2">
+                <div className="bg-card sticky bottom-0 z-10 -mx-4 mt-auto px-4 pt-3 pb-2">
                   <AppCommsLink collapsed={false} />
                 </div>
               </div>
@@ -364,7 +364,10 @@ export function AppShell({
               isComms || isAccess ? "h-screen min-h-0" : "min-h-screen",
             )}
           >
-            <header className="border-border bg-background sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5">
+            <header
+              data-skin="topbar"
+              className="border-border bg-background sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5"
+            >
               <div className="flex min-w-0 items-center gap-2.5">
                 <Button
                   variant="ghost"
@@ -387,6 +390,7 @@ export function AppShell({
             </header>
             <main
               id="main-content"
+              data-skin="page"
               className={cn(
                 isComms || isAccess
                   ? "flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden"

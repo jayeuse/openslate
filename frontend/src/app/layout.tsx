@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import {
   Archivo,
   Atkinson_Hyperlegible_Next,
+  Big_Shoulders_Stencil,
   Geist,
   Geist_Mono,
   Martian_Mono,
@@ -37,6 +38,12 @@ const archivo = Archivo({
   preload: false,
 });
 
+const bigShouldersStencil = Big_Shoulders_Stencil({
+  variable: "--font-stencil",
+  subsets: ["latin"],
+  preload: false,
+});
+
 const martianMono = Martian_Mono({
   variable: "--font-martian-mono",
   subsets: ["latin"],
@@ -62,7 +69,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       // differs from this render. Suppress the warning and keep React
       // from patching those attributes back.
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} ${atkinson.variable} ${archivo.variable} ${martianMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${atkinson.variable} ${archivo.variable} ${martianMono.variable} ${bigShouldersStencil.variable} h-full antialiased`}
     >
       <head>
         {/* eslint-disable-next-line @next/next/no-sync-scripts */}

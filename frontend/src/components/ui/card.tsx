@@ -20,6 +20,7 @@ export function CardHeader({
 }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
+      data-slot="card-header"
       className={cn(
         "border-border flex flex-col gap-1.5 border-b p-5",
         className,

@@ -77,6 +77,25 @@
   --dept-2-card: var(--dept-2-band);
   --dept-3-card: var(--dept-3-band);
   --dept-4-card: var(--dept-4-band);
+  /* Full-strength materials. Ballpoint blue marks what people entered. */
+  --data-ink: #2343c4;
+  --button-edge: var(--action);
+  --button-ink: var(--action);
+  --canvas-field-ink: #2343c4;
+  --dept-1-sheet: #f6f0d6;
+  --dept-2-sheet: #fefefc;
+  --dept-3-sheet: #e3efe6;
+  --dept-4-sheet: #f5e6e8;
+  --dept-1-module: var(--dept-1-sheet);
+  --dept-2-module: var(--dept-2-sheet);
+  --dept-3-module: var(--dept-3-sheet);
+  --dept-4-module: var(--dept-4-sheet);
+  --dept-1-stripe: var(--dept-1-sheet);
+  --dept-2-stripe: var(--dept-2-sheet);
+  --dept-3-stripe: var(--dept-3-sheet);
+  --dept-4-stripe: var(--dept-4-sheet);
+  --tp-paper-rule: #e3e5ea;
+  --tp-perforation: #8e96aa;
 }
 
 .dark[data-theme="triplicate"],
@@ -150,50 +169,238 @@
   --dept-2-card: var(--dept-2-band);
   --dept-3-card: var(--dept-3-band);
   --dept-4-card: var(--dept-4-band);
+  --data-ink: #b8c6f5;
+  --button-edge: var(--action);
+  --button-ink: var(--action);
+  --canvas-field-ink: #b8c6f5;
+  --dept-1-sheet: #26241a;
+  --dept-2-sheet: #1c223f;
+  --dept-3-sheet: #1a2a22;
+  --dept-4-sheet: #2c1f26;
+  --dept-1-module: var(--dept-1-sheet);
+  --dept-2-module: var(--dept-2-sheet);
+  --dept-3-module: var(--dept-3-sheet);
+  --dept-4-module: var(--dept-4-sheet);
+  --dept-1-stripe: var(--dept-1-sheet);
+  --dept-2-stripe: var(--dept-2-sheet);
+  --dept-3-stripe: var(--dept-3-sheet);
+  --dept-4-stripe: var(--dept-4-sheet);
+  --tp-paper-rule: #1b2140;
+  --tp-perforation: #414a73;
 }
 
-/* Skin places. Labels, table heads, and chips can show names people typed,
-   so they keep their case; the condensed width carries the form look. */
-[data-theme="triplicate"]
-  :is([data-slot="page-title"], [data-slot="card-title"]) {
-  font-stretch: 92%;
+/* Skin places. Triplicate is a carbon-copy business form: printed navy
+   structure, ballpoint blue for what people entered, ruled paper, form
+   boxes, perforations, and rubber stamps. Labels, table heads, and chips
+   can show names people typed, so they keep their case; condensed width
+   and tracking carry the form look instead. */
+
+/* The page is ruled form paper. */
+[data-theme="triplicate"] [data-skin="page"] {
+  background-color: var(--ground);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0 27px,
+    var(--tp-paper-rule) 27px 28px
+  );
+}
+
+/* The top bar is a printed form header with a double rule. */
+[data-theme="triplicate"] [data-skin="topbar"] {
+  border-bottom-color: var(--ink);
+  box-shadow:
+    0 2px 0 var(--ground),
+    0 3px 0 var(--ink);
+}
+
+[data-theme="triplicate"] [data-slot="sidebar"] {
+  border-right: 1px solid var(--ink);
+}
+
+/* Titles are printed in condensed navy with a heavy rule beneath. */
+[data-theme="triplicate"] [data-slot="page-title"] {
+  font-stretch: 88%;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+[data-theme="triplicate"] [data-slot="page-title"]::after {
+  content: "";
+  display: block;
+  width: 3.5rem;
+  height: 3px;
+  margin-top: 0.4rem;
+  background: var(--ink);
+}
+
+[data-theme="triplicate"] [data-slot="card-title"] {
+  font-stretch: 90%;
   font-weight: 700;
-  letter-spacing: 0;
 }
 
+/* Cards are form sheets: a navy frame and a perforated header. */
+[data-theme="triplicate"] [data-slot="card-header"] {
+  border-bottom-style: dashed;
+  border-bottom-color: var(--tp-perforation);
+}
+
+/* Form labels: small, condensed, tracked, printed ink. */
 [data-theme="triplicate"]
-  :is(
-    [data-slot="field-label"],
-    [data-slot="table-head"],
-    [data-slot="badge"]
-  ) {
-  letter-spacing: 0.03em;
-  font-stretch: 85%;
+  :is([data-slot="field-label"], [data-slot="table-head"]) {
+  font-size: 0.75rem;
+  font-stretch: 78%;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
 }
 
-/* Status chips read as rubber stamps. */
+/* Fields are boxes on the form. */
+[data-theme="triplicate"]
+  :is([data-slot="input"], [data-slot="select"], [data-slot="textarea"]) {
+  border-width: 1px;
+  background-color: var(--surface);
+}
+
+/* Buttons are pen-ruled: a heavier stroke and condensed weight. */
+[data-theme="triplicate"] [data-slot="button"] {
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+[data-theme="triplicate"] [data-slot="button"][data-variant="outline"] {
+  border-width: 1.5px;
+}
+
+/* Status chips are rubber stamps: a double frame, slightly askew. */
 [data-theme="triplicate"] [data-slot="badge"] {
   background: transparent;
-  border: 1px solid currentColor;
+  border: 1.5px solid currentColor;
+  border-radius: 0;
+  box-shadow:
+    inset 0 0 0 1.5px var(--surface),
+    inset 0 0 0 2.5px currentColor;
+  padding-inline: 0.45rem;
+  font-stretch: 80%;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+/* Only status stamps sit askew, as if stamped by hand. */
+[data-theme="triplicate"]
+  [data-slot="badge"]:is(
+    [data-variant="success"],
+    [data-variant="warning"],
+    [data-variant="destructive"]
+  ) {
+  transform: rotate(-2deg);
+}
+
+/* Tabs are form sections: a printed rule with the open section underlined. */
+[data-theme="triplicate"] [data-slot="tabs-list"] {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: inset 0 -1px 0 var(--ink);
+  padding: 0;
+}
+
+[data-theme="triplicate"] [data-slot="tabs-trigger"] {
   border-radius: 0;
 }
 
 [data-theme="triplicate"] [data-slot="tabs-trigger"][data-active] {
+  background: transparent;
   box-shadow: inset 0 -3px 0 var(--ink);
+  font-weight: 700;
 }
 
-/* The canvas paints over its frame's own background, so the frame draws
-   on a layer above it that ignores the pointer. */
+/* Tables are ruled ledgers with numbered lines. Only record rows count:
+   rows with a spanning cell (empty states, expanded details) and rows led
+   by a checkbox are skipped. The number sits in the first cell's left
+   padding, and the head cell gets the same padding, so columns stay
+   aligned. The empty alternative text keeps the number out of the
+   accessibility tree, so every look reads the same. */
+[data-theme="triplicate"] [data-slot="table-body"] {
+  counter-reset: tp-line;
+}
+
+[data-theme="triplicate"]
+  [data-slot="table-body"]
+  > [data-slot="table-row"]:not(
+    :has(> [colspan]),
+    :has(> :first-child [role="checkbox"])
+  ) {
+  counter-increment: tp-line;
+}
+
+[data-theme="triplicate"]
+  :is(
+    [data-slot="table-body"]
+      > [data-slot="table-row"]:not(
+        :has(> [colspan]),
+        :has(> :first-child [role="checkbox"])
+      )
+      > [data-slot="table-cell"],
+    [data-slot="table-header"]
+      > [data-slot="table-row"]:not(:has(> :first-child [role="checkbox"]))
+      > [data-slot="table-head"]
+  ):first-child {
+  position: relative;
+  padding-left: 2.25rem;
+}
+
+[data-theme="triplicate"]
+  [data-slot="table-body"]
+  > [data-slot="table-row"]:not(
+    :has(> [colspan]),
+    :has(> :first-child [role="checkbox"])
+  )
+  > [data-slot="table-cell"]:first-child::before {
+  content: counter(tp-line) / "";
+  position: absolute;
+  left: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.75rem;
+  font-stretch: 75%;
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+
+[data-theme="triplicate"] [data-slot="table-head"] {
+  border-bottom: 1.5px solid var(--ink);
+}
+
+/* Notices are stamped boxes. */
+[data-theme="triplicate"] [data-slot="alert"] {
+  border-width: 3px;
+  border-style: double;
+  border-radius: 0;
+}
+
+/* Dialogs and sheets are carbon slips with a torn, perforated top edge. */
+[data-theme="triplicate"]
+  :is([data-slot="dialog-content"], [data-slot="sheet-content"]) {
+  border-color: var(--ink);
+  border-top: 2px dashed var(--ink);
+  border-radius: 0;
+}
+
+[data-theme="triplicate"] [data-slot="dropdown-menu-content"] {
+  border: 1px solid var(--ink);
+  border-radius: 0;
+}
+
+/* The canvas is the desk; each department is a tinted carbon copy with
+   ruled boxes printed on it. */
 [data-theme="triplicate"] [data-skin="canvas-frame"]::after {
   content: "";
   position: absolute;
   inset: 0;
   z-index: 20;
   pointer-events: none;
-  box-shadow: inset 0 0 0 1px var(--rule-strong);
+  box-shadow: inset 0 0 0 1px var(--ink);
 }
 
-/* Form boxes: square corners and dashed carbon lines. */
 [data-theme="triplicate"]
   .sandbox-ui
   :is([data-sandbox-body], [data-sandbox-part="header"]) {
@@ -208,18 +415,22 @@
   stroke-dasharray: 6 4;
 }
 
-/* Carbon lines: a relationship is a dashed carbon stroke, and a handoff
-   to another department is dotted, so the two stay distinct. */
+[data-theme="triplicate"] .sandbox-ui [data-sandbox-kind="department"] {
+  filter: var(--lift-filter);
+}
+
+/* Carbon lines keep Slate's meaning: a relationship is a solid carbon
+   stroke, and a handoff to another department is dashed. */
 [data-theme="triplicate"]
   .sandbox-ui
   [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
-  stroke-dasharray: 5 4;
+  stroke-dasharray: none;
   stroke-linecap: butt;
 }
 
 [data-theme="triplicate"]
   .sandbox-ui
   [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
-  stroke-dasharray: 1.5 3.5;
-  stroke-linecap: round;
+  stroke-dasharray: 6 4;
+  stroke-linecap: butt;
 }
