@@ -36,7 +36,7 @@ def test_create_persists_an_immutable_temporary_input_snapshot() -> None:
     assert run.document_hash == row.content_hash
     assert run.module_id == "requests"
     assert run.input_values == {"priority": "High", "status": "", "score": 0}
-    assert run.automation_ids is None
+    assert run.trigger_ids is None
     assert response.result.values["status"] == "Triaged"
     assert response.result.values["score"] == 10
     assert database.add.call_count == 1
@@ -124,7 +124,7 @@ def _document_row() -> SandboxDocumentRow:
     return SandboxDocumentRow(
         id=uuid7(),
         singleton_key=True,
-        schema_version=2,
+        schema_version=3,
         revision=1,
         document=document.model_dump(by_alias=True, mode="json"),
         content_hash="0" * 64,

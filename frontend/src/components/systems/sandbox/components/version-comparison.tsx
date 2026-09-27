@@ -39,7 +39,7 @@ const areas: { prefix: string; label: string; icon: LucideIcon }[] = [
   { prefix: "Module", label: "Modules", icon: Boxes },
   { prefix: "Field", label: "Fields", icon: FileText },
   { prefix: "Relationship", label: "Relationships", icon: GitBranch },
-  { prefix: "Automation", label: "Automations", icon: Zap },
+  { prefix: "Trigger", label: "Triggers", icon: Zap },
   { prefix: "Scenario", label: "Scenarios", icon: Layers },
 ];
 

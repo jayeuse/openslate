@@ -13,9 +13,6 @@ from app.systems.sandbox.designs.schemas import DesignField, SandboxDocument
 from app.systems.sandbox.designs.validation import validate_document
 from app.systems.sandbox.fields.impact import validate_change_impact
 from app.systems.sandbox.fields.models import Field, FieldType
-from app.systems.sandbox.publications.automation_comparison import (
-    automation_semantics_changed,
-)
 from app.systems.sandbox.publications.binding_keys import normalize_legacy_field_bindings
 from app.systems.sandbox.publications.close_rules import (
     close_blockers,
@@ -32,10 +29,10 @@ from app.systems.sandbox.publications.preflight import (
     structure_name_blockers,
 )
 from app.systems.sandbox.publications.rules import (
-    _automation_blockers,
     _digest,
     _field_key,
     _field_type,
+    _trigger_blockers,
     operational_config,
     relationship_metadata,
 )
@@ -48,13 +45,16 @@ from app.systems.sandbox.publications.snapshot import (
     PublicationSnapshot,
     load_publication_snapshot,
 )
+from app.systems.sandbox.publications.trigger_comparison import (
+    trigger_semantics_changed,
+)
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.service import (
     RelationshipConflict,
     validate_cardinality_change,
 )
 
-BindingKind = Literal["department", "module", "field", "relationship", "automation"]
+BindingKind = Literal["department", "module", "field", "relationship", "trigger"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,35 +257,35 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
                     or live.relationship_target_module_id != expected_target
                 ):
                     _append_update(changes, "relationship", relationship.id, relationship.name)
-    for execution_position, automation in enumerate(document.automations):
-        desired_ids["automation"].add(automation.id)
+    for execution_position, record_trigger in enumerate(document.triggers):
+        desired_ids["trigger"].add(record_trigger.id)
         _plan_item(
             changes,
-            "automation",
-            automation.id,
-            automation.name,
+            "trigger",
+            record_trigger.id,
+            record_trigger.name,
             False,
-            by_kind["automation"],
+            by_kind["trigger"],
             snapshot,
         )
-        if automation_semantics_changed(
+        if trigger_semantics_changed(
             db,
-            automation,
+            record_trigger,
             by_kind["module"],
             by_kind["field"],
-            by_kind["automation"],
+            by_kind["trigger"],
             snapshot=snapshot,
         ):
-            _append_update(changes, "automation", automation.id, automation.name)
-        binding = by_kind["automation"].get(automation.id)
-        automation_live = (
-            snapshot.automations.get(binding.automation_id)
-            if binding is not None and binding.automation_id is not None
+            _append_update(changes, "trigger", record_trigger.id, record_trigger.name)
+        binding = by_kind["trigger"].get(record_trigger.id)
+        trigger_live = (
+            snapshot.triggers.get(binding.trigger_id)
+            if binding is not None and binding.trigger_id is not None
             else None
         )
-        if automation_live is not None and automation_live.execution_position != execution_position:
-            _append_update(changes, "automation", automation.id, automation.name)
-        blockers.extend(_automation_blockers(document, automation))
+        if trigger_live is not None and trigger_live.execution_position != execution_position:
+            _append_update(changes, "trigger", record_trigger.id, record_trigger.name)
+        blockers.extend(_trigger_blockers(document, record_trigger))
 
     _plan_removed_items(changes, by_kind, desired_ids, snapshot)
     blockers.extend(module_schema_blockers(document))
@@ -345,7 +345,7 @@ def _finish(
 
 
 def _kinds() -> tuple[BindingKind, ...]:
-    return ("department", "module", "field", "relationship", "automation")
+    return ("department", "module", "field", "relationship", "trigger")
 
 
 def _binding_map(bindings: list[SandboxBinding]) -> dict[BindingKind, dict[str, SandboxBinding]]:

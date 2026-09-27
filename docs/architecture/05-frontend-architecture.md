@@ -36,7 +36,7 @@ discarding browser state. See [authentication and authorization](08-authenticati
 for session admission and account eligibility.
 
 Some workspace surfaces remain browser-local sample state. Sandbox is an
-exception: its Build, Automations, Test, History, and Review & Publish workflow
+exception: its Build, Triggers, Test, History, and Review & Publish workflow
 uses authenticated FastAPI contracts and PostgreSQL. Its temporary Test inputs
 never create operational records. Authorized API adapters preserve loading,
 retry, revision-conflict, and unsaved-draft protection. SSE consumers treat

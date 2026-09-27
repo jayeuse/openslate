@@ -26,7 +26,7 @@ def _document_row() -> SandboxDocumentRow:
     return SandboxDocumentRow(
         id=uuid7(),
         singleton_key=True,
-        schema_version=2,
+        schema_version=3,
         revision=1,
         document=payload,
         content_hash=content_hash,
@@ -44,7 +44,7 @@ def test_export_bundles_preserve_required_null_values_and_round_trip() -> None:
     without_history_text = without_history_bytes.decode()
     without_history_payload = json.loads(without_history_bytes)
 
-    assert without_history_text.startswith('{\n  "automations": [')
+    assert without_history_text.startswith('{\n  "design": {')
     assert without_history_text.endswith("\n")
     assert "versions" not in without_history_payload
     assert (

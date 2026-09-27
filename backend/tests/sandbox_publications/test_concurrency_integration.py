@@ -327,7 +327,7 @@ def _configure_publishable_draft(engine: Engine) -> tuple[UUID, Baseline]:
         )
         initial = read_document(db)
         document = sample_document().model_copy(deep=True)
-        document.automations = []
+        document.triggers = []
         document.scenarios = []
         replace_document(
             db,

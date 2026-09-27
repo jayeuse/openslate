@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.models import SandboxVersion
 from app.systems.sandbox.designs.schemas import (
+    DOCUMENT_SCHEMA_VERSION,
     DocumentResponse,
     PortableBundle,
     PublishedDocumentVersion,
@@ -225,7 +226,7 @@ def import_bundle(
         snapshot = SandboxDocument.model_validate(
             {
                 "kind": "openslate-sandbox",
-                "schemaVersion": 2,
+                "schemaVersion": DOCUMENT_SCHEMA_VERSION,
                 **imported.document.model_dump(by_alias=True),
             }
         )
@@ -376,7 +377,7 @@ def _store_document(row: SandboxDocumentRow, document: SandboxDocument, actor_id
     row.document = payload
     row.content_hash = content_hash
     row.byte_count = byte_count
-    row.schema_version = 2
+    row.schema_version = DOCUMENT_SCHEMA_VERSION
     _advance_revision(row, actor_id)
 
 

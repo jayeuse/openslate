@@ -32,7 +32,7 @@ const workspaceNavigationDefinitions = [
     defaultItem: "build",
     items: [
       { id: "build", label: "Build" },
-      { id: "automations", label: "Automations" },
+      { id: "triggers", label: "Triggers" },
       { id: "test", label: "Test" },
       { id: "history", label: "History" },
     ],
@@ -114,7 +114,7 @@ const workspaceNavigationDefinitions = [
 const openViewRecordIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const sandboxLegacySections: Readonly<Record<string, string>> = {
   designer: "build",
-  automation: "automations",
+  trigger: "triggers",
   simulation: "test",
   preview: "test",
   versions: "history",
@@ -159,7 +159,7 @@ function sectionFor(
   if (matched) return matched.id;
   if (definition.id === "access" && params.has("user")) return "identities";
   if (requested !== null) return definition.defaultItem;
-  if (definition.id === "sandbox" && params.has("rule")) return "automations";
+  if (definition.id === "sandbox" && params.has("rule")) return "triggers";
   if (definition.id === "platform") {
     if (hash === "#account") return "account";
     if (hash === "#notifications") return "notifications";

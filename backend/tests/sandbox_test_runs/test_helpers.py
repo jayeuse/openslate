@@ -2,12 +2,6 @@
 
 import pytest
 
-from app.systems.sandbox.test_runs.automation_values import (
-    UNRESOLVED,
-    automation_issue,
-    automation_value,
-    compare,
-)
 from app.systems.sandbox.test_runs.relationships import (
     _cardinality_detail,
     _fields,
@@ -15,6 +9,12 @@ from app.systems.sandbox.test_runs.relationships import (
     _mapping_is_compatible,
     _value_is_valid,
     relationship_routes,
+)
+from app.systems.sandbox.test_runs.trigger_values import (
+    UNRESOLVED,
+    compare,
+    resolve_trigger_value,
+    trigger_issue,
 )
 
 
@@ -41,13 +41,14 @@ def _field(field_id: str, kind: str, **config: object) -> dict[str, object]:
     }
 
 
-def test_automation_values_fail_closed_and_compare_supported_scalars() -> None:
+def test_trigger_values_fail_closed_and_compare_supported_scalars() -> None:
     values = {"status": "Open"}
-    assert automation_value("bad", "requests", values) is UNRESOLVED
-    assert automation_value({"kind": "literal", "value": ["bad"]}, "requests", values) is UNRESOLVED
-    assert automation_value({"kind": "literal", "value": False}, "requests", values) is False
+    assert resolve_trigger_value("bad", "requests", values) is UNRESOLVED
+    bad_literal = {"kind": "literal", "value": ["bad"]}
+    assert resolve_trigger_value(bad_literal, "requests", values) is UNRESOLVED
+    assert resolve_trigger_value({"kind": "literal", "value": False}, "requests", values) is False
     assert (
-        automation_value(
+        resolve_trigger_value(
             {"kind": "field-reference", "moduleId": "requests", "fieldId": "status"},
             "requests",
             values,
@@ -55,7 +56,7 @@ def test_automation_values_fail_closed_and_compare_supported_scalars() -> None:
         == "Open"
     )
     assert (
-        automation_value(
+        resolve_trigger_value(
             {
                 "kind": "field-reference",
                 "moduleId": "requests",
@@ -87,8 +88,8 @@ def test_automation_values_fail_closed_and_compare_supported_scalars() -> None:
     )
 
     issues = []
-    automation_issue(issues, "automation", "Needs attention")
-    assert issues[0].target_id == "automation"
+    trigger_issue(issues, "trigger", "Needs attention")
+    assert issues[0].target_id == "trigger"
 
 
 def test_relationship_routes_report_invalid_shapes_and_project_safe_values() -> None:

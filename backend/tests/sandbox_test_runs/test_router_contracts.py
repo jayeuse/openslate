@@ -104,15 +104,15 @@ def test_create_detail_delete_and_validation_follow_the_frontend_contract(monkey
 
 def test_test_result_response_allows_the_bounded_cascade_trace_count() -> None:
     traces = [
-        {"automationId": f"automation-{index}", "label": "Automation", "outcome": "Applied"}
+        {"triggerId": f"trigger-{index}", "label": "Trigger", "outcome": "Applied"}
         for index in range(501)
     ]
 
     response = SandboxTestResultResponse.model_validate(
-        {"values": {}, "routes": [], "automationTraces": traces, "issues": []}
+        {"values": {}, "routes": [], "triggerTraces": traces, "issues": []}
     )
 
-    assert len(response.automation_traces) == 501
+    assert len(response.trigger_traces) == 501
 
 
 def _application() -> FastAPI:
@@ -158,11 +158,11 @@ def _response() -> SandboxTestRunResponse:
         documentRevision=1,
         input={"moduleId": "requests", "values": {"priority": "High", "status": ""}},
         event={"kind": "record-created"},
-        automationIds=None,
+        triggerIds=None,
         result={
             "values": {"priority": "High", "status": "Triaged"},
             "routes": [],
-            "automationTraces": [],
+            "triggerTraces": [],
             "issues": [],
         },
     )

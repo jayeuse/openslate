@@ -20,7 +20,6 @@ from app.common.listing import (
 from app.core.database import get_db
 from app.systems.access.users.models import User
 from app.systems.access.users.permissions import Capability
-from app.systems.sandbox.automations.outbox import enqueue_record_event
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import (
     parse_field_key,
@@ -28,6 +27,7 @@ from app.systems.sandbox.fields.validation import (
     validate_record_data,
 )
 from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.record_triggers.outbox import enqueue_record_event
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.schemas import RecordCreate, RecordResponse, RecordUpdate
 from app.systems.sandbox.relationships.errors import RelationshipError

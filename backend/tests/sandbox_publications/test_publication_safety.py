@@ -6,9 +6,8 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.systems.sandbox.automations.models import PublishedAutomationDefinition
 from app.systems.sandbox.departments.models import Department
-from app.systems.sandbox.designs.schemas import AutomationDocument
+from app.systems.sandbox.designs.schemas import TriggerDocument
 from app.systems.sandbox.designs.service import read_document, replace_document
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
@@ -19,6 +18,7 @@ from app.systems.sandbox.publications.executor import (
 )
 from app.systems.sandbox.publications.models import SandboxBinding, SandboxPublication
 from app.systems.sandbox.publications.planner import publication_plan
+from app.systems.sandbox.record_triggers.models import RecordTrigger
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 from tests.sandbox_publications.support import actor, publishable_document
@@ -70,7 +70,7 @@ def test_preview_is_read_only_and_publish_creates_only_bound_structure(
         "fields": 13,
         "bindings": 18,
         "publications": 1,
-        "automation_definitions": 0,
+        "trigger_definitions": 0,
         "records": 0,
         "relationships": 0,
     }
@@ -79,15 +79,15 @@ def test_preview_is_read_only_and_publish_creates_only_bound_structure(
     }
 
 
-def test_relationship_scoped_automation_blocks_publish_without_live_writes(
+def test_relationship_scoped_trigger_blocks_publish_without_live_writes(
     integration_owner_db: Session,
 ) -> None:
     before = _live_structure_counts(integration_owner_db)
     publisher = actor(integration_owner_db)
     initial = read_document(integration_owner_db)
     document = publishable_document()
-    document.automations = [
-        AutomationDocument.model_validate(
+    document.triggers = [
+        TriggerDocument.model_validate(
             {
                 "id": "relationship-reference",
                 "name": "Unsupported relationship reference",
@@ -117,7 +117,7 @@ def test_relationship_scoped_automation_blocks_publish_without_live_writes(
         document=document,
     )
     preview = publication_plan(integration_owner_db, saved.document)
-    assert "automation_relationship_reference_unsupported" in {
+    assert "trigger_relationship_reference_unsupported" in {
         blocker.code for blocker in preview.blockers
     }
     token_digest = sha256(b"relationship-reference-preview").hexdigest()
@@ -151,8 +151,8 @@ def _live_structure_counts(db: Session) -> dict[str, int]:
         "fields": int(db.scalar(select(func.count()).select_from(Field)) or 0),
         "bindings": int(db.scalar(select(func.count()).select_from(SandboxBinding)) or 0),
         "publications": int(db.scalar(select(func.count()).select_from(SandboxPublication)) or 0),
-        "automation_definitions": int(
-            db.scalar(select(func.count()).select_from(PublishedAutomationDefinition)) or 0
+        "trigger_definitions": int(
+            db.scalar(select(func.count()).select_from(RecordTrigger)) or 0
         ),
         "records": int(db.scalar(select(func.count()).select_from(Record)) or 0),
         "relationships": int(db.scalar(select(func.count()).select_from(RelationshipEdge)) or 0),

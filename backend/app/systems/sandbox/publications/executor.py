@@ -14,11 +14,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.sandbox.automations.models import (
-    PublishedAutomationAction,
-    PublishedAutomationCondition,
-    PublishedAutomationDefinition,
-)
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.designs.service import (
     _append_version,
@@ -28,7 +23,6 @@ from app.systems.sandbox.designs.service import (
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import validate_module_schema
 from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.publications.automation_mutations import apply_published_automations
 from app.systems.sandbox.publications.binding_keys import normalize_legacy_field_bindings
 from app.systems.sandbox.publications.models import SandboxBinding, SandboxPublication
 from app.systems.sandbox.publications.planner import (
@@ -45,6 +39,12 @@ from app.systems.sandbox.publications.schemas import PublicationResponse, Public
 from app.systems.sandbox.publications.structure_mutations import (
     close_removed_structure,
     stage_bound_names_and_positions,
+)
+from app.systems.sandbox.publications.trigger_mutations import apply_record_triggers
+from app.systems.sandbox.record_triggers.models import (
+    RecordTrigger,
+    RecordTriggerAction,
+    RecordTriggerCondition,
 )
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
@@ -180,7 +180,7 @@ def apply_publication(
     )
     db.add(publication)
     db.flush()
-    apply_published_automations(
+    apply_record_triggers(
         db,
         document,
         bindings,
@@ -239,9 +239,9 @@ def _lock_operational_rows(db: Session) -> None:
         Field,
         Record,
         RelationshipEdge,
-        PublishedAutomationDefinition,
-        PublishedAutomationCondition,
-        PublishedAutomationAction,
+        RecordTrigger,
+        RecordTriggerCondition,
+        RecordTriggerAction,
     ):
         db.scalars(select(model).order_by(model.id).with_for_update()).all()
 

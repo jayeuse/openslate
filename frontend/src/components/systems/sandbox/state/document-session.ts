@@ -11,10 +11,10 @@ import type { Design } from "../domain/model";
 import type { SandboxDocumentResponse } from "./api";
 import type { SandboxPublishedVersion } from "./api";
 import type { SandboxValidationIssue } from "../domain/validation";
-import type { SandboxDocumentV2 } from "../domain/document";
+import type { SandboxDocumentV3 } from "../domain/document";
 
 export type SandboxDocumentSession = {
-  document: SandboxDocumentV2;
+  document: SandboxDocumentV3;
   projected: Design;
   history: SandboxHistory;
   revision: number;
@@ -67,7 +67,7 @@ export function updateSandboxDocumentSession(
 export function proposedSandboxDocument(
   session: SandboxDocumentSession,
   design: Design = session.history.present,
-): SandboxDocumentV2 {
+): SandboxDocumentV3 {
   return mergeProjectedDesign(session.document, session.projected, design);
 }
 
@@ -103,7 +103,7 @@ export function reapplySandboxDocumentDraft(
 /** Reapplies a complete canonical draft against freshly loaded server metadata. */
 export function reapplySandboxDocument(
   response: SandboxDocumentResponse,
-  document: SandboxDocumentV2,
+  document: SandboxDocumentV3,
 ): SandboxDocumentSession {
   return openSandboxDocumentSession({ ...response, document });
 }

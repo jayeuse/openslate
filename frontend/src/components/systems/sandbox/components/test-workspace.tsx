@@ -13,7 +13,7 @@ import {
   defaultTestTrigger,
   summarizeTestRun,
 } from "../domain/test-run-summary";
-import type { SandboxAutomationTrigger } from "../domain/document";
+import type { SandboxTriggerEvent } from "../domain/document";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -27,18 +27,18 @@ import type {
   SandboxDocumentDesign,
   SandboxFieldValue,
 } from "../domain/document";
-import type { SandboxAutomation } from "../domain/document";
+import type { SandboxTrigger } from "../domain/document";
 import type { SandboxTestEvent, SandboxTestRun } from "../state/api";
 
 type Props = {
   design: SandboxDocumentDesign;
-  automations: readonly SandboxAutomation[];
+  triggers: readonly SandboxTrigger[];
   runs: readonly SandboxTestRun[];
   onRun: (input: {
     moduleId: string;
     values: Record<string, SandboxFieldValue>;
     event: SandboxTestEvent;
-    automationIds?: string[];
+    triggerIds?: string[];
   }) => Promise<void>;
   onClear: () => Promise<void>;
   onPendingChange?: (pending: boolean) => void;
@@ -100,7 +100,7 @@ function readSavedValues(
 
 export function TestWorkspace({
   design,
-  automations,
+  triggers,
   runs,
   onRun,
   onClear,
@@ -134,12 +134,12 @@ export function TestWorkspace({
     }
   }, [moduleId, values]);
   // Start on the reopened result's event, or else on the event that runs the
-  // module's first enabled automation, so the first test exercises something.
+  // module's first enabled trigger, so the first test exercises something.
   // Both shapes carry kind, fieldId, and the schedule fields read below.
-  const initialTrigger: SandboxTestEvent | SandboxAutomationTrigger | null =
+  const initialTrigger: SandboxTestEvent | SandboxTriggerEvent | null =
     initialRun && initialModule === initialRun.input.moduleId
       ? initialRun.event
-      : defaultTestTrigger(automations, initialModule);
+      : defaultTestTrigger(triggers, initialModule);
   const [eventKind, setEventKind] = useState<SandboxTestEvent["kind"]>(
     initialTrigger?.kind ?? "record-created",
   );
@@ -158,10 +158,8 @@ export function TestWorkspace({
       : "1",
   );
   const [previousValue, setPreviousValue] = useState("");
-  const [automationMode, setAutomationMode] = useState<"all" | "selected">(
-    "all",
-  );
-  const [automationIds, setAutomationIds] = useState<string[]>([]);
+  const [triggerMode, setTriggerMode] = useState<"all" | "selected">("all");
+  const [triggerIds, setTriggerIds] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState("");
@@ -178,7 +176,7 @@ export function TestWorkspace({
   const [focusFieldId, setFocusFieldId] = useState<string | null>(null);
   const selectedRun = runs.find((item) => item.id === selectedRunId) ?? runs[0];
   const selectedSummary = selectedRun
-    ? summarizeTestRun(selectedRun, design, automations, draftRevision)
+    ? summarizeTestRun(selectedRun, design, triggers, draftRevision)
     : null;
   // Issues from the shown result, on the inputs they are about, while the
   // setup shows that result's module and the result is current.
@@ -197,7 +195,7 @@ export function TestWorkspace({
 
   function chooseModule(
     nextModuleId: string,
-    trigger: SandboxAutomationTrigger | null,
+    trigger: SandboxTriggerEvent | null,
   ) {
     if (nextModuleId !== moduleId) {
       setModuleId(nextModuleId);
@@ -205,7 +203,7 @@ export function TestWorkspace({
         readSavedValues(design, nextModuleId) ??
           defaultValues(design, nextModuleId),
       );
-      setAutomationIds([]);
+      setTriggerIds([]);
       setSearch("");
       setFilter("relevant");
       setLimit(12);
@@ -240,7 +238,7 @@ export function TestWorkspace({
   const frequencyLabelId = useId();
   const timeLabelId = useId();
   const weekdayLabelId = useId();
-  const automationModeLabelId = useId();
+  const triggerModeLabelId = useId();
 
   useEffect(
     () => onPendingChange?.(pending || clearing),
@@ -266,8 +264,8 @@ export function TestWorkspace({
   );
   const eventFields =
     eventKind === "threshold-crossed" ? numericFields : fields;
-  const moduleAutomations = automations.filter(
-    (automation) => automation.trigger.moduleId === moduleId,
+  const moduleTriggers = triggers.filter(
+    (recordTrigger) => recordTrigger.trigger.moduleId === moduleId,
   );
   const relevantIds = new Set(
     fields.filter((field) => field.required).map((field) => field.id),
@@ -277,22 +275,22 @@ export function TestWorkspace({
   function addReference(reference: { moduleId: string; fieldId: string }) {
     if (reference.moduleId === moduleId) relevantIds.add(reference.fieldId);
   }
-  for (const automation of moduleAutomations.filter((item) =>
-    automationMode === "all" ? item.enabled : automationIds.includes(item.id),
+  for (const recordTrigger of moduleTriggers.filter((item) =>
+    triggerMode === "all" ? item.enabled : triggerIds.includes(item.id),
   )) {
-    if ("fieldId" in automation.trigger)
-      relevantIds.add(automation.trigger.fieldId);
+    if ("fieldId" in recordTrigger.trigger)
+      relevantIds.add(recordTrigger.trigger.fieldId);
     if (
-      automation.trigger.kind === "threshold-crossed" &&
-      automation.trigger.value.kind === "field-reference"
+      recordTrigger.trigger.kind === "threshold-crossed" &&
+      recordTrigger.trigger.value.kind === "field-reference"
     )
-      addReference(automation.trigger.value);
-    for (const condition of automation.conditionGroup.conditions) {
+      addReference(recordTrigger.trigger.value);
+    for (const condition of recordTrigger.conditionGroup.conditions) {
       addReference(condition.field);
       if (condition.value.kind === "field-reference")
         addReference(condition.value);
     }
-    for (const action of automation.actions) {
+    for (const action of recordTrigger.actions) {
       if (action.kind === "set-field") {
         addReference(action.target);
         if (action.value.kind === "field-reference") addReference(action.value);
@@ -366,7 +364,7 @@ export function TestWorkspace({
       moduleId,
       values,
       event,
-      ...(automationMode === "selected" ? { automationIds } : {}),
+      ...(triggerMode === "selected" ? { triggerIds } : {}),
     });
   }
 
@@ -449,7 +447,7 @@ export function TestWorkspace({
                     onChange={(event) =>
                       chooseModule(
                         event.target.value,
-                        defaultTestTrigger(automations, event.target.value),
+                        defaultTestTrigger(triggers, event.target.value),
                       )
                     }
                   >
@@ -576,49 +574,47 @@ export function TestWorkspace({
                   ) : null}
                 </div>
                 <fieldset className="grid gap-2">
-                  <legend className="text-sm font-medium">Automations</legend>
+                  <legend className="text-sm font-medium">Triggers</legend>
                   <Field>
-                    <FieldLabel htmlFor={automationModeLabelId}>
+                    <FieldLabel htmlFor={triggerModeLabelId}>
                       Choose which to run
                     </FieldLabel>
                     <NativeSelect
-                      id={automationModeLabelId}
-                      value={automationMode}
+                      id={triggerModeLabelId}
+                      value={triggerMode}
                       onChange={(event) =>
-                        setAutomationMode(
-                          event.target.value as "all" | "selected",
-                        )
+                        setTriggerMode(event.target.value as "all" | "selected")
                       }
                     >
                       <NativeSelectOption value="all">
-                        All enabled automations
+                        All enabled triggers
                       </NativeSelectOption>
                       <NativeSelectOption value="selected">
-                        Choose automations
+                        Choose triggers
                       </NativeSelectOption>
                     </NativeSelect>
                   </Field>
-                  {automationMode === "selected"
-                    ? moduleAutomations.map((automation) => (
+                  {triggerMode === "selected"
+                    ? moduleTriggers.map((recordTrigger) => (
                         <label
-                          key={automation.id}
-                          htmlFor={`sandbox-test-automation-${automation.id}`}
+                          key={recordTrigger.id}
+                          htmlFor={`sandbox-test-trigger-${recordTrigger.id}`}
                           className="flex min-h-11 items-center gap-2 text-sm"
                         >
                           <Checkbox
-                            id={`sandbox-test-automation-${automation.id}`}
-                            checked={automationIds.includes(automation.id)}
+                            id={`sandbox-test-trigger-${recordTrigger.id}`}
+                            checked={triggerIds.includes(recordTrigger.id)}
                             onCheckedChange={(checked) =>
-                              setAutomationIds(
+                              setTriggerIds(
                                 checked
-                                  ? [...automationIds, automation.id]
-                                  : automationIds.filter(
-                                      (id) => id !== automation.id,
+                                  ? [...triggerIds, recordTrigger.id]
+                                  : triggerIds.filter(
+                                      (id) => id !== recordTrigger.id,
                                     ),
                               )
                             }
                           />
-                          {automation.name}
+                          {recordTrigger.name}
                         </label>
                       ))
                     : null}
@@ -628,7 +624,7 @@ export function TestWorkspace({
                     Temporary field values
                   </legend>
                   <p className="text-muted-foreground mb-2 text-xs">
-                    Relevant: required fields and fields your automations use.
+                    Relevant: required fields and fields your triggers use.
                     Hidden fields keep their values.
                   </p>
                   <SearchField
@@ -837,13 +833,13 @@ export function TestWorkspace({
                     moduleId: previous.input.moduleId,
                     values: previous.input.values,
                     event: previous.event,
-                    ...(previous.automationIds
-                      ? { automationIds: previous.automationIds }
+                    ...(previous.triggerIds
+                      ? { triggerIds: previous.triggerIds }
                       : {}),
                   })
                 }
                 onShowOnCanvas={onShowOnCanvas}
-                automations={automations}
+                triggers={triggers}
                 onTryTrigger={(trigger) => {
                   chooseModule(trigger.moduleId ?? moduleId, trigger);
                   document.getElementById(moduleLabelId)?.focus();

@@ -304,7 +304,7 @@ def _assert_after_reset(
         pytest.fail("The CLI did not restore the Access policy singleton")
     if state["versions"] != ("workspace", 1, None, False, None):
         pytest.fail("The CLI did not restore the Access policy version singleton")
-    if state["workspace"] != (None,) or state["sandbox"] != (True, 2, 1, None, None, False):
+    if state["workspace"] != (None,) or state["sandbox"] != (True, 3, 1, None, None, False):
         pytest.fail("The CLI did not restore the workspace and Sandbox defaults")
     if provider_state != (True, False):
         pytest.fail("The CLI did not retain only the administrator Auth identity")

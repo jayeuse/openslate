@@ -438,7 +438,7 @@ export function Designer({
   useEffect(() => {
     if (
       !createRequest ||
-      createRequest.kind === "automation-rule" ||
+      createRequest.kind === "trigger-rule" ||
       handledCreateRequest.current === createRequest.id
     )
       return;

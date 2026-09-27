@@ -122,7 +122,7 @@ export function OrganizationTemplateDialog({
                     <p className="text-muted-foreground tabular-nums">
                       {stats.departments} departments · {stats.modules} modules
                       · {stats.fields} fields · {stats.relationships}{" "}
-                      relationships · {stats.automations} automations
+                      relationships · {stats.triggers} triggers
                     </p>
                   );
                 })()}

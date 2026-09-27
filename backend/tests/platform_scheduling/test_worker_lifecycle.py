@@ -250,9 +250,9 @@ def test_lifespan_joins_report_worker_before_database_disposal(monkeypatch) -> N
     app.state.smtp_outbox_worker = SimpleNamespace(
         start=lambda: order.append("smtp_start"), stop=lambda: order.append("smtp_stop")
     )
-    app.state.automation_worker = SimpleNamespace(
-        start=lambda: order.append("automation_start"),
-        stop=lambda: order.append("automation_stop") or True,
+    app.state.trigger_worker = SimpleNamespace(
+        start=lambda: order.append("trigger_start"),
+        stop=lambda: order.append("trigger_stop") or True,
     )
     app.state.report_scheduling_worker = SimpleNamespace(
         start=lambda: order.append("report_start"),
@@ -288,8 +288,8 @@ def test_failed_report_thread_start_still_cleans_up_lifespan(monkeypatch) -> Non
     app.state.smtp_outbox_worker = SimpleNamespace(
         start=lambda: None, stop=lambda: order.append("smtp_stop")
     )
-    app.state.automation_worker = SimpleNamespace(
-        start=lambda: None, stop=lambda: order.append("automation_stop") or True
+    app.state.trigger_worker = SimpleNamespace(
+        start=lambda: None, stop=lambda: order.append("trigger_stop") or True
     )
     app.state.report_scheduling_worker = module.ReportSchedulingWorker(
         SimpleNamespace(environment="development")
@@ -313,14 +313,14 @@ def test_failed_report_thread_start_still_cleans_up_lifespan(monkeypatch) -> Non
         asyncio.run(exercise())
 
     failed_thread.join.assert_not_called()
-    assert order == ["automation_stop", "events_stop", "readiness", "database"]
+    assert order == ["trigger_stop", "events_stop", "readiness", "database"]
 
 
 def test_lifespan_does_not_dispose_pool_when_report_worker_remains_alive(monkeypatch) -> None:
     app = FastAPI()
     app.state.events_listener = SimpleNamespace(start=lambda: None, stop=lambda: None)
     app.state.smtp_outbox_worker = SimpleNamespace(start=lambda: None, stop=lambda: None)
-    app.state.automation_worker = SimpleNamespace(start=lambda: None, stop=lambda: True)
+    app.state.trigger_worker = SimpleNamespace(start=lambda: None, stop=lambda: True)
     app.state.report_scheduling_worker = SimpleNamespace(start=lambda: None, stop=lambda: False)
     dispose_database = Mock()
     dispose_readiness = Mock()

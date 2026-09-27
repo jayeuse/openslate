@@ -1,7 +1,7 @@
 import type { SandboxTestEvent, SandboxTestRun } from "../state/api";
 import type {
-  SandboxAutomation,
-  SandboxAutomationTrigger,
+  SandboxTrigger,
+  SandboxTriggerEvent,
   SandboxDocumentDesign,
   SandboxFieldValue,
 } from "./document";
@@ -13,7 +13,7 @@ import type {
 export type TestRunStaleness = "older-draft" | "module-gone" | null;
 
 export type TestIssueSubject = {
-  kind: "automation" | "field" | "module";
+  kind: "trigger" | "field" | "module";
   id: string;
   name: string;
 };
@@ -35,12 +35,12 @@ export type TestRunSummary = {
  * The Test engine reports each issue with a code, a message, and one target
  * id. The same message can repeat for every action it touches, so repeats
  * collapse into one line with a count, and the target id is resolved to the
- * automation, field (in the tested module), or module it names.
+ * trigger, field (in the tested module), or module it names.
  */
 export function summarizeTestRun(
   run: SandboxTestRun,
   design: SandboxDocumentDesign,
-  automations: readonly SandboxAutomation[],
+  triggers: readonly SandboxTrigger[],
   draftRevision: number,
 ): TestRunSummary {
   // Field names resolve even when the module is closed; only staleness
@@ -57,9 +57,9 @@ export function summarizeTestRun(
 
   const subjectOf = (targetId: string | null): TestIssueSubject | null => {
     if (targetId === null) return null;
-    const automation = automations.find((item) => item.id === targetId);
-    if (automation)
-      return { kind: "automation", id: targetId, name: automation.name };
+    const recordTrigger = triggers.find((item) => item.id === targetId);
+    if (recordTrigger)
+      return { kind: "trigger", id: targetId, name: recordTrigger.name };
     const field = testedModule?.fields.find((item) => item.id === targetId);
     if (field) return { kind: "field", id: targetId, name: field.name };
     const named = design.modules.find((item) => item.id === targetId);
@@ -115,11 +115,11 @@ function fieldLabel(
 }
 
 /**
- * The event that runs an automation, in plain words. Names the module when
+ * The event that runs a trigger, in plain words. Names the module when
  * it is not the tested one, so the reason never reads as a contradiction.
  */
 export function describeTrigger(
-  trigger: SandboxAutomationTrigger,
+  trigger: SandboxTriggerEvent,
   design: SandboxDocumentDesign,
   testedModuleId?: string,
 ): string {
@@ -140,17 +140,16 @@ export function describeTrigger(
 
 /**
  * The event a new test should start with: the trigger of the first enabled
- * automation on the module, so the first run exercises something. Null when
- * no enabled automation runs on the module.
+ * trigger on the module, so the first run exercises something. Null when
+ * no enabled trigger runs on the module.
  */
 export function defaultTestTrigger(
-  automations: readonly SandboxAutomation[],
+  triggers: readonly SandboxTrigger[],
   moduleId: string,
-): SandboxAutomationTrigger | null {
+): SandboxTriggerEvent | null {
   return (
-    automations.find(
-      (item) => item.enabled && item.trigger.moduleId === moduleId,
-    )?.trigger ?? null
+    triggers.find((item) => item.enabled && item.trigger.moduleId === moduleId)
+      ?.trigger ?? null
   );
 }
 
@@ -241,7 +240,7 @@ export type TestTraceStep = {
 
 /**
  * A stored run as three still steps for the canvas: what happened (the
- * trigger field), which automations ran, and which values changed. Each
+ * trigger field), which triggers ran, and which values changed. Each
  * step keeps the earlier marks, so the last step shows the whole run.
  */
 export function testTraceSteps(
@@ -264,7 +263,7 @@ export function testTraceSteps(
       ? { [run.event.fieldId]: "trigger" }
       : {};
   const changed = comparisonRows(run).filter((row) => row.changed);
-  const traces = run.result.automationTraces;
+  const traces = run.result.triggerTraces;
   return [
     {
       title: "What happened",
@@ -272,13 +271,13 @@ export function testTraceSteps(
       marks: trigger,
     },
     {
-      title: "Automations",
+      title: "Triggers",
       lines: traces.length
         ? traces.map(
             (trace) =>
               `${trace.label}: ${trace.outcome === "Applied" ? "applied" : trace.outcome.toLowerCase()}`,
           )
-        : ["No automations ran."],
+        : ["No triggers ran."],
       marks: trigger,
     },
     {

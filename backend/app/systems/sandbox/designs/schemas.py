@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Final, Literal
 from urllib.parse import urlparse
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import PydanticCustomError
 
 from app.systems.sandbox.designs.date_values import date_in_range, valid_date, valid_datetime
 from app.systems.sandbox.numeric import numeric_matches_step
+
+DOCUMENT_SCHEMA_VERSION: Final = 3
+OLDER_FORMAT_MESSAGE: Final = "This design uses an older format and cannot be opened."
 
 ID = Annotated[str, Field(min_length=1, max_length=1_000)]
 Name = Annotated[str, Field(min_length=1, max_length=80)]
@@ -240,7 +244,7 @@ class FieldReferenceValue(FieldReference):
     kind: Literal["field-reference"]
 
 
-AutomationValue = Annotated[LiteralValue | FieldReferenceValue, Field(discriminator="kind")]
+TriggerValue = Annotated[LiteralValue | FieldReferenceValue, Field(discriminator="kind")]
 
 
 class RecordCreatedTrigger(StrictModel):
@@ -259,7 +263,7 @@ class ThresholdCrossedTrigger(StrictModel):
     module_id: ID = Field(alias="moduleId")
     field_id: ID = Field(alias="fieldId")
     operator: Literal[">", ">=", "<", "<=", "=", "!="]
-    value: AutomationValue
+    value: TriggerValue
 
 
 class ScheduleTrigger(StrictModel):
@@ -276,22 +280,22 @@ class ScheduleTrigger(StrictModel):
         return self
 
 
-AutomationTrigger = Annotated[
+TriggerEvent = Annotated[
     RecordCreatedTrigger | FieldChangedTrigger | ThresholdCrossedTrigger | ScheduleTrigger,
     Field(discriminator="kind"),
 ]
 
 
-class AutomationCondition(StrictModel):
+class TriggerCondition(StrictModel):
     id: ID
     field: FieldReference
     operator: Literal[">", ">=", "<", "<=", "=", "!="]
-    value: AutomationValue
+    value: TriggerValue
 
 
 class ConditionGroup(StrictModel):
     operator: Literal["all", "any"]
-    conditions: list[AutomationCondition] = Field(max_length=20)
+    conditions: list[TriggerCondition] = Field(max_length=20)
 
 
 class NotificationAction(StrictModel):
@@ -316,12 +320,12 @@ class SetFieldAction(StrictModel):
     id: ID
     kind: Literal["set-field"]
     target: FieldReference
-    value: AutomationValue
+    value: TriggerValue
 
 
 class CreateRecordValue(StrictModel):
     field_id: ID = Field(alias="fieldId")
-    value: AutomationValue
+    value: TriggerValue
 
 
 class CreateRecordAction(StrictModel):
@@ -331,7 +335,7 @@ class CreateRecordAction(StrictModel):
     values: list[CreateRecordValue] = Field(max_length=5_000)
 
 
-AutomationAction = Annotated[
+TriggerAction = Annotated[
     NotificationAction
     | ChannelMessageAction
     | AssignTaskAction
@@ -341,14 +345,14 @@ AutomationAction = Annotated[
 ]
 
 
-class AutomationDocument(StrictModel):
+class TriggerDocument(StrictModel):
     id: ID
     name: Name
     enabled: bool = True
     priority: int = Field(default=0, ge=-10_000, le=10_000)
-    trigger: AutomationTrigger
+    trigger: TriggerEvent
     condition_group: ConditionGroup = Field(alias="conditionGroup")
-    actions: list[AutomationAction] = Field(min_length=1, max_length=20)
+    actions: list[TriggerAction] = Field(min_length=1, max_length=20)
 
 
 class ScenarioRecord(StrictModel):
@@ -385,13 +389,26 @@ class DesignDocument(StrictModel):
 
 class SandboxSnapshot(StrictModel):
     design: DesignDocument
-    automations: list[AutomationDocument] = Field(default_factory=list, max_length=500)
+    triggers: list[TriggerDocument] = Field(default_factory=list, max_length=500)
     scenarios: list[ScenarioDocument] = Field(default_factory=list, max_length=500)
 
 
 class SandboxDocument(SandboxSnapshot):
     kind: Literal["openslate-sandbox"]
-    schema_version: Literal[2] = Field(alias="schemaVersion")
+    schema_version: Literal[3] = Field(alias="schemaVersion")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_older_format(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            version = data.get("schemaVersion", data.get("schema_version"))
+            if (
+                isinstance(version, int)
+                and not isinstance(version, bool)
+                and version < DOCUMENT_SCHEMA_VERSION
+            ):
+                raise PydanticCustomError("sandbox_document_older_format", OLDER_FORMAT_MESSAGE)
+        return data
 
 
 class PortableVersion(StrictModel):

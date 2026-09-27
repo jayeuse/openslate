@@ -37,7 +37,7 @@ def sample_document() -> SandboxDocument:
     return SandboxDocument.model_validate(
         {
             "kind": "openslate-sandbox",
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "design": {
                 "departments": [
                     {"id": "sample-operations", "name": "Operations", "closed": False},
@@ -111,7 +111,7 @@ def sample_document() -> SandboxDocument:
                     "sample-customers": {"x": 208, "y": 344, "width": 280, "height": 168},
                 },
             },
-            "automations": [
+            "triggers": [
                 {
                     "id": "sample-urgent",
                     "name": "Urgent request alert",

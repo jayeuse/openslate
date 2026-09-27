@@ -55,11 +55,13 @@ test("organization templates are detailed valid v2 baselines", () => {
       `${template.name} contains a relationship that cannot be published`,
     ).toBe(true);
     expect(
-      template.document.automations.length,
+      template.document.triggers.length,
       template.name,
     ).toBeGreaterThanOrEqual(3);
     expect(
-      template.document.automations.every((automation) => automation.enabled),
+      template.document.triggers.every(
+        (recordTrigger) => recordTrigger.enabled,
+      ),
       template.name,
     ).toBe(true);
     expect(template.document.scenarios, template.name).toEqual([]);
@@ -77,16 +79,16 @@ test("template documents are isolated from consumer mutations", () => {
   expect(first.createDocument().design.departments[0]?.name).toBe(originalName);
 });
 
-test("template status automations make a meaningful change", () => {
+test("template status triggers make a meaningful change", () => {
   for (const template of SANDBOX_ORGANIZATION_TEMPLATES) {
     let checked = 0;
-    for (const automation of template.document.automations) {
-      for (const action of automation.actions) {
+    for (const recordTrigger of template.document.triggers) {
+      for (const action of recordTrigger.actions) {
         if (action.kind !== "set-field" || action.value.kind !== "literal")
           continue;
         checked += 1;
         const actionValue = action.value.value;
-        const noOpCondition = automation.conditionGroup.conditions.find(
+        const noOpCondition = recordTrigger.conditionGroup.conditions.find(
           (condition) =>
             condition.operator === "=" &&
             condition.value.kind === "literal" &&
@@ -94,7 +96,7 @@ test("template status automations make a meaningful change", () => {
             condition.field.fieldId === action.target.fieldId &&
             condition.value.value === actionValue,
         );
-        expect(noOpCondition, `${template.name}: ${automation.name}`).toBe(
+        expect(noOpCondition, `${template.name}: ${recordTrigger.name}`).toBe(
           undefined,
         );
       }

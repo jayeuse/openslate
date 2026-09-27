@@ -17,7 +17,7 @@ def test_default_document_contains_no_placeholder_entities() -> None:
     assert seed.design.modules == []
     assert seed.design.relationships == []
     assert seed.design.layout == {}
-    assert seed.automations == []
+    assert seed.triggers == []
     assert seed.scenarios == []
 
 
@@ -43,11 +43,11 @@ def test_fresh_baseline_seeds_only_the_empty_shared_document(integration_owner_d
     assert len(rows) == 1
     assert rows[0] == {
         "id": UUID("00000000-0000-7000-8000-000000000005"),
-        "schema_version": 2,
+        "schema_version": 3,
         "revision": 1,
         "document": EMPTY_SANDBOX_DOCUMENT,
-        "content_hash": "34d294fb849433b5b53deb50502a21d22ef2e5383b6d93de0eb9cb21ee6d127f",
-        "byte_count": 150,
+        "content_hash": "1c8f69ffbddcb2aaa1fdbafbb6e10aa2e31a57630e4b0e5f11d50dc9affa3356",
+        "byte_count": 147,
     }
 
 

@@ -77,8 +77,8 @@ def test_runtime_role_can_manage_saved_test_evidence(
         module_id="runtime-check",
         input_values={},
         event={"kind": "record-created"},
-        automation_ids=None,
-        result={"values": {}, "routes": [], "automationTraces": [], "issues": []},
+        trigger_ids=None,
+        result={"values": {}, "routes": [], "triggerTraces": [], "issues": []},
         result_byte_count=0,
     )
     integration_db.add(run)

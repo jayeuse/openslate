@@ -1,10 +1,10 @@
 import {
   SANDBOX_DOCUMENT_LIMITS,
-  type SandboxDocumentV2,
+  type SandboxDocumentV3,
 } from "./document-types";
 import { parseSandboxDocumentValue } from "./document-parser";
 
-export function exportSandboxDocument(document: SandboxDocumentV2): string {
+export function exportSandboxDocument(document: SandboxDocumentV3): string {
   const candidate = JSON.stringify(document);
   if (
     new TextEncoder().encode(candidate).byteLength >

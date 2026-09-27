@@ -215,7 +215,7 @@ export function ReviewPublishDialog({
           ) : null}
           {localBlockers.length ? (
             <Alert role="alert" variant="destructive">
-              <p className="font-medium">Fix these automation settings first</p>
+              <p className="font-medium">Fix these trigger settings first</p>
               <ul className="mt-2 list-inside list-disc">
                 {localBlockers.map((blocker) => (
                   <li key={blocker}>{blocker}</li>

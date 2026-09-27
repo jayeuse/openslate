@@ -34,7 +34,7 @@ def actor(db: Session) -> User:
 
 def publishable_document() -> SandboxDocument:
     document = sample_document().model_copy(deep=True)
-    document.automations = []
+    document.triggers = []
     document.scenarios = []
     return document
 

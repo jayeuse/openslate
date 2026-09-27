@@ -50,7 +50,7 @@ def test_document_read_requires_every_structural_read_capability(monkeypatch) ->
     response = _client(application, reader, database).get("/api/sandbox/document")
 
     assert response.status_code == 200
-    assert response.json()["document"]["schemaVersion"] == 2
+    assert response.json()["document"]["schemaVersion"] == 3
 
 
 def test_document_write_returns_route_local_stale_revision_conflict(monkeypatch) -> None:
@@ -90,3 +90,42 @@ def test_document_write_returns_route_local_stale_revision_conflict(monkeypatch)
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "stale_revision"
     database.rollback.assert_called_once()
+
+
+def test_document_write_refuses_an_older_format_with_a_clear_422(monkeypatch) -> None:
+    import app.systems.sandbox.designs.router as designs_router
+    from tests.rbac.support import _client, make_user
+
+    database = Mock(spec=Session)
+    application = create_app()
+    writer = make_user(
+        "writer",
+        permissions={
+            capability.value: True
+            for capability in (
+                Capability.DEPARTMENTS_WRITE,
+                Capability.MODULES_WRITE,
+                Capability.FIELDS_WRITE,
+                Capability.RELATIONSHIPS_WRITE,
+            )
+        },
+    )
+    replace = Mock()
+    monkeypatch.setattr(designs_router, "replace_document", replace)
+    older = {
+        "kind": "openslate-sandbox",
+        "schemaVersion": 2,
+        "design": {"departments": [], "modules": [], "relationships": [], "layout": {}},
+        "automations": [],
+        "scenarios": [],
+    }
+
+    response = _client(application, writer, database).put(
+        "/api/sandbox/document", json={"expectedRevision": 1, "document": older}
+    )
+
+    assert response.status_code == 422
+    assert [error["msg"] for error in response.json()["detail"]] == [
+        "This design uses an older format and cannot be opened."
+    ]
+    replace.assert_not_called()

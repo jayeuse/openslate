@@ -24,13 +24,13 @@ import {
   type SandboxValidationIssue,
 } from "./domain/validation";
 import {
-  migrateSandboxFileV1,
-  type SandboxDocumentV2,
+  SANDBOX_DOCUMENT_SCHEMA_VERSION,
+  type SandboxDocumentV3,
 } from "./domain/document";
 import type { SandboxOrganizationTemplate } from "./domain/templates";
 import { openingModuleId } from "./domain/opening-module";
+import { sandboxIssueDestination } from "./domain/issue-destination";
 import { summarizeTestRun, testTraceSteps } from "./domain/test-run-summary";
-import { canvasFieldId } from "./helpers/bridge";
 import {
   SANDBOX_WORKBENCH_DEFAULT_WIDTH,
   clearSandboxViewPreferences,
@@ -46,7 +46,7 @@ import {
   getSandboxVersion,
   importSandboxBundle,
   listAllSandboxVersions,
-  listSandboxAutomationRuns,
+  listSandboxTriggerRuns,
   loadSandboxDocument,
   replaceSandboxDocument,
   restoreSandboxVersion,
@@ -57,7 +57,7 @@ import {
   listSandboxTests,
   publishSandbox,
   type SandboxVersion,
-  type SandboxAutomationRun,
+  type SandboxTriggerRun,
   type SandboxTestRun,
 } from "./state/api";
 import {
@@ -71,29 +71,29 @@ import {
 } from "./state/document-session";
 import { VersionsWorkspace } from "./components/versions-workspace";
 import {
-  AutomationStudio,
-  automationPublicationBlockers,
-} from "./components/automation-studio";
+  TriggerStudio,
+  triggerPublicationBlockers,
+} from "./components/trigger-studio";
 import { TestWorkspace } from "./components/test-workspace";
 import { ReviewPublishDialog } from "./components/review-publish-dialog";
 import { SandboxHeaderActions } from "./components/sandbox-header-actions";
 
 const SANDBOX_SECTIONS = {
   build: "Build",
-  automations: "Automations",
+  triggers: "Triggers",
   test: "Test",
   history: "History",
 } as const;
 const LEGACY_SECTION_ALIASES: Readonly<Record<string, SandboxSection>> = {
   designer: "Build",
-  automation: "Automations",
+  trigger: "Triggers",
   simulation: "Test",
   preview: "Test",
   versions: "History",
 };
 type SandboxSection = (typeof SANDBOX_SECTIONS)[keyof typeof SANDBOX_SECTIONS];
 type Conflict = {
-  proposedDocument: SandboxDocumentV2;
+  proposedDocument: SandboxDocumentV3;
   reason: "conflict" | "save-failed";
 };
 
@@ -107,7 +107,7 @@ export function sectionFromSearch(
       ? SANDBOX_SECTIONS[normalized as keyof typeof SANDBOX_SECTIONS]
       : (LEGACY_SECTION_ALIASES[normalized] ?? "Build");
   }
-  return requestedRule ? "Automations" : "Build";
+  return requestedRule ? "Triggers" : "Build";
 }
 
 function sectionHref(
@@ -165,12 +165,14 @@ function publishStatus(
   return { label: "Draft saved", publishable: true };
 }
 
-function emptyDocument(): SandboxDocumentV2 {
-  return migrateSandboxFileV1({
+function emptyDocument(): SandboxDocumentV3 {
+  return {
     kind: "openslate-sandbox",
-    schemaVersion: 1,
-    design: initialDesign,
-  });
+    schemaVersion: SANDBOX_DOCUMENT_SCHEMA_VERSION,
+    design: { departments: [], modules: [], relationships: [], layout: {} },
+    triggers: [],
+    scenarios: [],
+  };
 }
 
 // LoadingRegion wraps its content in one unstyled element, so the section's
@@ -243,10 +245,8 @@ export default function SandboxPage() {
   const [session, setSession] = useState<SandboxDocumentSession | null>(null);
   const [versions, setVersions] = useState<SandboxVersion[]>([]);
   const [testRuns, setTestRuns] = useState<SandboxTestRun[]>([]);
-  const [automationRuns, setAutomationRuns] = useState<SandboxAutomationRun[]>(
-    [],
-  );
-  const [automationActivity, setAutomationActivity] = useState({
+  const [triggerRuns, setTriggerRuns] = useState<SandboxTriggerRun[]>([]);
+  const [triggerActivity, setTriggerActivity] = useState({
     loading: false,
     error: "",
   });
@@ -259,7 +259,7 @@ export default function SandboxPage() {
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
-  const [automationDraft, setAutomationDraft] = useState({
+  const [triggerDraft, setTriggerDraft] = useState({
     dirty: false,
     pending: false,
   });
@@ -290,7 +290,7 @@ export default function SandboxPage() {
           summarizeTestRun(
             traceRun,
             session.document.design,
-            session.document.automations,
+            session.document.triggers,
             session.revision,
           ),
         )
@@ -308,18 +308,18 @@ export default function SandboxPage() {
   const refreshVersions = useCallback(async () => {
     setVersions(await listAllSandboxVersions());
   }, []);
-  const refreshAutomationActivity = useCallback(async () => {
-    setAutomationActivity({ loading: true, error: "" });
+  const refreshTriggerActivity = useCallback(async () => {
+    setTriggerActivity({ loading: true, error: "" });
     try {
-      const runPage = await listSandboxAutomationRuns({ limit: 20 });
-      setAutomationRuns(runPage.items);
+      const runPage = await listSandboxTriggerRuns({ limit: 20 });
+      setTriggerRuns(runPage.items);
     } catch {
-      setAutomationActivity((current) => ({
+      setTriggerActivity((current) => ({
         ...current,
         error: "Recent activity could not be loaded.",
       }));
     } finally {
-      setAutomationActivity((current) => ({ ...current, loading: false }));
+      setTriggerActivity((current) => ({ ...current, loading: false }));
     }
   }, []);
   const syncVersionMetadata = useCallback(async () => {
@@ -353,8 +353,8 @@ export default function SandboxPage() {
     void refresh();
   }, [refresh]);
   useEffect(() => {
-    if (section === "Automations") void refreshAutomationActivity();
-  }, [refreshAutomationActivity, section]);
+    if (section === "Triggers") void refreshTriggerActivity();
+  }, [refreshTriggerActivity, section]);
 
   const navigate = useCallback(
     (target: string, replace = false, bypassPending = false) => {
@@ -369,8 +369,8 @@ export default function SandboxPage() {
           publicationPending ||
           testPending ||
           conflict !== null ||
-          automationDraft.dirty ||
-          automationDraft.pending)
+          triggerDraft.dirty ||
+          triggerDraft.pending)
       )
         return;
       const href = sectionHref(next, new URLSearchParams(search.toString()));
@@ -378,8 +378,8 @@ export default function SandboxPage() {
       else router.push(href as Route, { scroll: false });
     },
     [
-      automationDraft.dirty,
-      automationDraft.pending,
+      triggerDraft.dirty,
+      triggerDraft.pending,
       conflict,
       pending,
       publicationPending,
@@ -395,11 +395,11 @@ export default function SandboxPage() {
         !publicationPending &&
         !testPending &&
         !conflict &&
-        !automationDraft.dirty &&
-        !automationDraft.pending,
+        !triggerDraft.dirty &&
+        !triggerDraft.pending,
       [
-        automationDraft.dirty,
-        automationDraft.pending,
+        triggerDraft.dirty,
+        triggerDraft.pending,
         conflict,
         pending,
         publicationPending,
@@ -413,8 +413,8 @@ export default function SandboxPage() {
       !publicationPending &&
       !testPending &&
       !conflict &&
-      !automationDraft.dirty &&
-      !automationDraft.pending
+      !triggerDraft.dirty &&
+      !triggerDraft.pending
     )
       return;
     const guardBrowserExit = (event: BeforeUnloadEvent) => {
@@ -424,8 +424,8 @@ export default function SandboxPage() {
     window.addEventListener("beforeunload", guardBrowserExit);
     return () => window.removeEventListener("beforeunload", guardBrowserExit);
   }, [
-    automationDraft.dirty,
-    automationDraft.pending,
+    triggerDraft.dirty,
+    triggerDraft.pending,
     conflict,
     pending,
     publicationPending,
@@ -474,7 +474,7 @@ export default function SandboxPage() {
     [],
   );
   const saveDocument = useCallback(
-    async (document: SandboxDocumentV2) => {
+    async (document: SandboxDocumentV3) => {
       if (!session) throw new Error("Sandbox is still loading.");
       const result = await persist({ ...session, document }, document);
       if (!result.ok) throw new Error(result.error);
@@ -588,7 +588,7 @@ export default function SandboxPage() {
   );
   const importFile = useCallback(
     async (
-      bundle: SandboxDocumentV2,
+      bundle: SandboxDocumentV3,
     ): Promise<SandboxCommandResult<unknown>> => {
       if (!session) return sandboxStillLoading();
       setPending(true);
@@ -691,37 +691,23 @@ export default function SandboxPage() {
       publicationPending ||
       testPending ||
       conflict !== null ||
-      automationDraft.dirty ||
-      automationDraft.pending
+      triggerDraft.dirty ||
+      triggerDraft.pending
     ) {
       setMessage(
-        "Wait for the current action to finish, or save or discard your automation changes.",
+        "Wait for the current action to finish, or save or discard your trigger changes.",
       );
       return;
     }
-    if (issue.code.startsWith("scenario.")) return navigate("Test");
-    if (issue.code.startsWith("automation.")) {
-      const params = new URLSearchParams(search.toString());
-      if (issue.targetId) params.set("rule", issue.targetId);
-      params.set("section", "automations");
-      router.replace(`/sandbox?${params.toString()}`, { scroll: false });
-      return;
-    }
-    if (!issue.targetId) return navigate("Build");
-    const params = new URLSearchParams(search.toString());
-    if (design.rules.some((rule) => rule.id === issue.targetId)) {
-      params.set("rule", issue.targetId);
-      params.set("section", "automations");
-    } else {
-      params.set(
-        "inspect",
-        issue.moduleId
-          ? canvasFieldId(issue.moduleId, issue.targetId)
-          : issue.targetId,
-      );
-      params.set("section", "build");
-    }
-    router.replace(`/sandbox?${params.toString()}`, { scroll: false });
+    const destination = sandboxIssueDestination(
+      issue,
+      new Set(design.rules.map((rule) => rule.id)),
+      new URLSearchParams(search.toString()),
+    );
+    if (destination.kind === "section") return navigate(destination.section);
+    router.replace(`/sandbox?${destination.params.toString()}`, {
+      scroll: false,
+    });
   }
   const reloadConflict = useCallback(async () => {
     setPending(true);
@@ -844,8 +830,8 @@ export default function SandboxPage() {
                 pending ||
                 testPending ||
                 !status.publishable ||
-                automationDraft.dirty ||
-                automationDraft.pending
+                triggerDraft.dirty ||
+                triggerDraft.pending
               }
               onClick={() => setReviewOpen(true)}
             >
@@ -856,8 +842,8 @@ export default function SandboxPage() {
                 loading ||
                 pending ||
                 testPending ||
-                automationDraft.dirty ||
-                automationDraft.pending
+                triggerDraft.dirty ||
+                triggerDraft.pending
               }
               templatesOpen={templatesOpen}
               onTemplatesOpenChange={setTemplatesOpen}
@@ -930,24 +916,24 @@ export default function SandboxPage() {
             pending={pending}
           />
         ) : null}
-        {section === "Automations" && session ? (
-          <AutomationStudio
+        {section === "Triggers" && session ? (
+          <TriggerStudio
             design={session.document.design}
-            automations={session.document.automations}
-            runs={automationRuns}
-            activity={automationActivity}
+            triggers={session.document.triggers}
+            runs={triggerRuns}
+            activity={triggerActivity}
             initialSelectedId={search.get("rule") ?? undefined}
-            onRefreshActivity={refreshAutomationActivity}
-            onChange={(automations) =>
-              saveDocument({ ...session.document, automations })
+            onRefreshActivity={refreshTriggerActivity}
+            onChange={(triggers) =>
+              saveDocument({ ...session.document, triggers })
             }
-            onStateChange={setAutomationDraft}
+            onStateChange={setTriggerDraft}
           />
         ) : null}
         {section === "Test" && session ? (
           <TestWorkspace
             design={session.document.design}
-            automations={session.document.automations}
+            triggers={session.document.triggers}
             runs={testRuns}
             onRun={async (input) => {
               const run = await createSandboxTest({
@@ -1061,11 +1047,11 @@ export default function SandboxPage() {
             disabled={
               pending ||
               Boolean(conflict) ||
-              automationDraft.dirty ||
-              automationDraft.pending
+              triggerDraft.dirty ||
+              triggerDraft.pending
             }
-            localBlockers={automationPublicationBlockers(
-              session.document.automations,
+            localBlockers={triggerPublicationBlockers(
+              session.document.triggers,
               session.document.design,
             )}
             onOpenChange={setReviewOpen}
@@ -1087,7 +1073,7 @@ export default function SandboxPage() {
             }
             onPublished={async () => {
               await refresh();
-              if (section === "Automations") await refreshAutomationActivity();
+              if (section === "Triggers") await refreshTriggerActivity();
               setMessage(
                 "Your changes are now published to the live workspace.",
               );

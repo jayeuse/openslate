@@ -38,10 +38,7 @@ import {
   moduleName,
   type TestRunSummary,
 } from "../domain/test-run-summary";
-import type {
-  SandboxAutomation,
-  SandboxAutomationTrigger,
-} from "../domain/document";
+import type { SandboxTrigger, SandboxTriggerEvent } from "../domain/document";
 
 function Stage({
   title,
@@ -79,33 +76,33 @@ function Connector() {
   );
 }
 
-/** Why an automation did not run, with a way to test the event that runs it. */
+/** Why a trigger did not run, with a way to test the event that runs it. */
 function NotTriggeredReason({
-  automation,
+  trigger: recordTrigger,
   design,
   testedModuleId,
   pending,
   onTryTrigger,
 }: {
-  automation: SandboxAutomation | undefined;
+  trigger: SandboxTrigger | undefined;
   design: SandboxDocumentDesign;
   testedModuleId: string;
   pending: boolean;
-  onTryTrigger: (trigger: SandboxAutomationTrigger) => void;
+  onTryTrigger: (trigger: SandboxTriggerEvent) => void;
 }) {
-  if (!automation) return null;
+  if (!recordTrigger) return null;
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
       <span className="text-muted-foreground">
-        {describeTrigger(automation.trigger, design, testedModuleId)}
+        {describeTrigger(recordTrigger.trigger, design, testedModuleId)}
       </span>
       <Button
         variant="outline"
         size="sm"
         className="min-h-9"
         disabled={pending}
-        aria-label={`Test ${automation.name} instead`}
-        onClick={() => onTryTrigger(automation.trigger)}
+        aria-label={`Test ${recordTrigger.name} instead`}
+        onClick={() => onTryTrigger(recordTrigger.trigger)}
       >
         Test this instead
       </Button>
@@ -122,9 +119,9 @@ type OutcomeProps = {
   onShowField: (id: string) => void;
   onRunAgain: (run: SandboxTestRun) => void;
   onShowOnCanvas: (run: SandboxTestRun) => void;
-  automations: readonly SandboxAutomation[];
-  /** Set up the next test with this automation's trigger. */
-  onTryTrigger: (trigger: SandboxAutomationTrigger) => void;
+  triggers: readonly SandboxTrigger[];
+  /** Set up the next test with this trigger's trigger. */
+  onTryTrigger: (trigger: SandboxTriggerEvent) => void;
 };
 export function TestOutcome({
   design,
@@ -135,7 +132,7 @@ export function TestOutcome({
   onShowField,
   onRunAgain,
   onShowOnCanvas,
-  automations,
+  triggers,
   onTryTrigger,
 }: OutcomeProps) {
   if (!run)
@@ -280,12 +277,12 @@ export function TestOutcome({
           </p>
         </Stage>
         <Connector />
-        <Stage title="Automation outcomes" icon={<GitBranch />}>
-          {run.result.automationTraces.length ? (
+        <Stage title="Trigger outcomes" icon={<GitBranch />}>
+          {run.result.triggerTraces.length ? (
             <ol className="divide-border divide-y">
-              {run.result.automationTraces.map((trace, index) => (
+              {run.result.triggerTraces.map((trace, index) => (
                 <li
-                  key={`${trace.automationId}-${index}`}
+                  key={`${trace.triggerId}-${index}`}
                   className="py-2 first:pt-0 last:pb-0"
                 >
                   <p className="font-medium">{trace.label}</p>
@@ -296,8 +293,8 @@ export function TestOutcome({
                   </p>
                   {trace.outcome === "Not triggered" ? (
                     <NotTriggeredReason
-                      automation={automations.find(
-                        (item) => item.id === trace.automationId,
+                      trigger={triggers.find(
+                        (item) => item.id === trace.triggerId,
                       )}
                       design={design}
                       testedModuleId={run.input.moduleId}
@@ -310,7 +307,7 @@ export function TestOutcome({
             </ol>
           ) : (
             <p className="text-muted-foreground">
-              No automations ran in this test.
+              No triggers ran in this test.
             </p>
           )}
         </Stage>
@@ -347,7 +344,7 @@ export function TestOutcome({
         <h4 className="text-sm font-semibold">How to read this result</h4>
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
           Field comparison shows each value after the test, including changes
-          that later automations made.
+          that later triggers made.
         </p>
         <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
           Editing inputs does not change this result. Run the test again to

@@ -18,13 +18,6 @@ from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
 from app.systems.openview.views.models import SavedView, SavedViewDefault
 from app.systems.platform.files.models import File
-from app.systems.sandbox.automations.models import (
-    PublishedAutomationAction,
-    PublishedAutomationCondition,
-    PublishedAutomationDefinition,
-    PublishedAutomationEvent,
-    PublishedAutomationRun,
-)
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.lifecycle.exceptions import (
@@ -42,6 +35,13 @@ from app.systems.sandbox.lifecycle.schemas import (
 )
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.models import SandboxBinding
+from app.systems.sandbox.record_triggers.models import (
+    RecordTrigger,
+    RecordTriggerAction,
+    RecordTriggerCondition,
+    RecordTriggerEvent,
+    RecordTriggerRun,
+)
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 
@@ -66,11 +66,11 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("files", File),
     ("saved_views", SavedView),
     ("saved_view_defaults", SavedViewDefault),
-    ("published_automation_definitions", PublishedAutomationDefinition),
-    ("published_automation_conditions", PublishedAutomationCondition),
-    ("published_automation_actions", PublishedAutomationAction),
-    ("published_automation_events", PublishedAutomationEvent),
-    ("published_automation_runs", PublishedAutomationRun),
+    ("record_triggers", RecordTrigger),
+    ("record_trigger_conditions", RecordTriggerCondition),
+    ("record_trigger_actions", RecordTriggerAction),
+    ("record_trigger_events", RecordTriggerEvent),
+    ("record_trigger_runs", RecordTriggerRun),
     ("sandbox_bindings", SandboxBinding),
 )
 

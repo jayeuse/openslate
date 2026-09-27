@@ -109,7 +109,7 @@ def test_module_closure_inherits_to_its_bound_fields(
     )
 
 
-def test_preview_reports_non_label_structure_and_automation_changes(
+def test_preview_reports_non_label_structure_and_trigger_changes(
     integration_owner_db: Session,
 ) -> None:
     document = publishable_document()

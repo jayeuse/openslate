@@ -7,7 +7,7 @@ OpenSlate groups domain behavior under FastAPI `systems` packages:
 | Area | Responsibilities |
 | --- | --- |
 | `access` | Supabase Auth identity binding, application users, roles, groups, Access policy, invitations, recovery, service-identity metadata |
-| `sandbox` | Shared design draft/history, safe publication, departments, modules, fields, records, relationships, lifecycle, temporary tests, and published automation execution |
+| `sandbox` | Shared design draft/history, safe publication, departments, modules, fields, records, relationships, lifecycle, temporary tests, and record trigger execution |
 | `openview` | Saved views, chart preferences, dashboards, reports, frozen report runs and schedules |
 | `boards` | Shared boards, grants, widgets, announcements, events, reminders, attachments and record links |
 | `manage` | Workspace profile and audit history |

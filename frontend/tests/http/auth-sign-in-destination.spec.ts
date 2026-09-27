@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { migrateSandboxFileV1 } from "../../src/components/systems/sandbox/domain/document";
+import { sandboxDocumentFromDesign } from "../helpers/sandbox-fixtures";
 import { initialDesign } from "../../src/components/systems/sandbox/domain/model";
 
 const userId = "00000000-0000-4000-8000-000000000301";
@@ -80,11 +80,7 @@ async function signInWith(
     );
   });
   // The Sandbox page itself loads the document after navigation.
-  const document = migrateSandboxFileV1({
-    kind: "openslate-sandbox",
-    schemaVersion: 1,
-    design: initialDesign,
-  });
+  const document = sandboxDocumentFromDesign(initialDesign);
   await page.route("**/api/sandbox/document", (route) =>
     route.fulfill(
       sandboxAccess

@@ -78,11 +78,11 @@ def test_document_typed_values_reject_non_finite_json_numbers() -> None:
         SandboxDocument.model_validate_json(raw)
 
 
-def test_v2_frontend_fixture_preserves_exact_automation_and_scenario_shapes() -> None:
+def test_v2_frontend_fixture_preserves_exact_trigger_and_scenario_shapes() -> None:
     document = SandboxDocument.model_validate(
         {
             "kind": "openslate-sandbox",
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "design": {
                 "departments": [{"id": "department-1", "name": "Operations", "closed": False}],
                 "modules": [
@@ -106,9 +106,9 @@ def test_v2_frontend_fixture_preserves_exact_automation_and_scenario_shapes() ->
                 "relationships": [],
                 "layout": {"module-1": {"x": 12, "y": 24, "width": 320, "height": 180}},
             },
-            "automations": [
+            "triggers": [
                 {
-                    "id": "automation-1",
+                    "id": "trigger-1",
                     "name": "Escalate",
                     "enabled": True,
                     "priority": 1,
@@ -155,6 +155,6 @@ def test_v2_frontend_fixture_preserves_exact_automation_and_scenario_shapes() ->
 
     payload = document.model_dump(by_alias=True, mode="json")
 
-    assert payload["automations"][0]["trigger"]["kind"] == "threshold-crossed"
+    assert payload["triggers"][0]["trigger"]["kind"] == "threshold-crossed"
     assert payload["scenarios"][0]["records"][0]["values"]["field-1"] == 1
     assert payload["design"]["layout"]["module-1"]["x"] == 12.0

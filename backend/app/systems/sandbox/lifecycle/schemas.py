@@ -36,7 +36,7 @@ class LifecycleBlockerCode(StrEnum):
     PURGE_REPORT_RUN_DEPENDENCY = "purge_report_run_dependency"
     PURGE_EXTERNAL_SCHEMA_DEPENDENCY = "purge_external_schema_dependency"
     PURGE_FILE_DEPENDENCY = "purge_file_dependency"
-    PURGE_AUTOMATION_DEPENDENCY = "purge_automation_dependency"
+    PURGE_TRIGGER_DEPENDENCY = "purge_trigger_dependency"
 
 
 class LifecycleRowState(BaseModel):

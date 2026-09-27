@@ -12,13 +12,6 @@ from app.systems.boards.models import Board
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.views.models import SavedView, SavedViewDefault
 from app.systems.platform.files.models import File
-from app.systems.sandbox.automations.models import (
-    PublishedAutomationAction,
-    PublishedAutomationCondition,
-    PublishedAutomationDefinition,
-    PublishedAutomationEvent,
-    PublishedAutomationRun,
-)
 from app.systems.sandbox.lifecycle.board_announcement_dependencies import (
     load_announcement_purge_dependencies,
 )
@@ -46,6 +39,13 @@ from app.systems.sandbox.lifecycle.schemas import (
     LifecycleTargetType,
 )
 from app.systems.sandbox.publications.models import SandboxBinding
+from app.systems.sandbox.record_triggers.models import (
+    RecordTrigger,
+    RecordTriggerAction,
+    RecordTriggerCondition,
+    RecordTriggerEvent,
+    RecordTriggerRun,
+)
 
 
 @dataclass(frozen=True)
@@ -191,20 +191,20 @@ def load_purge_dependencies(
     )
     definition_filters = []
     if module_ids:
-        definition_filters.append(PublishedAutomationDefinition.module_id.in_(module_ids))
+        definition_filters.append(RecordTrigger.module_id.in_(module_ids))
     if field_ids:
         definition_filters.extend(
             (
-                PublishedAutomationDefinition.trigger_field_id.in_(field_ids),
-                PublishedAutomationDefinition.trigger_value_field_id.in_(field_ids),
+                RecordTrigger.trigger_field_id.in_(field_ids),
+                RecordTrigger.trigger_value_field_id.in_(field_ids),
             )
         )
     definitions = (
         list(
             db.scalars(
-                select(PublishedAutomationDefinition)
+                select(RecordTrigger)
                 .where(or_(*definition_filters))
-                .order_by(PublishedAutomationDefinition.id)
+                .order_by(RecordTrigger.id)
             )
         )
         if definition_filters
@@ -214,27 +214,27 @@ def load_purge_dependencies(
     action_filters = []
     condition_filters = []
     if definition_ids:
-        action_filters.append(PublishedAutomationAction.automation_id.in_(definition_ids))
-        condition_filters.append(PublishedAutomationCondition.automation_id.in_(definition_ids))
+        action_filters.append(RecordTriggerAction.trigger_id.in_(definition_ids))
+        condition_filters.append(RecordTriggerCondition.trigger_id.in_(definition_ids))
     if field_ids:
         action_filters.extend(
             (
-                PublishedAutomationAction.target_field_id.in_(field_ids),
-                PublishedAutomationAction.value_field_id.in_(field_ids),
+                RecordTriggerAction.target_field_id.in_(field_ids),
+                RecordTriggerAction.value_field_id.in_(field_ids),
             )
         )
         condition_filters.extend(
             (
-                PublishedAutomationCondition.field_id.in_(field_ids),
-                PublishedAutomationCondition.value_field_id.in_(field_ids),
+                RecordTriggerCondition.field_id.in_(field_ids),
+                RecordTriggerCondition.value_field_id.in_(field_ids),
             )
         )
     actions = (
         list(
             db.scalars(
-                select(PublishedAutomationAction)
+                select(RecordTriggerAction)
                 .where(or_(*action_filters))
-                .order_by(PublishedAutomationAction.id)
+                .order_by(RecordTriggerAction.id)
             )
         )
         if action_filters
@@ -243,9 +243,9 @@ def load_purge_dependencies(
     conditions = (
         list(
             db.scalars(
-                select(PublishedAutomationCondition)
+                select(RecordTriggerCondition)
                 .where(or_(*condition_filters))
-                .order_by(PublishedAutomationCondition.id)
+                .order_by(RecordTriggerCondition.id)
             )
         )
         if condition_filters
@@ -253,17 +253,17 @@ def load_purge_dependencies(
     )
     event_filters = []
     if record_ids:
-        event_filters.append(PublishedAutomationEvent.record_id.in_(record_ids))
+        event_filters.append(RecordTriggerEvent.record_id.in_(record_ids))
     if module_ids:
-        event_filters.append(PublishedAutomationEvent.module_id.in_(module_ids))
+        event_filters.append(RecordTriggerEvent.module_id.in_(module_ids))
     if definition_ids:
-        event_filters.append(PublishedAutomationEvent.scheduled_automation_id.in_(definition_ids))
+        event_filters.append(RecordTriggerEvent.scheduled_trigger_id.in_(definition_ids))
     events = (
         list(
             db.scalars(
-                select(PublishedAutomationEvent)
+                select(RecordTriggerEvent)
                 .where(or_(*event_filters))
-                .order_by(PublishedAutomationEvent.id)
+                .order_by(RecordTriggerEvent.id)
             )
         )
         if event_filters
@@ -272,15 +272,15 @@ def load_purge_dependencies(
     event_ids = [event.id for event in events]
     run_filters = []
     if definition_ids:
-        run_filters.append(PublishedAutomationRun.automation_id.in_(definition_ids))
+        run_filters.append(RecordTriggerRun.trigger_id.in_(definition_ids))
     if event_ids:
-        run_filters.append(PublishedAutomationRun.event_id.in_(event_ids))
+        run_filters.append(RecordTriggerRun.event_id.in_(event_ids))
     runs = (
         list(
             db.scalars(
-                select(PublishedAutomationRun)
+                select(RecordTriggerRun)
                 .where(or_(*run_filters))
-                .order_by(PublishedAutomationRun.id)
+                .order_by(RecordTriggerRun.id)
             )
         )
         if run_filters
@@ -294,7 +294,7 @@ def load_purge_dependencies(
     if field_ids:
         binding_filters.append(SandboxBinding.field_id.in_(field_ids))
     if definition_ids:
-        binding_filters.append(SandboxBinding.automation_id.in_(definition_ids))
+        binding_filters.append(SandboxBinding.trigger_id.in_(definition_ids))
     bindings = (
         list(
             db.scalars(
@@ -440,24 +440,24 @@ def load_purge_dependencies(
                 department_name=(department.department_name if department is not None else None),
             )
         )
-    automation_dependencies = (
-        ("published_automation_definitions", definitions),
-        ("published_automation_conditions", conditions),
-        ("published_automation_actions", actions),
-        ("published_automation_events", events),
-        ("published_automation_runs", runs),
+    trigger_dependencies = (
+        ("record_triggers", definitions),
+        ("record_trigger_conditions", conditions),
+        ("record_trigger_actions", actions),
+        ("record_trigger_events", events),
+        ("record_trigger_runs", runs),
         ("sandbox_bindings", bindings),
     )
-    for entity_type, dependencies in automation_dependencies:
+    for entity_type, dependencies in trigger_dependencies:
         for dependency in dependencies:
             rows.append(row_state(entity_type, dependency))
             blockers.append(
                 LifecycleBlocker(
-                    code=LifecycleBlockerCode.PURGE_AUTOMATION_DEPENDENCY,
+                    code=LifecycleBlockerCode.PURGE_TRIGGER_DEPENDENCY,
                     entity_type=entity_type,
                     entity_id=dependency.id,
                     detail=(
-                        "Remove the published automation configuration or execution history "
+                        "Remove the record trigger configuration or execution history "
                         "that references this item before purging it"
                     ),
                 )
@@ -489,11 +489,11 @@ def load_purge_dependencies(
             "files": tuple(file.id for file in files),
             "saved_views": tuple(view.id for view in views),
             "saved_view_defaults": tuple(default.id for default in view_defaults),
-            "published_automation_definitions": tuple(definition.id for definition in definitions),
-            "published_automation_conditions": tuple(condition.id for condition in conditions),
-            "published_automation_actions": tuple(action.id for action in actions),
-            "published_automation_events": tuple(event.id for event in events),
-            "published_automation_runs": tuple(run.id for run in runs),
+            "record_triggers": tuple(definition.id for definition in definitions),
+            "record_trigger_conditions": tuple(condition.id for condition in conditions),
+            "record_trigger_actions": tuple(action.id for action in actions),
+            "record_trigger_events": tuple(event.id for event in events),
+            "record_trigger_runs": tuple(run.id for run in runs),
             "sandbox_bindings": tuple(binding.id for binding in bindings),
         },
     )

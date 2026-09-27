@@ -1383,7 +1383,7 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
   ).toBeVisible();
 }
 
-test("Sandbox exposes the simplified Build, Automations, Test, and History journey", async ({
+test("Sandbox exposes the simplified Build, Triggers, Test, and History journey", async ({
   page,
 }) => {
   test.setTimeout(360_000);
@@ -1407,7 +1407,7 @@ test("Sandbox exposes the simplified Build, Automations, Test, and History journ
     page.getByRole("link", { name: "Build", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Automations", exact: true }),
+    page.getByRole("link", { name: "Triggers", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Test", exact: true }),
@@ -1431,7 +1431,7 @@ test("Sandbox exposes the simplified Build, Automations, Test, and History journ
   await retireSeededSupplier(page, supplier.recordId);
   await page.goto("/sandbox?section=designer");
 
-  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Recent activity" }),
   ).toBeVisible();
@@ -1441,7 +1441,7 @@ test("Sandbox exposes the simplified Build, Automations, Test, and History journ
   await expect(
     page
       .getByRole("region", { name: "Recent activity details" })
-      .getByText("No published automation activity yet."),
+      .getByText("No published trigger activity yet."),
   ).toBeVisible();
 
   await page.getByRole("link", { name: "Test", exact: true }).click();

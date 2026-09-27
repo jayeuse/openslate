@@ -78,7 +78,7 @@ test("semantic version changes distinguish every supported design category", () 
     "Field removed: Equipment · Status",
     "Field removed: Equipment · Location",
     "Relationship changed: Uses assigned equipment",
-    "Automation changed: Urgent request alert",
+    "Trigger changed: Urgent request alert",
     "Canvas layout changed",
   ]);
 });
@@ -125,9 +125,9 @@ test("semantic version changes report reopen, removal, and reorder without false
     "Module reopened: Service requests",
     "Field reopened: Service requests · Request number",
     "Field removed: Service requests · Title",
-    "Automation added: Third rule",
-    "Automation removed: Removed rule",
-    "Automation order changed",
+    "Trigger added: Third rule",
+    "Trigger removed: Removed rule",
+    "Trigger order changed",
   ]);
   expect(changesFrom(after, structuredClone(after))).toEqual([
     "No structural changes since the last publication.",
@@ -216,14 +216,12 @@ test("semantic version changes ignore equivalent normalized field storage", () =
   ]);
 });
 
-test("the design summary names automations and counts one of each in the singular", () => {
+test("the design summary names triggers and counts one of each in the singular", () => {
   const design = fixture();
   expect(counts({ ...design, rules: design.rules.slice(0, 1) })).toMatch(
-    / · 1 automation$/,
+    / · 1 trigger$/,
   );
   expect(
     counts({ departments: [], modules: [], relationships: [], rules: [] }),
-  ).toBe(
-    "0 departments · 0 modules · 0 fields · 0 relationships · 0 automations",
-  );
+  ).toBe("0 departments · 0 modules · 0 fields · 0 relationships · 0 triggers");
 });

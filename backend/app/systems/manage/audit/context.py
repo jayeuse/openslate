@@ -12,6 +12,7 @@ class AuditContext:
     request_id: UUID | None = None
     request_method: str | None = None
     request_path: str | None = None
+    actor_label: str | None = None
 
 
 def get_audit_context(session: Session) -> AuditContext:

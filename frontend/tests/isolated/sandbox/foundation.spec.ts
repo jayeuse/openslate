@@ -8,10 +8,6 @@ import {
 import { configuredSandboxDesign } from "../../helpers/sandbox-fixtures";
 import { validateSandboxDesign } from "../../../src/components/systems/sandbox/domain/validation";
 import {
-  exportSandboxFile,
-  parseSandboxFile,
-} from "../../../src/components/systems/sandbox/helpers/file-format";
-import {
   canvasFieldId,
   updateProjectedField,
 } from "../../../src/components/systems/sandbox/helpers/bridge";
@@ -161,53 +157,4 @@ test("field validation issues retain module-scoped identity when field IDs repea
       moduleId: "sample-equipment",
     }),
   ]);
-});
-
-test("sandbox JSON round-trips and rejected imports never expose a replacement", () => {
-  const serialized = exportSandboxFile({ design: fixture() });
-  const parsed = parseSandboxFile(serialized);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) throw new Error(parsed.error);
-  expect(parsed.file.kind).toBe("openslate-sandbox");
-  expect(parsed.file.schemaVersion).toBe(1);
-  expect(parsed.file.design).toEqual(fixture());
-
-  for (const text of [
-    "{not-json",
-    JSON.stringify({
-      kind: "openslate-sandbox",
-      schemaVersion: 2,
-      design: fixture(),
-    }),
-    "x".repeat(2 * 1024 * 1024 + 1),
-  ]) {
-    const rejected = parseSandboxFile(text);
-    expect(rejected.ok).toBe(false);
-    expect("file" in rejected).toBe(false);
-  }
-});
-
-test("sandbox import rejects unknown root and nested properties", () => {
-  const design = fixture();
-  const nested = structuredClone(design) as Design & {
-    departments: Array<
-      Design["departments"][number] & { unexpected?: boolean }
-    >;
-  };
-  nested.departments[0].unexpected = true;
-
-  for (const value of [
-    {
-      kind: "openslate-sandbox",
-      schemaVersion: 1,
-      design,
-      unexpected: true,
-    },
-    { kind: "openslate-sandbox", schemaVersion: 1, design: nested },
-  ]) {
-    const result = parseSandboxFile(JSON.stringify(value));
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Unknown properties must not be accepted");
-    expect(result.error).toContain("unknown property");
-  }
 });

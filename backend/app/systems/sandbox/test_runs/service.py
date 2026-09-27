@@ -54,7 +54,7 @@ def create_run(
             module_id=payload.module_id,
             values=payload.values,
             event=event,
-            automation_ids=payload.automation_ids,
+            trigger_ids=payload.trigger_ids,
         )
     except ValueError as error:
         raise SandboxTestError("test_invalid", "Sandbox test settings are invalid.", 422) from error
@@ -62,7 +62,7 @@ def create_run(
     byte_count = _evidence_byte_count(
         input_values=input_values,
         event=event,
-        automation_ids=payload.automation_ids,
+        trigger_ids=payload.trigger_ids,
         result=result_payload,
     )
     run = SandboxTestRun(
@@ -72,7 +72,7 @@ def create_run(
         module_id=payload.module_id,
         input_values=input_values,
         event=event,
-        automation_ids=None if payload.automation_ids is None else list(payload.automation_ids),
+        trigger_ids=None if payload.trigger_ids is None else list(payload.trigger_ids),
         result=result_payload,
         result_byte_count=byte_count,
         performed_by=actor_id,
@@ -186,13 +186,13 @@ def _result_payload(result: SandboxTestResult) -> dict[str, object]:
                 {"label": route.label, **({"detail": route.detail} if route.detail else {})}
                 for route in result.routes
             ],
-            "automationTraces": [
+            "triggerTraces": [
                 {
-                    "automationId": trace.automation_id,
+                    "triggerId": trace.trigger_id,
                     "label": trace.label,
                     "outcome": trace.outcome,
                 }
-                for trace in result.automation_traces
+                for trace in result.trigger_traces
             ],
             "issues": [
                 {
@@ -211,14 +211,14 @@ def _evidence_byte_count(
     *,
     input_values: dict[str, object],
     event: dict[str, object],
-    automation_ids: list[str] | None,
+    trigger_ids: list[str] | None,
     result: dict[str, object],
 ) -> int:
     encoded = json.dumps(
         {
             "input": input_values,
             "event": event,
-            "automationIds": automation_ids,
+            "triggerIds": trigger_ids,
             "result": result,
         },
         ensure_ascii=False,
@@ -239,7 +239,7 @@ def _run_response(run: SandboxTestRun) -> SandboxTestRunResponse:
                 "documentRevision": run.document_revision,
                 "input": {"moduleId": run.module_id, "values": run.input_values},
                 "event": run.event,
-                "automationIds": run.automation_ids,
+                "triggerIds": run.trigger_ids,
                 "result": run.result,
             }
         )

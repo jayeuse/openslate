@@ -182,6 +182,7 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
             request_method=context.request_method,
             request_path=context.request_path,
             performed_by=context.performed_by,
+            actor_label=context.actor_label,
         )
         object.__setattr__(audit_log, "_audit_internal", True)
         session.add(audit_log)

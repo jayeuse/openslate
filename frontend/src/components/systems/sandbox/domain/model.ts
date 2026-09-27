@@ -472,7 +472,7 @@ export const counts = (d: Design) =>
       "field",
     ),
     countOf(d.relationships.length, "relationship"),
-    countOf(d.rules.length, "automation"),
+    countOf(d.rules.length, "trigger"),
   ].join(" · ");
 export function reorder<T>(items: T[], index: number, delta: number): T[] {
   const next = [...items];
@@ -600,7 +600,7 @@ export function changesFrom(
     changes.push("Module order changed");
 
   const compareNamedGroup = <T extends { id: string; name: string }>(
-    name: "Relationship" | "Automation",
+    name: "Relationship" | "Trigger",
     before: T[],
     after: T[],
   ) => {
@@ -615,7 +615,7 @@ export function changesFrom(
     if (orderChanged(before, after)) changes.push(`${name} order changed`);
   };
   compareNamedGroup("Relationship", previous.relationships, next.relationships);
-  compareNamedGroup("Automation", previous.rules, next.rules);
+  compareNamedGroup("Trigger", previous.rules, next.rules);
   if (
     JSON.stringify(previous.layout ?? compactDefaultLayout) !==
     JSON.stringify(next.layout ?? compactDefaultLayout)

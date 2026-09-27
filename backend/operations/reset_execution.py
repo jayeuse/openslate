@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from app.systems.sandbox.designs.defaults import empty_document
+from app.systems.sandbox.designs.schemas import DOCUMENT_SCHEMA_VERSION
 from app.systems.sandbox.designs.service import canonical_document
 
 if __package__:
@@ -89,12 +90,12 @@ def _reset_sandbox_workspace(connection: Any) -> None:
     _execute(
         connection,
         """UPDATE public.sandbox_documents
-              SET singleton_key = true, schema_version = 2, revision = 1,
+              SET singleton_key = true, schema_version = %s, revision = 1,
                   document = %s::jsonb, content_hash = %s, byte_count = %s,
                   deleted_at = NULL, is_deleted = false, updated_at = now(),
                   performed_by = NULL
             WHERE singleton_key = true""",
-        (encoded, content_hash, byte_count),
+        (DOCUMENT_SCHEMA_VERSION, encoded, content_hash, byte_count),
     )
 
 

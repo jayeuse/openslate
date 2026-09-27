@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/native-select";
 import { changesFrom } from "../domain/model";
 import { projectSandboxDocument } from "../domain/document-bridge";
-import type { SandboxDocumentV2 } from "../domain/document";
+import type { SandboxDocumentV3 } from "../domain/document";
 import type { SandboxCommandResult } from "../state/commands";
 import type {
   SandboxDocumentResponse,
@@ -59,7 +59,7 @@ type CheckpointLabelEdit = {
 };
 
 function canonicalEntityChanges(
-  label: "Automation" | "Scenario",
+  label: "Trigger" | "Scenario",
   before: ReadonlyArray<{ id: string; name: string }>,
   after: ReadonlyArray<{ id: string; name: string }>,
 ): string[] {
@@ -78,13 +78,13 @@ function canonicalEntityChanges(
 }
 
 /**
- * Compares canonical v2 documents without reducing automation content to
- * Designer rules. The projected design and the canonical automations can
- * report the same automation, so identical entries appear once.
+ * Compares canonical v2 documents without reducing trigger content to
+ * Designer rules. The projected design and the canonical triggers can
+ * report the same trigger, so identical entries appear once.
  */
 export function canonicalVersionChanges(
-  before: SandboxDocumentV2,
-  after: SandboxDocumentV2,
+  before: SandboxDocumentV3,
+  after: SandboxDocumentV3,
 ): string[] {
   return [
     ...new Set([
@@ -92,11 +92,7 @@ export function canonicalVersionChanges(
         projectSandboxDocument(before),
         projectSandboxDocument(after),
       ),
-      ...canonicalEntityChanges(
-        "Automation",
-        before.automations,
-        after.automations,
-      ),
+      ...canonicalEntityChanges("Trigger", before.triggers, after.triggers),
       ...canonicalEntityChanges("Scenario", before.scenarios, after.scenarios),
     ]),
   ];

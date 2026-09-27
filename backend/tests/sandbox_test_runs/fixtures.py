@@ -11,7 +11,7 @@ def sandbox_document() -> SandboxDocument:
     return SandboxDocument.model_validate(
         {
             "kind": "openslate-sandbox",
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "design": {
                 "departments": [
                     {"id": "operations", "name": "Operations"},
@@ -80,7 +80,7 @@ def sandbox_document() -> SandboxDocument:
                 ],
                 "layout": {},
             },
-            "automations": [
+            "triggers": [
                 {
                     "id": "mark-high",
                     "name": "Mark high requests",

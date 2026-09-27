@@ -400,7 +400,7 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                 "SELECT revision, document->>'schemaVersion', performed_by "
                 "FROM public.sandbox_documents"
             )
-            assert cursor.fetchone() == (1, "2", None)
+            assert cursor.fetchone() == (1, "3", None)
             cursor.execute(
                 "SELECT sequence, kind, label, performed_by FROM public.sandbox_versions"
             )

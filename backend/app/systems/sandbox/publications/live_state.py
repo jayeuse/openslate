@@ -6,11 +6,6 @@ from hashlib import sha256
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.systems.sandbox.automations.models import (
-    PublishedAutomationAction,
-    PublishedAutomationCondition,
-    PublishedAutomationDefinition,
-)
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
@@ -18,6 +13,11 @@ from app.systems.sandbox.publications.models import SandboxBinding
 from app.systems.sandbox.publications.snapshot import (
     PublicationSnapshot,
     load_publication_snapshot,
+)
+from app.systems.sandbox.record_triggers.models import (
+    RecordTrigger,
+    RecordTriggerAction,
+    RecordTriggerCondition,
 )
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
@@ -151,7 +151,7 @@ def live_state_digest(
                 ).order_by(RelationshipEdge.id)
             )
         ],
-        "automations": [
+        "triggers": [
             (
                 str(row.id),
                 str(row.publication_id),
@@ -161,7 +161,7 @@ def live_state_digest(
                 row.name,
                 row.enabled,
                 row.priority,
-                row.trigger_kind,
+                row.event_kind,
                 row.trigger_field_id and str(row.trigger_field_id),
                 row.trigger_operator,
                 row.trigger_value_kind,
@@ -177,34 +177,34 @@ def live_state_digest(
             )
             for row in db.execute(
                 select(
-                    PublishedAutomationDefinition.id,
-                    PublishedAutomationDefinition.publication_id,
-                    PublishedAutomationDefinition.published_version_id,
-                    PublishedAutomationDefinition.publisher_id,
-                    PublishedAutomationDefinition.module_id,
-                    PublishedAutomationDefinition.name,
-                    PublishedAutomationDefinition.enabled,
-                    PublishedAutomationDefinition.priority,
-                    PublishedAutomationDefinition.trigger_kind,
-                    PublishedAutomationDefinition.trigger_field_id,
-                    PublishedAutomationDefinition.trigger_operator,
-                    PublishedAutomationDefinition.trigger_value_kind,
-                    PublishedAutomationDefinition.trigger_literal_value,
-                    PublishedAutomationDefinition.trigger_value_field_id,
-                    PublishedAutomationDefinition.schedule_frequency,
-                    PublishedAutomationDefinition.schedule_time,
-                    PublishedAutomationDefinition.schedule_weekday,
-                    PublishedAutomationDefinition.workspace_timezone,
-                    PublishedAutomationDefinition.condition_operator,
-                    PublishedAutomationDefinition.is_deleted,
-                    PublishedAutomationDefinition.updated_at,
-                ).order_by(PublishedAutomationDefinition.id)
+                    RecordTrigger.id,
+                    RecordTrigger.publication_id,
+                    RecordTrigger.published_version_id,
+                    RecordTrigger.publisher_id,
+                    RecordTrigger.module_id,
+                    RecordTrigger.name,
+                    RecordTrigger.enabled,
+                    RecordTrigger.priority,
+                    RecordTrigger.event_kind,
+                    RecordTrigger.trigger_field_id,
+                    RecordTrigger.trigger_operator,
+                    RecordTrigger.trigger_value_kind,
+                    RecordTrigger.trigger_literal_value,
+                    RecordTrigger.trigger_value_field_id,
+                    RecordTrigger.schedule_frequency,
+                    RecordTrigger.schedule_time,
+                    RecordTrigger.schedule_weekday,
+                    RecordTrigger.workspace_timezone,
+                    RecordTrigger.condition_operator,
+                    RecordTrigger.is_deleted,
+                    RecordTrigger.updated_at,
+                ).order_by(RecordTrigger.id)
             )
         ],
         "conditions": [
             (
                 str(row.id),
-                str(row.automation_id),
+                str(row.trigger_id),
                 str(row.field_id),
                 row.position,
                 row.operator,
@@ -216,23 +216,23 @@ def live_state_digest(
             )
             for row in db.execute(
                 select(
-                    PublishedAutomationCondition.id,
-                    PublishedAutomationCondition.automation_id,
-                    PublishedAutomationCondition.field_id,
-                    PublishedAutomationCondition.position,
-                    PublishedAutomationCondition.operator,
-                    PublishedAutomationCondition.value_kind,
-                    PublishedAutomationCondition.literal_value,
-                    PublishedAutomationCondition.value_field_id,
-                    PublishedAutomationCondition.is_deleted,
-                    PublishedAutomationCondition.updated_at,
-                ).order_by(PublishedAutomationCondition.id)
+                    RecordTriggerCondition.id,
+                    RecordTriggerCondition.trigger_id,
+                    RecordTriggerCondition.field_id,
+                    RecordTriggerCondition.position,
+                    RecordTriggerCondition.operator,
+                    RecordTriggerCondition.value_kind,
+                    RecordTriggerCondition.literal_value,
+                    RecordTriggerCondition.value_field_id,
+                    RecordTriggerCondition.is_deleted,
+                    RecordTriggerCondition.updated_at,
+                ).order_by(RecordTriggerCondition.id)
             )
         ],
         "actions": [
             (
                 str(row.id),
-                str(row.automation_id),
+                str(row.trigger_id),
                 str(row.target_field_id),
                 row.position,
                 row.kind,
@@ -244,17 +244,17 @@ def live_state_digest(
             )
             for row in db.execute(
                 select(
-                    PublishedAutomationAction.id,
-                    PublishedAutomationAction.automation_id,
-                    PublishedAutomationAction.target_field_id,
-                    PublishedAutomationAction.position,
-                    PublishedAutomationAction.kind,
-                    PublishedAutomationAction.value_kind,
-                    PublishedAutomationAction.literal_value,
-                    PublishedAutomationAction.value_field_id,
-                    PublishedAutomationAction.is_deleted,
-                    PublishedAutomationAction.updated_at,
-                ).order_by(PublishedAutomationAction.id)
+                    RecordTriggerAction.id,
+                    RecordTriggerAction.trigger_id,
+                    RecordTriggerAction.target_field_id,
+                    RecordTriggerAction.position,
+                    RecordTriggerAction.kind,
+                    RecordTriggerAction.value_kind,
+                    RecordTriggerAction.literal_value,
+                    RecordTriggerAction.value_field_id,
+                    RecordTriggerAction.is_deleted,
+                    RecordTriggerAction.updated_at,
+                ).order_by(RecordTriggerAction.id)
             )
         ],
     }

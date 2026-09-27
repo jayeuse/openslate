@@ -27,14 +27,14 @@ const KIND_NOUNS: Record<Kind, readonly [string, string]> = {
   module: ["module", "modules"],
   field: ["field", "fields"],
   relationship: ["relationship", "relationships"],
-  automation: ["automation", "automations"],
+  trigger: ["trigger", "triggers"],
 };
 const KIND_ORDER: readonly Kind[] = [
   "department",
   "module",
   "field",
   "relationship",
-  "automation",
+  "trigger",
 ];
 const ACTION_LABELS: Record<Change["action"], string> = {
   create: "New",
@@ -137,7 +137,7 @@ export function groupPublicationChanges(
     departments: changes.filter((change) => change.kind === "department"),
     modules: [...modules.values()],
     relationships: changes.filter((change) => change.kind === "relationship"),
-    automations: changes.filter((change) => change.kind === "automation"),
+    triggers: changes.filter((change) => change.kind === "trigger"),
     other,
   };
 }
@@ -300,9 +300,9 @@ export function PublishChangeGroups({
           render={flatRow}
         />
         <ChangeGroup
-          title="Automations"
-          noun={KIND_NOUNS.automation}
-          items={groups.automations}
+          title="Triggers"
+          noun={KIND_NOUNS.trigger}
+          items={groups.triggers}
           itemKey={changeKey}
           render={flatRow}
         />

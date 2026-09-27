@@ -7,23 +7,23 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.systems.sandbox.automations.models import (
-    PublishedAutomationAction,
-    PublishedAutomationCondition,
-    PublishedAutomationDefinition,
-)
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.publications.automation_comparison import automation_semantics_changed
 from app.systems.sandbox.publications.models import SandboxBinding
 from app.systems.sandbox.publications.rules import _field_key
 from app.systems.sandbox.publications.schemas import PublicationBlocker
 from app.systems.sandbox.publications.snapshot import PublicationSnapshot
+from app.systems.sandbox.publications.trigger_comparison import trigger_semantics_changed
+from app.systems.sandbox.record_triggers.models import (
+    RecordTrigger,
+    RecordTriggerAction,
+    RecordTriggerCondition,
+)
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 
-type BindingKind = Literal["department", "module", "field", "relationship", "automation"]
+type BindingKind = Literal["department", "module", "field", "relationship", "trigger"]
 
 
 def close_blockers(
@@ -35,19 +35,19 @@ def close_blockers(
     snapshot: PublicationSnapshot | None = None,
 ) -> list[PublicationBlocker]:
     blockers: list[PublicationBlocker] = []
-    desired_automations = {automation.id: automation for automation in document.automations}
-    retiring_automation_ids = frozenset(
-        binding.automation_id
-        for sandbox_id, binding in bindings["automation"].items()
-        if binding.automation_id is not None
+    desired_triggers = {record_trigger.id: record_trigger for record_trigger in document.triggers}
+    retiring_trigger_ids = frozenset(
+        binding.trigger_id
+        for sandbox_id, binding in bindings["trigger"].items()
+        if binding.trigger_id is not None
         and (
-            sandbox_id not in desired_automations
-            or automation_semantics_changed(
+            sandbox_id not in desired_triggers
+            or trigger_semantics_changed(
                 db,
-                desired_automations[sandbox_id],
+                desired_triggers[sandbox_id],
                 bindings["module"],
                 bindings["field"],
-                bindings["automation"],
+                bindings["trigger"],
                 snapshot=snapshot,
             )
         )
@@ -118,15 +118,15 @@ def close_blockers(
                     db,
                     kind,
                     live_id,
-                    ignored_automation_ids=retiring_automation_ids,
+                    ignored_trigger_ids=retiring_trigger_ids,
                     ignored_relationship_field_ids=retiring_relationship_field_ids,
                 )
                 or (
                     kind in {"field", "relationship"}
-                    and _field_has_automation_dependency(
+                    and _field_has_trigger_dependency(
                         db,
                         live_id,
-                        ignored_automation_ids=retiring_automation_ids,
+                        ignored_trigger_ids=retiring_trigger_ids,
                     )
                 )
             ):
@@ -271,7 +271,7 @@ def live_dependencies_exist(
     kind: BindingKind,
     live_id: UUID,
     *,
-    ignored_automation_ids: Collection[UUID] = (),
+    ignored_trigger_ids: Collection[UUID] = (),
     ignored_relationship_field_ids: Collection[UUID] = (),
 ) -> bool:
     if kind == "module":
@@ -292,20 +292,20 @@ def live_dependencies_exist(
         has_relationship_target = (
             db.scalar(select(Field.id).where(*relationship_filters).limit(1)) is not None
         )
-        automation_filters = [
-            PublishedAutomationDefinition.module_id == live_id,
-            PublishedAutomationDefinition.is_deleted.is_(False),
-            PublishedAutomationDefinition.enabled.is_(True),
+        trigger_filters = [
+            RecordTrigger.module_id == live_id,
+            RecordTrigger.is_deleted.is_(False),
+            RecordTrigger.enabled.is_(True),
         ]
-        if ignored_automation_ids:
-            automation_filters.append(
-                PublishedAutomationDefinition.id.not_in(ignored_automation_ids)
+        if ignored_trigger_ids:
+            trigger_filters.append(
+                RecordTrigger.id.not_in(ignored_trigger_ids)
             )
-        has_automations = (
-            db.scalar(select(PublishedAutomationDefinition.id).where(*automation_filters).limit(1))
+        has_triggers = (
+            db.scalar(select(RecordTrigger.id).where(*trigger_filters).limit(1))
             is not None
         )
-        return has_records or has_relationship_target or has_automations
+        return has_records or has_relationship_target or has_triggers
     if kind in {"field", "relationship"}:
         if kind == "field":
             field = db.get(Field, live_id)
@@ -388,59 +388,59 @@ def _module_has_unmanaged_fields(
     return False
 
 
-def _field_has_automation_dependency(
+def _field_has_trigger_dependency(
     db: Session,
     field_id: UUID,
     *,
-    ignored_automation_ids: Collection[UUID] = (),
+    ignored_trigger_ids: Collection[UUID] = (),
 ) -> bool:
     definition_filters = [
-        PublishedAutomationDefinition.is_deleted.is_(False),
-        PublishedAutomationDefinition.enabled.is_(True),
+        RecordTrigger.is_deleted.is_(False),
+        RecordTrigger.enabled.is_(True),
         or_(
-            PublishedAutomationDefinition.trigger_field_id == field_id,
-            PublishedAutomationDefinition.trigger_value_field_id == field_id,
+            RecordTrigger.trigger_field_id == field_id,
+            RecordTrigger.trigger_value_field_id == field_id,
         ),
     ]
     child_filters = [
-        PublishedAutomationDefinition.is_deleted.is_(False),
-        PublishedAutomationDefinition.enabled.is_(True),
+        RecordTrigger.is_deleted.is_(False),
+        RecordTrigger.enabled.is_(True),
     ]
-    if ignored_automation_ids:
-        ignored_filter = PublishedAutomationDefinition.id.not_in(ignored_automation_ids)
+    if ignored_trigger_ids:
+        ignored_filter = RecordTrigger.id.not_in(ignored_trigger_ids)
         definition_filters.append(ignored_filter)
         child_filters.append(ignored_filter)
     definition = db.scalar(
-        select(PublishedAutomationDefinition.id).where(*definition_filters).limit(1)
+        select(RecordTrigger.id).where(*definition_filters).limit(1)
     )
     condition = db.scalar(
-        select(PublishedAutomationCondition.id)
+        select(RecordTriggerCondition.id)
         .join(
-            PublishedAutomationDefinition,
-            PublishedAutomationDefinition.id == PublishedAutomationCondition.automation_id,
+            RecordTrigger,
+            RecordTrigger.id == RecordTriggerCondition.trigger_id,
         )
         .where(
             *child_filters,
-            PublishedAutomationCondition.is_deleted.is_(False),
+            RecordTriggerCondition.is_deleted.is_(False),
             or_(
-                PublishedAutomationCondition.field_id == field_id,
-                PublishedAutomationCondition.value_field_id == field_id,
+                RecordTriggerCondition.field_id == field_id,
+                RecordTriggerCondition.value_field_id == field_id,
             ),
         )
         .limit(1)
     )
     action = db.scalar(
-        select(PublishedAutomationAction.id)
+        select(RecordTriggerAction.id)
         .join(
-            PublishedAutomationDefinition,
-            PublishedAutomationDefinition.id == PublishedAutomationAction.automation_id,
+            RecordTrigger,
+            RecordTrigger.id == RecordTriggerAction.trigger_id,
         )
         .where(
             *child_filters,
-            PublishedAutomationAction.is_deleted.is_(False),
+            RecordTriggerAction.is_deleted.is_(False),
             or_(
-                PublishedAutomationAction.target_field_id == field_id,
-                PublishedAutomationAction.value_field_id == field_id,
+                RecordTriggerAction.target_field_id == field_id,
+                RecordTriggerAction.value_field_id == field_id,
             ),
         )
         .limit(1)

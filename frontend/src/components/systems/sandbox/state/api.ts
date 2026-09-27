@@ -3,8 +3,9 @@ import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
 import {
   parseSandboxDocument,
   parseSandboxDocumentForApi,
+  SANDBOX_DOCUMENT_SCHEMA_VERSION,
   type SandboxFieldValue,
-  type SandboxDocumentV2,
+  type SandboxDocumentV3,
 } from "../domain/document";
 
 export type SandboxValidationIssue = {
@@ -14,7 +15,7 @@ export type SandboxValidationIssue = {
 };
 
 export type SandboxDocumentResponse = {
-  document: SandboxDocumentV2;
+  document: SandboxDocumentV3;
   revision: number;
   contentHash: string;
   byteCount: number;
@@ -51,7 +52,7 @@ export type SandboxVersion = {
 };
 
 export type SandboxVersionDetail = SandboxVersion & {
-  document: SandboxDocumentV2;
+  document: SandboxDocumentV3;
 };
 
 export type SandboxVersionPage = {
@@ -64,7 +65,7 @@ export type SandboxVersionPage = {
 };
 
 export type SandboxExport = {
-  document: SandboxDocumentV2;
+  document: SandboxDocumentV3;
   filename: string;
 };
 
@@ -87,11 +88,11 @@ const sandboxDocumentSchema = z.unknown().transform((value, context) => {
     value === null ||
     Array.isArray(value) ||
     !("schemaVersion" in value) ||
-    value.schemaVersion !== 2
+    value.schemaVersion !== SANDBOX_DOCUMENT_SCHEMA_VERSION
   ) {
     context.addIssue({
       code: "custom",
-      message: "Sandbox document must use schema version 2",
+      message: `Sandbox document must use schema version ${SANDBOX_DOCUMENT_SCHEMA_VERSION}`,
     });
     return z.NEVER;
   }
@@ -184,14 +185,14 @@ export type SandboxTestRequest = {
   moduleId: string;
   values: Record<string, SandboxFieldValue>;
   event: SandboxTestEvent;
-  automationIds?: string[];
+  triggerIds?: string[];
 };
 
 export type SandboxTestResult = {
   values: Record<string, SandboxFieldValue>;
   routes: Array<{ label: string; detail?: string }>;
-  automationTraces: Array<{
-    automationId: string;
+  triggerTraces: Array<{
+    triggerId: string;
     label: string;
     outcome: string;
   }>;
@@ -204,12 +205,12 @@ export type SandboxTestRun = {
   documentRevision: number;
   input: { moduleId: string; values: Record<string, SandboxFieldValue> };
   event: SandboxTestEvent;
-  automationIds: string[] | null;
+  triggerIds: string[] | null;
   result: SandboxTestResult;
 };
 
 export type SandboxPublicationChange = {
-  kind: "department" | "module" | "field" | "relationship" | "automation";
+  kind: "department" | "module" | "field" | "relationship" | "trigger";
   action: "create" | "update" | "close" | "reopen";
   sandboxId: string;
   label: string;
@@ -232,7 +233,7 @@ export type SandboxPublicationPreview = {
     modules: number;
     fields: number;
     relationships: number;
-    automations: number;
+    triggers: number;
   };
   warnings: string[];
   blockers: SandboxPublicationBlocker[];
@@ -255,11 +256,11 @@ export type SandboxPublication = {
   publishedAt: string;
 };
 
-export type SandboxAutomationRun = {
+export type SandboxTriggerRun = {
   id: string;
   createdAt: string;
-  automationId: string;
-  automationName: string;
+  triggerId: string;
+  triggerName: string;
   eventKind: "record-created" | "field-changed" | "schedule";
   state: "succeeded" | "skipped" | "suspended" | "failed";
   details: Record<string, unknown>;
@@ -305,7 +306,7 @@ const testRunSchema: z.ZodType<SandboxTestRun> = z.strictObject({
     values: sandboxValuesSchema,
   }),
   event: testEventSchema,
-  automationIds: z.array(z.string().min(1)).nullable(),
+  triggerIds: z.array(z.string().min(1)).nullable(),
   result: z.strictObject({
     values: sandboxValuesSchema,
     routes: z.array(
@@ -313,10 +314,10 @@ const testRunSchema: z.ZodType<SandboxTestRun> = z.strictObject({
         .object({ label: z.string().min(1), detail: z.string().optional() })
         .passthrough(),
     ),
-    automationTraces: z.array(
+    triggerTraces: z.array(
       z
         .object({
-          automationId: z.string().min(1),
+          triggerId: z.string().min(1),
           label: z.string().min(1),
           outcome: z.string().min(1),
         })
@@ -328,13 +329,7 @@ const testRunSchema: z.ZodType<SandboxTestRun> = z.strictObject({
 
 const publicationChangeSchema: z.ZodType<SandboxPublicationChange> =
   z.strictObject({
-    kind: z.enum([
-      "department",
-      "module",
-      "field",
-      "relationship",
-      "automation",
-    ]),
+    kind: z.enum(["department", "module", "field", "relationship", "trigger"]),
     action: z.enum(["create", "update", "close", "reopen"]),
     sandboxId: z.string().min(1),
     label: z.string().min(1).max(150),
@@ -363,7 +358,7 @@ const publicationPreviewSchema: z.ZodType<SandboxPublicationPreview> =
       modules: z.number().int().nonnegative(),
       fields: z.number().int().nonnegative(),
       relationships: z.number().int().nonnegative(),
-      automations: z.number().int().nonnegative(),
+      triggers: z.number().int().nonnegative(),
     }),
     warnings: z.array(z.string().min(1)),
     blockers: z.array(publicationBlockerSchema),
@@ -383,11 +378,11 @@ const publicationSchema: z.ZodType<SandboxPublication> = z
     publishedAt: z.string().datetime({ offset: true }),
   })
   .passthrough();
-const automationRunSchema: z.ZodType<SandboxAutomationRun> = z.strictObject({
+const triggerRunSchema: z.ZodType<SandboxTriggerRun> = z.strictObject({
   id: z.string().uuid(),
   createdAt: z.string().datetime({ offset: true }),
-  automationId: z.string().uuid(),
-  automationName: z.string().min(1).max(80),
+  triggerId: z.string().uuid(),
+  triggerName: z.string().min(1).max(80),
   eventKind: z.enum(["record-created", "field-changed", "schedule"]),
   state: z.enum(["succeeded", "skipped", "suspended", "failed"]),
   details: z.record(z.string(), z.unknown()),
@@ -467,7 +462,7 @@ export function loadSandboxDocument(
 }
 
 export function replaceSandboxDocument(
-  request: RevisionRequest & { document: SandboxDocumentV2 },
+  request: RevisionRequest & { document: SandboxDocumentV3 },
 ): Promise<SandboxDocumentResponse> {
   return documentRequest("/sandbox/document", {
     method: "PUT",
@@ -519,9 +514,9 @@ export function createSandboxTest(
       moduleId: request.moduleId,
       values: request.values,
       event: request.event,
-      ...(request.automationIds === undefined
+      ...(request.triggerIds === undefined
         ? {}
-        : { automationIds: request.automationIds }),
+        : { triggerIds: request.triggerIds }),
     }),
     signal: request.signal,
   });
@@ -541,22 +536,22 @@ export function listSandboxTests(
   );
 }
 
-export function listSandboxAutomationRuns(
+export function listSandboxTriggerRuns(
   options: RequestOptions & { limit?: number; offset?: number } = {},
-): Promise<{ items: SandboxAutomationRun[] }> {
+): Promise<{ items: SandboxTriggerRun[] }> {
   const limit = options.limit ?? 20;
   const offset = options.offset ?? 0;
   if (!Number.isInteger(limit) || limit < 1 || limit > 50)
-    throw new RangeError("Automation run limit must be between 1 and 50");
+    throw new RangeError("Trigger run limit must be between 1 and 50");
   if (!Number.isInteger(offset) || offset < 0)
-    throw new RangeError("Automation run offset must be non-negative");
+    throw new RangeError("Trigger run offset must be non-negative");
   const query = new URLSearchParams({
     limit: String(limit),
     offset: String(offset),
   });
   return apiFetch(
-    `/sandbox/automation-runs?${query}`,
-    z.object({ items: z.array(automationRunSchema) }).passthrough(),
+    `/sandbox/trigger-runs?${query}`,
+    z.object({ items: z.array(triggerRunSchema) }).passthrough(),
     { cache: "no-store", signal: options.signal },
   );
 }
@@ -694,7 +689,7 @@ export function rollbackSandboxVersion(
 }
 
 export function importSandboxBundle(
-  request: RevisionRequest & { bundle: SandboxDocumentV2 },
+  request: RevisionRequest & { bundle: SandboxDocumentV3 },
 ): Promise<SandboxDocumentResponse> {
   return documentRequest("/sandbox/imports", {
     method: "POST",

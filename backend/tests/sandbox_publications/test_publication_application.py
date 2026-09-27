@@ -5,17 +5,17 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.sandbox.automations.models import (
-    PublishedAutomationAction,
-    PublishedAutomationCondition,
-    PublishedAutomationDefinition,
-)
-from app.systems.sandbox.designs.schemas import AutomationDocument, SandboxDocument
+from app.systems.sandbox.designs.schemas import SandboxDocument, TriggerDocument
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.models import SandboxBinding, SandboxPublication
 from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.publications.rules import _field_key
+from app.systems.sandbox.record_triggers.models import (
+    RecordTrigger,
+    RecordTriggerAction,
+    RecordTriggerCondition,
+)
 from app.systems.sandbox.records.router import create_record
 from app.systems.sandbox.records.schemas import RecordCreate
 from tests.sandbox_publications.support import (
@@ -114,7 +114,7 @@ def test_published_integer_default_creates_a_valid_operational_record(
     assert type(default) is int
 
 
-def test_retired_automation_children_do_not_block_field_closure(
+def test_retired_trigger_children_do_not_block_field_closure(
     integration_owner_db: Session,
 ) -> None:
     publisher, document = publish_structure(integration_owner_db)
@@ -126,7 +126,7 @@ def test_retired_automation_children_do_not_block_field_closure(
         select(SandboxPublication).order_by(SandboxPublication.created_at.desc())
     )
     assert publication is not None
-    automation = PublishedAutomationDefinition(
+    record_trigger = RecordTrigger(
         publication_id=publication.id,
         published_version_id=publication.version_id,
         publisher_id=publisher.id,
@@ -134,25 +134,25 @@ def test_retired_automation_children_do_not_block_field_closure(
         name="Dependency check",
         enabled=True,
         priority=0,
-        trigger_kind="field-changed",
+        event_kind="field-changed",
         trigger_field_id=field.id,
         workspace_timezone="UTC",
         condition_operator="all",
     )
-    integration_owner_db.add(automation)
+    integration_owner_db.add(record_trigger)
     integration_owner_db.flush()
     integration_owner_db.add_all(
         [
-            PublishedAutomationCondition(
-                automation_id=automation.id,
+            RecordTriggerCondition(
+                trigger_id=record_trigger.id,
                 field_id=field.id,
                 position=0,
                 operator="=",
                 value_kind="literal",
                 literal_value={"value": "High"},
             ),
-            PublishedAutomationAction(
-                automation_id=automation.id,
+            RecordTriggerAction(
+                trigger_id=record_trigger.id,
                 target_field_id=field.id,
                 position=0,
                 kind="set-field",
@@ -178,14 +178,14 @@ def test_retired_automation_children_do_not_block_field_closure(
 
     integration_owner_db.add(
         SandboxBinding(
-            kind="automation",
+            kind="trigger",
             sandbox_id="retired-dependency-check",
-            automation_id=automation.id,
+            trigger_id=record_trigger.id,
             performed_by=publisher.id,
         )
     )
-    automation.is_deleted = True
-    automation.enabled = False
+    record_trigger.is_deleted = True
+    record_trigger.enabled = False
     integration_owner_db.flush()
     retired_plan = publication_plan(integration_owner_db, closing)
     assert ("close_has_live_dependencies", field_key) not in {
@@ -193,18 +193,18 @@ def test_retired_automation_children_do_not_block_field_closure(
     }
 
 
-def test_replacing_sandbox_automations_can_close_their_old_structure(
+def test_replacing_sandbox_record_triggers_can_close_their_old_structure(
     integration_owner_db: Session,
 ) -> None:
     document = publishable_document()
-    document.automations = [_triage_automation()]
+    document.triggers = [_triage_trigger()]
     publisher, published = publish_structure(integration_owner_db, document)
     replacement = published.model_copy(deep=True)
     replacement.design.departments = []
     replacement.design.modules = []
     replacement.design.relationships = []
     replacement.design.layout = {}
-    replacement.automations = []
+    replacement.triggers = []
 
     plan = publication_plan(integration_owner_db, replacement)
 
@@ -212,7 +212,7 @@ def test_replacing_sandbox_automations_can_close_their_old_structure(
     publish_revision(integration_owner_db, publisher, replacement, "replace-template")
     assert all(
         row.is_deleted
-        for row in integration_owner_db.scalars(select(PublishedAutomationDefinition))
+        for row in integration_owner_db.scalars(select(RecordTrigger))
     )
     assert all(row.is_deleted for row in integration_owner_db.scalars(select(Module)))
 
@@ -288,24 +288,24 @@ def test_removing_a_field_frees_its_position_and_restores_its_label_after_closur
     assert [field.position for field in active] == list(range(len(active)))
 
 
-def test_republishing_an_unchanged_automation_preserves_its_definition(
+def test_republishing_an_unchanged_trigger_preserves_its_definition(
     integration_owner_db: Session,
 ) -> None:
     document = publishable_document()
-    document.automations = [_triage_automation()]
+    document.triggers = [_triage_trigger()]
     publisher, published = publish_structure(integration_owner_db, document)
-    before = binding(integration_owner_db, "automation", "sample-triage").automation_id
+    before = binding(integration_owner_db, "trigger", "sample-triage").trigger_id
     assert before is not None
 
-    publish_revision(integration_owner_db, publisher, published, "unchanged-automation")
+    publish_revision(integration_owner_db, publisher, published, "unchanged-trigger")
 
-    after = binding(integration_owner_db, "automation", "sample-triage").automation_id
+    after = binding(integration_owner_db, "trigger", "sample-triage").trigger_id
     assert after == before
     assert (
         integration_owner_db.scalar(
             select(func.count())
-            .select_from(PublishedAutomationDefinition)
-            .where(PublishedAutomationDefinition.is_deleted.is_(False))
+            .select_from(RecordTrigger)
+            .where(RecordTrigger.is_deleted.is_(False))
         )
         == 1
     )
@@ -315,13 +315,13 @@ def test_reused_schedule_adopts_the_current_workspace_timezone(
     integration_owner_db: Session,
 ) -> None:
     document = publishable_document()
-    document.automations = [_scheduled_automation()]
+    document.triggers = [_scheduled_trigger()]
     publisher, published = publish_structure(integration_owner_db, document)
-    automation_id = binding(
-        integration_owner_db, "automation", "sample-scheduled-triage"
-    ).automation_id
-    assert automation_id is not None
-    definition = integration_owner_db.get(PublishedAutomationDefinition, automation_id)
+    trigger_id = binding(
+        integration_owner_db, "trigger", "sample-scheduled-triage"
+    ).trigger_id
+    assert trigger_id is not None
+    definition = integration_owner_db.get(RecordTrigger, trigger_id)
     profile = integration_owner_db.scalar(
         select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
     )
@@ -334,18 +334,18 @@ def test_reused_schedule_adopts_the_current_workspace_timezone(
     publish_revision(integration_owner_db, publisher, published, "schedule-timezone")
 
     assert (
-        binding(integration_owner_db, "automation", "sample-scheduled-triage").automation_id
-        == automation_id
+        binding(integration_owner_db, "trigger", "sample-scheduled-triage").trigger_id
+        == trigger_id
     )
     integration_owner_db.refresh(definition)
     assert definition.workspace_timezone == profile.timezone
 
 
-def test_retained_automation_blocks_closing_its_trigger_module(
+def test_retained_trigger_blocks_closing_its_trigger_module(
     integration_owner_db: Session,
 ) -> None:
     document = publishable_document()
-    document.automations = [_triage_automation()]
+    document.triggers = [_triage_trigger()]
     _publisher, published = publish_structure(integration_owner_db, document)
     closing = published.model_copy(deep=True)
     module = next(module for module in closing.design.modules if module.id == "sample-requests")
@@ -361,8 +361,8 @@ def test_retained_automation_blocks_closing_its_trigger_module(
     assert ("close_has_live_dependencies", "sample-requests") in blockers
 
 
-def _triage_automation() -> AutomationDocument:
-    return AutomationDocument.model_validate(
+def _triage_trigger() -> TriggerDocument:
+    return TriggerDocument.model_validate(
         {
             "id": "sample-triage",
             "name": "Triage requests",
@@ -385,8 +385,8 @@ def _triage_automation() -> AutomationDocument:
     )
 
 
-def _scheduled_automation() -> AutomationDocument:
-    value = _triage_automation().model_dump(by_alias=True)
+def _scheduled_trigger() -> TriggerDocument:
+    value = _triage_trigger().model_dump(by_alias=True)
     value["id"] = "sample-scheduled-triage"
     value["name"] = "Scheduled triage"
     value["trigger"] = {
@@ -395,4 +395,4 @@ def _scheduled_automation() -> AutomationDocument:
         "frequency": "daily",
         "time": "09:00",
     }
-    return AutomationDocument.model_validate(value)
+    return TriggerDocument.model_validate(value)

@@ -19,7 +19,7 @@ def _row(*, revision: int = 1) -> SandboxDocumentRow:
     return SandboxDocumentRow(
         id=uuid4(),
         singleton_key=True,
-        schema_version=2,
+        schema_version=3,
         revision=revision,
         document=payload,
         content_hash=content_hash,

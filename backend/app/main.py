@@ -89,14 +89,14 @@ from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router as files_router
 from app.systems.platform.scheduling.notification_router import router as notifications_router
 from app.systems.platform.scheduling.worker import ReportSchedulingWorker
-from app.systems.sandbox.automations.router import router as sandbox_automations_router
-from app.systems.sandbox.automations.worker import AutomationWorker
 from app.systems.sandbox.departments.router import router as departments_router
 from app.systems.sandbox.designs.router import router as sandbox_designs_router
 from app.systems.sandbox.fields.router import router as fields_router
 from app.systems.sandbox.lifecycle.router import router as lifecycle_router
 from app.systems.sandbox.modules.router import router as modules_router
 from app.systems.sandbox.publications.router import router as sandbox_publications_router
+from app.systems.sandbox.record_triggers.router import router as sandbox_record_triggers_router
+from app.systems.sandbox.record_triggers.worker import TriggerWorker
 from app.systems.sandbox.records.query_router import router as record_queries_router
 from app.systems.sandbox.records.router import router as records_router
 from app.systems.sandbox.relationships.router import router as relationships_router
@@ -165,7 +165,7 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             expected_user="openslate_runtime",
         )
     app.state.events_listener.start()
-    app.state.automation_worker.start()
+    app.state.trigger_worker.start()
     report_worker = getattr(app.state, "report_scheduling_worker", None)
     signout_worker = getattr(app.state, "provider_signout_worker", None)
     try:
@@ -177,9 +177,9 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         signout_stopped = signout_worker.stop() if signout_worker is not None else True
         report_stopped = report_worker.stop() if report_worker is not None else True
-        automation_stopped = app.state.automation_worker.stop()
+        trigger_stopped = app.state.trigger_worker.stop()
         app.state.events_listener.stop()
-        if automation_stopped and report_stopped and signout_stopped:
+        if trigger_stopped and report_stopped and signout_stopped:
             dispose_readiness_resources()
             dispose_database_resources()
         else:
@@ -188,11 +188,11 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
                     "operational_attention", reason_code="provider_signout_shutdown_incomplete",
                     upstream="supabase-auth",
                 )
-            if not automation_stopped:
+            if not trigger_stopped:
                 log_event(
                     "operational_attention",
-                    reason_code="sandbox_automation_shutdown_incomplete",
-                    upstream="sandbox-automations",
+                    reason_code="sandbox_trigger_shutdown_incomplete",
+                    upstream="sandbox-triggers",
                 )
             if not report_stopped:
                 log_event(
@@ -221,7 +221,7 @@ def create_app() -> FastAPI:
     events_hub = EventHub(max_subscribers=subscriber_capacity(settings.server_max_concurrency))
     app.state.events_hub = events_hub
     app.state.events_listener = PostgresInvalidationListener(events_hub)
-    app.state.automation_worker = AutomationWorker(settings)
+    app.state.trigger_worker = TriggerWorker(settings)
     app.state.report_scheduling_worker = ReportSchedulingWorker(settings)
     app.state.provider_signout_worker = ProviderSignoutWorker(settings)
 
@@ -348,7 +348,7 @@ def create_app() -> FastAPI:
     app.include_router(departments_router, prefix="/api")
     app.include_router(sandbox_designs_router, prefix="/api")
     app.include_router(sandbox_publications_router, prefix="/api")
-    app.include_router(sandbox_automations_router, prefix="/api")
+    app.include_router(sandbox_record_triggers_router, prefix="/api")
     app.include_router(sandbox_test_runs_router, prefix="/api")
     app.include_router(modules_router, prefix="/api")
     app.include_router(fields_router, prefix="/api")

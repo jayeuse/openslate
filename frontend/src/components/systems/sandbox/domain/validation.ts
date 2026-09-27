@@ -245,7 +245,7 @@ export function validateSandboxDesign(
       issue("design.relationship_limit", "Relationship limit exceeded"),
     );
   if (design.rules.length > SANDBOX_LIMITS.rules)
-    issues.push(issue("design.rule_limit", "Automation limit exceeded"));
+    issues.push(issue("design.rule_limit", "Trigger limit exceeded"));
 
   issues.push(
     ...duplicateIds(
@@ -541,7 +541,7 @@ export function validateSandboxDesign(
     for (const value of [rule.trigger, rule.condition, rule.action])
       if (value.length > SANDBOX_LIMITS.textCharacters)
         issues.push(
-          issue("rule.text_too_long", "Automation text is too long", rule.id),
+          issue("rule.text_too_long", "Trigger text is too long", rule.id),
         );
     issues.push(
       ...validateRuleConfig(design, rule, normalizeRule(rule, design).config),

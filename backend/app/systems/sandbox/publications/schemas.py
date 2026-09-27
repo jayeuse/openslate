@@ -28,7 +28,7 @@ class PublicationRequest(StrictModel):
 
 
 class PublicationChange(StrictModel):
-    kind: Literal["department", "module", "field", "relationship", "automation"]
+    kind: Literal["department", "module", "field", "relationship", "trigger"]
     action: Literal["create", "update", "close", "reopen"]
     sandbox_id: str = Field(alias="sandboxId", min_length=1, max_length=1_000)
     label: str = Field(min_length=1, max_length=150)
@@ -45,7 +45,7 @@ class PublicationCounts(StrictModel):
     modules: int = 0
     fields: int = 0
     relationships: int = 0
-    automations: int = 0
+    triggers: int = 0
 
 
 class PublicationPreviewResponse(StrictModel):

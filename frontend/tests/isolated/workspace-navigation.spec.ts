@@ -101,7 +101,7 @@ test("Sandbox uses the simplified sections while legacy links still open the mat
 
   expect(navigation?.items.map((entry) => [entry.id, entry.label])).toEqual([
     ["build", "Build"],
-    ["automations", "Automations"],
+    ["triggers", "Triggers"],
     ["test", "Test"],
     ["history", "History"],
   ]);
@@ -158,9 +158,9 @@ test("sidebar section links retain only each screen's relevant deep-link context
     )?.href,
   ).toBe("/openview?section=views&module=incidents");
   expect(
-    item("/sandbox", "rule=approval&inspect=orders", "sandbox", "automations")
+    item("/sandbox", "rule=approval&inspect=orders", "sandbox", "triggers")
       ?.href,
-  ).toBe("/sandbox?section=automations&rule=approval&inspect=orders");
+  ).toBe("/sandbox?section=triggers&rule=approval&inspect=orders");
   expect(
     item("/platform", "file=contract.pdf", "platform", "files")?.href,
   ).toBe("/platform?section=files&file=contract.pdf");
@@ -278,9 +278,9 @@ test("sidebar highlights the same section as Access, OpenView, and Sandbox deep 
   expect(
     isWorkspaceNavigationItemActive(
       "sandbox",
-      "automations",
+      "triggers",
       "/sandbox",
-      new URLSearchParams("section=AUTOMATION"),
+      new URLSearchParams("section=TRIGGER"),
     ),
   ).toBe(true);
 });
