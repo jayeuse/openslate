@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
+import { bindOpenViewAccess } from "@/components/systems/openview/adapters/openview-access";
 
 function createQueryClient() {
   return new QueryClient({
@@ -26,6 +27,11 @@ function createQueryClient() {
  * cache and signing out drops it.
  */
 export function AppQueryProvider({ children }: { children: ReactNode }) {
-  const [client] = useState(createQueryClient);
+  const [client] = useState(() => {
+    const created = createQueryClient();
+    // A new account starts with OpenView access unknown, not refused.
+    bindOpenViewAccess(created);
+    return created;
+  });
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }

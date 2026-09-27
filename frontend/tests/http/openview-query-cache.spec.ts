@@ -139,6 +139,9 @@ async function installOpenViewApi(page: Page): Promise<Api> {
   });
   await page.route("**/api/views/data-sources**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    // Fields need records.read like the catalog: they follow its refusal.
+    if (path !== "/api/views/data-sources" && catalogDenied)
+      return route.fulfill(forbidden);
     if (path === "/api/views/data-sources") {
       const offset = Number(
         new URL(route.request().url()).searchParams.get("offset") ?? 0,
@@ -207,6 +210,17 @@ async function installOpenViewApi(page: Page): Promise<Api> {
   await page.route("**/api/reports**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    // A Report's history needs records.read, like the list.
+    if (
+      /^\/api\/reports\/[^/]+\/runs$/.test(path) &&
+      request.method() === "GET"
+    ) {
+      if (listDenied) return route.fulfill(forbidden);
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(pageOf([])),
+      });
+    }
     if (path === "/api/reports/shared-runs")
       return route.fulfill({
         contentType: "application/json",
@@ -750,6 +764,27 @@ test("a refusal seen in Dashboards hides the cached Views catalog", async ({
   api.denyCatalog(false);
   await page.getByRole("button", { name: "Retry catalog" }).click();
   await expect(source).toHaveCount(1);
+});
+
+test("a refused Report history read hides the opened Report and the list", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  await page.goto("/openview?section=reports");
+  const main = page.locator("main");
+  await expect(
+    page.getByRole("button", { name: "Alpha report" }),
+  ).toBeVisible();
+
+  // records.read is revoked; opening the Report reads its history first.
+  api.denyLists(true);
+  await page.getByRole("button", { name: "Alpha report" }).click();
+  await expect(
+    page.getByText(
+      "OpenView data is unavailable. Sign in or ask for access, then retry.",
+    ),
+  ).not.toHaveCount(0);
+  await expect(main.getByText("Alpha report")).toHaveCount(0);
 });
 
 test("server invalidations and Refresh still reload cached OpenView reads", async ({

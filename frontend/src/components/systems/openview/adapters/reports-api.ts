@@ -6,6 +6,7 @@ import {
   apiRequest,
   type ApiRequestInit,
 } from "@/lib/api";
+import { isReadRequest, openViewReadFetch } from "./openview-access";
 import type { OpenViewPage } from "./views-api";
 import {
   serializeOpenViewQueryDefinition,
@@ -583,7 +584,11 @@ async function safeReportJson<Schema extends z.ZodType>(
   init?: ApiRequestInit,
 ): Promise<z.output<Schema>> {
   try {
-    return await apiFetch(path, schema, init);
+    return await (isReadRequest(init) ? openViewReadFetch : apiFetch)(
+      path,
+      schema,
+      init,
+    );
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
     return throwSafeResponseError(error.status, { detail: error.details });

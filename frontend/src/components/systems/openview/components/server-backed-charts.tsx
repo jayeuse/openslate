@@ -245,14 +245,17 @@ export default function ServerBackedCharts() {
     ? fieldsMore.nextOffset
     : (fieldsBase?.pagination.count ?? 0);
   const fieldsLoading = Boolean(moduleId) && fieldsQuery.isFetching;
-  const fieldsError = fieldsDenied
-    ? AUTHORIZATION_ERROR
-    : fieldsLoadError
-      ? formatError(
-          fieldsLoadError,
-          "The data-source fields could not be loaded.",
-        )
-      : "";
+  // While data sources are refused, their alert carries the one message.
+  const fieldsError = sourcesDenied
+    ? ""
+    : fieldsDenied
+      ? AUTHORIZATION_ERROR
+      : fieldsLoadError
+        ? formatError(
+            fieldsLoadError,
+            "The data-source fields could not be loaded.",
+          )
+        : "";
 
   // A denied read withdraws the applied chart, as every read did before.
   const readDenied = preferencesLoadDenied || sourcesDenied || fieldsDenied;
@@ -865,7 +868,9 @@ export default function ServerBackedCharts() {
         />
       </LoadingRegion>
 
-      {queryError ? (
+      {/* While a read is refused, the data-source alert already says so
+          and offers Retry; one message, not two. */}
+      {queryError && !(readDenied && queryError === AUTHORIZATION_ERROR) ? (
         <Alert
           role="alert"
           variant="warning"

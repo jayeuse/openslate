@@ -156,14 +156,17 @@ export function useServerViewsResource(requestedModule: string | null) {
           "The OpenView catalog could not be loaded.",
         )
       : "";
-  const moduleId = authorizationDenied ? undefined : loadedModuleId;
+  // The chosen source's id stays through a refusal (it is not data) so the
+  // editing draft keyed by it survives; its names and rows are hidden.
+  const moduleId = loadedModuleId;
   const moduleWorkspace = authorizationDenied
     ? null
     : (moduleQuery.data ?? null);
   const moduleLoading = moduleQuery.isFetching;
   const moduleLoadError = settledError(moduleQuery);
+  // While refused, the catalog alert carries the one message and Retry.
   const moduleError = authorizationDenied
-    ? AUTHORIZATION_ERROR
+    ? ""
     : moduleLoadError
       ? messageFor(moduleLoadError, "The data source could not be loaded.")
       : "";

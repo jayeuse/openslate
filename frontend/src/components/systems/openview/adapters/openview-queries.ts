@@ -7,7 +7,6 @@ import {
 } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { getAuthMe } from "@/lib/auth-api";
-import { denyOpenViewAccess, watchOpenViewAccess } from "./openview-access";
 import { getOpenViewChartPreferences } from "./chart-preferences-api";
 import {
   listOpenViewReports,
@@ -121,16 +120,15 @@ export function moduleFieldKeys(moduleId: string): QueryKey[] {
 }
 
 /**
- * Records a refused "Load more" page: the OpenView access latch hides every
- * cached read, and the reads this page extends hold the refusal as their
- * error, so their section says why.
+ * Records a refused "Load more" page on the reads it extends, so their
+ * section says why. The page's own request already set the OpenView access
+ * latch (openview-access.ts), which hides every cached read.
  */
 export function recordPageDenial(
   client: QueryClient,
   queryKeys: readonly QueryKey[],
   error: ApiError,
 ): void {
-  denyOpenViewAccess(client);
   const now = Date.now();
   for (const queryKey of queryKeys)
     for (const query of client.getQueryCache().findAll({ queryKey }))
@@ -311,7 +309,6 @@ export function prefetchOpenViewSection(
   client: QueryClient,
   href: string,
 ): void {
-  watchOpenViewAccess(client);
   const url = new URL(href, "http://openview.invalid");
   if (url.pathname !== "/openview") return;
   const section = url.searchParams.get("section") ?? "views";

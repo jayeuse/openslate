@@ -2920,6 +2920,32 @@ for (const requestPath of ["initial load", "manual refresh"] as const) {
   });
 }
 
+test("a refused Dashboard read hides the retained Dashboard and offers Retry", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page, dashboard());
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  const table = page.getByRole("table", {
+    name: "Complete data for Count by Category",
+  });
+  await expect(table.locator("tbody tr")).toHaveCount(25);
+
+  const pending = api.holdNextSnapshot(403);
+  await page.getByRole("button", { name: "Refresh now" }).click();
+  await pending.started;
+  pending.release();
+  await expect(
+    page.getByText(
+      "OpenView data is unavailable. Sign in or ask for access, then retry.",
+    ),
+  ).toBeVisible();
+  await expect(table).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Operations" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+});
+
 test("duplicating a Dashboard creates an independent copy and keeps the source default", async ({
   page,
 }) => {

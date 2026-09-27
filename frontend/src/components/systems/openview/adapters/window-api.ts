@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { apiFetch } from "@/lib/api";
+import { openViewReadFetch } from "./openview-access";
 import type {
   OpenViewQueryDefinition,
   OpenViewQueryFieldReference,
@@ -298,7 +298,7 @@ export async function queryOpenViewWindowRecords(
     body.to_date = request.toDate;
   }
 
-  return apiFetch(
+  return openViewReadFetch(
     "/records/window-query",
     responseSchemaFor(request, selectedFieldIds, hasProjectedDatetime),
     {

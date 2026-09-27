@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { apiFetch } from "@/lib/api";
+import { openViewReadFetch } from "./openview-access";
 import {
   serializeOpenViewQueryDefinition,
   type OpenViewQueryDefinition,
@@ -622,7 +622,7 @@ export async function queryOpenViewGroupedRecords(
   if (request.selectedGroup !== undefined) {
     body.selected_group = request.selectedGroup;
   }
-  return apiFetch(
+  return openViewReadFetch(
     "/records/grouped-query",
     groupedResponseSchema(request, allowedFieldIds),
     {
@@ -654,7 +654,7 @@ export async function queryOpenViewAggregates(
     body.from_date = request.fromDate;
     body.to_date = request.toDate;
   }
-  return apiFetch(
+  return openViewReadFetch(
     "/records/aggregate-query",
     aggregateResponseSchema(request),
     {
@@ -689,7 +689,7 @@ export async function queryOpenViewAggregateSnapshot(
     body.from_date = request.fromDate;
     body.to_date = request.toDate;
   }
-  return apiFetch(
+  return openViewReadFetch(
     "/records/aggregate-snapshot",
     aggregateSnapshotResponseSchema(request),
     {
