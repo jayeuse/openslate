@@ -191,15 +191,12 @@
   --tp-perforation: #414a73;
 }
 
-/* Motion: crisp paper. The next page arrives like the next sheet of a form
-   pad, sliding up a little further than Slate. */
+/* Motion: crisp paper, a little quicker than Slate. */
 :root[data-theme="triplicate"] {
   --motion-fast: 120ms;
   --motion-base: 200ms;
   --motion-slow: 340ms;
   --ease-out: cubic-bezier(0.3, 0.9, 0.2, 1);
-  --nav-travel-x: 0px;
-  --nav-travel-y: 16px;
 }
 
 /* Skin places. Triplicate is a carbon-copy business form: printed navy
@@ -247,13 +244,11 @@
   transform-origin: left center;
 }
 
-/* Signature: moving through the sidebar writes the rule in one even pen
-   stroke as the page arrives. It plays only during a sidebar handoff. */
+/* Signature: a successful Publish writes the rule in one even pen stroke,
+   once. It never plays on load or on navigation. */
 @media (prefers-reduced-motion: no-preference) {
-  :root[data-theme="triplicate"]:not(
-      [data-motion="reduced"]
-    ):active-view-transition-type(nav-down, nav-up)
-    [data-slot="page-title"]::after {
+  :root[data-theme="triplicate"]:not([data-motion="reduced"])
+    [data-slot="page-title"][data-signature="play"]::after {
     animation: tp-rule-write var(--motion-base) var(--ease-in-out)
       var(--motion-fast) both;
   }

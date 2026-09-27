@@ -3,14 +3,8 @@
 import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import type { Route } from "next";
-import {
-  GuardedWorkspaceLink,
-  useNavigationDirection,
-} from "@/components/workspace-navigation-guard";
-import {
-  getWorkspaceLocation,
-  workspaceDefaultNavigationKey,
-} from "@/components/workspace-navigation";
+import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
+import { getWorkspaceLocation } from "@/components/workspace-navigation";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -50,25 +44,13 @@ export function AppBreadcrumbs() {
     hash,
   );
   const current = location?.section ?? routeLabels[pathname] ?? "Workspace";
-  // Crumbs animate the page in the direction of the place they open.
-  const rootDirection = useNavigationDirection(
-    workspaceDefaultNavigationKey("/openview"),
-  );
-  const workspaceDirection = useNavigationDirection(
-    location ? workspaceDefaultNavigationKey(location.workspace.href) : null,
-  );
   return (
     <Breadcrumb className="min-w-0">
       <BreadcrumbList className="flex-nowrap">
         <BreadcrumbItem className="max-sm:hidden">
           <BreadcrumbLink
             className={crumbTarget}
-            render={
-              <GuardedWorkspaceLink
-                href={"/openview" as Route}
-                transitionTypes={rootDirection ? [rootDirection] : undefined}
-              />
-            }
+            render={<GuardedWorkspaceLink href={"/openview" as Route} />}
           >
             Workspace
           </BreadcrumbLink>
@@ -82,9 +64,6 @@ export function AppBreadcrumbs() {
                 render={
                   <GuardedWorkspaceLink
                     href={location.workspace.href as Route}
-                    transitionTypes={
-                      workspaceDirection ? [workspaceDirection] : undefined
-                    }
                   />
                 }
               >

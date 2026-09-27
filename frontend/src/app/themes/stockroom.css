@@ -200,15 +200,12 @@
   --sr-wall: #16181b;
 }
 
-/* Motion: heavy steel. Pages slide sideways like a drawer on runners, with
-   a long slow-down. */
+/* Motion: heavy steel, like a drawer on runners, with a long slow-down. */
 :root[data-theme="stockroom"] {
   --motion-fast: 160ms;
   --motion-base: 260ms;
   --motion-slow: 420ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --nav-travel-x: 24px;
-  --nav-travel-y: 0px;
 }
 
 /* Skin places. Stockroom is steel shelving and kraft boxes: steel rails
@@ -232,14 +229,11 @@
 }
 
 /* Page titles are stencilled. */
-/* Signature: moving through the sidebar sprays the stencilled title on
-   from left to right as the page arrives. It plays only during a sidebar
-   handoff, never on load. */
+/* Signature: a successful Publish sprays the stencilled title on from left
+   to right, once. It never plays on load or on navigation. */
 @media (prefers-reduced-motion: no-preference) {
-  :root[data-theme="stockroom"]:not(
-      [data-motion="reduced"]
-    ):active-view-transition-type(nav-down, nav-up)
-    [data-slot="page-title"] {
+  :root[data-theme="stockroom"]:not([data-motion="reduced"])
+    [data-slot="page-title"][data-signature="play"] {
     animation: sr-stencil-spray var(--motion-base) var(--ease-out)
       var(--motion-fast) both;
   }

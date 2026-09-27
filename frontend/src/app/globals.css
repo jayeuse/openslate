@@ -105,19 +105,14 @@
   --sandbox-field-stripe: var(--ground);
   --radius: 0.5rem;
   /* Motion. Durations name the job, not a speed: fast for feedback, base
-     for routine state and navigation, slow for layout and authored moments.
-     Each look sets its own timing and travel below; reduced motion keeps
-     fades and color but removes travel. */
+     for routine state, slow for layout and authored moments. Each look sets
+     its own timing. Pages swap at once; nothing animates a navigation. */
   --motion-fast: 140ms;
   --motion-base: 220ms;
   --motion-slow: 360ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  /* How far page content travels when you move through the sidebar:
-     x for a sideways handoff, y for a vertical one. */
-  --nav-travel-x: 0px;
-  --nav-travel-y: 10px;
   --font-ui: var(--font-geist-sans);
   --font-code: var(--font-geist-mono);
   /* Card material. Themes set these instead of overriding Card, so a card's
@@ -401,82 +396,6 @@ textarea {
   ):not(:disabled):not([aria-disabled="true"]):focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
-}
-
-/* Navigation motion (React ViewTransition). The shell stays still: only the
-   page body hands off (the active sidebar fill glides in the live page).
-   Moving down the sidebar brings the new page up from below; moving up
-   brings it down from above. Clicks pass through while it runs. */
-::view-transition {
-  pointer-events: none;
-}
-
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-}
-
-/* The body stays in place: only its old and new images move. (The window
-   scrolls, and Next resets it to the top, so a group morph would swing the
-   page across the screen after a scroll.) */
-::view-transition-group(.nav-down),
-::view-transition-group(.nav-up) {
-  animation: none;
-}
-
-::view-transition-old(.nav-down),
-::view-transition-old(.nav-up) {
-  animation: nav-leave var(--motion-fast) var(--ease-in) both;
-}
-
-::view-transition-new(.nav-down),
-::view-transition-new(.nav-up) {
-  /* The new page waits for the old one to leave, so text never doubles up
-     in a cross-fade. */
-  animation: nav-enter var(--motion-base) var(--ease-out) var(--motion-fast)
-    both;
-}
-
-::view-transition-old(.nav-down),
-::view-transition-new(.nav-down) {
-  --nav-direction: 1;
-}
-
-::view-transition-old(.nav-up),
-::view-transition-new(.nav-up) {
-  --nav-direction: -1;
-}
-
-@keyframes nav-leave {
-  to {
-    opacity: 0;
-    translate: calc(var(--nav-travel-x) * var(--nav-direction) * -0.5)
-      calc(var(--nav-travel-y) * var(--nav-direction) * -0.5);
-  }
-}
-
-@keyframes nav-enter {
-  from {
-    opacity: 0;
-    translate: calc(var(--nav-travel-x) * var(--nav-direction))
-      calc(var(--nav-travel-y) * var(--nav-direction));
-  }
-}
-
-/* Reduced motion (device setting or Appearance): keep the handoff fade;
-   drop the travel. */
-@media (prefers-reduced-motion: reduce) {
-  :root,
-  :root[data-theme] {
-    --nav-travel-x: 0px;
-    --nav-travel-y: 0px;
-  }
-}
-
-:root[data-motion="reduced"],
-:root[data-motion="reduced"][data-theme] {
-  --nav-travel-x: 0px;
-  --nav-travel-y: 0px;
 }
 
 @media (prefers-reduced-motion: reduce) {

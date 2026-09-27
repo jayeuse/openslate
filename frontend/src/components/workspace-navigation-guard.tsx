@@ -1,23 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import {
-  currentNavigationKey,
-  navigationOrder,
-  navigationTransitionType,
-  type NavigationTransitionType,
-} from "@/components/workspace-navigation";
+import { useRouter } from "next/navigation";
 import type { Route } from "next";
-import {
-  addTransitionType,
-  createContext,
-  startTransition,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-} from "react";
+import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import type { ComponentProps, ReactNode } from "react";
 
 export type WorkspaceNavigationGuard = (
@@ -115,7 +101,6 @@ type GuardedWorkspaceLinkProps = Omit<
 export function GuardedWorkspaceLink({
   href,
   onAcceptedNavigate,
-  transitionTypes,
   ...props
 }: GuardedWorkspaceLinkProps) {
   const router = useRouter();
@@ -125,16 +110,10 @@ export function GuardedWorkspaceLink({
     <Link
       {...props}
       href={href}
-      transitionTypes={transitionTypes}
       onNavigate={(event) => {
-        // A navigation resumed after a confirmation keeps its transition
-        // types, so it animates like a direct one.
         const resume = () => {
           onAcceptedNavigate?.();
-          startTransition(() => {
-            for (const type of transitionTypes ?? []) addTransitionType(type);
-            router.push(href);
-          });
+          router.push(href);
         };
         const accepted = requestNavigation(href, resume);
         if (!accepted) {
@@ -144,25 +123,5 @@ export function GuardedWorkspaceLink({
         onAcceptedNavigate?.();
       }}
     />
-  );
-}
-
-/**
- * The page-handoff direction for a link to `target` (a navigation key), from
- * the place the current URL shows. Null when there is no move to show.
- */
-export function useNavigationDirection(
-  target: string | null,
-): NavigationTransitionType | null {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  if (!target) return null;
-  return navigationTransitionType(
-    navigationOrder(),
-    currentNavigationKey(
-      pathname,
-      new URLSearchParams(searchParams.toString()),
-    ),
-    target,
   );
 }

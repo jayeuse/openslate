@@ -103,8 +103,8 @@ export default function AppearancePage() {
                   id={motionDescriptionId}
                   className="text-muted-foreground mt-1 text-sm"
                 >
-                  Pages fade instead of sliding, and highlights and tabs move
-                  without gliding.{" "}
+                  Highlights, tabs, and panels move at once instead of gliding,
+                  and loading placeholders hold still.{" "}
                   {deviceReducesMotion
                     ? "Your device already asks for reduced motion, so OpenSlate reduces it either way."
                     : "When off, OpenSlate follows your device setting."}

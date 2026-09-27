@@ -185,6 +185,8 @@ export default function SandboxPage() {
   const [loadError, setLoadError] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
+  // Bumped by each successful Publish; the look's title signature plays once.
+  const [publishCount, setPublishCount] = useState(0);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -737,7 +739,9 @@ export default function SandboxPage() {
         <div className="flex flex-col gap-3 xl:contents">
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
             <h1
+              key={publishCount}
               data-slot="page-title"
+              data-signature={publishCount > 0 ? "play" : undefined}
               className="text-xl font-semibold tracking-tight sm:text-2xl"
             >
               Organization builder
@@ -1004,6 +1008,7 @@ export default function SandboxPage() {
             await refresh();
             if (section === "Automations") await refreshAutomationActivity();
             setMessage("Your changes are now published to the live workspace.");
+            setPublishCount((count) => count + 1);
           }}
         />
       ) : null}

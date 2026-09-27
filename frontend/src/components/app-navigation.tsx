@@ -12,23 +12,13 @@ import {
   ShieldCheck,
   Workflow,
 } from "lucide-react";
-import {
-  addTransitionType,
-  startTransition,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import {
   currentNavigationKey,
   getWorkspaceNavigation,
   isWorkspaceNavigationGroupActive,
   isWorkspaceNavigationItemActive,
-  navigationOrder,
-  navigationTransitionType,
-  type NavigationTransitionType,
 } from "@/components/workspace-navigation";
 import { useWorkspaceNavigationRequest } from "@/components/workspace-navigation-guard";
 import {
@@ -89,8 +79,6 @@ export function AppNavigation({
   const activeGroupId = groups.find((group) =>
     isWorkspaceNavigationGroupActive(group, pathname),
   )?.id;
-  // Sidebar order, and the current place in it, give each move a direction.
-  const order = navigationOrder();
   const currentKey = currentNavigationKey(pathname, searchParams, hash);
   const navRef = useRef<HTMLElement>(null);
   const indicatorRef = useRef<HTMLSpanElement>(null);
@@ -203,19 +191,8 @@ export function AppNavigation({
     prefetchTimers.current.delete(href);
   }
 
-  function navigate(
-    href: string,
-    type: NavigationTransitionType | null,
-    event: { preventDefault: () => void },
-  ) {
-    // A navigation that waits for a confirmation resumes here; it keeps its
-    // direction like a direct one.
-    const accepted = requestNavigation(href, () =>
-      startTransition(() => {
-        if (type) addTransitionType(type);
-        router.push(href as Route);
-      }),
-    );
+  function navigate(href: string, event: { preventDefault: () => void }) {
+    const accepted = requestNavigation(href, () => router.push(href as Route));
     if (!accepted) event.preventDefault();
   }
 
@@ -309,11 +286,6 @@ export function AppNavigation({
                         searchParams,
                         hash,
                       );
-                      const type = navigationTransitionType(
-                        order,
-                        currentKey,
-                        `${group.id}:${item.id}`,
-                      );
                       return (
                         <SidebarMenuSubItem key={item.id}>
                           <SidebarMenuSubButton
@@ -321,9 +293,8 @@ export function AppNavigation({
                               <Link
                                 href={item.href as Route}
                                 prefetch={false}
-                                transitionTypes={type ? [type] : undefined}
                                 onNavigate={(event) =>
-                                  navigate(item.href, type, event)
+                                  navigate(item.href, event)
                                 }
                                 onPointerEnter={() =>
                                   schedulePrefetch(item.href)

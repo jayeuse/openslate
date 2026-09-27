@@ -12,26 +12,28 @@ async function signIn(page: Page) {
   );
 }
 
-const travel = (page: Page) =>
-  page.evaluate(() =>
-    getComputedStyle(document.documentElement)
-      .getPropertyValue("--nav-travel-y")
-      .trim(),
+// The sidebar's width change is one of the glides that reduce motion stops.
+const sidebarGlide = (page: Page) =>
+  page.evaluate(
+    () =>
+      getComputedStyle(
+        document.querySelector('[data-slot="sidebar-gap"]') as Element,
+      ).transitionProperty,
   );
 
-test("reduce motion in Appearance stops page travel and survives a reload", async ({
+test("reduce motion in Appearance stops glides and survives a reload", async ({
   page,
 }) => {
   await signIn(page);
   await page.goto("/settings/appearance");
   const toggle = page.getByRole("switch", { name: "Reduce motion" });
   await expect(toggle).not.toBeChecked();
-  expect(await travel(page)).not.toBe("0px");
+  expect(await sidebarGlide(page)).toBe("width");
 
   await toggle.click();
   await expect(toggle).toBeChecked();
   await expect(page.locator("html")).toHaveAttribute("data-motion", "reduced");
-  expect(await travel(page)).toBe("0px");
+  expect(await sidebarGlide(page)).toBe("none");
 
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-motion", "reduced");
@@ -41,5 +43,5 @@ test("reduce motion in Appearance stops page travel and survives a reload", asyn
 
   await page.getByRole("switch", { name: "Reduce motion" }).click();
   await expect(page.locator("html")).not.toHaveAttribute("data-motion");
-  expect(await travel(page)).not.toBe("0px");
+  expect(await sidebarGlide(page)).toBe("width");
 });

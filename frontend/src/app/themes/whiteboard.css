@@ -198,15 +198,13 @@
   --wb-grid: #263033;
 }
 
-/* Motion: quick and light, like a marker on a board. Pages hand off with a
-   short vertical move. Timing is the same in light and dark. */
+/* Motion: quick and light, like a marker on a board. Timing is the same in
+   light and dark. */
 :root[data-theme="whiteboard"] {
   --motion-fast: 110ms;
   --motion-base: 180ms;
   --motion-slow: 320ms;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --nav-travel-x: 0px;
-  --nav-travel-y: 8px;
 }
 
 /* Skin places. Whiteboard is the back-office planning board: a gridded
@@ -246,13 +244,11 @@
   transform-origin: left center;
 }
 
-/* Signature: moving through the sidebar draws the marker underline as the
-   page arrives. It plays only during a sidebar handoff, never on load. */
+/* Signature: a successful Publish draws the marker underline once. It
+   never plays on load or on navigation. */
 @media (prefers-reduced-motion: no-preference) {
-  :root[data-theme="whiteboard"]:not(
-      [data-motion="reduced"]
-    ):active-view-transition-type(nav-down, nav-up)
-    [data-slot="page-title"]::after {
+  :root[data-theme="whiteboard"]:not([data-motion="reduced"])
+    [data-slot="page-title"][data-signature="play"]::after {
     animation: wb-marker-draw var(--motion-base) var(--ease-out)
       var(--motion-fast) both;
   }

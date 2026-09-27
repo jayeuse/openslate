@@ -15,9 +15,6 @@ import {
   X,
 } from "lucide-react";
 import {
-  ViewTransition,
-  addTransitionType,
-  startTransition,
   useEffect,
   useId,
   useRef,
@@ -31,13 +28,8 @@ import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import {
   GuardedWorkspaceLink,
   WorkspaceNavigationGuardProvider,
-  useNavigationDirection,
   useWorkspaceNavigationRequest,
 } from "@/components/workspace-navigation-guard";
-import {
-  APPEARANCE_NAVIGATION_KEY,
-  COMMS_NAVIGATION_KEY,
-} from "@/components/workspace-navigation";
 import { releaseAllLocalAttachments } from "@/components/systems/shared/runtime/local-attachments";
 import {
   clearAccessDraftsForAccountChange,
@@ -408,25 +400,7 @@ export function AppShell({
                     : "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7",
               )}
             >
-              {/* The page body hands off on sidebar moves (the shell stays
-                  still). Only navigations tagged with a direction animate;
-                  data refreshes and in-page updates do not. */}
-              <ViewTransition
-                update={{
-                  "nav-down": "nav-down",
-                  "nav-up": "nav-up",
-                  default: "none",
-                }}
-                default="none"
-              >
-                <div
-                  className={cn(
-                    (isComms || isAccess) && "flex min-h-0 flex-1 flex-col",
-                  )}
-                >
-                  {children}
-                </div>
-              </ViewTransition>
+              {children}
             </main>
           </div>
         </SidebarProvider>
@@ -464,7 +438,6 @@ function AppCommsLink({ collapsed }: { collapsed: boolean }) {
   const router = useRouter();
   const active = pathname === "/comms" || pathname.startsWith("/comms/");
   const descriptionId = useId();
-  const direction = useNavigationDirection(COMMS_NAVIGATION_KEY);
 
   return (
     <SidebarMenu>
@@ -474,7 +447,6 @@ function AppCommsLink({ collapsed }: { collapsed: boolean }) {
             <GuardedWorkspaceLink
               href={"/comms" as Route}
               prefetch={false}
-              transitionTypes={direction ? [direction] : undefined}
               onPointerEnter={() => router.prefetch("/comms" as Route)}
               onFocus={() => router.prefetch("/comms" as Route)}
             />
@@ -513,14 +485,9 @@ function AppSidebarFooter({
 }) {
   const router = useRouter();
   const requestNavigation = useWorkspaceNavigationRequest();
-  const appearanceDirection = useNavigationDirection(APPEARANCE_NAVIGATION_KEY);
 
   function navigate(href: Route) {
-    const resume = () =>
-      startTransition(() => {
-        if (appearanceDirection) addTransitionType(appearanceDirection);
-        router.push(href);
-      });
+    const resume = () => router.push(href);
     if (requestNavigation(href, resume)) resume();
   }
 

@@ -292,43 +292,9 @@ export function isWorkspaceNavigationGroupActive(
   return group.href.split("?")[0] === pathname;
 }
 
-export type NavigationTransitionType = "nav-down" | "nav-up";
-
-/**
- * The direction of a sidebar move, for the page handoff animation: moving
- * to an item lower in the sidebar is "nav-down", higher is "nav-up". Order
- * keys are `group:item`. Null when there is no move to show.
- */
-export function navigationTransitionType(
-  order: readonly string[],
-  from: string | null,
-  to: string,
-): NavigationTransitionType | null {
-  if (from === null || from === to) return null;
-  const fromIndex = order.indexOf(from);
-  const toIndex = order.indexOf(to);
-  if (fromIndex < 0 || toIndex < 0) return null;
-  return toIndex > fromIndex ? "nav-down" : "nav-up";
-}
-
 /** OpenComms and Appearance sit below the sidebar groups. */
-export const COMMS_NAVIGATION_KEY = "comms";
-export const APPEARANCE_NAVIGATION_KEY = "appearance";
-
-/**
- * Every place the sidebar can take you, top to bottom, as `group:item` keys
- * followed by OpenComms and Appearance. Page handoffs read their direction
- * from this order.
- */
-export function navigationOrder(): string[] {
-  return [
-    ...workspaceNavigationDefinitions.flatMap((definition) =>
-      definition.items.map((item) => `${definition.id}:${item.id}`),
-    ),
-    COMMS_NAVIGATION_KEY,
-    APPEARANCE_NAVIGATION_KEY,
-  ];
-}
+const COMMS_NAVIGATION_KEY = "comms";
+const APPEARANCE_NAVIGATION_KEY = "appearance";
 
 /** The navigation key of the place a URL shows, or null outside the sidebar. */
 export function currentNavigationKey(
@@ -344,12 +310,4 @@ export function currentNavigationKey(
   );
   if (!definition) return null;
   return `${definition.id}:${sectionFor(definition, searchParams, hash)}`;
-}
-
-/** The key a workspace's own link opens: its first (default) section. */
-export function workspaceDefaultNavigationKey(href: string): string | null {
-  const definition = workspaceNavigationDefinitions.find(
-    (candidate) => candidate.pathname === href.split("?")[0],
-  );
-  return definition ? `${definition.id}:${definition.defaultItem}` : null;
 }

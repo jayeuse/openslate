@@ -5,8 +5,6 @@ import {
   getWorkspaceNavigation,
   isWorkspaceNavigationItemActive,
   currentNavigationKey,
-  navigationOrder,
-  navigationTransitionType,
 } from "../../src/components/workspace-navigation";
 
 function item(
@@ -326,30 +324,6 @@ test("every workspace describes what it holds in one short line", () => {
   ]);
 });
 
-test("navigation moves the page up or down by sidebar order", () => {
-  const order = ["sandbox:build", "sandbox:test", "access:overview"];
-  expect(
-    navigationTransitionType(order, "sandbox:build", "access:overview"),
-  ).toBe("nav-down");
-  expect(
-    navigationTransitionType(order, "access:overview", "sandbox:test"),
-  ).toBe("nav-up");
-  // Reselecting the current item, or leaving an unknown place, does not move.
-  expect(
-    navigationTransitionType(order, "sandbox:test", "sandbox:test"),
-  ).toBeNull();
-  expect(navigationTransitionType(order, null, "sandbox:test")).toBeNull();
-});
-
-test("OpenComms and Appearance sit below the sidebar groups in navigation order", () => {
-  const order = navigationOrder();
-  const at = (key: string) => order.indexOf(key);
-  expect(at("sandbox:build")).toBe(0);
-  expect(at("openview:views")).toBeGreaterThan(at("access:overview"));
-  expect(at("comms")).toBe(order.length - 2);
-  expect(at("appearance")).toBe(order.length - 1);
-});
-
 test("the current navigation key follows the route and its section", () => {
   const key = (path: string, search = "") =>
     currentNavigationKey(path, new URLSearchParams(search));
@@ -358,13 +332,4 @@ test("the current navigation key follows the route and its section", () => {
   expect(key("/comms")).toBe("comms");
   expect(key("/settings/appearance")).toBe("appearance");
   expect(key("/login")).toBeNull();
-  // The Workspace crumb (OpenView Views) is below Access, so going there
-  // from Access moves down, not up.
-  expect(
-    navigationTransitionType(
-      navigationOrder(),
-      key("/access", "view=permissions"),
-      "openview:views",
-    ),
-  ).toBe("nav-down");
 });

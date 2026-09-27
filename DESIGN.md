@@ -508,42 +508,45 @@ Wrong: `[data-theme="whiteboard"] [data-skin="page"] { background: url(board-pho
 
 ## Motion
 
-Motion explains navigation and state; it never decorates. It is timed by tokens that each look sets, so a look changes how things move without changing what moves.
+Motion answers what a person did; it never decorates and never makes them wait. Pages swap at once. Motion is timed by tokens that each look sets, so a look changes how things move without changing what moves.
 
 ### Tokens
 
-`--motion-fast` (feedback and exits), `--motion-base` (routine state and navigation), `--motion-slow` (layout and arrival signatures), with `--ease-out` (arrivals), `--ease-in` (exits), and `--ease-in-out` (even strokes). `--nav-travel-x` and `--nav-travel-y` set how far page content travels on a sidebar move.
+`--motion-fast` (feedback and exits), `--motion-base` (routine state), `--motion-slow` (layout and authored moments), with `--ease-out` (arrivals), `--ease-in` (exits), and `--ease-in-out` (even strokes).
 
-| Look       | fast / base / slow | Page handoff                                     | Signature                                                                |
-| ---------- | ------------------ | ------------------------------------------------ | ------------------------------------------------------------------------ |
-| Slate      | 140 / 220 / 360ms  | 10px vertical                                    | the active sidebar item and tab mark glide                               |
-| Whiteboard | 110 / 180 / 320ms  | 8px vertical                                     | on a sidebar move, the page-title marker underline draws from the left   |
-| Triplicate | 120 / 200 / 340ms  | 16px vertical, like the next sheet of a form pad | on a sidebar move, the page-title rule is written in one even stroke     |
-| Stockroom  | 160 / 260 / 420ms  | 24px sideways, like a drawer                     | on a sidebar move, the stencilled page title is sprayed on from the left |
+| Look       | fast / base / slow | Signature (after a successful Publish)                |
+| ---------- | ------------------ | ----------------------------------------------------- |
+| Slate      | 140 / 220 / 360ms  | none; the active sidebar item and tab mark glide      |
+| Whiteboard | 110 / 180 / 320ms  | the page-title marker underline draws from the left   |
+| Triplicate | 120 / 200 / 340ms  | the page-title rule is written in one even stroke     |
+| Stockroom  | 160 / 260 / 420ms  | the stencilled page title is sprayed on from the left |
 
 ### Navigation
 
-- **Page handoff.** Links that move you through the sidebar carry a direction from one order, top to bottom: the sidebar sections, then OpenComms, then Appearance (`navigationOrder`, `currentNavigationKey`, `navigationTransitionType`). Moving down is `nav-down` and up is `nav-up`. Sidebar items, OpenComms, Appearance, and both breadcrumbs use it, so a crumb animates toward where it actually leads. A React `ViewTransition` around the page body in the app shell animates only those navigations: the old page leaves in `--motion-fast`, then the new one arrives over `--motion-base` from the direction of travel; they never overlap, so text never doubles up. Each look's signature plays as the new page arrives, only during a sidebar handoff (`:active-view-transition-type(nav-down, nav-up)`), never on first load, and never under reduced motion. The body's group does not morph (`::view-transition-group(.nav-*)` has no animation), so a handoff after a scroll never swings the page across the screen. The sidebar, top bar, and page ground stay still (`::view-transition-*(root)` does not animate), data refreshes and in-page updates do not start a view transition at all, and clicks pass through while one runs.
-- **Active item.** The active section's fill is one element under the list (`data-slot="sidebar-active-indicator"`) that moves to the active link over `--motion-base` and follows groups as they open and close. It is part of the live page, not a view-transition layer, so it stays under the labels and inside the sidebar's scroll clipping, and it shows during a handoff because the new page is drawn live. It glides only when the place changes; when groups open or close around it, it moves with its label frame by frame, and a closing group clips it like it clips the label.
+- **Instant swap.** A sidebar move, crumb, or link replaces the page body at once, with no view transition. A view transition makes the page body ignore clicks while it runs and makes React hold the next navigation, so rapid moves felt stuck (measured: 380–514ms per move with the old handoff, 25–27ms without).
+- **Active item.** The active section's fill is one element under the list (`data-slot="sidebar-active-indicator"`) that moves to the active link over `--motion-base` and follows groups as they open and close. It stays under the labels and inside the sidebar's scroll clipping.
 - **Groups and panels.** Sidebar groups open and close by height over `--motion-base`, with the chevron turning; the sidebar collapses over `--motion-base`; the phone menu sheet enters over `--motion-slow` and leaves over `--motion-base`.
+- **Signatures.** Each look's title signature plays once when Publish succeeds (`data-signature="play"` on the Sandbox page title), never on load or navigation.
 
 ### Named Rules
 
-**The Still Shell Rule.** Navigation moves the page body, never the frame around it. The sidebar, top bar, and page ground are the fixed reference that tells a person only the content changed.
+**The Still Shell Rule.** Navigation changes the page body, never the frame around it. The sidebar, top bar, and page ground are the fixed reference that tells a person only the content changed.
 
-Correct: `::view-transition-old(root), ::view-transition-new(root) { animation: none; }` with the page body in its own `ViewTransition`.
+**The No Choreography Rule.** Never animate a navigation. Motion belongs to the element a person acted on or to the state that changed, and it never blocks the next click.
 
-Wrong: letting the browser's default root cross-fade run, so the whole window, sidebar included, dissolves on every click.
+Correct: the sidebar fill glides to the clicked item while the new page body is already in place.
+
+Wrong: wrapping the page body in a `ViewTransition` so every sidebar click slides the page.
 
 ### Reduce motion setting
 
 Appearance has a **Reduce motion** switch (per person, per browser, stored as `openslate-motion`). On, it sets `data-motion="reduced"` on `<html>` before first paint (`public/theme-init.js`), and every reduced-motion rule answers to that attribute as well as to the device's `prefers-reduced-motion`: the Tailwind `motion-reduce:` variant is redefined in `globals.css` to cover both, and each hand-written reduced rule has a `[data-motion="reduced"]` twin. Off, OpenSlate follows the device setting; when the device already asks for reduced motion, the page says so.
 
-**The Travel Not Meaning Rule.** Reduced motion removes travel (`--nav-travel-*` become 0, glides and arrival signatures stop) but keeps the fades and color changes that say something changed.
+**The Signal Not Travel Rule.** Reduced motion stops glides, height changes, and signatures, but keeps the color and state changes that say something changed.
 
-Correct: under `prefers-reduced-motion`, the page body still cross-fades on a sidebar move.
+Correct: under reduced motion, the sidebar fill jumps to the new item.
 
-Wrong: `animation: none` on every view transition, so a sidebar move gives no sign that the page changed.
+Wrong: hiding the active fill under reduced motion, so a move gives no sign of where you are.
 
 ## Components
 
