@@ -1,33 +1,33 @@
 # Data Architecture
 
-> **Scope:** Application-owned PostgreSQL schema, private file bytes, and schema delivery.
+> **Scope:** OpenSlate's application schema in self-hosted Supabase PostgreSQL, provider-schema ownership, private file bytes, and schema delivery.
 
-PostgreSQL is the sole relational datastore. FastAPI owns application data access; Alembic owns schema changes. The current vanilla PostgreSQL baseline is a new root revision for disposable development data and seeds the required `admin` and `member` roles.
+Supabase Database is PostgreSQL and the sole relational datastore. Supabase initializes and owns provider schemas; OpenSlate uses the `public` schema for application tables. FastAPI owns application data access, and Alembic owns application schema changes only. The active Alembic lineage starts at the fresh-install root [`c4ec36fc30cc`](../../backend/migrations/versions/c4ec36fc30cc_self_hosted_supabase_application_.py), which requires that no existing `public` relations be owned by `openslate_owner` except `alembic_version`. Earlier vanilla PostgreSQL revisions remain archived under [`backend/migrations/history/vanilla_postgresql`](../../backend/migrations/history/vanilla_postgresql/); the current lineage does not import an existing installation.
 
 ## Ownership and roles
 
-`openslate_owner` owns the database objects and runs migrations through `MIGRATION_DATABASE_URL`. `openslate_runtime` is the constrained login used through `DATABASE_URL`; provisioning is a separate bootstrap operation. `DATABASE_BOOTSTRAP_URL` is restricted to provisioning and never belongs in FastAPI settings, browser configuration, logs, or backups.
+`openslate_owner` owns OpenSlate application objects and runs migrations through `MIGRATION_DATABASE_URL`. `openslate_runtime` is the constrained login used through `DATABASE_URL`; `openslate_app` supplies its application privileges. An operator uses the provider's `supabase_admin` account through `DATABASE_BOOTSTRAP_URL` only for guarded role and privilege provisioning. Keep that bootstrap connection out of the API, worker, frontend, and normal runtime configuration. Supabase retains ownership of the database and its provider schemas; OpenSlate does not transfer them to its application owner.
 
-The application uses ordinary PostgreSQL ownership and grants. There are no managed schemas, row-level policies, or external identity foreign keys. FastAPI remains the domain authorization boundary.
+Application tables use ordinary PostgreSQL ownership and grants. OpenSlate does not use provider RLS to reproduce application role, group, or domain policy. The one provider-table exception supports immediate Auth-session liveness: `openslate_app` receives `USAGE` on `auth` and `SELECT` only on `auth.sessions.id` and `auth.sessions.user_id`, constrained by the operator-owned `openslate_session_liveness` SELECT policy. It has no Auth table-wide read or mutation grant. Supabase Data API routes for OpenSlate application tables are blocked. Alembic reflection is limited to application-owned `public` objects by [`application_migration_scope`](../../backend/app/core/database/migration_scope.py), leaving provider objects outside its schema authority.
 
 ## Identity and files
 
-`users` is application-owned. Identity models add credentials, sessions, action tokens, and rate-limit buckets. Session and action-token state makes revocation, one-time links, refresh rotation, and password recovery enforceable in PostgreSQL.
+`users` is application-owned and retains the OpenSlate UUID used by application relationships and audit actors. Its nullable unique `supabase_user_id` explicitly binds an eligible local profile to a Supabase Auth subject; it is not a foreign key into the provider-owned `auth` schema. Application `identity_sessions` retain local expiry, CSRF digest, immediate revocation, and provider user/session IDs. Each session stores the digest of an opaque refresh handle and the encrypted current provider access/refresh token pair. OpenSlate rate-limit buckets remain application data. Password hashes, provider email-action tokens, and provider Auth users belong to Supabase Auth rather than an OpenSlate password/action-token table.
 
 Identity bucket cleanup selects at most 100 expired windows in timestamp order
 under row locks. The `window_started_at` B-tree supports that cutoff and order;
 the fingerprint primary key continues to serve per-budget lookups. Revision
-[`38f146d6f952`](../../backend/migrations/versions/38f146d6f952_index_identity_rate_limit_cleanup_window.py)
-adds only this index, preserving retention, admission and locking behavior.
+[`38f146d6f952`](../../backend/migrations/history/vanilla_postgresql/38f146d6f952_index_identity_rate_limit_cleanup_window.py)
+is part of the archived vanilla PostgreSQL history; the fresh-install Supabase lineage includes the current model state directly.
 Inserts and window resets maintain the additional index. Its ordinary
 transactional build blocks writes to the bucket table while it runs, so plan
 migration timing for the installation's table size and availability needs; a
 local build duration is not a production downtime guarantee. See PostgreSQL's
 [index build behavior](https://www.postgresql.org/docs/17/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY).
 
-`files` stores metadata, object keys, scan state, and nullable `enc_version`. Private bytes are written under a server-only `FILES_STORAGE_ROOT`: quarantine before scanning and immutable ready objects after promotion. A file row alone never grants byte access.
+`files` stores application metadata, immutable object keys, scan state, and nullable `enc_version`. File bytes are stored in the private Supabase Storage `openslate-quarantine` and `openslate-ready` buckets, accessed through the server-only Storage API adapter. FastAPI authorizes upload, download, and deletion; the OpenSlate worker scans quarantined bytes with ClamAV before promotion and makes a clean verdict durable before download is allowed. A file row or guessed object key alone never grants byte access. There is no selectable local-filesystem storage adapter.
 
-OpenView persists owner-private Dashboards and widget configurations in [`dashboards` and `dashboard_widgets`](../../backend/app/systems/openview/dashboards/models.py), with a bounded refresh cadence on each Dashboard. [`openview_chart_preferences`](../../backend/app/systems/openview/charts/models.py) stores one versioned Chart configuration per user. These rows contain settings rather than materialized Record results; each data view queries authorized Records when rendered. The forward revisions [`7d08f4310c7b`](../../backend/migrations/versions/7d08f4310c7b_add_chart_preferences_and_dashboard_.py) and [`a1a581d48771`](../../backend/migrations/versions/a1a581d48771_complete_chart_preference_audit_foreign_.py) add the preference table, Dashboard checks, and audit foreign key.
+OpenView persists owner-private Dashboards and widget configurations in [`dashboards` and `dashboard_widgets`](../../backend/app/systems/openview/dashboards/models.py), with a bounded refresh cadence on each Dashboard. [`openview_chart_preferences`](../../backend/app/systems/openview/charts/models.py) stores one versioned Chart configuration per user. These rows contain settings rather than materialized Record results; each data view queries authorized Records when rendered. The historical revisions [`7d08f4310c7b`](../../backend/migrations/history/vanilla_postgresql/7d08f4310c7b_add_chart_preferences_and_dashboard_.py) and [`a1a581d48771`](../../backend/migrations/history/vanilla_postgresql/a1a581d48771_complete_chart_preference_audit_foreign_.py) describe the earlier vanilla PostgreSQL evolution. The fresh-install Supabase baseline already includes the current preference table, Dashboard checks, and audit foreign key.
 
 ## Record reads and projections
 
@@ -67,7 +67,7 @@ for dynamic fields still requires workload-specific query-plan evidence.
 
 1. Change the registered SQLAlchemy model.
 2. Generate and review an Alembic revision from `backend/`.
-3. Apply `uv run alembic upgrade head` with the owner connection.
-4. Run `uv run alembic check` and the disposable PostgreSQL integration path.
+3. Apply `uv run alembic upgrade head` against the admitted Supabase installation with `MIGRATION_DATABASE_URL` as `openslate_owner`.
+4. Run `uv run alembic check`; reflection covers application-owned objects and excludes Supabase provider schemas.
 
-Do not edit an applied baseline or use SQLite as a substitute. Current development data is disposable; no importer is provided for earlier deployments.
+Do not edit an applied baseline or use SQLite as a substitute. The new lineage is for fresh installations. No importer is provided for earlier vanilla PostgreSQL application data, Auth accounts, or local filesystem files.

@@ -16,11 +16,24 @@ Authenticated routes live under `src/app/(app)/`; `AppPage` owns the one browser
 
 `apiFetch()` calls the same-origin `/api` path. In daily development, Next's
 proxy forwards that path to FastAPI; production Caddy forwards the production
-origin to FastAPI. FastAPI issues and refreshes HttpOnly `openslate_access` and
-`openslate_refresh` cookies. Browser mutations include the CSRF token, and the
-client coordinates refresh attempts across tabs.
+origin to FastAPI. Supabase Auth supplies the access JWT; FastAPI stores it in
+the HttpOnly `openslate_access` cookie. The HttpOnly `openslate_refresh` cookie
+contains an opaque application refresh handle, not the provider refresh token.
+Production sets the `Secure` attribute; relaxed local HTTP development omits it.
+FastAPI stores the handle's digest and the encrypted provider token pair in its
+application session row. Browser mutations include the CSRF token, and the
+client coordinates refresh attempts across tabs through [`refreshBrowserSession`](../../frontend/src/lib/api.ts).
 
-Login accepts email or username. Invitation tokens are consumed by the FastAPI setup flow; temporary-password users are kept in setup-only state until activation succeeds. Logout reports server failure rather than silently discarding browser state.
+[`signIn`](../../frontend/src/lib/auth-api.ts) sends email and password;
+usernames are profile labels. Supabase Auth handles authentication and
+invitation/recovery email, while FastAPI binds the provider subject to an
+eligible application profile and enforces authorization. The [invitation
+setup](../../frontend/src/app/auth/setup/page.tsx) and [recovery
+page](../../frontend/src/app/auth/recovery/page.tsx) submit the provider's
+one-time email-action token to FastAPI only after the user takes the
+corresponding form action. Logout reports server failure rather than silently
+discarding browser state. See [authentication and authorization](08-authentication-authorization.md)
+for session admission and account eligibility.
 
 Some workspace surfaces remain browser-local sample state. Sandbox is an
 exception: its Build, Automations, Test, History, and Review & Publish workflow

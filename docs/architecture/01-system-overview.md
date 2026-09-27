@@ -1,43 +1,44 @@
 # System Overview
 
-> **Scope:** OpenSlate's production-server contract, ownership boundaries, and implementation status.
+> **Scope:** OpenSlate's self-hosted server contract, ownership boundaries, and implementation status.
 
-OpenSlate is a self-hosted web application for configurable business operations. Its production server is FastAPI behind one same-origin Caddy gateway. The browser UI is a statically exported Next.js application served by FastAPI; Node.js and Next.js are build and local-development tools, not production services. FastAPI owns identity, authorization, application data, files, audit capture, static UI delivery, and server-sent invalidation events.
+OpenSlate is a self-hosted web application installed separately for each client. The selected deployment topology is Docker Compose with Linux containers on Linux servers or Windows through Docker Desktop and WSL2. The checked-in Supabase Compose stack supplies PostgreSQL, Auth, Storage, and Studio. FastAPI remains the application API and authorization authority. It serves a statically exported Next.js frontend, uses SQLAlchemy for application data, and mediates private file access. The production Compose overlay adds Caddy, ClamAV, and the file-scanning worker. Production and Windows runtime acceptance remain pending.
 
-## Production runtime contract
+## Server runtime contract
 
 | Concern | Owner |
 | --- | --- |
 | Browser UI | Static Next.js export and React, delivered by FastAPI |
-| HTTPS gateway | Caddy, with one production FastAPI upstream |
+| HTTPS ingress | Caddy in the production Compose overlay, with one FastAPI application upstream |
 | Browser routes, assets, and 404s | FastAPI static-site delivery |
-| Business API, authorization, and SSE | FastAPI with synchronous SQLAlchemy |
-| Schema and durable state | Vanilla PostgreSQL and Alembic |
-| Identity | FastAPI Identity tables: credentials, sessions, action tokens, and rate-limit buckets |
-| Files | PostgreSQL metadata plus private local filesystem bytes |
-| Invalidation | Authenticated SSE backed by PostgreSQL `LISTEN`/`NOTIFY` |
+| Business API and application authorization | FastAPI with synchronous SQLAlchemy and OpenSlate roles, groups, permissions, and domain policies |
+| Relational database | Supabase Database (PostgreSQL), with separate Supabase-owned and OpenSlate-owned schemas |
+| Application schema | Alembic using the owner connection; the active fresh-install root is `c4ec36fc30cc` |
+| Authentication | Supabase Auth verifies email/password and issues provider sessions and JWTs |
+| Application identity and sessions | FastAPI maps provider subjects to local users and keeps revocable `identity_sessions` |
+| Files | PostgreSQL file metadata; private Supabase Storage `openslate-quarantine` and `openslate-ready` objects, mediated by FastAPI |
+| Malware scanning | OpenSlate worker and ClamAV before ready-file access |
+| Invalidation | Authenticated SSE using PostgreSQL `LISTEN`/`NOTIFY`; Supabase Realtime integration is future work |
+| Operator database UI | Supabase Studio, loopback-bound behind gateway Basic Auth |
 
-The browser never writes application rows directly. FastAPI uses the runtime PostgreSQL role; Alembic uses the owner connection. Application mutations use `AuditSession` and produce transactional, redacted audit rows.
+The browser does not write application rows or read private objects directly. FastAPI verifies provider JWTs against the configured issuer and JWKS, confirms provider subject/session liveness, resolves an explicitly bound OpenSlate user, and checks the application's session and current authorization state. The backend never derives application roles from provider metadata. Normal application mutations use `AuditSession`; Alembic and provider-managed Auth/Storage operations remain outside that application ORM audit boundary.
+
+The application runtime role has normal application-table privileges needed by FastAPI. Its provider-schema exception is deliberately narrow: an operator provisions `openslate_app` for read-only access to `auth.sessions.id` and `auth.sessions.user_id` through the `openslate_session_liveness` SELECT policy. It has no Auth mutation access. OpenSlate does not duplicate its roles, groups, or domain authorization model in PostgreSQL row policies. Provider APIs for Auth and Storage use server-only credentials, and provider Data API routes for application tables are blocked.
 
 ## Development boundary
 
-Daily development retains `next dev` for hot reload and uses it as the direct
-browser origin. Its development-only `/api` proxy forwards API and SSE traffic
-to loopback FastAPI. Caddy, TLS, and the disabled `gateway` profile are excluded
-from that path. Caddy remains installed and configured for an operator-started
-production preview and production-level acceptance; this does not introduce a
-Next.js production runtime or a browser-facing second service in a packaged
-deployment.
+The pinned self-hosted provider stack is also the Compose-based development and test database/Auth/Storage environment. Its development overlay publishes the database and provider gateway on loopback and adds Mailpit; host-run FastAPI and `next dev` can remain the daily application workflow. Installation-specific environment, project names, ports, and volumes keep each instance isolated.
+
+Production uses `infra/supabase/compose.production.yaml` to add the unified FastAPI/static-UI image, scanner worker, ClamAV, and Caddy. The database is not published to the host; Studio's provider gateway remains loopback-only. This Compose path is documented and implemented in configuration, while production TLS, complete operator acceptance, Windows startup/restart, and restore on Windows remain unverified release work. No Node.js or Next.js process runs as a production application service.
 
 ## Status boundaries
 
-- Vanilla PostgreSQL, FastAPI Identity, private filesystem storage, Caddy configuration, and authenticated SSE are implemented application contracts.
-- The FastAPI-only production-server cutover is the selected deployment contract: one FastAPI payload includes the static frontend assets and contains no Node.js frontend process, image, listener, or runtime configuration.
-- Sandbox design documents, history, temporary test evidence, publication, and
-  supported published automations are durable FastAPI/PostgreSQL contracts.
-  Other UI-first workspace surfaces may still use browser-local sample state;
-  do not present those interactions as persisted behavior.
-- SMTP delivery is optional and disabled by default. When enabled, FastAPI queues encrypted invitation and recovery payloads in PostgreSQL, then a bounded worker delivers them through the configured SMTP transport.
-- Signed Windows/macOS server-app installers, automated setup, bundled database lifecycle, and tested backup/restore remain unverified until clean-host acceptance proves them.
+- The repository contains a per-installation self-hosted Supabase Compose stack for PostgreSQL, Auth, Storage, and Studio, plus OpenSlate's PostgreSQL, Auth, and Storage adapters.
+- Supabase Auth owns password verification, provider tokens, invitations, and password-recovery email actions. FastAPI owns application identity binding, sessions, authorization, and session revocation.
+- Private Supabase Storage buckets and the FastAPI/ClamAV scan path replace the former local-filesystem file adapter. File authorization stays in OpenSlate.
+- Alembic owns only OpenSlate's application schema. Earlier vanilla PostgreSQL revisions are retained as history; the new lineage is for fresh installations and does not import an existing database.
+- The OpenSlate event endpoint remains authenticated SSE over PostgreSQL notifications. Supabase Realtime is not part of the current application contract.
+- The selected server target is Linux and Windows with Linux containers. Windows acceptance remains pending; macOS is a workstation platform, not a server target.
+- `/api/ready` reports Database, Auth, Storage, SMTP configuration, and scanner states. Production requires scanner engine health and worker leadership; development/test treats the scanner as optional. These probes do not establish mail delivery, backup integrity, or complete deployment acceptance.
 
-See [system context](02-system-context.md), [data architecture](06-data-architecture.md), and [deployment architecture](12-deployment-architecture.md).
+See [system context](02-system-context.md), [data architecture](06-data-architecture.md), [authentication and authorization](08-authentication-authorization.md), and [deployment architecture](12-deployment-architecture.md).
