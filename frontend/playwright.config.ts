@@ -96,6 +96,7 @@ export default defineConfig({
         }))
       : []),
   ],
+  globalSetup: testLayer === "isolated" ? undefined : "./tests/warm-routes.ts",
   webServer:
     testLayer === "isolated"
       ? undefined
