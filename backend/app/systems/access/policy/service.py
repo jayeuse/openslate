@@ -150,7 +150,7 @@ def _active_users(db: Session, user_ids: tuple[UUID, ...]) -> set[UUID]:
     return {row.id for row in rows}
 
 
-def _existing_pending_users(db: Session, user_ids: set[UUID]) -> set[UUID]:
+def _pending_users(db: Session, user_ids: set[UUID]) -> set[UUID]:
     if not user_ids:
         return set()
     rows = db.scalars(
@@ -184,8 +184,8 @@ def replace_group_members(
     desired = _unique_ids(member_ids)
     existing_ids = {item.user_id for item in existing}
     inactive_ids = set(desired) - _active_users(db, desired)
-    if inactive_ids != _existing_pending_users(db, inactive_ids & existing_ids):
-        raise conflict("Members must be active, unexpired users")
+    if inactive_ids != _pending_users(db, inactive_ids):
+        raise conflict("Members must be active or pending, unexpired users")
     added_ids = set(desired) - existing_ids
     if added_ids and db.scalar(
         select(func.count())
@@ -238,8 +238,6 @@ def update_group(
     require_match(if_match, group_etag(row))
     try:
         changed = False
-        if "member_ids" in payload.model_fields_set:
-            changed = replace_group_members(db, row, payload.member_ids or [], actor_id)
         if "name" in payload.model_fields_set and payload.name != row.name:
             assert payload.name is not None
             row.name = payload.name
@@ -278,7 +276,7 @@ def delete_group(db: Session, group_id: UUID, if_match: str | None, actor_id: UU
         raise conflict("Group is already deleted")
     require_match(if_match, group_etag(row))
     ensure_group_deletable(db, row)
-    for grant in _locked_access(db, row.id):
+    for grant in locked_access(db, row.id):
         db.delete(grant)
     row.is_deleted = True
     row.deleted_at = utc_now()
@@ -287,7 +285,7 @@ def delete_group(db: Session, group_id: UUID, if_match: str | None, actor_id: UU
     commit(db, "Unable to delete group")
 
 
-def _locked_access(db: Session, group_id: UUID) -> list[GroupAccess]:
+def locked_access(db: Session, group_id: UUID) -> list[GroupAccess]:
     return list(
         db.scalars(
             select(GroupAccess)
@@ -375,7 +373,7 @@ def replace_group_access(
         require_match(if_match, group_etag(row))
         _validate_access_targets(db, entries)
         existing = {
-            (item.department_id, item.module_id): item for item in _locked_access(db, row.id)
+            (item.department_id, item.module_id): item for item in locked_access(db, row.id)
         }
         desired = {(entry.department_id, entry.module_id): entry.level.value for entry in entries}
         changed = False

@@ -2,13 +2,14 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.common.listing import StandardListRequest
+from app.common.listing import DeletedFilter, StandardListRequest
 from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import UserRole, UserStatus
 
 
 class GroupSortField(StrEnum):
@@ -45,14 +46,21 @@ class GroupCreate(_StrictModel):
 
 
 class GroupUpdate(_StrictModel):
+    """Name and description only; members change through ``PUT .../members``."""
+
     name: str = Field(default=None, min_length=1, max_length=200)  # type: ignore[assignment]
     description: str = Field(default=None, max_length=2000)  # type: ignore[assignment]
-    member_ids: list[UUID] = Field(default=None, max_length=100)  # type: ignore[arg-type]
 
     @field_validator("name", "description", mode="before")
     @classmethod
     def trim_text(cls, value: Any) -> Any:
         return value.strip() if isinstance(value, str) else value
+
+
+class GroupMembersReplace(_StrictModel):
+    """The complete new member list of one group."""
+
+    member_ids: list[UUID] = Field(max_length=100)
 
 
 class GroupResponse(BaseModel):
@@ -71,3 +79,28 @@ class GroupResponse(BaseModel):
 
 class GroupListRequest(StandardListRequest[GroupSortField]):
     pass
+
+
+class MemberCandidateSortField(StrEnum):
+    USERNAME = "username"
+    EMAIL = "email"
+    DISPLAY_NAME = "display_name"
+
+
+class MemberCandidateListRequest(StandardListRequest[MemberCandidateSortField]):
+    """Deleted accounts are never candidates."""
+
+    deleted: Literal[DeletedFilter.EXCLUDE] = DeletedFilter.EXCLUDE
+
+
+class MemberCandidateResponse(BaseModel):
+    """The minimum a manager needs to choose a group member."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    display_name: str | None
+    username: str
+    email: str
+    role: UserRole
+    status: UserStatus

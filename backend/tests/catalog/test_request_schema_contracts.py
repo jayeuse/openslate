@@ -8,7 +8,12 @@ from uuid6 import uuid7
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.main import create_app
-from app.systems.access.policy.schemas import GroupAccessReplace, GroupCreate
+from app.systems.access.policy.schemas import (
+    GroupAccessReplace,
+    GroupCreate,
+    GroupMembersReplace,
+    GroupUpdate,
+)
 from app.systems.access.users.schemas import (
     InvitationCreate,
     UserCreate,
@@ -40,6 +45,8 @@ REQUEST_SCHEMAS: list[tuple[type[BaseModel], dict[str, Any]]] = [
     (RecordUpdate, {"data": {"dynamic-field": "value"}}),
     (GroupCreate, {"name": "Inventory"}),
     (GroupAccessReplace, {"access": []}),
+    (GroupMembersReplace, {"member_ids": []}),
+    (GroupUpdate, {"name": "Inventory"}),
     (UserCreate, {"email": "member@example.com", "username": "member"}),
     (UserUpdate, {"username": "member"}),
 ]
@@ -63,6 +70,7 @@ def test_write_schemas_accept_declared_inputs_and_reject_unknown_top_level_field
         ("patch", f"/api/records/{uuid7()}", {"data": {"dynamic": "value"}}),
         ("post", "/api/access/groups", {"name": "Inventory"}),
         ("put", f"/api/access/groups/{uuid7()}/access", {"access": []}),
+        ("put", f"/api/access/groups/{uuid7()}/members", {"member_ids": []}),
         ("post", "/api/users", {"email": "member@example.com", "username": "member"}),
         ("patch", f"/api/users/{uuid7()}", {"username": "member"}),
     ],

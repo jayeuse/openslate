@@ -9,6 +9,9 @@ Rules, in order:
 4. The highest level across all groups wins. Groups only add access.
 5. A guest is limited to ``read``.
 6. With no matching row, the user has no access.
+7. ``manage`` on a department (a department row) also lets the user change the
+   members of a group whose live rows all fall inside departments they manage.
+   A group with no live rows is administrator-only.
 
 Every read path takes its filter from :func:`allowed_module_ids` or
 :func:`level_for`, so one rule decides who sees which records.
@@ -86,6 +89,29 @@ class EffectiveAccess:
         if self.unrestricted:
             return None
         return frozenset(self.departments) | frozenset(self.module_departments.values())
+
+    def managed_department_ids(self) -> frozenset[UUID] | None:
+        """Departments where a department row gives ``manage``. None means every department."""
+
+        if self.unrestricted:
+            return None
+        return frozenset(
+            department_id
+            for department_id, level in self.departments.items()
+            if level == AccessLevel.MANAGE
+        )
+
+    def manages_all(self, department_ids: frozenset[UUID]) -> bool:
+        """True when the user manages every department of a non-empty set.
+
+        This decides who may change a group's members: pass the group's reach
+        from :func:`group_reach`. An administrator manages every group.
+        """
+
+        managed = self.managed_department_ids()
+        if managed is None:
+            return True
+        return bool(department_ids) and department_ids <= managed
 
     def entries(self) -> list[tuple[UUID, UUID | None, AccessLevel]]:
         """Compact levels for a client: department rows, then modules that differ.
@@ -203,6 +229,38 @@ def level_for(
     if not access.unrestricted and access.module_departments.get(module_id) != department_id:
         return None
     return access.module_level(module_id)
+
+
+def group_reach(db: Session, group_id: UUID) -> frozenset[UUID]:
+    """Departments that the group's live access rows reach.
+
+    A module row carries its own department, so it counts as that department.
+    """
+
+    return frozenset(
+        db.scalars(
+            select(GroupAccess.department_id).where(
+                GroupAccess.group_id == group_id, GroupAccess.is_deleted.is_(False)
+            )
+        ).all()
+    )
+
+
+def manageable_group_clause(access: EffectiveAccess) -> ColumnElement[bool]:
+    """SQL form of :meth:`EffectiveAccess.manages_all` over each ``groups`` row."""
+
+    managed = access.managed_department_ids()
+    if managed is None:
+        return true()
+    if not managed:
+        return false()
+    live = and_(GroupAccess.group_id == Group.id, GroupAccess.is_deleted.is_(False))
+    return and_(
+        exists(select(GroupAccess.id).where(live)),
+        ~exists(
+            select(GroupAccess.id).where(live, GroupAccess.department_id.not_in(sorted(managed)))
+        ),
+    )
 
 
 def _active_account_clause(now: datetime | None) -> ColumnElement[bool]:

@@ -177,7 +177,7 @@ def test_group_metadata_update_changes_revision_once_and_no_op_keeps_it(
     assert db.commit.call_count == 2
 
 
-def test_group_update_rejects_deleted_rows_and_rolls_back_member_conflicts(
+def test_group_update_rejects_deleted_rows_and_rolls_back_name_conflicts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     deleted = _group(deleted=True)
@@ -191,21 +191,18 @@ def test_group_update_rejects_deleted_rows_and_rolls_back_member_conflicts(
 
     active = _group()
     monkeypatch.setattr(policy_service, "lock_group", lambda *_args: active)
-    monkeypatch.setattr(
-        policy_service,
-        "replace_group_members",
-        lambda *_args: (_ for _ in ()).throw(policy_service.conflict("member unavailable")),
-    )
+    db.commit.side_effect = IntegrityError("update", {}, RuntimeError("duplicate"))
     with pytest.raises(HTTPException) as conflict:
         policy_service.update_group(
             db,
             active.id,
-            schemas.GroupUpdate(member_ids=[uuid7()]),
+            schemas.GroupUpdate(name="Taken"),
             policy_service.group_etag(active),
             uuid7(),
         )
     assert conflict.value.status_code == 409
-    assert db.rollback.call_count == 1
+    assert conflict.value.detail == "Group name unavailable"
+    assert db.rollback.called
 
 
 def test_group_deletion_blocks_members_and_soft_deletes_an_empty_group(

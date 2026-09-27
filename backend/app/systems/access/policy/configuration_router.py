@@ -1,26 +1,41 @@
-"""Administrator routes for Access groups, their members and their access."""
+"""Routes for Access groups, their members and their access.
+
+Administrators manage every group. A manager of every department that a group
+reaches may read that group and replace its members (see ``scope.manages_all``).
+"""
 
 from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_admin, require_fresh_exact_admin
+from app.common.dependencies import get_current_user, require_admin, require_fresh_exact_admin
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
+from app.systems.access.policy.checks import forbidden
+from app.systems.access.policy.delegation import replace_members
 from app.systems.access.policy.models import Group
 from app.systems.access.policy.schemas import (
     GroupAccessEntry,
     GroupAccessReplace,
     GroupCreate,
     GroupListRequest,
+    GroupMembersReplace,
     GroupResponse,
     GroupSortField,
     GroupUpdate,
+    MemberCandidateListRequest,
+    MemberCandidateResponse,
+    MemberCandidateSortField,
+)
+from app.systems.access.policy.scope import (
+    effective_levels,
+    group_reach,
+    manageable_group_clause,
 )
 from app.systems.access.policy.service import (
     create_group,
@@ -32,13 +47,18 @@ from app.systems.access.policy.service import (
     replace_group_access,
     update_group,
 )
-from app.systems.access.users.models import User
+from app.systems.access.users.models import User, UserRole
 
 router = APIRouter(prefix="/access", tags=["access"])
 AdminUser = Annotated[User, Depends(require_admin)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 class GroupListResponse(StandardListResponse[GroupResponse]):
+    pass
+
+
+class MemberCandidateListResponse(StandardListResponse[MemberCandidateResponse]):
     pass
 
 
@@ -56,6 +76,21 @@ GROUP_LIST_SPEC = ListQuerySpec(
     ),
     deleted_field=cast(ColumnElement[bool], Group.is_deleted),
 )
+MEMBER_CANDIDATE_LIST_SPEC = ListQuerySpec(
+    sort_fields={
+        MemberCandidateSortField.USERNAME: cast(ColumnElement[Any], User.username),
+        MemberCandidateSortField.EMAIL: cast(ColumnElement[Any], User.email),
+        MemberCandidateSortField.DISPLAY_NAME: cast(ColumnElement[Any], User.display_name),
+    },
+    default_sort=MemberCandidateSortField.USERNAME,
+    tie_breaker=cast(ColumnElement[Any], User.id),
+    search_fields=(
+        cast(ColumnElement[str], User.username),
+        cast(ColumnElement[str], User.email),
+        cast(ColumnElement[str], User.display_name),
+    ),
+    deleted_field=cast(ColumnElement[bool], User.is_deleted),
+)
 ETAG_HEADERS: dict[str, dict[str, Any]] = {"ETag": {"schema": {"type": "string"}}}
 CONDITIONAL_RESPONSES: dict[int | str, dict[str, Any]] = {
     412: {"description": "If-Match does not match the locked resource version"},
@@ -65,6 +100,51 @@ CONDITIONAL_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 def _exact_admin(db: Session, admin: User) -> None:
     require_fresh_exact_admin(db, admin.id)
+
+
+def _database_unavailable(db: Session) -> HTTPException:
+    db.rollback()
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Database unavailable",
+    )
+
+
+def _visible_groups(db: Session, user: User) -> ColumnElement[bool]:
+    """Every group for an administrator; the groups a manager may change; else 403."""
+
+    if user.role == UserRole.ADMIN.value:
+        _exact_admin(db, user)
+        return true()
+    try:
+        access = effective_levels(db, user)
+    except SQLAlchemyError as error:
+        raise _database_unavailable(db) from error
+    if not access.managed_department_ids():
+        raise forbidden()
+    return manageable_group_clause(access)
+
+
+def _visible_group(db: Session, user: User, group_id: UUID) -> Group:
+    """One group; 404 for a manager who may not change it, as for a missing group."""
+
+    if user.role == UserRole.ADMIN.value:
+        _exact_admin(db, user)
+        return get_group(db, group_id)
+    try:
+        access = effective_levels(db, user)
+    except SQLAlchemyError as error:
+        raise _database_unavailable(db) from error
+    if not access.managed_department_ids():
+        raise forbidden()
+    row = get_group(db, group_id)
+    try:
+        allowed = access.manages_all(group_reach(db, row.id))
+    except SQLAlchemyError as error:
+        raise _database_unavailable(db) from error
+    if not allowed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    return row
 
 
 def _private(response: Response) -> None:
@@ -103,24 +183,20 @@ def _single_group_response(db: Session, row: Group) -> GroupResponse:
 
 @router.get("/groups", response_model=GroupListResponse)
 def list_groups(
-    admin: AdminUser,
+    user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
     response: Response,
     params: Annotated[GroupListRequest, Query()],
 ) -> GroupListResponse:
-    _exact_admin(db, admin)
+    visible = _visible_groups(db, user)
     _private(response)
     try:
-        result = execute_standard_list(db, select(Group), params, GROUP_LIST_SPEC)
+        result = execute_standard_list(db, select(Group).where(visible), params, GROUP_LIST_SPEC)
         ids = [row.id for row in result.items]
         member_map = group_member_map(db, ids)
         access_map = group_access_map(db, ids)
     except SQLAlchemyError as error:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database unavailable",
-        ) from error
+        raise _database_unavailable(db) from error
     return GroupListResponse.model_validate(
         {
             "items": [
@@ -139,12 +215,11 @@ def list_groups(
 )
 def get_group_route(
     group_id: UUID,
-    admin: AdminUser,
+    user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
     response: Response,
 ) -> GroupResponse:
-    _exact_admin(db, admin)
-    row = get_group(db, group_id)
+    row = _visible_group(db, user, group_id)
     _private(response)
     response.headers["ETag"] = group_etag(row)
     return _single_group_response(db, row)
@@ -188,6 +263,59 @@ def update_group_route(
     _private(response)
     response.headers["ETag"] = group_etag(row)
     return _single_group_response(db, row)
+
+
+@router.put(
+    "/groups/{group_id}/members",
+    response_model=GroupResponse,
+    responses={
+        200: {"headers": ETAG_HEADERS},
+        403: {"description": "Not an administrator or a manager of every department it reaches"},
+        409: {"description": "A member is an administrator, or not an active or pending user"},
+        **CONDITIONAL_RESPONSES,
+    },
+)
+def replace_group_members_route(
+    group_id: UUID,
+    payload: GroupMembersReplace,
+    user: CurrentUser,
+    db: Annotated[Session, Depends(get_db)],
+    response: Response,
+    if_match: Annotated[str | None, Header()] = None,
+) -> GroupResponse:
+    """Replace every member of the group."""
+
+    row = replace_members(db, group_id, payload.member_ids, if_match, user)
+    _private(response)
+    response.headers["ETag"] = group_etag(row)
+    return _single_group_response(db, row)
+
+
+@router.get("/member-candidates", response_model=MemberCandidateListResponse)
+def list_member_candidates(
+    user: CurrentUser,
+    db: Annotated[Session, Depends(get_db)],
+    response: Response,
+    params: Annotated[MemberCandidateListRequest, Query()],
+) -> MemberCandidateListResponse:
+    """Non-administrator accounts that a group member can be chosen from."""
+
+    visible = _visible_groups(db, user)
+    _private(response)
+    try:
+        if db.scalar(select(Group.id).where(Group.is_deleted.is_(False), visible).limit(1)) is None:
+            raise forbidden()
+        result = execute_standard_list(
+            db,
+            select(User).where(User.role != UserRole.ADMIN.value),
+            params,
+            MEMBER_CANDIDATE_LIST_SPEC,
+        )
+    except SQLAlchemyError as error:
+        raise _database_unavailable(db) from error
+    return MemberCandidateListResponse.model_validate(
+        {"items": result.items, "pagination": result.pagination}, from_attributes=True
+    )
 
 
 @router.put(
