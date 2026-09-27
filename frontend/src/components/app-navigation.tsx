@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
   ChevronRight,
@@ -16,13 +16,17 @@ import {
 import { useEffect, useId, useRef, useState } from "react";
 
 import {
+  accessNavigationFor,
   currentNavigationKey,
   getWorkspaceNavigation,
   isWorkspaceNavigationGroupActive,
   isWorkspaceNavigationItemActive,
 } from "@/components/workspace-navigation";
 import { useWorkspaceNavigationRequest } from "@/components/workspace-navigation-guard";
-import { prefetchOpenViewSection } from "@/components/systems/openview/adapters/openview-queries";
+import {
+  authMeOptions,
+  prefetchOpenViewSection,
+} from "@/components/systems/openview/adapters/openview-queries";
 import {
   Collapsible,
   CollapsibleContent,
@@ -77,7 +81,14 @@ export function AppNavigation({
     new Map(),
   );
   const prefetchedRoutes = useRef(new Set<string>());
-  const groups = getWorkspaceNavigation(pathname, searchParams);
+  // Access shows only what the signed-in role and manage access allow; it
+  // stays hidden until the identity is known.
+  const identity = useQuery(authMeOptions());
+  const groups = getWorkspaceNavigation(
+    pathname,
+    searchParams,
+    accessNavigationFor(identity.data),
+  );
   const search = searchParams.toString();
   const activeGroupId = groups.find((group) =>
     isWorkspaceNavigationGroupActive(group, pathname),

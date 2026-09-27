@@ -1,11 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { accessDraftStorageKey } from "../../src/components/systems/access/state/draft-journal";
+import { accessDraftStorageKey } from "../../src/components/systems/access/state/draft-journal-storage";
 
 const userA = "00000000-0000-4000-8000-0000000000a1";
 const userB = "00000000-0000-4000-8000-0000000000b2";
-const draftA = accessDraftStorageKey(userA, "rules");
-const draftB = accessDraftStorageKey(userB, "rules");
+const draftA = accessDraftStorageKey(userA, "identity");
+const draftB = accessDraftStorageKey(userB, "identity");
 
 async function mockSession(page: Page, verifiedUser: () => string) {
   await page.route("**/api/**", async (route) => {

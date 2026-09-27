@@ -9,7 +9,7 @@ import {
   clearVerifiedWorkspaceSessionSnapshot,
   workspaceSessionSnapshotStorageKey,
 } from "../../../src/components/systems/shared/runtime/workspace-identity";
-import { accessDraftStorageKey } from "../../../src/components/systems/access/state/draft-journal";
+import { accessDraftStorageKey } from "../../../src/components/systems/access/state/draft-journal-storage";
 import {
   commsDraftTextKey,
   ownedCommsDraftTextId,
@@ -113,8 +113,8 @@ test("session cleanup removes Access drafts without deleting another account's s
     data.set("openslate.sample.v1", "legacy workspace");
     data.set(workspaceSessionSnapshotStorageKey("user-a"), "A workspace");
     data.set(workspaceSessionSnapshotStorageKey("user-b"), "B workspace");
-    data.set(accessDraftStorageKey("user-a", "rules"), "A Access draft");
-    data.set(accessDraftStorageKey("user-b", "rules"), "B Access draft");
+    data.set(accessDraftStorageKey("user-a", "identity"), "A Access draft");
+    data.set(accessDraftStorageKey("user-b", "identity"), "B Access draft");
     data.set(commsDraftTextKey("thread-1"), "legacy draft");
     data.set(
       commsDraftTextKey(ownedCommsDraftTextId("user-a", "thread-1")),
@@ -134,8 +134,12 @@ test("session cleanup removes Access drafts without deleting another account's s
       "B workspace",
     );
     expect(data.get("openslate.sample.v1")).toBe("legacy workspace");
-    expect(data.get(accessDraftStorageKey("user-a", "rules"))).toBeUndefined();
-    expect(data.get(accessDraftStorageKey("user-b", "rules"))).toBeUndefined();
+    expect(
+      data.get(accessDraftStorageKey("user-a", "identity")),
+    ).toBeUndefined();
+    expect(
+      data.get(accessDraftStorageKey("user-b", "identity")),
+    ).toBeUndefined();
     expect(
       data.get(commsDraftTextKey(ownedCommsDraftTextId("user-a", "thread-1"))),
     ).toBeUndefined();
@@ -144,9 +148,11 @@ test("session cleanup removes Access drafts without deleting another account's s
     ).toBe("B draft");
     expect(data.get(commsDraftTextKey("thread-1"))).toBe("legacy draft");
 
-    data.set(accessDraftStorageKey("user-a", "rules"), "A after reload");
+    data.set(accessDraftStorageKey("user-a", "identity"), "A after reload");
     await clearVerifiedWorkspaceSessionSnapshot(null);
-    expect(data.get(accessDraftStorageKey("user-a", "rules"))).toBeUndefined();
+    expect(
+      data.get(accessDraftStorageKey("user-a", "identity")),
+    ).toBeUndefined();
   } finally {
     if (originalWindow)
       Object.defineProperty(globalThis, "window", originalWindow);

@@ -7,8 +7,7 @@ export const draftIdentifier = z
   .max(256)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const MAX_RECORD_LENGTH = 32_768;
-export type AccessDraftOwner =
-  "rules" | "identity" | "role" | "group" | "defaults";
+export type AccessDraftOwner = "identity" | "group" | "settings";
 const submissionsBegunInDocument = new Set<string>();
 
 export type AccessDraftStorage = Pick<

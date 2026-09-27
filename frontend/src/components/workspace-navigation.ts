@@ -1,3 +1,5 @@
+import type { AuthMe } from "@/lib/auth-api";
+
 export type WorkspaceNavigationItem = {
   id: string;
   label: string;
@@ -59,8 +61,8 @@ const workspaceNavigationDefinitions = [
     defaultItem: "overview",
     items: [
       { id: "overview", label: "Overview" },
-      { id: "identities", label: "People & services" },
-      { id: "permissions", label: "Permissions" },
+      { id: "people", label: "People" },
+      { id: "groups", label: "Groups" },
     ],
   },
   {
@@ -120,6 +122,39 @@ const sandboxLegacySections: Readonly<Record<string, string>> = {
   versions: "history",
 };
 
+/**
+ * Which Access entries the signed-in person sees (schema redesign D13).
+ * Administrators see every entry. A member with `manage` on any department
+ * or module sees only Groups, where they change the members of the groups
+ * they manage. Everyone else, and an identity that is still loading or
+ * failed to load, sees no Access entry. The backend enforces every rule;
+ * this only hides controls that would be refused.
+ */
+export type AccessNavigation = "all" | "groups" | "none";
+
+export function accessNavigationFor(
+  identity: Pick<AuthMe, "role" | "access"> | undefined,
+): AccessNavigation {
+  if (!identity) return "none";
+  if (identity.role === "admin") return "all";
+  if (
+    identity.role === "member" &&
+    identity.access.some((entry) => entry.level === "manage")
+  )
+    return "groups";
+  return "none";
+}
+
+function visibleItems(
+  definition: WorkspaceNavigationDefinition,
+  access: AccessNavigation,
+): readonly { id: string; label: string }[] {
+  const items = definition.items;
+  if (definition.id !== "access" || access === "all") return items;
+  if (access === "groups") return items.filter((item) => item.id === "groups");
+  return [];
+}
+
 function href(pathname: string, params: URLSearchParams): string {
   const query = params.toString();
   return query ? `${pathname}?${query}` : pathname;
@@ -129,7 +164,9 @@ function sectionFor(
   definition: WorkspaceNavigationDefinition,
   params: URLSearchParams,
   hash = "",
+  access: AccessNavigation = "all",
 ): string {
+  if (definition.id === "access" && access === "groups") return "groups";
   const requested = params.get(definition.queryKey);
   const normalizedRequested =
     definition.id === "sandbox" && requested
@@ -140,14 +177,6 @@ function sectionFor(
     return "security";
   if (definition.id === "manage" && requested?.toLowerCase() === "licensing")
     return "updates";
-  if (definition.id === "access" && requested === "simulator")
-    return "identities";
-  if (definition.id === "access" && requested === "reviews") return "overview";
-  if (
-    definition.id === "access" &&
-    ["roles", "groups", "rules"].includes(requested ?? "")
-  )
-    return "permissions";
   if (
     definition.id === "openview" &&
     openViewRecordIdPattern.test(params.get("record") ?? "")
@@ -157,7 +186,7 @@ function sectionFor(
     (item) => item.id === normalizedRequested,
   );
   if (matched) return matched.id;
-  if (definition.id === "access" && params.has("user")) return "identities";
+  if (definition.id === "access" && params.has("user")) return "people";
   if (requested !== null) return definition.defaultItem;
   if (definition.id === "sandbox" && params.has("rule")) return "triggers";
   if (definition.id === "platform") {
@@ -188,7 +217,7 @@ function paramsFor(
       if (board) params.set("board", board);
     }
     if (definition.id === "access") {
-      if (itemId === "identities") {
+      if (itemId === "people") {
         const user = searchParams.get("user");
         if (user) params.set("user", user);
       }
@@ -217,25 +246,30 @@ function paramsFor(
 export function getWorkspaceNavigation(
   pathname: string,
   searchParams: URLSearchParams,
+  access: AccessNavigation,
 ): readonly WorkspaceNavigationGroup[] {
-  return workspaceNavigationDefinitions.map((definition) => {
-    const items = definition.items.map((item) => ({
+  return workspaceNavigationDefinitions.flatMap((definition) => {
+    const items = visibleItems(definition, access).map((item) => ({
       ...item,
       href: href(
         definition.pathname,
         paramsFor(definition, item.id, pathname, searchParams),
       ),
     }));
-    const defaultItem = items.find(
-      (item) => item.id === definition.defaultItem,
-    );
-    return {
-      id: definition.id,
-      label: definition.label,
-      description: definition.description,
-      href: defaultItem?.href ?? definition.pathname,
-      items,
-    };
+    if (items.length === 0) return [];
+    // The workspace link opens its default section, or the first section
+    // this person sees when the default is hidden.
+    const defaultItem =
+      items.find((item) => item.id === definition.defaultItem) ?? items[0];
+    return [
+      {
+        id: definition.id,
+        label: definition.label,
+        description: definition.description,
+        href: defaultItem?.href ?? definition.pathname,
+        items,
+      },
+    ];
   });
 }
 
@@ -248,17 +282,18 @@ export type WorkspaceLocation = {
 export function getWorkspaceLocation(
   pathname: string,
   searchParams: URLSearchParams,
-  hash = "",
+  hash: string,
+  access: AccessNavigation,
 ): WorkspaceLocation | null {
   const definition = workspaceNavigationDefinitions.find(
     (candidate) => candidate.pathname === pathname,
   );
   if (!definition) return null;
-  const sectionId = sectionFor(definition, searchParams, hash);
-  const group = getWorkspaceNavigation(pathname, searchParams).find(
+  const sectionId = sectionFor(definition, searchParams, hash, access);
+  const group = getWorkspaceNavigation(pathname, searchParams, access).find(
     (candidate) => candidate.id === definition.id,
   );
-  const section = definition.items.find((item) => item.id === sectionId);
+  const section = group?.items.find((item) => item.id === sectionId);
   if (!group || !section) return null;
   return {
     workspace: { label: group.label, href: group.href },

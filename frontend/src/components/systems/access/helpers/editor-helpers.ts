@@ -8,43 +8,6 @@ export type FieldConflict = {
   draft: string;
 };
 
-type DepartmentSelection = {
-  departmentIds: readonly string[];
-  primaryDepartmentId: string;
-};
-
-export function closedDepartmentMemberships(
-  selectedIds: readonly string[],
-  activeIds: ReadonlySet<string>,
-  names: ReadonlyMap<string, string>,
-): { id: string; name: string }[] {
-  return selectedIds.flatMap((id) =>
-    activeIds.has(id)
-      ? []
-      : [{ id, name: names.get(id) || "Closed department" }],
-  );
-}
-
-export function updateDepartmentSelection(
-  current: DepartmentSelection,
-  id: string,
-  checked: boolean,
-  activeIds: ReadonlySet<string>,
-): { departmentIds: string[]; primaryDepartmentId: string } {
-  const departmentIds =
-    checked && activeIds.has(id)
-      ? [...new Set([...current.departmentIds, id])]
-      : checked
-        ? [...current.departmentIds]
-        : current.departmentIds.filter((item) => item !== id);
-  const primaryDepartmentId = departmentIds.includes(
-    current.primaryDepartmentId,
-  )
-    ? current.primaryDepartmentId
-    : (departmentIds.find((item) => activeIds.has(item)) ?? "");
-  return { departmentIds, primaryDepartmentId };
-}
-
 export function sameList(
   left: readonly string[],
   right: readonly string[],

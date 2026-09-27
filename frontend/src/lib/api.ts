@@ -159,30 +159,6 @@ export type LifecycleMutationResponse = {
   operation_id: string | null;
 };
 export type LifecycleReopenRequest = { confirmed: true };
-export const CAPABILITIES = [
-  "departments.read",
-  "departments.write",
-  "fields.read",
-  "fields.write",
-  "modules.read",
-  "modules.write",
-  "records.read",
-  "records.write",
-  "relationships.read",
-  "relationships.write",
-] as const;
-export type Capability = (typeof CAPABILITIES)[number];
-export type RolePermissions = Partial<Record<Capability, boolean>>;
-export type Role = BaseEntity & {
-  role: string;
-  permissions: RolePermissions;
-};
-export type User = BaseEntity & {
-  email: string;
-  username: string;
-  status: "pending" | "active" | "disabled";
-  role_id: string;
-};
 export type AuditAction = "create" | "update" | "delete";
 export type AuditLog = {
   id: string;
