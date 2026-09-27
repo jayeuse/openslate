@@ -9,7 +9,7 @@ import {
   useSampleRuntime,
   type SampleTransactionDraft,
 } from "../../shared/runtime/sample-state";
-import { initialPeople, initialRoles } from "../../access/domain/model";
+import { initialPeople, initialRoles } from "../../shared/data/sample-people";
 import {
   INITIAL_RECORDS,
   type SampleRecord,

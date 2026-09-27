@@ -15,6 +15,11 @@ import {
   INITIAL_EVENTS,
 } from "../../../src/components/systems/boards/domain/model";
 import type { BoardViewer } from "../../../src/components/systems/boards/domain/content";
+import { canAccessSampleBoard } from "../../../src/components/systems/boards/domain/sample-access";
+import {
+  initialPeople,
+  initialRoles,
+} from "../../../src/components/systems/shared/data/sample-people";
 
 const now = "2026-09-15T01:00:00.000Z";
 const actorId = "sample-eli";
@@ -200,19 +205,83 @@ test("canSetBoardReminder rechecks the current event audience before personal wr
   ).toBe(false);
 });
 
-test("readBoardsRuntimeSnapshot derives Boards and policy owners from the same reader", () => {
+test("readBoardsRuntimeSnapshot derives Boards and its audience from the same reader", () => {
   const board = structuredClone(INITIAL_BOARDS[0]);
   board.name = "Current board projection";
   const snapshot = readBoardsRuntimeSnapshot((key, initial) => {
     if (key === "boards-list") return [board] as typeof initial;
+    if (key === "access-people")
+      return [
+        { ...initialPeople[1], name: "Current person" },
+      ] as typeof initial;
     return initial;
   });
 
   expect(snapshot.state.boards.map((item) => item.name)).toEqual([
     "Current board projection",
   ]);
-  expect(snapshot.access.owners.boards.map((item) => item.name)).toEqual([
-    "Current board projection",
+  expect(snapshot.people.map((person) => person.name)).toEqual([
+    "Current person",
   ]);
-  expect(snapshot.access.snapshot.people.length).toBeGreaterThan(0);
+  expect(snapshot.roles.map((role) => role.id)).toEqual(
+    initialRoles.map((role) => role.id),
+  );
+});
+
+test("canAccessSampleBoard gives Administrators every permission and others view by visible role", () => {
+  const people = [
+    ...initialPeople,
+    {
+      ...initialPeople[1],
+      id: "suspended",
+      accessStatus: "suspended" as const,
+    },
+    {
+      ...initialPeople[1],
+      id: "expired",
+      expiresAt: "2026-09-15T00:00:00.000Z",
+    },
+    { ...initialPeople[1], id: "unknown-role", role: "missing-role" },
+  ];
+  const boards = [
+    INITIAL_BOARDS[0],
+    {
+      ...INITIAL_BOARDS[0],
+      id: "admin-only",
+      visibleRoleIds: ["sample-admin"],
+    },
+  ];
+  const can = (
+    identityId: string,
+    boardId: string | null,
+    permission: "view" | "edit" | "manage",
+  ) =>
+    canAccessSampleBoard({
+      people,
+      roles: initialRoles,
+      boards,
+      identityId,
+      boardId,
+      permission,
+      now,
+    });
+
+  for (const permission of ["view", "edit", "manage"] as const) {
+    expect(can("sample-mara", INITIAL_BOARDS[0].id, permission)).toBe(true);
+    expect(can("sample-mara", null, permission)).toBe(true);
+    expect(can("sample-mara", "missing-board", permission)).toBe(false);
+  }
+  expect(can(actorId, INITIAL_BOARDS[0].id, "view")).toBe(true);
+  expect(can(actorId, INITIAL_BOARDS[0].id, "edit")).toBe(false);
+  expect(can(actorId, INITIAL_BOARDS[0].id, "manage")).toBe(false);
+  expect(can(actorId, "admin-only", "view")).toBe(false);
+  expect(can(actorId, null, "manage")).toBe(false);
+  for (const identityId of [
+    "sample-nina",
+    "suspended",
+    "expired",
+    "unknown-role",
+    "missing-person",
+  ])
+    expect(can(identityId, INITIAL_BOARDS[0].id, "view")).toBe(false);
 });

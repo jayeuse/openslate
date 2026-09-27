@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/empty";
 import { Badge } from "@/components/ui/badge";
 import { FieldGroup } from "@/components/ui/field";
-import type { Person, Role } from "../../access/domain/model";
+import type { Person, Role } from "../../shared/data/sample-people";
 import { Action, Choice, Toggle } from "../../shared/components/ui";
 import { ConfigurationFrame } from "./configuration-frame";
 import {

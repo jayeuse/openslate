@@ -2,20 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  useAccessController,
-  ACCESS_OWNER_KEYS,
-  readAccessProjection,
-  type AccessRuntimeSnapshot,
-} from "../../access/state/controller";
-import {
-  resolveControllerAccess,
-  type AccessControllerSnapshot,
-} from "../../access/domain/controller-utils";
-import {
-  getFederatedAccess,
-  type FederatedAccessOwners,
-} from "../../access/adapters/federated-adapters";
-import { departments } from "../../access/domain/model";
+  departments,
+  initialPeople,
+  initialRoles,
+  type Person,
+  type Role,
+} from "../../shared/data/sample-people";
 import { useSampleRuntime } from "../../shared/runtime/sample-state";
 import type { SampleDraft } from "../../shared/runtime/sample-runtime";
 import {
@@ -62,8 +54,11 @@ import {
   type BoardMutationResult,
   type BoardsState,
 } from "../domain/commands";
+import { canAccessSampleBoard } from "../domain/sample-access";
 
 export const BOARD_MANAGER_ID = "sample-mara";
+const PEOPLE_KEY = "access-people";
+const ROLES_KEY = "access-roles";
 export const BOARD_KEYS = {
   boards: "boards-list",
   events: "boards-events",
@@ -78,7 +73,8 @@ export const BOARD_OWNER_KEYS = [
   "records",
   "manage-settings",
   "platformNotifications",
-  ...ACCESS_OWNER_KEYS,
+  PEOPLE_KEY,
+  ROLES_KEY,
 ] as const;
 type RawState = Record<keyof BoardsState, unknown>;
 
@@ -176,9 +172,15 @@ export function decodeBoardsState(
     activity: decodeBoardActivity(raw.activity ?? []),
   };
 }
-function lookupFrom(
-  state: Pick<AccessRuntimeSnapshot["snapshot"], "roles" | "people">,
-): BoardAudienceLookup {
+type BoardsAudience = { people: Person[]; roles: Role[] };
+
+function readAudience(read: <T>(key: string, initial: T) => T): BoardsAudience {
+  return {
+    people: structuredClone(read(PEOPLE_KEY, initialPeople)),
+    roles: structuredClone(read(ROLES_KEY, initialRoles)),
+  };
+}
+function lookupFrom(state: BoardsAudience): BoardAudienceLookup {
   return {
     roles: state.roles,
     identities: state.people.filter(
@@ -193,7 +195,7 @@ function lookupFrom(
 }
 function boardViewerFor(
   actorId: string,
-  person: AccessControllerSnapshot["people"][number] | undefined,
+  person: Person | undefined,
   lookup: BoardAudienceLookup,
 ): BoardViewer {
   return {
@@ -258,40 +260,6 @@ function readBoards(
     lookup,
   );
 }
-function attachBoardsPolicy(
-  base: AccessControllerSnapshot,
-  owners: FederatedAccessOwners,
-  state: BoardsState,
-): AccessControllerSnapshot {
-  const projection = getFederatedAccess(
-    {
-      ...owners,
-      boards: state.boards.map((board) => ({
-        ...board,
-        roles: board.roles ?? [],
-        permission: board.permission ?? "Members can view",
-      })),
-      announcements: state.announcements,
-    },
-    {
-      departments: lookupFrom(base).departments,
-      roles: base.roles,
-      identities: base.people.map((person) => ({
-        ...person,
-        status: person.accessStatus,
-        deleted: !person.active,
-      })),
-    },
-  );
-  return {
-    ...base,
-    rules: [
-      ...base.rules.filter((rule) => !rule.id.startsWith("native:")),
-      ...projection.rules,
-    ],
-    federatedScopes: projection.scopes,
-  };
-}
 function attachmentIds(state: BoardsState): Set<string> {
   return new Set(
     [
@@ -306,7 +274,8 @@ function attachmentIds(state: BoardsState): Set<string> {
 
 export type BoardsRuntimeSnapshot = {
   state: BoardsState;
-  access: AccessRuntimeSnapshot;
+  people: Person[];
+  roles: Role[];
   records: SampleRecord[];
   settings: Record<string, unknown>;
 };
@@ -314,8 +283,8 @@ export type BoardsRuntimeSnapshot = {
 export function readBoardsRuntimeSnapshot(
   read: <T>(key: string, initial: T) => T,
 ): BoardsRuntimeSnapshot {
-  const access = readAccessProjection(read);
-  const lookup = lookupFrom(access.snapshot);
+  const audience = readAudience(read);
+  const lookup = lookupFrom(audience);
   const state = decodeBoardsState(
     Object.fromEntries(
       Object.entries(BOARD_KEYS).map(([key, storageKey]) => [
@@ -327,7 +296,7 @@ export function readBoardsRuntimeSnapshot(
   );
   return {
     state,
-    access,
+    ...audience,
     records: structuredClone(read("records", INITIAL_RECORDS)),
     settings: structuredClone(read("manage-settings", {})),
   };
@@ -386,31 +355,6 @@ function writeBoardsState(
   }
 }
 
-function removeBoardAccessRules(
-  draft: SampleDraft,
-  current: BoardsState,
-  snapshot: AccessControllerSnapshot,
-  command: BoardCommand,
-): void {
-  if (command.type !== "board-action" || command.action !== "delete") return;
-  const scopeIds = new Set([
-    `board:${command.boardId}`,
-    ...(current.boards
-      .find((board) => board.id === command.boardId)
-      ?.widgets.map(
-        (widget) => `openview:board-widget:${command.boardId}:${widget.id}`,
-      ) ?? []),
-  ]);
-  const currentRules = {
-    version: 1 as const,
-    items: snapshot.rules.filter((rule) => !rule.id.startsWith("native:")),
-  };
-  draft.update("access-rules-v1", currentRules, (rules) => ({
-    ...rules,
-    items: rules.items.filter((rule) => !scopeIds.has(rule.scope.id)),
-  }));
-}
-
 type BoardCommandResolution = BoardCommand | { ok: false; error: string };
 type PersonalPatch =
   | Partial<BoardPersonalState>
@@ -424,7 +368,6 @@ function isRejectedBoardCommand(
 
 export function useBoardsController(previewIdentityId: string | null = null) {
   const runtime = useSampleRuntime();
-  const access = useAccessController();
   const resource = useSampleResource<BoardsRuntimeSnapshot>({
     keys: BOARD_OWNER_KEYS,
     queryKey: "boards:projection:v1",
@@ -438,8 +381,11 @@ export function useBoardsController(previewIdentityId: string | null = null) {
   const [fallback] = useState(initialBoardsRuntimeSnapshot);
   const projection = resource.data ?? fallback;
   const state = projection.state;
-  const accessSnapshot = projection.access.snapshot;
-  const lookup = lookupFrom(accessSnapshot);
+  const audience: BoardsAudience = {
+    people: projection.people,
+    roles: projection.roles,
+  };
+  const lookup = lookupFrom(audience);
   const records = projection.records;
   const settings = projection.settings;
   const previousAttachments = useRef<Set<string>>(new Set());
@@ -467,21 +413,19 @@ export function useBoardsController(previewIdentityId: string | null = null) {
         ? "en-US"
         : "en-PH";
   const actorId = previewIdentityId ?? BOARD_MANAGER_ID;
-  const viewer = accessSnapshot.people.find((person) => person.id === actorId);
+  const viewer = audience.people.find((person) => person.id === actorId);
   const personalState =
     state.personal[actorId] ??
     decodeBoardPersonalState({ identityId: actorId });
 
   function contextFor(
     current: BoardsState,
-    snapshot: AccessControllerSnapshot,
-    owners: FederatedAccessOwners,
+    snapshot: BoardsAudience,
     currentRecords: readonly SampleRecord[],
     now: string,
     id: string,
     preview = previewIdentityId !== null,
   ): BoardCommandContext {
-    const policy = attachBoardsPolicy(snapshot, owners, current);
     return {
       actorId,
       preview,
@@ -495,20 +439,15 @@ export function useBoardsController(previewIdentityId: string | null = null) {
       audienceLookup: lookupFrom(snapshot),
       recordIds: currentRecords.map((record) => record.id),
       can: (boardId, permission) =>
-        resolveControllerAccess(policy, {
+        canAccessSampleBoard({
+          people: snapshot.people,
+          roles: snapshot.roles,
+          boards: current.boards,
           identityId: actorId,
-          permissionId: `boards.${permission}`,
-          scopePath: boardId
-            ? [
-                { kind: "workspace", id: "workspace" },
-                { kind: "board", id: `board:${boardId}` },
-              ]
-            : [
-                { kind: "workspace", id: "workspace" },
-                { kind: "board", id: "board:organization" },
-              ],
+          boardId,
+          permission,
           now,
-        }).decision === "allow",
+        }),
     };
   }
   function can(
@@ -517,8 +456,7 @@ export function useBoardsController(previewIdentityId: string | null = null) {
   ): boolean {
     return contextFor(
       state,
-      accessSnapshot,
-      projection.access.owners,
+      audience,
       records,
       new Date().toISOString(),
       "preview",
@@ -526,14 +464,14 @@ export function useBoardsController(previewIdentityId: string | null = null) {
   }
 
   function isPending(key?: string): boolean {
-    return commands.isPending(key) || access.isPending(key);
+    return commands.isPending(key);
   }
 
   async function runResolved(
     key: string,
     resolve: (
       current: BoardsState,
-      snapshot: AccessRuntimeSnapshot,
+      snapshot: BoardsAudience,
       records: readonly SampleRecord[],
       now: string,
     ) => BoardCommandResolution,
@@ -542,18 +480,15 @@ export function useBoardsController(previewIdentityId: string | null = null) {
       return await commands.run(key, (signal) =>
         runtime.execute<BoardMutationResult>(
           (draft) => {
-            const currentAccess = readAccessProjection(draft.read);
-            const current = readBoards(
-              draft,
-              lookupFrom(currentAccess.snapshot),
-            );
+            const currentAudience = readAudience(draft.read);
+            const current = readBoards(draft, lookupFrom(currentAudience));
             const currentRecords = structuredClone(
               draft.read<SampleRecord[]>("records", INITIAL_RECORDS),
             );
             const now = new Date().toISOString();
             const resolution = resolve(
               current,
-              currentAccess,
+              currentAudience,
               currentRecords,
               now,
             );
@@ -564,8 +499,7 @@ export function useBoardsController(previewIdentityId: string | null = null) {
               resolution,
               contextFor(
                 current,
-                currentAccess.snapshot,
-                currentAccess.owners,
+                currentAudience,
                 currentRecords,
                 now,
                 `board-activity-${crypto.randomUUID()}`,
@@ -573,12 +507,6 @@ export function useBoardsController(previewIdentityId: string | null = null) {
             );
             if (!result.result.ok) return draft.reject(result.result);
             writeBoardsState(draft, current, result.state);
-            removeBoardAccessRules(
-              draft,
-              current,
-              currentAccess.snapshot,
-              resolution,
-            );
             return result.result;
           },
           { keys: BOARD_OWNER_KEYS, signal },
@@ -624,7 +552,7 @@ export function useBoardsController(previewIdentityId: string | null = null) {
   ): Promise<BoardMutationResult> {
     return runResolved(
       `boards:reminder:${actorId}:${event.id}:${occurrenceStart}`,
-      (current, currentAccess, currentRecords, now) => {
+      (current, currentAudience, currentRecords, now) => {
         if (previewIdentityId)
           return {
             ok: false,
@@ -643,8 +571,7 @@ export function useBoardsController(previewIdentityId: string | null = null) {
         );
         const currentContext = contextFor(
           current,
-          currentAccess.snapshot,
-          currentAccess.owners,
+          currentAudience,
           currentRecords,
           now,
           "board-reminder",
@@ -659,10 +586,10 @@ export function useBoardsController(previewIdentityId: string | null = null) {
             ok: false,
             error: "You no longer have access to this board.",
           };
-        const currentLookup = lookupFrom(currentAccess.snapshot);
+        const currentLookup = lookupFrom(currentAudience);
         const currentViewer = boardViewerFor(
           actorId,
-          currentAccess.snapshot.people.find((person) => person.id === actorId),
+          currentAudience.people.find((person) => person.id === actorId),
           currentLookup,
         );
         if (
@@ -744,16 +671,15 @@ export function useBoardsController(previewIdentityId: string | null = null) {
       return await commands.run("boards:reminders", (signal) =>
         runtime.execute<BoardMutationResult | undefined>(
           (draft) => {
-            const currentAccess = readAccessProjection(draft.read);
-            const currentLookup = lookupFrom(currentAccess.snapshot);
+            const currentAudience = readAudience(draft.read);
+            const currentLookup = lookupFrom(currentAudience);
             const current = readBoards(draft, currentLookup);
             const own = current.personal[actorId];
             if (!own) return undefined;
             const now = new Date().toISOString();
             const currentContext = contextFor(
               current,
-              currentAccess.snapshot,
-              currentAccess.owners,
+              currentAudience,
               draft.read<SampleRecord[]>("records", INITIAL_RECORDS),
               now,
               "board-reminders",
@@ -765,9 +691,7 @@ export function useBoardsController(previewIdentityId: string | null = null) {
               actorId,
               viewer: boardViewerFor(
                 actorId,
-                currentAccess.snapshot.people.find(
-                  (person) => person.id === actorId,
-                ),
+                currentAudience.people.find((person) => person.id === actorId),
                 currentLookup,
               ),
               now,
@@ -819,14 +743,12 @@ export function useBoardsController(previewIdentityId: string | null = null) {
 
   return {
     state,
-    access,
-    accessSnapshot,
     resource,
     isPending,
-    pendingKeys: [...new Set([...commands.pendingKeys, ...access.pendingKeys])],
+    pendingKeys: commands.pendingKeys,
     records,
     viewer,
-    people: accessSnapshot.people,
+    people: audience.people,
     actorId,
     personal: personalState,
     lookup,

@@ -9,7 +9,7 @@ import {
   initialPeople,
   type Person,
   type Role,
-} from "../../access/domain/model";
+} from "../../shared/data/sample-people";
 import {
   useSampleState,
   type SampleTransactionDraft,

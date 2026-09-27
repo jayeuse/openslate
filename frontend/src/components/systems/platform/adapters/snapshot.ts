@@ -1,4 +1,4 @@
-import { initialPeople, type Person } from "../../access/domain/model";
+import { initialPeople, type Person } from "../../shared/data/sample-people";
 import {
   INITIAL_RECORDS,
   type SampleRecord,

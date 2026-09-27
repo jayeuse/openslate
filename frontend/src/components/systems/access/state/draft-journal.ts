@@ -20,6 +20,7 @@ import {
   accessDraftSubmissionNeedsReload,
   accessDraftUserStoragePrefix,
   browserStorage,
+  clearAccessDraftStorageExcept,
   clearDraftKeys,
   readDraft,
   writeDraft,
@@ -34,6 +35,7 @@ export {
   ACCESS_DRAFT_STORAGE_PREFIX,
   accessDraftStorageKey,
   accessDraftSubmissionNeedsReload,
+  clearAccessDraftStorageExcept,
   editableAccessIdentity,
   editableAccessDefaults,
 };
@@ -481,19 +483,6 @@ export function clearAccessDraftStorageForUser(
 ): boolean {
   return clearDraftKeys(
     (key) => key.startsWith(accessDraftUserStoragePrefix(userId)),
-    storage,
-  );
-}
-
-export function clearAccessDraftStorageExcept(
-  userId: string | null,
-  storage: AccessDraftStorage | undefined = browserStorage(),
-): boolean {
-  const keep = userId === null ? null : accessDraftUserStoragePrefix(userId);
-  return clearDraftKeys(
-    (key) =>
-      key.startsWith(ACCESS_DRAFT_STORAGE_PREFIX) &&
-      (keep === null || !key.startsWith(keep)),
     storage,
   );
 }

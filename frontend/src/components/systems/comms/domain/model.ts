@@ -1,4 +1,4 @@
-import type { Person } from "../../access/domain/model";
+import type { Person } from "../../shared/data/sample-people";
 
 export interface Permissions {
   access: "everyone" | "roles";

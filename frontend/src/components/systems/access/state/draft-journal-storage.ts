@@ -249,3 +249,16 @@ export function clearDraftKeys(
     return false;
   }
 }
+
+export function clearAccessDraftStorageExcept(
+  userId: string | null,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  const keep = userId === null ? null : accessDraftUserStoragePrefix(userId);
+  return clearDraftKeys(
+    (key) =>
+      key.startsWith(ACCESS_DRAFT_STORAGE_PREFIX) &&
+      (keep === null || !key.startsWith(keep)),
+    storage,
+  );
+}

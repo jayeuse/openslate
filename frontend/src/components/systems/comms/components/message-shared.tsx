@@ -3,7 +3,7 @@ import { useId } from "react";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
-import type { Person, Role } from "../../access/domain/model";
+import type { Person, Role } from "../../shared/data/sample-people";
 import type { LocalAttachment, Message } from "../domain/model";
 import type { CommsPreferences, CommsSettings } from "../domain/configuration";
 

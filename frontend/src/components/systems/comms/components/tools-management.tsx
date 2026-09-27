@@ -43,7 +43,7 @@ import {
 } from "../domain/configuration";
 import { useSampleState } from "../../shared/runtime/sample-state";
 import { CATEGORIES, CHANNELS } from "../domain/model";
-import { initialPeople, initialRoles } from "../../access/domain/model";
+import { initialPeople, initialRoles } from "../../shared/data/sample-people";
 import {
   parseSettingsImport,
   selectedSettings,

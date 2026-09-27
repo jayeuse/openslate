@@ -11,7 +11,7 @@ import {
   EmptyTitle,
   EmptyDescription,
 } from "@/components/ui/empty";
-import type { Person, Role } from "../../access/domain/model";
+import type { Person, Role } from "../../shared/data/sample-people";
 import { previewCommsNotification } from "../domain/notification-policy";
 import { type SampleTransactionDraft } from "../../shared/runtime/sample-state";
 import { Action, Toggle } from "../../shared/components/ui";

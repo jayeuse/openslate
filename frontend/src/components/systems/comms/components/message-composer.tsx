@@ -1,4 +1,4 @@
-import type { Person } from "../../access/domain/model";
+import type { Person } from "../../shared/data/sample-people";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Image from "next/image";
 import { Paperclip, Reply, Send, X } from "lucide-react";

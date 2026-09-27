@@ -10,7 +10,7 @@ import {
 import { initialManageSessions } from "./sessions";
 import type { SampleRuntime } from "../../shared/runtime/sample-runtime";
 import { completeCollection } from "../../shared/helpers/sample-collections";
-import { initialPeople } from "../../access/domain/model";
+import { initialPeople } from "../../shared/data/sample-people";
 import {
   useSampleCommands,
   useSampleResource,

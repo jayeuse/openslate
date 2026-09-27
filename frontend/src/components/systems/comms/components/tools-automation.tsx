@@ -39,7 +39,7 @@ import {
   type Message,
   type Thread,
 } from "../domain/model";
-import { initialPeople } from "../../access/domain/model";
+import { initialPeople } from "../../shared/data/sample-people";
 import { INITIAL_RECORDS } from "../../shared/data/sample-data";
 import { templateText, toolChannelMessages } from "../domain/tools-helpers";
 import { validateCommsMessage } from "../domain/message-policy";

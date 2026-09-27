@@ -2,7 +2,7 @@
 
 import type { useCommsCommands } from "./runtime";
 import type { Dispatch, SetStateAction } from "react";
-import { initialPeople, type Person } from "../../access/domain/model";
+import { initialPeople, type Person } from "../../shared/data/sample-people";
 import type { ThreadChangeOptions } from "../components/message-shared";
 import {
   CATEGORIES,
