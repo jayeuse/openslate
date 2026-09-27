@@ -406,6 +406,51 @@ test("a Views denial stays in force while its Retry is in flight", async ({
   await expect(denial).toHaveCount(0);
 });
 
+test("a Charts denial stays in force while its catalog Retry is in flight", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  await page.goto("/openview?section=charts");
+  const source = page.locator("option", { hasText: "Assets" });
+  await expect(source).toHaveCount(1);
+  await sendOpenViewEvent(page, "resync");
+  await expect.poll(() => api.catalogReads.length).toBe(2);
+
+  api.denyCatalog(true);
+  await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
+  await expect(source).toHaveCount(0);
+
+  api.denyCatalog(false);
+  const release = api.holdCatalog();
+  const reads = api.catalogReads.length;
+  await page.getByRole("button", { name: "Retry catalog" }).click();
+  await expect.poll(() => api.catalogReads.length).toBe(reads + 1);
+  // Access is not confirmed yet, so the retained catalog stays hidden.
+  await expect(source).toHaveCount(0);
+
+  release();
+  await expect(source).toHaveCount(1);
+});
+
+test("a refused catalog refresh hides data sources from a new Report recipe", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  await page.goto("/openview?section=reports");
+  await expect(
+    page.getByRole("button", { name: "Alpha report" }),
+  ).toBeVisible();
+  await expect.poll(() => api.catalogReads.length).toBe(1);
+
+  api.denyCatalog(true);
+  // The stream connects; the catalog reads again and is refused.
+  await sendOpenViewEvent(page, "resync");
+  await expect.poll(() => api.catalogReads.length).toBe(2);
+
+  await page.getByRole("button", { name: "New Report" }).click();
+  await expect(page.locator("option", { hasText: "Assets" })).toHaveCount(0);
+});
+
 test("server invalidations and Refresh still reload cached OpenView reads", async ({
   page,
 }) => {

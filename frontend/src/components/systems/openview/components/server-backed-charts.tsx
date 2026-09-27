@@ -137,7 +137,8 @@ export default function ServerBackedCharts() {
   const preferencesLoadError = preferencesQuery.isFetching
     ? null
     : preferencesQuery.error;
-  const preferencesLoadDenied = isAuthorizationDenied(preferencesLoadError);
+  // A denial holds through a retry until a read succeeds again.
+  const preferencesLoadDenied = isAuthorizationDenied(preferencesQuery.error);
   const settingsDenied = saveDenied ?? preferencesLoadDenied;
   const preferencesError =
     preferenceMessage ||
@@ -158,7 +159,7 @@ export default function ServerBackedCharts() {
       : null;
   const sourcesLoadError = sourcesQuery.isFetching ? null : sourcesQuery.error;
   const sourcesDenied =
-    isAuthorizationDenied(sourcesLoadError) || Boolean(sourcesMore?.denied);
+    isAuthorizationDenied(sourcesQuery.error) || Boolean(sourcesMore?.denied);
   const sources = sourcesDenied
     ? []
     : [...(sourcesBase?.items ?? []), ...(sourcesMore?.items ?? [])];
@@ -214,7 +215,8 @@ export default function ServerBackedCharts() {
   const fieldsLoadError =
     moduleId && !fieldsQuery.isFetching ? fieldsQuery.error : null;
   const fieldsDenied =
-    isAuthorizationDenied(fieldsLoadError) || Boolean(fieldsMore?.denied);
+    (Boolean(moduleId) && isAuthorizationDenied(fieldsQuery.error)) ||
+    Boolean(fieldsMore?.denied);
   const fields = fieldsDenied
     ? []
     : [...(fieldsBase?.items ?? []), ...(fieldsMore?.items ?? [])];

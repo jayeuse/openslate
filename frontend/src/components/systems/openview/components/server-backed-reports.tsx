@@ -289,7 +289,9 @@ export default function ServerBackedReports() {
   // Data sources and fields for the recipe editor: cached first pages plus
   // pages loaded with "Load more".
   const sourcesQuery = useQuery(catalogFirstPageOptions());
-  const sourcesBase = sourcesQuery.data;
+  // A refused read hides retained recipe metadata until a read succeeds.
+  const sourcesDenied = isAuthorizationDenied(sourcesQuery.error);
+  const sourcesBase = sourcesDenied ? undefined : sourcesQuery.data;
   const sourcesMore =
     sourcesExtension && sourcesExtension.base === sourcesBase
       ? sourcesExtension
@@ -313,7 +315,9 @@ export default function ServerBackedReports() {
         : "";
 
   const fieldsQuery = useQuery(fieldsFirstPageOptions(draft.moduleId));
-  const fieldsBase = draft.moduleId ? fieldsQuery.data : undefined;
+  const fieldsDenied = isAuthorizationDenied(fieldsQuery.error);
+  const fieldsBase =
+    draft.moduleId && !fieldsDenied ? fieldsQuery.data : undefined;
   const fieldsMore =
     fieldsExtension && fieldsBase && fieldsExtension.base === fieldsBase
       ? fieldsExtension
