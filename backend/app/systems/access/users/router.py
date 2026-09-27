@@ -17,10 +17,12 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
+from app.systems.access.policy.scope import explain_access
 from app.systems.access.users.coordination import (
     InvitationConflict,
     InvitationError,
     ProfileValidationError,
+    not_found,
 )
 from app.systems.access.users.coordination import (
     get_user as load_user,
@@ -29,6 +31,7 @@ from app.systems.access.users.models import User, UserRole
 from app.systems.access.users.schemas import (
     InvitationCreate,
     InvitationResponse,
+    UserAccessResponse,
     UserCreate,
     UserResponse,
 )
@@ -91,6 +94,39 @@ def get_user(
     db: Annotated[Session, Depends(get_db)],
 ) -> User:
     return load_user(db, user_id)
+
+
+@router.get("/{user_id}/access", response_model=UserAccessResponse)
+def get_user_access(
+    user_id: UUID,
+    _: AdminUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> UserAccessResponse:
+    """Show where the person has access and which groups give it."""
+
+    user = load_user(db, user_id)
+    if user.is_deleted:
+        raise not_found("User")
+    access, entries = explain_access(db, user)
+    return UserAccessResponse.model_validate(
+        {
+            "user_id": user.id,
+            "role": user.role,
+            "unrestricted": access.unrestricted,
+            "entries": [
+                {
+                    "department_id": entry.department_id,
+                    "module_id": entry.module_id,
+                    "level": entry.level,
+                    "groups": [
+                        {"group_id": group_id, "name": name, "level": level}
+                        for group_id, name, level in entry.groups
+                    ],
+                }
+                for entry in entries
+            ],
+        }
+    )
 
 
 @router.post("", response_model=InvitationResponse, status_code=status.HTTP_201_CREATED)

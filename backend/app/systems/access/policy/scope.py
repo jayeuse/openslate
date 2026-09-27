@@ -134,13 +134,30 @@ class EffectiveAccess:
 NO_ACCESS = EffectiveAccess()
 
 
+_GroupLevels = dict[UUID, dict[UUID, AccessLevel]]
+
+
+@dataclass(frozen=True, slots=True)
+class _Resolution:
+    """The resolved levels and the raw rows of each group they came from."""
+
+    access: EffectiveAccess
+    department_rows: _GroupLevels = field(default_factory=dict)
+    module_rows: _GroupLevels = field(default_factory=dict)
+    guest: bool = False
+
+
 def effective_levels(db: Session, user: User, *, now: datetime | None = None) -> EffectiveAccess:
     """Resolve the user's level on every department and module they can reach."""
 
+    return _resolve(db, user, now=now).access
+
+
+def _resolve(db: Session, user: User, *, now: datetime | None) -> _Resolution:
     if not is_active_account(user, now=now):
-        return NO_ACCESS
+        return _Resolution(NO_ACCESS)
     if user.role == UserRole.ADMIN.value:
-        return EffectiveAccess(unrestricted=True)
+        return _Resolution(EffectiveAccess(unrestricted=True))
     rows = db.execute(
         select(
             GroupAccess.group_id,
@@ -157,8 +174,8 @@ def effective_levels(db: Session, user: User, *, now: datetime | None = None) ->
             GroupAccess.is_deleted.is_(False),
         )
     ).tuples()
-    department_rows: dict[UUID, dict[UUID, AccessLevel]] = {}
-    module_rows: dict[UUID, dict[UUID, AccessLevel]] = {}
+    department_rows: _GroupLevels = {}
+    module_rows: _GroupLevels = {}
     for group_id, department_id, module_id, raw_level in rows:
         level = AccessLevel(raw_level)
         if module_id is None:
@@ -168,7 +185,7 @@ def effective_levels(db: Session, user: User, *, now: datetime | None = None) ->
     department_ids = {item for levels in department_rows.values() for item in levels}
     module_ids = {item for levels in module_rows.values() for item in levels}
     if not department_ids and not module_ids:
-        return NO_ACCESS
+        return _Resolution(NO_ACCESS)
     module_departments = {
         module_id: department_id
         for module_id, department_id in db.execute(
@@ -194,11 +211,78 @@ def effective_levels(db: Session, user: User, *, now: datetime | None = None) ->
     if guest:
         modules = {key: AccessLevel.READ for key in modules}
         departments = {key: AccessLevel.READ for key in departments}
-    return EffectiveAccess(
+    access = EffectiveAccess(
         modules=modules,
         module_departments={key: module_departments[key] for key in modules},
         departments=departments,
     )
+    return _Resolution(access, department_rows, module_rows, guest)
+
+
+@dataclass(frozen=True, slots=True)
+class AccessSource:
+    """One compact entry and every group whose own row produces its level.
+
+    ``groups`` holds ``(group_id, name, level)`` with the group's own row level,
+    which for a guest can be higher than the capped entry level.
+    """
+
+    department_id: UUID
+    module_id: UUID | None
+    level: AccessLevel
+    groups: tuple[tuple[UUID, str, AccessLevel], ...]
+
+
+def explain_access(
+    db: Session, user: User, *, now: datetime | None = None
+) -> tuple[EffectiveAccess, list[AccessSource]]:
+    """Return :meth:`EffectiveAccess.entries` with the groups behind each one.
+
+    A group produces an entry when its most specific row for the target, capped
+    for a guest, equals the entry level. Entries sort by department, then module.
+    """
+
+    resolution = _resolve(db, user, now=now)
+    access = resolution.access
+    found: list[tuple[UUID, UUID | None, AccessLevel, list[tuple[UUID, AccessLevel]]]] = []
+    for department_id, module_id, level in access.entries():
+        sources: list[tuple[UUID, AccessLevel]] = []
+        for group_id in resolution.department_rows.keys() | resolution.module_rows.keys():
+            own = resolution.department_rows.get(group_id, {}).get(department_id)
+            if module_id is not None:
+                own = resolution.module_rows.get(group_id, {}).get(module_id) or own
+            capped = AccessLevel.READ if resolution.guest and own is not None else own
+            if capped == level and own is not None:
+                sources.append((group_id, own))
+        found.append((department_id, module_id, level, sources))
+    group_ids = {group_id for *_, sources in found for group_id, _ in sources}
+    names = dict(
+        db.execute(select(Group.id, Group.name).where(Group.id.in_(group_ids))).tuples().all()
+        if group_ids
+        else ()
+    )
+    explained = [
+        AccessSource(
+            department_id,
+            module_id,
+            level,
+            tuple(
+                sorted(
+                    ((group_id, names[group_id], own) for group_id, own in sources),
+                    key=lambda item: (item[1], item[0]),
+                )
+            ),
+        )
+        for department_id, module_id, level, sources in found
+    ]
+    explained.sort(
+        key=lambda item: (
+            item.department_id,
+            item.module_id is not None,
+            item.module_id or UUID(int=0),
+        )
+    )
+    return access, explained
 
 
 def allowed_module_ids(

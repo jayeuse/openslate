@@ -44,6 +44,27 @@ class AuthMeResponse(UserResponse):
     access: list[AccessEntryResponse]
 
 
+class AccessGroupResponse(BaseModel):
+    """A group whose own row gives an entry its level; a guest's row can be higher."""
+
+    group_id: UUID
+    name: str
+    level: AccessLevel
+
+
+class UserAccessEntryResponse(AccessEntryResponse):
+    groups: list[AccessGroupResponse]
+
+
+class UserAccessResponse(BaseModel):
+    """A person's effective access. An active administrator is unrestricted with no entries."""
+
+    user_id: UUID
+    role: UserRole
+    unrestricted: bool
+    entries: list[UserAccessEntryResponse]
+
+
 class UserCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

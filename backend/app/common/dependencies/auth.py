@@ -133,7 +133,11 @@ def require_fresh_exact_admin(
 
 
 def require_admin(user: Annotated[User, Depends(get_current_user)]) -> User:
-    """Allow only an administrator. Administrators alone change the schema and Access."""
+    """Allow only an administrator.
+
+    Administrators alone change the schema, users, invitations and group access.
+    Department managers change group members through ``policy/delegation.py`` instead.
+    """
 
     if user.role != UserRole.ADMIN.value:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
