@@ -77,8 +77,66 @@ export async function boundedItems<T>(
   return { items, hasMore: true, nextOffset: offset };
 }
 
-export function isAuthorizationDenied(error: unknown): boolean {
+export function isAuthorizationDenied(error: unknown): error is ApiError {
   return error instanceof ApiError && [401, 403].includes(error.status);
+}
+
+// "Load more" pages extend a cached first page in one section's state. Two
+// rules keep them honest across sections:
+//
+// 1. A page belongs to the one successful read that produced its first page,
+//    identified by that read's `dataUpdatedAt`. Any later read drops it, even
+//    one whose data is equal (structural sharing keeps the same object, so
+//    object identity cannot tell reads apart).
+// 2. A refused page (401/403) is a refusal of the whole collection. It is
+//    recorded on the shared cached reads, so every section loses the cached
+//    names and holds the refusal as `error` until a read succeeds.
+
+/** The read a "Load more" page extends: 0 when no data is cached. */
+export function readStamp(query: {
+  data: unknown;
+  dataUpdatedAt: number;
+}): number {
+  return query.data === undefined ? 0 : query.dataUpdatedAt;
+}
+
+/** Whether a page loaded after the read stamped `readAt` still applies. */
+export function extendsRead(
+  readAt: number,
+  query: { data: unknown; dataUpdatedAt: number },
+): boolean {
+  const current = readStamp(query);
+  return current !== 0 && current === readAt;
+}
+
+/** Cached reads that hold one data source's fields. */
+export function moduleFieldKeys(moduleId: string): QueryKey[] {
+  return [
+    openViewKeys.fieldsFirstPage(moduleId),
+    openViewKeys.moduleWorkspace(moduleId),
+  ];
+}
+
+/** Records a refused "Load more" page on every cached read it extends. */
+export function recordPageDenial(
+  client: QueryClient,
+  queryKeys: readonly QueryKey[],
+  error: ApiError,
+): void {
+  const now = Date.now();
+  for (const queryKey of queryKeys)
+    for (const query of client.getQueryCache().findAll({ queryKey }))
+      query.setState({
+        data: undefined,
+        dataUpdatedAt: 0,
+        error,
+        errorUpdatedAt: now,
+        errorUpdateCount: query.state.errorUpdateCount + 1,
+        fetchFailureCount: query.state.fetchFailureCount + 1,
+        fetchFailureReason: error,
+        status: "error",
+        isInvalidated: true,
+      });
 }
 
 export type ModuleWorkspace = {

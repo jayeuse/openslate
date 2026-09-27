@@ -11,6 +11,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
 import {
   audienceOptions,
+  extendsRead,
+  moduleFieldKeys,
+  readStamp,
+  recordPageDenial,
   boundedCatalogOptions,
   invalidatesRecords,
   isAuthorizationDenied,
@@ -51,15 +55,16 @@ const AUTHORIZATION_ERROR =
   "OpenView data is unavailable. Sign in or ask for access, then retry.";
 
 // Pages loaded with "Load more" extend the cached first batch. They belong to
-// the batch they extend: a refetch replaces the batch and drops them.
+// the read that produced it (`readAt`, see readStamp): any later read of the
+// batch drops them.
 type CatalogExtension = {
-  base: unknown;
+  readAt: number;
   items: OpenViewDataSource[];
   hasMore: boolean;
   nextOffset: number;
 };
 type AudienceExtension = {
-  base: unknown;
+  readAt: number;
   items: OpenViewAudienceOption[];
   roleHasMore: boolean;
   roleNextOffset: number;
@@ -95,8 +100,9 @@ export function useServerViewsResource(requestedModule: string | null) {
   );
 
   const catalogBatch = catalogQuery.data;
+  const catalogReadAt = readStamp(catalogQuery);
   const catalogMore =
-    catalogExtension && catalogExtension.base === catalogBatch
+    catalogExtension && extendsRead(catalogExtension.readAt, catalogQuery)
       ? catalogExtension
       : null;
   // The workspace keys effects (route sync, deep-link lookup) on the
@@ -158,8 +164,9 @@ export function useServerViewsResource(requestedModule: string | null) {
       : "";
 
   const audienceLists = audienceQuery.data;
+  const audienceReadAt = readStamp(audienceQuery);
   const audienceMore =
-    audienceExtension && audienceExtension.base === audienceLists
+    audienceExtension && extendsRead(audienceExtension.readAt, audienceQuery)
       ? audienceExtension
       : null;
   const loadedAudiences = useMemo(
@@ -210,7 +217,8 @@ export function useServerViewsResource(requestedModule: string | null) {
   );
 
   const loadMoreCatalog = useCallback(async () => {
-    if (!catalogHasMore || metadataLoadingMore || !catalogBatch) return;
+    if (!catalogHasMore || metadataLoadingMore || !catalogReadAt) return;
+    const readAt = catalogReadAt;
     setMetadataLoadingMore(true);
     setMetadataError("");
     setMetadataRetryTarget(null);
@@ -220,15 +228,19 @@ export function useServerViewsResource(requestedModule: string | null) {
         offset: catalogNextOffset,
       });
       setCatalogExtension((current) => ({
-        base: catalogBatch,
+        readAt,
         items: [
-          ...(current?.base === catalogBatch ? current.items : []),
+          ...(current?.readAt === readAt ? current.items : []),
           ...page.items,
         ],
         hasMore: page.pagination.hasMore,
         nextOffset: catalogNextOffset + page.pagination.count,
       }));
     } catch (error) {
+      if (isAuthorizationDenied(error)) {
+        recordPageDenial(queryClient, [openViewKeys.catalog], error);
+        return;
+      }
       setMetadataRetryTarget("catalog");
       setMetadataError(
         messageFor(error, "More data sources could not be loaded."),
@@ -236,7 +248,13 @@ export function useServerViewsResource(requestedModule: string | null) {
     } finally {
       setMetadataLoadingMore(false);
     }
-  }, [catalogBatch, catalogHasMore, catalogNextOffset, metadataLoadingMore]);
+  }, [
+    catalogHasMore,
+    catalogNextOffset,
+    catalogReadAt,
+    metadataLoadingMore,
+    queryClient,
+  ]);
 
   const loadMoreModuleMetadata = useCallback(async () => {
     if (!moduleId || !moduleWorkspace || metadataLoadingMore) return;
@@ -298,6 +316,10 @@ export function useServerViewsResource(requestedModule: string | null) {
         };
       });
     } catch (error) {
+      if (isAuthorizationDenied(error)) {
+        recordPageDenial(queryClient, moduleFieldKeys(moduleId), error);
+        return;
+      }
       setMetadataRetryTarget("module");
       setMetadataError(
         messageFor(error, "More saved-view metadata could not be loaded."),
@@ -305,15 +327,21 @@ export function useServerViewsResource(requestedModule: string | null) {
     } finally {
       setMetadataLoadingMore(false);
     }
-  }, [metadataLoadingMore, moduleId, moduleWorkspace, setModuleWorkspace]);
+  }, [
+    metadataLoadingMore,
+    moduleId,
+    moduleWorkspace,
+    queryClient,
+    setModuleWorkspace,
+  ]);
 
   const loadMoreAudienceOptions = useCallback(async () => {
     if (metadataLoadingMore || (!roleOptionsHasMore && !userOptionsHasMore))
       return;
-    const base = audienceLists;
+    if (!audienceReadAt) return;
     setMetadataLoadingMore(true);
     const extension: AudienceExtension = {
-      base,
+      readAt: audienceReadAt,
       items: audienceMore?.items ?? [],
       roleHasMore: roleOptionsHasMore,
       roleNextOffset: roleOptionsNextOffset,
@@ -357,7 +385,11 @@ export function useServerViewsResource(requestedModule: string | null) {
             }
           : {}),
       });
-    } catch {
+    } catch (error) {
+      if (isAuthorizationDenied(error)) {
+        recordPageDenial(queryClient, [openViewKeys.audiences()], error);
+        return;
+      }
       setAudienceExtension({
         ...extension,
         error:
@@ -367,8 +399,9 @@ export function useServerViewsResource(requestedModule: string | null) {
       setMetadataLoadingMore(false);
     }
   }, [
-    audienceLists,
     audienceMore,
+    audienceReadAt,
+    queryClient,
     metadataLoadingMore,
     roleOptionsHasMore,
     roleOptionsNextOffset,

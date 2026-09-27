@@ -75,7 +75,10 @@ import {
   catalogFirstPageOptions,
   fieldsFirstPageOptions,
   isAuthorizationDenied,
+  moduleFieldKeys,
   openViewKeys,
+  readStamp,
+  recordPageDenial,
   REPORT_PAGE_SIZE as PAGE_SIZE,
   reportListOptions,
   sharedRunsOptions,
@@ -105,14 +108,27 @@ import {
 } from "./report-run-panels";
 import { SavedReportsPanel } from "./saved-reports-panel";
 
-// Pages loaded with "Load more" extend the cached first page they follow. A
-// refetch replaces that page and drops them, like the former reload did.
-type PageExtension<T> = {
-  base: unknown;
+// The one read of a cached first page that "Load more" pages (and their
+// failures) belong to: `scope` names the archive filter or data source, and
+// `readAt` the read (see readStamp). Any later read of that first page drops
+// them, like the former reload did. A refused page (401/403) is recorded on
+// the shared cached reads instead (recordPageDenial).
+type ReadMark = { scope: string; readAt: number };
+type PageExtension<T> = ReadMark & {
   items: T[];
   hasMore: boolean;
   nextOffset: number;
 };
+
+function marksRead(
+  mark: ReadMark | null,
+  scope: string,
+  readAt: number,
+): boolean {
+  return Boolean(
+    mark && readAt && mark.scope === scope && mark.readAt === readAt,
+  );
+}
 
 function safeMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
@@ -174,16 +190,19 @@ export default function ServerBackedReports() {
   const [listExtension, setListExtension] =
     useState<PageExtension<OpenViewReport> | null>(null);
   const [listLoadingMore, setListLoadingMore] = useState(false);
-  const [listMoreFailedFor, setListMoreFailedFor] = useState<unknown>(null);
+  const [listMoreFailedFor, setListMoreFailedFor] = useState<ReadMark | null>(
+    null,
+  );
   const [sourcesExtension, setSourcesExtension] =
     useState<PageExtension<OpenViewDataSource> | null>(null);
   const [sourcesLoadingMore, setSourcesLoadingMore] = useState(false);
   const [sourcesMoreFailedFor, setSourcesMoreFailedFor] =
-    useState<unknown>(null);
+    useState<ReadMark | null>(null);
   const [fieldsExtension, setFieldsExtension] =
     useState<PageExtension<OpenViewDataSourceField> | null>(null);
   const [fieldsLoadingMore, setFieldsLoadingMore] = useState(false);
-  const [fieldsMoreFailedFor, setFieldsMoreFailedFor] = useState<unknown>(null);
+  const [fieldsMoreFailedFor, setFieldsMoreFailedFor] =
+    useState<ReadMark | null>(null);
   const [baselineReport, setBaselineReport] = useState<OpenViewReport | null>(
     null,
   );
@@ -245,8 +264,10 @@ export default function ServerBackedReports() {
   // A refused refresh hides the retained list until a read succeeds again.
   const listDenied = isAuthorizationDenied(listQuery.error);
   const listBase = listDenied ? undefined : listQuery.data;
-  const listMore =
-    listExtension && listExtension.base === listBase ? listExtension : null;
+  const listReadAt = listBase ? readStamp(listQuery) : 0;
+  const listMore = marksRead(listExtension, listDeleted, listReadAt)
+    ? listExtension
+    : null;
   const reports = listBase
     ? [
         ...listBase.items,
@@ -259,7 +280,7 @@ export default function ServerBackedReports() {
     ? listMore.hasMore
     : (listBase?.pagination.hasMore ?? false);
   const listLoading = listQuery.isFetching || listLoadingMore;
-  const listMoreFailed = Boolean(listBase) && listMoreFailedFor === listBase;
+  const listMoreFailed = marksRead(listMoreFailedFor, listDeleted, listReadAt);
   const listError =
     listMoreFailed || (listQuery.isError && !listQuery.isFetching)
       ? "Reports could not be loaded. Try again."
@@ -292,10 +313,10 @@ export default function ServerBackedReports() {
   // A refused read hides retained recipe metadata until a read succeeds.
   const sourcesDenied = isAuthorizationDenied(sourcesQuery.error);
   const sourcesBase = sourcesDenied ? undefined : sourcesQuery.data;
-  const sourcesMore =
-    sourcesExtension && sourcesExtension.base === sourcesBase
-      ? sourcesExtension
-      : null;
+  const sourcesReadAt = sourcesBase ? readStamp(sourcesQuery) : 0;
+  const sourcesMore = marksRead(sourcesExtension, "", sourcesReadAt)
+    ? sourcesExtension
+    : null;
   const sources = [
     ...(sourcesBase?.items ?? []),
     ...(sourcesMore?.items ?? []),
@@ -307,21 +328,20 @@ export default function ServerBackedReports() {
     ? sourcesMore.nextOffset
     : (sourcesBase?.pagination.count ?? 0);
   const sourcesLoading = sourcesQuery.isFetching || sourcesLoadingMore;
-  const sourcesError =
-    Boolean(sourcesBase) && sourcesMoreFailedFor === sourcesBase
-      ? "More data sources could not be loaded. Try again."
-      : sourcesQuery.isError && !sourcesQuery.isFetching
-        ? "Data sources could not be loaded. Try again."
-        : "";
+  const sourcesError = marksRead(sourcesMoreFailedFor, "", sourcesReadAt)
+    ? "More data sources could not be loaded. Try again."
+    : sourcesQuery.isError && !sourcesQuery.isFetching
+      ? "Data sources could not be loaded. Try again."
+      : "";
 
   const fieldsQuery = useQuery(fieldsFirstPageOptions(draft.moduleId));
   const fieldsDenied = isAuthorizationDenied(fieldsQuery.error);
   const fieldsBase =
     draft.moduleId && !fieldsDenied ? fieldsQuery.data : undefined;
-  const fieldsMore =
-    fieldsExtension && fieldsBase && fieldsExtension.base === fieldsBase
-      ? fieldsExtension
-      : null;
+  const fieldsReadAt = fieldsBase ? readStamp(fieldsQuery) : 0;
+  const fieldsMore = marksRead(fieldsExtension, draft.moduleId, fieldsReadAt)
+    ? fieldsExtension
+    : null;
   const fields = [...(fieldsBase?.items ?? []), ...(fieldsMore?.items ?? [])];
   const fieldsForModule = fieldsBase ? draft.moduleId : "";
   const fieldsHasMore = fieldsMore
@@ -332,12 +352,15 @@ export default function ServerBackedReports() {
     : (fieldsBase?.pagination.count ?? 0);
   const fieldsLoading =
     (Boolean(draft.moduleId) && fieldsQuery.isFetching) || fieldsLoadingMore;
-  const fieldsError =
-    Boolean(fieldsBase) && fieldsMoreFailedFor === fieldsBase
-      ? "More fields could not be loaded. Try again."
-      : draft.moduleId && fieldsQuery.isError && !fieldsQuery.isFetching
-        ? "Fields could not be loaded. Try again."
-        : "";
+  const fieldsError = marksRead(
+    fieldsMoreFailedFor,
+    draft.moduleId,
+    fieldsReadAt,
+  )
+    ? "More fields could not be loaded. Try again."
+    : draft.moduleId && fieldsQuery.isError && !fieldsQuery.isFetching
+      ? "Fields could not be loaded. Try again."
+      : "";
 
   function refreshReportList(): void {
     setListExtension(null);
@@ -349,13 +372,16 @@ export default function ServerBackedReports() {
   function patchReports(
     update: (current: OpenViewReport[]) => OpenViewReport[],
   ): void {
-    const next = queryClient.setQueryData(
-      reportListOptions(listDeleted).queryKey,
-      (page) => (page ? { ...page, items: update(page.items) } : page),
+    const queryKey = reportListOptions(listDeleted).queryKey;
+    queryClient.setQueryData(queryKey, (page) =>
+      page ? { ...page, items: update(page.items) } : page,
     );
+    // The local update is a new read of the first page; the loaded pages
+    // move onto it.
+    const readAt = queryClient.getQueryState(queryKey)?.dataUpdatedAt ?? 0;
     setListExtension((current) =>
-      current && current.base === listBase
-        ? { ...current, base: next, items: update(current.items) }
+      current && marksRead(current, listDeleted, listReadAt)
+        ? { ...current, readAt, items: update(current.items) }
         : current,
     );
   }
@@ -363,6 +389,7 @@ export default function ServerBackedReports() {
   async function loadMoreReports(): Promise<void> {
     if (!listBase || listLoadingMore) return;
     const base = listBase;
+    const mark = { scope: listDeleted, readAt: listReadAt };
     const loaded = listMore?.items ?? [];
     setListLoadingMore(true);
     setListMoreFailedFor(null);
@@ -374,7 +401,7 @@ export default function ServerBackedReports() {
       });
       const known = [...base.items, ...loaded];
       setListExtension({
-        base,
+        ...mark,
         items: [
           ...loaded,
           ...page.items.filter(
@@ -384,8 +411,10 @@ export default function ServerBackedReports() {
         hasMore: page.pagination.hasMore,
         nextOffset: 0,
       });
-    } catch {
-      setListMoreFailedFor(base);
+    } catch (error) {
+      if (isAuthorizationDenied(error))
+        recordPageDenial(queryClient, [openViewKeys.reportLists], error);
+      else setListMoreFailedFor(mark);
     } finally {
       setListLoadingMore(false);
     }
@@ -563,7 +592,7 @@ export default function ServerBackedReports() {
 
   async function loadMoreSources(): Promise<void> {
     if (sourcesLoading || !sourcesHasMore || !sourcesBase) return;
-    const base = sourcesBase;
+    const mark = { scope: "", readAt: sourcesReadAt };
     const loaded = sourcesMore?.items ?? [];
     setSourcesLoadingMore(true);
     try {
@@ -572,14 +601,16 @@ export default function ServerBackedReports() {
         offset: sourcesOffset,
       });
       setSourcesExtension({
-        base,
+        ...mark,
         items: [...loaded, ...page.items],
         hasMore: page.pagination.hasMore,
         nextOffset: sourcesOffset + page.pagination.count,
       });
       setSourcesMoreFailedFor(null);
-    } catch {
-      setSourcesMoreFailedFor(base);
+    } catch (error) {
+      if (isAuthorizationDenied(error))
+        recordPageDenial(queryClient, [openViewKeys.catalog], error);
+      else setSourcesMoreFailedFor(mark);
     } finally {
       setSourcesLoadingMore(false);
     }
@@ -588,25 +619,28 @@ export default function ServerBackedReports() {
   async function loadMoreFields(): Promise<void> {
     if (fieldsLoading || !fieldsHasMore || !draft.moduleId || !fieldsBase)
       return;
-    const base = fieldsBase;
+    const moduleId = draft.moduleId;
+    const mark = { scope: moduleId, readAt: fieldsReadAt };
     const loaded = fieldsMore?.items ?? [];
     setFieldsLoadingMore(true);
     try {
-      const page = await listOpenViewDataSourceFields(draft.moduleId, {
+      const page = await listOpenViewDataSourceFields(moduleId, {
         limit: CATALOG_PAGE_SIZE,
         offset: fieldsOffset,
       });
       // A result for a source that is no longer chosen is ignored, because
-      // its base page is no longer the one shown.
+      // its mark no longer matches the first page shown.
       setFieldsExtension({
-        base,
+        ...mark,
         items: [...loaded, ...page.items],
         hasMore: page.pagination.hasMore,
         nextOffset: fieldsOffset + page.pagination.count,
       });
       setFieldsMoreFailedFor(null);
-    } catch {
-      setFieldsMoreFailedFor(base);
+    } catch (error) {
+      if (isAuthorizationDenied(error))
+        recordPageDenial(queryClient, moduleFieldKeys(moduleId), error);
+      else setFieldsMoreFailedFor(mark);
     } finally {
       setFieldsLoadingMore(false);
     }

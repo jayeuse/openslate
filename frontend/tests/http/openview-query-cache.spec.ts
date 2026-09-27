@@ -73,6 +73,11 @@ type Api = {
   holdCatalog(): () => void;
   /** Makes the catalog's first page say more pages exist, and refuses them. */
   refuseLaterCatalogPages(): void;
+  /**
+   * Makes the catalog's first page say one more page exists and serves these
+   * sources on it. The first page itself stays the same.
+   */
+  setLaterCatalogPage(sources: { id: string; name: string }[]): void;
 };
 
 const forbidden = {
@@ -91,6 +96,7 @@ async function installOpenViewApi(page: Page): Promise<Api> {
   let catalogDenied = false;
   let catalogHold: Promise<void> | null = null;
   let laterPagesRefused = false;
+  let laterPage: { id: string; name: string }[] | null = null;
   const reportLists: string[] = [];
   const catalogReads: string[] = [];
   await installOpenViewEventSource(page);
@@ -137,13 +143,21 @@ async function installOpenViewApi(page: Page): Promise<Api> {
         if (laterPagesRefused) return route.fulfill(forbidden);
         return route.fulfill({
           contentType: "application/json",
-          body: JSON.stringify(pageOf([], 100)),
+          body: JSON.stringify(
+            pageOf(
+              (laterPage ?? []).map((source) => ({
+                ...source,
+                department_id: departmentId,
+              })),
+              100,
+            ),
+          ),
         });
       }
       catalogReads.push(route.request().url());
       if (catalogHold) await catalogHold;
       if (catalogDenied) return route.fulfill(forbidden);
-      if (laterPagesRefused) {
+      if (laterPagesRefused || laterPage) {
         const first = pageOf(
           [{ id: moduleId, name: "Assets", department_id: departmentId }],
           100,
@@ -220,6 +234,9 @@ async function installOpenViewApi(page: Page): Promise<Api> {
     },
     refuseLaterCatalogPages() {
       laterPagesRefused = true;
+    },
+    setLaterCatalogPage(sources) {
+      laterPage = sources;
     },
     holdCatalog() {
       let release: () => void = () => {};
@@ -482,6 +499,65 @@ test("a refused Charts catalog page stays in force while the catalog retries", a
 
   release();
   await expect(source).toHaveCount(1);
+});
+
+test("a refused catalog page in Charts hides cached data sources from a new Report recipe", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  api.refuseLaterCatalogPages();
+  await page.goto("/openview?section=charts");
+  const source = page.locator("option", { hasText: "Assets" });
+  await expect(source).toHaveCount(1);
+  await page.getByRole("button", { name: "Load more data sources" }).click();
+  await expect(source).toHaveCount(0);
+
+  // The refusal belongs to the shared catalog, not to Charts alone: Reports
+  // must read the catalog again before it may show any data source.
+  const release = api.holdCatalog();
+  const reads = api.catalogReads.length;
+  await sidebarLink(page, "Reports").click();
+  await expect(page).toHaveURL(/section=reports/);
+  await page.getByRole("button", { name: "New Report" }).click();
+  await expect(page.locator("#report-source")).toBeVisible();
+  await expect(source).toHaveCount(0);
+  await expect.poll(() => api.catalogReads.length).toBeGreaterThan(reads);
+  await expect(source).toHaveCount(0);
+
+  // An authorized read shows the data source again.
+  release();
+  await expect(source).toHaveCount(1);
+});
+
+test("an invalidation drops loaded catalog pages even when the first page is unchanged", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  api.setLaterCatalogPage([
+    { id: "00000000-0000-4000-8000-000000000106", name: "Equipment" },
+  ]);
+  await page.goto("/openview?section=charts");
+  await expect(page.locator("option", { hasText: "Assets" })).toHaveCount(1);
+  // The stream's opening resync reads the catalog once more.
+  await sendOpenViewEvent(page, "resync");
+  await expect.poll(() => api.catalogReads.length).toBe(2);
+
+  await page.getByRole("button", { name: "Load more data sources" }).click();
+  const equipment = page.locator("option", { hasText: "Equipment" });
+  await expect(equipment).toHaveCount(1);
+
+  // The second page changes; the first page reads back deep-equal.
+  api.setLaterCatalogPage([
+    { id: "00000000-0000-4000-8000-000000000107", name: "Vehicles" },
+  ]);
+  await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
+  await expect.poll(() => api.catalogReads.length).toBe(3);
+  await expect(equipment).toHaveCount(0);
+  await expect(page.locator("option", { hasText: "Assets" })).toHaveCount(1);
+
+  await page.getByRole("button", { name: "Load more data sources" }).click();
+  await expect(page.locator("option", { hasText: "Vehicles" })).toHaveCount(1);
+  await expect(equipment).toHaveCount(0);
 });
 
 test("a refused catalog refresh hides data sources from a new Report recipe", async ({

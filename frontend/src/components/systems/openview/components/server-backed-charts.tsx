@@ -19,9 +19,14 @@ import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events"
 import {
   catalogFirstPageOptions,
   chartPreferencesOptions,
+  extendsRead,
   fieldsFirstPageOptions,
   invalidatesRecords,
   isAuthorizationDenied,
+  moduleFieldKeys,
+  openViewKeys,
+  readStamp,
+  recordPageDenial,
 } from "../adapters/openview-queries";
 import {
   queryOpenViewAggregateSnapshot,
@@ -68,14 +73,17 @@ function formatError(error: unknown, fallback: string): string {
   return messageFor(error, fallback);
 }
 
-// Pages loaded with "Load more" extend the cached first page they follow. A
-// refetch replaces that page and drops them, like the former reload did.
+// Pages loaded with "Load more" extend the cached first page of one read
+// (`readAt`, see readStamp; `scope` names the data source for fields). Any
+// later read of that page drops them, like the former reload did. A refused
+// page is recorded on the shared cached reads (recordPageDenial), so the
+// refusal holds here and in every other section until a read succeeds.
 type PageExtension<T> = {
-  base: unknown;
+  scope: string;
+  readAt: number;
   items: T[];
   hasMore: boolean;
   nextOffset: number;
-  denied: boolean;
 };
 
 export default function ServerBackedCharts() {
@@ -84,13 +92,6 @@ export default function ServerBackedCharts() {
   const sourcesQuery = useQuery(catalogFirstPageOptions());
   const [sourcesExtension, setSourcesExtension] =
     useState<PageExtension<OpenViewDataSource> | null>(null);
-  // A "Load more" denial holds until the first page reads again with
-  // success: its read time must pass the time the denial was recorded.
-  const [sourcesDeniedAt, setSourcesDeniedAt] = useState<number | null>(null);
-  const [fieldsDeniedAt, setFieldsDeniedAt] = useState<{
-    moduleId: string;
-    at: number;
-  } | null>(null);
   const [metadataError, setMetadataError] = useState("");
   const [metadataRetryTarget, setMetadataRetryTarget] = useState<
     "sources" | "fields" | null
@@ -160,15 +161,13 @@ export default function ServerBackedCharts() {
 
   // The data-source catalog: the cached first page plus loaded pages.
   const sourcesBase = sourcesQuery.data;
+  const sourcesReadAt = readStamp(sourcesQuery);
   const sourcesMore =
-    sourcesExtension && sourcesExtension.base === sourcesBase
+    sourcesExtension && extendsRead(sourcesExtension.readAt, sourcesQuery)
       ? sourcesExtension
       : null;
   const sourcesLoadError = sourcesQuery.isFetching ? null : sourcesQuery.error;
-  const sourcesDenied =
-    isAuthorizationDenied(sourcesQuery.error) ||
-    Boolean(sourcesMore?.denied) ||
-    (sourcesDeniedAt !== null && sourcesQuery.dataUpdatedAt <= sourcesDeniedAt);
+  const sourcesDenied = isAuthorizationDenied(sourcesQuery.error);
   const sources = sourcesDenied
     ? []
     : [...(sourcesBase?.items ?? []), ...(sourcesMore?.items ?? [])];
@@ -217,17 +216,18 @@ export default function ServerBackedCharts() {
   // Fields of the chosen data source: the cached first page plus loaded pages.
   const fieldsQuery = useQuery(fieldsFirstPageOptions(moduleId));
   const fieldsBase = moduleId ? fieldsQuery.data : undefined;
+  const fieldsReadAt = moduleId ? readStamp(fieldsQuery) : 0;
   const fieldsMore =
-    fieldsExtension && fieldsBase && fieldsExtension.base === fieldsBase
+    fieldsExtension &&
+    moduleId &&
+    fieldsExtension.scope === moduleId &&
+    extendsRead(fieldsExtension.readAt, fieldsQuery)
       ? fieldsExtension
       : null;
   const fieldsLoadError =
     moduleId && !fieldsQuery.isFetching ? fieldsQuery.error : null;
   const fieldsDenied =
-    (Boolean(moduleId) && isAuthorizationDenied(fieldsQuery.error)) ||
-    Boolean(fieldsMore?.denied) ||
-    (fieldsDeniedAt?.moduleId === moduleId &&
-      fieldsQuery.dataUpdatedAt <= fieldsDeniedAt.at);
+    Boolean(moduleId) && isAuthorizationDenied(fieldsQuery.error);
   const fields = fieldsDenied
     ? []
     : [...(fieldsBase?.items ?? []), ...(fieldsMore?.items ?? [])];
@@ -432,7 +432,7 @@ export default function ServerBackedCharts() {
     setMetadataLoading(true);
     setMetadataError("");
     setMetadataRetryTarget(null);
-    const base = sourcesBase;
+    const readAt = sourcesReadAt;
     const loaded = sourcesMore?.items ?? [];
     try {
       const page = await listOpenViewDataSources({
@@ -440,22 +440,15 @@ export default function ServerBackedCharts() {
         offset: sourcesNextOffset,
       });
       setSourcesExtension({
-        base,
+        scope: "",
+        readAt,
         items: [...loaded, ...page.items],
         hasMore: page.pagination.hasMore,
         nextOffset: sourcesNextOffset + page.pagination.count,
-        denied: false,
       });
     } catch (error) {
       if (isAuthorizationDenied(error)) {
-        setSourcesDeniedAt(sourcesQuery.dataUpdatedAt);
-        setSourcesExtension({
-          base,
-          items: [],
-          hasMore: false,
-          nextOffset: sourcesNextOffset,
-          denied: true,
-        });
+        recordPageDenial(queryClient, [openViewKeys.catalog], error);
       } else {
         setMetadataError(
           formatError(error, "More data sources could not be loaded."),
@@ -472,7 +465,7 @@ export default function ServerBackedCharts() {
     setMetadataLoading(true);
     setMetadataError("");
     setMetadataRetryTarget(null);
-    const base = fieldsBase;
+    const readAt = fieldsReadAt;
     const loaded = fieldsMore?.items ?? [];
     try {
       const page = await listOpenViewDataSourceFields(moduleId, {
@@ -480,22 +473,15 @@ export default function ServerBackedCharts() {
         offset: fieldsNextOffset,
       });
       setFieldsExtension({
-        base,
+        scope: moduleId,
+        readAt,
         items: [...loaded, ...page.items],
         hasMore: page.pagination.hasMore,
         nextOffset: fieldsNextOffset + page.pagination.count,
-        denied: false,
       });
     } catch (error) {
       if (isAuthorizationDenied(error)) {
-        setFieldsDeniedAt({ moduleId, at: fieldsQuery.dataUpdatedAt });
-        setFieldsExtension({
-          base,
-          items: [],
-          hasMore: false,
-          nextOffset: fieldsNextOffset,
-          denied: true,
-        });
+        recordPageDenial(queryClient, moduleFieldKeys(moduleId), error);
       } else {
         setMetadataError(
           formatError(error, "More data-source fields could not be loaded."),
