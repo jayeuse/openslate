@@ -35,7 +35,6 @@ const page: BoardAnnouncementPage = {
       links: [],
       audience: {
         kind: "department",
-        roleId: null,
         userId: null,
         departmentId: "00000000-0000-4000-8000-000000000005",
       },
@@ -64,7 +63,6 @@ const wireAnnouncement = {
   links: [],
   audience: {
     kind: "department",
-    role_id: null,
     user_id: null,
     department_id: "00000000-0000-4000-8000-000000000005",
   },

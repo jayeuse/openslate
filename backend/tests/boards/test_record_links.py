@@ -31,6 +31,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.boards.test_announcement_routes import _actor, _board, _grant
 from tests.boards.test_permanent_delete import _actor as _admin
+from tests.rbac.support import grant_capability_actors
 
 
 def _client(db: Session, actor) -> TestClient:
@@ -52,6 +53,7 @@ def _source(db: Session) -> tuple[Module, Record]:
     )
     db.add(module)
     db.flush()
+    grant_capability_actors(db, department, module)
     record = Record(module_id=module.id, data={"private": "never serialize this"})
     db.add(record)
     db.flush()
@@ -353,7 +355,8 @@ def test_archived_event_record_link_blocks_record_module_and_department_purge_un
 def test_record_link_cap_and_database_parent_guards(integration_owner_db: Session) -> None:
     db = integration_owner_db
     owner = _actor(db, "record-guard")
-    write_only = _actor(db, "record-write-only", read=False)
+    # A guest editor may read the module but never adds a record link.
+    write_only = _actor(db, "record-guest-editor", write=False)
     board = _board(db, owner)
     wrong_board = _board(db, owner)
     _grant(db, board, write_only, "edit")

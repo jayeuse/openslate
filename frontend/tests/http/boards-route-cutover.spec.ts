@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const boardId = "00000000-0000-4000-8000-000000000011";
 const userId = "00000000-0000-4000-8000-000000000012";
-const audienceRoleId = "00000000-0000-4000-8000-000000000014";
+const audienceDepartmentId = "00000000-0000-4000-8000-000000000014";
 const board = {
   id: boardId,
   owner_id: userId,
@@ -86,7 +86,7 @@ async function installBoardApi(page: Page, isAllowed: () => boolean) {
       return reply(200, { view: true, edit: true, manage: true });
     if (path === `/api/boards/${boardId}/content-audience-targets`)
       return reply(200, {
-        items: [{ id: audienceRoleId, label: "Operations" }],
+        items: [{ id: audienceDepartmentId, label: "Operations" }],
         pagination: {
           limit: 25,
           offset: 0,
@@ -446,7 +446,6 @@ test("Calendar uses Workspace today and reaches later occurrences for reminders"
         repeat_until: null,
         audience: {
           kind: "everyone",
-          role_id: null,
           user_id: null,
           department_id: null,
         },
@@ -631,7 +630,7 @@ test("announcement editor retains a canceled close and discards only on confirma
   );
 });
 
-test("Announcement editor requires a selected active role before saving", async ({
+test("Announcement editor requires a selected active department before saving", async ({
   page,
 }) => {
   await installBoardApi(page, () => true);
@@ -639,11 +638,13 @@ test("Announcement editor requires a selected active role before saving", async 
   await page.getByRole("button", { name: "New announcement" }).click();
   await page.getByLabel("Title", { exact: true }).fill("Operations update");
   await page.getByLabel("Message").fill("Read the latest instructions.");
-  await page.getByRole("combobox", { name: "Audience" }).selectOption("role");
+  await page
+    .getByRole("combobox", { name: "Audience" })
+    .selectOption("department");
   await expect(page.getByRole("button", { name: "Save draft" })).toBeDisabled();
   await page
-    .getByRole("combobox", { name: "Role", exact: true })
-    .selectOption(audienceRoleId);
+    .getByRole("combobox", { name: "Department", exact: true })
+    .selectOption(audienceDepartmentId);
   await expect(page.getByRole("button", { name: "Save draft" })).toBeEnabled();
 });
 
@@ -673,7 +674,6 @@ test("My events refreshes after saving and when the current tab reselects it", a
     repeat_until: null,
     audience: {
       kind: "author",
-      role_id: null,
       user_id: null,
       department_id: null,
     },

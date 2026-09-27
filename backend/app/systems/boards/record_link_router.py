@@ -7,10 +7,9 @@ from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.boards.record_link_models import (
     BoardAnnouncementRevisionRecordLink,
     BoardContentRecordLink,
@@ -28,11 +27,11 @@ router = APIRouter(
     tags=["board record links"],
     dependencies=[
         Depends(_private_cache),
-        Depends(require_legacy_capability(Capability.RECORDS_READ)),
+        Depends(get_current_user),
     ],
 )
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
+Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 

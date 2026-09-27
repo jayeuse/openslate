@@ -24,6 +24,7 @@ from app.systems.sandbox.relationships.service import (
     create_relationship,
     list_relationships,
 )
+from tests.rbac.support import make_user
 from tests.relationships_integration.relationships_integration_support import (
     _add_edge,
     _edge_audit_rows,
@@ -33,6 +34,8 @@ from tests.relationships_integration.relationships_integration_support import (
 )
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
+# An administrator reads every module, so the projection needs no group.
+READER = make_user("relationship_reader")
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -40,6 +43,7 @@ pytestmark = [
         reason="Set TEST_DATABASE_URL to run PostgreSQL integration tests",
     ),
 ]
+
 
 def test_postgres_constraints_reject_self_and_active_duplicates(
     integration_db: Session, owned_ids: set[UUID]
@@ -69,6 +73,7 @@ def test_postgres_constraints_reject_self_and_active_duplicates(
             )
             integration_db.flush()
 
+
 def test_postgres_partial_unique_allows_relink_after_soft_delete(
     integration_db: Session, owned_ids: set[UUID]
 ) -> None:
@@ -82,8 +87,7 @@ def test_postgres_partial_unique_allows_relink_after_soft_delete(
 
     edges = list(
         integration_db.scalars(
-            select(RelationshipEdge)
-            .where(
+            select(RelationshipEdge).where(
                 RelationshipEdge.field_id == field.id,
                 RelationshipEdge.source_record_id == sources[0].id,
                 RelationshipEdge.target_record_id == targets[0].id,
@@ -92,6 +96,7 @@ def test_postgres_partial_unique_allows_relink_after_soft_delete(
     )
     assert {edge.id for edge in edges} == {original.id, replacement.id}
     assert sum(not edge.is_deleted for edge in edges) == 1
+
 
 @pytest.mark.parametrize("side", ["source", "target"])
 def test_relationship_cardinality_rejects_a_second_edge(
@@ -102,11 +107,15 @@ def test_relationship_cardinality_rejects_a_second_edge(
     source, target = (sources[0], targets[1]) if side == "source" else (sources[1], targets[0])
     with pytest.raises(RelationshipConflict):
         create_relationship(integration_db, field.id, source.id, target.id)
-    assert integration_db.scalar(
-        select(func.count())
-        .select_from(RelationshipEdge)
-        .where(RelationshipEdge.field_id == field.id)
-    ) == 1
+    assert (
+        integration_db.scalar(
+            select(func.count())
+            .select_from(RelationshipEdge)
+            .where(RelationshipEdge.field_id == field.id)
+        )
+        == 1
+    )
+
 
 def test_assignment_commits_delete_and_create_audits_same_request(
     integration_db: AuditSession, owned_ids: set[UUID]
@@ -147,6 +156,7 @@ def test_assignment_commits_delete_and_create_audits_same_request(
     assert created.entity_id == replacement.id
     assert created.after is not None and created.after["target_record_id"] == str(new_target.id)
 
+
 def test_assignment_rollback_removes_replacement_and_audit_mutations(
     integration_db: AuditSession, owned_ids: set[UUID]
 ) -> None:
@@ -181,15 +191,15 @@ def test_assignment_rollback_removes_replacement_and_audit_mutations(
         ).all()
     )
     assert [edge.id for edge in active_edges] == [original.id]
-    assert not [row for row in _edge_audit_rows(integration_db, original.id)
-                if row.request_id == request_id]
+    assert not [
+        row for row in _edge_audit_rows(integration_db, original.id) if row.request_id == request_id
+    ]
+
 
 def test_relationship_list_filters_visibility_and_pagination_in_postgresql(
     integration_db: Session, owned_ids: set[UUID]
 ) -> None:
-    field, _, _, sources, targets = _seed_graph(
-        integration_db, owned_ids, record_count=4
-    )
+    field, _, _, sources, targets = _seed_graph(integration_db, owned_ids, record_count=4)
     edges = [
         _add_edge(integration_db, owned_ids, field, source, target)
         for source, target in zip(sources, targets, strict=True)
@@ -203,6 +213,7 @@ def test_relationship_list_filters_visibility_and_pagination_in_postgresql(
     visible, visible_page = list_relationships(
         integration_db,
         RelationshipListRequest(field_id=field.id),
+        reader=READER,
     )
     assert {item.id for item in visible} == {edges[0].id, edges[1].id}
     assert visible_page.total == 2
@@ -213,6 +224,7 @@ def test_relationship_list_filters_visibility_and_pagination_in_postgresql(
             field_id=field.id,
             availability=RelationshipAvailability.HIDDEN,
         ),
+        reader=READER,
     )
     assert [item.id for item in hidden] == [edges[2].id]
     assert hidden_page.total == 1
@@ -228,6 +240,7 @@ def test_relationship_list_filters_visibility_and_pagination_in_postgresql(
             limit=2,
             offset=1,
         ),
+        reader=READER,
     )
     assert len(all_items) == 2
     assert all_page.total == 4
@@ -238,9 +251,7 @@ def test_relationship_list_filters_visibility_and_pagination_in_postgresql(
 def test_relationship_list_projects_each_hidden_reason_independently(
     integration_db: Session, owned_ids: set[UUID]
 ) -> None:
-    field, source_module, target_module, sources, targets = _seed_graph(
-        integration_db, owned_ids
-    )
+    field, source_module, target_module, sources, targets = _seed_graph(integration_db, owned_ids)
     edge = _add_edge(integration_db, owned_ids, field, sources[0], targets[0])
     hidden_causes = (
         (field, RelationshipHiddenReason.FIELD_ARCHIVED),
@@ -261,6 +272,7 @@ def test_relationship_list_projects_each_hidden_reason_independently(
                 field_id=field.id,
                 availability=RelationshipAvailability.HIDDEN,
             ),
+            reader=READER,
         )
 
         assert [item.id for item in hidden] == [edge.id]

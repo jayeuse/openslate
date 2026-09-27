@@ -10,8 +10,8 @@ from fastapi import HTTPException
 from sqlalchemy import Engine, literal, select
 from sqlalchemy.orm import Session
 
-from app.systems.access.policy.authorization import authorize_workspace_capabilities
-from app.systems.access.users.permissions import Capability
+from app.systems.access.policy.checks import forbidden
+from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.reports.models import Report, ReportRun
 from app.systems.openview.reports.schemas import ReportRecipe
@@ -74,11 +74,7 @@ def _active_report(db: Session, report_id: UUID, owner_id: UUID) -> Report:
             detail={"code": "report_archived", "message": "Restore the Report before running it"},
         )
     module = db.get(Module, report.module_id)
-    if (
-        module is None
-        or module.is_deleted
-        or module.deleted_at is not None
-    ):
+    if module is None or module.is_deleted or module.deleted_at is not None:
         raise _invalid_report()
     return report
 
@@ -92,7 +88,9 @@ def _definition(recipe: ReportRecipe) -> QueryDefinition:
     )
 
 
-def validate_report_recipe(db: Session, module_id: UUID, recipe: ReportRecipe) -> None:
+def validate_report_recipe(
+    db: Session, module_id: UUID, recipe: ReportRecipe, *, reader: User
+) -> None:
     """Reject unavailable source fields before persisting a recipe or run."""
     module = db.scalar(
         select(Module)
@@ -111,6 +109,7 @@ def validate_report_recipe(db: Session, module_id: UUID, recipe: ReportRecipe) -
             module_id,
             definition,
             extra_references=(recipe.group_by,) if recipe.group_by is not None else (),
+            reader=reader,
         )
     except HTTPException as error:
         if error.status_code == 409:
@@ -124,16 +123,16 @@ def validate_report_recipe(db: Session, module_id: UUID, recipe: ReportRecipe) -
 
 
 def capture_report_snapshot(engine: Engine, report_id: UUID, owner_id: UUID) -> ReportSnapshot:
-    """Freeze source values, formatting, ordering and CSV before any write."""
+    """Freeze source values, formatting, ordering and CSV before any write.
+
+    The owner's module read level is checked inside the same snapshot.
+    """
 
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
         with Session(bind=connection) as db:
-            authorize_workspace_capabilities(
-                db,
-                actor_id=owner_id,
-                expected_role_id=None,
-                capabilities=(Capability.RECORDS_READ, Capability.RECORDS_WRITE),
-            )
+            owner = db.get(User, owner_id)
+            if owner is None:
+                raise forbidden()
             report = _active_report(db, report_id, owner_id)
             recipe = ReportRecipe.model_validate(report.recipe)
             definition = _definition(recipe)
@@ -142,6 +141,7 @@ def capture_report_snapshot(engine: Engine, report_id: UUID, owner_id: UUID) -> 
                 report.module_id,
                 definition,
                 extra_references=(recipe.group_by,) if recipe.group_by else (),
+                reader=owner,
             )
             references = [*recipe.fields, *recipe.filters, *recipe.sorts]
             if recipe.group_by is not None:

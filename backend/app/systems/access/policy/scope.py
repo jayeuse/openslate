@@ -1,0 +1,288 @@
+"""The one access function: a user's level on each department and module.
+
+Rules, in order:
+
+1. An administrator has ``manage`` everywhere.
+2. A disabled, pending, expired or deleted account has nothing.
+3. For each group of the user, the most specific ``group_access`` row for the
+   target wins: the module row, or else the department row.
+4. The highest level across all groups wins. Groups only add access.
+5. A guest is limited to ``read``.
+6. With no matching row, the user has no access.
+
+Every read path takes its filter from :func:`allowed_module_ids` or
+:func:`level_for`, so one rule decides who sees which records.
+"""
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy import Select, and_, exists, false, or_, select, true
+from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
+
+from app.core.base_model import utc_now
+from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
+from app.systems.access.users.eligibility import established_user_clause, is_active_account
+from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.sandbox.modules.models import Module
+
+_RANK = {AccessLevel.READ: 1, AccessLevel.WRITE: 2, AccessLevel.MANAGE: 3}
+
+
+def rank(level: AccessLevel | None) -> int:
+    """Order levels so that a higher level includes every lower one."""
+
+    return 0 if level is None else _RANK[level]
+
+
+def includes(granted: AccessLevel | None, required: AccessLevel) -> bool:
+    return rank(granted) >= rank(required)
+
+
+def _highest(first: AccessLevel | None, second: AccessLevel) -> AccessLevel:
+    if first is None or rank(second) > rank(first):
+        return second
+    return first
+
+
+@dataclass(frozen=True, slots=True)
+class EffectiveAccess:
+    """One user's levels, resolved once from the database.
+
+    ``unrestricted`` is true only for an active administrator. ``modules`` holds
+    the level of every module the user can reach; ``departments`` holds the level
+    of the department rows, which apply to the whole department.
+    """
+
+    unrestricted: bool = False
+    modules: Mapping[UUID, AccessLevel] = field(default_factory=dict)
+    module_departments: Mapping[UUID, UUID] = field(default_factory=dict)
+    departments: Mapping[UUID, AccessLevel] = field(default_factory=dict)
+
+    def module_level(self, module_id: UUID) -> AccessLevel | None:
+        if self.unrestricted:
+            return AccessLevel.MANAGE
+        return self.modules.get(module_id)
+
+    def department_level(self, department_id: UUID) -> AccessLevel | None:
+        if self.unrestricted:
+            return AccessLevel.MANAGE
+        return self.departments.get(department_id)
+
+    def module_ids(self, level: AccessLevel) -> frozenset[UUID] | None:
+        if self.unrestricted:
+            return None
+        return frozenset(
+            module_id for module_id, granted in self.modules.items() if includes(granted, level)
+        )
+
+    def department_ids(self) -> frozenset[UUID] | None:
+        """Departments where the user can read something: a department row or a module."""
+
+        if self.unrestricted:
+            return None
+        return frozenset(self.departments) | frozenset(self.module_departments.values())
+
+    def entries(self) -> list[tuple[UUID, UUID | None, AccessLevel]]:
+        """Compact levels for a client: department rows, then modules that differ.
+
+        A client reads a module's level from its module entry, or else from its
+        department entry. An administrator has no entries; the role says it all.
+        """
+
+        entries: list[tuple[UUID, UUID | None, AccessLevel]] = [
+            (department_id, None, level)
+            for department_id, level in sorted(self.departments.items(), key=lambda i: str(i[0]))
+        ]
+        for module_id, level in sorted(self.modules.items(), key=lambda item: str(item[0])):
+            department_id = self.module_departments[module_id]
+            if self.departments.get(department_id) != level:
+                entries.append((department_id, module_id, level))
+        return entries
+
+
+NO_ACCESS = EffectiveAccess()
+
+
+def effective_levels(db: Session, user: User, *, now: datetime | None = None) -> EffectiveAccess:
+    """Resolve the user's level on every department and module they can reach."""
+
+    if not is_active_account(user, now=now):
+        return NO_ACCESS
+    if user.role == UserRole.ADMIN.value:
+        return EffectiveAccess(unrestricted=True)
+    rows = db.execute(
+        select(
+            GroupAccess.group_id,
+            GroupAccess.department_id,
+            GroupAccess.module_id,
+            GroupAccess.level,
+        )
+        .join(GroupMember, GroupMember.group_id == GroupAccess.group_id)
+        .join(Group, Group.id == GroupAccess.group_id)
+        .where(
+            GroupMember.user_id == user.id,
+            GroupMember.is_deleted.is_(False),
+            Group.is_deleted.is_(False),
+            GroupAccess.is_deleted.is_(False),
+        )
+    ).tuples()
+    department_rows: dict[UUID, dict[UUID, AccessLevel]] = {}
+    module_rows: dict[UUID, dict[UUID, AccessLevel]] = {}
+    for group_id, department_id, module_id, raw_level in rows:
+        level = AccessLevel(raw_level)
+        if module_id is None:
+            department_rows.setdefault(group_id, {})[department_id] = level
+        else:
+            module_rows.setdefault(group_id, {})[module_id] = level
+    department_ids = {item for levels in department_rows.values() for item in levels}
+    module_ids = {item for levels in module_rows.values() for item in levels}
+    if not department_ids and not module_ids:
+        return NO_ACCESS
+    module_departments = {
+        module_id: department_id
+        for module_id, department_id in db.execute(
+            select(Module.id, Module.department_id).where(
+                or_(Module.department_id.in_(department_ids), Module.id.in_(module_ids))
+            )
+        ).tuples()
+    }
+
+    guest = user.role == UserRole.GUEST.value
+    modules: dict[UUID, AccessLevel] = {}
+    for group_id in department_rows.keys() | module_rows.keys():
+        group_departments = department_rows.get(group_id, {})
+        group_modules = module_rows.get(group_id, {})
+        for module_id, department_id in module_departments.items():
+            specific = group_modules.get(module_id) or group_departments.get(department_id)
+            if specific is not None:
+                modules[module_id] = _highest(modules.get(module_id), specific)
+    departments: dict[UUID, AccessLevel] = {}
+    for group_departments in department_rows.values():
+        for department_id, level in group_departments.items():
+            departments[department_id] = _highest(departments.get(department_id), level)
+    if guest:
+        modules = {key: AccessLevel.READ for key in modules}
+        departments = {key: AccessLevel.READ for key in departments}
+    return EffectiveAccess(
+        modules=modules,
+        module_departments={key: module_departments[key] for key in modules},
+        departments=departments,
+    )
+
+
+def allowed_module_ids(
+    db: Session, user: User, level: AccessLevel, *, now: datetime | None = None
+) -> frozenset[UUID] | None:
+    """Return the modules where the user has at least ``level``.
+
+    None means every module: the user is an active administrator. Callers turn
+    the result into a query filter; an empty set denies everything.
+    """
+
+    return effective_levels(db, user, now=now).module_ids(level)
+
+
+def level_for(
+    db: Session,
+    user: User,
+    department_id: UUID,
+    module_id: UUID | None = None,
+    *,
+    now: datetime | None = None,
+) -> AccessLevel | None:
+    """Return the user's level on a module, or on the whole department when no module is given."""
+
+    access = effective_levels(db, user, now=now)
+    if module_id is None:
+        return access.department_level(department_id)
+    if not access.unrestricted and access.module_departments.get(module_id) != department_id:
+        return None
+    return access.module_level(module_id)
+
+
+def _active_account_clause(now: datetime | None) -> ColumnElement[bool]:
+    timestamp = now or utc_now()
+    return and_(
+        User.status == UserStatus.ACTIVE.value,
+        User.is_deleted.is_(False),
+        or_(User.expires_at.is_(None), User.expires_at > timestamp),
+        established_user_clause(),
+    )
+
+
+def _readers(access_target: ColumnElement[bool], now: datetime | None) -> Select[tuple[UUID]]:
+    """Active administrators, and active users with a live row that matches the target.
+
+    Every level includes ``read`` and the most specific row never goes below it,
+    so any matching row gives read access.
+    """
+
+    group_readers = (
+        select(GroupMember.user_id)
+        .join(Group, Group.id == GroupMember.group_id)
+        .join(GroupAccess, GroupAccess.group_id == Group.id)
+        .where(
+            GroupMember.is_deleted.is_(False),
+            Group.is_deleted.is_(False),
+            GroupAccess.is_deleted.is_(False),
+            access_target,
+        )
+    )
+    return select(User.id).where(
+        _active_account_clause(now),
+        or_(User.role == UserRole.ADMIN.value, User.id.in_(group_readers)),
+    )
+
+
+def module_reader_ids(
+    db: Session, module_id: UUID, *, now: datetime | None = None
+) -> frozenset[UUID]:
+    """Every active user who can read the module now."""
+
+    department_id = db.scalar(select(Module.department_id).where(Module.id == module_id))
+    if department_id is None:
+        return frozenset()
+    target = and_(
+        GroupAccess.department_id == department_id,
+        or_(GroupAccess.module_id.is_(None), GroupAccess.module_id == module_id),
+    )
+    return frozenset(db.scalars(_readers(target, now)).all())
+
+
+def department_reader_ids(
+    db: Session, department_id: UUID, *, now: datetime | None = None
+) -> frozenset[UUID]:
+    """Every active user who can read something in the department now."""
+
+    target = GroupAccess.department_id == department_id
+    return frozenset(db.scalars(_readers(target, now)).all())
+
+
+def department_reader_clause(user: User, department_id: Any) -> ColumnElement[bool]:
+    """SQL test that ``user`` can read something in the department named by a column.
+
+    It replaces department membership for Board audiences: an administrator reads
+    every department, and a member or guest needs a live group row there.
+    """
+
+    if not is_active_account(user):
+        return false()
+    if user.role == UserRole.ADMIN.value:
+        return true()
+    return exists(
+        select(GroupAccess.id)
+        .join(Group, Group.id == GroupAccess.group_id)
+        .join(GroupMember, GroupMember.group_id == Group.id)
+        .where(
+            GroupMember.user_id == user.id,
+            GroupMember.is_deleted.is_(False),
+            Group.is_deleted.is_(False),
+            GroupAccess.is_deleted.is_(False),
+            GroupAccess.department_id == department_id,
+        )
+    )

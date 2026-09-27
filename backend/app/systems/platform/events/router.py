@@ -20,8 +20,14 @@ from app.core.integrations.supabase_auth import (
     get_supabase_auth_client,
 )
 from app.systems.access.identity.provider_sessions import resolve_provider_session
-from app.systems.access.users.models import User
-from app.systems.platform.events.hub import EventHub, EventSubscription, SubscriberLimitReached
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.scope import allowed_module_ids
+from app.systems.platform.events.hub import (
+    EventHub,
+    EventSubscription,
+    EventViewer,
+    SubscriberLimitReached,
+)
 
 router = APIRouter(prefix="/events", tags=["events"])
 _HEARTBEAT_SECONDS = 15.0
@@ -152,15 +158,15 @@ async def event_stream(
     principal: EventPrincipal,
     *,
     heartbeat_seconds: float = _HEARTBEAT_SECONDS,
-    reauthorize: Callable[[EventPrincipal], Awaitable[object | None]] | None = None,
-    initial_user: object | None = None,
+    reauthorize: Callable[[EventPrincipal], Awaitable[EventViewer | None]] | None = None,
+    initial_user: EventViewer | None = None,
     subscription: EventSubscription | None = None,
 ) -> AsyncIterator[bytes]:
     """Send resyncs while reauthorizing outside the request session lifetime."""
 
     check_identity = reauthorize or reauthorize_event_principal
 
-    async def checked_identity() -> object | None:
+    async def checked_identity() -> EventViewer | None:
         try:
             return await check_identity(principal)
         except HTTPException:
@@ -213,13 +219,13 @@ async def event_stream(
             await hub.unsubscribe(active_subscription)
 
 
-async def reauthorize_event_principal(principal: EventPrincipal) -> User | None:
-    """Validate token, user, role, and session using a short-lived DB session."""
+async def reauthorize_event_principal(principal: EventPrincipal) -> EventViewer | None:
+    """Validate token, user, session and readable modules using a short-lived DB session."""
 
     return await asyncio.to_thread(_reauthorize_in_database, principal)
 
 
-def _reauthorize_in_database(principal: EventPrincipal) -> User | None:
+def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
     client = get_supabase_auth_client()
     try:
         claims = client.verify_access_token(principal.access_token)
@@ -230,7 +236,14 @@ def _reauthorize_in_database(principal: EventPrincipal) -> User | None:
     try:
         with AuditSession(get_engine()) as db:
             resolved = resolve_provider_session(db, claims, client)
-            return resolved[0] if resolved is not None else None
+            if resolved is None:
+                return None
+            user = resolved[0]
+            return EventViewer(
+                user_id=user.id,
+                role=user.role,
+                module_ids=allowed_module_ids(db, user, AccessLevel.READ),
+            )
     except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
         raise HTTPException(status_code=503, detail="Event authorization unavailable") from error
 

@@ -12,7 +12,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.announcement_models import (
     BoardAnnouncement,
     BoardAnnouncementRevision,
@@ -23,7 +23,7 @@ from app.systems.boards.announcement_personal_router import router
 from app.systems.boards.models import Board, BoardGrant
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditLog
-from tests.rbac.support import make_role, make_user
+from tests.rbac.support import capability_actor, make_user
 
 
 def _client(db: Session, actor: User) -> TestClient:
@@ -35,24 +35,9 @@ def _client(db: Session, actor: User) -> TestClient:
 
 
 def _actor(db: Session, label: str, *, read: bool = True) -> User:
-    role = Role(
-        role=f"announcement-personal-{label}-{uuid7().hex[:8]}",
-        permissions={"records.read": read},
-    )
-    db.add(role)
-    db.flush()
-    actor_id = uuid7()
-    actor = User(
-        id=actor_id,
-        email=f"announcement-personal-{actor_id.hex}@example.test",
-        username=f"announcement_personal_{actor_id.hex[:12]}",
-        status="active",
-        role_id=role.id,
-        role=role,
-    )
-    db.add(actor)
-    db.flush()
-    return actor
+    """A member; Boards reads need no capability since slice 3."""
+
+    return capability_actor(db, "board", {"records.write": True})
 
 
 def _grant(db: Session, board: Board, actor: User, permission: str = "view") -> BoardGrant:
@@ -124,29 +109,11 @@ def _put_bookmark(client: TestClient, url: str, number: int, value: bool):
     return client.put(f"{url}/bookmark", json={"publication_number": number, "bookmarked": value})
 
 
-def test_personal_announcement_routes_require_global_read_and_strict_payload() -> None:
+def test_personal_announcement_routes_require_a_strict_payload() -> None:
     board_id, announcement_id = uuid7(), uuid7()
     root = f"/api/boards/{board_id}/announcements/{announcement_id}/personal"
     db = Mock(spec=Session)
-    denied = make_user("announcement_personal_denied", role=make_role("member", {}))
-    assert _client(db, denied).get(root).status_code == 403
-    assert (
-        _client(db, denied)
-        .get(
-            f"/api/boards/{board_id}/announcement-personal",
-            params=[("announcement_id", str(announcement_id))],
-        )
-        .status_code
-        == 403
-    )
-    assert _put_read(_client(db, denied), root, 1, True).status_code == 403
-    assert _put_bookmark(_client(db, denied), root, 1, True).status_code == 403
-    db.scalar.assert_not_called()
-    db.scalars.assert_not_called()
-
-    reader = make_user(
-        "announcement_personal_reader", role=make_role("member", {"records.read": True})
-    )
+    reader = make_user("announcement_personal_reader", role="guest")
     for path, payload in (
         ("read", {"publication_number": 1, "read": "true"}),
         ("read", {"publication_number": 1}),
@@ -381,9 +348,7 @@ def test_personal_put_rechecks_disabled_actor_and_revoked_board_view(
 
 def test_batch_personal_read_rejects_missing_or_overlarge_id_list_before_board_lookup() -> None:
     db = Mock(spec=Session)
-    reader = make_user(
-        "announcement_batch_reader", role=make_role("member", {"records.read": True})
-    )
+    reader = make_user("announcement_batch_reader", role="guest")
     url = f"/api/boards/{uuid7()}/announcement-personal"
     client = _client(db, reader)
     assert client.get(url).status_code == 422

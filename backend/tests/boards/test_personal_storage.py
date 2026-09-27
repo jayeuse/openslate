@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from app.core.database import Base, model_registry  # noqa: F401
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.models import Board
 from app.systems.boards.personal_models import BoardFavorite, BoardHome
 from app.systems.manage.audit.models import AuditAction, AuditLog
@@ -26,7 +26,7 @@ def test_personal_rows_enforce_unique_scope_restrict_deletion_and_survive_archiv
     integration_owner_db,
 ) -> None:
     db = integration_owner_db
-    role = db.scalar(select(Role).where(Role.role == "member"))
+    role = "member"
     assert role is not None
     owner_id, viewer_id = uuid7(), uuid7()
     owner = User(
@@ -34,14 +34,14 @@ def test_personal_rows_enforce_unique_scope_restrict_deletion_and_survive_archiv
         email=f"personal-owner-{owner_id.hex}@example.test",
         username=f"personal_owner_{owner_id.hex[:12]}",
         status="active",
-        role_id=role.id,
+        role=role,
     )
     viewer = User(
         id=viewer_id,
         email=f"personal-viewer-{viewer_id.hex}@example.test",
         username=f"personal_viewer_{viewer_id.hex[:12]}",
         status="active",
-        role_id=role.id,
+        role=role,
     )
     db.add_all([owner, viewer])
     db.flush()

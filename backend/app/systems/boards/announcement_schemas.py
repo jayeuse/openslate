@@ -14,15 +14,14 @@ from app.systems.boards.content_links import ContentLink
 class AnnouncementAudience(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["everyone", "author", "role", "user", "department"] = "everyone"
-    role_id: UUID | None = None
+    kind: Literal["everyone", "author", "user", "department"] = "everyone"
     user_id: UUID | None = None
     department_id: UUID | None = None
 
     @model_validator(mode="after")
     def one_target(self) -> Self:
-        targets = (self.role_id, self.user_id, self.department_id)
-        expected = {"role": 0, "user": 1, "department": 2}.get(self.kind)
+        targets = (self.user_id, self.department_id)
+        expected = {"user": 0, "department": 1}.get(self.kind)
         if expected is None:
             valid = all(value is None for value in targets)
         else:

@@ -13,13 +13,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import {
-  listOpenViewReportAudienceRoles,
   listOpenViewReportAudienceUsers,
   type OpenViewReportAudienceInput,
 } from "../adapters/reports-api";
 
 const PAGE_SIZE = 25;
-type TargetKind = "role" | "user";
+type TargetKind = "user";
 type Choice = { id: string; label: string };
 type ListedChoices = {
   key: string;
@@ -39,18 +38,12 @@ export type ReportAudienceSelectorProps = {
   disabled: boolean;
 };
 
-async function readChoices(
-  kind: TargetKind,
-  options: { search?: string; id?: string; offset: number; limit: number },
-): Promise<{ items: Choice[]; count: number; hasMore: boolean }> {
-  if (kind === "role") {
-    const page = await listOpenViewReportAudienceRoles(options);
-    return {
-      items: page.items.map((item) => ({ id: item.id, label: item.role })),
-      count: page.pagination.count,
-      hasMore: page.pagination.hasMore,
-    };
-  }
+async function readChoices(options: {
+  search?: string;
+  id?: string;
+  offset: number;
+  limit: number;
+}): Promise<{ items: Choice[]; count: number; hasMore: boolean }> {
   const page = await listOpenViewReportAudienceUsers(options);
   return {
     items: page.items.map((item) => ({ id: item.id, label: item.username })),
@@ -80,13 +73,8 @@ export function ReportAudienceSelector({
   const [resolveRefresh, setResolveRefresh] = useState(0);
 
   const kind: TargetKind | null =
-    audience.kind === "role" || audience.kind === "user" ? audience.kind : null;
-  const selectedId =
-    audience.kind === "role"
-      ? audience.roleId
-      : audience.kind === "user"
-        ? audience.userId
-        : "";
+    audience.kind === "user" ? audience.kind : null;
+  const selectedId = audience.kind === "user" ? audience.userId : "";
   const listKey = `${kind}:${search}`;
   const choices = listed.key === listKey ? listed.items : [];
   const hasMore = listed.key === listKey && listed.hasMore;
@@ -100,7 +88,7 @@ export function ReportAudienceSelector({
     let active = true;
     setLoading(true);
     setListError("");
-    void readChoices(kind, {
+    void readChoices({
       limit: PAGE_SIZE,
       offset,
       ...(search ? { search } : {}),
@@ -141,7 +129,7 @@ export function ReportAudienceSelector({
     if (!kind || !selectedId) return;
     let active = true;
     setSelected({ key: selectedKey, status: "loading" });
-    void readChoices(kind, { id: selectedId, limit: 1, offset: 0 })
+    void readChoices({ id: selectedId, limit: 1, offset: 0 })
       .then((page) => {
         if (!active) return;
         const choice = page.items.find((item) => item.id === selectedId);
@@ -167,15 +155,12 @@ export function ReportAudienceSelector({
     setRefresh((current) => current + 1);
     if (value === "private" || value === "everyone") {
       onChange({ kind: value });
-    } else if (value === "role") {
-      onChange({ kind: "role", roleId: "" });
     } else if (value === "user") {
       onChange({ kind: "user", userId: "" });
     }
   }
 
   function changeTarget(id: string): void {
-    if (kind === "role") onChange({ kind, roleId: id });
     if (kind === "user") onChange({ kind, userId: id });
   }
 
@@ -187,7 +172,7 @@ export function ReportAudienceSelector({
     setRefresh((current) => current + 1);
   }
 
-  const targetName = kind === "role" ? "role" : "user";
+  const targetName = "user";
   const selectedIsListed = choices.some((choice) => choice.id === selectedId);
   const selectedLabel =
     selectedStatus?.status === "available"
@@ -213,8 +198,7 @@ export function ReportAudienceSelector({
           disabled={disabled}
         >
           <option value="private">Private to me</option>
-          <option value="everyone">Everyone with Records access</option>
-          <option value="role">One role</option>
+          <option value="everyone">Everyone who can read this data</option>
           <option value="user">One person</option>
         </Select>
         <FieldDescription>
@@ -227,7 +211,7 @@ export function ReportAudienceSelector({
           <div className="flex flex-wrap items-end gap-2">
             <Field className="min-w-40 flex-1">
               <FieldLabel htmlFor="report-audience-search">
-                Search {kind === "role" ? "roles" : "people"}
+                Search people
               </FieldLabel>
               <Input
                 id="report-audience-search"
@@ -255,9 +239,7 @@ export function ReportAudienceSelector({
             </Button>
           </div>
           <Field>
-            <FieldLabel htmlFor="report-audience-target">
-              {kind === "role" ? "Role" : "Person"}
-            </FieldLabel>
+            <FieldLabel htmlFor="report-audience-target">Person</FieldLabel>
             <Select
               id="report-audience-target"
               className="min-h-11"
@@ -323,9 +305,7 @@ export function ReportAudienceSelector({
             </p>
           ) : null}
           {!choicesLoading && !listError && choices.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              No matching {kind === "role" ? "roles" : "people"}.
-            </p>
+            <p className="text-muted-foreground text-sm">No matching people.</p>
           ) : null}
           {hasMore ? (
             <Button
@@ -335,7 +315,7 @@ export function ReportAudienceSelector({
               disabled={disabled || loading}
               onClick={() => setOffset(listed.nextOffset)}
             >
-              Load more {kind === "role" ? "roles" : "people"}
+              Load more people
             </Button>
           ) : null}
         </>

@@ -9,19 +9,19 @@ from fastapi import HTTPException
 from PIL import Image, PngImagePlugin
 from pydantic import ValidationError
 
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.platform.files.access import authorize
 from app.systems.platform.files.providers import ProviderUnavailable, get_scanner, transfer_slot
 from app.systems.platform.files.schemas import FileCreate
 from app.systems.platform.files.validation import validate_content
 
 
-def user(permissions=None, role="operator"):
+def user(role="member"):
     return User(
         id=uuid4(),
         status="active",
         is_deleted=False,
-        role=Role(role=role, permissions=permissions or {}, is_deleted=False),
+        role=role,
         invitation_accepted_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
     )
 
@@ -112,10 +112,8 @@ def test_reservation_rejects_parent_forgery_limits_and_provider_keys(payload):
 
 
 @pytest.mark.parametrize("purpose", ["library_document", "workspace_logo"])
-def test_all_capabilities_do_not_grant_admin_documents(purpose):
-    from app.systems.access.users.permissions import ALL_CAPABILITIES
-
-    actor = user({key: True for key in ALL_CAPABILITIES})
+def test_members_do_not_get_admin_documents(purpose):
+    actor = user()
     with pytest.raises(HTTPException) as caught:
         authorize(None, actor, purpose)
     assert caught.value.status_code == 403

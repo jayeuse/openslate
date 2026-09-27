@@ -3,7 +3,6 @@ from unittest.mock import Mock
 from sqlalchemy.orm import Session
 
 from app.main import create_app
-from app.systems.access.users.permissions import Capability
 from app.systems.sandbox.designs.schemas import DocumentResponse
 from app.systems.sandbox.designs.service import (
     SandboxDesignError,
@@ -24,29 +23,18 @@ def _document_response() -> DocumentResponse:
     )
 
 
-def test_document_read_requires_every_structural_read_capability(monkeypatch) -> None:
+def test_document_read_is_administrator_only(monkeypatch) -> None:
     import app.systems.sandbox.designs.router as designs_router
     from tests.rbac.support import _client, make_user
 
     application = create_app()
     database = Mock(spec=Session)
     monkeypatch.setattr(designs_router, "read_document", lambda _db: _document_response())
-    partial = make_user("partial", permissions={Capability.DEPARTMENTS_READ.value: True})
+    partial = make_user("partial", role="member")
 
     assert _client(application, partial, database).get("/api/sandbox/document").status_code == 403
 
-    reader = make_user(
-        "reader",
-        permissions={
-            capability.value: True
-            for capability in (
-                Capability.DEPARTMENTS_READ,
-                Capability.MODULES_READ,
-                Capability.FIELDS_READ,
-                Capability.RELATIONSHIPS_READ,
-            )
-        },
-    )
+    reader = make_user("reader")
     response = _client(application, reader, database).get("/api/sandbox/document")
 
     assert response.status_code == 200
@@ -59,18 +47,7 @@ def test_document_write_returns_route_local_stale_revision_conflict(monkeypatch)
 
     database = Mock(spec=Session)
     application = create_app()
-    writer = make_user(
-        "writer",
-        permissions={
-            capability.value: True
-            for capability in (
-                Capability.DEPARTMENTS_WRITE,
-                Capability.MODULES_WRITE,
-                Capability.FIELDS_WRITE,
-                Capability.RELATIONSHIPS_WRITE,
-            )
-        },
-    )
+    writer = make_user("writer")
     monkeypatch.setattr(
         designs_router,
         "replace_document",
@@ -98,18 +75,7 @@ def test_document_write_refuses_an_older_format_with_a_clear_422(monkeypatch) ->
 
     database = Mock(spec=Session)
     application = create_app()
-    writer = make_user(
-        "writer",
-        permissions={
-            capability.value: True
-            for capability in (
-                Capability.DEPARTMENTS_WRITE,
-                Capability.MODULES_WRITE,
-                Capability.FIELDS_WRITE,
-                Capability.RELATIONSHIPS_WRITE,
-            )
-        },
-    )
+    writer = make_user("writer")
     replace = Mock()
     monkeypatch.setattr(designs_router, "replace_document", replace)
     older = {

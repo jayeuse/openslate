@@ -7,12 +7,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.common.listing import (
     ListQuerySpec,
     execute_standard_list,
@@ -20,9 +20,9 @@ from app.common.listing import (
 from app.common.listing.schemas import PaginationMetadata
 from app.core.database import get_db
 from app.systems.access.identity.eligibility import identity_eligible_clause
+from app.systems.access.policy.scope import department_reader_clause
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import Role, User, UserDepartment, UserStatus
-from app.systems.access.users.permissions import Capability
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.access import can_access_board
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.event_occurrences import expand_board_event_occurrences
@@ -73,8 +73,8 @@ def _private_cache(response: Response) -> None:
 
 
 router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_private_cache)])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
+Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -102,48 +102,28 @@ def _not_found() -> HTTPException:
 
 
 def _audience_clause(actor: User) -> ColumnElement[bool]:
-    membership = exists(
-        select(UserDepartment.id)
-        .join(Department, Department.id == UserDepartment.department_id)
-        .join(User, User.id == UserDepartment.user_id)
-        .where(
-            UserDepartment.user_id == actor.id,
-            UserDepartment.department_id == BoardEvent.audience_department_id,
-            UserDepartment.is_deleted.is_(False),
-            UserDepartment.deleted_at.is_(None),
-            Department.is_deleted.is_(False),
-            Department.deleted_at.is_(None),
-            User.status == UserStatus.ACTIVE.value,
-            User.is_deleted.is_(False),
-            User.deleted_at.is_(None),
-            established_user_clause(),
-        )
-    )
-    no_target = and_(
-        BoardEvent.audience_role_id.is_(None),
-        BoardEvent.audience_user_id.is_(None),
-        BoardEvent.audience_department_id.is_(None),
-    )
+    """Everyone, the author, one user, or the readers of one department."""
     return or_(
-        and_(BoardEvent.audience_kind == "everyone", no_target),
-        and_(BoardEvent.audience_kind == "author", BoardEvent.author_id == actor.id, no_target),
         and_(
-            BoardEvent.audience_kind == "role",
-            BoardEvent.audience_role_id == actor.role_id,
+            BoardEvent.audience_kind == "everyone",
+            BoardEvent.audience_user_id.is_(None),
+            BoardEvent.audience_department_id.is_(None),
+        ),
+        and_(
+            BoardEvent.audience_kind == "author",
+            BoardEvent.author_id == actor.id,
             BoardEvent.audience_user_id.is_(None),
             BoardEvent.audience_department_id.is_(None),
         ),
         and_(
             BoardEvent.audience_kind == "user",
             BoardEvent.audience_user_id == actor.id,
-            BoardEvent.audience_role_id.is_(None),
             BoardEvent.audience_department_id.is_(None),
         ),
         and_(
             BoardEvent.audience_kind == "department",
-            membership,
-            BoardEvent.audience_role_id.is_(None),
             BoardEvent.audience_user_id.is_(None),
+            department_reader_clause(actor, BoardEvent.audience_department_id),
         ),
     )
 
@@ -172,7 +152,6 @@ def _event(
 def _audience(event: BoardEvent) -> EventAudience:
     return EventAudience(
         kind=event.audience_kind,
-        role_id=event.audience_role_id,
         user_id=event.audience_user_id,
         department_id=event.audience_department_id,
     )
@@ -231,26 +210,15 @@ def _check_event(event: BoardEvent, revision: int) -> None:
 
 
 def _validate_target(db: Session, audience: EventAudience) -> None:
-    if audience.kind == "role":
-        target = db.scalar(
-            select(Role.id)
-            .where(
-                Role.id == audience.role_id, Role.is_deleted.is_(False), Role.deleted_at.is_(None)
-            )
-            .with_for_update()
-        )
-    elif audience.kind == "user":
+    if audience.kind == "user":
         target = db.scalar(
             select(User.id)
-            .join(Role, Role.id == User.role_id)
             .where(
                 User.id == audience.user_id,
                 User.status == UserStatus.ACTIVE.value,
                 User.is_deleted.is_(False),
                 User.deleted_at.is_(None),
                 identity_eligible_clause(),
-                Role.is_deleted.is_(False),
-                Role.deleted_at.is_(None),
                 established_user_clause(),
             )
             .with_for_update(of=User)
@@ -276,7 +244,6 @@ def _set_definition(event: BoardEvent, definition: EventDefinition) -> None:
         setattr(event, key, getattr(definition, key))
     event.links = [link.model_dump() for link in definition.links]
     event.audience_kind = definition.audience.kind
-    event.audience_role_id = definition.audience.role_id
     event.audience_user_id = definition.audience.user_id
     event.audience_department_id = definition.audience.department_id
 

@@ -21,7 +21,6 @@ import {
 
 const moduleId = "00000000-0000-4000-8000-000000000001";
 const fieldId = "00000000-0000-4000-8000-000000000002";
-const roleId = "00000000-0000-4000-8000-000000000003";
 const userId = "00000000-0000-4000-8000-000000000004";
 const viewId = "00000000-0000-4000-8000-000000000005";
 const departmentId = "00000000-0000-4000-8000-000000000007";
@@ -106,7 +105,7 @@ const viewResponse = {
   module_id: moduleId,
   owner_id: userId,
   name: "Urgent queue",
-  audience: { kind: "user", role_id: null, user_id: userId },
+  audience: { kind: "user", user_id: userId },
   visibility: "workspace",
   definition: {
     version: 1,
@@ -216,10 +215,6 @@ test("maps validated catalog, audience, saved-view, default, and record pages", 
       pagination,
     },
     {
-      items: [{ kind: "role", id: roleId, label: "Operations" }],
-      pagination,
-    },
-    {
       items: [{ kind: "user", id: userId, label: "Nina Santos" }],
       pagination,
     },
@@ -283,10 +278,6 @@ test("maps validated catalog, audience, saved-view, default, and record pages", 
       ],
       pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
     });
-    await expect(listOpenViewAudienceOptions("role")).resolves.toEqual({
-      items: [{ kind: "role", id: roleId, label: "Operations" }],
-      pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
-    });
     await expect(listOpenViewAudienceOptions("user")).resolves.toEqual({
       items: [{ kind: "identity", id: userId, label: "Nina Santos" }],
       pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
@@ -332,14 +323,13 @@ test("maps validated catalog, audience, saved-view, default, and record pages", 
     expect(mock.requests.map(({ input }) => String(input))).toEqual([
       "/api/views/data-sources?limit=20&offset=0",
       `/api/views/data-sources/${moduleId}/fields?limit=20&offset=0`,
-      "/api/views/audience-options?kind=role&limit=20&offset=0",
       "/api/views/audience-options?kind=user&limit=20&offset=0",
       `/api/views?module_id=${moduleId}&limit=20&offset=0`,
       `/api/views/${viewId}`,
       "/api/views/defaults?limit=20&offset=0",
       "/api/records/query",
     ]);
-    expect(mock.requests[7]?.init?.body).toBe(
+    expect(mock.requests[6]?.init?.body).toBe(
       JSON.stringify({
         module_id: moduleId,
         definition: {
@@ -471,7 +461,7 @@ test("sends a backend-valid Timeline view and personal-default commands with exp
     moduleId,
     ownerId: userId,
     name: "Urgent queue",
-    audience: { kind: "role", id: roleId },
+    audience: { kind: "identity", id: userId },
     visibility: "workspace",
     definition: timelineDefinition,
     presentation: timelinePresentation,
@@ -529,7 +519,7 @@ test("sends a backend-valid Timeline view and personal-default commands with exp
       JSON.stringify({
         module_id: moduleId,
         name: "Urgent queue",
-        audience: { kind: "role", role_id: roleId },
+        audience: { kind: "user", user_id: userId },
         definition: {
           version: 1,
           logic: "or",

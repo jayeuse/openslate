@@ -9,11 +9,10 @@ from pydantic import ValidationError
 from sqlalchemy import and_, func, literal, or_, select
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.common.listing import execute_standard_list
 from app.core.database import get_db
-from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability, has_capability
+from app.systems.access.users.models import User, UserRole
 from app.systems.boards.announcement_listing import display_join, editable_statement, list_spec
 from app.systems.boards.announcement_models import (
     BoardAnnouncement,
@@ -74,13 +73,13 @@ def _private_cache(response: Response) -> None:
 
 
 router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_private_cache)])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
+Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 
 def _require_editor_role(actor: User) -> None:
-    if not has_capability(actor.role, Capability.RECORDS_WRITE):
+    if actor.role == UserRole.GUEST.value:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
 

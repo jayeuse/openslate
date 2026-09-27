@@ -5,11 +5,10 @@ from datetime import UTC, datetime
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
@@ -35,26 +34,26 @@ def query_db(request):
     return request.getfixturevalue("integration_owner_db")
 
 
+# An administrator reads every module, so direct query calls need no group.
+READER = User(id=uuid7(), status="active", role="admin", is_deleted=False)
+
+
 def route_actor(db: Session, *, records_read: bool = True) -> User:
     """Give HTTP query tests a persisted actor for Access policy evaluation."""
 
     actor_id = uuid7()
     if records_read:
-        role = db.scalar(select(Role).where(Role.role == "admin"))
+        role = "admin"
         assert role is not None
     else:
-        role = Role(
-            role=f"query-write-only-{actor_id.hex}",
-            permissions={"records.write": True},
-        )
-        db.add(role)
+        role = "member"
         db.flush()
     actor = User(
         id=actor_id,
         email=f"query-{actor_id.hex}@example.test",
         username=f"query_{actor_id.hex[:16]}",
         status="active",
-        role_id=role.id,
+        role=role,
     )
     db.add(actor)
     db.flush()
@@ -118,7 +117,7 @@ def test_typed_filter_and_sort(query_db, kind, values, threshold, expected):
         filters=[{**reference, "operator": "gt", "value": threshold}],
         sort=[{**reference, "direction": "asc"}],
     )
-    result = query_records(query_db, payload)
+    result = query_records(query_db, payload, reader=READER)
     assert [item.id for item in result.items] == [rows[index].id for index in expected]
 
 
@@ -135,7 +134,7 @@ def test_decimal_equality_preserves_exact_filter_text(query_db) -> None:
             field,
             filters=[{**reference, "operator": "eq", "value": value}],
         )
-        result = query_records(query_db, request)
+        result = query_records(query_db, request, reader=READER)
         assert [item.id for item in result.items] == [expected.id]
 
 
@@ -157,13 +156,13 @@ def test_local_datetime_filter_and_sort_are_independent_of_session_timezone(quer
         field,
         filters=[{**reference, "operator": "eq", "value": "2026-09-09T12:00"}],
     )
-    assert {item.id for item in query_records(query_db, equal).items} == {
+    assert {item.id for item in query_records(query_db, equal, reader=READER).items} == {
         rows[0].id,
         rows[1].id,
     }
 
     ordered = request_for(module, field, sort=[{**reference, "direction": "asc"}])
-    result = query_records(query_db, ordered)
+    result = query_records(query_db, ordered, reader=READER)
     assert [item.id for item in result.items] == [
         *sorted((rows[0].id, rows[1].id)),
         rows[2].id,
@@ -174,9 +173,15 @@ def test_empty_missing_null_and_string_are_distinct(query_db):
     module, field, rows = setup_rows(query_db, "text", [..., None, "", "x"])
     reference = {"field_id": field.id, "expected_type": "text"}
     empty = request_for(module, field, filters=[{**reference, "operator": "empty"}])
-    assert {item.id for item in query_records(query_db, empty).items} == {rows[0].id, rows[1].id}
+    assert {item.id for item in query_records(query_db, empty, reader=READER).items} == {
+        rows[0].id,
+        rows[1].id,
+    }
     nonempty = request_for(module, field, filters=[{**reference, "operator": "not_empty"}])
-    assert {item.id for item in query_records(query_db, nonempty).items} == {rows[2].id, rows[3].id}
+    assert {item.id for item in query_records(query_db, nonempty, reader=READER).items} == {
+        rows[2].id,
+        rows[3].id,
+    }
 
 
 def test_blank_not_blank_suffix_and_neq_preserve_legacy_empty_semantics(query_db):
@@ -186,10 +191,13 @@ def test_blank_not_blank_suffix_and_neq_preserve_legacy_empty_semantics(query_db
     reference = {"field_id": field.id, "expected_type": "text"}
 
     empty = request_for(module, field, filters=[{**reference, "operator": "empty"}])
-    assert {item.id for item in query_records(query_db, empty).items} == {rows[0].id, rows[1].id}
+    assert {item.id for item in query_records(query_db, empty, reader=READER).items} == {
+        rows[0].id,
+        rows[1].id,
+    }
 
     blank = request_for(module, field, filters=[{**reference, "operator": "blank"}])
-    assert {item.id for item in query_records(query_db, blank).items} == {
+    assert {item.id for item in query_records(query_db, blank, reader=READER).items} == {
         rows[0].id,
         rows[1].id,
         rows[2].id,
@@ -197,7 +205,7 @@ def test_blank_not_blank_suffix_and_neq_preserve_legacy_empty_semantics(query_db
     }
 
     not_blank = request_for(module, field, filters=[{**reference, "operator": "not_blank"}])
-    assert {item.id for item in query_records(query_db, not_blank).items} == {
+    assert {item.id for item in query_records(query_db, not_blank, reader=READER).items} == {
         rows[4].id,
         rows[5].id,
     }
@@ -205,10 +213,12 @@ def test_blank_not_blank_suffix_and_neq_preserve_legacy_empty_semantics(query_db
     suffix = request_for(
         module, field, filters=[{**reference, "operator": "suffix", "value": "suffix"}]
     )
-    assert [item.id for item in query_records(query_db, suffix).items] == [rows[4].id]
+    assert [item.id for item in query_records(query_db, suffix, reader=READER).items] == [
+        rows[4].id
+    ]
 
     neq = request_for(module, field, filters=[{**reference, "operator": "neq", "value": "match"}])
-    assert {item.id for item in query_records(query_db, neq).items} == {
+    assert {item.id for item in query_records(query_db, neq, reader=READER).items} == {
         rows[2].id,
         rows[3].id,
         rows[4].id,
@@ -239,7 +249,9 @@ def test_select_contains_and_or_logic_and_allowlisted_search(query_db):
         select_field,
         filters=[{**select_reference, "operator": "contains", "value": "end"}],
     )
-    assert [item.id for item in query_records(query_db, contains).items] == [rows[0].id]
+    assert [item.id for item in query_records(query_db, contains, reader=READER).items] == [
+        rows[0].id
+    ]
 
     either = request_for(
         module,
@@ -250,7 +262,7 @@ def test_select_contains_and_or_logic_and_allowlisted_search(query_db):
             {**text_reference, "operator": "contains", "value": "report"},
         ],
     )
-    assert {item.id for item in query_records(query_db, either).items} == {
+    assert {item.id for item in query_records(query_db, either, reader=READER).items} == {
         rows[0].id,
         rows[1].id,
         rows[2].id,
@@ -262,12 +274,16 @@ def test_select_contains_and_or_logic_and_allowlisted_search(query_db):
         search="dashboard",
         search_fields=[text_reference],
     )
-    assert [item.id for item in query_records(query_db, search).items] == [rows[0].id]
-    assert not query_records(query_db, request_for(module, select_field, search="dashboard")).items
+    assert [item.id for item in query_records(query_db, search, reader=READER).items] == [
+        rows[0].id
+    ]
+    assert not query_records(
+        query_db, request_for(module, select_field, search="dashboard"), reader=READER
+    ).items
     assert [
         item.id
         for item in query_records(
-            query_db, request_for(module, select_field, search=str(rows[2].id))
+            query_db, request_for(module, select_field, search=str(rows[2].id)), reader=READER
         ).items
     ] == [rows[2].id]
 
@@ -282,6 +298,7 @@ def test_search_fields_must_be_active_and_searchable(query_db):
         query_records(
             query_db,
             request_for(module, field, search="searchable", search_fields=[reference]),
+            reader=READER,
         )
 
     assert error.value.status_code == 409
@@ -294,10 +311,14 @@ def test_contains_is_literal_case_insensitive_and_uuid_search_is_server_side(que
     payload = request_for(
         module, field, filters=[{**reference, "operator": "contains", "value": "%_"}]
     )
-    assert [item.id for item in query_records(query_db, payload).items] == [rows[0].id]
+    assert [item.id for item in query_records(query_db, payload, reader=READER).items] == [
+        rows[0].id
+    ]
     payload = request_for(module, field, search=str(rows[1].id))
-    assert [item.id for item in query_records(query_db, payload).items] == [rows[1].id]
-    assert not query_records(query_db, request_for(module, field, search="%")).items
+    assert [item.id for item in query_records(query_db, payload, reader=READER).items] == [
+        rows[1].id
+    ]
+    assert not query_records(query_db, request_for(module, field, search="%"), reader=READER).items
 
 
 def test_pagination_ties_nulls_last_and_projection(query_db):
@@ -306,13 +327,13 @@ def test_pagination_ties_nulls_last_and_projection(query_db):
     payload = request_for(module, field, sort=[reference])
     payload.offset = 100
     payload.limit = 1
-    result = query_records(query_db, payload)
+    result = query_records(query_db, payload, reader=READER)
     assert result.pagination.total == 102 and result.pagination.has_more
     assert result.items[0].id == sorted(row.id for row in rows[:101])[100]
     payload.offset = 101
-    assert query_records(query_db, payload).items[0].id == rows[-1].id
+    assert query_records(query_db, payload, reader=READER).items[0].id == rows[-1].id
     payload.definition.columns = []
-    assert query_records(query_db, payload).items[0].data == {}
+    assert query_records(query_db, payload, reader=READER).items[0].data == {}
 
 
 def test_projection_preserves_record_metadata_json_values_and_unselected_sort_fields(
@@ -405,7 +426,7 @@ def test_projection_preserves_record_metadata_json_values_and_unselected_sort_fi
         deleted="include",
     )
 
-    result = query_records(query_db, payload)
+    result = query_records(query_db, payload, reader=READER)
 
     assert [item.id for item in result.items] == [
         missing_key.id,
@@ -436,11 +457,11 @@ def test_archived_field_renames_work_and_changed_type_fails(query_db):
     field.is_deleted = True
     field.name = "Renamed"
     query_db.flush()
-    assert query_records(query_db, payload).items[0].data == {str(field.id): "kept"}
+    assert query_records(query_db, payload, reader=READER).items[0].data == {str(field.id): "kept"}
     field.type = "boolean"
     query_db.flush()
     with pytest.raises(HTTPException) as error:
-        query_records(query_db, payload)
+        query_records(query_db, payload, reader=READER)
     assert error.value.status_code == 409
 
 
@@ -448,7 +469,7 @@ def test_cross_module_reference_fails_without_broadening(query_db):
     module, field, _ = setup_rows(query_db, "text", ["secret"])
     other, _, _ = setup_rows(query_db, "text", ["other"])
     with pytest.raises(HTTPException) as error:
-        query_records(query_db, request_for(other, field))
+        query_records(query_db, request_for(other, field), reader=READER)
     assert error.value.status_code == 409
 
 
@@ -458,11 +479,9 @@ def test_filtered_empty_page_preserves_exact_total(query_db, value, total):
     payload = request_for(
         module,
         field,
-        filters=[
-            {"field_id": field.id, "expected_type": "text", "operator": "eq", "value": value}
-        ],
+        filters=[{"field_id": field.id, "expected_type": "text", "operator": "eq", "value": value}],
     ).model_copy(update={"offset": 25})
-    result = query_records(query_db, payload)
+    result = query_records(query_db, payload, reader=READER)
     assert result.items == []
     assert result.pagination.total == total
     assert result.pagination.count == 0
@@ -490,6 +509,6 @@ def test_allowed_predicates_execute_in_postgres(query_db, kind, values, operator
             {"field_id": field.id, "expected_type": kind, "operator": operator, "value": value}
         ],
     )
-    assert [item.id for item in query_records(query_db, payload).items] == [
+    assert [item.id for item in query_records(query_db, payload, reader=READER).items] == [
         rows[i].id for i in expected
     ]

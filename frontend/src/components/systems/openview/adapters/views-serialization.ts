@@ -17,7 +17,8 @@ export function serializeOpenViewAudience(
     case "everyone":
       return { kind: "everyone" as const };
     case "role":
-      return { kind: "role" as const, role_id: validAudience.id };
+      // Access groups replaced role audiences; the server accepts none.
+      throw new Error("Role audiences are no longer available");
     case "identity":
       return { kind: "user" as const, user_id: validAudience.id };
   }

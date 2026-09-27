@@ -31,7 +31,7 @@ function widget(overrides: Partial<BoardWidget> = {}): BoardWidget {
       refresh: "manual",
       pinned: false,
     },
-    audience: { kind: "everyone", roleId: null, userId: null },
+    audience: { kind: "everyone", userId: null },
     createdAt: "2026-09-23T00:00:00Z",
     updatedAt: "2026-09-23T00:00:00Z",
     ...overrides,

@@ -8,7 +8,6 @@ import {
   getOpenViewReport,
   getOpenViewReportConflict,
   getOpenViewReportRun,
-  listOpenViewReportAudienceRoles,
   listOpenViewReportAudienceUsers,
   listOpenViewReports,
   listOpenViewReportRuns,
@@ -28,7 +27,6 @@ const reportId = "00000000-0000-4000-8000-000000000106";
 const runId = "00000000-0000-4000-8000-000000000107";
 const idempotencyKey = "00000000-0000-4000-8000-000000000108";
 const otherReportId = "00000000-0000-4000-8000-000000000109";
-const roleId = "00000000-0000-4000-8000-000000000110";
 const targetUserId = "00000000-0000-4000-8000-000000000111";
 const timestamp = "2026-09-23T00:00:00Z";
 
@@ -119,7 +117,7 @@ function reportResponse(overrides: Record<string, unknown> = {}) {
     subtitle: "Current operational records",
     revision: 4,
     recipe: wireRecipe,
-    audience: { kind: "private", role_id: null, user_id: null },
+    audience: { kind: "private", user_id: null },
     is_deleted: false,
     created_at: timestamp,
     updated_at: timestamp,
@@ -144,7 +142,7 @@ function expectedReport(): OpenViewReport {
     subtitle: "Current operational records",
     revision: 4,
     recipe,
-    audience: { kind: "private", roleId: null, userId: null },
+    audience: { kind: "private", userId: null },
     isDeleted: false,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -244,8 +242,8 @@ test("creates and updates Reports with exclusive audience targets", async () => 
       reportResponse({
         audience:
           init?.method === "POST"
-            ? { kind: "role", role_id: roleId, user_id: null }
-            : { kind: "user", role_id: null, user_id: targetUserId },
+            ? { kind: "everyone", user_id: null }
+            : { kind: "user", user_id: targetUserId },
       }),
       init?.method === "POST" ? 201 : 200,
     ),
@@ -256,14 +254,13 @@ test("creates and updates Reports with exclusive audience targets", async () => 
         moduleId,
         name: "Active work",
         recipe,
-        audience: { kind: "role", roleId },
+        audience: { kind: "everyone" },
       }),
     ).resolves.toMatchObject({
-      audience: { kind: "role", roleId, userId: null },
+      audience: { kind: "everyone", userId: null },
     });
     expect(JSON.parse(String(mock.requests[0]?.init?.body)).audience).toEqual({
-      kind: "role",
-      role_id: roleId,
+      kind: "everyone",
       user_id: null,
     });
 
@@ -274,11 +271,11 @@ test("creates and updates Reports with exclusive audience targets", async () => 
         audience: { kind: "user", userId: targetUserId },
       }),
     ).resolves.toMatchObject({
-      audience: { kind: "user", roleId: null, userId: targetUserId },
+      audience: { kind: "user", userId: targetUserId },
     });
     expect(JSON.parse(String(mock.requests[1]?.init?.body))).toEqual({
       revision: 4,
-      audience: { kind: "user", role_id: null, user_id: targetUserId },
+      audience: { kind: "user", user_id: targetUserId },
     });
 
     await expect(
@@ -287,8 +284,8 @@ test("creates and updates Reports with exclusive audience targets", async () => 
         name: "Invalid target",
         recipe,
         audience: {
-          kind: "private",
-          roleId,
+          kind: "role",
+          roleId: targetUserId,
         } as unknown as OpenViewReportCreateInput["audience"],
       }),
     ).rejects.toThrow();
@@ -299,39 +296,23 @@ test("creates and updates Reports with exclusive audience targets", async () => 
 });
 
 test("lists bounded, minimal Report audience choices without cached profile data", async () => {
-  const mock = installFetch((input) =>
+  const mock = installFetch(() =>
     jsonResponse({
-      items: String(input).includes("audience-roles")
-        ? [{ id: roleId, role: "Viewer" }]
-        : [{ id: targetUserId, username: "Ada" }],
-      pagination: {
-        ...pagination,
-        limit: String(input).includes("audience-roles") ? 1 : 25,
-      },
+      items: [{ id: targetUserId, username: "Ada" }],
+      pagination: { ...pagination, limit: 25 },
     }),
   );
   try {
-    await expect(
-      listOpenViewReportAudienceRoles({ limit: 1, search: "  View  " }),
-    ).resolves.toEqual({
-      items: [{ id: roleId, role: "Viewer" }],
-      pagination: { limit: 1, offset: 0, count: 1, total: 1, hasMore: false },
-    });
-    expect(String(mock.requests[0]?.input)).toBe(
-      "/api/reports/audience-roles?limit=1&offset=0&search=View",
-    );
-    expect(mock.requests[0]?.init?.cache).toBe("no-store");
-
     await expect(
       listOpenViewReportAudienceUsers({ id: targetUserId }),
     ).resolves.toEqual({
       items: [{ id: targetUserId, username: "Ada" }],
       pagination: { limit: 25, offset: 0, count: 1, total: 1, hasMore: false },
     });
-    expect(String(mock.requests[1]?.input)).toBe(
+    expect(String(mock.requests[0]?.input)).toBe(
       `/api/reports/audience-users?limit=25&offset=0&id=${targetUserId}`,
     );
-    expect(mock.requests[1]?.init?.cache).toBe("no-store");
+    expect(mock.requests[0]?.init?.cache).toBe("no-store");
   } finally {
     mock.restore();
   }
@@ -351,7 +332,7 @@ test("Report audience choices reject unbounded input and extra profile data", as
       listOpenViewReportAudienceUsers({ limit: 101 }),
     ).rejects.toThrow();
     await expect(
-      listOpenViewReportAudienceRoles({ id: "not-a-uuid" }),
+      listOpenViewReportAudienceUsers({ id: "not-a-uuid" }),
     ).rejects.toThrow();
     expect(mock.requests).toHaveLength(0);
     await expect(listOpenViewReportAudienceUsers()).rejects.toBeInstanceOf(
@@ -362,42 +343,30 @@ test("Report audience choices reject unbounded input and extra profile data", as
   }
 });
 
-for (const kind of ["roles", "users"] as const) {
-  test(`rejects over-limit ${kind} Report audience choices from the server`, async () => {
-    const mock = installFetch(() =>
-      jsonResponse({
-        items:
-          kind === "roles"
-            ? [
-                { id: roleId, role: "Viewer" },
-                { id: otherReportId, role: "Editor" },
-              ]
-            : [
-                { id: targetUserId, username: "Ada" },
-                { id: otherReportId, username: "Ben" },
-              ],
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: 2,
-          total: 3,
-          has_more: true,
-        },
-      }),
-    );
-    try {
-      const request =
-        kind === "roles"
-          ? listOpenViewReportAudienceRoles
-          : listOpenViewReportAudienceUsers;
-      await expect(request({ limit: 1 })).rejects.toBeInstanceOf(
-        ApiContractError,
-      );
-    } finally {
-      mock.restore();
-    }
-  });
-}
+test("rejects over-limit user Report audience choices from the server", async () => {
+  const mock = installFetch(() =>
+    jsonResponse({
+      items: [
+        { id: targetUserId, username: "Ada" },
+        { id: otherReportId, username: "Ben" },
+      ],
+      pagination: {
+        limit: 1,
+        offset: 0,
+        count: 2,
+        total: 3,
+        has_more: true,
+      },
+    }),
+  );
+  try {
+    await expect(
+      listOpenViewReportAudienceUsers({ limit: 1 }),
+    ).rejects.toBeInstanceOf(ApiContractError);
+  } finally {
+    mock.restore();
+  }
+});
 
 test("rejects malformed IDs, revisions, and recipe values before sending", async () => {
   const mock = installFetch(() => jsonResponse(reportResponse()));
@@ -663,7 +632,6 @@ test("does not expose a private server message from a stale Report conflict", ()
 test("JSON Report methods do not expose server error text or details", async () => {
   const calls = [
     () => listOpenViewReports(),
-    () => listOpenViewReportAudienceRoles(),
     () => listOpenViewReportAudienceUsers(),
     () => listOpenViewReportRuns(reportId),
     () => getOpenViewReport(reportId),
@@ -776,7 +744,7 @@ test("does not expose malformed wire responses or unsafe CSV error bodies", asyn
   const invalidAudience = installFetch(() =>
     jsonResponse(
       reportResponse({
-        audience: { kind: "private", role_id: ownerId, user_id: null },
+        audience: { kind: "private", user_id: ownerId },
       }),
     ),
   );

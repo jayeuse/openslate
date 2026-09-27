@@ -58,19 +58,16 @@ def test_saved_view_catalog_constraints_and_runtime_access_on_active_baseline() 
 
 def _seed_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
     with engine.begin() as connection:
-        role_id = connection.scalar(text("SELECT id FROM public.roles WHERE role = 'member'"))
-        assert role_id is not None
         for key in ("author", "target_user", "actor"):
             connection.execute(
                 text(
-                    "INSERT INTO public.users (id, email, username, status, role_id) "
-                    "VALUES (:id, :email, :username, 'active', :role_id)"
+                    "INSERT INTO public.users (id, email, username, status, role) "
+                    "VALUES (:id, :email, :username, 'active', 'member')"
                 ),
                 {
                     "id": ids[key],
                     "email": f"saved-view-baseline-{ids[key].hex}@example.test",
                     "username": f"saved_view_baseline_{ids[key].hex}",
-                    "role_id": role_id,
                 },
             )
         connection.execute(
@@ -114,7 +111,6 @@ def _assert_saved_view_catalog(connection: Connection) -> None:
         "name",
         "visibility",
         "audience_kind",
-        "audience_role_id",
         "audience_user_id",
         "revision",
         "definition",
@@ -124,7 +120,6 @@ def _assert_saved_view_catalog(connection: Connection) -> None:
     assert saved_view_columns["presentation"]["udt_name"] == "jsonb"
     assert saved_view_columns["revision"]["column_default"] == "1"
     assert saved_view_columns["audience_kind"]["column_default"] == "'private'::character varying"
-    assert saved_view_columns["audience_role_id"]["is_nullable"] == "YES"
     assert saved_view_columns["audience_user_id"]["is_nullable"] == "YES"
 
     default_columns = {
@@ -170,7 +165,6 @@ def _assert_saved_view_catalog(connection: Connection) -> None:
         "ck_saved_views_revision": "c",
         "ck_saved_views_audience_reference": "c",
         "uq_saved_views_id_module": "u",
-        "fk_saved_views_audience_role_id_roles": "f",
         "fk_saved_views_audience_user_id_users": "f",
         "fk_saved_views_module_id_modules": "f",
         "fk_saved_views_owner_id_users": "f",
@@ -185,7 +179,6 @@ def _assert_saved_view_catalog(connection: Connection) -> None:
     assert set(constraints) == set(expected_kinds)
     assert {name: constraints[name]["contype"] for name in expected_kinds} == expected_kinds
     for name in (
-        "fk_saved_views_audience_role_id_roles",
         "fk_saved_views_audience_user_id_users",
         "fk_saved_views_module_id_modules",
         "fk_saved_views_owner_id_users",
@@ -220,7 +213,6 @@ def _assert_saved_view_catalog(connection: Connection) -> None:
             "ix_saved_views_module_id",
             "ix_saved_views_owner_module",
             "ix_saved_views_everyone_module_active",
-            "ix_saved_views_role_module_active",
             "ix_saved_views_user_module_active",
         },
         "saved_view_defaults": {
@@ -241,21 +233,19 @@ def _assert_runtime_privileges(connection: Connection) -> None:
 
 def _insert_audience_views(engine: Engine, ids: dict[str, UUID]) -> None:
     with engine.begin() as connection:
-        role_id = connection.scalar(text("SELECT id FROM public.roles WHERE role = 'member'"))
-        assert role_id is not None
-        for key, kind, visibility, audience_role_id, audience_user_id in (
-            ("private_view", "private", "private", None, None),
-            ("everyone_view", "everyone", "workspace", None, None),
-            ("role_view", "role", "workspace", role_id, None),
-            ("user_view", "user", "workspace", None, ids["target_user"]),
+        for key, kind, visibility, audience_user_id in (
+            ("private_view", "private", "private", None),
+            ("everyone_view", "everyone", "workspace", None),
+            ("role_view", "everyone", "workspace", None),
+            ("user_view", "user", "workspace", ids["target_user"]),
         ):
             connection.execute(
                 text(
                     "INSERT INTO public.saved_views "
                     "(id, module_id, owner_id, name, visibility, audience_kind, "
-                    "audience_role_id, audience_user_id, definition, performed_by) "
+                    "audience_user_id, definition, performed_by) "
                     "VALUES (:id, :module_id, :owner_id, :name, :visibility, :kind, "
-                    ":role_id, :user_id, '{}'::jsonb, :actor_id)"
+                    ":user_id, '{}'::jsonb, :actor_id)"
                 ),
                 {
                     "id": ids[key],
@@ -264,7 +254,6 @@ def _insert_audience_views(engine: Engine, ids: dict[str, UUID]) -> None:
                     "name": key,
                     "visibility": visibility,
                     "kind": kind,
-                    "role_id": audience_role_id,
                     "user_id": audience_user_id,
                     "actor_id": ids["actor"] if key == "role_view" else None,
                 },
@@ -273,24 +262,23 @@ def _insert_audience_views(engine: Engine, ids: dict[str, UUID]) -> None:
 
 def _assert_invalid_audience_rows_are_rejected(engine: Engine, ids: dict[str, UUID]) -> None:
     invalid_rows = (
-        ("role", "workspace", None, None, 1),
-        ("unknown", "workspace", None, None, 1),
-        ("private", "workspace", None, None, 1),
-        ("private", "private", None, None, 0),
-        ("role", "workspace", uuid7(), None, 1),
-        ("user", "workspace", None, uuid7(), 1),
+        ("role", "workspace", None, 1),
+        ("unknown", "workspace", None, 1),
+        ("private", "workspace", None, 1),
+        ("private", "private", None, 0),
+        ("user", "workspace", uuid7(), 1),
     )
     with engine.begin() as connection:
-        for kind, visibility, role_id, user_id, revision in invalid_rows:
+        for kind, visibility, user_id, revision in invalid_rows:
             with pytest.raises(IntegrityError):
                 with connection.begin_nested():
                     connection.execute(
                         text(
                             "INSERT INTO public.saved_views "
                             "(id, module_id, owner_id, name, visibility, audience_kind, "
-                            "audience_role_id, audience_user_id, revision, definition) "
+                            "audience_user_id, revision, definition) "
                             "VALUES (:id, :module_id, :owner_id, 'Invalid audience', :visibility, "
-                            ":kind, :role_id, :user_id, :revision, '{}'::jsonb)"
+                            ":kind, :user_id, :revision, '{}'::jsonb)"
                         ),
                         {
                             "id": uuid7(),
@@ -298,7 +286,6 @@ def _assert_invalid_audience_rows_are_rejected(engine: Engine, ids: dict[str, UU
                             "owner_id": ids["author"],
                             "visibility": visibility,
                             "kind": kind,
-                            "role_id": role_id,
                             "user_id": user_id,
                             "revision": revision,
                         },

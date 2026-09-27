@@ -6,26 +6,23 @@ import pytest
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.models import Board, BoardGrant
 from app.systems.sandbox.departments.models import Department
-from tests.boards.test_grant_role_chooser import _client, _user
+from tests.boards.test_content_audience_user_chooser import _client, _user
 
 pytestmark = pytest.mark.integration
 
 
-def test_board_editor_can_choose_active_user_role_and_department_without_manage(
+def test_board_editor_can_choose_active_user_and_department_without_manage(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _user(db, permissions={"records.read": True, "records.write": True})
-    editor = _user(db, permissions={"records.read": True, "records.write": True})
-    outsider = _user(db, permissions={"records.read": True, "records.write": True})
+    owner = _user(db)
+    editor = _user(db)
+    outsider = _user(db)
     marker = uuid7().hex[:12]
-    target_role = Role(role=f"audience-{marker}", permissions={})
-    deleted_role = Role(role=f"audience-{marker}-deleted", permissions={}, is_deleted=True)
-    db.add_all((target_role, deleted_role))
-    db.flush()
+    target_role = "member"
     target = User(
         email=f"audience-{marker}@example.test",
         username=f"audience_{marker}",
@@ -60,7 +57,6 @@ def test_board_editor_can_choose_active_user_role_and_department_without_manage(
     root = f"/api/boards/{board.id}/content-audience-targets"
     for kind, expected in (
         ("user", {"id": str(target.id), "label": target.username}),
-        ("role", {"id": str(target_role.id), "label": target_role.role}),
         ("department", {"id": str(department.id), "label": department.department_name}),
     ):
         response = client.get(f"{root}?kind={kind}&search={marker}&limit=1")
@@ -69,4 +65,4 @@ def test_board_editor_can_choose_active_user_role_and_department_without_manage(
         assert response.json()["items"] == [expected]
         assert response.json()["pagination"]["count"] == 1
     assert _client(db, outsider).get(f"{root}?kind=user&search={marker}").status_code == 404
-    assert client.get(f"/api/boards/{board.id}/grant-roles").status_code == 404
+    assert client.get(f"{root}?kind=role&search={marker}").status_code == 422

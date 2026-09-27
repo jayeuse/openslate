@@ -9,11 +9,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.database import get_db
+from app.systems.access.policy.checks import module_filter, module_level
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.boards.models import Board, BoardPermission, BoardRecordPlacement, BoardStatus
 from app.systems.boards.placement_schemas import (
     BoardPlacementCreate,
@@ -33,8 +34,8 @@ def _private_cache(response: Response) -> None:
 
 
 router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_private_cache)])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
+Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 PLACEMENT_LIST_SPEC = ListQuerySpec(
@@ -70,9 +71,9 @@ def _editable(board: Board, revision: int) -> None:
         raise _conflict("board_archived", "Restore the Board before changing shortcuts")
 
 
-def _active_record(db: Session, record_id: UUID) -> Record:
+def _active_record(db: Session, actor: User, record_id: UUID) -> Record:
     module_id = db.scalar(select(Record.module_id).where(Record.id == record_id))
-    if module_id is None:
+    if module_id is None or module_level(db, actor, module_id) is None:
         raise _conflict("record_unavailable", "The selected record is unavailable")
     module = db.scalar(
         select(Module)
@@ -101,7 +102,9 @@ def _active_record(db: Session, record_id: UUID) -> Record:
     return record
 
 
-def _available_modules(db: Session, placements: list[BoardRecordPlacement]) -> dict[UUID, UUID]:
+def _available_modules(
+    db: Session, actor: User, placements: list[BoardRecordPlacement]
+) -> dict[UUID, UUID]:
     if not placements:
         return {}
     record_ids = [placement.record_id for placement in placements]
@@ -114,6 +117,7 @@ def _available_modules(db: Session, placements: list[BoardRecordPlacement]) -> d
             Record.deleted_at.is_(None),
             Module.is_deleted.is_(False),
             Module.deleted_at.is_(None),
+            module_filter(db, actor, AccessLevel.READ, Record.module_id),
         )
     ).all()
     return {record_id: module_id for record_id, module_id in rows}
@@ -164,7 +168,7 @@ def list_board_placements(
         params,
         PLACEMENT_LIST_SPEC,
     )
-    modules = _available_modules(db, result.items)
+    modules = _available_modules(db, user, result.items)
     return BoardPlacementListResponse(
         items=[
             _response(placement, modules.get(placement.record_id)) for placement in result.items
@@ -188,7 +192,7 @@ def create_board_placement(
 ) -> BoardPlacementMutationResponse:
     board = _board_with_access(db, user, board_id, BoardPermission.EDIT, lock=True)
     _editable(board, payload.revision)
-    record = _active_record(db, payload.record_id)
+    record = _active_record(db, user, payload.record_id)
     existing = db.scalar(
         select(BoardRecordPlacement.id).where(
             BoardRecordPlacement.board_id == board.id,

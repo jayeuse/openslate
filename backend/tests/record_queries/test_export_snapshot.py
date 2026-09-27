@@ -5,11 +5,13 @@ from record_queries.test_database import request_for, setup_rows
 from sqlalchemy.orm import Session
 
 from app.core.database.session import AuditSession
+from app.systems.access.users.models import User
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records import export as exporter
 from app.systems.sandbox.records.models import Record
+from tests.rbac.support import add_user
 
 
 def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, monkeypatch):
@@ -17,6 +19,7 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
     engine = query_db.get_bind().engine
     with AuditSession(engine) as setup:
         module, field, rows = setup_rows(setup, "text", ["original", "second"])
+        reader_id = add_user(setup, "export-reader", role="admin").id
         setup.commit()
         module_id, field_id, department_id = module.id, field.id, module.department_id
         row_ids = [row.id for row in rows]
@@ -34,7 +37,7 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
 
     monkeypatch.setattr(exporter, "encode_csv", update_after_snapshot_started)
     try:
-        content, count = exporter.export_snapshot(engine, payload)
+        content, count = exporter.export_snapshot(engine, payload, reader_id=reader_id)
         parsed = list(csv.reader(io.StringIO(content.decode())))
         assert count == 2
         assert [row[1] for row in parsed[1:]] == ["original", "second"]
@@ -47,6 +50,7 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
                 (Field, [field_id]),
                 (Module, [module_id]),
                 (Department, [department_id]),
+                (User, [reader_id]),
             ):
                 for identifier in ids:
                     cleanup.delete(cleanup.get(model, identifier))
@@ -62,19 +66,19 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
     from app.common.dependencies import get_current_user
     from app.core.database import get_db
     from app.main import app
-    from app.systems.access.users.models import Role, User
+    from app.systems.access.users.models import User
     from app.systems.manage.audit.models import SecurityEvent
 
     engine = query_db.get_bind().engine
     actor_id = uuid7()
     with AuditSession(engine) as setup:
-        role = setup.scalar(select(Role).where(Role.role == "admin"))
+        role = "admin"
         assert role is not None
         actor = User(
             id=actor_id,
             email=f"p7-export-{actor_id}@example.com",
             username=f"p7_export_{actor_id.hex[:12]}",
-            role_id=role.id,
+            role=role,
             status="active",
         )
         setup.add(actor)

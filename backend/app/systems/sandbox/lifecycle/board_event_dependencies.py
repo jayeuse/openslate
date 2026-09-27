@@ -59,7 +59,6 @@ def load_board_event_purge_dependencies(
                     "recurrence",
                     "repeat_until",
                     "audience_kind",
-                    "audience_role_id",
                     "audience_user_id",
                     "audience_department_id",
                     "archived",

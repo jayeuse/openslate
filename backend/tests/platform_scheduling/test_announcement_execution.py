@@ -7,7 +7,7 @@ from sqlalchemy import select
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.announcement_service import write_manager
 from app.systems.boards.models import Board, BoardGrant
@@ -28,11 +28,20 @@ pytestmark = pytest.mark.integration
 NOW = datetime(2026, 9, 24, 12, tzinfo=UTC)
 
 
-def _subject(db):
-    role = Role(
-        role=f"announcement-work-{uuid7().hex}",
-        permissions={"records.read": True, "records.write": True},
+def _other_user(db, role: str) -> User:
+    other = User(
+        email=f"announcement-other-{uuid7().hex}@example.test",
+        username=f"announcement_other_{uuid7().hex[:16]}",
+        status=UserStatus.ACTIVE.value,
+        role=role,
     )
+    db.add(other)
+    db.flush()
+    return other
+
+
+def _subject(db):
+    role = "member"
     actor = User(
         email=f"announcement-work-{uuid7().hex}@example.test",
         username=f"announcement_work_{uuid7().hex[:16]}",
@@ -229,13 +238,14 @@ def test_current_source_or_actor_denial_cancels_without_publication(integration_
     elif change == "actor_disabled":
         actor.status = UserStatus.DISABLED.value
     elif change == "write_revoked":
-        role.permissions = {"records.read": True}
+        sponsor = _other_user(db, role)
+        actor.role = "guest"
+        actor.sponsor_user_id = sponsor.id
+        actor.expires_at = datetime.now(UTC) + timedelta(days=30)
     elif change == "audience_excluded":
-        other = Role(role=f"other-{uuid7().hex}", permissions={"records.read": True})
-        db.add(other)
-        db.flush()
-        item.audience_kind = "role"
-        item.audience_role_id = other.id
+        other = _other_user(db, role)
+        item.audience_kind = "user"
+        item.audience_user_id = other.id
     elif change == "source_changed":
         item.revision += 1
     elif change == "not_due":

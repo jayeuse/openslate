@@ -6,14 +6,13 @@ from secrets import token_urlsafe
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.main import app as application
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards import lifecycle_router
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.event_models import BoardEvent
@@ -40,7 +39,7 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
 ) -> None:
     db = integration_owner_db
     password = token_urlsafe(32)
-    role = db.scalar(select(Role).where(Role.role == "admin"))
+    role = "admin"
     assert role is not None
     actor_id = uuid7()
     email = f"board-work-purge-{actor_id.hex}@example.test"
@@ -51,7 +50,6 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
         supabase_user_id=provider_user_id,
         username=f"board_work_purge_{actor_id.hex[:12]}",
         status="active",
-        role_id=role.id,
         role=role,
     )
     db.add(actor)

@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from app.core.database import Base, model_registry  # noqa: F401
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.announcement_models import BoardAnnouncement
 from app.systems.boards.announcement_personal_models import BoardAnnouncementPersonalState
 from app.systems.boards.models import Board
@@ -30,7 +30,7 @@ def test_announcement_personal_flags_are_audited_and_database_scoped(
     integration_owner_db,
 ) -> None:
     db = integration_owner_db
-    role = db.scalar(select(Role).where(Role.role == "member"))
+    role = "member"
     assert role is not None
     author_id, reader_id = uuid7(), uuid7()
     author = User(
@@ -38,14 +38,14 @@ def test_announcement_personal_flags_are_audited_and_database_scoped(
         email=f"personal-author-{author_id.hex}@example.test",
         username=f"personal_author_{author_id.hex[:12]}",
         status="active",
-        role_id=role.id,
+        role=role,
     )
     reader = User(
         id=reader_id,
         email=f"personal-reader-{reader_id.hex}@example.test",
         username=f"personal_reader_{reader_id.hex[:12]}",
         status="active",
-        role_id=role.id,
+        role=role,
     )
     db.add_all([author, reader])
     db.flush()

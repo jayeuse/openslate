@@ -7,15 +7,10 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Res
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import (
-    require_fresh_exact_admin,
-    require_legacy_capability,
-    require_roles,
-)
+from app.common.dependencies import require_admin, require_fresh_exact_admin, require_non_guest
 from app.common.listing import execute_standard_list
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.boards.attachment_models import (
     BoardAnnouncementRevisionAttachment,
     BoardContentAttachment,
@@ -51,8 +46,8 @@ def _private_cache(response: Response) -> None:
 
 
 router = APIRouter(prefix="/boards", tags=["board files"], dependencies=[Depends(_private_cache)])
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
-Admin = Annotated[User, Depends(require_roles("admin"))]
+Writer = Annotated[User, Depends(require_non_guest)]
+Admin = Annotated[User, Depends(require_admin)]
 Database = Annotated[Session, Depends(get_db)]
 Store = Annotated[StorageBackend, Depends(get_storage)]
 

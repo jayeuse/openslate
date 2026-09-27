@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user
 from app.common.listing import (
     ListQuerySpec,
     SortOrder,
@@ -22,7 +22,6 @@ from app.common.listing import (
 from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.boards.announcement_models import BoardAnnouncement
 from app.systems.boards.reminder_models import BoardEventReminder
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkKind
@@ -36,7 +35,7 @@ def _private_cache(response: Response) -> None:
 router = APIRouter(
     prefix="/notifications", tags=["notifications"], dependencies=[Depends(_private_cache)]
 )
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
+Reader = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 

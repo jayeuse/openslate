@@ -11,7 +11,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.announcement_router import router
 from app.systems.boards.models import Board, BoardGrant
@@ -26,11 +26,7 @@ def _client(db: Session, actor: User) -> TestClient:
 
 
 def _actor(db: Session, label: str) -> User:
-    role = Role(
-        role=f"announcement-author-filter-{label}-{uuid7().hex[:8]}",
-        permissions={"records.read": True, "records.write": True},
-    )
-    db.add(role)
+    role = "member"
     db.flush()
     user_id = uuid7()
     actor = User(
@@ -38,7 +34,6 @@ def _actor(db: Session, label: str) -> User:
         email=f"announcement-author-filter-{user_id.hex}@example.test",
         username=f"announcement_author_filter_{user_id.hex[:12]}",
         status="active",
-        role_id=role.id,
         role=role,
     )
     db.add(actor)

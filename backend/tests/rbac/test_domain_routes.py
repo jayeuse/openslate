@@ -1,28 +1,23 @@
-"""Capability boundaries for domain and lifecycle routes."""
+"""Administrator boundaries for lifecycle, account and audit routes.
+
+Record and relationship routes follow department and module access; their
+database tests live in ``tests/access/test_read_paths_integration.py``.
+"""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from secrets import token_urlsafe
-from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.systems.access.auth.router as auth_router
-import app.systems.access.users.roles_router as roles_router
 import app.systems.access.users.router as users_router
 import app.systems.manage.audit.router as audit_router
-import app.systems.sandbox.departments.router as departments_router
-import app.systems.sandbox.fields.router as fields_router
 import app.systems.sandbox.lifecycle.router as lifecycle_router
-import app.systems.sandbox.modules.router as modules_router
-import app.systems.sandbox.records.router as records_router
-import app.systems.sandbox.relationships.router as relationships_router
 from app.systems.access.users.models import UserRole
-from app.systems.access.users.permissions import ALL_CAPABILITIES, Capability
 from app.systems.sandbox.lifecycle.schemas import (
     LifecycleImpactResponse,
     LifecycleMutationResponse,
@@ -30,178 +25,54 @@ from app.systems.sandbox.lifecycle.schemas import (
     LifecyclePurgePreviewResponse,
     LifecycleTargetType,
 )
-from app.systems.sandbox.relationships.schemas import RelationshipResponse
 
-from .support import (
-    _client,
-    _empty_list_result,
-    _persisted,
-    make_field,
-    make_module,
-    make_role,
-    make_user,
-)
+from .support import _client, _empty_list_result, make_user
 
 CONFIRMATION_TOKEN = token_urlsafe(32)
 CONFIRMATION_PASSWORD = token_urlsafe(32)
 
 
 @pytest.mark.parametrize(
-    ("resource", "read_capability", "write_capability", "path"),
-    [
-        ("departments", "departments.read", "departments.write", "/api/departments"),
-        ("modules", "modules.read", "modules.write", "/api/modules"),
-        ("fields", "fields.read", "fields.write", "/api/fields"),
-        ("records", "records.read", "records.write", "/api/records"),
-        ("relationships", "relationships.read", "relationships.write", "/api/relationships"),
-    ],
-)
-def test_resource_read_routes_require_read_and_not_write(
-    api: FastAPI,
-    monkeypatch: pytest.MonkeyPatch,
-    resource: str,
-    read_capability: str,
-    write_capability: str,
-    path: str,
-) -> None:
-    if resource == "relationships":
-        monkeypatch.setattr(
-            relationships_router,
-            "list_relationships_service",
-            lambda *_args: ([], _empty_list_result().pagination),
-        )
-    else:
-        router_module = {
-            "departments": departments_router,
-            "modules": modules_router,
-            "fields": fields_router,
-            "records": records_router,
-        }[resource]
-        monkeypatch.setattr(
-            router_module,
-            "execute_standard_list",
-            lambda *_args: _empty_list_result(),
-        )
-
-    write_only = make_user("writer", permissions={write_capability: True})
-    assert _client(api, write_only).get(path).status_code == 403
-
-    read_only = make_user("reader", permissions={read_capability: True})
-    assert _client(api, read_only).get(path).status_code == 200
-
-
-@pytest.mark.parametrize(
-    ("resource", "read_capability", "write_capability"),
-    [
-        ("records", "records.read", "records.write"),
-        ("relationships", "relationships.read", "relationships.write"),
-    ],
-)
-def test_resource_write_routes_require_write_and_not_read(
-    api: FastAPI,
-    monkeypatch: pytest.MonkeyPatch,
-    resource: str,
-    read_capability: str,
-    write_capability: str,
-) -> None:
-    db = Mock(spec=Session)
-    if resource == "records":
-        module = make_module()
-        field = make_field(module.id, position=0, name="Title")
-        monkeypatch.setattr(records_router, "_active_module", lambda *_args: module)
-        monkeypatch.setattr(records_router, "_lock_active_module", lambda *_args: module)
-        monkeypatch.setattr(records_router, "_module_fields", lambda *_args: [field])
-        db.refresh.side_effect = lambda entity: _persisted(entity)
-        path = "/api/records"
-        payload = {"module_id": str(module.id), "data": {}}
-    else:
-        relationship = RelationshipResponse(
-            id=uuid7(),
-            field_id=uuid7(),
-            source_record_id=uuid7(),
-            target_record_id=uuid7(),
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC),
-            deleted_at=None,
-            is_deleted=False,
-            performed_by=None,
-            visibility="available",
-            hidden_reasons=[],
-        )
-        monkeypatch.setattr(
-            relationships_router,
-            "create_relationship_service",
-            lambda *_args: object(),
-        )
-        monkeypatch.setattr(
-            relationships_router,
-            "relationship_response",
-            lambda _edge: relationship,
-        )
-        path = "/api/relationships"
-        payload = {
-            "field_id": str(relationship.field_id),
-            "source_record_id": str(relationship.source_record_id),
-            "target_record_id": str(relationship.target_record_id),
-        }
-
-    write_only = make_user("writer", permissions={write_capability: True})
-    response = _client(api, write_only, db).request("POST", path, json=payload)
-    assert response.status_code in {200, 201}
-
-    read_only = make_user("reader", permissions={read_capability: True})
-    response = _client(api, read_only, db).request("POST", path, json=payload)
-    assert response.status_code == 403
-
-
-@pytest.mark.parametrize(
-    ("target_type", "operation", "path", "capability"),
+    ("target_type", "operation", "path"),
     [
         (
             LifecycleTargetType.DEPARTMENT,
             LifecycleOperation.CLOSE,
             f"/api/departments/{uuid7()}/close",
-            Capability.DEPARTMENTS_WRITE,
         ),
         (
             LifecycleTargetType.DEPARTMENT,
             LifecycleOperation.REOPEN,
             f"/api/departments/{uuid7()}/reopen",
-            Capability.DEPARTMENTS_WRITE,
         ),
         (
             LifecycleTargetType.MODULE,
             LifecycleOperation.CLOSE,
             f"/api/modules/{uuid7()}/close",
-            Capability.MODULES_WRITE,
         ),
         (
             LifecycleTargetType.MODULE,
             LifecycleOperation.REOPEN,
             f"/api/modules/{uuid7()}/reopen",
-            Capability.MODULES_WRITE,
         ),
         (
             LifecycleTargetType.FIELD,
             LifecycleOperation.CLOSE,
             f"/api/fields/{uuid7()}/close",
-            Capability.FIELDS_WRITE,
         ),
         (
             LifecycleTargetType.FIELD,
             LifecycleOperation.REOPEN,
             f"/api/fields/{uuid7()}/reopen",
-            Capability.FIELDS_WRITE,
         ),
     ],
 )
-def test_lifecycle_close_and_reopen_use_corresponding_resource_write_capability(
+def test_lifecycle_close_and_reopen_are_administrator_only(
     api: FastAPI,
     monkeypatch: pytest.MonkeyPatch,
     target_type: LifecycleTargetType,
     operation: LifecycleOperation,
     path: str,
-    capability: Capability,
 ) -> None:
     impact = LifecycleImpactResponse(
         target_type=target_type,
@@ -222,18 +93,11 @@ def test_lifecycle_close_and_reopen_use_corresponding_resource_write_capability(
         monkeypatch.setattr(lifecycle_router, "_reopen", lambda *_args: mutation)
         payload = {"confirmed": True}
 
-    write_only = make_user("lifecycle-writer", permissions={capability.value: True})
-    blocked = make_user("lifecycle-blocked", permissions={})
-    response = _client(api, blocked).post(path, json=payload)
-    assert response.status_code == 403
-    response = _client(api, write_only).post(path, json=payload)
-    assert response.status_code == 200
-
-    read_only = make_user(
-        "lifecycle-reader",
-        permissions={capability.value.replace(".write", ".read"): True},
-    )
-    assert _client(api, read_only).post(path, json=payload).status_code == 403
+    admin = make_user("lifecycle-admin", role=UserRole.ADMIN)
+    assert _client(api, admin).post(path, json=payload).status_code == 200
+    for role in (UserRole.MEMBER, UserRole.GUEST):
+        blocked = make_user(f"lifecycle-{role}", role=role)
+        assert _client(api, blocked).post(path, json=payload).status_code == 403
 
 
 def _purge_impact(target_type: LifecycleTargetType) -> LifecycleImpactResponse:
@@ -288,15 +152,12 @@ def test_all_purge_routes_remain_literal_admin_only(
         }
     )
 
-    admin = make_user("admin", role=make_role(UserRole.ADMIN, {"not-a-capability": "bad"}))
+    admin = make_user("admin", role=UserRole.ADMIN)
     response = _client(api, admin).request("POST", path, json=payload)
     assert response.status_code == 200
 
-    non_admin_with_every_capability = make_user(
-        "custom",
-        permissions={capability: True for capability in ALL_CAPABILITIES},
-    )
-    response = _client(api, non_admin_with_every_capability).request("POST", path, json=payload)
+    member = make_user("member", role=UserRole.MEMBER)
+    response = _client(api, member).request("POST", path, json=payload)
     assert response.status_code == 403
 
 
@@ -304,7 +165,6 @@ def test_all_purge_routes_remain_literal_admin_only(
     ("path", "method", "payload", "route_group"),
     [
         ("/api/users", "GET", None, "users"),
-        ("/api/roles", "GET", None, "roles"),
         (
             "/api/auth/invitations",
             "POST",
@@ -314,7 +174,7 @@ def test_all_purge_routes_remain_literal_admin_only(
         ("/api/audit-logs", "GET", None, "audit"),
     ],
 )
-def test_users_roles_invitations_and_audit_are_literal_admin_only(
+def test_users_invitations_and_audit_are_administrator_only(
     api: FastAPI,
     monkeypatch: pytest.MonkeyPatch,
     path: str,
@@ -325,12 +185,6 @@ def test_users_roles_invitations_and_audit_are_literal_admin_only(
     if route_group == "users":
         monkeypatch.setattr(
             users_router,
-            "execute_standard_list",
-            lambda *_args: _empty_list_result(),
-        )
-    elif route_group == "roles":
-        monkeypatch.setattr(
-            roles_router,
             "execute_standard_list",
             lambda *_args: _empty_list_result(),
         )
@@ -347,13 +201,10 @@ def test_users_roles_invitations_and_audit_are_literal_admin_only(
             lambda *_args, **_kwargs: _empty_list_result(),
         )
 
-    admin = make_user("admin", role=make_role(UserRole.ADMIN))
+    admin = make_user("admin", role=UserRole.ADMIN)
     response = _client(api, admin).request(method, path, json=payload)
     assert response.status_code in {200, 201}
 
-    custom = make_user(
-        "custom",
-        permissions={capability: True for capability in ALL_CAPABILITIES},
-    )
-    response = _client(api, custom).request(method, path, json=payload)
+    member = make_user("member", role=UserRole.MEMBER)
+    response = _client(api, member).request(method, path, json=payload)
     assert response.status_code == 403

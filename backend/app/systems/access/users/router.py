@@ -6,10 +6,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_roles
+from app.common.dependencies import require_admin
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -37,7 +37,7 @@ from app.systems.access.users.service import (
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
-AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+AdminUser = Annotated[User, Depends(require_admin)]
 
 
 class UserSortField(StrEnum):
@@ -52,7 +52,7 @@ class UserListResponse(StandardListResponse[UserResponse]):
 
 
 class UserListRequest(StandardListRequest[UserSortField]):
-    role_id: UUID | None = None
+    role: UserRole | None = None
 
 
 USER_LIST_SPEC = ListQuerySpec(
@@ -75,9 +75,9 @@ def list_users(
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[UserListRequest, Query()],
 ) -> UserListResponse:
-    statement = select(User).options(selectinload(User.department_memberships))
-    if params.role_id is not None:
-        statement = statement.where(User.role_id == params.role_id)
+    statement = select(User)
+    if params.role is not None:
+        statement = statement.where(User.role == params.role.value)
     result = execute_standard_list(db, statement, params, USER_LIST_SPEC)
     return UserListResponse.model_validate(
         {"items": result.items, "pagination": result.pagination}, from_attributes=True

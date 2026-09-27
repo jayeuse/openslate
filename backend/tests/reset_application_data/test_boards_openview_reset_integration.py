@@ -32,7 +32,7 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
     auth = Mock()
     admin_id, member_id, session_id = uuid4(), uuid4(), uuid4()
     admin_provider_id, member_provider_id = uuid4(), uuid4()
-    department_id = uuid4()
+    department_id, group_id = uuid4(), uuid4()
     admin_email = f"reset-admin-{admin_id}@example.test"
 
     def cleanup() -> None:
@@ -40,10 +40,11 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
         _guard_integration_database(owner_url)
         with connect(database_url) as database:
             with database.cursor() as cursor:
-                cursor.execute(
-                    "DELETE FROM public.user_departments WHERE department_id = %s",
-                    (department_id,),
-                )
+                for table in ("group_access", "group_members"):
+                    cursor.execute(
+                        f"DELETE FROM public.{table} WHERE group_id = %s", (group_id,)
+                    )
+                cursor.execute("DELETE FROM public.groups WHERE id = %s", (group_id,))
                 cursor.execute(
                     "DELETE FROM public.users WHERE id IN (%s, %s)", (admin_id, member_id)
                 )
@@ -52,25 +53,19 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
     request.addfinalizer(cleanup)
     with connect(database_url) as database:
         with database.cursor() as cursor:
-            cursor.execute("SELECT id FROM public.roles WHERE role = 'admin'")
-            (admin_role_id,) = cursor.fetchone()
-            cursor.execute("SELECT id FROM public.roles WHERE role = 'member'")
-            (member_role_id,) = cursor.fetchone()
             cursor.execute(
-                "INSERT INTO public.users (id, email, supabase_user_id, username, status, role_id) "
-                "VALUES (%s, %s, %s, %s, 'active', %s), "
-                "(%s, %s, %s, %s, 'active', %s)",
+                "INSERT INTO public.users (id, email, supabase_user_id, username, status, role) "
+                "VALUES (%s, %s, %s, %s, 'active', 'admin'), "
+                "(%s, %s, %s, %s, 'active', 'member')",
                 (
                     admin_id,
                     admin_email,
                     admin_provider_id,
                     f"reset_admin_{admin_id.hex[:12]}",
-                    admin_role_id,
                     member_id,
                     f"reset-member-{member_id}@example.test",
                     member_provider_id,
                     f"reset_member_{member_id.hex[:12]}",
-                    member_role_id,
                 ),
             )
             cursor.execute(
@@ -108,10 +103,17 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 (department_id, f"reset-{admin_id}"),
             )
             cursor.execute(
-                "INSERT INTO public.user_departments "
-                "(id, user_id, department_id, is_primary, performed_by) "
-                "VALUES (%s, %s, %s, true, %s)",
-                (uuid4(), member_id, department_id, admin_id),
+                "INSERT INTO public.groups (id, name, performed_by) VALUES (%s, %s, %s)",
+                (group_id, f"reset-group-{group_id.hex[:12]}", admin_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.group_members (id, group_id, user_id) VALUES (%s, %s, %s)",
+                (uuid4(), group_id, member_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.group_access (id, group_id, department_id, level) "
+                "VALUES (%s, %s, %s, 'read')",
+                (uuid4(), group_id, department_id),
             )
             cursor.execute(
                 "INSERT INTO public.modules (id, department_id, module_name) VALUES (%s, %s, %s)",
@@ -269,7 +271,7 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             database, admin_email, storage_object_keys=storage.list_object_keys()
         )
         for table in (
-            "user_departments "
+            "groups group_members group_access "
             "board_announcement_personal_states board_announcement_revisions "
             "board_announcements board_events "
             "board_favorites board_homes boards board_record_placements board_templates "
@@ -299,8 +301,9 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             assert cursor.fetchone() == (0,)
             cursor.execute("SELECT count(*) FROM public.departments")
             assert cursor.fetchone() == (0,)
-            cursor.execute("SELECT count(*) FROM public.user_departments")
-            assert cursor.fetchone() == (0,)
+            for table in ("groups", "group_members", "group_access"):
+                cursor.execute(f"SELECT count(*) FROM public.{table}")
+                assert cursor.fetchone() == (0,)
             for table in (
                 "board_announcement_personal_states board_announcement_revisions "
                 "board_announcements board_events "

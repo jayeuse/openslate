@@ -21,7 +21,6 @@ test("Board grant panel describes explicit rules separately from effective acces
           id: grantId,
           principalType: "everyone",
           principalUserId: null,
-          principalRoleId: null,
           principalLabel: "Everyone",
           principalAvailable: true,
           permission: "view",
@@ -51,7 +50,6 @@ test("unavailable principal names stay generic and otherwise identical revoke ac
     id: grantId,
     principalType: "user" as const,
     principalUserId: "00000000-0000-4000-8000-000000000005",
-    principalRoleId: null,
     principalLabel: "Unavailable user",
     principalAvailable: false,
     permission: "view" as const,
@@ -94,7 +92,6 @@ test("active principal labels render as text, not executable markup or principal
           id: grantId,
           principalType: "user",
           principalUserId,
-          principalRoleId: null,
           principalLabel: "Avery <script>unsafe</script>",
           principalAvailable: true,
           permission: "view",
@@ -135,16 +132,6 @@ test("Board grant data clears on Board switch and denied refresh, ignoring stale
         },
         boardRevision: 4,
       },
-      roles: {
-        items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          hasMore: false,
-        },
-      },
     },
   );
   const switched = transitionBoardGrantsState(ready, {
@@ -153,14 +140,12 @@ test("Board grant data clears on Board switch and denied refresh, ignoring stale
     sequence: 2,
   });
   expect(switched.page).toBeNull();
-  expect(switched.roles).toBeNull();
   expect(
     transitionBoardGrantsState(switched, {
       type: "resolve",
       key: boardId,
       sequence: 1,
       page: ready.page!,
-      roles: ready.roles!,
     }),
   ).toEqual(switched);
   const denied = transitionBoardGrantsState(ready, {
@@ -170,5 +155,4 @@ test("Board grant data clears on Board switch and denied refresh, ignoring stale
     error: "Board grant access is unavailable.",
   });
   expect(denied.page).toBeNull();
-  expect(denied.roles).toBeNull();
 });

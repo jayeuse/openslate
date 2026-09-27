@@ -1,11 +1,11 @@
 """Board placement schema and privilege contracts on the fresh baseline."""
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.models import Board
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
@@ -73,7 +73,7 @@ def _assert_placement_schema_and_privileges(connection: Connection) -> None:
 
 
 def _assert_runtime_role_can_create_and_read_placements(db) -> None:
-    role = db.scalar(select(Role).where(Role.role == "member"))
+    role = "member"
     assert role is not None
     user_id = uuid7()
     user = User(
@@ -81,7 +81,7 @@ def _assert_runtime_role_can_create_and_read_placements(db) -> None:
         email=f"placement-baseline-{user_id.hex}@example.test",
         username=f"placement_baseline_{user_id.hex[:12]}",
         status="active",
-        role_id=role.id,
+        role=role,
     )
     department = Department(department_name=f"Placement baseline {uuid7().hex}")
     db.add_all([user, department])

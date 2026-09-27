@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_fresh_exact_admin, require_roles
+from app.common.dependencies import require_admin, require_fresh_exact_admin
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.systems.access.users.models import User
@@ -36,7 +36,7 @@ from app.systems.sandbox.lifecycle.service import (
 )
 
 router = APIRouter(prefix="/files", tags=["files"])
-Admin = Annotated[User, Depends(require_roles("admin"))]
+Admin = Annotated[User, Depends(require_admin)]
 DB = Annotated[Session, Depends(get_db)]
 
 

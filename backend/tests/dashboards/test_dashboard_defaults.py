@@ -8,15 +8,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.openview.dashboards.models import Dashboard, DashboardDefault
 from app.systems.openview.dashboards.router import router
+from tests.rbac.support import capability_actor
 
 
 def test_dashboard_default_routes_precede_dashboard_id_route() -> None:
@@ -33,21 +33,7 @@ def test_dashboard_default_routes_precede_dashboard_id_route() -> None:
 
 
 def _actor(db: Session, capabilities: dict[str, bool]) -> User:
-    role = Role(role=f"dashboard-default-{uuid7().hex}", permissions=capabilities)
-    db.add(role)
-    db.flush()
-    user_id = uuid7()
-    actor = User(
-        id=user_id,
-        email=f"dashboard-default-{user_id.hex}@example.test",
-        username=f"default_{user_id.hex[:20]}",
-        status=UserStatus.ACTIVE.value,
-        role_id=role.id,
-        role=role,
-    )
-    db.add(actor)
-    db.flush()
-    return actor
+    return capability_actor(db, "default", capabilities)
 
 
 def _client(db: Session, actor: User) -> TestClient:
@@ -154,5 +140,5 @@ def test_personal_default_rejects_foreign_and_archived_artifacts_without_leaking
         assert client.get("/api/dashboards/default").status_code == 200
         assert client.put("/api/dashboards/default", json={"dashboard_id": None}).status_code == 403
     with _client(db, writer) as client:
-        assert client.get("/api/dashboards/default").status_code == 403
+        assert client.get("/api/dashboards/default").status_code == 200
         assert client.put("/api/dashboards/default", json={"dashboard_id": None}).status_code == 200

@@ -159,7 +159,6 @@ export type ModuleWorkspace = {
 };
 
 export type AudienceLists = {
-  roles: ItemBatch<OpenViewAudienceOption> | null;
   people: ItemBatch<OpenViewAudienceOption> | null;
   failed: boolean;
 };
@@ -217,33 +216,24 @@ export const moduleWorkspaceOptions = (moduleId: string) =>
     enabled: Boolean(moduleId),
   });
 
-// Role and person choices only feed sharing, so a failed list keeps the last
+// Person choices only feed sharing, so a failed list keeps the last
 // loaded one and reports a scoped message. Only a denial fails the query.
 export const audienceOptions = () =>
   queryOptions({
     queryKey: openViewKeys.audiences(),
     queryFn: async ({ client, queryKey }): Promise<AudienceLists> => {
-      const [roles, people] = await Promise.allSettled([
-        boundedItems((options) => listOpenViewAudienceOptions("role", options)),
+      const [people] = await Promise.allSettled([
         boundedItems((options) => listOpenViewAudienceOptions("user", options)),
       ]);
-      for (const result of [roles, people])
-        if (
-          result.status === "rejected" &&
-          isAuthorizationDenied(result.reason)
-        )
-          throw result.reason;
+      if (people.status === "rejected" && isAuthorizationDenied(people.reason))
+        throw people.reason;
       const previous = client.getQueryData<AudienceLists>(queryKey);
       return {
-        roles:
-          roles.status === "fulfilled"
-            ? roles.value
-            : (previous?.roles ?? null),
         people:
           people.status === "fulfilled"
             ? people.value
             : (previous?.people ?? null),
-        failed: roles.status === "rejected" || people.status === "rejected",
+        failed: people.status === "rejected",
       };
     },
   });

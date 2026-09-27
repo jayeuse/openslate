@@ -10,9 +10,11 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.listing import ListQuerySpec, build_standard_list_statements
 from app.common.listing.schemas import PaginationMetadata
+from app.systems.access.users.models import User
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.relationships.access import readable_link_clause
 from app.systems.sandbox.relationships.errors import RelationshipNotFound
 from app.systems.sandbox.relationships.models import RelationshipEdge
 from app.systems.sandbox.relationships.schemas import (
@@ -99,7 +101,7 @@ def relationship_response(edge: RelationshipEdge) -> RelationshipResponse:
 
 
 def list_relationships(
-    db: Session, params: RelationshipListRequest
+    db: Session, params: RelationshipListRequest, *, reader: User
 ) -> tuple[list[RelationshipResponse], Any]:
     source_record = aliased(Record)
     target_record = aliased(Record)
@@ -131,6 +133,7 @@ def list_relationships(
         .join(target_module, Field.relationship_target_module_id == target_module.id)
         .join(source_record_module, source_record.module_id == source_record_module.id)
         .join(target_record_module, target_record.module_id == target_record_module.id)
+        .where(readable_link_clause(db, reader, source_record.module_id, target_record.module_id))
     )
     if params.field_id is not None:
         statement = statement.where(RelationshipEdge.field_id == params.field_id)

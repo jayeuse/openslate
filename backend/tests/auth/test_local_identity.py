@@ -20,7 +20,7 @@ from app.systems.access.auth.router import auth_router
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_sessions import revoke_provider_refresh_session
 from app.systems.access.identity.rate_limits import cleanup_expired_buckets, login_fingerprint
-from app.systems.access.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserRole, UserStatus
 from tests.auth.local_identity_support import request as _request
 
 
@@ -86,8 +86,7 @@ def test_registered_logout_returns_204_clears_cookies_and_revokes_session(
         email="logout@example.com",
         username="logout",
         status=UserStatus.ACTIVE.value,
-        role_id=uuid7(),
-        role=Role(role=UserRole.MEMBER, permissions={}),
+        role=UserRole.MEMBER,
     )
     db = Mock(spec=Session)
     db.get.return_value = session

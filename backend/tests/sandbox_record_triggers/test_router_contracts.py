@@ -3,14 +3,13 @@
 from datetime import UTC, datetime
 from unittest.mock import Mock
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.permissions import Capability, has_capability
 from app.systems.sandbox.record_triggers.router import router
 from app.systems.sandbox.record_triggers.schemas import (
     TriggerRunListResponse,
@@ -19,28 +18,15 @@ from app.systems.sandbox.record_triggers.schemas import (
 from tests.rbac.support import make_user
 
 
-def test_recent_runs_require_every_structure_read_capability(monkeypatch) -> None:
+def test_recent_runs_are_administrator_only(monkeypatch) -> None:
     import app.systems.sandbox.record_triggers.router as trigger_router
 
     database = Mock(spec=Session)
     application = FastAPI()
     application.include_router(router, prefix="/api")
     application.dependency_overrides[get_db] = lambda: database
-    current_user = make_user(
-        "partial",
-        permissions={Capability.MODULES_READ.value: True},
-    )
+    current_user = make_user("partial", role="member")
     application.dependency_overrides[get_current_user] = lambda: current_user
-
-    def authorize_current_user(*_args, capabilities, **_kwargs):
-        if not all(has_capability(current_user.role, capability) for capability in capabilities):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-        return current_user
-
-    monkeypatch.setattr(
-        "app.common.dependencies.auth.authorize_workspace_capabilities",
-        authorize_current_user,
-    )
     client = TestClient(application)
 
     assert client.get("/api/sandbox/trigger-runs").status_code == 403
@@ -65,15 +51,7 @@ def test_recent_runs_require_every_structure_read_capability(monkeypatch) -> Non
         hasMore=False,
     )
     monkeypatch.setattr(trigger_router, "list_recent_runs", lambda *_args, **_kw: response_model)
-    current_user = make_user(
-        "reader",
-        permissions={
-            Capability.MODULES_READ.value: True,
-            Capability.FIELDS_READ.value: True,
-            Capability.RELATIONSHIPS_READ.value: True,
-            Capability.DEPARTMENTS_READ.value: True,
-        },
-    )
+    current_user = make_user("reader")
 
     response = client.get("/api/sandbox/trigger-runs?limit=20&offset=0")
 

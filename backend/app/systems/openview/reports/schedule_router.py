@@ -10,11 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.core.base_model import utc_now
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.access.users.permissions import Capability, has_capability
+from app.systems.access.users.eligibility import is_active_account
+from app.systems.access.users.models import User, UserRole
 from app.systems.openview.reports.models import Report
 from app.systems.openview.reports.run_service import validate_report_recipe
 from app.systems.openview.reports.schedule_models import ReportSchedule
@@ -35,8 +35,8 @@ def _private_cache(response: Response) -> None:
 
 
 router = APIRouter(prefix="/reports", tags=["reports"], dependencies=[Depends(_private_cache)])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
+Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -63,32 +63,30 @@ def _report(db: Session, actor: User, report_id: UUID, *, lock: bool) -> Report:
     return report
 
 
-def _fresh_writer(db: Session, actor_id: UUID) -> None:
+def _fresh_writer(db: Session, actor_id: UUID) -> User:
     actor = db.scalar(
-        select(User).where(User.id == actor_id).with_for_update()
+        select(User)
+        .where(User.id == actor_id)
+        .with_for_update()
         .execution_options(populate_existing=True)
     )
-    role = (
-        db.scalar(
-            select(Role).where(Role.id == actor.role_id).with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if actor is not None else None
-    )
     if (
-        actor is None or actor.is_deleted or actor.deleted_at is not None
-        or actor.status != UserStatus.ACTIVE.value or role is None
-        or role.is_deleted or role.deleted_at is not None
-        or not has_capability(role, Capability.RECORDS_WRITE)
+        actor is None
+        or not is_active_account(actor)
+        or actor.deleted_at is not None
+        or actor.role == UserRole.GUEST.value
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    return actor
 
 
 def _require_enabled_eligibility(db: Session, report: Report, actor_id: UUID) -> None:
     owner = _eligible_owner(db, report, lock=True)
     if owner is None or owner.id != actor_id:
         raise _conflict("schedule_ineligible", "The Report is unavailable for scheduling")
-    validate_report_recipe(db, report.module_id, ReportRecipe.model_validate(report.recipe))
+    validate_report_recipe(
+        db, report.module_id, ReportRecipe.model_validate(report.recipe), reader=owner
+    )
 
 
 def _policy(db: Session, report_id: UUID, *, lock: bool) -> ReportSchedule | None:
@@ -168,7 +166,8 @@ def read_report_schedule(report_id: UUID, user: Reader, db: Database) -> Schedul
 
 
 @router.post(
-    "/{report_id}/schedule", response_model=ScheduleResponse,
+    "/{report_id}/schedule",
+    response_model=ScheduleResponse,
     status_code=status.HTTP_201_CREATED,
 )
 def create_report_schedule(
@@ -208,7 +207,8 @@ def update_report_schedule(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Report schedule not found")
     if policy.revision != payload.revision:
         raise _conflict(
-            "stale_revision", "Schedule changed; reload before saving",
+            "stale_revision",
+            "Schedule changed; reload before saving",
             current_revision=policy.revision,
         )
     values: dict[str, object] = {
@@ -225,7 +225,8 @@ def update_report_schedule(
     except ValidationError as error:
         raise HTTPException(422, detail=error.errors(include_context=False)) from error
     timing_changed = any(
-        getattr(policy, name) != value for name, value in (
+        getattr(policy, name) != value
+        for name, value in (
             ("cadence", merged.cadence),
             ("timezone_name", merged.timezone_name),
             ("local_time", time.fromisoformat(merged.local_time)),

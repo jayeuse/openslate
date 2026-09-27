@@ -13,7 +13,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.openview.reports.models import (
@@ -30,29 +30,15 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.report_dependencies import load_report_purge_dependencies
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.rbac.support import capability_actor, grant_capability_actors
 
 pytestmark = pytest.mark.integration
 
 
 def _actor(
-    db: Session, *, permissions: dict[str, bool] | None = None, role: Role | None = None
+    db: Session, *, permissions: dict[str, bool] | None = None, role: str | None = None
 ) -> User:
-    if role is None:
-        role = Role(role=f"report-{uuid7().hex}", permissions=permissions or {})
-        db.add(role)
-        db.flush()
-    user_id = uuid7()
-    user = User(
-        id=user_id,
-        email=f"report-{user_id.hex}@example.test",
-        username=f"report_{user_id.hex[:20]}",
-        status=UserStatus.ACTIVE.value,
-        role_id=role.id,
-        role=role,
-    )
-    db.add(user)
-    db.flush()
-    return user
+    return capability_actor(db, "report", permissions, role=role)
 
 
 def _client(db: Session, user: User) -> TestClient:
@@ -85,6 +71,7 @@ def _module(db: Session, *, active: bool = True) -> tuple[Module, Field]:
     )
     db.add(field)
     db.flush()
+    grant_capability_actors(db, department, module)
     return module, field
 
 
@@ -162,7 +149,7 @@ def test_private_report_owner_and_active_source_are_enforced(integration_owner_d
     owner = _actor(db, permissions={"records.read": True, "records.write": True})
     outsider = _actor(db, permissions={"records.read": True, "records.write": True})
     read_only_owner = _actor(db, permissions={"records.read": True})
-    admin_role = db.scalar(select(Role).where(Role.role == "admin", Role.is_deleted.is_(False)))
+    admin_role = "admin"
     assert admin_role is not None
     admin = _actor(db, role=admin_role)
     module, field = _module(db)

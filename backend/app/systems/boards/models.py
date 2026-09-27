@@ -22,7 +22,6 @@ from app.core.base_model import BaseModel
 
 class BoardPrincipalType(StrEnum):
     USER = "user"
-    ROLE = "role"
     EVERYONE = "everyone"
 
 
@@ -98,16 +97,12 @@ class BoardGrant(BaseModel):
     __tablename__ = "board_grants"
     __table_args__ = (
         CheckConstraint(
-            "principal_type IN ('user', 'role', 'everyone')",
+            "principal_type IN ('user', 'everyone')",
             name="ck_board_grants_principal_type",
         ),
         CheckConstraint(
-            "(principal_type = 'user' AND principal_user_id IS NOT NULL "
-            "AND principal_role_id IS NULL) OR "
-            "(principal_type = 'role' AND principal_user_id IS NULL "
-            "AND principal_role_id IS NOT NULL) OR "
-            "(principal_type = 'everyone' AND principal_user_id IS NULL "
-            "AND principal_role_id IS NULL)",
+            "(principal_type = 'user' AND principal_user_id IS NOT NULL) OR "
+            "(principal_type = 'everyone' AND principal_user_id IS NULL)",
             name="ck_board_grants_principal_reference",
         ),
         CheckConstraint(
@@ -117,7 +112,6 @@ class BoardGrant(BaseModel):
         CheckConstraint("effect IN ('allow', 'deny')", name="ck_board_grants_effect"),
         Index("ix_board_grants_board_id", "board_id"),
         Index("ix_board_grants_principal_user_id", "principal_user_id"),
-        Index("ix_board_grants_principal_role_id", "principal_role_id"),
         Index(
             "uq_board_grants_active_user_decision",
             "board_id",
@@ -126,15 +120,6 @@ class BoardGrant(BaseModel):
             "effect",
             unique=True,
             postgresql_where=text("principal_type = 'user' AND is_deleted = false"),
-        ),
-        Index(
-            "uq_board_grants_active_role_decision",
-            "board_id",
-            "principal_role_id",
-            "permission",
-            "effect",
-            unique=True,
-            postgresql_where=text("principal_type = 'role' AND is_deleted = false"),
         ),
         Index(
             "uq_board_grants_active_everyone_decision",
@@ -152,9 +137,6 @@ class BoardGrant(BaseModel):
     principal_type: Mapped[str] = mapped_column(String(20), nullable=False)
     principal_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
-    )
-    principal_role_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="RESTRICT"), nullable=True
     )
     permission: Mapped[str] = mapped_column(String(20), nullable=False)
     effect: Mapped[str] = mapped_column(String(10), nullable=False)
@@ -192,12 +174,8 @@ class BoardWidget(BaseModel):
         ),
         CheckConstraint("position >= 0 AND position < 12", name="ck_board_widgets_position"),
         CheckConstraint(
-            "(audience_kind IN ('private', 'everyone') AND audience_role_id IS NULL "
-            "AND audience_user_id IS NULL) OR "
-            "(audience_kind = 'role' AND audience_role_id IS NOT NULL "
-            "AND audience_user_id IS NULL) OR "
-            "(audience_kind = 'user' AND audience_role_id IS NULL "
-            "AND audience_user_id IS NOT NULL)",
+            "(audience_kind IN ('private', 'everyone') AND audience_user_id IS NULL) OR "
+            "(audience_kind = 'user' AND audience_user_id IS NOT NULL)",
             name="ck_board_widgets_audience",
         ),
         UniqueConstraint(
@@ -222,9 +200,6 @@ class BoardWidget(BaseModel):
     widget_type: Mapped[str] = mapped_column(String(20), nullable=False)
     config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     audience_kind: Mapped[str] = mapped_column(String(20), nullable=False)
-    audience_role_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="RESTRICT"), nullable=True
-    )
     audience_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )

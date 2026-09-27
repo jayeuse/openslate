@@ -6,15 +6,14 @@ import random
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
+from uuid import UUID
 
 import psycopg
 from sqlalchemy.engine import make_url
 
 from app.core.config import get_settings
 from app.core.observability import log_event
-from app.systems.access.users.models import Role
-from app.systems.access.users.permissions import effective_permissions, has_capability
 from app.systems.platform.events.models import (
     PRIVATE_NOTIFICATION_ENTITY,
     RESYNC_ENTITY,
@@ -44,10 +43,22 @@ def subscriber_capacity(server_max_concurrency: int) -> int:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class EventViewer:
+    """A subscriber's identity and readable modules from one fresh database check.
+
+    ``module_ids`` is None for an administrator, who reads every module.
+    """
+
+    user_id: object
+    role: str | None
+    module_ids: frozenset[UUID] | None
+
+
 @dataclass(slots=True)
 class EventSubscription:
     queue: asyncio.Queue[InvalidationEvent | None]
-    role: object
+    viewer: EventViewer
     access_signature: tuple[str, ...]
     user_id: object
     closed: bool = False
@@ -74,22 +85,21 @@ class EventHub:
     def subscriber_count(self) -> int:
         return len(self._by_id)
 
-    def can_subscribe(self, user: object) -> bool:
-        user_id = getattr(user, "id", id(user))
+    def can_subscribe(self, viewer: EventViewer) -> bool:
+        user_id = viewer.user_id
         return (
             len(self._by_id) < self._max_subscribers
             and self._subscribers_by_user.get(user_id, 0) < self._max_subscribers_per_user
         )
 
-    async def subscribe(self, user: object) -> EventSubscription:
-        role = getattr(user, "role", None)
-        user_id = getattr(user, "id", id(user))
-        if not self.can_subscribe(user):
+    async def subscribe(self, viewer: EventViewer) -> EventSubscription:
+        user_id = viewer.user_id
+        if not self.can_subscribe(viewer):
             raise SubscriberLimitReached("event subscriber capacity reached")
         subscription = EventSubscription(
             queue=asyncio.Queue(maxsize=self._subscriber_queue_size),
-            role=role,
-            access_signature=_access_signature(role),
+            viewer=viewer,
+            access_signature=_access_signature(viewer),
             user_id=user_id,
         )
         self._loop = asyncio.get_running_loop()
@@ -102,13 +112,12 @@ class EventHub:
         subscription.closed = True
         self._remove(subscription)
 
-    def refresh_subscription(self, subscription: EventSubscription, user: object) -> bool:
-        """Replace the detached role snapshot after a fresh identity check."""
+    def refresh_subscription(self, subscription: EventSubscription, viewer: EventViewer) -> bool:
+        """Replace the detached access snapshot after a fresh identity check."""
 
-        role = getattr(user, "role", None)
-        signature = _access_signature(role)
+        signature = _access_signature(viewer)
         changed = subscription.access_signature != signature
-        subscription.role = role
+        subscription.viewer = viewer
         subscription.access_signature = signature
         return changed
 
@@ -180,32 +189,26 @@ class EventHub:
 
 
 def _can_receive(subscription: EventSubscription, event: InvalidationEvent) -> bool:
-    role = subscription.role
-    if role is None:
+    viewer = subscription.viewer
+    if viewer.role is None:
         return False
     if event.entity == PRIVATE_NOTIFICATION_ENTITY:
         return event.recipient_id is not None and subscription.user_id == event.recipient_id
     if event.all_authenticated:
         return True
-    if getattr(role, "role", None) == "admin":
-        return True
-    if event.administrators_only or event.capability is None:
+    if viewer.module_ids is None:
+        return viewer.role == "admin"
+    if event.administrators_only or event.module_id is None:
         return False
-    try:
-        return has_capability(cast(Role, role), event.capability)
-    except (TypeError, ValueError):
-        return False
+    return event.module_id in viewer.module_ids
 
 
-def _access_signature(role: object) -> tuple[str, ...]:
-    if role is None:
+def _access_signature(viewer: EventViewer) -> tuple[str, ...]:
+    if viewer.role is None:
         return ()
-    if getattr(role, "role", None) == "admin":
-        return ("admin",)
-    try:
-        return tuple(effective_permissions(cast(Role, role)))
-    except (TypeError, ValueError):
-        return ()
+    if viewer.module_ids is None:
+        return (viewer.role,)
+    return (viewer.role, *sorted(str(module_id) for module_id in viewer.module_ids))
 
 
 class PostgresInvalidationListener:

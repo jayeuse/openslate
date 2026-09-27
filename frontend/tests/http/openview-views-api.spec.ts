@@ -58,8 +58,7 @@ type SavedView = {
   name: string;
   visibility: "private" | "workspace";
   audience: {
-    kind: "private" | "everyone" | "role" | "user";
-    role_id: string | null;
+    kind: "private" | "everyone" | "user";
     user_id: string | null;
   };
   definition: QueryDefinition;
@@ -98,7 +97,7 @@ function baseView(): SavedView {
     owner_id: userId,
     name: "Equipment register",
     visibility: "private",
-    audience: { kind: "private", role_id: null, user_id: null },
+    audience: { kind: "private", user_id: null },
     definition: {
       version: 1,
       logic: "and",
@@ -497,18 +496,11 @@ async function installViewsApi(
           contentType: "application/json",
           body: JSON.stringify({ detail: "Audience options are unavailable." }),
         });
-      const option =
-        url.searchParams.get("kind") === "role"
-          ? {
-              kind: "role",
-              id: "00000000-0000-4000-8000-000000000017",
-              label: "Operations",
-            }
-          : {
-              kind: "user",
-              id: "00000000-0000-4000-8000-000000000018",
-              label: "Nina Santos",
-            };
+      const option = {
+        kind: "user",
+        id: "00000000-0000-4000-8000-000000000018",
+        label: "Nina Santos",
+      };
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(pageResponse([option])),
@@ -1633,11 +1625,11 @@ test("a failed audience list keeps the catalog open and limits sharing to Only m
   ]);
   await expect(
     dialog.getByText(
-      "Roles and people could not be loaded. You can still share with Only me or Everyone.",
+      "People could not be loaded. You can still share with Only me or Everyone.",
     ),
   ).toBeVisible();
 
-  const retry = dialog.getByRole("button", { name: "Retry roles and people" });
+  const retry = dialog.getByRole("button", { name: "Retry people" });
   await retry.click();
   await expect(retry).toBeFocused();
   await expect(retry).not.toHaveAttribute("aria-disabled", "true");
@@ -1647,11 +1639,10 @@ test("a failed audience list keeps the catalog open and limits sharing to Only m
   await expect(audience.getByRole("option")).toHaveText([
     "Only me",
     "Everyone",
-    "Role: Operations",
     "User: Nina Santos",
   ]);
   await expect(
-    dialog.getByRole("button", { name: "Retry roles and people" }),
+    dialog.getByRole("button", { name: "Retry people" }),
   ).toHaveCount(0);
   await expect(audience).toBeFocused();
 });

@@ -71,7 +71,6 @@ def load_report_purge_dependencies(
                     "name",
                     "subtitle",
                     "audience_kind",
-                    "audience_role_id",
                     "audience_user_id",
                     "revision",
                     "recipe",

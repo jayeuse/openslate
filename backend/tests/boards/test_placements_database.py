@@ -13,7 +13,7 @@ from uuid6 import uuid7
 from app.common.dependencies.auth import get_current_user
 from app.core.base_model import utc_now
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.models import Board, BoardGrant, BoardRecordPlacement, BoardStatus
 from app.systems.boards.placement_router import router
 from app.systems.manage.audit.context import set_audit_actor
@@ -21,26 +21,13 @@ from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.rbac.support import capability_actor, grant_capability_actors
 
 pytestmark = pytest.mark.integration
 
 
 def _actor(db: Session, capabilities: dict[str, bool]) -> User:
-    role = Role(role=f"board-placement-{uuid7().hex}", permissions=capabilities)
-    db.add(role)
-    db.flush()
-    user_id = uuid7()
-    user = User(
-        id=user_id,
-        email=f"placement-{user_id.hex}@example.test",
-        username=f"placement_{user_id.hex[:12]}",
-        status="active",
-        role_id=role.id,
-        role=role,
-    )
-    db.add(user)
-    db.flush()
-    return user
+    return capability_actor(db, "placement", capabilities)
 
 
 def _client(db: Session, user: User) -> TestClient:
@@ -68,6 +55,7 @@ def test_placement_create_list_soft_delete_and_remove_are_scoped_and_audited(
     board = Board(owner_id=owner.id, name="Record shortcuts")
     db.add_all([module, board])
     db.flush()
+    grant_capability_actors(db, department, module)
     record = Record(module_id=module.id, data={})
     db.add(record)
     db.flush()
@@ -174,6 +162,7 @@ def test_placement_mutations_reject_archived_board_and_unavailable_record(
     board = Board(owner_id=owner.id, name="Operations")
     db.add_all([module, board])
     db.flush()
+    grant_capability_actors(db, department, module)
     record = Record(module_id=module.id, data={})
     db.add(record)
     db.commit()

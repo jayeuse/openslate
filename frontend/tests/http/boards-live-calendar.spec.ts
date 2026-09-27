@@ -55,7 +55,6 @@ const visibleOccurrence: BoardEventOccurrencePage["items"][number] = {
     repeatUntil: null,
     audience: {
       kind: "everyone",
-      roleId: null,
       userId: null,
       departmentId: null,
     },
@@ -497,10 +496,9 @@ test("event editor updates timed series in its IANA timezone without changing a 
     recurrence: "weekly" as const,
     repeatUntil: "2026-10-15",
     audience: {
-      kind: "role" as const,
-      roleId: "00000000-0000-4000-8000-000000000090",
+      kind: "department" as const,
       userId: null,
-      departmentId: null,
+      departmentId: "00000000-0000-4000-8000-000000000090",
     },
   };
   const draft = boardEventDraftFromEvent(event);

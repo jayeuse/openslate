@@ -12,7 +12,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.event_router import router as event_router
 from app.systems.boards.models import Board, BoardGrant
@@ -27,11 +27,7 @@ from app.systems.platform.scheduling.models import (
 
 
 def _owner(db: Session) -> User:
-    role = Role(
-        role=f"reminder-{uuid7().hex[:12]}",
-        permissions={"records.read": True, "records.write": True},
-    )
-    db.add(role)
+    role = "member"
     db.flush()
     actor_id = uuid7()
     actor = User(
@@ -39,7 +35,6 @@ def _owner(db: Session) -> User:
         email=f"reminder-{actor_id.hex}@example.test",
         username=f"reminder_{actor_id.hex[:12]}",
         status="active",
-        role_id=role.id,
         role=role,
     )
     db.add(actor)

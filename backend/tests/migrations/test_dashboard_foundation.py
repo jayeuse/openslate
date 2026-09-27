@@ -41,18 +41,15 @@ def test_dashboard_baseline_installs_catalog_constraints_and_runtime_access() ->
 
 def _seed_dashboard_owner(engine: Engine, ids: dict[str, UUID]) -> None:
     with engine.begin() as connection:
-        role_id = connection.scalar(text("SELECT id FROM public.roles WHERE role = 'admin'"))
-        assert role_id is not None
         connection.execute(
             text(
-                "INSERT INTO public.users (id, email, username, status, role_id) "
-                "VALUES (:id, :email, :username, 'active', :role_id)"
+                "INSERT INTO public.users (id, email, username, status, role) "
+                "VALUES (:id, :email, :username, 'active', 'admin')"
             ),
             {
                 "id": ids["user"],
                 "email": f"dashboard-{ids['user'].hex}@example.test",
                 "username": f"dashboard-{ids['user'].hex}",
-                "role_id": role_id,
             },
         )
 

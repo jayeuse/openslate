@@ -29,17 +29,12 @@ class Report(BaseModel):
         CheckConstraint("length(btrim(name)) > 0", name="ck_reports_name_nonempty"),
         CheckConstraint("revision > 0", name="ck_reports_revision_positive"),
         CheckConstraint(
-            "(audience_kind IN ('private', 'everyone') AND audience_role_id IS NULL "
-            "AND audience_user_id IS NULL) OR "
-            "(audience_kind = 'role' AND audience_role_id IS NOT NULL "
-            "AND audience_user_id IS NULL) OR "
-            "(audience_kind = 'user' AND audience_role_id IS NULL "
-            "AND audience_user_id IS NOT NULL)",
+            "(audience_kind IN ('private', 'everyone') AND audience_user_id IS NULL) OR "
+            "(audience_kind = 'user' AND audience_user_id IS NOT NULL)",
             name="ck_reports_audience",
         ),
         Index("ix_reports_owner_module", "owner_id", "module_id"),
         Index("ix_reports_module", "module_id"),
-        Index("ix_reports_audience_role_id", "audience_role_id"),
         Index("ix_reports_audience_user_id", "audience_user_id"),
     )
 
@@ -53,9 +48,6 @@ class Report(BaseModel):
     subtitle: Mapped[str | None] = mapped_column(String(160), nullable=True)
     audience_kind: Mapped[str] = mapped_column(
         String(20), default="private", server_default=text("'private'"), nullable=False
-    )
-    audience_role_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="RESTRICT"), nullable=True
     )
     audience_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True

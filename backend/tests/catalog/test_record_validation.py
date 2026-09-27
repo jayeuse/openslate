@@ -17,13 +17,14 @@ from app.systems.sandbox.fields.validation import (
 )
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
-from app.systems.sandbox.records.router import (
+from app.systems.sandbox.records.mutation_validation import (
     RecordValidationError,
-    update_record,
     validate_record_mutation,
 )
+from app.systems.sandbox.records.router import update_record
 from app.systems.sandbox.records.schemas import RecordUpdate
 from tests.catalog.field_record_support import make_field, make_module
+from tests.rbac.support import make_user
 
 REJECTED_VALUE_CANARY = token_urlsafe(32)
 
@@ -373,7 +374,7 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
     update_record(
         record.id,
         RecordUpdate(data={str(closed.id): 1}),
-        Mock(),
+        make_user("record_writer"),
         db,
     )
     assert record.data == {str(closed.id): 1}
@@ -382,7 +383,7 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
         update_record(
             record.id,
             RecordUpdate(data={str(closed.id): True}),
-            Mock(),
+            make_user("record_writer"),
             db,
         )
 

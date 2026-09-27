@@ -70,7 +70,6 @@ def load_board_widget_purge_dependencies(
                     "widget_type",
                     "config",
                     "audience_kind",
-                    "audience_role_id",
                     "audience_user_id",
                 )
             }

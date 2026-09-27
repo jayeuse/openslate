@@ -17,17 +17,13 @@ from app.core.database import get_db
 from app.systems.access.users.models import User
 from app.systems.boards.models import Board, BoardGrant, BoardStatus
 from app.systems.boards.router import router
-from tests.rbac.support import make_role, make_user
+from tests.rbac.support import make_user
 
 
-def _user(name: str, *capabilities: str, role_name: str = "member") -> User:
-    return make_user(
-        name,
-        role=make_role(
-            role_name,
-            {capability: True for capability in capabilities},
-        ),
-    )
+def _user(name: str, *capabilities: str) -> User:
+    """A member for Board writes; a guest when the old test gave only read."""
+
+    return make_user(name, role="member" if "records.write" in capabilities else "guest")
 
 
 def _board(*, owner_id: UUID, status: BoardStatus = BoardStatus.ACTIVE) -> Board:
@@ -62,7 +58,6 @@ def _grant(
         board_id=board_id,
         principal_type="user",
         principal_user_id=user_id,
-        principal_role_id=None,
         permission=permission,
         effect=effect,
         created_at=now,
@@ -157,17 +152,14 @@ def test_read_hides_an_existing_board_without_view_access() -> None:
     database.commit.assert_not_called()
 
 
-def test_read_returns_board_for_creator_and_global_read_is_required() -> None:
+def test_read_returns_board_for_creator() -> None:
     owner = _user("board_owner_reader", "records.read")
     target = _board(owner_id=owner.id)
 
     readable = _client(_database(target=target), owner).get(f"/api/boards/{target.id}")
-    write_only = _user("board_writer_without_read", "records.write")
-    denied = _client(_database(target=target), write_only).get(f"/api/boards/{target.id}")
 
     assert readable.status_code == 200
     assert readable.json()["id"] == str(target.id)
-    assert denied.status_code == 403
 
 
 def test_read_and_missing_board_have_the_same_not_found_contract() -> None:

@@ -15,7 +15,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards import lifecycle_router
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.event_models import BoardEvent
@@ -45,10 +45,9 @@ pytestmark = pytest.mark.integration
 
 
 def _actor(db: Session, *, admin: bool, password: str | None = None) -> User:
-    role = db.scalar(select(Role).where(Role.role == "admin")) if admin else None
+    role = "admin" if admin else None
     if role is None:
-        role = Role(role=f"board-purge-{uuid7().hex}", permissions={"records.read": True})
-        db.add(role)
+        role = "member"
         db.flush()
     user_id = uuid7()
     email = f"board-purge-{user_id.hex}@example.test"
@@ -63,7 +62,6 @@ def _actor(db: Session, *, admin: bool, password: str | None = None) -> User:
         supabase_user_id=provider_user_id,
         username=f"purge_{user_id.hex[:12]}",
         status="active",
-        role_id=role.id,
         role=role,
     )
     db.add(actor)
@@ -456,15 +454,12 @@ def test_board_purge_rechecks_fresh_admin_after_password_step_up(
     _enabled(monkeypatch, True)
     path = f"/api/boards/{board.id}/purge"
     token = _client(db, admin).post(f"{path}/preview").json()["token"]
-    member_role = Role(role=f"board-demoted-{uuid7().hex}", permissions={})
-    db.add(member_role)
-    db.flush()
     actor_id = admin.id
-    assert admin.role.role == "admin"
+    assert admin.role == "admin"
     db.expunge(admin)
     fresh_actor = db.get(User, actor_id)
     assert fresh_actor is not None
-    fresh_actor.role_id = member_role.id
+    fresh_actor.role = "member"
     db.commit()
 
     denied = _client(db, admin).post(

@@ -14,7 +14,7 @@ const widgetId = "00000000-0000-4000-8000-000000000002";
 const duplicateId = "00000000-0000-4000-8000-000000000003";
 const moduleId = "00000000-0000-4000-8000-000000000004";
 const fieldId = "00000000-0000-4000-8000-000000000005";
-const roleId = "00000000-0000-4000-8000-000000000006";
+const targetId = "00000000-0000-4000-8000-000000000006";
 const timestamp = "2026-09-23T00:00:00Z";
 
 type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
@@ -59,7 +59,7 @@ function widgetResponse(id = widgetId) {
     module_id: moduleId,
     position: 0,
     config,
-    audience: { kind: "everyone", role_id: null, user_id: null },
+    audience: { kind: "everyone", user_id: null },
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -94,7 +94,7 @@ test("widget list is a server-filtered page with no manager audience override", 
       id: widgetId,
       boardId,
       config: { fields: [{ fieldId, expectedType: "text" }] },
-      audience: { kind: "everyone", roleId: null, userId: null },
+      audience: { kind: "everyone", userId: null },
     });
     expect(page.pagination).toEqual({
       limit: 1,
@@ -205,7 +205,7 @@ test("widget inputs reject invalid audience, source, filters and order before fe
     await expect(
       createBoardWidget(boardId, 1, {
         ...widgetInput,
-        ownerId: roleId,
+        ownerId: targetId,
       } as never),
     ).rejects.toThrow();
     await expect(
@@ -249,13 +249,13 @@ test("widget inputs reject invalid audience, source, filters and order before fe
   }
 });
 
-test("role audience is explicit and its target is serialized without actor inference", async () => {
+test("user audience is explicit and its target is serialized without actor inference", async () => {
   const mock = installFetch(() =>
     jsonResponse(
       {
         widget: {
           ...widgetResponse(),
-          audience: { kind: "role", role_id: roleId, user_id: null },
+          audience: { kind: "user", user_id: targetId },
         },
         board_revision: 2,
       },
@@ -265,18 +265,17 @@ test("role audience is explicit and its target is serialized without actor infer
   try {
     const created = await createBoardWidget(boardId, 1, {
       ...widgetInput,
-      audience: { kind: "role", roleId },
+      audience: { kind: "user", userId: targetId },
     });
     expect(created.widget.audience).toEqual({
-      kind: "role",
-      roleId,
-      userId: null,
+      kind: "user",
+      userId: targetId,
     });
     expect(
       JSON.parse(String(mock.requests[0]?.init?.body)).widget.audience,
     ).toEqual({
-      kind: "role",
-      role_id: roleId,
+      kind: "user",
+      user_id: targetId,
     });
   } finally {
     mock.restore();
@@ -286,7 +285,7 @@ test("role audience is explicit and its target is serialized without actor infer
 test("widget responses reject private extras, malformed audience and foreign board IDs", async () => {
   const privateDto = installFetch(() =>
     jsonResponse({
-      items: [{ ...widgetResponse(), creator_id: roleId }],
+      items: [{ ...widgetResponse(), creator_id: targetId }],
       pagination: { limit: 25, offset: 0, count: 1, total: 1, has_more: false },
       board_revision: 1,
     }),
@@ -303,7 +302,7 @@ test("widget responses reject private extras, malformed audience and foreign boa
       {
         widget: {
           ...widgetResponse(),
-          audience: { kind: "role", role_id: null, user_id: null },
+          audience: { kind: "user", user_id: null },
         },
         board_revision: 2,
       },
@@ -319,7 +318,10 @@ test("widget responses reject private extras, malformed audience and foreign boa
   }
   const foreign = installFetch(() =>
     jsonResponse(
-      { widget: { ...widgetResponse(), board_id: roleId }, board_revision: 2 },
+      {
+        widget: { ...widgetResponse(), board_id: targetId },
+        board_revision: 2,
+      },
       201,
     ),
   );

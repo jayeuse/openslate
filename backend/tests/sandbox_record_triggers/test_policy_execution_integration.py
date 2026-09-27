@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from uuid import UUID
 
 import pytest
 from sqlalchemy import select
@@ -11,12 +10,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
-from app.systems.access.policy.models import (
-    AccessPolicyVersion,
-    AccessRule,
-)
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.access.users.permissions import Capability
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.record_triggers.execution import ClaimedTriggerEvent, claim_due_events
 from app.systems.sandbox.record_triggers.models import (
@@ -68,60 +62,18 @@ def _field_change_claim(db: Session) -> ClaimedTriggerEvent:
     raise AssertionError("Expected a field-changed trigger event")
 
 
-def _role(db: Session, *, writes_records: bool) -> Role:
-    role = Role(
-        role=f"trigger-policy-{uuid7()}",
-        permissions={Capability.RECORDS_WRITE.value: writes_records} if writes_records else {},
-    )
-    db.add(role)
-    db.flush()
-    return role
-
-
-def _workspace_rule(
-    db: Session,
-    *,
-    subject_kind: str,
-    subject_id: UUID | None,
-    decision: str,
-) -> None:
-    version = db.scalar(
-        select(AccessPolicyVersion).where(AccessPolicyVersion.singleton_key == "workspace")
-    )
-    assert version is not None
-    db.add(
-        AccessRule(
-            subject_kind=subject_kind,
-            subject_id=subject_id,
-            scope_kind="workspace",
-            scope_id=None,
-            permission_id=Capability.RECORDS_WRITE.value,
-            decision=decision,
-            starts_at=None,
-            ends_at=None,
-            locked=False,
-            policy_version=version.revision,
-        )
-    )
-
-
 def _remove_publisher_access(db: Session, actor: User, change: str) -> None:
     if change == "disabled":
         actor.status = UserStatus.DISABLED.value
     elif change == "expired":
         actor.expires_at = utc_now() - timedelta(seconds=1)
-    elif change == "role-without-record-write":
-        actor.role_id = _role(db, writes_records=False).id
-    elif change == "workspace-deny":
-        actor.role_id = _role(db, writes_records=True).id
-        _workspace_rule(db, subject_kind="user", subject_id=actor.id, decision="deny")
+    elif change == "demoted":
+        actor.role = UserRole.MEMBER.value
     else:
         raise AssertionError(change)
 
 
-@pytest.mark.parametrize(
-    "change", ("disabled", "expired", "role-without-record-write", "workspace-deny")
-)
+@pytest.mark.parametrize("change", ("disabled", "expired", "demoted"))
 def test_trigger_keeps_running_after_its_publisher_loses_access(
     integration_owner_db: Session, change: str
 ) -> None:

@@ -8,10 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.openview.charts.models import UserChartPreference
 from app.systems.openview.charts.schemas import (
     ChartPreferenceConfig,
@@ -24,16 +23,8 @@ from app.systems.sandbox.records.query import validate_definition
 from app.systems.sandbox.records.query_schemas import FieldReference, QueryDefinition
 
 router = APIRouter(prefix="/charts", tags=["charts"])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-ReadWriter = Annotated[
-    User,
-    Depends(
-        require_legacy_capability(
-            Capability.RECORDS_READ,
-            Capability.RECORDS_WRITE,
-        )
-    ),
-]
+Reader = Annotated[User, Depends(get_current_user)]
+ReadWriter = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 _CATEGORICAL_TYPES = {
@@ -73,7 +64,7 @@ def _field_by_id(
     return field
 
 
-def _validate_preferences(db: Session, config: ChartPreferenceConfig) -> None:
+def _validate_preferences(db: Session, user: User, config: ChartPreferenceConfig) -> None:
     module = db.scalar(
         select(Module)
         .where(
@@ -94,9 +85,7 @@ def _validate_preferences(db: Session, config: ChartPreferenceConfig) -> None:
     if config.chart_type == "line":
         dimension = None
     else:
-        dimension = _field_by_id(
-            fields, config.dimension_id, allowed=_CATEGORICAL_TYPES
-        )
+        dimension = _field_by_id(fields, config.dimension_id, allowed=_CATEGORICAL_TYPES)
         if dimension is None:
             raise _invalid_preferences()
     date_field = _field_by_id(fields, config.date_field_id, allowed=_DATE_TYPES)
@@ -123,6 +112,7 @@ def _validate_preferences(db: Session, config: ChartPreferenceConfig) -> None:
             config.module_id,
             definition,
             extra_references=extra_references,
+            reader=user,
         )
     except HTTPException as error:
         if error.status_code == status.HTTP_409_CONFLICT:
@@ -143,9 +133,7 @@ def get_chart_preferences(
     db: Database,
 ) -> ChartPreferenceResponse:
     _private_cache(response)
-    row = db.scalar(
-        select(UserChartPreference).where(UserChartPreference.user_id == user.id)
-    )
+    row = db.scalar(select(UserChartPreference).where(UserChartPreference.user_id == user.id))
     return _response(row)
 
 
@@ -157,11 +145,9 @@ def put_chart_preferences(
     db: Database,
 ) -> ChartPreferenceResponse:
     _private_cache(response)
-    _validate_preferences(db, payload.config)
+    _validate_preferences(db, user, payload.config)
     row = db.scalar(
-        select(UserChartPreference)
-        .where(UserChartPreference.user_id == user.id)
-        .with_for_update()
+        select(UserChartPreference).where(UserChartPreference.user_id == user.id).with_for_update()
     )
     if row is None:
         row = UserChartPreference(

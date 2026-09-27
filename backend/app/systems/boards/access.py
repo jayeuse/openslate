@@ -5,8 +5,7 @@ from uuid import UUID
 
 from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import Role, User, UserRole, UserStatus
-from app.systems.access.users.permissions import Capability, has_capability
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.boards.models import (
     Board,
     BoardGrant,
@@ -17,8 +16,7 @@ from app.systems.boards.models import (
 
 _PRINCIPAL_PRIORITY = {
     BoardPrincipalType.EVERYONE: 1,
-    BoardPrincipalType.ROLE: 2,
-    BoardPrincipalType.USER: 3,
+    BoardPrincipalType.USER: 2,
 }
 _MISSING = object()
 _IMPLIED_PERMISSIONS = {
@@ -35,26 +33,23 @@ def _active_entity(value: object) -> bool:
     )
 
 
-def _active_actor(actor: User | None) -> Role | None:
+def _active_actor(actor: User | None) -> str | None:
+    """Return the role of an active, accepted, unexpired actor, else None."""
+
     if actor is None or not _active_entity(actor) or not is_identity_eligible(actor):
         return None
     role = getattr(actor, "role", None)
-    actor_id = getattr(actor, "id", None)
-    role_id = getattr(actor, "role_id", None)
     if (
-        not isinstance(role, Role)
-        or not _active_entity(role)
+        role not in {item.value for item in UserRole}
         or getattr(actor, "status", None) != UserStatus.ACTIVE.value
         or not is_established_user(actor)
-        or not isinstance(actor_id, UUID)
-        or not isinstance(role_id, UUID)
-        or getattr(role, "id", None) != role_id
+        or not isinstance(getattr(actor, "id", None), UUID)
     ):
         return None
-    return role
+    return str(role)
 
 
-def _principal_priority(grant: BoardGrant, actor: User, role: Role, board_id: UUID) -> int | None:
+def _principal_priority(grant: BoardGrant, actor: User, board_id: UUID) -> int | None:
     if getattr(grant, "board_id", None) != board_id or not _active_entity(grant):
         return None
 
@@ -67,14 +62,10 @@ def _principal_priority(grant: BoardGrant, actor: User, role: Role, board_id: UU
         return None
 
     user_id = getattr(grant, "principal_user_id", None)
-    role_id = getattr(grant, "principal_role_id", None)
     if principal_type is BoardPrincipalType.USER:
-        if role_id is not None or not isinstance(user_id, UUID) or user_id != actor.id:
+        if not isinstance(user_id, UUID) or user_id != actor.id:
             return None
-    elif principal_type is BoardPrincipalType.ROLE:
-        if user_id is not None or not isinstance(role_id, UUID) or role_id != role.id:
-            return None
-    elif user_id is not None or role_id is not None:
+    elif user_id is not None:
         return None
 
     return _PRINCIPAL_PRIORITY[principal_type]
@@ -86,14 +77,14 @@ def can_access_board(
     action: str | BoardPermission,
     grants: Iterable[BoardGrant],
 ) -> bool:
-    """Check the global record gate and the Board's most-specific ACL rules.
+    """Check the account gate and the Board's most-specific ACL rules.
 
-    View grants are required for reads; edit/manage grants are required for
-    mutations. Active creators and admins retain Board authority after the
-    global capability gate. For other principals, higher Board permissions
-    imply lower ones; explicit view denial also denies edit and manage.
-    Identity grants outrank role and everyone grants, while deny wins among
-    decisions at the same priority.
+    Any active account may view; a guest may not edit or manage. View grants are
+    required for reads; edit/manage grants are required for mutations. Active
+    creators and admins retain Board authority after the account gate. For other
+    principals, higher Board permissions imply lower ones; explicit view denial
+    also denies edit and manage. User grants outrank everyone grants, while deny
+    wins among decisions at the same priority.
     """
 
     if board is None or actor is None or not _active_entity(board):
@@ -110,10 +101,7 @@ def can_access_board(
     role = _active_actor(actor)
     if role is None:
         return False
-    required_capability = (
-        Capability.RECORDS_READ if requested is BoardPermission.VIEW else Capability.RECORDS_WRITE
-    )
-    if not has_capability(role, required_capability):
+    if requested is not BoardPermission.VIEW and role == UserRole.GUEST.value:
         return False
     return _board_permission_granted(board, actor, role, requested, grants)
 
@@ -123,11 +111,10 @@ def can_read_board_grants(
     actor: User | None,
     grants: Iterable[BoardGrant],
 ) -> bool:
-    """Allow a global reader to inspect grants only when they manage the Board.
+    """Allow an active account to inspect grants only when it manages the Board.
 
-    Listing access rules is a read operation and does not require the global
-    records.write capability. Mutations continue to use :func:`can_access_board`
-    with ``manage``, which does require records.write.
+    Listing access rules is a read operation. Mutations continue to use
+    :func:`can_access_board` with ``manage``, which a guest never passes.
     """
 
     if board is None or actor is None or not _active_entity(board):
@@ -135,7 +122,7 @@ def can_read_board_grants(
     if not isinstance(getattr(board, "id", None), UUID):
         return False
     role = _active_actor(actor)
-    if role is None or not has_capability(role, Capability.RECORDS_READ):
+    if role is None:
         return False
     return _board_permission_granted(board, actor, role, BoardPermission.MANAGE, grants)
 
@@ -143,19 +130,19 @@ def can_read_board_grants(
 def _board_permission_granted(
     board: Board,
     actor: User,
-    role: Role,
+    role: str,
     requested: BoardPermission,
     grants: Iterable[BoardGrant],
 ) -> bool:
     board_id = getattr(board, "id", None)
     if not isinstance(board_id, UUID):
         return False
-    if getattr(board, "owner_id", None) == actor.id or role.role == UserRole.ADMIN.value:
+    if getattr(board, "owner_id", None) == actor.id or role == UserRole.ADMIN.value:
         return True
 
     matching: list[tuple[int, BoardPermission, BoardGrantEffect]] = []
     for grant in grants:
-        priority = _principal_priority(grant, actor, role, board_id)
+        priority = _principal_priority(grant, actor, board_id)
         if priority is None:
             continue
         raw_permission = getattr(grant, "permission", None)

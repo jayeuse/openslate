@@ -4,6 +4,7 @@ import os
 from collections.abc import Generator
 from contextlib import ExitStack
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
 from uuid import UUID
 
@@ -21,7 +22,8 @@ from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.systems.access.identity.provider_sessions import admit_provider_session
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
+from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.openview.reports.models import Report
 from app.systems.openview.reports.router import router
@@ -43,10 +45,10 @@ class _RunFixture:
     runtime_engine: Engine
     owner_id: UUID
     outsider_id: UUID
-    write_only_id: UUID
+    guest_id: UUID
     owner_token: str
     outsider_token: str
-    write_only_token: str
+    guest_token: str
     report_id: UUID
     module_id: UUID
     note_field_id: UUID
@@ -67,15 +69,16 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
     _guard_integration_database(runtime_url)
     owner_engine = guarded_create_engine(owner_url)
     runtime_engine = guarded_create_engine(runtime_url)
-    owner_id, outsider_id, write_only_id = uuid7(), uuid7(), uuid7()
-    actor_ids = (owner_id, outsider_id, write_only_id)
-    role_ids = (uuid7(), uuid7(), uuid7())
+    owner_id, outsider_id, guest_id = uuid7(), uuid7(), uuid7()
+    actor_ids = (owner_id, outsider_id, guest_id)
+    group_id, owner_access_id = uuid7(), uuid7()
     department_id, module_id, report_id = uuid7(), uuid7(), uuid7()
     category_id, note_id, amount_id = uuid7(), uuid7(), uuid7()
     record_ids = (uuid7(), uuid7(), uuid7(), uuid7())
     all_ids = [
         *actor_ids,
-        *role_ids,
+        group_id,
+        owner_access_id,
         department_id,
         module_id,
         report_id,
@@ -121,22 +124,9 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
                 request_method="POST",
                 request_path="/api/reports/run-fixture",
             )
-            roles = [
-                Role(
-                    id=role_id,
-                    role=f"report-run-{role_id.hex}",
-                    permissions=permissions,
-                )
-                for role_id, permissions in zip(
-                    role_ids,
-                    (
-                        {"records.read": True, "records.write": True},
-                        {"records.read": True, "records.write": True},
-                        {"records.write": True},
-                    ),
-                    strict=True,
-                )
-            ]
+            # The owner and the outsider are members who read the module through one
+            # group; the third actor is a guest in that group, so it can never run.
+            guest_expiry = datetime.now(UTC) + timedelta(days=30)
             users = [
                 User(
                     id=actor_id,
@@ -145,10 +135,16 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
                     status=UserStatus.ACTIVE.value,
                     role=role,
                     supabase_user_id=identity[0],
+                    sponsor_user_id=owner_id if role == "guest" else None,
+                    expires_at=guest_expiry if role == "guest" else None,
                 )
-                for actor_id, role, identity in zip(actor_ids, roles, identities, strict=True)
+                for actor_id, role, identity in zip(
+                    actor_ids, ("member", "member", "guest"), identities, strict=True
+                )
             ]
-            setup.add_all(users)
+            setup.add(users[0])
+            setup.flush()
+            setup.add_all(users[1:])
             setup.flush()
             setup.add(Department(id=department_id, department_name=f"Report run {uuid7().hex}"))
             setup.flush()
@@ -157,6 +153,21 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
                     id=module_id,
                     department_id=department_id,
                     module_name=f"Report run {uuid7().hex}",
+                )
+            )
+            setup.flush()
+            setup.add(Group(id=group_id, name=f"Report run {group_id.hex}"))
+            setup.flush()
+            setup.add_all(
+                GroupMember(group_id=group_id, user_id=actor_id) for actor_id in actor_ids
+            )
+            setup.add(
+                GroupAccess(
+                    id=owner_access_id,
+                    group_id=group_id,
+                    department_id=department_id,
+                    module_id=module_id,
+                    level=AccessLevel.WRITE.value,
                 )
             )
             setup.flush()
@@ -258,10 +269,10 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
                 runtime_engine=runtime_engine,
                 owner_id=owner_id,
                 outsider_id=outsider_id,
-                write_only_id=write_only_id,
+                guest_id=guest_id,
                 owner_token=access_tokens[0],
                 outsider_token=access_tokens[1],
-                write_only_token=access_tokens[2],
+                guest_token=access_tokens[2],
                 report_id=report_id,
                 module_id=module_id,
                 note_field_id=note_id,
@@ -301,6 +312,9 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
                 ("reports", "id = :id", {"id": report_id}),
                 ("records", "module_id = :id", {"id": module_id}),
                 ("fields", "module_id = :id", {"id": module_id}),
+                ("group_access", "group_id = :id", {"id": group_id}),
+                ("group_members", "group_id = :id", {"id": group_id}),
+                ("groups", "id = :id", {"id": group_id}),
                 ("modules", "id = :id", {"id": module_id}),
                 ("departments", "id = :id", {"id": department_id}),
             ):
@@ -312,16 +326,11 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
                 {"ids": list(actor_ids)},
             )
             cleanup.execute(
-                text("DELETE FROM public.users WHERE id IN :ids").bindparams(
+                text("DELETE FROM public.users WHERE id IN :ids AND id <> :owner").bindparams(
                     bindparam("ids", expanding=True)
                 ),
-                {"ids": list(actor_ids)},
+                {"ids": list(actor_ids), "owner": owner_id},
             )
-            cleanup.execute(
-                text("DELETE FROM public.roles WHERE id IN :ids").bindparams(
-                    bindparam("ids", expanding=True)
-                ),
-                {"ids": list(role_ids)},
-            )
+            cleanup.execute(text("DELETE FROM public.users WHERE id = :id"), {"id": owner_id})
         owner_engine.dispose()
         runtime_engine.dispose()

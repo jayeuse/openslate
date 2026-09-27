@@ -187,21 +187,14 @@ const wireRecipeSchema = z
 
 const wireReportAudienceSchema = z
   .object({
-    kind: z.enum(["private", "everyone", "role", "user"]),
-    role_id: uuidSchema.nullable(),
+    kind: z.enum(["private", "everyone", "user"]),
     user_id: uuidSchema.nullable(),
   })
   .strict()
   .superRefine((audience, context) => {
     const valid =
-      (audience.kind === "role" &&
-        audience.role_id !== null &&
-        audience.user_id === null) ||
-      (audience.kind === "user" &&
-        audience.user_id !== null &&
-        audience.role_id === null) ||
+      (audience.kind === "user" && audience.user_id !== null) ||
       ((audience.kind === "private" || audience.kind === "everyone") &&
-        audience.role_id === null &&
         audience.user_id === null);
     if (!valid)
       context.addIssue({
@@ -211,7 +204,6 @@ const wireReportAudienceSchema = z
   })
   .transform((audience) => ({
     kind: audience.kind,
-    roleId: audience.role_id,
     userId: audience.user_id,
   }));
 
@@ -264,23 +256,9 @@ const wireReportListSchema = z
   })
   .strict();
 
-const reportRoleChoiceSchema = z
-  .object({ id: uuidSchema, role: z.string().min(1).max(100) })
-  .strict();
 const reportUserChoiceSchema = z
   .object({ id: uuidSchema, username: z.string().min(1).max(100) })
   .strict();
-const roleChoicesPageSchema = z
-  .object({
-    items: z.array(reportRoleChoiceSchema).max(100),
-    pagination: paginationSchema,
-  })
-  .strict()
-  .refine(
-    (page) =>
-      page.items.length === page.pagination.count &&
-      page.items.length <= page.pagination.limit,
-  );
 const userChoicesPageSchema = z
   .object({
     items: z.array(reportUserChoiceSchema).max(100),
@@ -368,7 +346,6 @@ const audienceChoiceOptionsSchema = z
 const reportAudienceInputSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("private") }).strict(),
   z.object({ kind: z.literal("everyone") }).strict(),
-  z.object({ kind: z.literal("role"), roleId: uuidSchema }).strict(),
   z.object({ kind: z.literal("user"), userId: uuidSchema }).strict(),
 ]);
 const createInputSchema = z
@@ -454,7 +431,6 @@ export type OpenViewReport = z.output<typeof wireReportSchema>;
 export type OpenViewReportAudienceInput = z.output<
   typeof reportAudienceInputSchema
 >;
-export type OpenViewReportRoleChoice = z.output<typeof reportRoleChoiceSchema>;
 export type OpenViewReportUserChoice = z.output<typeof reportUserChoiceSchema>;
 export type OpenViewReportAudienceChoiceOptions = z.input<
   typeof audienceChoiceOptionsSchema
@@ -495,7 +471,6 @@ function serializeReportAudience(
 ) {
   return {
     kind: audience.kind,
-    role_id: audience.kind === "role" ? audience.roleId : null,
     user_id: audience.kind === "user" ? audience.userId : null,
   };
 }
@@ -621,29 +596,6 @@ export async function listOpenViewReports(
       cache: "no-store",
     },
   );
-}
-
-export async function listOpenViewReportAudienceRoles(
-  raw: OpenViewReportAudienceChoiceOptions = {},
-): Promise<OpenViewPage<OpenViewReportRoleChoice>> {
-  const options = audienceChoiceOptionsSchema.parse(raw);
-  const values: Record<string, string | number> = {
-    limit: options.limit,
-    offset: options.offset,
-    ...(options.search ? { search: options.search } : {}),
-    ...(options.id === undefined ? {} : { id: options.id }),
-  };
-  const page = await safeReportJson(
-    `/reports/audience-roles?${queryString(values)}`,
-    roleChoicesPageSchema,
-    { cache: "no-store" },
-  );
-  if (
-    page.pagination.limit !== options.limit ||
-    page.pagination.offset !== options.offset
-  )
-    throw new ApiContractError();
-  return page;
 }
 
 export async function listOpenViewReportAudienceUsers(

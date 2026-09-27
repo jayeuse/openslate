@@ -1,5 +1,4 @@
 from collections.abc import Iterable
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -9,30 +8,15 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
-from app.systems.access.policy.models import (
-    AccessDefaultDepartment,
-    AccessDefaultGroup,
-    AccessGroup,
-    AccessGroupMember,
-    AccessPolicyDefaults,
-    AccessRule,
-)
+from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import (
-    AccessDefaultsUpdate,
-    AccessGroupCreate,
-    AccessGroupUpdate,
+    GroupAccessEntry,
+    GroupCreate,
+    GroupUpdate,
 )
-from app.systems.access.users.models import IdentityKind, Role, User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.sandbox.departments.models import Department
-
-
-@dataclass(frozen=True, slots=True)
-class CreationDefaults:
-    role: Role
-    group_ids: tuple[UUID, ...]
-    department_ids: tuple[UUID, ...]
-    invitation_expiry_days: int
-    guest_duration_days: int
+from app.systems.sandbox.modules.models import Module
 
 
 def conflict(message: str) -> HTTPException:
@@ -57,7 +41,7 @@ def commit(db: Session, message: str) -> None:
         raise unavailable(db) from error
 
 
-def _require_patch(payload: AccessGroupUpdate | AccessDefaultsUpdate) -> None:
+def _require_patch(payload: GroupUpdate) -> None:
     if not payload.model_fields_set or any(
         getattr(payload, field) is None for field in payload.model_fields_set
     ):
@@ -67,19 +51,11 @@ def _require_patch(payload: AccessGroupUpdate | AccessDefaultsUpdate) -> None:
         )
 
 
-def require_group_patch(payload: AccessGroupUpdate) -> None:
+def require_group_patch(payload: GroupUpdate) -> None:
     _require_patch(payload)
 
 
-def require_defaults_patch(payload: AccessDefaultsUpdate) -> None:
-    _require_patch(payload)
-
-
-def group_etag(row: AccessGroup) -> str:
-    return f'"{row.id}:{row.revision}"'
-
-
-def defaults_etag(row: AccessPolicyDefaults) -> str:
+def group_etag(row: Group) -> str:
     return f'"{row.id}:{row.revision}"'
 
 
@@ -100,9 +76,9 @@ def _unique_ids(ids: Iterable[UUID]) -> tuple[UUID, ...]:
     return tuple(dict.fromkeys(ids))
 
 
-def get_group(db: Session, group_id: UUID) -> AccessGroup:
+def get_group(db: Session, group_id: UUID) -> Group:
     try:
-        row = db.get(AccessGroup, group_id)
+        row = db.get(Group, group_id)
     except SQLAlchemyError as error:
         raise unavailable(db) from error
     if row is None:
@@ -110,11 +86,11 @@ def get_group(db: Session, group_id: UUID) -> AccessGroup:
     return row
 
 
-def lock_group(db: Session, group_id: UUID) -> AccessGroup:
+def lock_group(db: Session, group_id: UUID) -> Group:
     try:
         row = db.scalar(
-            select(AccessGroup)
-            .where(AccessGroup.id == group_id)
+            select(Group)
+            .where(Group.id == group_id)
             .execution_options(populate_existing=True)
             .with_for_update()
         )
@@ -130,9 +106,9 @@ def group_member_ids(db: Session, group_id: UUID) -> list[UUID]:
     try:
         return list(
             db.scalars(
-                select(AccessGroupMember.user_id)
-                .where(AccessGroupMember.group_id == group_id)
-                .order_by(AccessGroupMember.user_id)
+                select(GroupMember.user_id)
+                .where(GroupMember.group_id == group_id)
+                .order_by(GroupMember.user_id)
             ).all()
         )
     except SQLAlchemyError as error:
@@ -146,9 +122,9 @@ def group_member_map(db: Session, group_ids: Iterable[UUID]) -> dict[UUID, list[
         return result
     try:
         rows = db.execute(
-            select(AccessGroupMember.group_id, AccessGroupMember.user_id)
-            .where(AccessGroupMember.group_id.in_(ids))
-            .order_by(AccessGroupMember.group_id, AccessGroupMember.user_id)
+            select(GroupMember.group_id, GroupMember.user_id)
+            .where(GroupMember.group_id.in_(ids))
+            .order_by(GroupMember.group_id, GroupMember.user_id)
         ).tuples()
         for group_id, user_id in rows:
             result.setdefault(group_id, []).append(user_id)
@@ -166,7 +142,6 @@ def _active_users(db: Session, user_ids: tuple[UUID, ...]) -> set[UUID]:
             User.id.in_(user_ids),
             User.is_deleted.is_(False),
             User.status == UserStatus.ACTIVE.value,
-            User.identity_kind.in_((IdentityKind.INTERNAL.value, IdentityKind.GUEST.value)),
             or_(User.expires_at.is_(None), User.expires_at > datetime.now(UTC)),
         )
         .order_by(User.id)
@@ -184,7 +159,6 @@ def _existing_pending_users(db: Session, user_ids: set[UUID]) -> set[UUID]:
             User.id.in_(user_ids),
             User.is_deleted.is_(False),
             User.status == UserStatus.PENDING.value,
-            User.identity_kind.in_((IdentityKind.INTERNAL.value, IdentityKind.GUEST.value)),
             or_(User.expires_at.is_(None), User.expires_at > datetime.now(UTC)),
         )
         .order_by(User.id)
@@ -195,15 +169,15 @@ def _existing_pending_users(db: Session, user_ids: set[UUID]) -> set[UUID]:
 
 def replace_group_members(
     db: Session,
-    row: AccessGroup,
+    row: Group,
     member_ids: list[UUID],
     actor_id: UUID,
 ) -> bool:
     existing = list(
         db.scalars(
-            select(AccessGroupMember)
-            .where(AccessGroupMember.group_id == row.id)
-            .order_by(AccessGroupMember.user_id)
+            select(GroupMember)
+            .where(GroupMember.group_id == row.id)
+            .order_by(GroupMember.user_id)
             .with_for_update()
         ).all()
     )
@@ -212,6 +186,13 @@ def replace_group_members(
     inactive_ids = set(desired) - _active_users(db, desired)
     if inactive_ids != _existing_pending_users(db, inactive_ids & existing_ids):
         raise conflict("Members must be active, unexpired users")
+    added_ids = set(desired) - existing_ids
+    if added_ids and db.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(User.id.in_(added_ids), User.role == UserRole.ADMIN.value)
+    ):
+        raise conflict("Administrators have access everywhere and are not group members")
     if existing_ids == set(desired):
         return False
     for item in existing:
@@ -219,14 +200,14 @@ def replace_group_members(
             db.delete(item)
     for user_id in desired:
         if user_id not in existing_ids:
-            db.add(AccessGroupMember(group_id=row.id, user_id=user_id, performed_by=actor_id))
+            db.add(GroupMember(group_id=row.id, user_id=user_id, performed_by=actor_id))
     db.flush()
     return True
 
 
-def create_group(db: Session, payload: AccessGroupCreate, actor_id: UUID) -> AccessGroup:
+def create_group(db: Session, payload: GroupCreate, actor_id: UUID) -> Group:
     try:
-        row = AccessGroup(name=payload.name, description=payload.description, performed_by=actor_id)
+        row = Group(name=payload.name, description=payload.description, performed_by=actor_id)
         db.add(row)
         db.flush()
         replace_group_members(db, row, payload.member_ids, actor_id)
@@ -246,10 +227,10 @@ def create_group(db: Session, payload: AccessGroupCreate, actor_id: UUID) -> Acc
 def update_group(
     db: Session,
     group_id: UUID,
-    payload: AccessGroupUpdate,
+    payload: GroupUpdate,
     if_match: str | None,
     actor_id: UUID,
-) -> AccessGroup:
+) -> Group:
     require_group_patch(payload)
     row = lock_group(db, group_id)
     if row.is_deleted:
@@ -280,35 +261,15 @@ def update_group(
         raise unavailable(db) from error
 
 
-def ensure_group_deletable(db: Session, row: AccessGroup) -> None:
+def ensure_group_deletable(db: Session, row: Group) -> None:
     try:
         has_members = db.scalar(
-            select(func.count())
-            .select_from(AccessGroupMember)
-            .where(AccessGroupMember.group_id == row.id)
-        )
-        if has_members:
-            raise conflict("Group has members")
-        is_default = db.scalar(
-            select(func.count())
-            .select_from(AccessDefaultGroup)
-            .where(AccessDefaultGroup.group_id == row.id)
-        )
-        if is_default:
-            raise conflict("Group is used by defaults")
-        has_rules = db.scalar(
-            select(func.count())
-            .select_from(AccessRule)
-            .where(
-                AccessRule.subject_kind == "group",
-                AccessRule.subject_id == row.id,
-                AccessRule.is_deleted.is_(False),
-            )
+            select(func.count()).select_from(GroupMember).where(GroupMember.group_id == row.id)
         )
     except SQLAlchemyError as error:
         raise unavailable(db) from error
-    if has_rules:
-        raise conflict("Group has access rules. Remove or retarget them in Detailed rules first")
+    if has_members:
+        raise conflict("Group has members")
 
 
 def delete_group(db: Session, group_id: UUID, if_match: str | None, actor_id: UUID) -> None:
@@ -317,6 +278,8 @@ def delete_group(db: Session, group_id: UUID, if_match: str | None, actor_id: UU
         raise conflict("Group is already deleted")
     require_match(if_match, group_etag(row))
     ensure_group_deletable(db, row)
+    for grant in _locked_access(db, row.id):
+        db.delete(grant)
     row.is_deleted = True
     row.deleted_at = utc_now()
     row.revision += 1
@@ -324,204 +287,123 @@ def delete_group(db: Session, group_id: UUID, if_match: str | None, actor_id: UU
     commit(db, "Unable to delete group")
 
 
-def get_defaults(db: Session, *, lock: bool = False) -> AccessPolicyDefaults:
-    try:
-        statement = select(AccessPolicyDefaults).where(
-            AccessPolicyDefaults.singleton_key == "workspace"
-        )
-        if lock:
-            statement = statement.execution_options(populate_existing=True).with_for_update()
-        row = db.scalar(statement)
-    except SQLAlchemyError as error:
-        raise unavailable(db) from error
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Access defaults not found",
-        )
-    return row
+def _locked_access(db: Session, group_id: UUID) -> list[GroupAccess]:
+    return list(
+        db.scalars(
+            select(GroupAccess)
+            .where(GroupAccess.group_id == group_id, GroupAccess.is_deleted.is_(False))
+            .order_by(GroupAccess.id)
+            .with_for_update()
+        ).all()
+    )
 
 
-def default_link_ids(db: Session, defaults_id: UUID) -> tuple[list[UUID], list[UUID]]:
-    try:
-        group_query = (
-            select(AccessDefaultGroup.group_id)
-            .where(AccessDefaultGroup.policy_defaults_id == defaults_id)
-            .order_by(AccessDefaultGroup.group_id)
-        )
-        department_query = (
-            select(AccessDefaultDepartment.department_id)
-            .where(AccessDefaultDepartment.policy_defaults_id == defaults_id)
-            .order_by(AccessDefaultDepartment.department_id)
-        )
-        groups = list(db.scalars(group_query).all())
-        departments = list(db.scalars(department_query).all())
-        return groups, departments
-    except SQLAlchemyError as error:
-        raise unavailable(db) from error
-
-
-def _active_ids(
-    db: Session,
-    model: type[AccessGroup] | type[Department],
-    ids: tuple[UUID, ...],
-) -> set[UUID]:
+def group_access_map(db: Session, group_ids: Iterable[UUID]) -> dict[UUID, list[GroupAccessEntry]]:
+    result: dict[UUID, list[GroupAccessEntry]] = {}
+    ids = tuple(group_ids)
     if not ids:
-        return set()
-    return set(
-        db.scalars(
-            select(model.id)
-            .where(model.id.in_(ids), model.is_deleted.is_(False))
-            .order_by(model.id)
-            .with_for_update()
-        ).all()
-    )
-
-
-def load_creation_defaults(db: Session) -> CreationDefaults:
+        return result
     try:
-        defaults = get_defaults(db, lock=True)
-        if defaults.is_deleted:
-            raise ValueError("Access defaults are unavailable")
-        role = db.scalar(
-            select(Role)
-            .where(
-                Role.id == defaults.default_role_id,
-                Role.is_deleted.is_(False),
-                Role.role != UserRole.ADMIN.value,
-            )
-            .with_for_update()
-        )
-        group_ids, department_ids = default_link_ids(db, defaults.id)
-        if not isinstance(role, Role):
-            raise ValueError("Default role is unavailable")
-        if _active_ids(db, AccessGroup, tuple(group_ids)) != set(group_ids):
-            raise ValueError("Default group is unavailable")
-        if _active_ids(db, Department, tuple(department_ids)) != set(department_ids):
-            raise ValueError("Default department is unavailable")
-        if not all(
-            type(value) is int and 1 <= value <= 365
-            for value in (defaults.invitation_expiry_days, defaults.guest_duration_days)
-        ):
-            raise ValueError("Default duration is invalid")
+        rows = db.scalars(
+            select(GroupAccess)
+            .where(GroupAccess.group_id.in_(ids), GroupAccess.is_deleted.is_(False))
+            .order_by(GroupAccess.group_id, GroupAccess.department_id, GroupAccess.module_id)
+        ).all()
     except SQLAlchemyError as error:
-        raise ValueError("Access defaults are unavailable") from error
-    return CreationDefaults(
-        role=role,
-        group_ids=tuple(group_ids),
-        department_ids=tuple(department_ids),
-        invitation_expiry_days=defaults.invitation_expiry_days,
-        guest_duration_days=defaults.guest_duration_days,
-    )
+        raise unavailable(db) from error
+    for row in rows:
+        result.setdefault(row.group_id, []).append(
+            GroupAccessEntry.model_validate(
+                {"department_id": row.department_id, "module_id": row.module_id, "level": row.level}
+            )
+        )
+    return result
 
 
-def load_invitation_expiry_days(db: Session) -> int:
-    """Lock and return the configured lifetime for a newly issued invitation token."""
-    defaults = get_defaults(db, lock=True)
-    value = defaults.invitation_expiry_days
-    if defaults.is_deleted or type(value) is not int or not 1 <= value <= 365:
-        raise ValueError("Invitation expiry default is unavailable")
-    return value
+def _validate_access_targets(db: Session, entries: list[GroupAccessEntry]) -> None:
+    """Every department must exist, and every module must belong to its department."""
 
-
-def _replace_default_links(
-    db: Session,
-    defaults_id: UUID,
-    desired_ids: list[UUID],
-    link_model: type[AccessDefaultGroup] | type[AccessDefaultDepartment],
-    target_model: type[AccessGroup] | type[Department],
-    target_field: str,
-    actor_id: UUID,
-) -> bool:
-    existing = list(
+    keys = [(entry.department_id, entry.module_id) for entry in entries]
+    if len(set(keys)) != len(keys):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Each department and module can appear only once",
+        )
+    department_ids = {entry.department_id for entry in entries}
+    module_ids = {entry.module_id for entry in entries if entry.module_id is not None}
+    found_departments = set(
         db.scalars(
-            select(link_model).where(link_model.policy_defaults_id == defaults_id).with_for_update()
+            select(Department.id).where(Department.id.in_(department_ids)).with_for_update()
         ).all()
+        if department_ids
+        else ()
     )
-    desired = _unique_ids(desired_ids)
-    existing_ids = {getattr(item, target_field) for item in existing}
-    if _active_ids(db, target_model, desired) != set(desired):
-        raise conflict("Default references must be active")
-    if existing_ids == set(desired):
-        return False
-    for item in existing:
-        if getattr(item, target_field) not in desired:
-            db.delete(item)
-    for item_id in desired:
-        if item_id not in existing_ids:
-            db.add(
-                link_model(
-                    policy_defaults_id=defaults_id, **{target_field: item_id}, performed_by=actor_id
-                )
-            )
-    db.flush()
-    return True
+    if found_departments != department_ids:
+        raise conflict("Department does not exist")
+    module_departments = {
+        module_id: department_id
+        for module_id, department_id in (
+            db.execute(
+                select(Module.id, Module.department_id)
+                .where(Module.id.in_(module_ids))
+                .with_for_update()
+            ).tuples()
+            if module_ids
+            else ()
+        )
+    }
+    for entry in entries:
+        if entry.module_id is not None and (
+            module_departments.get(entry.module_id) != entry.department_id
+        ):
+            raise conflict("Module does not belong to the department")
 
 
-def _active_member_role(db: Session, role_id: UUID) -> None:
-    role = db.scalar(
-        select(Role)
-        .where(Role.id == role_id, Role.is_deleted.is_(False), Role.role != UserRole.ADMIN.value)
-        .with_for_update()
-    )
-    if role is None:
-        raise conflict("Default role must be active and cannot be Administrator")
+def replace_group_access(
+    db: Session,
+    group_id: UUID,
+    entries: list[GroupAccessEntry],
+    if_match: str | None,
+    actor_id: UUID,
+) -> Group:
+    """Replace every access row of one group under its current version."""
 
-
-def update_defaults(
-    db: Session, payload: AccessDefaultsUpdate, if_match: str | None, actor_id: UUID
-) -> AccessPolicyDefaults:
-    require_defaults_patch(payload)
-    row = get_defaults(db, lock=True)
-    require_match(if_match, defaults_etag(row))
-    fields = payload.model_fields_set
+    row = lock_group(db, group_id)
     try:
-        changed = False
-        if "default_role_id" in fields:
-            assert payload.default_role_id is not None
-            _active_member_role(db, payload.default_role_id)
-            if payload.default_role_id != row.default_role_id:
-                row.default_role_id = payload.default_role_id
-                changed = True
-        if "group_ids" in fields:
-            links_changed = _replace_default_links(
-                db,
-                row.id,
-                payload.group_ids or [],
-                AccessDefaultGroup,
-                AccessGroup,
-                "group_id",
-                actor_id,
-            )
-            changed = links_changed or changed
-        if "department_ids" in fields:
-            links_changed = _replace_default_links(
-                db,
-                row.id,
-                payload.department_ids or [],
-                AccessDefaultDepartment,
-                Department,
-                "department_id",
-                actor_id,
-            )
-            changed = links_changed or changed
-        protected_and_duration_fields = {
-            "invitation_expiry_days",
-            "guest_duration_days",
-            "service_duration_days",
-            "default_deny",
-            "require_guest_sponsor",
-            "require_service_owner",
+        if row.is_deleted:
+            raise conflict("Group is deleted")
+        require_match(if_match, group_etag(row))
+        _validate_access_targets(db, entries)
+        existing = {
+            (item.department_id, item.module_id): item for item in _locked_access(db, row.id)
         }
-        for field in protected_and_duration_fields & fields:
-            value = getattr(payload, field)
-            if value != getattr(row, field):
-                setattr(row, field, value)
+        desired = {(entry.department_id, entry.module_id): entry.level.value for entry in entries}
+        changed = False
+        for key, item in existing.items():
+            if key not in desired:
+                db.delete(item)
+                changed = True
+            elif item.level != desired[key]:
+                item.level = desired[key]
+                item.performed_by = actor_id
+                changed = True
+        db.flush()
+        for (department_id, module_id), level in desired.items():
+            if (department_id, module_id) not in existing:
+                db.add(
+                    GroupAccess(
+                        group_id=row.id,
+                        department_id=department_id,
+                        module_id=module_id,
+                        level=level,
+                        performed_by=actor_id,
+                    )
+                )
                 changed = True
         if changed:
             row.revision += 1
             row.performed_by = actor_id
-        commit(db, "Unable to update access defaults")
+        commit(db, "Unable to change group access")
         db.refresh(row)
         return row
     except HTTPException:

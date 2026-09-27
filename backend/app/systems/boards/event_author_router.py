@@ -7,11 +7,10 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.common.listing import execute_standard_list
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.event_router import EVENT_LIST_SPEC, _response
 from app.systems.boards.event_schemas import (
@@ -23,7 +22,7 @@ from app.systems.boards.models import BoardPermission
 from app.systems.boards.router import _board_with_access
 
 router = APIRouter(prefix="/boards", tags=["boards"])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
+Reader = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -36,7 +35,7 @@ def _private_cache(response: Response) -> None:
     response_model=EventListResponse,
     dependencies=[
         Depends(_private_cache),
-        Depends(require_legacy_capability(Capability.RECORDS_WRITE)),
+        Depends(require_non_guest),
     ],
 )
 def list_my_board_events(

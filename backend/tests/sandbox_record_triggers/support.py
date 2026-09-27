@@ -12,7 +12,7 @@ from sqlalchemy import Engine, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
 from app.systems.sandbox.departments.models import Department
@@ -138,13 +138,13 @@ def publish_trigger(
     record_trigger: TriggerDocument | None = None,
     triggers: Sequence[TriggerDocument] | None = None,
 ) -> tuple[User, Module, dict[str, Field], RecordTrigger]:
-    role = db.scalar(select(Role).where(Role.role == "admin"))
+    role = "admin"
     assert role is not None
     actor = User(
         email=f"trigger-{uuid7()}@example.test",
         username=f"trigger-{uuid7()}",
         status=UserStatus.ACTIVE.value,
-        role_id=role.id,
+        role=role,
     )
     db.add(actor)
     db.flush()

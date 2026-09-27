@@ -97,10 +97,8 @@ def test_report_run_list_enforces_owner_capability_and_archive_state(
     assert (
         fixture.client.get(path, headers=fixture.headers(fixture.outsider_token)).status_code == 404
     )
-    assert (
-        fixture.client.get(path, headers=fixture.headers(fixture.write_only_token)).status_code
-        == 403
-    )
+    # A guest reads runs only when a run's audience includes it; this one is private.
+    assert fixture.client.get(path, headers=fixture.headers(fixture.guest_token)).status_code == 404
     assert fixture.client.get(path).status_code == 401
     archived = fixture.client.delete(
         f"/api/reports/{fixture.report_id}?revision=1", headers=fixture.headers()

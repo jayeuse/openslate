@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.attachment_models import BoardContentAttachment
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
@@ -186,8 +186,8 @@ def test_board_file_uncertain_upload_reconciles_only_in_owning_board(guarded_db,
 def test_global_records_writer_without_board_grant_cannot_reserve_or_upload(guarded_db, actor):
     db = guarded_db
     board = Board(owner_id=actor.id, name="Owner only", status="active")
-    role = Role(role=f"board-file-outsider-{uuid7().hex}", permissions={"records.write": True})
-    db.add_all((board, role))
+    role = "member"
+    db.add(board)
     db.flush()
     identity = uuid7()
     outsider = User(
@@ -195,7 +195,6 @@ def test_global_records_writer_without_board_grant_cannot_reserve_or_upload(guar
         email=f"outsider-{identity.hex}@example.test",
         username=f"outsider_{identity.hex[:16]}",
         status="active",
-        role_id=role.id,
         role=role,
     )
     db.add(outsider)

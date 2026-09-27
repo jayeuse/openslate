@@ -17,7 +17,7 @@ from uuid6 import uuid7
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.models import Board, BoardGrant, BoardWidget
 from app.systems.boards.portability import parse_portable_board
 from app.systems.boards.template_models import BoardTemplate
@@ -28,7 +28,7 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import guarded_create_engine
-from tests.rbac.support import make_role, make_user
+from tests.rbac.support import capability_actor, grant_capability_actors, make_user
 
 
 def _client(db: Session, actor: User) -> TestClient:
@@ -53,24 +53,9 @@ def _engine_client(engine: Engine, actor: User) -> TestClient:
 
 
 def _actor(db: Session, name: str, *, read: bool = True, write: bool = True) -> User:
-    role = Role(
-        role=f"template-{name}-{uuid7().hex[:8]}",
-        permissions={"records.read": read, "records.write": write},
-    )
-    db.add(role)
-    db.flush()
-    user_id = uuid7()
-    user = User(
-        id=user_id,
-        email=f"template-{name}-{user_id.hex}@example.test",
-        username=f"tmpl_{user_id.hex[:12]}",
-        status="active",
-        role_id=role.id,
-        role=role,
-    )
-    db.add(user)
-    db.flush()
-    return user
+    """Map the retired read and write capabilities: write makes a member, read alone a guest."""
+
+    return capability_actor(db, "board", {"records.read": read, "records.write": write})
 
 
 def _source_board(db: Session, owner: User) -> tuple[Board, Module, Field]:
@@ -91,6 +76,7 @@ def _source_board(db: Session, owner: User) -> tuple[Board, Module, Field]:
     )
     db.add_all([module, board])
     db.flush()
+    grant_capability_actors(db, department, module)
     field = Field(module_id=module.id, name="Reference", type=FieldType.TEXT, position=0)
     db.add(field)
     db.flush()
@@ -153,35 +139,29 @@ def _empty_bundle() -> dict[str, object]:
     }
 
 
-def test_template_reads_and_copies_require_both_global_record_capabilities() -> None:
-    read_only = make_user("template_read_only", role=make_role("member", {"records.read": True}))
-    write_only = make_user("template_write_only", role=make_role("member", {"records.write": True}))
+def test_template_routes_refuse_a_guest_before_database_work() -> None:
+    guest = make_user("template_guest", role="guest")
     db = Mock(spec=Session)
     board_id, template_id = uuid7(), uuid7()
+    client = _client(db, guest)
 
-    assert _client(db, read_only).get("/api/board-templates").status_code == 403
-    assert _client(db, write_only).get(f"/api/board-templates/{template_id}").status_code == 403
-    assert _client(db, read_only).delete(f"/api/board-templates/{template_id}").status_code == 403
+    assert client.get("/api/board-templates").status_code == 403
+    assert client.get(f"/api/board-templates/{template_id}").status_code == 403
+    assert client.delete(f"/api/board-templates/{template_id}").status_code == 403
     assert (
-        _client(db, write_only)
-        .post("/api/board-templates", json={"board_id": str(board_id), "name": "Starter"})
-        .status_code
+        client.post(
+            "/api/board-templates", json={"board_id": str(board_id), "name": "Starter"}
+        ).status_code
         == 403
     )
-    assert (
-        _client(db, write_only).post(f"/api/board-templates/{template_id}/boards").status_code
-        == 403
-    )
+    assert client.post(f"/api/board-templates/{template_id}/boards").status_code == 403
     db.scalar.assert_not_called()
     db.scalars.assert_not_called()
     db.add.assert_not_called()
 
 
 def test_template_name_validation_rejects_blank_and_oversize_before_database_work() -> None:
-    manager = make_user(
-        "template_manager",
-        role=make_role("member", {"records.read": True, "records.write": True}),
-    )
+    manager = make_user("template_manager", role="member")
     db = Mock(spec=Session)
     client = _client(db, manager)
     board_id = uuid7()
@@ -424,8 +404,7 @@ def test_template_cap_serializes_a_racing_save_against_the_fiftieth_insert() -> 
             for index in range(49)
         )
         setup.commit()
-        assert actor.role is not None
-        board_id, actor_id, role_id = board.id, actor.id, actor.role_id
+        board_id, actor_id = board.id, actor.id
 
     attempted = threading.Event()
     results = []
@@ -491,6 +470,5 @@ def test_template_cap_serializes_a_racing_save_against_the_fiftieth_insert() -> 
             )
             cleanup.execute(text("DELETE FROM public.boards WHERE id = :id"), {"id": board_id})
             cleanup.execute(text("DELETE FROM public.users WHERE id = :id"), {"id": actor_id})
-            cleanup.execute(text("DELETE FROM public.roles WHERE id = :id"), {"id": role_id})
         runtime_engine.dispose()
         owner_engine.dispose()

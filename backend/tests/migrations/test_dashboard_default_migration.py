@@ -46,20 +46,17 @@ def test_dashboard_default_baseline_preserves_owner_constraints_and_runtime_acce
 
 def _seed_dashboard_default_rows(engine: Engine, ids: dict[str, UUID]) -> None:
     with engine.begin() as connection:
-        role_id = connection.scalar(text("SELECT id FROM public.roles WHERE role = 'member'"))
-        assert role_id is not None
         for name in ("owner", "other_owner", "default_actor"):
             user_id = ids[name]
             connection.execute(
                 text(
-                    "INSERT INTO public.users (id, email, username, status, role_id) "
-                    "VALUES (:id, :email, :username, 'active', :role_id)"
+                    "INSERT INTO public.users (id, email, username, status, role) "
+                    "VALUES (:id, :email, :username, 'active', 'member')"
                 ),
                 {
                     "id": user_id,
                     "email": f"dashboard-default-{user_id.hex}@example.test",
                     "username": f"dashboard-default-{user_id.hex}",
-                    "role_id": role_id,
                 },
             )
         for name, owner, label in (

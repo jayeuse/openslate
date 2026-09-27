@@ -15,7 +15,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.models import Board, BoardGrant, BoardRecordPlacement, BoardWidget
 from app.systems.boards.portability_router import router
 from app.systems.manage.audit.context import set_audit_actor
@@ -24,31 +24,13 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
-from tests.rbac.support import make_role, make_user
+from tests.rbac.support import capability_actor, grant_capability_actors, make_user
 
 
 def _actor(db: Session, name: str, *, read: bool = True, write: bool = True) -> User:
-    role = Role(
-        role=f"portability-{name}-{uuid7().hex[:8]}",
-        permissions={
-            "records.read": read,
-            "records.write": write,
-        },
-    )
-    db.add(role)
-    db.flush()
-    user_id = uuid7()
-    user = User(
-        id=user_id,
-        email=f"{name}-{user_id.hex}@example.test",
-        username=f"port_{user_id.hex[:12]}",
-        status="active",
-        role_id=role.id,
-        role=role,
-    )
-    db.add(user)
-    db.flush()
-    return user
+    """Map the retired read and write capabilities: write makes a member, read alone a guest."""
+
+    return capability_actor(db, "board", {"records.read": read, "records.write": write})
 
 
 def _client(db: Session, actor: User) -> TestClient:
@@ -69,6 +51,7 @@ def _source(db: Session) -> tuple[Department, Module, Field]:
     )
     db.add(module)
     db.flush()
+    grant_capability_actors(db, department, module)
     field = Field(module_id=module.id, name="Label", type=FieldType.TEXT, position=0)
     db.add(field)
     db.flush()
@@ -117,10 +100,7 @@ def _upload(client: TestClient, bundle: dict) -> object:
 
 
 def test_import_rejects_nonportable_bundle_before_any_database_write() -> None:
-    actor = make_user(
-        "portability_pure",
-        role=make_role("member", {"records.write": True}),
-    )
+    actor = make_user("portability_pure", role="member")
     db = Mock(spec=Session)
     response = _client(db, actor).post(
         "/api/boards/import",
@@ -134,26 +114,27 @@ def test_import_rejects_nonportable_bundle_before_any_database_write() -> None:
     db.commit.assert_not_called()
 
 
-def test_export_and_duplicate_require_global_read_before_board_lookup() -> None:
-    actor = make_user(
-        "portability_write_only",
-        role=make_role("member", {"records.write": True}),
-    )
+def test_duplicate_and_import_refuse_a_guest_before_board_lookup() -> None:
+    actor = make_user("portability_guest", role="guest")
     db = Mock(spec=Session)
     client = _client(db, actor)
     board_id = uuid7()
 
-    assert client.get(f"/api/boards/{board_id}/configuration").status_code == 403
     assert client.post(f"/api/boards/{board_id}/duplicate").status_code == 403
+    assert (
+        client.post(
+            "/api/boards/import",
+            content=b"{}",
+            headers={"Content-Type": "application/octet-stream"},
+        ).status_code
+        == 403
+    )
     db.scalar.assert_not_called()
     db.scalars.assert_not_called()
 
 
-def test_read_only_board_manager_can_export_visible_structure_without_write_capability() -> None:
-    actor = make_user(
-        "portability_read_only_manager",
-        role=make_role("member", {"records.read": True}),
-    )
+def test_board_manager_can_export_visible_structure() -> None:
+    actor = make_user("portability_manager", role="member")
     board = Board(
         id=uuid7(),
         owner_id=uuid7(),
@@ -186,7 +167,6 @@ def test_read_only_board_manager_can_export_visible_structure_without_write_capa
 
     assert response.status_code == 200
     assert response.json()["configuration"]["widgets"] == []
-    assert client.post(f"/api/boards/{board.id}/duplicate").status_code == 403
     assert db.scalar.call_count == 1
     db.add.assert_not_called()
     db.commit.assert_not_called()

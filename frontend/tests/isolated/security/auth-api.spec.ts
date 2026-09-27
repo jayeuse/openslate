@@ -11,22 +11,33 @@ import {
 } from "../../../src/lib/auth-api";
 
 const userId = "2cb24e31-8b78-4ec2-b33a-807a14b1f9e8";
-const roleId = "b4f0b2e8-16da-4d91-aef2-57ff72b19f90";
+const departmentId = "b4f0b2e8-16da-4d91-aef2-57ff72b19f90";
+const moduleId = "c5a1c3f9-27eb-4ea2-bf03-68ac83c2af01";
 
-test("loads only the authenticated user's identity and current role ID", async () => {
+test("loads the authenticated user's role and compact access levels", async () => {
   const originalFetch = globalThis.fetch;
   const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   globalThis.fetch = async (input, init) => {
     requests.push({ input, init });
     return Response.json({
       id: userId,
-      role_id: roleId,
+      username: "ada",
       role: "member",
-      permissions: ["records.read"],
+      access: [
+        { department_id: departmentId, module_id: null, level: "read" },
+        { department_id: departmentId, module_id: moduleId, level: "write" },
+      ],
     });
   };
   try {
-    await expect(getAuthMe()).resolves.toEqual({ id: userId, roleId });
+    await expect(getAuthMe()).resolves.toEqual({
+      id: userId,
+      role: "member",
+      access: [
+        { departmentId, moduleId: null, level: "read" },
+        { departmentId, moduleId, level: "write" },
+      ],
+    });
     expect(requests.map(({ input }) => input)).toEqual(["/api/auth/me"]);
     expect(requests[0]?.init?.cache).toBe("no-store");
     expect(

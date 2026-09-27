@@ -32,8 +32,6 @@ type AudienceChoice = BoardContentAudienceSelection | "keep";
 function audienceSelection(
   audience: BoardEvent["audience"] | null,
 ): BoardContentAudienceSelection {
-  if (audience?.kind === "role")
-    return { kind: "role", targetId: audience.roleId };
   if (audience?.kind === "user")
     return { kind: "user", targetId: audience.userId };
   if (audience?.kind === "department")
@@ -48,8 +46,6 @@ function audienceInput(
     return { kind: selection.kind };
   if (!("targetId" in selection) || !selection.targetId)
     throw new BoardEventDraftError("Choose an active audience target.");
-  if (selection.kind === "role")
-    return { kind: "role", roleId: selection.targetId };
   if (selection.kind === "user")
     return { kind: "user", userId: selection.targetId };
   return { kind: "department", departmentId: selection.targetId };

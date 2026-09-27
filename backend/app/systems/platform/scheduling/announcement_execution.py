@@ -5,14 +5,14 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import Engine, and_, or_, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
+from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.access.users.permissions import Capability, has_capability
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.boards.access import can_access_board
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.announcement_service import (
@@ -120,7 +120,6 @@ def _cancel(work: ScheduledWork, reason: str) -> None:
 def _current_actor(db: Session, actor_id: UUID) -> User | None:
     actor = db.scalar(
         select(User)
-        .options(joinedload(User.role))
         .where(User.id == actor_id)
         .with_for_update(of=User)
         .execution_options(populate_existing=True)
@@ -133,19 +132,8 @@ def _current_actor(db: Session, actor_id: UUID) -> User | None:
         or not is_established_user(actor)
     ):
         return None
-    role = db.scalar(
-        select(Role)
-        .where(Role.id == actor.role_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    if (
-        role is None
-        or role.is_deleted
-        or role.deleted_at is not None
-        or not has_capability(role, Capability.RECORDS_READ)
-        or not has_capability(role, Capability.RECORDS_WRITE)
-    ):
+    # A scheduled post publishes only while its author may still change content.
+    if actor.role == UserRole.GUEST.value or not is_identity_eligible(actor):
         return None
     return actor
 

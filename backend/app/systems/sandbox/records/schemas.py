@@ -19,7 +19,6 @@ class RecordUpdate(BaseModel):
     data: dict[str, Any] | None = None
 
 
-
 class RecordResponse(RecordCreate):
     id: UUID
     created_at: datetime

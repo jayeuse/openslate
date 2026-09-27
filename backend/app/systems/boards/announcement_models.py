@@ -30,7 +30,6 @@ def publication_content_fingerprint(
     title: str,
     body: str,
     audience_kind: str,
-    audience_role_id: UUID | None = None,
     audience_user_id: UUID | None = None,
     audience_department_id: UUID | None = None,
     expires_at: datetime | None = None,
@@ -44,7 +43,8 @@ def publication_content_fingerprint(
         "title": title,
         "body": body,
         "audience_kind": audience_kind,
-        "audience_role_id": str(audience_role_id) if audience_role_id else None,
+        # Retired role audiences: the key stays so earlier fingerprints still match.
+        "audience_role_id": None,
         "audience_user_id": str(audience_user_id) if audience_user_id else None,
         "audience_department_id": (str(audience_department_id) if audience_department_id else None),
         "expires_at": expires_at.astimezone(UTC).isoformat() if expires_at else None,
@@ -64,13 +64,11 @@ def publication_content_fingerprint(
 
 def _audience_check(table: str) -> CheckConstraint:
     return CheckConstraint(
-        "(audience_kind IN ('everyone', 'author') AND audience_role_id IS NULL "
+        "(audience_kind IN ('everyone', 'author') "
         "AND audience_user_id IS NULL AND audience_department_id IS NULL) OR "
-        "(audience_kind = 'role' AND audience_role_id IS NOT NULL "
-        "AND audience_user_id IS NULL AND audience_department_id IS NULL) OR "
-        "(audience_kind = 'user' AND audience_role_id IS NULL "
+        "(audience_kind = 'user' "
         "AND audience_user_id IS NOT NULL AND audience_department_id IS NULL) OR "
-        "(audience_kind = 'department' AND audience_role_id IS NULL "
+        "(audience_kind = 'department' "
         "AND audience_user_id IS NULL AND audience_department_id IS NOT NULL)",
         name=f"ck_{table}_audience",
     )
@@ -110,7 +108,6 @@ class BoardAnnouncement(BaseModel):
         _audience_check("board_announcements"),
         Index("ix_board_announcements_board_id", "board_id"),
         Index("ix_board_announcements_author_id", "author_id"),
-        Index("ix_board_announcements_audience_role_id", "audience_role_id"),
         Index("ix_board_announcements_audience_user_id", "audience_user_id"),
         Index("ix_board_announcements_audience_department_id", "audience_department_id"),
     )
@@ -135,9 +132,6 @@ class BoardAnnouncement(BaseModel):
         Boolean, nullable=False, default=False, server_default=text("false")
     )
     audience_kind: Mapped[str] = mapped_column(String(20), nullable=False)
-    audience_role_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="RESTRICT"), nullable=True
-    )
     audience_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
@@ -193,7 +187,6 @@ class BoardAnnouncementRevision(BaseModel):
         ),
         _audience_check("board_announcement_revisions"),
         Index("ix_board_announcement_revisions_author_id", "author_id"),
-        Index("ix_board_announcement_revisions_audience_role_id", "audience_role_id"),
         Index("ix_board_announcement_revisions_audience_user_id", "audience_user_id"),
         Index("ix_board_announcement_revisions_audience_department_id", "audience_department_id"),
     )
@@ -213,9 +206,6 @@ class BoardAnnouncementRevision(BaseModel):
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
     audience_kind: Mapped[str] = mapped_column(String(20), nullable=False)
-    audience_role_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="RESTRICT"), nullable=True
-    )
     audience_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )

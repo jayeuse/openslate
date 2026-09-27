@@ -127,9 +127,8 @@ def test_uncertain_execution_halts_and_api_cannot_clear_it(guarded_db, actor):
 def test_revoked_requester_suspends_without_engine_access_and_new_actor_can_adopt(
     guarded_db, actor
 ):
-    from sqlalchemy import select
 
-    from app.systems.access.users.models import Role, User
+    from app.systems.access.users.models import User
 
     db = guarded_db
     original_id = actor.id
@@ -140,13 +139,11 @@ def test_revoked_requester_suspends_without_engine_access_and_new_actor_can_adop
     assert process_next(db, storage, scanner) is False
     assert scanner.calls == 0 and db.get(File, file_id).failure_code == "scan_suspended"
     new_id = uuid4()
-    role_id = db.scalar(select(Role.id).where(Role.role == "admin"))
-    assert role_id is not None
     replacement = User(
         id=new_id,
         email=f"queue-{new_id}@example.com",
         username=f"queue_{new_id.hex[:12]}",
-        role_id=role_id,
+        role="admin",
         status="active",
     )
     db.add(replacement)

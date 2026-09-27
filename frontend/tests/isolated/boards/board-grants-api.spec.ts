@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test";
 import { ApiContractError, ApiError } from "../../../src/lib/api";
 import {
   createBoardGrant,
-  listBoardGrantRoles,
   listBoardGrants,
   revokeBoardGrant,
 } from "../../../src/components/systems/boards/adapters/board-grants-api";
@@ -14,7 +13,6 @@ const grant = {
   id: grantId,
   principal_type: "user",
   principal_user_id: userId,
-  principal_role_id: null,
   principal_label: "Avery",
   principal_available: true,
   permission: "edit",
@@ -45,7 +43,6 @@ test("Board grants list validates a page and preserves the Board revision", asyn
           id: grantId,
           principalType: "user",
           principalUserId: userId,
-          principalRoleId: null,
           principalLabel: "Avery",
           principalAvailable: true,
           permission: "edit",
@@ -64,42 +61,6 @@ test("Board grants list validates a page and preserves the Board revision", asyn
     expect(fetch.requests[0].init.cache).toBe("no-store");
   } finally {
     fetch.restore();
-  }
-});
-
-test("Board grant role choices use the manager-only Board endpoint and reject extra identity data", async () => {
-  const roleId = "00000000-0000-4000-8000-000000000004";
-  const fetch = installFetch(() =>
-    Response.json({
-      items: [{ id: roleId, role: "Coordinator" }],
-      pagination: page,
-    }),
-  );
-  try {
-    await expect(
-      listBoardGrantRoles(boardId, { search: "Coord", limit: 25 }),
-    ).resolves.toMatchObject({ items: [{ id: roleId, role: "Coordinator" }] });
-    expect(fetch.requests[0].path).toBe(
-      `/api/boards/${boardId}/grant-roles?limit=25&offset=0&sort_by=role&sort_order=asc&search=Coord`,
-    );
-    expect(fetch.requests[0].init.cache).toBe("no-store");
-  } finally {
-    fetch.restore();
-  }
-  const invalid = installFetch(() =>
-    Response.json({
-      items: [
-        { id: roleId, role: "Coordinator", email: "private@example.invalid" },
-      ],
-      pagination: page,
-    }),
-  );
-  try {
-    await expect(listBoardGrantRoles(boardId)).rejects.toBeInstanceOf(
-      ApiContractError,
-    );
-  } finally {
-    invalid.restore();
   }
 });
 
@@ -214,7 +175,7 @@ test("Board grants reject malformed IDs, principal shapes, and page options befo
 test("Board grants fail closed on mismatched principal, extra fields, and invalid revisions", async () => {
   const cases = [
     {
-      items: [{ ...grant, principal_role_id: userId }],
+      items: [{ ...grant, principal_user_id: null }],
       pagination: page,
       board_revision: 4,
     },

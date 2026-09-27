@@ -9,7 +9,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from uuid6 import uuid7
 
 from app.core.database import Base, model_registry  # noqa: F401
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.announcement_models import (
     BoardAnnouncement,
     BoardAnnouncementRevision,
@@ -57,7 +57,7 @@ def test_published_snapshot_remains_private_and_immutable_during_scheduled_repla
     integration_owner_db,
 ) -> None:
     db = integration_owner_db
-    role = db.scalar(select(Role).where(Role.role == "member"))
+    role = "member"
     assert role is not None
     author_id, reader_id = uuid7(), uuid7()
     author = User(
@@ -65,14 +65,14 @@ def test_published_snapshot_remains_private_and_immutable_during_scheduled_repla
         email=f"announcement-author-{author_id.hex}@example.test",
         username=f"announcement_author_{author_id.hex[:10]}",
         status="active",
-        role_id=role.id,
+        role=role,
     )
     reader = User(
         id=reader_id,
         email=f"announcement-reader-{reader_id.hex}@example.test",
         username=f"announcement_reader_{reader_id.hex[:10]}",
         status="active",
-        role_id=role.id,
+        role=role,
     )
     department = Department(department_name=f"Announcement department {uuid7().hex}")
     db.add_all([author, reader, department])
@@ -197,7 +197,7 @@ def test_announcement_constraints_reject_invalid_audience_timing_and_duplicate_p
     integration_owner_db,
 ) -> None:
     db = integration_owner_db
-    role = db.scalar(select(Role).where(Role.role == "member"))
+    role = "member"
     assert role is not None
     author_id = uuid7()
     author = User(
@@ -205,7 +205,7 @@ def test_announcement_constraints_reject_invalid_audience_timing_and_duplicate_p
         email=f"announcement-constraints-{author_id.hex}@example.test",
         username=f"announcement_constraints_{author_id.hex[:8]}",
         status="active",
-        role_id=role.id,
+        role=role,
     )
     db.add(author)
     db.flush()
@@ -225,7 +225,7 @@ def test_announcement_constraints_reject_invalid_audience_timing_and_duplicate_p
         {"status": "unknown"},
         {"publish_at": now, "expires_at": now},
         {"audience_kind": "user"},
-        {"audience_role_id": role.id},
+        {"audience_kind": "role"},
         {"title": "  "},
         {"body": "  "},
         {"body": "x" * 2001},
@@ -307,7 +307,6 @@ def _assert_announcement_schema_and_privileges(connection: Connection) -> None:
         "board_announcements": {
             "ix_board_announcements_board_id",
             "ix_board_announcements_author_id",
-            "ix_board_announcements_audience_role_id",
             "ix_board_announcements_audience_user_id",
             "ix_board_announcements_audience_department_id",
         },
@@ -315,7 +314,6 @@ def _assert_announcement_schema_and_privileges(connection: Connection) -> None:
             "uq_board_announcement_revisions_publication",
             "uq_board_announcement_revisions_publication_key",
             "ix_board_announcement_revisions_author_id",
-            "ix_board_announcement_revisions_audience_role_id",
             "ix_board_announcement_revisions_audience_user_id",
             "ix_board_announcement_revisions_audience_department_id",
         },

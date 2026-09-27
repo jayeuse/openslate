@@ -15,6 +15,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.systems.access.policy.checks import module_hidden
+from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
@@ -107,10 +109,15 @@ def encode_csv(
     return bytes(result), count
 
 
-def export_snapshot(engine: Engine, payload: RecordQuery) -> tuple[bytes, int]:
+def export_snapshot(engine: Engine, payload: RecordQuery, *, reader_id: UUID) -> tuple[bytes, int]:
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
         with Session(bind=connection) as snapshot:
-            fields = validate_definition(snapshot, payload.module_id, payload.definition)
+            reader = snapshot.get(User, reader_id)
+            if reader is None:
+                raise module_hidden()
+            fields = validate_definition(
+                snapshot, payload.module_id, payload.definition, reader=reader
+            )
             profile = snapshot.scalar(
                 select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
             )

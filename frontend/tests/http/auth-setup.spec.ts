@@ -197,7 +197,8 @@ test("login accepts email and does not send a username field", async ({
     await route.fulfill({
       json: {
         id: "2cb24e31-8b78-4ec2-b33a-807a14b1f9e8",
-        role_id: "b4f0b2e8-16da-4d91-aef2-57ff72b19f90",
+        role: "member",
+        access: [],
       },
     });
   });

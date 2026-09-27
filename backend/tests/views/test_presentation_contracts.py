@@ -226,7 +226,7 @@ def test_name_only_noop_preserves_legacy_presentation_without_timeline_keys(monk
     from unittest.mock import Mock
 
     import app.systems.openview.views.router as views_router
-    from app.systems.access.users.models import Role, User
+    from app.systems.access.users.models import User
     from app.systems.openview.views.models import AudienceKind, SavedView
     from app.systems.openview.views.router import update_view
     from app.systems.openview.views.schemas import ViewUpdate
@@ -260,12 +260,7 @@ def test_name_only_noop_preserves_legacy_presentation_without_timeline_keys(monk
     user = User(
         id=user_id,
         status="active",
-        role=Role(
-            role="member",
-            permissions={"records.write": True},
-            is_deleted=False,
-        ),
-        role_id=uuid7(),
+        role="member",
         is_deleted=False,
     )
     database = Mock()

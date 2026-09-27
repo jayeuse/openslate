@@ -5,7 +5,7 @@ from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, and_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -13,14 +13,14 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.common.dependencies import (
     CurrentIdentity,
     get_current_identity,
-    require_all_capabilities,
-    require_fresh_capabilities,
-    require_legacy_capability,
+    get_current_user,
+    require_non_guest,
 )
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
+from app.systems.access.policy.checks import module_filter, require_fresh_module_access
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User, UserStatus
-from app.systems.access.users.permissions import Capability
 from app.systems.openview.reports.audience import (
     audience_columns,
     capture_run_eligible_users,
@@ -59,12 +59,9 @@ def _private_cache(response: Response) -> None:
 router = APIRouter(prefix="/reports", tags=["reports"], dependencies=[Depends(_private_cache)])
 router.include_router(audience_router)
 router.include_router(run_reader_router)
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
-RunWriter = Annotated[
-    User,
-    Depends(require_all_capabilities(Capability.RECORDS_READ, Capability.RECORDS_WRITE)),
-]
+Reader = Annotated[User, Depends(get_current_user)]
+Writer = Annotated[User, Depends(require_non_guest)]
+RunWriter = Annotated[User, Depends(require_non_guest)]
 Identity = Annotated[CurrentIdentity, Depends(get_current_identity)]
 Database = Annotated[Session, Depends(get_db)]
 
@@ -79,6 +76,8 @@ REPORT_LIST_SPEC = ListQuerySpec(
     deleted_field=cast(ColumnElement[bool], Report.is_deleted),
     search_fields=(cast(ColumnElement[str], Report.name),),
 )
+
+
 def _not_found() -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, detail="Report not found")
 
@@ -94,25 +93,20 @@ def _invalid_report() -> HTTPException:
     return _conflict("report_invalid", "The Report source or selected fields are unavailable")
 
 
-def _owner_clause(user: User) -> ColumnElement[bool]:
-    role = user.role
-    if (
-        user.status != UserStatus.ACTIVE.value
-        or user.is_deleted
-        or user.deleted_at is not None
-        or role is None
-        or role.is_deleted
-        or role.deleted_at is not None
-        or role.id != user.role_id
-    ):
+def _owner_clause(db: Session, user: User) -> ColumnElement[bool]:
+    """Owner-private for now, and only while the owner can read the report module."""
+    if user.status != UserStatus.ACTIVE.value or user.is_deleted or user.deleted_at is not None:
         return Report.id.is_(None)
-    return Report.owner_id == user.id
+    return and_(
+        Report.owner_id == user.id,
+        module_filter(db, user, AccessLevel.READ, Report.module_id),
+    )
 
 
 def _report(
     db: Session, user: User, report_id: UUID, *, lock: bool = False, run_access: bool = False
 ) -> Report:
-    statement = select(Report).where(Report.id == report_id, _owner_clause(user))
+    statement = select(Report).where(Report.id == report_id, _owner_clause(db, user))
     if run_access:
         statement = statement.where(run_audience_clause(user))
     if lock:
@@ -153,7 +147,7 @@ def list_reports(
     db: Database,
     params: Annotated[ReportListRequest, Query()],
 ) -> StandardListResponse[ReportResponse]:
-    statement = select(Report).where(_owner_clause(user))
+    statement = select(Report).where(_owner_clause(db, user))
     if params.module_id is not None:
         statement = statement.where(Report.module_id == params.module_id)
     result = execute_standard_list(db, statement, params, REPORT_LIST_SPEC)
@@ -170,9 +164,9 @@ def create_report(
     db: Database,
     response: Response,
 ) -> ReportResponse:
-    validate_report_recipe(db, payload.module_id, payload.recipe)
-    validate_audience(db, payload.audience)
-    audience_kind, role_id, audience_user_id = audience_columns(payload.audience)
+    validate_report_recipe(db, payload.module_id, payload.recipe, reader=user)
+    validate_audience(db, payload.audience, payload.module_id)
+    audience_kind, audience_user_id = audience_columns(payload.audience)
     report = Report(
         owner_id=user.id,
         module_id=payload.module_id,
@@ -180,7 +174,6 @@ def create_report(
         subtitle=payload.subtitle,
         recipe=payload.recipe.model_dump(mode="json"),
         audience_kind=audience_kind,
-        audience_role_id=role_id,
         audience_user_id=audience_user_id,
     )
     db.add(report)
@@ -213,9 +206,9 @@ def update_report(
         raise _conflict("report_archived", "Restore the Report before editing it")
     module_id = payload.module_id if payload.module_id is not None else report.module_id
     recipe = payload.recipe or ReportRecipe.model_validate(report.recipe)
-    validate_report_recipe(db, module_id, recipe)
+    validate_report_recipe(db, module_id, recipe, reader=user)
     if payload.audience is not None:
-        validate_audience(db, payload.audience)
+        validate_audience(db, payload.audience, module_id)
 
     changes: dict[str, object] = {}
     for key in ("module_id", "name", "subtitle"):
@@ -228,10 +221,8 @@ def update_report(
         if stored_recipe != report.recipe:
             changes["recipe"] = stored_recipe
     if payload.audience is not None:
-        kind, role_id, user_id = audience_columns(payload.audience)
-        for key, value in (
-            ("audience_kind", kind), ("audience_role_id", role_id), ("audience_user_id", user_id)
-        ):
+        kind, user_id = audience_columns(payload.audience)
+        for key, value in (("audience_kind", kind), ("audience_user_id", user_id)):
             if value != getattr(report, key):
                 changes[key] = value
     for key, value in changes.items():
@@ -354,12 +345,12 @@ def create_report_run(
     # Report writes lock the recipe before policy targets; keep the same order
     # when finalizing a run so an audience edit cannot invert the lock graph.
     _report(db, user, report_id, lock=True)
-    fresh_actor = require_fresh_capabilities(
+    fresh_actor = require_fresh_module_access(
         db,
         actor_id=actor_id,
         session_id=identity.session_id,
-        expected_role_id=user.role_id,
-        capabilities=(Capability.RECORDS_READ, Capability.RECORDS_WRITE),
+        module_id=snapshot.module_id,
+        level=AccessLevel.READ,
     )
     report = _report(db, fresh_actor, report_id, run_access=True)
     if report.is_deleted:
@@ -384,7 +375,9 @@ def create_report_run(
             "Report changed while the run was being prepared",
             current_revision=report.revision,
         )
-    validate_report_recipe(db, report.module_id, ReportRecipe.model_validate(report.recipe))
+    validate_report_recipe(
+        db, report.module_id, ReportRecipe.model_validate(report.recipe), reader=fresh_actor
+    )
     run = ReportRun(
         report_id=report.id,
         module_id=snapshot.module_id,

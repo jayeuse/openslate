@@ -10,13 +10,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.database import get_db
 from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.access.users.permissions import Capability
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.models import Board, BoardPermission, BoardStatus, BoardWidget
 from app.systems.boards.router import _board_with_access
 from app.systems.boards.widget_schemas import (
@@ -43,8 +42,8 @@ def _private_cache(response: Response) -> None:
 
 
 router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_private_cache)])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
+Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 WIDGET_LIST_SPEC = ListQuerySpec(
@@ -84,7 +83,6 @@ def _audience(widget: BoardWidget) -> BoardWidgetAudience:
     try:
         return BoardWidgetAudience(
             kind=widget.audience_kind,
-            role_id=widget.audience_role_id,
             user_id=widget.audience_user_id,
         )
     except ValidationError:
@@ -97,35 +95,19 @@ def _visible(widget: BoardWidget, actor: User) -> bool:
         return True
     if audience.kind == "private":
         return widget.creator_id == actor.id
-    if audience.kind == "role":
-        return audience.role_id == actor.role_id
     return audience.user_id == actor.id
 
 
 def _visible_clause(actor: User) -> ColumnElement[bool]:
     """Apply widget audience before count and pagination, including for managers."""
     return or_(
-        and_(
-            BoardWidget.audience_kind == "everyone",
-            BoardWidget.audience_role_id.is_(None),
-            BoardWidget.audience_user_id.is_(None),
-        ),
+        and_(BoardWidget.audience_kind == "everyone", BoardWidget.audience_user_id.is_(None)),
         and_(
             BoardWidget.audience_kind == "private",
             BoardWidget.creator_id == actor.id,
-            BoardWidget.audience_role_id.is_(None),
             BoardWidget.audience_user_id.is_(None),
         ),
-        and_(
-            BoardWidget.audience_kind == "role",
-            BoardWidget.audience_role_id == actor.role_id,
-            BoardWidget.audience_user_id.is_(None),
-        ),
-        and_(
-            BoardWidget.audience_kind == "user",
-            BoardWidget.audience_user_id == actor.id,
-            BoardWidget.audience_role_id.is_(None),
-        ),
+        and_(BoardWidget.audience_kind == "user", BoardWidget.audience_user_id == actor.id),
     )
 
 
@@ -164,7 +146,7 @@ def _response(widget: BoardWidget) -> BoardWidgetResponse:
         raise _not_found() from None
 
 
-def _validate_source(db: Session, widget: BoardWidgetSpec) -> None:
+def _validate_source(db: Session, user: User, widget: BoardWidgetSpec) -> None:
     module = db.scalar(
         select(Module.id)
         .where(
@@ -184,6 +166,7 @@ def _validate_source(db: Session, widget: BoardWidgetSpec) -> None:
             widget.module_id,
             definition,
             extra_references=(config.metric,) if config.metric is not None else (),
+            reader=user,
         )
     except HTTPException as error:
         if error.status_code == status.HTTP_409_CONFLICT:
@@ -207,20 +190,9 @@ def _validate_source(db: Session, widget: BoardWidgetSpec) -> None:
 
 
 def _validate_audience(db: Session, audience: BoardWidgetAudience) -> None:
-    if audience.kind == "role":
-        valid = db.scalar(
-            select(Role.id)
-            .where(
-                Role.id == audience.role_id,
-                Role.is_deleted.is_(False),
-                Role.deleted_at.is_(None),
-            )
-            .with_for_update()
-        )
-    elif audience.kind == "user":
+    if audience.kind == "user":
         valid = db.scalar(
             select(User.id)
-            .join(Role, Role.id == User.role_id)
             .where(
                 User.id == audience.user_id,
                 User.status == UserStatus.ACTIVE.value,
@@ -228,8 +200,6 @@ def _validate_audience(db: Session, audience: BoardWidgetAudience) -> None:
                 User.deleted_at.is_(None),
                 identity_eligible_clause(),
                 established_user_clause(),
-                Role.is_deleted.is_(False),
-                Role.deleted_at.is_(None),
             )
             .with_for_update()
         )
@@ -245,7 +215,6 @@ def _write(widget: BoardWidget, payload: BoardWidgetSpec) -> None:
     widget.module_id = payload.module_id
     widget.config = payload.config.model_dump(mode="json")
     widget.audience_kind = payload.audience.kind
-    widget.audience_role_id = payload.audience.role_id
     widget.audience_user_id = payload.audience.user_id
 
 
@@ -296,7 +265,7 @@ def create_board_widget(
     widgets = _active_widgets(db, board.id, lock=True)
     if len(widgets) >= 12:
         raise _conflict("widget_limit", "A Board can contain at most 12 widgets")
-    _validate_source(db, payload.widget)
+    _validate_source(db, user, payload.widget)
     _validate_audience(db, payload.widget.audience)
     widget = BoardWidget(
         board_id=board.id,
@@ -307,7 +276,6 @@ def create_board_widget(
         module_id=payload.widget.module_id,
         config=payload.widget.config.model_dump(mode="json"),
         audience_kind=payload.widget.audience.kind,
-        audience_role_id=payload.widget.audience.role_id,
         audience_user_id=payload.widget.audience.user_id,
     )
     db.add(widget)
@@ -329,7 +297,7 @@ def update_board_widget(
     )
     if widget is None or not _visible(widget, user):
         raise _not_found()
-    _validate_source(db, payload.widget)
+    _validate_source(db, user, payload.widget)
     _validate_audience(db, payload.widget.audience)
     if widget.audience_kind != "private" and payload.widget.audience.kind == "private":
         widget.creator_id = user.id
@@ -370,7 +338,7 @@ def duplicate_board_widget(
             "audience": _audience(source),
         }
     )
-    _validate_source(db, source_spec)
+    _validate_source(db, user, source_spec)
     _validate_audience(db, source_spec.audience)
     duplicate = BoardWidget(
         board_id=board.id,
@@ -381,7 +349,6 @@ def duplicate_board_widget(
         module_id=source.module_id,
         config=dict(source.config),
         audience_kind=source.audience_kind,
-        audience_role_id=source.audience_role_id,
         audience_user_id=source.audience_user_id,
     )
     db.add(duplicate)

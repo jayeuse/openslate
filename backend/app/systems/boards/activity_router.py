@@ -8,12 +8,11 @@ from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user
 from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.database import get_db
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.access.users.permissions import Capability
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.activity_schemas import (
     BoardActivityKind,
     BoardActivityListRequest,
@@ -27,7 +26,7 @@ from app.systems.boards.widget_router import _visible_clause
 from app.systems.manage.audit.models import AuditAction, AuditLog
 
 router = APIRouter(prefix="/boards", tags=["boards"])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
+Reader = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 ACTIVITY_LIST_SPEC = ListQuerySpec(
@@ -88,14 +87,11 @@ def _active_actor_labels(db: Session, rows: list[AuditLog]) -> dict[UUID, str]:
         return {}
     actors = db.execute(
         select(User.id, User.username)
-        .join(Role, Role.id == User.role_id)
         .where(
             User.id.in_(actor_ids),
             User.status == UserStatus.ACTIVE.value,
             User.is_deleted.is_(False),
             User.deleted_at.is_(None),
-            Role.is_deleted.is_(False),
-            Role.deleted_at.is_(None),
             established_user_clause(),
         )
     ).all()

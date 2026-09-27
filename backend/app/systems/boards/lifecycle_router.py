@@ -10,11 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_fresh_exact_admin, require_roles
+from app.common.dependencies import require_admin, require_fresh_exact_admin
 from app.core.base_model import BaseModel
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import User
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.announcement_personal_models import BoardAnnouncementPersonalState
 from app.systems.boards.announcement_work import delete_announcement_work
@@ -65,7 +65,7 @@ from app.systems.sandbox.lifecycle.service import (
 )
 
 router = APIRouter(prefix="/boards", tags=["boards"])
-Admin = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+Admin = Annotated[User, Depends(require_admin)]
 Database = Annotated[Session, Depends(get_db)]
 
 _CHILD_MODELS = (

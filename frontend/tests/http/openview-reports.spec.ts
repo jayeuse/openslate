@@ -8,7 +8,6 @@ import {
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";
-const roleId = "00000000-0000-4000-8000-000000000108";
 const duplicateReportId = "00000000-0000-4000-8000-000000000109";
 const moduleId = "00000000-0000-4000-8000-000000000103";
 const fieldId = "00000000-0000-4000-8000-000000000104";
@@ -46,14 +45,14 @@ const report = {
     group_by: null,
     include_row_count: false,
   },
-  audience: { kind: "private", role_id: null, user_id: null },
+  audience: { kind: "private", user_id: null },
   is_deleted: false,
   created_at: timestamp,
   updated_at: timestamp,
 };
 type ReportFixture = Omit<typeof report, "audience" | "subtitle"> & {
   subtitle: string | null;
-  audience: { kind: string; role_id: string | null; user_id: string | null };
+  audience: { kind: string; user_id: string | null };
 };
 const run = {
   id: runId,
@@ -125,9 +124,8 @@ async function installReportsApi(
       contentType: "application/json",
       body: JSON.stringify({
         id: userId,
-        role_id: roleId,
         role: "member",
-        permissions: ["records.read", "records.write"],
+        access: [],
       }),
     }),
   );
@@ -180,7 +178,6 @@ async function installReportsApi(
         recipe: body.recipe,
         audience: body.audience ?? {
           kind: "private",
-          role_id: null,
           user_id: null,
         },
         revision: 1,
@@ -674,7 +671,7 @@ test("excluded Report owner cannot run it while eligible scheduling stays availa
 }) => {
   const excluded = {
     ...report,
-    audience: { kind: "user", role_id: null, user_id: ownerId },
+    audience: { kind: "user", user_id: ownerId },
   };
   const api = await installReportsApi(page, false, excluded);
   await page.goto("/openview?section=reports");

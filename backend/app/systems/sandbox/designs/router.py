@@ -9,10 +9,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_all_capabilities
+from app.common.dependencies import require_admin
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.sandbox.designs.schemas import (
     DocumentReplaceRequest,
     DocumentResponse,
@@ -40,20 +39,9 @@ from app.systems.sandbox.designs.service import (
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox-designs"])
 
-_READ_CAPABILITIES = (
-    Capability.DEPARTMENTS_READ,
-    Capability.MODULES_READ,
-    Capability.FIELDS_READ,
-    Capability.RELATIONSHIPS_READ,
-)
-_WRITE_CAPABILITIES = (
-    Capability.DEPARTMENTS_WRITE,
-    Capability.MODULES_WRITE,
-    Capability.FIELDS_WRITE,
-    Capability.RELATIONSHIPS_WRITE,
-)
-ReadActor = Annotated[User, Depends(require_all_capabilities(*_READ_CAPABILITIES))]
-WriteActor = Annotated[User, Depends(require_all_capabilities(*_WRITE_CAPABILITIES))]
+# The Sandbox changes the schema, so only an administrator uses it.
+ReadActor = Annotated[User, Depends(require_admin)]
+WriteActor = Annotated[User, Depends(require_admin)]
 Database = Annotated[Session, Depends(get_db)]
 
 

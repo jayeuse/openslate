@@ -12,20 +12,18 @@ import app.systems.access.identity.admin_recovery as recovery
 from app.core.integrations.supabase_auth import ProviderUser
 from app.systems.access.identity.admin_recovery import LocalRecoveryError, recover_local_admin
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import IdentityKind, Role, User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserRole, UserStatus
 
 
 def _admin() -> User:
-    role = Role(id=uuid7(), role=UserRole.ADMIN, permissions={})
+    role = UserRole.ADMIN
     return User(
         id=uuid7(),
         email="admin@example.com",
         username="admin",
         supabase_user_id=uuid7(),
         status=UserStatus.ACTIVE.value,
-        role_id=role.id,
         role=role,
-        identity_kind=IdentityKind.INTERNAL.value,
     )
 
 

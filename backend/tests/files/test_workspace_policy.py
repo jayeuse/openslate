@@ -7,8 +7,8 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.systems.access.users.models import Role, User
-from app.systems.access.users.permissions import Capability
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User
 from app.systems.platform.files import access, scan_processing, scan_queue, service
 from app.systems.platform.files.scan_processing import ScanClaim
 
@@ -16,87 +16,73 @@ NOW = datetime(2026, 9, 23, tzinfo=UTC)
 
 
 def _actor(*, role: str = "member") -> User:
-    role_row = Role(id=uuid4(), role=role, permissions={}, is_deleted=False)
     return User(
         id=uuid4(),
-        role_id=role_row.id,
-        role=role_row,
+        role=role,
         status="active",
         is_deleted=False,
     )
 
 
-def test_record_attachment_uses_workspace_policy_capability_snapshot(
+def _database(module_id: object | None) -> SimpleNamespace:
+    record = None if module_id is None else SimpleNamespace(module_id=module_id)
+    return SimpleNamespace(get=lambda _model, _id: record)
+
+
+@pytest.mark.parametrize(
+    ("granted", "write", "status"),
+    [
+        (AccessLevel.READ, False, None),
+        (AccessLevel.WRITE, True, None),
+        (AccessLevel.READ, True, 403),
+        (None, False, 404),
+    ],
+    ids=["read", "write", "read-only-write", "hidden-module"],
+)
+def test_record_attachment_follows_the_record_module_level(
     monkeypatch: pytest.MonkeyPatch,
-):
+    granted: AccessLevel | None,
+    write: bool,
+    status: int | None,
+) -> None:
     actor = _actor()
-    database = object()
-    calls: list[tuple[object, object, object, object]] = []
-
-    def policy_authorize(
-        db: object,
-        *,
-        actor_id: object,
-        expected_role_id: object,
-        capabilities: object,
-    ) -> User:
-        calls.append((db, actor_id, expected_role_id, capabilities))
-        return actor
-
-    monkeypatch.setattr(access, "authorize_workspace_capabilities", policy_authorize)
-
-    assert access.authorize(database, actor, "record_attachment") is actor
-    assert calls == [(database, actor.id, actor.role_id, (Capability.RECORDS_READ,))]
-
-
-def test_record_attachment_write_and_administrator_still_use_policy(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    actor = _actor(role="admin")
-    calls: list[tuple[Capability, ...]] = []
-
-    def policy_authorize(_db: object, **kwargs: object) -> User:
-        calls.append(kwargs["capabilities"])  # type: ignore[arg-type]
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    monkeypatch.setattr(access, "authorize_workspace_capabilities", policy_authorize)
-
-    with pytest.raises(HTTPException) as denied:
-        access.authorize(object(), actor, "record_attachment", write=True)
-
-    assert denied.value.status_code == 403
-    assert calls == [(Capability.RECORDS_WRITE,)]
-
-
-def test_record_attachment_surfaces_policy_unavailability(monkeypatch: pytest.MonkeyPatch):
-    actor = _actor()
-
-    def unavailable(_db: object, **_kwargs: object) -> User:
-        raise HTTPException(status_code=503, detail="Authorization unavailable")
-
-    monkeypatch.setattr(access, "authorize_workspace_capabilities", unavailable)
-
-    with pytest.raises(HTTPException) as unavailable_error:
-        access.authorize(object(), actor, "record_attachment")
-
-    assert unavailable_error.value.status_code == 503
-
-
-def test_library_document_and_workspace_logo_keep_exact_admin_guard(
-    monkeypatch: pytest.MonkeyPatch,
-):
+    module_id = uuid4()
     calls: list[object] = []
+
+    def module_level(_db: object, user: User, requested: object) -> AccessLevel | None:
+        calls.append((user, requested))
+        return granted
+
+    monkeypatch.setattr(access, "module_level", module_level)
+    database = _database(module_id)
+
+    if status is None:
+        assert (
+            access.authorize(database, actor, "record_attachment", write=write, record_id=uuid4())
+            is actor
+        )
+    else:
+        with pytest.raises(HTTPException) as denied:
+            access.authorize(database, actor, "record_attachment", write=write, record_id=uuid4())
+        assert denied.value.status_code == status
+    assert calls == [(actor, module_id)]
+
+
+def test_record_attachment_for_a_missing_record_is_not_found() -> None:
+    with pytest.raises(HTTPException) as missing:
+        access.authorize(_database(None), _actor(), "record_attachment", record_id=uuid4())
+
+    assert missing.value.status_code == 404
+
+
+def test_library_document_and_workspace_logo_are_administrator_only() -> None:
     admin = _actor(role="admin")
 
-    def policy_authorize(**kwargs: object) -> User:
-        calls.append(kwargs)
-        return admin
-
-    monkeypatch.setattr(access, "authorize_workspace_capabilities", policy_authorize)
-
-    assert access.authorize(None, admin, "library_document") is admin
-    assert access.authorize(None, admin, "workspace_logo", write=True) is admin
-    assert calls == []
+    assert access.authorize(None, admin, "library_document") is admin  # type: ignore[arg-type]
+    assert access.authorize(None, admin, "workspace_logo", write=True) is admin  # type: ignore[arg-type]
+    with pytest.raises(HTTPException) as denied:
+        access.authorize(None, _actor(), "library_document")  # type: ignore[arg-type]
+    assert denied.value.status_code == 403
 
 
 @pytest.mark.parametrize(

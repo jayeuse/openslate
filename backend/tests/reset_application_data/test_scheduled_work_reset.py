@@ -98,13 +98,16 @@ def test_reset_counts_locks_and_deletes_scheduled_report_children_first() -> Non
     assert order.index("scheduled_work") < order.index("reports")
 
 
-def test_reset_counts_locks_and_deletes_memberships_before_departments() -> None:
-    table = "user_departments"
-    assert table in reset_models.APPLICATION_TABLES
-    assert table in reset_models.NON_PRESERVED_TABLES
-    assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
-    assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
-    assert reset_models.DELETE_ORDER.index(table) < reset_models.DELETE_ORDER.index("departments")
+def test_reset_counts_locks_and_deletes_group_access_before_its_targets() -> None:
+    for table in ("group_access", "group_members", "groups"):
+        assert table in reset_models.APPLICATION_TABLES
+        assert table in reset_models.NON_PRESERVED_TABLES
+        assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
+        assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
+    order = reset_models.DELETE_ORDER
+    assert order.index("group_access") < order.index("groups") < order.index("departments")
+    assert order.index("group_access") < order.index("modules")
+    assert order.index("group_members") < order.index("groups")
 
 
 def test_reset_counts_locks_and_deletes_board_templates() -> None:

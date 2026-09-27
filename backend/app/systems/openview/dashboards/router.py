@@ -10,11 +10,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
 from app.systems.access.users.models import User, UserStatus
-from app.systems.access.users.permissions import Capability
 from app.systems.openview.dashboards.models import Dashboard, DashboardDefault, DashboardWidget
 from app.systems.openview.dashboards.schemas import (
     DashboardCreate,
@@ -40,8 +39,8 @@ router = APIRouter(
     tags=["dashboards"],
     dependencies=[Depends(_private_cache)],
 )
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
+Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 DASHBOARD_LIST_SPEC = ListQuerySpec(
@@ -81,16 +80,7 @@ def _stale_revision(current_revision: int) -> HTTPException:
 
 
 def _owner_clause(user: User) -> ColumnElement[bool]:
-    role = user.role
-    if (
-        user.status != UserStatus.ACTIVE.value
-        or user.is_deleted
-        or user.deleted_at is not None
-        or role is None
-        or role.is_deleted
-        or role.deleted_at is not None
-        or role.id != user.role_id
-    ):
+    if user.status != UserStatus.ACTIVE.value or user.is_deleted or user.deleted_at is not None:
         return Dashboard.id.is_(None)
     return Dashboard.owner_id == user.id
 
@@ -245,7 +235,7 @@ def create_dashboard(
     db: Database,
     response: Response,
 ) -> DashboardResponse:
-    validate_dashboard_widgets(db, payload.widgets)
+    validate_dashboard_widgets(db, user, payload.widgets)
     dashboard = Dashboard(
         owner_id=user.id,
         name=payload.name,
@@ -347,7 +337,7 @@ def update_dashboard(
         raise _conflict("dashboard_archived", "Restore the Dashboard before editing it")
 
     if payload.widgets is not None:
-        validate_dashboard_widgets(db, payload.widgets)
+        validate_dashboard_widgets(db, user, payload.widgets)
     name_changed = payload.name is not None and payload.name != dashboard.name
     cadence_changed = (
         payload.refresh_cadence is not None

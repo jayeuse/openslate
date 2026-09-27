@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -9,24 +8,19 @@ from uuid6 import uuid7
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.main import create_app
+from app.systems.access.policy.schemas import GroupAccessReplace, GroupCreate
 from app.systems.access.users.schemas import (
     InvitationCreate,
-    RoleCreate,
-    RoleUpdate,
     UserCreate,
     UserUpdate,
 )
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
 from tests.catalog.auth_support import override_catalog_authorization
+from tests.rbac.support import make_user
 
 
-def _actor() -> SimpleNamespace:
-    return SimpleNamespace(
-        id=uuid7(),
-        identity_kind="internal",
-        role_id=uuid7(),
-        role=SimpleNamespace(role="admin"),
-    )
+def _actor() -> object:
+    return make_user("schema-admin")
 
 
 @pytest.fixture
@@ -44,8 +38,8 @@ REQUEST_SCHEMAS: list[tuple[type[BaseModel], dict[str, Any]]] = [
     (InvitationCreate, {"email": "admin@example.com", "username": "admin"}),
     (RecordCreate, {"module_id": uuid7(), "data": {"dynamic-field": "value"}}),
     (RecordUpdate, {"data": {"dynamic-field": "value"}}),
-    (RoleCreate, {"role": "editor", "permissions": {"records.read": True}}),
-    (RoleUpdate, {"role": "editor"}),
+    (GroupCreate, {"name": "Inventory"}),
+    (GroupAccessReplace, {"access": []}),
     (UserCreate, {"email": "member@example.com", "username": "member"}),
     (UserUpdate, {"username": "member"}),
 ]
@@ -67,8 +61,8 @@ def test_write_schemas_accept_declared_inputs_and_reject_unknown_top_level_field
         ("post", "/api/auth/invitations", {"email": "admin@example.com", "username": "admin"}),
         ("post", "/api/records", {"module_id": str(uuid7()), "data": {"dynamic": "value"}}),
         ("patch", f"/api/records/{uuid7()}", {"data": {"dynamic": "value"}}),
-        ("post", "/api/roles", {"role": "editor", "permissions": {"records.read": True}}),
-        ("patch", f"/api/roles/{uuid7()}", {"role": "editor"}),
+        ("post", "/api/access/groups", {"name": "Inventory"}),
+        ("put", f"/api/access/groups/{uuid7()}/access", {"access": []}),
         ("post", "/api/users", {"email": "member@example.com", "username": "member"}),
         ("patch", f"/api/users/{uuid7()}", {"username": "member"}),
     ],

@@ -4,6 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.systems.access.users.models import User
 from app.systems.openview.dashboards.schemas import (
     DashboardAggregateConfig,
     DashboardChartConfig,
@@ -30,7 +31,7 @@ def _invalid_dashboard() -> HTTPException:
     )
 
 
-def validate_dashboard_widgets(db: Session, widgets: list[DashboardWidgetSpec]) -> None:
+def validate_dashboard_widgets(db: Session, user: User, widgets: list[DashboardWidgetSpec]) -> None:
     """Reject inactive modules or stale field references before saving any widget."""
     module_ids = {widget.config.query.module_id for widget in widgets}
     if not module_ids:
@@ -51,11 +52,7 @@ def validate_dashboard_widgets(db: Session, widgets: list[DashboardWidgetSpec]) 
 
     for widget in widgets:
         config = widget.config
-        query: (
-            DashboardRecordsQuery
-            | GroupedAggregateSnapshotQuery
-            | DateSeriesAggregateQuery
-        )
+        query: DashboardRecordsQuery | GroupedAggregateSnapshotQuery | DateSeriesAggregateQuery
         if isinstance(config, DashboardRecordsConfig):
             query = config.query
             additional_references: tuple[FieldReference | None, ...] = ()
@@ -70,9 +67,7 @@ def validate_dashboard_widgets(db: Session, widgets: list[DashboardWidgetSpec]) 
             else:
                 additional_references = (query.date_field, query.measure)
         references = tuple(
-            reference
-            for reference in additional_references
-            if reference is not None
+            reference for reference in additional_references if reference is not None
         )
         try:
             fields = validate_definition(
@@ -80,6 +75,7 @@ def validate_dashboard_widgets(db: Session, widgets: list[DashboardWidgetSpec]) 
                 query.module_id,
                 query.definition,
                 extra_references=references,
+                reader=user,
             )
         except HTTPException as error:
             if error.status_code == status.HTTP_409_CONFLICT:

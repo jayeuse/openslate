@@ -41,7 +41,7 @@ function report(id: string, ownerId: string, name: string) {
       group_by: null,
       include_row_count: false,
     },
-    audience: { kind: "private", role_id: null, user_id: null },
+    audience: { kind: "private", user_id: null },
     is_deleted: false,
     created_at: timestamp,
     updated_at: timestamp,
@@ -115,9 +115,8 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       contentType: "application/json",
       body: JSON.stringify({
         id: activeUser,
-        role_id: departmentId,
         role: "member",
-        permissions: ["records.read", "records.write"],
+        access: [],
       }),
     }),
   );

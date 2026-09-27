@@ -67,8 +67,6 @@ type CatalogExtension = {
 type AudienceExtension = {
   readAt: number;
   items: OpenViewAudienceOption[];
-  roleHasMore: boolean;
-  roleNextOffset: number;
   userHasMore: boolean;
   userNextOffset: number;
   error: string | null;
@@ -179,19 +177,12 @@ export function useServerViewsResource(requestedModule: string | null) {
       : null;
   const loadedAudiences = useMemo(
     () => [
-      ...(audienceLists?.roles?.items ?? []),
       ...(audienceLists?.people?.items ?? []),
       ...(audienceMore?.items ?? []),
     ],
     [audienceLists, audienceMore],
   );
   const audiences = authorizationDenied ? NO_AUDIENCES : loadedAudiences;
-  const roleOptionsHasMore = audienceMore
-    ? audienceMore.roleHasMore
-    : (audienceLists?.roles?.hasMore ?? false);
-  const roleOptionsNextOffset = audienceMore
-    ? audienceMore.roleNextOffset
-    : (audienceLists?.roles?.nextOffset ?? 0);
   const userOptionsHasMore = audienceMore
     ? audienceMore.userHasMore
     : (audienceLists?.people?.hasMore ?? false);
@@ -202,7 +193,7 @@ export function useServerViewsResource(requestedModule: string | null) {
     ? ""
     : (audienceMore?.error ??
       (audienceLists?.failed
-        ? "Roles and people could not be loaded. You can still share with Only me or Everyone."
+        ? "People could not be loaded. You can still share with Only me or Everyone."
         : ""));
   const audienceLoading = audienceQuery.isFetching;
 
@@ -344,54 +335,27 @@ export function useServerViewsResource(requestedModule: string | null) {
   ]);
 
   const loadMoreAudienceOptions = useCallback(async () => {
-    if (metadataLoadingMore || (!roleOptionsHasMore && !userOptionsHasMore))
-      return;
+    if (metadataLoadingMore || !userOptionsHasMore) return;
     if (!audienceReadAt) return;
     setMetadataLoadingMore(true);
     const extension: AudienceExtension = {
       readAt: audienceReadAt,
       items: audienceMore?.items ?? [],
-      roleHasMore: roleOptionsHasMore,
-      roleNextOffset: roleOptionsNextOffset,
       userHasMore: userOptionsHasMore,
       userNextOffset: userOptionsNextOffset,
       error: "",
     };
     setAudienceExtension(extension);
     try {
-      const [roles, users] = await Promise.all([
-        roleOptionsHasMore
-          ? listOpenViewAudienceOptions("role", {
-              limit: 100,
-              offset: roleOptionsNextOffset,
-            })
-          : Promise.resolve(null),
-        userOptionsHasMore
-          ? listOpenViewAudienceOptions("user", {
-              limit: 100,
-              offset: userOptionsNextOffset,
-            })
-          : Promise.resolve(null),
-      ]);
+      const users = await listOpenViewAudienceOptions("user", {
+        limit: 100,
+        offset: userOptionsNextOffset,
+      });
       setAudienceExtension({
         ...extension,
-        items: [
-          ...extension.items,
-          ...(roles?.items ?? []),
-          ...(users?.items ?? []),
-        ],
-        ...(roles
-          ? {
-              roleHasMore: roles.pagination.hasMore,
-              roleNextOffset: roleOptionsNextOffset + roles.pagination.count,
-            }
-          : {}),
-        ...(users
-          ? {
-              userHasMore: users.pagination.hasMore,
-              userNextOffset: userOptionsNextOffset + users.pagination.count,
-            }
-          : {}),
+        items: [...extension.items, ...users.items],
+        userHasMore: users.pagination.hasMore,
+        userNextOffset: userOptionsNextOffset + users.pagination.count,
       });
     } catch (error) {
       if (isAuthorizationDenied(error)) {
@@ -401,7 +365,7 @@ export function useServerViewsResource(requestedModule: string | null) {
       setAudienceExtension({
         ...extension,
         error:
-          "More roles and people could not be loaded. You can still share with the choices shown.",
+          "More people could not be loaded. You can still share with the choices shown.",
       });
     } finally {
       setMetadataLoadingMore(false);
@@ -411,8 +375,6 @@ export function useServerViewsResource(requestedModule: string | null) {
     audienceReadAt,
     queryClient,
     metadataLoadingMore,
-    roleOptionsHasMore,
-    roleOptionsNextOffset,
     userOptionsHasMore,
     userOptionsNextOffset,
   ]);
@@ -422,7 +384,7 @@ export function useServerViewsResource(requestedModule: string | null) {
   }, [moduleQuery]);
 
   const retryCatalog = useCallback(() => {
-    // Role and person choices reload with the catalog, as a denial may have
+    // Person choices reload with the catalog, as a denial may have
     // come from any read.
     void catalogQuery.refetch();
     void audienceQuery.refetch();
@@ -443,7 +405,6 @@ export function useServerViewsResource(requestedModule: string | null) {
     audienceError,
     audienceLoading,
     retryAudiences,
-    roleOptionsHasMore,
     userOptionsHasMore,
     moduleId,
     moduleWorkspace,

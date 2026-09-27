@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -17,8 +17,7 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
-from app.systems.access.users.permissions import Capability, has_capability
+from app.systems.access.users.models import User, UserRole
 from app.systems.openview.views.access import visible_to
 from app.systems.openview.views.catalog import router as catalog_router
 from app.systems.openview.views.models import AudienceKind, SavedView
@@ -37,8 +36,8 @@ from app.systems.sandbox.records.query_schemas import QueryDefinition
 
 router = APIRouter(prefix="/views", tags=["views"])
 router.include_router(catalog_router)
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
+Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -101,7 +100,6 @@ def _active_module(db: Session, module_id: UUID) -> Module:
 def _view_audience(view: SavedView) -> ViewAudience:
     return ViewAudience(
         kind=AudienceKind(view.audience_kind).value,
-        role_id=view.audience_role_id,
         user_id=view.audience_user_id,
     )
 
@@ -118,14 +116,16 @@ def _view_response(view: SavedView, user: User) -> ViewResponse:
         presentation=ViewPresentation.model_validate(view.presentation),
         revision=view.revision,
         is_deleted=view.is_deleted,
-        can_edit=view.owner_id == user.id and has_capability(user.role, Capability.RECORDS_WRITE),
+        can_edit=view.owner_id == user.id and user.role != UserRole.GUEST.value,
         created_at=view.created_at,
         updated_at=view.updated_at,
     )
 
 
-def _validate_definition(db: Session, module_id: UUID, definition: QueryDefinition) -> None:
-    fields = validate_definition(db, module_id, definition)
+def _validate_definition(
+    db: Session, user: User, module_id: UUID, definition: QueryDefinition
+) -> None:
+    fields = validate_definition(db, module_id, definition, reader=user)
     references = [
         *definition.columns,
         *definition.filters,
@@ -203,13 +203,7 @@ def _validate_presentation(
 
 
 def _validate_audience(db: Session, audience: ViewAudience) -> None:
-    if audience.kind == "role":
-        valid = db.scalar(
-            select(Role.id)
-            .where(Role.id == audience.role_id, Role.is_deleted.is_(False))
-            .with_for_update()
-        )
-    elif audience.kind == "user":
+    if audience.kind == "user":
         valid = db.scalar(
             select(User.id).where(
                 User.id == audience.user_id,
@@ -223,12 +217,12 @@ def _validate_audience(db: Session, audience: ViewAudience) -> None:
         raise _conflict("audience_invalid", "The selected audience is unavailable")
 
 
-def _audience_columns(audience: ViewAudience) -> tuple[AudienceKind, UUID | None, UUID | None]:
-    return AudienceKind(audience.kind), audience.role_id, audience.user_id
+def _audience_columns(audience: ViewAudience) -> tuple[AudienceKind, UUID | None]:
+    return AudienceKind(audience.kind), audience.user_id
 
 
 def get_view(db: Session, user: User, view_id: UUID, *, write: bool = False) -> SavedView:
-    statement = select(SavedView).where(SavedView.id == view_id, visible_to(user))
+    statement = select(SavedView).where(SavedView.id == view_id, visible_to(db, user))
     if write:
         statement = statement.with_for_update().execution_options(populate_existing=True)
     view = db.scalar(statement)
@@ -258,7 +252,7 @@ def list_views(
     db: Database,
     params: Annotated[ViewList, Query()],
 ) -> StandardListResponse[ViewResponse]:
-    statement = select(SavedView).where(visible_to(user))
+    statement = select(SavedView).where(visible_to(db, user))
     if params.module_id is not None:
         statement = statement.where(SavedView.module_id == params.module_id)
     result = execute_standard_list(db, statement, params, VIEW_SPEC)
@@ -278,16 +272,15 @@ def create_view(
     _active_module(db, payload.module_id)
     audience = payload.audience or ViewAudience(kind="private")
     _validate_audience(db, audience)
-    _validate_definition(db, payload.module_id, payload.definition)
+    _validate_definition(db, user, payload.module_id, payload.definition)
     _validate_presentation(db, payload.module_id, payload.presentation, payload.definition)
-    audience_kind, role_id, audience_user_id = _audience_columns(audience)
+    audience_kind, audience_user_id = _audience_columns(audience)
     view = SavedView(
         module_id=payload.module_id,
         owner_id=user.id,
         name=payload.name,
         visibility=audience.visibility,
         audience_kind=audience_kind,
-        audience_role_id=role_id,
         audience_user_id=audience_user_id,
         definition=payload.definition.model_dump(mode="json"),
         presentation=payload.presentation.model_dump(mode="json"),
@@ -329,7 +322,7 @@ def update_view(
         if payload.presentation is not None
         else ViewPresentation.model_validate(view.presentation)
     )
-    _validate_definition(db, view.module_id, definition)
+    _validate_definition(db, user, view.module_id, definition)
     _validate_presentation(db, view.module_id, presentation, definition)
 
     audience = _view_audience(view)
@@ -347,14 +340,13 @@ def update_view(
     current_presentation = ViewPresentation.model_validate(view.presentation).model_dump(
         mode="json"
     )
-    audience_kind, role_id, audience_user_id = _audience_columns(audience)
+    audience_kind, audience_user_id = _audience_columns(audience)
     visibility = audience.visibility
     if (
         view.name == name
         and view.definition == normalized_definition
         and current_presentation == normalized_presentation
         and view.audience_kind == audience_kind
-        and view.audience_role_id == role_id
         and view.audience_user_id == audience_user_id
         and view.visibility == visibility
     ):
@@ -365,7 +357,6 @@ def update_view(
     if current_presentation != normalized_presentation:
         view.presentation = normalized_presentation
     view.audience_kind = audience_kind
-    view.audience_role_id = role_id
     view.audience_user_id = audience_user_id
     view.visibility = visibility
     view.revision += 1

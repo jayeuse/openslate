@@ -18,8 +18,11 @@ from tests.catalog.dynamic_field_support import (
     _seed_committed_module,
     _set_request,
 )
+from tests.rbac.support import make_user
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
+# Record handlers now read the caller's module level; an administrator needs no group.
+RECORD_WRITER = make_user("record_writer")
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -68,7 +71,7 @@ def test_field_close_and_record_create_serialize_on_parent_module_lock(
     with pytest.raises(HTTPException) as raised:
         create_record(
             RecordCreate(module_id=seeded.module_id, data={}),
-            None,
+            RECORD_WRITER,
             integration_db,
         )
     assert raised.value.status_code == 409

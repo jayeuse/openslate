@@ -12,6 +12,9 @@ from app.systems.boards.models import Board
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.views.models import SavedView, SavedViewDefault
 from app.systems.platform.files.models import File
+from app.systems.sandbox.lifecycle.access_dependencies import (
+    load_group_access_purge_dependencies,
+)
 from app.systems.sandbox.lifecycle.board_announcement_dependencies import (
     load_announcement_purge_dependencies,
 )
@@ -26,9 +29,6 @@ from app.systems.sandbox.lifecycle.board_record_link_dependencies import (
 )
 from app.systems.sandbox.lifecycle.board_widget_dependencies import (
     load_board_widget_purge_dependencies,
-)
-from app.systems.sandbox.lifecycle.membership_dependencies import (
-    load_membership_purge_dependencies,
 )
 from app.systems.sandbox.lifecycle.planning_scope import LifecycleScope, row_state
 from app.systems.sandbox.lifecycle.report_dependencies import load_report_purge_dependencies
@@ -94,8 +94,8 @@ def load_purge_dependencies(
         else []
     )
     departments_by_id = {department.id: department for department in scope.departments}
-    membership_rows, membership_blockers, membership_ids = load_membership_purge_dependencies(
-        db, department_ids, departments_by_id, fingerprint
+    access_rows, group_access_ids = load_group_access_purge_dependencies(
+        db, department_ids, module_ids, fingerprint
     )
     boards = (
         list(
@@ -304,9 +304,9 @@ def load_purge_dependencies(
         if binding_filters
         else []
     )
-    rows = membership_rows + board_event_rows + announcement_rows + placement_rows
+    rows = access_rows + board_event_rows + announcement_rows + placement_rows
     rows += record_link_rows + report_rows + board_widget_rows
-    blockers = membership_blockers + board_event_blockers + announcement_blockers
+    blockers = board_event_blockers + announcement_blockers
     blockers += placement_blockers + record_link_blockers
     blockers += report_blockers + board_widget_blockers
     for file in files:
@@ -466,7 +466,7 @@ def load_purge_dependencies(
         tuple(rows),
         tuple(blockers),
         {
-            "user_departments": membership_ids,
+            "group_access": group_access_ids,
             "boards": tuple(
                 sorted(
                     {board.id for board in boards}

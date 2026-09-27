@@ -24,35 +24,26 @@ def _plan() -> SimpleNamespace:
         preserved_admin_id=uuid4(),
         preserved_admin_provider_id=uuid4(),
         provider_subjects=((uuid4(), uuid4()),),
-        preserved_admin_role_id=uuid4(),
-        preserved_member_role_id=uuid4(),
         profile_snapshot=SimpleNamespace(id=uuid4()),
         credential_snapshot=SimpleNamespace(user_id=uuid4()),
-        admin_role_snapshot=SimpleNamespace(id=uuid4()),
-        member_role_snapshot=SimpleNamespace(id=uuid4()),
-        workspace_snapshot=SimpleNamespace(id=uuid4()),
-        access_policy_defaults_snapshot=SimpleNamespace(id=uuid4(), revision=1),
-        access_policy_version_snapshot=SimpleNamespace(id=uuid4(), revision=1),
+        workspace_snapshot=SimpleNamespace(
+            id=uuid4(), invitation_expiry_days=7, guest_duration_days=30
+        ),
         storage_object_keys=("objects/aa/object",),
         alembic_head="head",
     )
 
 
-def test_reset_impact_digest_includes_access_singleton_snapshots() -> None:
+def test_reset_impact_digest_includes_the_invitation_settings() -> None:
     plan = _plan()
     plan.impact_digest = reset_planning._impact_digest(plan)
 
-    changed_defaults = SimpleNamespace(**vars(plan))
-    changed_defaults.access_policy_defaults_snapshot = SimpleNamespace(
-        id=plan.access_policy_defaults_snapshot.id, revision=2
-    )
-    changed_version = SimpleNamespace(**vars(plan))
-    changed_version.access_policy_version_snapshot = SimpleNamespace(
-        id=plan.access_policy_version_snapshot.id, revision=2
+    changed = SimpleNamespace(**vars(plan))
+    changed.workspace_snapshot = SimpleNamespace(
+        id=plan.workspace_snapshot.id, invitation_expiry_days=14, guest_duration_days=30
     )
 
-    assert reset_planning._impact_digest(changed_defaults) != plan.impact_digest
-    assert reset_planning._impact_digest(changed_version) != plan.impact_digest
+    assert reset_planning._impact_digest(changed) != plan.impact_digest
 
 
 def test_reset_impact_digest_freezes_provider_subject_mapping() -> None:

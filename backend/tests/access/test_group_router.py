@@ -1,4 +1,4 @@
-"""Response and conditional-header contracts for Access configuration routes."""
+"""Response and conditional-header contracts for Access group routes."""
 
 from datetime import UTC, datetime
 from unittest.mock import Mock
@@ -12,52 +12,28 @@ from uuid6 import uuid7
 import app.systems.access.policy.configuration_router as policy_router
 import app.systems.access.policy.schemas as schemas
 from app.common.listing import ListQueryResult, PaginationMetadata
-from app.systems.access.policy.models import AccessGroup, AccessPolicyDefaults
-from app.systems.access.users.models import IdentityKind, Role, User, UserRole, UserStatus
+from app.systems.access.policy.models import AccessLevel, Group
+from app.systems.access.users.models import User, UserRole, UserStatus
 
 
 def _admin() -> User:
-    role = Role(id=uuid7(), role=UserRole.ADMIN.value, permissions={}, is_deleted=False)
     return User(
         id=uuid7(),
         email="admin@example.test",
         username="admin",
-        identity_kind=IdentityKind.INTERNAL.value,
+        role=UserRole.ADMIN.value,
         status=UserStatus.ACTIVE.value,
-        role_id=role.id,
-        role=role,
         is_deleted=False,
     )
 
 
-def _group() -> AccessGroup:
+def _group() -> Group:
     now = datetime.now(UTC)
-    return AccessGroup(
+    return Group(
         id=uuid7(),
         name="Operations",
         description="Team",
         revision=2,
-        created_at=now,
-        updated_at=now,
-        deleted_at=None,
-        is_deleted=False,
-        performed_by=None,
-    )
-
-
-def _defaults() -> AccessPolicyDefaults:
-    now = datetime.now(UTC)
-    return AccessPolicyDefaults(
-        id=uuid7(),
-        singleton_key="workspace",
-        default_role_id=uuid7(),
-        invitation_expiry_days=14,
-        guest_duration_days=45,
-        service_duration_days=90,
-        default_deny=True,
-        require_guest_sponsor=True,
-        require_service_owner=True,
-        revision=3,
         created_at=now,
         updated_at=now,
         deleted_at=None,
@@ -81,18 +57,29 @@ def test_group_list_serializes_members_pagination_and_private_cache_headers(
             pagination=PaginationMetadata(limit=25, offset=0, count=1, total=1, has_more=False),
         ),
     )
+    department_id = uuid7()
     monkeypatch.setattr(
         policy_router,
         "group_member_map",
         lambda *_args: {group.id: [member_id]},
     )
+    monkeypatch.setattr(
+        policy_router,
+        "group_access_map",
+        lambda *_args: {
+            group.id: [
+                schemas.GroupAccessEntry(department_id=department_id, level=AccessLevel.WRITE)
+            ]
+        },
+    )
     response = Response()
 
-    result = policy_router.list_groups(
-        _admin(), database, response, schemas.AccessGroupListRequest()
-    )
+    result = policy_router.list_groups(_admin(), database, response, schemas.GroupListRequest())
 
     assert result.items[0].member_ids == [member_id]
+    assert [
+        (item.department_id, item.module_id, item.level) for item in result.items[0].access
+    ] == [(department_id, None, AccessLevel.WRITE)]
     assert result.pagination.total == 1
     assert response.headers["Cache-Control"] == "private, no-store"
 
@@ -110,7 +97,7 @@ def test_group_list_database_failure_returns_route_local_unavailable(
     response = Response()
 
     with pytest.raises(HTTPException) as error:
-        policy_router.list_groups(_admin(), database, response, schemas.AccessGroupListRequest())
+        policy_router.list_groups(_admin(), database, response, schemas.GroupListRequest())
 
     assert error.value.status_code == 503
     assert error.value.detail == "Database unavailable"
@@ -125,7 +112,8 @@ def test_group_detail_and_update_routes_return_etags_and_private_headers(
     database = Mock(spec=Session)
     monkeypatch.setattr(policy_router, "_exact_admin", lambda *_args: None)
     monkeypatch.setattr(policy_router, "get_group", lambda *_args: group)
-    monkeypatch.setattr(policy_router, "group_member_ids", lambda *_args: [])
+    monkeypatch.setattr(policy_router, "group_member_map", lambda *_args: {})
+    monkeypatch.setattr(policy_router, "group_access_map", lambda *_args: {})
     detail_response = Response()
 
     detail = policy_router.get_group_route(group.id, _admin(), database, detail_response)
@@ -138,7 +126,7 @@ def test_group_detail_and_update_routes_return_etags_and_private_headers(
     update_response = Response()
     updated = policy_router.update_group_route(
         group.id,
-        schemas.AccessGroupUpdate(name=group.name),
+        schemas.GroupUpdate(name=group.name),
         _admin(),
         database,
         update_response,
@@ -171,38 +159,34 @@ def test_group_delete_route_returns_empty_private_response(monkeypatch: pytest.M
     delete.assert_called_once_with(database, group.id, policy_router.group_etag(group), admin.id)
 
 
-def test_defaults_get_and_update_routes_return_etags_and_private_values(
+def test_group_access_replacement_route_passes_the_precondition_and_returns_the_new_etag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    defaults = _defaults()
-    group_id, department_id = uuid7(), uuid7()
+    group = _group()
+    admin = _admin()
     database = Mock(spec=Session)
+    replaced: list[object] = []
     monkeypatch.setattr(policy_router, "_exact_admin", lambda *_args: None)
-    monkeypatch.setattr(policy_router, "get_defaults", lambda *_args: defaults)
-    monkeypatch.setattr(
-        policy_router,
-        "default_link_ids",
-        lambda *_args: ([group_id], [department_id]),
+    monkeypatch.setattr(policy_router, "group_member_map", lambda *_args: {})
+    monkeypatch.setattr(policy_router, "group_access_map", lambda *_args: {})
+
+    def replace(*args: object) -> Group:
+        replaced.append(args)
+        group.revision += 1
+        return group
+
+    monkeypatch.setattr(policy_router, "replace_group_access", replace)
+    payload = schemas.GroupAccessReplace(
+        access=[schemas.GroupAccessEntry(department_id=uuid7(), level=AccessLevel.READ)]
     )
-    get_response = Response()
+    response = Response()
+    current_etag = policy_router.group_etag(group)
 
-    result = policy_router.get_defaults_route(_admin(), database, get_response)
-
-    assert result.group_ids == [group_id]
-    assert result.department_ids == [department_id]
-    assert get_response.headers["ETag"] == policy_router.defaults_etag(defaults)
-    assert get_response.headers["Cache-Control"] == "private, no-store"
-
-    monkeypatch.setattr(policy_router, "update_defaults", lambda *_args: defaults)
-    update_response = Response()
-    updated = policy_router.update_defaults_route(
-        schemas.AccessDefaultsUpdate(guest_duration_days=60),
-        _admin(),
-        database,
-        update_response,
-        policy_router.defaults_etag(defaults),
+    result = policy_router.replace_group_access_route(
+        group.id, payload, admin, database, response, current_etag
     )
 
-    assert updated.guest_duration_days == 45
-    assert update_response.headers["ETag"] == policy_router.defaults_etag(defaults)
-    assert update_response.headers["Cache-Control"] == "private, no-store"
+    assert replaced == [(database, group.id, payload.access, current_etag, admin.id)]
+    assert result.revision == 3
+    assert response.headers["ETag"] == policy_router.group_etag(group)
+    assert response.headers["Cache-Control"] == "private, no-store"

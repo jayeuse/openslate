@@ -18,7 +18,7 @@ from app.core.config.provider_instance import assert_provider_instance
 from app.core.integrations.supabase_auth import SupabaseAuthUnavailable, get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from tests.conftest import guarded_create_engine
 
 pytestmark = pytest.mark.integration
@@ -47,13 +47,11 @@ def provider_account():
             assert created.status_code in {200, 201}
             provider_id = UUID(created.json()["id"])
             with Session(owner) as db:
-                role = db.scalar(select(Role).where(Role.role == "member"))
-                assert role is not None
                 user = User(
                     email=email,
                     username=f"journey-{uuid4().hex[:16]}",
                     status=UserStatus.ACTIVE.value,
-                    role_id=role.id,
+                    role="member",
                     # Deliberately unbound first: matching email cannot grant access.
                 )
                 db.add(user)
@@ -101,7 +99,7 @@ def test_browser_session_requires_binding_and_supports_refresh_csrf_and_revocati
         assert login.status_code == 200
         assert login.json() == {"authenticated": True, "setup_required": False}
         assert client.get("/api/auth/me").status_code == 200
-        assert client.get("/api/roles").status_code == 403
+        assert client.get("/api/access/groups").status_code == 403
         csrf = client.cookies.get("openslate_csrf")
         assert csrf
         cookie_headers = login.headers.get_list("set-cookie")

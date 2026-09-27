@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_capability
+from app.common.dependencies import get_current_user
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -15,13 +15,15 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
+from app.systems.access.policy.checks import module_filter
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.schemas import FieldResponse
 
 router = APIRouter(prefix="/fields", tags=["fields"])
-FieldReadUser = Annotated[User, Depends(require_capability(Capability.FIELDS_READ))]
+# A field is listed only for a user who can read its module.
+FieldReadUser = Annotated[User, Depends(get_current_user)]
 
 
 class FieldSortField(StrEnum):
@@ -59,8 +61,12 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Field not found")
 
 
-def _field(db: Session, field_id: UUID) -> Field:
-    field = db.get(Field, field_id)
+def _field(db: Session, user: User, field_id: UUID) -> Field:
+    field = db.scalar(
+        select(Field).where(
+            Field.id == field_id, module_filter(db, user, AccessLevel.READ, Field.module_id)
+        )
+    )
     if field is None:
         raise _not_found()
     return field
@@ -68,11 +74,11 @@ def _field(db: Session, field_id: UUID) -> Field:
 
 @router.get("", response_model=FieldListResponse)
 def list_fields(
-    _: FieldReadUser,
+    user: FieldReadUser,
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[FieldListRequest, Query()],
 ) -> FieldListResponse:
-    statement = select(Field)
+    statement = select(Field).where(module_filter(db, user, AccessLevel.READ, Field.module_id))
     module_id = getattr(params, "module_id", None)
     field_type = getattr(params, "type", None)
     required = getattr(params, "required", None)
@@ -92,7 +98,7 @@ def list_fields(
 @router.get("/{field_id}", response_model=FieldResponse)
 def get_field(
     field_id: UUID,
-    _: FieldReadUser,
+    user: FieldReadUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Field:
-    return _field(db, field_id)
+    return _field(db, user, field_id)

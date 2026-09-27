@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import require_non_guest
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -22,7 +22,6 @@ from app.common.listing import (
 )
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.boards.models import BoardPermission, BoardStatus
 from app.systems.boards.portability import PortabilityError, parse_portable_board
 from app.systems.boards.portability_router import (
@@ -49,9 +48,9 @@ router = APIRouter(
 )
 Manager = Annotated[
     User,
-    Depends(require_legacy_capability(Capability.RECORDS_READ, Capability.RECORDS_WRITE)),
+    Depends(require_non_guest),
 ]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 

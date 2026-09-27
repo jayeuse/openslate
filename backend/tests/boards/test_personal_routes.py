@@ -5,38 +5,22 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.models import Board, BoardGrant, BoardStatus
 from app.systems.boards.personal_models import BoardFavorite, BoardHome
 from app.systems.boards.personal_router import router
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditLog
-from tests.rbac.support import make_role, make_user
+from tests.rbac.support import capability_actor
 
 
 def _actor(db: Session, name: str, *, read: bool = True, write: bool = False) -> User:
-    role = Role(
-        role=f"board-personal-{name}-{uuid7().hex[:8]}",
-        permissions={"records.read": read, "records.write": write},
-    )
-    db.add(role)
-    db.flush()
-    user_id = uuid7()
-    actor = User(
-        id=user_id,
-        email=f"personal-{name}-{user_id.hex}@example.test",
-        username=f"personal_{user_id.hex[:12]}",
-        status="active",
-        role_id=role.id,
-        role=role,
-    )
-    db.add(actor)
-    db.flush()
-    return actor
+    """Map the retired read and write capabilities: write makes a member, read alone a guest."""
+
+    return capability_actor(db, "board", {"records.read": read, "records.write": write})
 
 
 def _client(db: Session, actor: User) -> TestClient:
@@ -57,23 +41,6 @@ def _grant(db: Session, board: Board, actor: User) -> BoardGrant:
     )
     db.add(grant)
     return grant
-
-
-def test_personal_routes_require_global_record_read_before_database_access() -> None:
-    from unittest.mock import Mock
-
-    db = Mock(spec=Session)
-    actor = make_user("personal_no_read", role=make_role("member", {}))
-    client = _client(db, actor)
-
-    assert client.get("/api/boards/personal").status_code == 403
-    assert client.put("/api/boards/personal/home", json={"board_id": None}).status_code == 403
-    assert (
-        client.put(f"/api/boards/personal/favorites/{uuid7()}", json={"favorite": True}).status_code
-        == 403
-    )
-    db.scalar.assert_not_called()
-    db.scalars.assert_not_called()
 
 
 @pytest.mark.integration

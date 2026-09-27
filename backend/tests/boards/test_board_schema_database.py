@@ -1,11 +1,10 @@
 """Board schema constraints on the runner-owned disposable PostgreSQL database."""
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.models import Board, BoardGrant, BoardRecordPlacement
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
@@ -16,7 +15,7 @@ pytestmark = pytest.mark.integration
 
 def test_board_grants_enforce_references_and_active_uniqueness(integration_owner_db) -> None:
     db = integration_owner_db
-    member_role = db.scalar(select(Role).where(Role.role == "member"))
+    member_role = "member"
     assert member_role is not None
     owner_id = uuid7()
     owner = User(
@@ -24,7 +23,7 @@ def test_board_grants_enforce_references_and_active_uniqueness(integration_owner
         email=f"board-{owner_id}@example.test",
         username=f"board_{owner_id.hex[:12]}",
         status="active",
-        role_id=member_role.id,
+        role=member_role,
     )
     department = Department(department_name=f"Board department {uuid7()}")
     db.add_all([owner, department])
@@ -101,7 +100,7 @@ def test_board_grants_enforce_references_and_active_uniqueness(integration_owner
 
 def test_board_record_placements_enforce_unique_restrictive_links(integration_owner_db) -> None:
     db = integration_owner_db
-    member_role = db.scalar(select(Role).where(Role.role == "member"))
+    member_role = "member"
     assert member_role is not None
     owner_id = uuid7()
     owner = User(
@@ -109,7 +108,7 @@ def test_board_record_placements_enforce_unique_restrictive_links(integration_ow
         email=f"placement-{owner_id}@example.test",
         username=f"placement_{owner_id.hex[:12]}",
         status="active",
-        role_id=member_role.id,
+        role=member_role,
     )
     department = Department(department_name=f"Placement department {uuid7()}")
     db.add_all([owner, department])

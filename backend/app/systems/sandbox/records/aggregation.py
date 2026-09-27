@@ -11,6 +11,8 @@ from sqlalchemy import Date, Engine, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.systems.access.policy.checks import module_hidden
+from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.records.models import Record
@@ -82,9 +84,7 @@ def _date_window_predicates(
     lower = datetime.combine(from_date, time.min, tzinfo=workspace_timezone)
     if to_date == date.max:
         return (date_expression >= lower, bucket_expression <= to_date)
-    upper = datetime.combine(
-        to_date + timedelta(days=1), time.min, tzinfo=workspace_timezone
-    )
+    upper = datetime.combine(to_date + timedelta(days=1), time.min, tzinfo=workspace_timezone)
     return (date_expression >= lower, date_expression < upper)
 
 
@@ -108,14 +108,16 @@ def _grouped_aggregate(
             dimension_expression.asc().nulls_last(),
         )
     )
-    total = db.scalar(
-        select(func.count())
-        .select_from(
-            grouped_query.with_only_columns(dimension_expression.label("dimension"))
-            .order_by(None)
-            .subquery()
+    total = (
+        db.scalar(
+            select(func.count()).select_from(
+                grouped_query.with_only_columns(dimension_expression.label("dimension"))
+                .order_by(None)
+                .subquery()
+            )
         )
-    ) or 0
+        or 0
+    )
     rows = db.execute(grouped_query.limit(payload.limit).offset(payload.offset)).all()
     items = [
         AggregateDatum(
@@ -165,10 +167,7 @@ def _date_series_aggregate(
         .group_by(bucket_expression)
         .order_by(bucket_expression.asc())
     )
-    by_day = {
-        row.day: (row.value, row.record_count)
-        for row in db.execute(series_query).all()
-    }
+    by_day = {row.day: (row.value, row.record_count) for row in db.execute(series_query).all()}
     length = (payload.to_date - payload.from_date).days + 1
     zero: int | Decimal = 0 if payload.aggregation == "count" else Decimal(0)
     items = []
@@ -197,7 +196,7 @@ def _date_series_aggregate(
 
 
 def aggregate_records(
-    db: Session, payload: GroupedAggregateQuery | DateSeriesAggregateQuery
+    db: Session, payload: GroupedAggregateQuery | DateSeriesAggregateQuery, *, reader: User
 ) -> AggregateResponse:
     references = (
         (payload.dimension, payload.measure)
@@ -208,6 +207,7 @@ def aggregate_records(
         db,
         payload.module_id,
         payload.definition,
+        reader=reader,
         extra_references=tuple(reference for reference in references if reference is not None),
     )
     if isinstance(payload, GroupedAggregateQuery):
@@ -279,7 +279,7 @@ def _snapshot_limit_exceeded() -> HTTPException:
 
 
 def aggregate_snapshot_records(
-    db: Session, payload: AggregateSnapshotQuery
+    db: Session, payload: AggregateSnapshotQuery, *, reader: User
 ) -> AggregateSnapshotResponse:
     references = (
         (payload.dimension, payload.measure, payload.date_field)
@@ -290,6 +290,7 @@ def aggregate_snapshot_records(
         db,
         payload.module_id,
         payload.definition,
+        reader=reader,
         extra_references=tuple(reference for reference in references if reference is not None),
     )
     if isinstance(payload, GroupedAggregateSnapshotQuery):
@@ -308,12 +309,18 @@ def aggregate_snapshot_records(
 
 
 def aggregate_snapshot(
-    engine: Engine, payload: AggregateSnapshotQuery
+    engine: Engine, payload: AggregateSnapshotQuery, *, reader_id: UUID
 ) -> tuple[bytes, int]:
-    """Materialize a complete JSON result inside one independent read snapshot."""
+    """Materialize a complete JSON result inside one independent read snapshot.
+
+    The reader's module level is checked inside the same snapshot.
+    """
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
         with Session(bind=connection) as snapshot:
-            result = aggregate_snapshot_records(snapshot, payload)
+            reader = snapshot.get(User, reader_id)
+            if reader is None:
+                raise module_hidden()
+            result = aggregate_snapshot_records(snapshot, payload, reader=reader)
             content = result.model_dump_json().encode("utf-8")
             if len(content) > MAX_AGGREGATE_SNAPSHOT_BYTES:
                 raise _snapshot_limit_exceeded()

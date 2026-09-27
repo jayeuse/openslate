@@ -7,7 +7,8 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.announcement_models import (
     BoardAnnouncement,
     BoardAnnouncementRevision,
@@ -24,16 +25,14 @@ from app.systems.platform.scheduling.service import (
 )
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
+from tests.rbac.support import make_group_access
 
 pytestmark = pytest.mark.integration
 NOW = datetime(2026, 9, 24, 10, tzinfo=UTC)
 
 
 def _sources(db):
-    role = Role(
-        role=f"work-kind-{uuid7().hex}",
-        permissions={"records.read": True, "records.write": True},
-    )
+    role = "member"
     actor = User(
         email=f"work-kind-{uuid7().hex}@example.test",
         username=f"work_kind_{uuid7().hex[:16]}",
@@ -50,6 +49,7 @@ def _sources(db):
     )
     db.add_all((board, module))
     db.flush()
+    make_group_access(db, [actor], department, module, level=AccessLevel.WRITE)
     announcement = BoardAnnouncement(
         board_id=board.id,
         author_id=actor.id,

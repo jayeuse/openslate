@@ -1,8 +1,8 @@
 """Registered relationship API contracts against PostgreSQL."""
-
 from __future__ import annotations
 
 import os
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -170,27 +170,34 @@ def test_visibility_projection_hides_archived_target_from_available_list(
         assert hidden.json()["items"][0]["hidden_reasons"] == ["target_record_archived"]
 
 
-def test_relationship_capabilities_deny_read_and_write_without_mutation(
+def test_member_without_a_group_for_the_department_sees_and_changes_no_relationship(
     relationship_http_fixture,
 ) -> None:
     graph = relationship_http_fixture.graph
     assert graph is not None
     member = relationship_http_fixture.member
     assert member is not None
-    with relationship_http_fixture.client(member) as client:
+    with relationship_http_fixture.client(relationship_http_fixture.actor) as client:
         payload = _payload(graph.field_id, graph.source_id, graph.target_id)
-        assert client.get(f"/api/relationships?field_id={graph.field_id}").status_code == 403
-        assert client.post("/api/relationships", json=payload).status_code == 403
+        created = client.post("/api/relationships", json=payload)
+        assert created.status_code == 201
+    edge_id = created.json()["id"]
+    with relationship_http_fixture.client(member) as client:
+        listed = client.get(f"/api/relationships?field_id={graph.field_id}")
+        assert listed.status_code == 200
+        assert listed.json()["items"] == []
+        assert client.get(f"/api/relationships/{edge_id}").status_code == 404
+        assert client.post("/api/relationships", json=payload).status_code == 404
         assert (
             client.put(
                 f"/api/relationships/fields/{graph.field_id}/sources/{graph.source_id}",
                 json={"target_record_id": str(graph.target_id)},
             ).status_code
-            == 403
+            == 404
         )
-        assert client.delete(f"/api/relationships/{graph.source_id}").status_code == 403
+        assert client.delete(f"/api/relationships/{edge_id}").status_code == 404
 
-    assert relationship_http_fixture.active_edge_ids() == set()
+    assert relationship_http_fixture.active_edge_ids() == {UUID(edge_id)}
 
 
 def test_registered_route_requires_bearer_credentials() -> None:

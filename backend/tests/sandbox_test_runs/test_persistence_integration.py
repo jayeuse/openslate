@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.sandbox.designs.models import SandboxDocument
 from app.systems.sandbox.designs.service import read_document, replace_document
 from app.systems.sandbox.records.models import Record
@@ -20,13 +20,13 @@ pytestmark = pytest.mark.integration
 def test_temporary_test_persists_only_evidence(
     integration_owner_db: Session,
 ) -> None:
-    role = integration_owner_db.scalar(select(Role).where(Role.role == "admin"))
+    role = "admin"
     assert role is not None
     actor = User(
         email="sandbox-test-owner@example.test",
         username="sandbox-test-owner",
         status=UserStatus.ACTIVE.value,
-        role_id=role.id,
+        role=role,
     )
     integration_owner_db.add(actor)
     integration_owner_db.flush()

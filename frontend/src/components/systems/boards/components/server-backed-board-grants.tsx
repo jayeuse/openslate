@@ -24,8 +24,6 @@ function labelForGrant(grant: BoardGrant): string {
       return "Everyone";
     case "user":
       return `Person: ${grant.principalLabel}`;
-    case "role":
-      return `Role: ${grant.principalLabel}`;
   }
 }
 
@@ -165,10 +163,6 @@ function BoardGrantsForBoard({
     visibleUsers,
     grantOffset,
     setGrantOffset,
-    roleOffset,
-    setRoleOffset,
-    roleSearchInput,
-    setRoleSearchInput,
     userOffset,
     setUserOffset,
     userSearchInput,
@@ -191,13 +185,11 @@ function BoardGrantsForBoard({
     accessDenied,
     choiceValid,
     canMutate,
-    selectedRole,
     selectedUser,
     revokeTarget,
     setRevokeChoice,
     saveGrant,
     revokeGrant,
-    searchRoles,
     searchUsers,
   } = useServerBoardGrants({
     boardId,
@@ -308,7 +300,7 @@ function BoardGrantsForBoard({
           </div>
         </Alert>
       )}
-      {canMutate && visible.page && visible.roles && (
+      {canMutate && visible.page && (
         <>
           <BoardGrantsDisplay
             grants={visible.page.items}
@@ -397,7 +389,6 @@ function BoardGrantsForBoard({
                 >
                   <option value="everyone">Everyone</option>
                   <option value="user">Person</option>
-                  <option value="role">Role</option>
                 </select>
               </div>
               <div>
@@ -442,89 +433,6 @@ function BoardGrantsForBoard({
                 </select>
               </div>
             </div>
-            {principalType === "role" && (
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-2">
-                  <Input
-                    aria-label="Find a role"
-                    className="min-h-11 max-w-sm"
-                    maxLength={100}
-                    value={roleSearchInput}
-                    disabled={pending || conflict !== null}
-                    onChange={(event) => setRoleSearchInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        searchRoles();
-                      }
-                    }}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={pending || conflict !== null}
-                    onClick={searchRoles}
-                  >
-                    Search roles
-                  </Button>
-                </div>
-                <label
-                  htmlFor={`${id}-role`}
-                  className="block text-sm font-medium"
-                >
-                  Role
-                </label>
-                <select
-                  data-slot="select"
-                  id={`${id}-role`}
-                  className="border-input bg-card min-h-11 w-full max-w-md rounded-md border px-3"
-                  value={selectedRole?.id ?? ""}
-                  disabled={pending || conflict !== null}
-                  onChange={(event) => setPrincipalId(event.target.value)}
-                >
-                  <option value="">Choose an active role</option>
-                  {visible.roles.items.map((role) => (
-                    <option key={role.id} value={role.id}>
-                      {role.role}
-                    </option>
-                  ))}
-                </select>
-                <nav
-                  aria-label="Role choices pages"
-                  className="flex flex-wrap items-center gap-2"
-                >
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={pending || conflict !== null || roleOffset === 0}
-                    onClick={() => {
-                      setPrincipalId("");
-                      setRoleOffset((value) => Math.max(0, value - PAGE_SIZE));
-                    }}
-                  >
-                    Previous roles
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={
-                      pending ||
-                      conflict !== null ||
-                      !visible.roles.pagination.hasMore
-                    }
-                    onClick={() => {
-                      setPrincipalId("");
-                      setRoleOffset((value) => value + PAGE_SIZE);
-                    }}
-                  >
-                    Next roles
-                  </Button>
-                </nav>
-              </div>
-            )}
             {principalType === "user" && (
               <div className="space-y-3">
                 <div className="flex flex-wrap gap-2">

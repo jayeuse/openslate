@@ -70,7 +70,6 @@ export type LifecycleTargetType =
 export type LifecycleOperation = "close" | "purge" | "reopen";
 export type LifecycleBlockerCode =
   | "closed_ancestor"
-  | "default_department_reference"
   | "module_name_conflict"
   | "field_name_conflict"
   | "field_position_conflict"

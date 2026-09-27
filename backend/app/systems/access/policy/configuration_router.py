@@ -1,4 +1,4 @@
-"""Unregistered administrator routes for Access groups and defaults."""
+"""Administrator routes for Access groups, their members and their access."""
 
 from typing import Annotated, Any, cast
 from uuid import UUID
@@ -9,55 +9,52 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_fresh_exact_admin, require_roles
+from app.common.dependencies import require_admin, require_fresh_exact_admin
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
-from app.systems.access.policy.models import AccessGroup, AccessPolicyDefaults
+from app.systems.access.policy.models import Group
 from app.systems.access.policy.schemas import (
-    AccessDefaultsResponse,
-    AccessDefaultsUpdate,
-    AccessGroupCreate,
-    AccessGroupListRequest,
-    AccessGroupResponse,
-    AccessGroupSortField,
-    AccessGroupUpdate,
+    GroupAccessEntry,
+    GroupAccessReplace,
+    GroupCreate,
+    GroupListRequest,
+    GroupResponse,
+    GroupSortField,
+    GroupUpdate,
 )
 from app.systems.access.policy.service import (
     create_group,
-    default_link_ids,
-    defaults_etag,
     delete_group,
-    get_defaults,
     get_group,
+    group_access_map,
     group_etag,
-    group_member_ids,
     group_member_map,
-    update_defaults,
+    replace_group_access,
     update_group,
 )
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import User
 
 router = APIRouter(prefix="/access", tags=["access"])
-AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+AdminUser = Annotated[User, Depends(require_admin)]
 
 
-class AccessGroupListResponse(StandardListResponse[AccessGroupResponse]):
+class GroupListResponse(StandardListResponse[GroupResponse]):
     pass
 
 
 GROUP_LIST_SPEC = ListQuerySpec(
     sort_fields={
-        AccessGroupSortField.NAME: cast(ColumnElement[Any], AccessGroup.name),
-        AccessGroupSortField.CREATED_AT: cast(ColumnElement[Any], AccessGroup.created_at),
-        AccessGroupSortField.UPDATED_AT: cast(ColumnElement[Any], AccessGroup.updated_at),
+        GroupSortField.NAME: cast(ColumnElement[Any], Group.name),
+        GroupSortField.CREATED_AT: cast(ColumnElement[Any], Group.created_at),
+        GroupSortField.UPDATED_AT: cast(ColumnElement[Any], Group.updated_at),
     },
-    default_sort=AccessGroupSortField.NAME,
-    tie_breaker=cast(ColumnElement[Any], AccessGroup.id),
+    default_sort=GroupSortField.NAME,
+    tie_breaker=cast(ColumnElement[Any], Group.id),
     search_fields=(
-        cast(ColumnElement[str], AccessGroup.name),
-        cast(ColumnElement[str], AccessGroup.description),
+        cast(ColumnElement[str], Group.name),
+        cast(ColumnElement[str], Group.description),
     ),
-    deleted_field=cast(ColumnElement[bool], AccessGroup.is_deleted),
+    deleted_field=cast(ColumnElement[bool], Group.is_deleted),
 )
 ETAG_HEADERS: dict[str, dict[str, Any]] = {"ETag": {"schema": {"type": "string"}}}
 CONDITIONAL_RESPONSES: dict[int | str, dict[str, Any]] = {
@@ -75,17 +72,18 @@ def _private(response: Response) -> None:
 
 
 def _group_response(
-    db: Session,
-    row: AccessGroup,
-    member_ids: list[UUID] | None = None,
-) -> AccessGroupResponse:
-    return AccessGroupResponse.model_validate(
+    row: Group,
+    member_ids: list[UUID],
+    access: list[GroupAccessEntry],
+) -> GroupResponse:
+    return GroupResponse.model_validate(
         {
             "id": row.id,
             "name": row.name,
             "description": row.description,
             "revision": row.revision,
-            "member_ids": group_member_ids(db, row.id) if member_ids is None else member_ids,
+            "member_ids": member_ids,
+            "access": access,
             "created_at": row.created_at,
             "updated_at": row.updated_at,
             "deleted_at": row.deleted_at,
@@ -95,39 +93,40 @@ def _group_response(
     )
 
 
-def _defaults_response(db: Session, row: AccessPolicyDefaults) -> AccessDefaultsResponse:
-    group_ids, department_ids = default_link_ids(db, row.id)
-    return AccessDefaultsResponse.model_validate(
-        {
-            field: getattr(row, field)
-            for field in AccessDefaultsResponse.model_fields
-            if field not in {"group_ids", "department_ids"}
-        }
-        | {"group_ids": group_ids, "department_ids": department_ids}
+def _single_group_response(db: Session, row: Group) -> GroupResponse:
+    return _group_response(
+        row,
+        group_member_map(db, (row.id,)).get(row.id, []),
+        group_access_map(db, (row.id,)).get(row.id, []),
     )
 
 
-@router.get("/groups", response_model=AccessGroupListResponse)
+@router.get("/groups", response_model=GroupListResponse)
 def list_groups(
     admin: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     response: Response,
-    params: Annotated[AccessGroupListRequest, Query()],
-) -> AccessGroupListResponse:
+    params: Annotated[GroupListRequest, Query()],
+) -> GroupListResponse:
     _exact_admin(db, admin)
     _private(response)
     try:
-        result = execute_standard_list(db, select(AccessGroup), params, GROUP_LIST_SPEC)
-        member_map = group_member_map(db, (row.id for row in result.items))
+        result = execute_standard_list(db, select(Group), params, GROUP_LIST_SPEC)
+        ids = [row.id for row in result.items]
+        member_map = group_member_map(db, ids)
+        access_map = group_access_map(db, ids)
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database unavailable",
         ) from error
-    return AccessGroupListResponse.model_validate(
+    return GroupListResponse.model_validate(
         {
-            "items": [_group_response(db, row, member_map.get(row.id, [])) for row in result.items],
+            "items": [
+                _group_response(row, member_map.get(row.id, []), access_map.get(row.id, []))
+                for row in result.items
+            ],
             "pagination": result.pagination,
         }
     )
@@ -135,7 +134,7 @@ def list_groups(
 
 @router.get(
     "/groups/{group_id}",
-    response_model=AccessGroupResponse,
+    response_model=GroupResponse,
     responses={200: {"headers": ETAG_HEADERS}},
 )
 def get_group_route(
@@ -143,61 +142,84 @@ def get_group_route(
     admin: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     response: Response,
-) -> AccessGroupResponse:
+) -> GroupResponse:
     _exact_admin(db, admin)
     row = get_group(db, group_id)
     _private(response)
     response.headers["ETag"] = group_etag(row)
-    return _group_response(db, row)
+    return _single_group_response(db, row)
 
 
 @router.post(
     "/groups",
-    response_model=AccessGroupResponse,
+    response_model=GroupResponse,
     status_code=status.HTTP_201_CREATED,
     responses={201: {"headers": {**ETAG_HEADERS, "Location": {"schema": {"type": "string"}}}}},
 )
 def create_group_route(
-    payload: AccessGroupCreate,
+    payload: GroupCreate,
     admin: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     response: Response,
-) -> AccessGroupResponse:
+) -> GroupResponse:
     _exact_admin(db, admin)
     row = create_group(db, payload, admin.id)
     _private(response)
     response.headers["ETag"] = group_etag(row)
     response.headers["Location"] = f"/api/access/groups/{row.id}"
-    return _group_response(db, row)
+    return _single_group_response(db, row)
 
 
 @router.patch(
     "/groups/{group_id}",
-    response_model=AccessGroupResponse,
+    response_model=GroupResponse,
     responses={200: {"headers": ETAG_HEADERS}, **CONDITIONAL_RESPONSES},
 )
 def update_group_route(
     group_id: UUID,
-    payload: AccessGroupUpdate,
+    payload: GroupUpdate,
     admin: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     response: Response,
     if_match: Annotated[str | None, Header()] = None,
-) -> AccessGroupResponse:
+) -> GroupResponse:
     _exact_admin(db, admin)
     row = update_group(db, group_id, payload, if_match, admin.id)
     _private(response)
     response.headers["ETag"] = group_etag(row)
-    return _group_response(db, row)
+    return _single_group_response(db, row)
+
+
+@router.put(
+    "/groups/{group_id}/access",
+    response_model=GroupResponse,
+    responses={
+        200: {"headers": ETAG_HEADERS},
+        409: {"description": "A department is missing or a module is outside its department"},
+        **CONDITIONAL_RESPONSES,
+    },
+)
+def replace_group_access_route(
+    group_id: UUID,
+    payload: GroupAccessReplace,
+    admin: AdminUser,
+    db: Annotated[Session, Depends(get_db)],
+    response: Response,
+    if_match: Annotated[str | None, Header()] = None,
+) -> GroupResponse:
+    """Replace every department and module level of the group."""
+
+    _exact_admin(db, admin)
+    row = replace_group_access(db, group_id, payload.access, if_match, admin.id)
+    _private(response)
+    response.headers["ETag"] = group_etag(row)
+    return _single_group_response(db, row)
 
 
 @router.delete(
     "/groups/{group_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    responses={
-        409: {"description": "Group still has members, default references, or access rules"},
-        **CONDITIONAL_RESPONSES,
-    },
+    responses={409: {"description": "Group still has members"}, **CONDITIONAL_RESPONSES},
 )
 def delete_group_route(
     group_id: UUID,
@@ -211,39 +233,3 @@ def delete_group_route(
         status_code=status.HTTP_204_NO_CONTENT,
         headers={"Cache-Control": "private, no-store"},
     )
-
-
-@router.get(
-    "/defaults",
-    response_model=AccessDefaultsResponse,
-    responses={200: {"headers": ETAG_HEADERS}},
-)
-def get_defaults_route(
-    admin: AdminUser,
-    db: Annotated[Session, Depends(get_db)],
-    response: Response,
-) -> AccessDefaultsResponse:
-    _exact_admin(db, admin)
-    row = get_defaults(db)
-    _private(response)
-    response.headers["ETag"] = defaults_etag(row)
-    return _defaults_response(db, row)
-
-
-@router.patch(
-    "/defaults",
-    response_model=AccessDefaultsResponse,
-    responses={200: {"headers": ETAG_HEADERS}, **CONDITIONAL_RESPONSES},
-)
-def update_defaults_route(
-    payload: AccessDefaultsUpdate,
-    admin: AdminUser,
-    db: Annotated[Session, Depends(get_db)],
-    response: Response,
-    if_match: Annotated[str | None, Header()] = None,
-) -> AccessDefaultsResponse:
-    _exact_admin(db, admin)
-    row = update_defaults(db, payload, if_match, admin.id)
-    _private(response)
-    response.headers["ETag"] = defaults_etag(row)
-    return _defaults_response(db, row)

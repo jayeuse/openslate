@@ -12,7 +12,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
@@ -29,22 +29,15 @@ from app.systems.platform.scheduling.models import (
 from app.systems.platform.scheduling.notification_router import router
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
+from tests.rbac.support import capability_actor, grant_capability_actors
 
 pytestmark = pytest.mark.integration
 
 
 def _actor(db: Session, *, read: bool = True) -> User:
-    suffix = uuid7().hex
-    role = Role(role=f"notification-{suffix}", permissions={"records.read": read})
-    actor = User(
-        email=f"notification-{suffix}@example.test",
-        username=f"notification_{suffix[:16]}",
-        status=UserStatus.ACTIVE.value,
-        role=role,
-    )
-    db.add(actor)
-    db.flush()
-    return actor
+    """A member who reads every Report module the test makes, or a member in no group."""
+
+    return capability_actor(db, "notification", {"records.write": read})
 
 
 def _report(db: Session, owner: User) -> tuple[Report, Module]:
@@ -57,6 +50,7 @@ def _report(db: Session, owner: User) -> tuple[Report, Module]:
     )
     db.add(module)
     db.flush()
+    grant_capability_actors(db, department, module)
     report = Report(owner_id=owner.id, module_id=module.id, name="Secret Report", recipe={})
     db.add(report)
     db.flush()
@@ -157,7 +151,9 @@ def test_notification_list_is_actor_scoped_bounded_and_reference_only(
     outsider_page = _client(db, outsider).get("/api/notifications")
     assert outsider_page.status_code == 200
     assert outsider_page.json()["pagination"]["total"] == 0
-    assert _client(db, no_read).get("/api/notifications").status_code == 403
+    no_read_page = _client(db, no_read).get("/api/notifications")
+    assert no_read_page.status_code == 200
+    assert no_read_page.json()["pagination"]["total"] == 0
     assert _client(db, None).get("/api/notifications").status_code == 401
     for query in ("limit=0", "limit=101", "offset=-1", "sort_order=asc"):
         assert _client(db, owner).get(f"/api/notifications?{query}").status_code == 422
@@ -294,7 +290,7 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
     db.commit()
     # Keep the detached principal usable by the route dependency while forcing
     # each request to hydrate its page references from PostgreSQL again.
-    _ = owner.role.role
+    _ = owner.role
     db.expunge_all()
 
     select_counts: list[int] = []
@@ -360,7 +356,7 @@ def test_mark_read_is_audited_idempotent_and_rechecks_current_audience(
     path = f"/api/notifications/{notice.id}/read"
 
     assert _client(db, outsider).post(path).status_code == 404
-    assert _client(db, no_read).post(path).status_code == 403
+    assert _client(db, no_read).post(path).status_code == 404
     assert _client(db, None).post(path).status_code == 401
     assert notice.read_at is None
     report.audience_kind = "user"

@@ -20,7 +20,6 @@ const item: BoardAnnouncement = {
   links: [],
   audience: {
     kind: "everyone",
-    roleId: null,
     userId: null,
     departmentId: null,
   },

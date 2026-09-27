@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import bindparam, select, text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -12,7 +12,7 @@ from uuid6 import uuid7
 from app.core.config import get_settings
 from app.main import create_app
 from app.systems.access.identity.rate_limits import login_fingerprint
-from app.systems.access.users.models import Role, User, UserRole
+from app.systems.access.users.models import User, UserRole
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
@@ -23,16 +23,9 @@ pytestmark = pytest.mark.integration
 
 def _bind_provider_account_as_admin(owner: Engine, provider_id: UUID, local_id: UUID) -> None:
     with Session(owner) as db:
-        role = db.scalar(
-            select(Role).where(
-                Role.role == UserRole.ADMIN.value,
-                Role.is_deleted.is_(False),
-            )
-        )
         user = db.get(User, local_id)
-        assert role is not None
         assert user is not None
-        user.role_id = role.id
+        user.role = UserRole.ADMIN.value
         user.supabase_user_id = provider_id
         db.commit()
 

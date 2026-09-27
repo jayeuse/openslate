@@ -43,7 +43,7 @@ from app.core.readiness import (
 from app.core.static_site import StaticSite
 from app.systems.access.auth.aggregate_router import router as auth_router
 from app.systems.access.identity.provider_signout_worker import ProviderSignoutWorker
-from app.systems.access.policy import router as access_policy_router
+from app.systems.access.policy.configuration_router import router as access_policy_router
 from app.systems.boards.access_preview_router import router as board_access_preview_router
 from app.systems.boards.activity_router import router as board_activity_router
 from app.systems.boards.announcement_author_router import (

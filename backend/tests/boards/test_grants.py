@@ -11,17 +11,18 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.grant_router import router
 from app.systems.boards.models import Board, BoardGrant, BoardStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, set_audit_actor
 from app.systems.manage.audit.models import AuditAction, AuditLog
+from tests.rbac.support import add_user, make_user
 
 
 def _grant_request(
@@ -53,7 +54,7 @@ def _grant_request(
         ("user", None, None),
         ("role", uuid7(), uuid7()),
     ],
-    ids=["everyone-has-no-target", "user-needs-user-id", "role-has-one-target"],
+    ids=["everyone-has-no-target", "user-needs-user-id", "role-is-retired"],
 )
 def test_create_rejects_invalid_principal_shape_without_database_access(
     principal_type: str,
@@ -62,7 +63,7 @@ def test_create_rejects_invalid_principal_shape_without_database_access(
 ) -> None:
     database = Mock(spec=Session)
     assert _client(database, None).get(f"/api/boards/{uuid7()}/grants").status_code == 401
-    actor = _actor(database, permissions={"records.write": True})
+    actor = make_user("board_grant_shape", role="member")
 
     response = _client(database, actor).post(
         f"/api/boards/{uuid7()}/grants",
@@ -83,25 +84,18 @@ def test_create_rejects_invalid_principal_shape_without_database_access(
 def _actor(
     db: Session,
     *,
-    permissions: dict[str, bool],
-    role: Role | None = None,
+    role: str = "member",
     status: UserStatus = UserStatus.ACTIVE,
     invitation_sent_at: datetime | None = None,
     invitation_accepted_at: datetime | None = None,
     deleted: bool = False,
 ) -> User:
-    if role is None:
-        role = Role(role=f"board-grant-{uuid7().hex}", permissions=permissions)
-        db.add(role)
-        db.flush()
-
     user_id = uuid7()
     user = User(
         id=user_id,
         email=f"board-grant-{user_id.hex}@example.test",
         username=f"board_grant_{user_id.hex[:20]}",
         status=status.value,
-        role_id=role.id,
         role=role,
         invitation_sent_at=invitation_sent_at,
         invitation_accepted_at=invitation_accepted_at,
@@ -113,11 +107,8 @@ def _actor(
 
 
 def _manager_board(db: Session) -> tuple[User, Board]:
-    manager = _actor(
-        db,
-        permissions={"records.read": True, "records.write": True},
-    )
-    owner = _actor(db, permissions={}, role=manager.role)
+    manager = _actor(db)
+    owner = _actor(db)
     board = Board(owner_id=owner.id, name="Grant test board")
     db.add(board)
     db.flush()
@@ -155,12 +146,12 @@ def _board_audit_rows(db: Session, board_id: UUID) -> list[AuditLog]:
 
 
 @pytest.mark.integration
-def test_read_only_board_manager_can_list_grants_but_cannot_mutate(
+def test_guest_board_manager_can_list_grants_but_cannot_mutate(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    manager = _actor(db, permissions={"records.read": True})
-    owner = _actor(db, permissions={}, role=manager.role)
+    manager = add_user(db, "board-grant-guest", role="guest")
+    owner = _actor(db)
     board = Board(owner_id=owner.id, name="Read-only grant list")
     db.add(board)
     db.flush()
@@ -204,7 +195,6 @@ def test_read_only_board_manager_can_list_grants_but_cannot_mutate(
         "id",
         "principal_type",
         "principal_user_id",
-        "principal_role_id",
         "principal_label",
         "principal_available",
         "permission",
@@ -216,7 +206,7 @@ def test_read_only_board_manager_can_list_grants_but_cannot_mutate(
     unchanged_board = db.get(Board, board.id)
     assert unchanged_board is not None and unchanged_board.revision == 1
 
-    unmanaged = _actor(db, permissions={}, role=manager.role)
+    unmanaged = _actor(db)
     hidden = _client(db, unmanaged).get(f"/api/boards/{board.id}/grants")
     missing = _client(db, unmanaged).get(f"/api/boards/{uuid7()}/grants")
     assert hidden.status_code == missing.status_code == 404
@@ -227,10 +217,7 @@ def test_read_only_board_manager_can_list_grants_but_cannot_mutate(
 def test_create_grants_targets_and_active_duplicate_conflict(integration_owner_db: Session) -> None:
     db = integration_owner_db
     manager, board = _manager_board(db)
-    user_target = _actor(db, permissions={}, role=manager.role)
-    role_target = Role(role=f"board-grantee-{uuid7().hex}", permissions={})
-    db.add(role_target)
-    db.flush()
+    user_target = _actor(db)
     client = _client(db, manager)
 
     user_created = client.post(
@@ -243,16 +230,16 @@ def test_create_grants_targets_and_active_duplicate_conflict(integration_owner_d
         f"/api/boards/{board.id}/grants",
         json=_grant_request(2, "user", "edit", "allow", user_id=user_target.id),
     )
-    role_created = client.post(
+    everyone_created = client.post(
         f"/api/boards/{board.id}/grants",
-        json=_grant_request(2, "role", "view", "deny", role_id=role_target.id),
+        json=_grant_request(2, "everyone", "view", "deny"),
     )
     assert user_created.json()["board_revision"] == 2
     assert duplicate.status_code == 409
     assert duplicate.json()["detail"]["code"] == "grant_exists"
-    assert role_created.status_code == 201
-    assert role_created.json()["board_revision"] == 3
-    assert role_created.json()["grant"]["id"] != str(user_grant_id)
+    assert everyone_created.status_code == 201
+    assert everyone_created.json()["board_revision"] == 3
+    assert everyone_created.json()["grant"]["id"] != str(user_grant_id)
     current_board = db.get(Board, board.id)
     assert current_board is not None and current_board.revision == 3
 
@@ -271,48 +258,27 @@ def test_inactive_or_unaccepted_grantees_are_rejected_without_revision_bump(
 ) -> None:
     db = integration_owner_db
     manager, board = _manager_board(db)
-    disabled_user = _actor(db, permissions={}, role=manager.role, status=UserStatus.DISABLED)
-    unaccepted_user = _actor(
-        db,
-        permissions={},
-        role=manager.role,
-        invitation_sent_at=datetime.now(UTC),
-    )
-    deleted_user = _actor(db, permissions={}, role=manager.role, deleted=True)
-    expired_user = _actor(db, permissions={}, role=manager.role)
+    disabled_user = _actor(db, status=UserStatus.DISABLED)
+    unaccepted_user = _actor(db, invitation_sent_at=datetime.now(UTC))
+    deleted_user = _actor(db, deleted=True)
+    expired_user = _actor(db)
     expired_user.expires_at = datetime.now(UTC) - timedelta(seconds=1)
-    deleted_role = Role(
-        role=f"board-grantee-deleted-{uuid7().hex}",
-        permissions={},
-        is_deleted=True,
-    )
-    db.add(deleted_role)
     db.flush()
     client = _client(db, manager)
 
-    for principal_type, target_id in (
-        ("user", disabled_user.id),
-        ("user", unaccepted_user.id),
-        ("user", deleted_user.id),
-        ("user", expired_user.id),
-        ("role", deleted_role.id),
+    for target_id in (
+        disabled_user.id,
+        unaccepted_user.id,
+        deleted_user.id,
+        expired_user.id,
     ):
-        body = _grant_request(
-            1,
-            principal_type,
-            "view",
-            "allow",
-            user_id=target_id if principal_type == "user" else None,
-            role_id=target_id if principal_type == "role" else None,
-        )
+        body = _grant_request(1, "user", "view", "allow", user_id=target_id)
         rejected = client.post(f"/api/boards/{board.id}/grants", json=body)
         assert rejected.status_code == 409
         assert rejected.json()["detail"]["code"] == "grantee_unavailable"
 
     accepted_user = _actor(
         db,
-        permissions={},
-        role=manager.role,
         invitation_sent_at=datetime.now(UTC),
         invitation_accepted_at=datetime.now(UTC),
     )
@@ -349,7 +315,7 @@ def test_revoke_soft_deletes_and_revision_checks_board_and_grant_audit(
     assert stale.json()["detail"]["code"] == "stale_revision"
     assert revoked.status_code == 204 and revoked.headers["Cache-Control"] == "private, no-store"
     assert grant is not None and grant.is_deleted is True and grant.deleted_at is not None
-    assert grant.principal_user_id is None and grant.principal_role_id is None
+    assert grant.principal_user_id is None
     assert current_board is not None and current_board.revision == 3
     assert len(_board_audit_rows(db, board.id)) == before_board_audit + 1
     grant_audit = list(
@@ -426,15 +392,9 @@ def test_concurrent_grant_mutations_serialize_on_board_revision(
 ) -> None:
     engine = integration_owner_db.connection().engine
     with AuditSession(bind=engine, expire_on_commit=False) as setup:
-        manager_role = Role(
-            role=f"board-race-{uuid7().hex}",
-            permissions={"records.read": True, "records.write": True},
-        )
-        setup.add(manager_role)
-        setup.flush()
-        first_manager = _actor(setup, permissions={}, role=manager_role)
-        second_manager = _actor(setup, permissions={}, role=manager_role)
-        owner = _actor(setup, permissions={}, role=manager_role)
+        first_manager = _actor(setup)
+        second_manager = _actor(setup)
+        owner = _actor(setup)
         board = Board(owner_id=owner.id, name="Concurrent grants")
         setup.add(board)
         setup.flush()
@@ -451,10 +411,8 @@ def test_concurrent_grant_mutations_serialize_on_board_revision(
             )
         setup.commit()
         manager_ids = (first_manager.id, second_manager.id)
-        owner_id, role_id = owner.id, manager_role.id
-        managers = setup.scalars(
-            select(User).options(joinedload(User.role)).where(User.id.in_(manager_ids))
-        ).all()
+        owner_id = owner.id
+        managers = setup.scalars(select(User).where(User.id.in_(manager_ids))).all()
         actors = {manager.id: manager for manager in managers}
         setup.expunge_all()
 
@@ -518,8 +476,4 @@ def test_concurrent_grant_mutations_serialize_on_board_revision(
                 user = cleanup.get(User, user_id)
                 if user is not None:
                     cleanup.delete(user)
-            cleanup.flush()
-            role = cleanup.get(Role, role_id)
-            if role is not None:
-                cleanup.delete(role)
             cleanup.commit()

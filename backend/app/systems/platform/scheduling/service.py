@@ -6,14 +6,15 @@ from uuid import UUID
 
 from sqlalchemy import Select, and_, false, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
 from app.systems.access.identity.eligibility import is_identity_eligible
+from app.systems.access.policy.checks import module_filter, module_level
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.access.users.permissions import Capability, has_capability
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.boards.announcement_models import (
     BoardAnnouncement,
     BoardAnnouncementRevision,
@@ -78,15 +79,8 @@ def _eligible_owner(db: Session, report: Report, *, lock: bool) -> User | None:
         or not is_established_user(user)
     ):
         return None
-    role_query = select(Role).where(Role.id == user.role_id)
-    if lock:
-        role_query = role_query.with_for_update()
-    role = db.scalar(role_query)
-    if role is None or role.is_deleted or role.deleted_at is not None:
-        return None
-    if not has_capability(role, Capability.RECORDS_READ):
-        return None
-    if not has_capability(role, Capability.RECORDS_WRITE):
+    # A scheduled report runs for an owner who is not a guest and can read its module.
+    if user.role == UserRole.GUEST.value or module_level(db, user, module.id) is None:
         return None
     return user
 
@@ -268,7 +262,6 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
 
     user = db.scalar(
         select(User)
-        .options(joinedload(User.role))
         .where(User.id == user_id)
         .with_for_update(of=User)
         .execution_options(populate_existing=True)
@@ -279,16 +272,6 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
         or user.deleted_at is not None
         or user.status != UserStatus.ACTIVE.value
         or not is_established_user(user)
-    ):
-        return select(InAppNotification).where(false())
-    role = db.scalar(
-        select(Role).where(Role.id == user.role_id).execution_options(populate_existing=True)
-    )
-    if (
-        role is None
-        or role.is_deleted
-        or role.deleted_at is not None
-        or not has_capability(role, Capability.RECORDS_READ)
     ):
         return select(InAppNotification).where(false())
     report_ids = (
@@ -307,6 +290,7 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
             ReportRun.report_id == Report.id,
             ReportRun.is_deleted.is_(False),
             run_audience_clause(user),
+            module_filter(db, user, AccessLevel.READ, Report.module_id),
             Report.is_deleted.is_(False),
             Report.deleted_at.is_(None),
             Module.is_deleted.is_(False),

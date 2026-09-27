@@ -25,7 +25,6 @@ const draft: BoardAnnouncement = {
   links: [],
   audience: {
     kind: "author",
-    roleId: null,
     userId: null,
     departmentId: null,
   },
@@ -107,7 +106,6 @@ test("editing a targeted-audience draft omits audience instead of widening it", 
     ...draft,
     audience: {
       kind: "department",
-      roleId: null,
       userId: null,
       departmentId: "00000000-0000-4000-8000-000000000005",
     },
@@ -293,7 +291,6 @@ test("canceling a scheduled draft sends unchanged text and omits links and audie
     links: [{ label: "Guide", url: "https://example.test/guide" }],
     audience: {
       kind: "department",
-      roleId: null,
       userId: null,
       departmentId: "00000000-0000-4000-8000-000000000005",
     },

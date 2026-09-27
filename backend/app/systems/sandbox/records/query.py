@@ -32,6 +32,8 @@ from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.listing.schemas import PaginationMetadata, StandardListResponse
+from app.systems.access.policy.checks import module_hidden, module_level
+from app.systems.access.users.models import User
 from app.systems.sandbox.designs.date_values import parse_datetime
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import validate_field_value
@@ -69,7 +71,17 @@ def validate_definition(
     module_id: UUID,
     definition: QueryDefinition,
     extra_references: Sequence[FieldReference] = (),
+    *,
+    reader: User,
 ) -> dict[UUID, Field]:
+    """Validate a record query for one module that ``reader`` can read.
+
+    Every record read path compiles through this check, so a module the reader
+    cannot read is hidden from all of them.
+    """
+
+    if module_level(db, reader, module_id) is None:
+        raise module_hidden()
     if db.get(Module, module_id) is None:
         raise invalid_view("The module no longer exists")
     fields = {
@@ -331,8 +343,10 @@ def _filtered_page(
     return int(rows[0].total), [row for row in rows if row.id is not None]
 
 
-def query_records(db: Session, payload: RecordQuery) -> StandardListResponse[RecordResponse]:
-    fields = validate_definition(db, payload.module_id, payload.definition)
+def query_records(
+    db: Session, payload: RecordQuery, *, reader: User
+) -> StandardListResponse[RecordResponse]:
+    fields = validate_definition(db, payload.module_id, payload.definition, reader=reader)
     if payload.definition.filters or payload.definition.search:
         total, rows = _filtered_page(db, payload, fields)
     else:

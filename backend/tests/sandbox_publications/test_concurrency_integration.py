@@ -22,7 +22,7 @@ from app.common.dependencies.auth import CurrentIdentity
 from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
 from app.systems.sandbox.departments.models import Department
@@ -303,13 +303,13 @@ def test_publication_retry_rechecks_session_after_integrity_rollback(
 
 def _configure_publishable_draft(engine: Engine) -> tuple[UUID, Baseline]:
     with AuditSession(bind=engine) as db:
-        role = db.scalar(select(Role).where(Role.role == "admin"))
+        role = "admin"
         assert role is not None
         actor = User(
             email="publication-concurrency@example.test",
             username="publication-concurrency",
             status=UserStatus.ACTIVE.value,
-            role_id=role.id,
+            role=role,
         )
         db.add(actor)
         db.flush()

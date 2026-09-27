@@ -54,7 +54,7 @@ test("Board content audience chooser rejects expanded or mismatched pages", asyn
     })) as typeof fetch;
   try {
     await expect(
-      listBoardContentAudienceTargets(boardId, "role", "Operations"),
+      listBoardContentAudienceTargets(boardId, "department", "Operations"),
     ).rejects.toBeInstanceOf(ApiContractError);
   } finally {
     globalThis.fetch = original;

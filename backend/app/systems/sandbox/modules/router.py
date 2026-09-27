@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_capability
+from app.common.dependencies import get_current_user
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -15,13 +15,15 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
+from app.systems.access.policy.checks import module_filter
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.modules.schemas import ModuleResponse
 
 router = APIRouter(prefix="/modules", tags=["modules"])
-ModuleReadUser = Annotated[User, Depends(require_capability(Capability.MODULES_READ))]
+# A module is listed only for a user who can read it.
+ModuleReadUser = Annotated[User, Depends(get_current_user)]
 
 
 class ModuleSortField(StrEnum):
@@ -55,8 +57,12 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
 
 
-def _module(db: Session, module_id: UUID) -> Module:
-    module = db.get(Module, module_id)
+def _module(db: Session, user: User, module_id: UUID) -> Module:
+    module = db.scalar(
+        select(Module).where(
+            Module.id == module_id, module_filter(db, user, AccessLevel.READ, Module.id)
+        )
+    )
     if module is None:
         raise _not_found()
     return module
@@ -64,11 +70,11 @@ def _module(db: Session, module_id: UUID) -> Module:
 
 @router.get("", response_model=ModuleListResponse)
 def list_modules(
-    _: ModuleReadUser,
+    user: ModuleReadUser,
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[ModuleListRequest, Query()],
 ) -> ModuleListResponse:
-    statement = select(Module)
+    statement = select(Module).where(module_filter(db, user, AccessLevel.READ, Module.id))
     department_id = getattr(params, "department_id", None)
     if department_id is not None:
         statement = statement.where(Module.department_id == department_id)
@@ -82,7 +88,7 @@ def list_modules(
 @router.get("/{module_id}", response_model=ModuleResponse)
 def get_module(
     module_id: UUID,
-    _: ModuleReadUser,
+    user: ModuleReadUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Module:
-    return _module(db, module_id)
+    return _module(db, user, module_id)

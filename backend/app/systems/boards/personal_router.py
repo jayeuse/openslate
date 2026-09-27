@@ -7,13 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, StrictBool
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import User, UserStatus
-from app.systems.access.users.permissions import Capability, has_capability
 from app.systems.boards.models import Board, BoardPermission, BoardStatus
 from app.systems.boards.personal_models import BoardFavorite, BoardHome
 from app.systems.boards.router import _board_view_clause, _board_with_access
@@ -26,7 +25,7 @@ def _private_cache(response: Response) -> None:
 router = APIRouter(
     prefix="/boards/personal", tags=["boards"], dependencies=[Depends(_private_cache)]
 )
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
+Reader = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -87,7 +86,6 @@ def _current_state(db: Session, actor: User) -> BoardPersonalState:
 def _locked_actor(db: Session, actor: User) -> User:
     current = db.scalar(
         select(User)
-        .options(joinedload(User.role))
         .where(User.id == actor.id)
         .with_for_update(of=User)
         .execution_options(populate_existing=True)
@@ -98,11 +96,6 @@ def _locked_actor(db: Session, actor: User) -> User:
         or current.is_deleted
         or current.deleted_at is not None
         or not is_established_user(current)
-        or current.role is None
-        or current.role.is_deleted
-        or current.role.deleted_at is not None
-        or current.role_id != current.role.id
-        or not has_capability(current.role, Capability.RECORDS_READ)
     ):
         db.rollback()
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Forbidden")

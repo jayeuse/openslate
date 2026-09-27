@@ -158,8 +158,6 @@ function ownerIncludedByAudience(
     case "private":
     case "everyone":
       return true;
-    case "role":
-      return report.audience.roleId === identity.roleId;
     case "user":
       return report.audience.userId === identity.id;
   }
@@ -170,9 +168,7 @@ function reportAudienceLabel(audience: ReportDraft["audience"]): string {
     case "private":
       return "Private to me";
     case "everyone":
-      return "Everyone with Records access";
-    case "role":
-      return "One role";
+      return "Everyone who can read this data";
     case "user":
       return "One person";
   }
@@ -658,10 +654,7 @@ export default function ServerBackedReports() {
       if (!draft.moduleId)
         throw new ReportDraftError("Choose a data source for this Report");
       if (!draft.name.trim()) throw new ReportDraftError("Enter a Report name");
-      if (
-        (draft.audience.kind === "role" && !draft.audience.roleId) ||
-        (draft.audience.kind === "user" && !draft.audience.userId)
-      )
+      if (draft.audience.kind === "user" && !draft.audience.userId)
         throw new ReportDraftError("Choose a Report audience target");
       const recipe = reportRecipeFromDraft(draft);
       const input = {

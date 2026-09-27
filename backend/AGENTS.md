@@ -35,8 +35,8 @@ The deployment profile is one full stack per client (single tenant, micro–medi
 
 ## API conventions
 
-- Routers register under `/api` in `app/main.py`; the auth router aggregates users, roles, and invitations, which must not be registered separately.
-- Use exactly ten flat `<feature>.read`/`<feature>.write` capabilities. Malformed permission documents fail closed; literal `admin` has all capabilities. Users, roles, invitations, audit, and purge are administrator-only.
+- Routers register under `/api` in `app/main.py`; the auth router aggregates users and invitations, which must not be registered separately.
+- Take every read and write filter from `app/systems/access/policy/scope.py` (`effective_levels`, `allowed_module_ids`, `level_for`) through `policy/checks.py`; never add a parallel permission check. Admins manage everything; a guest never writes. Users, groups, invitations, audit, purge, the Sandbox, and CSV export are administrator-only.
 - List endpoints use `StandardListRequest`/`StandardListResponse` and `ListQuerySpec`: explicit sort enum, allowlisted columns, default sort, UUID tie-breaker, and offset pagination (never keyset).
 - Keep errors route-local `HTTPException` shapes (for example lifecycle `{"detail":{"code","message"}}` and record validation with `code`, `message`, `errors`, `truncated`); do not add a global envelope.
 - Departments, modules, and fields expose only `GET` routes; the Sandbox publish is the only way to change them. Hierarchical close/reopen/purge belongs to lifecycle, never CRUD.

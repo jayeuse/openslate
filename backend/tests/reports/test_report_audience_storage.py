@@ -3,11 +3,10 @@
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.openview.reports.models import Report
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.lifecycle.exceptions import LifecyclePlanDriftError
@@ -19,7 +18,7 @@ pytestmark = pytest.mark.integration
 
 
 def _source(db) -> tuple[User, Module]:
-    role = db.scalar(select(Role).where(Role.role == "member"))
+    role = "member"
     assert role is not None
     user_id = uuid7()
     user = User(
@@ -27,7 +26,7 @@ def _source(db) -> tuple[User, Module]:
         email=f"report-audience-{user_id.hex}@example.test",
         username=f"report_audience_{user_id.hex[:12]}",
         status=UserStatus.ACTIVE.value,
-        role_id=role.id,
+        role=role,
     )
     department = Department(department_name=f"Report audience {uuid7()}")
     db.add_all([user, department])
@@ -44,11 +43,10 @@ def test_report_audience_database_accepts_only_exclusive_restrictive_targets(
     db = integration_owner_db
     owner, module = _source(db)
 
-    for kind, role_id, user_id in (
-        ("private", None, None),
-        ("everyone", None, None),
-        ("role", owner.role_id, None),
-        ("user", None, owner.id),
+    for kind, user_id in (
+        ("private", None),
+        ("everyone", None),
+        ("user", owner.id),
     ):
         report = Report(
             owner_id=owner.id,
@@ -56,7 +54,6 @@ def test_report_audience_database_accepts_only_exclusive_restrictive_targets(
             name=f"Audience {kind}",
             recipe={"version": 1},
             audience_kind=kind,
-            audience_role_id=role_id,
             audience_user_id=user_id,
         )
         db.add(report)
@@ -73,15 +70,13 @@ def test_report_audience_database_accepts_only_exclusive_restrictive_targets(
     db.flush()
     assert implicit_private.audience_kind == "private"
 
-    for kind, role_id, user_id in (
-        ("private", owner.role_id, None),
-        ("everyone", None, owner.id),
-        ("role", None, None),
-        ("role", owner.role_id, owner.id),
-        ("user", None, None),
-        ("unknown", None, None),
-        ("role", uuid7(), None),
-        ("user", None, uuid7()),
+    for kind, user_id in (
+        ("private", owner.id),
+        ("everyone", owner.id),
+        ("role", None),
+        ("user", None),
+        ("unknown", None),
+        ("user", uuid7()),
     ):
         with pytest.raises(IntegrityError):
             with db.begin_nested():
@@ -92,7 +87,6 @@ def test_report_audience_database_accepts_only_exclusive_restrictive_targets(
                         name="Rejected audience",
                         recipe={"version": 1},
                         audience_kind=kind,
-                        audience_role_id=role_id,
                         audience_user_id=user_id,
                     )
                 )
@@ -112,8 +106,7 @@ def test_report_audience_change_invalidates_existing_module_purge_preview(
         module_id=module.id,
         name="Retained report",
         recipe={"version": 1},
-        audience_kind="role",
-        audience_role_id=owner.role_id,
+        audience_kind="everyone",
         is_deleted=True,
         deleted_at=now,
     )
@@ -126,7 +119,6 @@ def test_report_audience_change_invalidates_existing_module_purge_preview(
         row.state_fingerprint for row in preview.rows if row.entity_id == report.id
     )
     report.audience_kind = "user"
-    report.audience_role_id = None
     report.audience_user_id = owner.id
     db.commit()
 

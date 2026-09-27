@@ -154,27 +154,21 @@ const wireConfigSchema = z
 const inputAudienceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("everyone") }).strict(),
   z.object({ kind: z.literal("private") }).strict(),
-  z.object({ kind: z.literal("role"), roleId: uuidSchema }).strict(),
   z.object({ kind: z.literal("user"), userId: uuidSchema }).strict(),
 ]);
 const wireAudienceSchema = z
   .object({
-    kind: z.enum(["everyone", "private", "role", "user"]),
-    role_id: uuidSchema.nullable(),
+    kind: z.enum(["everyone", "private", "user"]),
     user_id: uuidSchema.nullable(),
   })
   .strict()
   .refine(
-    ({ kind, role_id, user_id }) =>
-      (kind === "role" && role_id !== null && user_id === null) ||
-      (kind === "user" && user_id !== null && role_id === null) ||
-      ((kind === "everyone" || kind === "private") &&
-        role_id === null &&
-        user_id === null),
+    ({ kind, user_id }) =>
+      (kind === "user" && user_id !== null) ||
+      ((kind === "everyone" || kind === "private") && user_id === null),
   )
-  .transform(({ kind, role_id, user_id }) => ({
+  .transform(({ kind, user_id }) => ({
     kind,
-    roleId: role_id,
     userId: user_id,
   }));
 
@@ -339,11 +333,9 @@ function serializeField(field: z.output<typeof inputFieldSchema>) {
 
 function serializeWidget(widget: z.output<typeof inputWidgetSchema>) {
   const audience =
-    widget.audience.kind === "role"
-      ? { kind: "role", role_id: widget.audience.roleId }
-      : widget.audience.kind === "user"
-        ? { kind: "user", user_id: widget.audience.userId }
-        : { kind: widget.audience.kind };
+    widget.audience.kind === "user"
+      ? { kind: "user", user_id: widget.audience.userId }
+      : { kind: widget.audience.kind };
   return {
     name: widget.name,
     widget_type: widget.widgetType,

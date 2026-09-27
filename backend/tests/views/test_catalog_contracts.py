@@ -5,7 +5,7 @@ from uuid6 import uuid7
 
 from app.common.listing import StandardListRequest
 from app.common.listing.schemas import PaginationMetadata
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.openview.views.catalog import (
     DataSourceSort,
     FieldSort,
@@ -23,7 +23,7 @@ from app.systems.sandbox.fields.models import Field, FieldType
 def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
     module_id = uuid7()
     department_id = uuid7()
-    role_id = uuid7()
+    user_id = uuid7()
     field_id = uuid7()
     data_source = ViewDataSourceResponse.model_validate(
         {"id": module_id, "name": "Equipment", "department_id": department_id}
@@ -40,7 +40,7 @@ def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
         }
     )
     audience = ViewAudienceOptionResponse.model_validate(
-        {"kind": "role", "id": role_id, "label": "Operations"}
+        {"kind": "user", "id": user_id, "label": "operations"}
     )
 
     assert data_source.model_dump(mode="json") == {
@@ -58,9 +58,9 @@ def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
         "config": {"options": ["open", "closed"]},
     }
     assert audience.model_dump(mode="json") == {
-        "kind": "role",
-        "id": str(role_id),
-        "label": "Operations",
+        "kind": "user",
+        "id": str(user_id),
+        "label": "operations",
     }
 
 
@@ -118,7 +118,7 @@ def test_field_catalog_filters_relationship_fields_before_offset_pagination() ->
     session = CatalogSession()
     result = list_data_source_fields(
         module_id,
-        User(id=uuid7(), status="active", role=Role(role="member", is_deleted=False)),
+        User(id=uuid7(), status="active", role="admin"),
         session,  # type: ignore[arg-type]
         StandardListRequest[FieldSort](limit=1, offset=0),
     )
@@ -147,7 +147,7 @@ def test_data_source_catalog_lists_every_active_module(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(catalog, "execute_standard_list", list_result)
-    user = User(id=uuid7(), status="active", role=Role(role="member", is_deleted=False))
+    user = User(id=uuid7(), status="active", role="admin")
     list_data_sources(
         user,
         object(),  # type: ignore[arg-type]

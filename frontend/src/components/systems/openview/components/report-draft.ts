@@ -56,9 +56,7 @@ export function reportDraftFrom(report: OpenViewReport): ReportDraft {
   const { recipe } = report;
   const { audience } = report;
   let draftAudience: OpenViewReportAudienceInput;
-  if (audience.kind === "role" && audience.roleId !== null) {
-    draftAudience = { kind: "role", roleId: audience.roleId };
-  } else if (audience.kind === "user" && audience.userId !== null) {
+  if (audience.kind === "user" && audience.userId !== null) {
     draftAudience = { kind: "user", userId: audience.userId };
   } else if (audience.kind === "everyone" || audience.kind === "private") {
     draftAudience = { kind: audience.kind };

@@ -10,33 +10,22 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.activity_router import router
 from app.systems.boards.models import Board, BoardGrant, BoardRecordPlacement, BoardWidget
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.rbac.support import capability_actor, grant_capability_actors
 
 pytestmark = pytest.mark.integration
 
 
 def _actor(db: Session, *, read: bool = True) -> User:
-    suffix = uuid7().hex
-    role = Role(role=f"board-activity-{suffix}", permissions={"records.read": read})
-    db.add(role)
-    db.flush()
-    actor = User(
-        id=uuid7(),
-        email=f"activity-{suffix}@example.test",
-        username=f"activity_{suffix[:12]}",
-        status="active",
-        role_id=role.id,
-        role=role,
-    )
-    db.add(actor)
-    db.flush()
-    return actor
+    """A member; Boards reads need no capability since slice 3."""
+
+    return capability_actor(db, "board", {"records.write": True})
 
 
 def _client(db: Session, actor: User) -> TestClient:
@@ -54,7 +43,6 @@ def test_board_activity_filters_acl_and_widget_audience_before_count_and_page(
     owner = _actor(db)
     manager = _actor(db)
     outsider = _actor(db)
-    no_read = _actor(db, read=False)
     set_audit_actor(db, owner.id)
     board = Board(owner_id=owner.id, name="Operations", description="PRIVATE BOARD NOTES")
     other = Board(owner_id=owner.id, name="Other")
@@ -64,6 +52,7 @@ def test_board_activity_filters_acl_and_widget_audience_before_count_and_page(
     module = Module(department_id=department.id, module_name="Requests")
     db.add(module)
     db.flush()
+    grant_capability_actors(db, department, module)
     record = Record(module_id=module.id, data={})
     db.add(record)
     db.flush()
@@ -136,7 +125,6 @@ def test_board_activity_filters_acl_and_widget_audience_before_count_and_page(
     )
     assert _client(db, owner).get(root).json()["pagination"]["total"] == 5
     assert _client(db, outsider).get(root).status_code == 404
-    assert _client(db, no_read).get(root).status_code == 403
     assert manager_client.get(f"/api/boards/{uuid7()}/activity").json() == {
         "detail": "Board not found"
     }
@@ -175,6 +163,7 @@ def test_board_activity_omits_deleted_widget_history_and_inactive_actor_label(
     module = Module(department_id=department.id, module_name="Requests")
     db.add(module)
     db.flush()
+    grant_capability_actors(db, department, module)
     set_audit_actor(db, author.id)
     widget = BoardWidget(
         board_id=board.id, module_id=module.id, creator_id=author.id,

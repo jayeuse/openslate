@@ -3,12 +3,12 @@
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import DBAPIError
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.models import Board
 
@@ -91,7 +91,7 @@ def _assert_link_columns_and_privileges(connection: Connection) -> None:
 
 
 def _assert_published_revision_links_are_immutable(db) -> None:
-    role = db.scalar(select(Role).where(Role.role == "member"))
+    role = "member"
     assert role is not None
     user_id = uuid7()
     user = User(
@@ -99,7 +99,7 @@ def _assert_published_revision_links_are_immutable(db) -> None:
         email=f"link-baseline-{user_id.hex}@example.test",
         username=f"link_baseline_{user_id.hex[:12]}",
         status="active",
-        role_id=role.id,
+        role=role,
     )
     board = Board(owner_id=user.id, name="Link baseline")
     db.add_all([user, board])

@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 
 pytest_plugins = ("tests.auth.test_provider_auth_integration",)
 pytestmark = pytest.mark.integration
@@ -51,6 +51,8 @@ def provider_mail():
             if "host.docker.internal" in line.split()[1:]
         )
     listener = socket.socket()
+    # Back-to-back fixtures leave the previous server's closed connections in TIME_WAIT.
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind((bind_host, 8008))
     listener.listen(128)
     server = uvicorn.Server(
@@ -107,7 +109,7 @@ def test_invitation_and_recovery_use_provider_emails_and_backend_admission(
     with Session(owner) as db:
         user = db.get(User, local_id)
         user.supabase_user_id = provider_id
-        user.role_id = db.scalar(select(Role.id).where(Role.role == "admin"))
+        user.role = "admin"
         db.commit()
     admin = TestClient(create_app(), base_url=settings.public_origin)
     recipient = TestClient(create_app(), base_url=settings.public_origin)

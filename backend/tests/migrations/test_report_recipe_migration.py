@@ -40,19 +40,16 @@ def test_report_recipe_schema_constraints_and_runtime_access_on_active_baseline(
 
 def _seed_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
     with engine.begin() as connection:
-        role_id = connection.scalar(text("SELECT id FROM public.roles WHERE role = 'member'"))
-        assert role_id is not None
         for key in ("owner", "audit_actor"):
             connection.execute(
                 text(
-                    "INSERT INTO public.users (id, email, username, status, role_id) "
-                    "VALUES (:id, :email, :username, 'active', :role_id)"
+                    "INSERT INTO public.users (id, email, username, status, role) "
+                    "VALUES (:id, :email, :username, 'active', 'member')"
                 ),
                 {
                     "id": ids[key],
                     "email": f"report-baseline-{ids[key].hex}@example.test",
                     "username": f"report_baseline_{ids[key].hex}",
-                    "role_id": role_id,
                 },
             )
         connection.execute(
@@ -95,7 +92,6 @@ def _assert_report_schema(connection: Connection) -> None:
         "name",
         "subtitle",
         "audience_kind",
-        "audience_role_id",
         "audience_user_id",
         "revision",
         "recipe",
@@ -106,7 +102,6 @@ def _assert_report_schema(connection: Connection) -> None:
     assert columns["owner_id"]["is_nullable"] == "NO"
     assert columns["module_id"]["is_nullable"] == "NO"
     assert columns["subtitle"]["is_nullable"] == "YES"
-    assert columns["audience_role_id"]["is_nullable"] == "YES"
     assert columns["audience_user_id"]["is_nullable"] == "YES"
 
     constraints = {
@@ -123,7 +118,6 @@ def _assert_report_schema(connection: Connection) -> None:
         "ck_reports_audience": "c",
         "ck_reports_name_nonempty": "c",
         "ck_reports_revision_positive": "c",
-        "fk_reports_audience_role_id_roles": "f",
         "fk_reports_audience_user_id_users": "f",
         "fk_reports_module_id_modules": "f",
         "fk_reports_owner_id_users": "f",
@@ -131,7 +125,6 @@ def _assert_report_schema(connection: Connection) -> None:
     }
     assert {name: constraints[name]["contype"] for name in expected} == expected
     for name in (
-        "fk_reports_audience_role_id_roles",
         "fk_reports_audience_user_id_users",
         "fk_reports_module_id_modules",
         "fk_reports_owner_id_users",
@@ -150,7 +143,6 @@ def _assert_report_schema(connection: Connection) -> None:
     }
     assert set(indexes) == {
         "reports_pkey",
-        "ix_reports_audience_role_id",
         "ix_reports_audience_user_id",
         "ix_reports_module",
         "ix_reports_owner_module",

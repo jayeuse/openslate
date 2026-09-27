@@ -17,7 +17,7 @@ const fieldTypeSchema = z.enum([
   "datetime",
   "select",
 ]);
-const audienceOptionKindSchema = z.enum(["role", "user"]);
+const audienceOptionKindSchema = z.enum(["user"]);
 const queryFieldTypeSchema = fieldTypeSchema;
 const viewLayoutSchema = z.enum([
   "table",
@@ -351,33 +351,12 @@ const audienceInputSchema = z.discriminatedUnion("kind", [
 ]);
 const wireAudienceSchema = z.discriminatedUnion("kind", [
   z
-    .object({
-      kind: z.literal("private"),
-      role_id: z.null().optional(),
-      user_id: z.null().optional(),
-    })
+    .object({ kind: z.literal("private"), user_id: z.null().optional() })
     .strict(),
   z
-    .object({
-      kind: z.literal("everyone"),
-      role_id: z.null().optional(),
-      user_id: z.null().optional(),
-    })
+    .object({ kind: z.literal("everyone"), user_id: z.null().optional() })
     .strict(),
-  z
-    .object({
-      kind: z.literal("role"),
-      role_id: uuidSchema,
-      user_id: z.null().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("user"),
-      role_id: z.null().optional(),
-      user_id: uuidSchema,
-    })
-    .strict(),
+  z.object({ kind: z.literal("user"), user_id: uuidSchema }).strict(),
 ]);
 
 const savedViewResponseSchema = z
@@ -437,8 +416,6 @@ function toDomainAudience(
       return { kind: "private" };
     case "everyone":
       return { kind: "everyone" };
-    case "role":
-      return { kind: "role", id: audience.role_id };
     case "user":
       return { kind: "identity", id: audience.user_id };
   }

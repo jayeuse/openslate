@@ -157,7 +157,7 @@ def test_announcement_links_are_immutable_in_publications_and_bind_retry_key(
         json=_create_payload(
             1,
             links=[first_link],
-            audience={"kind": "role", "role_id": str(owner.role_id)},
+            audience={"kind": "user", "user_id": str(owner.id)},
         ),
     )
     assert created.status_code == 201

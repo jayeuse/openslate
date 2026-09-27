@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from record_queries.test_database import request_for, route_actor, setup_rows
+from record_queries.test_database import READER, request_for, route_actor, setup_rows
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -66,7 +66,7 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
         "group_offset": 2,
     }
 
-    headers = query_grouped_records(query_db, GroupedRecordQuery(**base))
+    headers = query_grouped_records(query_db, GroupedRecordQuery(**base), reader=READER)
     assert [(group.value, group.label, group.count) for group in headers.groups] == [
         ("B", "B", 1),
         (None, "Unspecified", 2),
@@ -83,6 +83,7 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
             limit=1,
             selected_group={"kind": "value", "value": "B"},
         ),
+        reader=READER,
     )
     assert [item.id for item in selected.items] == [rows[2].id]
     assert selected.items[0].data == {}
@@ -95,6 +96,7 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
     unspecified = query_grouped_records(
         query_db,
         GroupedRecordQuery(**base, selected_group={"kind": "unspecified"}),
+        reader=READER,
     )
     assert [item.id for item in unspecified.items] == [rows[4].id, rows[3].id]
     assert all(item.data == {} for item in unspecified.items)
@@ -111,6 +113,7 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
             offset=1,
             selected_group={"kind": "unspecified"},
         ),
+        reader=READER,
     )
     assert [item.id for item in second_member_page.items] == [rows[3].id]
     assert second_member_page.pagination is not None
@@ -120,6 +123,7 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
     empty_string = query_grouped_records(
         query_db,
         GroupedRecordQuery(**base, selected_group={"kind": "value", "value": ""}),
+        reader=READER,
     )
     assert [item.id for item in empty_string.items] == [rows[5].id]
     assert empty_string.selected_group is not None
@@ -138,7 +142,7 @@ def test_grouped_query_rejects_deleted_or_type_changed_group_field(query_db) -> 
     query_db.flush()
 
     with pytest.raises(HTTPException) as error:
-        query_grouped_records(query_db, payload)
+        query_grouped_records(query_db, payload, reader=READER)
 
     assert error.value.status_code == 409
     assert error.value.detail["code"] == "view_invalid"
@@ -156,7 +160,7 @@ def test_long_text_group_header_can_round_trip_to_members(query_db) -> None:
     )
     assert len(payload.model_dump_json().encode("utf-8")) < get_settings().request_body_max_bytes
 
-    result = query_grouped_records(query_db, payload)
+    result = query_grouped_records(query_db, payload, reader=READER)
 
     assert [(group.value, group.count) for group in result.groups] == [(value, 1)]
     assert [item.id for item in result.items] == [rows[0].id]
@@ -176,7 +180,7 @@ def test_group_header_over_request_limit_fails_instead_of_becoming_unselectable(
     )
 
     with pytest.raises(HTTPException) as error:
-        query_grouped_records(query_db, payload)
+        query_grouped_records(query_db, payload, reader=READER)
 
     assert error.value.status_code == 422
     assert error.value.detail["code"] == "group_value_not_selectable"
@@ -203,6 +207,7 @@ def test_grouped_aggregate_sums_and_averages_rank_buckets_server_side(query_db) 
     summed = aggregate_records(
         query_db,
         GroupedAggregateQuery(**base, aggregation="sum", limit=3),
+        reader=READER,
     )
     assert [(item.label, item.value, item.record_count) for item in summed.items] == [
         ("Unspecified", Decimal("10.25"), 1),
@@ -214,6 +219,7 @@ def test_grouped_aggregate_sums_and_averages_rank_buckets_server_side(query_db) 
     averaged = aggregate_records(
         query_db,
         GroupedAggregateQuery(**base, aggregation="average", limit=10),
+        reader=READER,
     )
     values = {item.label: item.value for item in averaged.items}
     assert values["Open"] == Decimal("5.00")
@@ -245,7 +251,7 @@ def test_date_series_includes_empty_days_and_uses_utc_for_datetime(query_db) -> 
         to_date=date(2026, 9, 4),
     )
 
-    result = aggregate_records(query_db, payload)
+    result = aggregate_records(query_db, payload, reader=READER)
 
     assert [item.label for item in result.items] == [
         "2026-09-01",
@@ -284,7 +290,7 @@ def test_date_series_includes_empty_days_and_uses_utc_for_datetime(query_db) -> 
         from_date=date(2026, 9, 1),
         to_date=date(2026, 9, 3),
     )
-    datetime_result = aggregate_records(query_db, datetime_payload)
+    datetime_result = aggregate_records(query_db, datetime_payload, reader=READER)
     assert [item.value for item in datetime_result.items] == [
         Decimal("2.0000000000"),
         Decimal("1.0000000000"),
@@ -318,16 +324,14 @@ def test_datetime_series_buckets_by_validated_workspace_timezone(query_db) -> No
         to_date=date(2026, 9, 2),
     )
 
-    result = aggregate_records(query_db, payload)
+    result = aggregate_records(query_db, payload, reader=READER)
 
     assert [item.label for item in result.items] == ["2026-09-01", "2026-09-02"]
     assert [item.value for item in result.items] == [Decimal("1"), Decimal("2")]
 
 
 def test_grouped_snapshot_combines_or_filters_with_an_independent_date_window(query_db) -> None:
-    module, dimension, rows = setup_rows(
-        query_db, "select", ["Open", "Open", "Closed", "Closed"]
-    )
+    module, dimension, rows = setup_rows(query_db, "select", ["Open", "Open", "Closed", "Closed"])
     date_field = add_values(
         query_db,
         module,
@@ -362,7 +366,7 @@ def test_grouped_snapshot_combines_or_filters_with_an_independent_date_window(qu
         aggregation="count",
     )
 
-    result = aggregate_snapshot_records(query_db, payload)
+    result = aggregate_snapshot_records(query_db, payload, reader=READER)
 
     assert {item.label: item.record_count for item in result.items} == {
         "Open": 2,
@@ -403,11 +407,9 @@ def test_grouped_snapshot_date_window_uses_workspace_day_bounds_for_datetime(que
         aggregation="count",
     )
 
-    result = aggregate_snapshot_records(query_db, payload)
+    result = aggregate_snapshot_records(query_db, payload, reader=READER)
 
-    assert [(item.label, item.record_count) for item in result.items] == [
-        ("Included", 2)
-    ]
+    assert [(item.label, item.record_count) for item in result.items] == [("Included", 2)]
 
 
 @pytest.mark.parametrize("day_count", [101, 366])

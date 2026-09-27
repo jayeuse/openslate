@@ -4,17 +4,8 @@ from app.systems.access.identity.models import (  # noqa: F401
     IdentityRateLimitBucket,
     IdentitySession,
 )
-from app.systems.access.policy.models import (  # noqa: F401
-    AccessDefaultDepartment,
-    AccessDefaultGroup,
-    AccessGroup,
-    AccessGroupMember,
-    AccessPolicyDefaults,
-    AccessPolicyVersion,
-    AccessRule,
-)
-from app.systems.access.service_identities.models import ServiceIdentity  # noqa: F401
-from app.systems.access.users.models import Role, User, UserDepartment  # noqa: F401
+from app.systems.access.policy.models import Group, GroupAccess, GroupMember  # noqa: F401
+from app.systems.access.users.models import User  # noqa: F401
 from app.systems.boards.announcement_models import (  # noqa: F401
     BoardAnnouncement,
     BoardAnnouncementRevision,

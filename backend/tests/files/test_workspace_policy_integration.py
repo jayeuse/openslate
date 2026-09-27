@@ -1,4 +1,4 @@
-"""Record attachments obey persisted workspace policy across their lifecycle."""
+"""Record attachments follow the record's department and module access across their lifecycle."""
 
 from hashlib import sha256
 from io import BytesIO
@@ -8,12 +8,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import select
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.systems.access.policy.models import AccessPolicyVersion, AccessRule
-from app.systems.access.users.models import Role, User
+from app.systems.access.policy.models import AccessLevel, GroupAccess
+from app.systems.access.users.models import User, UserRole
 from app.systems.platform.files import service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import transfer_slot
@@ -23,6 +22,7 @@ from app.systems.platform.files.storage import get_storage
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.rbac.support import add_user, make_group_access
 
 pytestmark = pytest.mark.integration
 
@@ -67,43 +67,42 @@ def _png() -> bytes:
     return output.getvalue()
 
 
-def _add_role_rule(db, *, role_id, permission: str, decision: str) -> AccessRule:
-    version = db.scalar(select(AccessPolicyVersion).with_for_update())
-    assert version is not None
-    version.revision += 1
-    rule = AccessRule(
-        subject_kind="role",
-        subject_id=role_id,
-        scope_kind="workspace",
-        scope_id=None,
-        permission_id=permission,
-        decision=decision,
-        starts_at=None,
-        ends_at=None,
-        locked=False,
-        policy_version=version.revision,
-    )
-    db.add(rule)
-    db.commit()
-    return rule
-
-
-def _actor_with_record(db, *, permissions: dict[str, bool] | None = None):
-    role = Role(role=f"attachment-policy-{uuid4()}", permissions=permissions or {})
-    db.add(role)
-    db.flush()
-    actor = User(
-        email=f"attachment-policy-{uuid4()}@example.com",
-        username=f"attachment_policy_{uuid4().hex[:12]}",
-        role_id=role.id,
-        status="active",
-    )
+def _actor_with_record(
+    db, *, level: AccessLevel | None = None, role: str = UserRole.MEMBER
+) -> tuple[User, GroupAccess | None, Record]:
+    actor = add_user(db, "attachment-policy", role=role)
     department = Department(department_name=f"Attachment policy {uuid4()}")
     module = Module(department=department, module_name="Files")
     record = Record(module=module, data={})
-    db.add_all([actor, department, module, record])
+    db.add_all([department, module, record])
+    db.flush()
+    grant = (
+        make_group_access(db, [actor], department, module, level=level)
+        if level is not None
+        else None
+    )
     db.commit()
-    return actor, role, record
+    return actor, grant, record
+
+
+def _ready_file(db, actor: User, record: Record, content: bytes) -> File:
+    file = File(
+        purpose="record_attachment",
+        record_id=record.id,
+        creator_id=actor.id,
+        filename="attachment.png",
+        expected_size=len(content),
+        actual_size=len(content),
+        media_type="image/png",
+        digest=sha256(content).hexdigest(),
+        object_key=uuid4().hex,
+        state="ready",
+        scanner_version="test",
+        signature_version="test",
+    )
+    db.add(file)
+    db.commit()
+    return file
 
 
 def _client(db, actor: User, storage: _Store) -> TestClient:
@@ -122,11 +121,9 @@ def _client(db, actor: User, storage: _Store) -> TestClient:
     return TestClient(app)
 
 
-def test_record_attachment_routes_allow_workspace_role_rules(guarded_db, monkeypatch):
+def test_record_attachment_routes_allow_a_member_who_can_write_the_module(guarded_db, monkeypatch):
     db = guarded_db
-    actor, role, record = _actor_with_record(db)
-    _add_role_rule(db, role_id=role.id, permission="records.read", decision="allow")
-    _add_role_rule(db, role_id=role.id, permission="records.write", decision="allow")
+    actor, _grant, record = _actor_with_record(db, level=AccessLevel.WRITE)
     content = _png()
     storage = _Store(db)
     monkeypatch.setattr(service, "append_committed_security_event", lambda _event: None)
@@ -173,26 +170,13 @@ def test_record_attachment_routes_allow_workspace_role_rules(guarded_db, monkeyp
         assert archived.status_code == 200 and archived.json()["is_deleted"] is True
 
 
-def test_record_attachment_routes_deny_without_a_workspace_rule(guarded_db):
+def test_member_without_a_group_for_the_department_cannot_see_or_change_attachments(
+    guarded_db,
+):
     db = guarded_db
-    actor, _role, record = _actor_with_record(db)
+    actor, _grant, record = _actor_with_record(db)
     content = _png()
-    file = File(
-        purpose="record_attachment",
-        record_id=record.id,
-        creator_id=actor.id,
-        filename="attachment.png",
-        expected_size=len(content),
-        actual_size=len(content),
-        media_type="image/png",
-        digest=sha256(content).hexdigest(),
-        object_key=uuid4().hex,
-        state="ready",
-        scanner_version="test",
-        signature_version="test",
-    )
-    db.add(file)
-    db.commit()
+    file = _ready_file(db, actor, record, content)
     storage = _Store(db)
     storage.objects[file.object_key] = content
 
@@ -203,9 +187,10 @@ def test_record_attachment_routes_deny_without_a_workspace_rule(guarded_db):
                 "/api/files",
                 params={"purpose": "record_attachment", "record_id": str(record.id)},
             ).status_code
-            == 403
+            == 404
         )
-        assert client.get(path).status_code == 403
+        assert client.get(path).status_code == 404
+        assert client.get(path + "/content").status_code == 404
         assert (
             client.post(
                 "/api/files",
@@ -216,61 +201,44 @@ def test_record_attachment_routes_deny_without_a_workspace_rule(guarded_db):
                     "expected_size": len(content),
                 },
             ).status_code
-            == 403
+            == 404
         )
-        assert (
-            client.put(
-                path + "/content",
-                content=content,
-                headers={"Content-Type": "application/octet-stream"},
-            ).status_code
-            == 403
+        assert client.post(path + "/archive").status_code == 404
+
+
+def test_guest_in_a_write_group_can_read_but_not_add_attachments(guarded_db):
+    db = guarded_db
+    guest, _grant, record = _actor_with_record(db, level=AccessLevel.WRITE, role=UserRole.GUEST)
+    content = _png()
+    file = _ready_file(db, guest, record, content)
+
+    with _client(db, guest, _Store(db)) as client:
+        assert client.get(f"/api/files/{file.id}").status_code == 200
+        created = client.post(
+            "/api/files",
+            json={
+                "purpose": "record_attachment",
+                "record_id": str(record.id),
+                "filename": "new.png",
+                "expected_size": len(content),
+            },
         )
-        assert client.post(path + "/archive").status_code == 403
+        assert created.status_code == 403
+        assert client.post(f"/api/files/{file.id}/archive").status_code == 403
 
 
 def test_attachment_download_reauthorizes_after_storage_latency(guarded_db, monkeypatch):
     db = guarded_db
-    actor, role, record = _actor_with_record(db)
-    allow = _add_role_rule(db, role_id=role.id, permission="records.read", decision="allow")
+    actor, grant, record = _actor_with_record(db, level=AccessLevel.READ)
+    assert grant is not None
     content = _png()
-    file = File(
-        purpose="record_attachment",
-        record_id=record.id,
-        creator_id=actor.id,
-        filename="attachment.png",
-        expected_size=len(content),
-        actual_size=len(content),
-        media_type="image/png",
-        digest=sha256(content).hexdigest(),
-        object_key=uuid4().hex,
-        state="ready",
-        scanner_version="test",
-        signature_version="test",
-    )
-    db.add(file)
-    db.commit()
+    file = _ready_file(db, actor, record, content)
 
     class _RevokingStore(_Store):
         def download(self, key: str) -> bytes | None:
-            allow.is_deleted = True
-            version = self.db.scalar(select(AccessPolicyVersion).with_for_update())
-            assert version is not None
-            version.revision += 1
-            self.db.add(
-                AccessRule(
-                    subject_kind="role",
-                    subject_id=role.id,
-                    scope_kind="workspace",
-                    scope_id=None,
-                    permission_id="records.read",
-                    decision="deny",
-                    starts_at=None,
-                    ends_at=None,
-                    locked=False,
-                    policy_version=version.revision,
-                )
-            )
+            revoked = self.db.get(GroupAccess, grant.id)
+            assert revoked is not None
+            self.db.delete(revoked)
             self.db.commit()
             return super().download(key)
 
@@ -280,33 +248,15 @@ def test_attachment_download_reauthorizes_after_storage_latency(guarded_db, monk
 
     with _client(db, actor, storage) as client:
         response = client.get(f"/api/files/{file.id}/content")
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
-def test_internal_administrator_attachment_write_is_policy_protected(guarded_db, actor):
+def test_administrator_attaches_to_any_record_without_a_group(guarded_db, actor):
     db = guarded_db
     department = Department(department_name=f"Administrator attachment {uuid4()}")
     module = Module(department=department, module_name="Files")
     record = Record(module=module, data={})
     db.add_all([department, module, record])
-    db.commit()
-    version = db.scalar(select(AccessPolicyVersion).with_for_update())
-    assert version is not None
-    version.revision += 1
-    db.add(
-        AccessRule(
-            subject_kind="everyone",
-            subject_id=None,
-            scope_kind="workspace",
-            scope_id=None,
-            permission_id="records.write",
-            decision="deny",
-            starts_at=None,
-            ends_at=None,
-            locked=False,
-            policy_version=version.revision,
-        )
-    )
     db.commit()
 
     result = service.reserve(

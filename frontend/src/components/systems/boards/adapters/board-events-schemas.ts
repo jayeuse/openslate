@@ -43,41 +43,27 @@ export const links = z
 export const audienceInput = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("everyone") }).strict(),
   z.object({ kind: z.literal("author") }).strict(),
-  z.object({ kind: z.literal("role"), roleId: uuid }).strict(),
   z.object({ kind: z.literal("user"), userId: uuid }).strict(),
   z.object({ kind: z.literal("department"), departmentId: uuid }).strict(),
 ]);
 const audienceWire = z
   .object({
-    kind: z.enum(["everyone", "author", "role", "user", "department"]),
-    role_id: uuid.nullable(),
+    kind: z.enum(["everyone", "author", "user", "department"]),
     user_id: uuid.nullable(),
     department_id: uuid.nullable(),
   })
   .strict()
-  .refine((audience) => {
-    const targets = [
-      audience.role_id,
-      audience.user_id,
-      audience.department_id,
-    ];
-    const expected =
-      audience.kind === "role"
-        ? 0
-        : audience.kind === "user"
-          ? 1
-          : audience.kind === "department"
-            ? 2
-            : undefined;
+  .refine(({ kind, user_id, department_id }) => {
+    const targets = [user_id, department_id];
+    const expected = kind === "user" ? 0 : kind === "department" ? 1 : -1;
     return targets.every((target, index) =>
-      expected === undefined
+      expected === -1
         ? target === null
         : (index === expected) === (target !== null),
     );
   })
-  .transform(({ kind, role_id, user_id, department_id }) => ({
+  .transform(({ kind, user_id, department_id }) => ({
     kind,
-    roleId: role_id,
     userId: user_id,
     departmentId: department_id,
   }));

@@ -9,11 +9,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.access.users.permissions import Capability
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.announcement_listing import display_join
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.announcement_router import MAX_ANNOUNCEMENTS
@@ -27,7 +26,7 @@ def _private_cache(response: Response) -> None:
 
 
 router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_private_cache)])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
+Reader = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -59,13 +58,10 @@ def list_announcement_authors(
     rows = db.execute(
         select(User.id, User.username)
         .join(visible_author_ids, visible_author_ids.c.author_id == User.id)
-        .join(Role, Role.id == User.role_id)
         .where(
             User.status == UserStatus.ACTIVE.value,
             User.is_deleted.is_(False),
             User.deleted_at.is_(None),
-            Role.is_deleted.is_(False),
-            Role.deleted_at.is_(None),
             established_user_clause(),
         )
         .order_by(User.username, User.id)

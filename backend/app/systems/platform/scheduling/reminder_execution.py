@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import Engine, and_, or_, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
@@ -149,7 +149,6 @@ def finalize_reminder_claim(
     )
     actor = db.scalar(
         select(User)
-        .options(joinedload(User.role))
         .where(User.id == source.recipient_id)
         .execution_options(populate_existing=True)
     )

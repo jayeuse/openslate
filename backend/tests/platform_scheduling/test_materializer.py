@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.openview.reports.models import Report
 from app.systems.openview.reports.schedule_models import ReportSchedule
@@ -92,11 +92,9 @@ def test_unknown_timezone_and_non_utc_instant_fail_closed():
 
 def _subject(
     db: AuditSession, due: datetime
-) -> tuple[User, Report, ReportSchedule, Role, Module, Department]:
-    role = Role(
-        role=f"materializer-{uuid7().hex}",
-        permissions={"records.read": True, "records.write": True},
-    )
+) -> tuple[User, Report, ReportSchedule, str, Module, Department]:
+    # The materializer concerns scheduling; an administrator can always run the report.
+    role = "admin"
     owner = User(
         email=f"materializer-{uuid7().hex}@example.test",
         username=f"materializer_{uuid7().hex[:16]}",
@@ -142,7 +140,6 @@ def _committed_subject(due: datetime) -> Iterator[tuple[Engine, dict[str, UUID]]
                 "owner": owner.id,
                 "report": report.id,
                 "schedule": schedule.id,
-                "role": role.id,
                 "module": module.id,
                 "department": department.id,
             }
@@ -163,7 +160,6 @@ def _committed_subject(due: datetime) -> Iterator[tuple[Engine, dict[str, UUID]]
                     ("module", Module),
                     ("department", Department),
                     ("owner", User),
-                    ("role", Role),
                 ):
                     if (row := cleanup.get(model, ids[key])) is not None:
                         cleanup.delete(row)

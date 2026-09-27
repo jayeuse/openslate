@@ -5,7 +5,6 @@ import pytest
 from uuid6 import uuid7
 
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.manage.audit.context import AuditContext
 from app.systems.manage.audit.listeners import (
     PENDING_CHANGES_KEY,
@@ -25,6 +24,9 @@ from app.systems.sandbox.records.models import Record
 
 FIRST_RECORD_CANARY = token_urlsafe(32)
 SECOND_RECORD_CANARY = token_urlsafe(32)
+
+
+MODULE_ID = uuid7()
 
 
 class FakeSession:
@@ -52,7 +54,7 @@ def test_create_listener_stages_and_writes_create_log() -> None:
         email="alice@example.com",
         username="alice",
         status="active",
-        role_id=uuid7(),
+        role="member",
     )
     session.new = [user]
 
@@ -73,12 +75,11 @@ def test_create_listener_stages_and_writes_create_log() -> None:
         "provider_invitation_operation_id": None,
         "username": "alice",
         "display_name": None,
-        "identity_kind": None,
+        "role": "member",
         "job_title": None,
         "sponsor_user_id": None,
         "expires_at": None,
         "status": "active",
-        "role_id": str(user.role_id),
     }
     assert session.info[REALTIME_INVALIDATION_KEY] == [
         InvalidationEvent(entity="users", entity_id=user.id, administrators_only=True)
@@ -140,7 +141,7 @@ def test_only_a_successful_commit_publishes_the_staged_opaque_invalidations(
 ) -> None:
     session = FakeSession()
     session.info[REALTIME_INVALIDATION_KEY] = [
-        InvalidationEvent(entity="records", capability=Capability.RECORDS_READ),
+        InvalidationEvent(entity="records", module_id=MODULE_ID),
     ]
     published: list[InvalidationEvent] = []
     monkeypatch.setattr(
@@ -151,7 +152,7 @@ def test_only_a_successful_commit_publishes_the_staged_opaque_invalidations(
     broadcast_committed_changes(session)
     broadcast_committed_changes(session)
 
-    assert published == [InvalidationEvent(entity="records", capability=Capability.RECORDS_READ)]
+    assert published == [InvalidationEvent(entity="records", module_id=MODULE_ID)]
     assert REALTIME_INVALIDATION_KEY not in session.info
 
 
@@ -175,7 +176,7 @@ def test_rollback_discards_staged_invalidations_without_publishing(
 def test_commit_deduplicates_staged_invalidations_before_one_publish_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    event = InvalidationEvent(entity="records", capability=Capability.RECORDS_READ)
+    event = InvalidationEvent(entity="records", module_id=MODULE_ID)
     session = FakeSession()
     session.info[REALTIME_INVALIDATION_KEY] = [event, event]
     calls: list[tuple[InvalidationEvent, ...]] = []

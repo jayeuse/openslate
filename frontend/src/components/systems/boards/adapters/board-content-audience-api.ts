@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ApiContractError, apiFetch } from "@/lib/api";
 
 const uuid = z.string().uuid();
-const kindSchema = z.enum(["user", "role", "department"]);
+const kindSchema = z.enum(["user", "department"]);
 const choiceSchema = z
   .object({ id: uuid, label: z.string().min(1).max(150) })
   .strict();

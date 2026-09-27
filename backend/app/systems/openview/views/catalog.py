@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -16,8 +16,9 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.access.users.permissions import Capability
+from app.systems.access.policy.checks import module_filter
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User, UserStatus
 from app.systems.openview.views.access import visible_to
 from app.systems.openview.views.models import SavedView, SavedViewDefault
 from app.systems.openview.views.schemas import (
@@ -31,8 +32,8 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 
 router = APIRouter()
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
+Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -70,13 +71,6 @@ FIELD_SPEC = ListQuerySpec(
     deleted_field=cast(ColumnElement[bool], Field.is_deleted),
     search_fields=(cast(ColumnElement[str], Field.name),),
 )
-ROLE_AUDIENCE_SPEC = ListQuerySpec(
-    sort_fields={AudienceSort.LABEL: cast(ColumnElement[Any], Role.role)},
-    default_sort=AudienceSort.LABEL,
-    tie_breaker=cast(ColumnElement[Any], Role.id),
-    deleted_field=cast(ColumnElement[bool], Role.is_deleted),
-    search_fields=(cast(ColumnElement[str], Role.role),),
-)
 USER_AUDIENCE_SPEC = ListQuerySpec(
     sort_fields={AudienceSort.LABEL: cast(ColumnElement[Any], User.username)},
     default_sort=AudienceSort.LABEL,
@@ -108,7 +102,7 @@ def _commit(db: Session, code: str, message: str) -> None:
 
 @router.get("/data-sources", response_model=StandardListResponse[ViewDataSourceResponse])
 def list_data_sources(
-    _: Reader,
+    user: Reader,
     db: Database,
     params: Annotated[StandardListRequest[DataSourceSort], Query()],
 ) -> StandardListResponse[ViewDataSourceResponse]:
@@ -116,6 +110,7 @@ def list_data_sources(
         db,
         select(Module).where(
             Module.is_deleted.is_(False),
+            module_filter(db, user, AccessLevel.READ, Module.id),
         ),
         params,
         DATA_SOURCE_SPEC,
@@ -137,7 +132,7 @@ def list_data_sources(
 )
 def list_data_source_fields(
     module_id: UUID,
-    _: Reader,
+    user: Reader,
     db: Database,
     params: Annotated[StandardListRequest[FieldSort], Query()],
 ) -> StandardListResponse[ViewFieldResponse]:
@@ -145,6 +140,7 @@ def list_data_source_fields(
         select(Module.id).where(
             Module.id == module_id,
             Module.is_deleted.is_(False),
+            module_filter(db, user, AccessLevel.READ, Module.id),
         )
     )
     if active_module_id is None:
@@ -168,39 +164,25 @@ def list_data_source_fields(
     response_model=StandardListResponse[ViewAudienceOptionResponse],
 )
 def list_audience_options(
-    kind: Literal["role", "user"],
+    kind: Literal["user"],
     _: Reader,
     db: Database,
     params: Annotated[StandardListRequest[AudienceSort], Query()],
 ) -> StandardListResponse[ViewAudienceOptionResponse]:
-    if kind == "role":
-        role_result = execute_standard_list(
-            db,
-            select(Role).where(Role.is_deleted.is_(False)),
-            params,
-            ROLE_AUDIENCE_SPEC,
-        )
-        items = [
-            ViewAudienceOptionResponse(kind="role", id=item.id, label=item.role)
-            for item in role_result.items
-        ]
-        pagination = role_result.pagination
-    else:
-        user_result = execute_standard_list(
-            db,
-            select(User).where(
-                User.status == UserStatus.ACTIVE,
-                User.is_deleted.is_(False),
-            ),
-            params,
-            USER_AUDIENCE_SPEC,
-        )
-        items = [
-            ViewAudienceOptionResponse(kind="user", id=item.id, label=item.username)
-            for item in user_result.items
-        ]
-        pagination = user_result.pagination
-    return StandardListResponse(items=items, pagination=pagination)
+    user_result = execute_standard_list(
+        db,
+        select(User).where(
+            User.status == UserStatus.ACTIVE,
+            User.is_deleted.is_(False),
+        ),
+        params,
+        USER_AUDIENCE_SPEC,
+    )
+    items = [
+        ViewAudienceOptionResponse(kind=kind, id=item.id, label=item.username)
+        for item in user_result.items
+    ]
+    return StandardListResponse(items=items, pagination=user_result.pagination)
 
 
 @router.get("/defaults", response_model=StandardListResponse[ViewDefaultResponse])
@@ -213,7 +195,7 @@ def list_personal_defaults(
         select(SavedView.id)
         .join(Module, Module.id == SavedView.module_id)
         .where(
-            visible_to(user),
+            visible_to(db, user),
             SavedView.is_deleted.is_(False),
             Module.is_deleted.is_(False),
         )
@@ -267,7 +249,7 @@ def set_personal_default(
             SavedView.id == payload.view_id,
             SavedView.module_id == module_id,
             SavedView.is_deleted.is_(False),
-            visible_to(user),
+            visible_to(db, user),
         )
         .with_for_update()
     )

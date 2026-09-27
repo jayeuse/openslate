@@ -7,6 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.systems.access.policy.checks import module_filter, module_level
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.boards.announcement_models import BoardAnnouncement
 from app.systems.boards.attachment_service import (
@@ -33,9 +35,10 @@ def _owner_filter(kind: str, content_id: UUID) -> ColumnElement[bool]:
     )
 
 
-def _available_record(db: Session, record_id: UUID) -> Record:
+def _available_record(db: Session, actor: User, record_id: UUID) -> Record:
+    """A record the actor cannot read is unavailable, the same as a missing one."""
     module_id = db.scalar(select(Record.module_id).where(Record.id == record_id))
-    if module_id is None:
+    if module_id is None or module_level(db, actor, module_id) is None:
         raise error("record_unavailable", "The selected Record is unavailable", 409)
     module = db.scalar(
         select(Module)
@@ -128,6 +131,7 @@ def listed_links(
                     Record.deleted_at.is_(None),
                     Module.is_deleted.is_(False),
                     Module.deleted_at.is_(None),
+                    module_filter(db, actor, AccessLevel.READ, Record.module_id),
                 )
             ).all()
         }
@@ -166,7 +170,7 @@ def link_record(
     )
     if existing is not None:
         raise error("record_link_exists", "Record is already linked to this content")
-    record = _available_record(db, record_id)
+    record = _available_record(db, actor, record_id)
     link = BoardContentRecordLink(
         board_id=board_id,
         event_id=content_id if kind == "event" else None,

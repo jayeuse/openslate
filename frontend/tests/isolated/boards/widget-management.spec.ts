@@ -24,7 +24,7 @@ import {
 const boardId = "00000000-0000-4000-8000-000000000001";
 const moduleId = "00000000-0000-4000-8000-000000000002";
 const widgetId = "00000000-0000-4000-8000-000000000003";
-const roleId = "00000000-0000-4000-8000-000000000004";
+const otherId = "00000000-0000-4000-8000-000000000004";
 const userId = "00000000-0000-4000-8000-000000000005";
 const timestamp = "2026-09-23T00:00:00Z";
 
@@ -71,9 +71,8 @@ test("new summary widget stays private unless Everyone is explicitly selected", 
 
 test("settings edits preserve targeted audience and unrelated config exactly", () => {
   for (const audience of [
-    { kind: "role" as const, roleId, userId: null },
-    { kind: "user" as const, roleId: null, userId },
-    { kind: "private" as const, roleId: null, userId: null },
+    { kind: "user" as const, userId },
+    { kind: "private" as const, userId: null },
   ]) {
     const source = widget(audience);
     const draft = {
@@ -84,11 +83,7 @@ test("settings edits preserve targeted audience and unrelated config exactly", (
     };
     const input = updateInputForWidgetDraft(source, draft);
     expect(input.audience).toEqual(
-      audience.kind === "role"
-        ? { kind: "role", roleId }
-        : audience.kind === "user"
-          ? { kind: "user", userId }
-          : { kind: "private" },
+      audience.kind === "user" ? { kind: "user", userId } : { kind: "private" },
     );
     expect(input.config).toEqual({
       ...source.config,
@@ -101,13 +96,13 @@ test("settings edits preserve targeted audience and unrelated config exactly", (
 });
 
 test("conflict retains a draft only while its source widget is still visible", () => {
-  const source = widget({ kind: "private", roleId: null, userId: null });
+  const source = widget({ kind: "private", userId: null });
   const draft = { ...draftFromBoardWidget(source), name: "Unsaved local name" };
   expect(retainWidgetDraftAfterConflict(draft, [source])).toEqual(draft);
   expect(retainWidgetDraftAfterConflict(draft, [])).toBeNull();
   const changed = {
     ...source,
-    audience: { kind: "everyone" as const, roleId: null, userId: null },
+    audience: { kind: "everyone" as const, userId: null },
   };
   const retained = retainWidgetDraftAfterConflict(draft, [changed]);
   expect(retained).toEqual(draft);
@@ -115,7 +110,7 @@ test("conflict retains a draft only while its source widget is still visible", (
 });
 
 test("Board switch and denial clear private widget metadata and drafts", () => {
-  const source = widget({ kind: "private", roleId: null, userId: null });
+  const source = widget({ kind: "private", userId: null });
   const draft = {
     ...draftFromBoardWidget(source),
     name: "Unsaved private name",
@@ -239,7 +234,7 @@ test("unconfirmed or stale Board VIEW probes never revoke parent detail", async 
 });
 
 test("remote Board archive locks every widget mutation until Board status is restored", () => {
-  const source = widget({ kind: "private", roleId: null, userId: null });
+  const source = widget({ kind: "private", userId: null });
   const page: BoardWidgetPage = {
     items: [source],
     pagination: { limit: 12, offset: 0, count: 1, total: 1, hasMore: false },
@@ -276,7 +271,7 @@ test("remote Board archive locks every widget mutation until Board status is res
 });
 
 test("stale settings conflict retains draft and pauses all mutation controls until cancel", () => {
-  const source = widget({ kind: "role", roleId, userId: null });
+  const source = widget({ kind: "user", userId });
   const originalPage: BoardWidgetPage = {
     items: [source],
     pagination: { limit: 12, offset: 0, count: 1, total: 1, hasMore: false },
@@ -349,7 +344,7 @@ test("management metadata uses Board access and only a complete visible widget p
               refresh: "manual",
               pinned: false,
             },
-            audience: { kind: "private", role_id: null, user_id: null },
+            audience: { kind: "private", user_id: null },
             created_at: timestamp,
             updated_at: timestamp,
           },
@@ -379,9 +374,9 @@ test("management metadata uses Board access and only a complete visible widget p
 });
 
 test("reorder acts on only visible widget IDs in the server page", () => {
-  const first = widget({ kind: "everyone", roleId: null, userId: null });
+  const first = widget({ kind: "everyone", userId: null });
   const second = { ...first, id: userId, position: 2 };
-  const third = { ...first, id: roleId, position: 4 };
+  const third = { ...first, id: otherId, position: 4 };
   const page: BoardWidgetPage = {
     items: [first, second, third],
     pagination: { limit: 12, offset: 0, count: 3, total: 3, hasMore: false },
@@ -400,8 +395,8 @@ test("reorder acts on only visible widget IDs in the server page", () => {
   expect(reorderVisibleWidgetIds(page, first.id, -1)).toBeNull();
 });
 
-test("save uses the listed Board revision and keeps the exact role audience", async () => {
-  const source = widget({ kind: "role", roleId, userId: null });
+test("save uses the listed Board revision and keeps the exact user audience", async () => {
+  const source = widget({ kind: "user", userId });
   const page: BoardWidgetPage = {
     items: [source],
     pagination: { limit: 12, offset: 0, count: 1, total: 1, hasMore: false },
@@ -435,7 +430,7 @@ test("save uses the listed Board revision and keeps the exact role audience", as
             refresh: "manual",
             pinned: false,
           },
-          audience: { kind: "role", role_id: roleId, user_id: null },
+          audience: { kind: "user", user_id: userId },
           created_at: timestamp,
           updated_at: timestamp,
         },
@@ -456,7 +451,7 @@ test("save uses the listed Board revision and keeps the exact role audience", as
           revision: 11,
           widget: expect.objectContaining({
             name: "New title",
-            audience: { kind: "role", role_id: roleId },
+            audience: { kind: "user", user_id: userId },
           }),
         }),
       },
@@ -474,7 +469,7 @@ test("source chooser reads active OpenView catalog page rather than accepting a 
     return Promise.resolve(
       Response.json({
         items: [
-          { id: moduleId, name: "Accepted source", department_id: roleId },
+          { id: moduleId, name: "Accepted source", department_id: otherId },
         ],
         pagination: {
           limit: 100,

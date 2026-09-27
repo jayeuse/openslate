@@ -21,7 +21,6 @@ from app.core.base_model import BaseModel
 class AudienceKind(StrEnum):
     PRIVATE = "private"
     EVERYONE = "everyone"
-    ROLE = "role"
     USER = "user"
 
 
@@ -38,19 +37,17 @@ class SavedView(BaseModel):
     __table_args__ = (
         CheckConstraint("visibility IN ('private', 'workspace')", name="ck_saved_views_visibility"),
         CheckConstraint(
-            "audience_kind IN ('private', 'everyone', 'role', 'user')",
+            "audience_kind IN ('private', 'everyone', 'user')",
             name="ck_saved_views_audience_kind",
         ),
         CheckConstraint("revision > 0", name="ck_saved_views_revision"),
         CheckConstraint(
             "(audience_kind = 'private' AND visibility = 'private' "
-            "AND audience_role_id IS NULL AND audience_user_id IS NULL) OR "
+            "AND audience_user_id IS NULL) OR "
             "(audience_kind = 'everyone' AND visibility = 'workspace' "
-            "AND audience_role_id IS NULL AND audience_user_id IS NULL) OR "
-            "(audience_kind = 'role' AND visibility = 'workspace' "
-            "AND audience_role_id IS NOT NULL AND audience_user_id IS NULL) OR "
+            "AND audience_user_id IS NULL) OR "
             "(audience_kind = 'user' AND visibility = 'workspace' "
-            "AND audience_role_id IS NULL AND audience_user_id IS NOT NULL)",
+            "AND audience_user_id IS NOT NULL)",
             name="ck_saved_views_audience_reference",
         ),
         UniqueConstraint("id", "module_id", name="uq_saved_views_id_module"),
@@ -59,12 +56,6 @@ class SavedView(BaseModel):
             "ix_saved_views_everyone_module_active",
             "module_id",
             postgresql_where=text("audience_kind = 'everyone' AND is_deleted = false"),
-        ),
-        Index(
-            "ix_saved_views_role_module_active",
-            "audience_role_id",
-            "module_id",
-            postgresql_where=text("audience_kind = 'role' AND is_deleted = false"),
         ),
         Index(
             "ix_saved_views_user_module_active",
@@ -86,9 +77,6 @@ class SavedView(BaseModel):
         default=_legacy_audience_default,
         server_default=text("'private'"),
         nullable=False,
-    )
-    audience_role_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="RESTRICT"), nullable=True
     )
     audience_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True

@@ -48,8 +48,6 @@ export type {
 };
 
 function wireAudience(audience: z.output<typeof audienceInput>) {
-  if (audience.kind === "role")
-    return { kind: audience.kind, role_id: audience.roleId };
   if (audience.kind === "user")
     return { kind: audience.kind, user_id: audience.userId };
   if (audience.kind === "department")

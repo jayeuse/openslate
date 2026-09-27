@@ -19,7 +19,6 @@ const draft: BoardAnnouncement = {
   links: [],
   audience: {
     kind: "department",
-    roleId: null,
     userId: null,
     departmentId: "00000000-0000-4000-8000-000000000004",
   },
@@ -255,7 +254,6 @@ test("published confirmation renders only immutable displayed content", () => {
     body: "Immutable display text.",
     audience: {
       kind: "everyone",
-      roleId: null,
       userId: null,
       departmentId: null,
     },

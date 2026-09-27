@@ -16,8 +16,6 @@ if __package__:
         _LOCK_APPLICATION_STATEMENT,
         _RESET_ADVISORY_LOCK_KEY,
         _SCANNER_LEADER_LOCK_KEY,
-        ACCESS_POLICY_DEFAULTS_ID,
-        ACCESS_POLICY_VERSION_ID,
         DELETE_ORDER,
         NON_PRESERVED_TABLES,
         ResetError,
@@ -26,11 +24,8 @@ if __package__:
     )
     from .reset_planning import (  # type: ignore[import-not-found]
         _expected_snapshot_payload,
-        _read_access_policy_defaults,
-        _read_access_policy_version,
         _read_alembic_head,
         _read_profile,
-        _read_roles,
         _read_workspace,
         _single_value,
         build_reset_plan,
@@ -41,8 +36,6 @@ else:
         _LOCK_APPLICATION_STATEMENT,
         _RESET_ADVISORY_LOCK_KEY,
         _SCANNER_LEADER_LOCK_KEY,
-        ACCESS_POLICY_DEFAULTS_ID,
-        ACCESS_POLICY_VERSION_ID,
         DELETE_ORDER,
         NON_PRESERVED_TABLES,
         ResetError,
@@ -51,11 +44,8 @@ else:
     )
     from reset_planning import (
         _expected_snapshot_payload,
-        _read_access_policy_defaults,
-        _read_access_policy_version,
         _read_alembic_head,
         _read_profile,
-        _read_roles,
         _read_workspace,
         _single_value,
         build_reset_plan,
@@ -99,39 +89,13 @@ def _reset_sandbox_workspace(connection: Any) -> None:
     )
 
 
-def _reset_access_policy_singletons(connection: Any, plan: ResetPlan) -> None:
-    """Restore seeded Access policy values without replacing either singleton row."""
-    _execute(
-        connection,
-        """UPDATE public.access_policy_defaults
-              SET singleton_key = 'workspace', default_role_id = %s,
-                  invitation_expiry_days = 7, guest_duration_days = 30,
-                  service_duration_days = 90, default_deny = true,
-                  require_guest_sponsor = true, require_service_owner = true,
-                  revision = 1, deleted_at = NULL, is_deleted = false,
-                  updated_at = now(), performed_by = NULL
-            WHERE id = %s""",
-        (plan.preserved_member_role_id, ACCESS_POLICY_DEFAULTS_ID),
-    )
-    _execute(
-        connection,
-        """UPDATE public.access_policy_versions
-              SET singleton_key = 'workspace', revision = 1, deleted_at = NULL,
-                  is_deleted = false, updated_at = now(), performed_by = NULL
-            WHERE id = %s""",
-        (ACCESS_POLICY_VERSION_ID,),
-    )
-
-
 def _validate_postconditions(
     connection: Any,
     plan: ResetPlan,
     *,
     read_profile_fn: Callable[..., Any] | None = None,
-    read_roles_fn: Callable[..., Any] | None = None,
 ) -> None:
     read_profile = read_profile_fn or _read_profile
-    read_roles = read_roles_fn or _read_roles
     count_statements = dict(_COUNT_STATEMENTS)
     for table_name in NON_PRESERVED_TABLES:
         if _single_value(connection, count_statements[table_name]) != 0:
@@ -139,13 +103,6 @@ def _validate_postconditions(
 
     if _single_value(connection, count_statements["users"]) != 1:
         raise ResetError("The reset postcondition was not met")
-    if _single_value(connection, count_statements["roles"]) != 2:
-        raise ResetError("The reset postcondition was not met")
-    if (
-        _single_value(connection, count_statements["access_policy_defaults"]) != 1
-        or _single_value(connection, count_statements["access_policy_versions"]) != 1
-    ):
-        raise ResetError("The Access policy singleton reset postcondition was not met")
     if (
         _single_value(connection, count_statements["sandbox_documents"]) != 1
         or _single_value(connection, count_statements["sandbox_versions"]) != 0
@@ -156,23 +113,9 @@ def _validate_postconditions(
     if (
         stable_snapshot_payload(profile)
         != _expected_snapshot_payload(plan.profile_snapshot, plan.preserved_admin_id)
-        or profile.role_id != plan.preserved_admin_role_id
+        or profile.role != "admin"
     ):
         raise ResetError("The preserved administrator profile changed")
-
-    roles = read_roles(connection)
-    if {role.id for role in roles} != {
-        plan.preserved_admin_role_id,
-        plan.preserved_member_role_id,
-    }:
-        raise ResetError("The preserved role set changed")
-    role_by_id = {role.id: role for role in roles}
-    admin_after = stable_snapshot_payload(role_by_id[plan.preserved_admin_role_id])
-    admin_expected = _expected_snapshot_payload(plan.admin_role_snapshot, plan.preserved_admin_id)
-    member_after = stable_snapshot_payload(role_by_id[plan.preserved_member_role_id])
-    member_expected = _expected_snapshot_payload(plan.member_role_snapshot, plan.preserved_admin_id)
-    if admin_after != admin_expected or member_after != member_expected:
-        raise ResetError("The preserved roles changed")
 
     workspace = _read_workspace(connection)
     if (
@@ -188,42 +131,13 @@ def _validate_postconditions(
         or workspace.timezone != "UTC"
         or workspace.locale != "en-US"
         or workspace.revision != 1
+        or workspace.invitation_expiry_days != 7
+        or workspace.guest_duration_days != 30
         or workspace.deleted_at is not None
         or workspace.is_deleted is not False
         or workspace.performed_by is not None
     ):
         raise ResetError("The workspace reset postcondition was not met")
-
-    policy_defaults = _read_access_policy_defaults(connection)
-    if (
-        policy_defaults.id != plan.access_policy_defaults_snapshot.id
-        or policy_defaults.singleton_key != "workspace"
-        or policy_defaults.created_at != plan.access_policy_defaults_snapshot.created_at
-        or policy_defaults.default_role_id != plan.preserved_member_role_id
-        or policy_defaults.invitation_expiry_days != 7
-        or policy_defaults.guest_duration_days != 30
-        or policy_defaults.service_duration_days != 90
-        or policy_defaults.default_deny is not True
-        or policy_defaults.require_guest_sponsor is not True
-        or policy_defaults.require_service_owner is not True
-        or policy_defaults.revision != 1
-        or policy_defaults.deleted_at is not None
-        or policy_defaults.is_deleted is not False
-        or policy_defaults.performed_by is not None
-    ):
-        raise ResetError("The Access policy defaults reset postcondition was not met")
-
-    policy_version = _read_access_policy_version(connection)
-    if (
-        policy_version.id != plan.access_policy_version_snapshot.id
-        or policy_version.singleton_key != "workspace"
-        or policy_version.created_at != plan.access_policy_version_snapshot.created_at
-        or policy_version.revision != 1
-        or policy_version.deleted_at is not None
-        or policy_version.is_deleted is not False
-        or policy_version.performed_by is not None
-    ):
-        raise ResetError("The Access policy version reset postcondition was not met")
 
     if _read_alembic_head(connection) != plan.alembic_head:
         raise ResetError("The database migration head changed")
@@ -239,7 +153,6 @@ def apply_reset(
     storage: Any | None = None,
     auth: Any | None = None,
     read_profile_fn: Callable[..., Any] | None = None,
-    read_roles_fn: Callable[..., Any] | None = None,
     build_plan_fn: Callable[..., ResetPlan] | None = None,
 ) -> None:
     """Apply one freshly confirmed plan, or do nothing for the default dry run."""
@@ -316,17 +229,17 @@ def apply_reset(
             """UPDATE public.workspace_profiles SET display_name = 'OpenSlate',
                legal_name = NULL, description = NULL, contact_email = NULL,
                contact_phone = NULL, postal_address = NULL,
-               logo_file_id = NULL, timezone = 'UTC', locale = 'en-US', revision = 1,
+               logo_file_id = NULL, timezone = 'UTC', locale = 'en-US',
+               invitation_expiry_days = 7, guest_duration_days = 30, revision = 1,
                performed_by = NULL WHERE id = %s""",
             (locked_plan.workspace_snapshot.id,),
         )
         for table_name in DELETE_ORDER:
             _execute(connection, f"DELETE FROM public.{table_name}")
-        _reset_access_policy_singletons(connection, locked_plan)
         _reset_sandbox_workspace(connection)
         _execute(
             connection,
-            "DELETE FROM public.users WHERE identity_kind = 'guest' AND id <> %s",
+            "DELETE FROM public.users WHERE role = 'guest' AND id <> %s",
             (locked_plan.preserved_admin_id,),
         )
         _execute(
@@ -334,16 +247,10 @@ def apply_reset(
             "DELETE FROM public.users WHERE id <> %s",
             (locked_plan.preserved_admin_id,),
         )
-        _execute(
-            connection,
-            "DELETE FROM public.roles WHERE id NOT IN (%s, %s)",
-            (locked_plan.preserved_admin_role_id, locked_plan.preserved_member_role_id),
-        )
         _validate_postconditions(
             connection,
             locked_plan,
             read_profile_fn=read_profile_fn,
-            read_roles_fn=read_roles_fn,
         )
         sql_commit_started = True
         connection.commit()

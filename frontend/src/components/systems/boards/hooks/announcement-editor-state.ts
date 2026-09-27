@@ -17,8 +17,6 @@ export type AnnouncementEditorForm = {
 function audienceSelection(
   audience: BoardAnnouncement["audience"],
 ): AnnouncementEditorForm["audience"] {
-  if (audience.kind === "role")
-    return { kind: "role", targetId: audience.roleId };
   if (audience.kind === "user")
     return { kind: "user", targetId: audience.userId };
   if (audience.kind === "department")
@@ -33,8 +31,6 @@ export function audienceInput(
     return { kind: audience.kind };
   if (!("targetId" in audience) || !audience.targetId)
     throw new ApiContractError();
-  if (audience.kind === "role")
-    return { kind: "role", roleId: audience.targetId };
   if (audience.kind === "user")
     return { kind: "user", userId: audience.targetId };
   return { kind: "department", departmentId: audience.targetId };

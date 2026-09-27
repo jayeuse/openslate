@@ -90,9 +90,6 @@ function inputAudience(widget: BoardWidget): BoardWidgetInput["audience"] {
       return { kind: "private" };
     case "everyone":
       return { kind: "everyone" };
-    case "role":
-      if (!widget.audience.roleId) throw new ApiContractError();
-      return { kind: "role", roleId: widget.audience.roleId };
     case "user":
       if (!widget.audience.userId) throw new ApiContractError();
       return { kind: "user", userId: widget.audience.userId };

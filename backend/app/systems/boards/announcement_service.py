@@ -5,15 +5,16 @@ from typing import Any, cast
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, exists, func, or_, select, true
+from sqlalchemy import and_, func, or_, select, true
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 from uuid6 import uuid7
 
 from app.systems.access.identity.eligibility import identity_eligible_clause
+from app.systems.access.policy.scope import department_reader_clause
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import Role, User, UserDepartment, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.access import can_access_board, can_read_board_grants
 from app.systems.boards.announcement_inbox import stage_publication_inbox
 from app.systems.boards.announcement_models import (
@@ -69,7 +70,6 @@ def set_content(item: BoardAnnouncement, content: AnnouncementContent) -> None:
     item.links = [link.model_dump() for link in content.links]
     item.expires_at, item.pinned = content.expires_at, content.pinned
     item.audience_kind = content.audience.kind
-    item.audience_role_id = content.audience.role_id
     item.audience_user_id = content.audience.user_id
     item.audience_department_id = content.audience.department_id
 
@@ -83,7 +83,6 @@ def current_content(item: BoardAnnouncement) -> AnnouncementContent:
         pinned=item.pinned,
         audience=AnnouncementAudience(
             kind=cast(Any, item.audience_kind),
-            role_id=item.audience_role_id,
             user_id=item.audience_user_id,
             department_id=item.audience_department_id,
         ),
@@ -101,7 +100,6 @@ def fingerprint(
         body=item.body,
         links=item.links,
         audience_kind=item.audience_kind,
-        audience_role_id=item.audience_role_id,
         audience_user_id=item.audience_user_id,
         audience_department_id=item.audience_department_id,
         expires_at=item.expires_at,
@@ -218,7 +216,6 @@ def publish_locked(
         body=item.body,
         links=[dict(link) for link in item.links],
         audience_kind=item.audience_kind,
-        audience_role_id=item.audience_role_id,
         audience_user_id=item.audience_user_id,
         audience_department_id=item.audience_department_id,
         published_at=published_at,
@@ -276,73 +273,42 @@ def not_found() -> HTTPException:
 
 
 def audience_clause(model: AnnouncementModel, actor: User) -> ColumnElement[bool]:
-    membership = exists(
-        select(UserDepartment.id)
-        .join(Department, Department.id == UserDepartment.department_id)
-        .join(User, User.id == UserDepartment.user_id)
-        .where(
-            UserDepartment.user_id == actor.id,
-            UserDepartment.department_id == model.audience_department_id,
-            UserDepartment.is_deleted.is_(False),
-            UserDepartment.deleted_at.is_(None),
-            Department.is_deleted.is_(False),
-            Department.deleted_at.is_(None),
-            User.status == UserStatus.ACTIVE.value,
-            User.is_deleted.is_(False),
-            User.deleted_at.is_(None),
-            established_user_clause(),
-        )
-    )
-    no_target = and_(
-        model.audience_role_id.is_(None),
-        model.audience_user_id.is_(None),
-        model.audience_department_id.is_(None),
-    )
+    """Everyone, the author, one user, or the readers of one department."""
     return or_(
-        and_(model.audience_kind == "everyone", no_target),
-        and_(model.audience_kind == "author", model.author_id == actor.id, no_target),
         and_(
-            model.audience_kind == "role",
-            model.audience_role_id == actor.role_id,
+            model.audience_kind == "everyone",
+            model.audience_user_id.is_(None),
+            model.audience_department_id.is_(None),
+        ),
+        and_(
+            model.audience_kind == "author",
+            model.author_id == actor.id,
             model.audience_user_id.is_(None),
             model.audience_department_id.is_(None),
         ),
         and_(
             model.audience_kind == "user",
             model.audience_user_id == actor.id,
-            model.audience_role_id.is_(None),
             model.audience_department_id.is_(None),
         ),
         and_(
             model.audience_kind == "department",
-            membership,
-            model.audience_role_id.is_(None),
             model.audience_user_id.is_(None),
+            department_reader_clause(actor, model.audience_department_id),
         ),
     )
 
 
 def active_audience_target(db: Session, audience: AnnouncementAudience) -> None:
-    if audience.kind == "role":
-        target = db.scalar(
-            select(Role.id)
-            .where(
-                Role.id == audience.role_id, Role.is_deleted.is_(False), Role.deleted_at.is_(None)
-            )
-            .with_for_update()
-        )
-    elif audience.kind == "user":
+    if audience.kind == "user":
         target = db.scalar(
             select(User.id)
-            .join(Role, Role.id == User.role_id)
             .where(
                 User.id == audience.user_id,
                 User.status == UserStatus.ACTIVE.value,
                 User.is_deleted.is_(False),
                 User.deleted_at.is_(None),
                 identity_eligible_clause(),
-                Role.is_deleted.is_(False),
-                Role.deleted_at.is_(None),
                 established_user_clause(),
             )
             .with_for_update(of=User)
@@ -463,7 +429,6 @@ def commit(db: Session) -> None:
 def audience(item: BoardAnnouncement | BoardAnnouncementRevision) -> AnnouncementAudience:
     return AnnouncementAudience(
         kind=cast(Any, item.audience_kind),
-        role_id=item.audience_role_id,
         user_id=item.audience_user_id,
         department_id=item.audience_department_id,
     )

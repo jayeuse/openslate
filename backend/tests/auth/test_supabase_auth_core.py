@@ -15,7 +15,7 @@ from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserRole, UserStatus
 
 
 def _settings() -> SimpleNamespace:
@@ -232,8 +232,7 @@ def test_provider_session_admission_requires_explicit_subject_mapping(
         email="person@example.test",
         username="person",
         status=UserStatus.ACTIVE.value,
-        role_id=uuid4(),
-        role=Role(role=UserRole.MEMBER, permissions={}),
+        role=UserRole.MEMBER,
     )
     db = Mock(spec=Session)
     db.scalar.return_value = user
@@ -294,8 +293,7 @@ def test_valid_provider_jwt_still_requires_live_local_and_provider_sessions() ->
         email="person@example.test",
         username="person",
         status=UserStatus.ACTIVE.value,
-        role_id=uuid4(),
-        role=Role(role=UserRole.MEMBER, permissions={}),
+        role=UserRole.MEMBER,
     )
     db = Mock(spec=Session)
     db.scalar.side_effect = [local_session, user]
@@ -313,7 +311,7 @@ def test_valid_provider_jwt_still_requires_live_local_and_provider_sessions() ->
     assert resolved is not None
     assert resolved[0] is user
     assert resolved[1] is local_session
-    assert user.role.role == UserRole.MEMBER.value
+    assert user.role == UserRole.MEMBER.value
 
     local_session.revoked_at = datetime.now(UTC)
     db.scalar.side_effect = [local_session]
@@ -351,8 +349,7 @@ def test_concurrent_refresh_reuses_current_provider_token_and_stable_handle(
         email="person@example.test",
         username="person",
         status=UserStatus.ACTIVE.value,
-        role_id=uuid4(),
-        role=Role(role=UserRole.MEMBER, permissions={}),
+        role=UserRole.MEMBER,
     )
     session = IdentitySession(
         id=uuid4(),
@@ -406,8 +403,7 @@ def test_api_dependency_requires_bound_provider_and_rejects_mixed_credentials(
         email="person@example.test",
         username="person",
         status=UserStatus.ACTIVE.value,
-        role_id=uuid4(),
-        role=Role(role=UserRole.MEMBER, permissions={}),
+        role=UserRole.MEMBER,
     )
     session = IdentitySession(
         id=uuid4(),
@@ -469,8 +465,7 @@ def test_ambiguous_refresh_persistence_failure_revokes_the_local_session(
         email="person@example.test",
         username="person",
         status=UserStatus.ACTIVE.value,
-        role_id=uuid4(),
-        role=Role(role=UserRole.MEMBER, permissions={}),
+        role=UserRole.MEMBER,
     )
     session = IdentitySession(
         id=uuid4(),

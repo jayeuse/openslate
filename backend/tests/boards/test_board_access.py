@@ -8,42 +8,28 @@ import pytest
 from sqlalchemy import CheckConstraint, Index, Text
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.access import can_access_board
 from app.systems.boards.models import Board, BoardGrant
 
 
 def principal(
     *,
-    role_name: str = "member",
-    permissions: dict[str, bool] | None = None,
+    role: str = "member",
     status: str = "active",
     user_deleted: bool = False,
-    role_deleted: bool = False,
-    role_present: bool = True,
     expires_at: datetime | None = None,
 ) -> User:
-    role_id = uuid7()
     user_id = uuid7()
-    role = (
-        Role(
-            id=role_id,
-            role=role_name,
-            permissions=permissions or {},
-            is_deleted=role_deleted,
-            deleted_at=None,
-        )
-        if role_present
-        else None
-    )
+    guest = role == "guest"
     return User(
         id=user_id,
         email=f"{user_id.hex}@example.com",
         username=f"board_test_{user_id.hex[:12]}",
-        role_id=role_id,
         role=role,
+        sponsor_user_id=uuid7() if guest else None,
         status=status,
-        expires_at=expires_at,
+        expires_at=expires_at or (datetime.now(UTC) + timedelta(days=1) if guest else None),
         is_deleted=user_deleted,
         deleted_at=None,
     )
@@ -63,7 +49,6 @@ def grant(
     *,
     principal_type: str = "everyone",
     user_id: UUID | None = None,
-    role_id: UUID | None = None,
     permission: str = "view",
     effect: str = "allow",
     deleted: bool = False,
@@ -72,7 +57,6 @@ def grant(
         board_id=board_id,
         principal_type=principal_type,
         principal_user_id=user_id,
-        principal_role_id=role_id,
         permission=permission,
         effect=effect,
         is_deleted=deleted,
@@ -81,15 +65,15 @@ def grant(
 
 
 def test_board_acl_defaults_to_deny() -> None:
-    actor = principal(permissions={"records.read": True, "records.write": True})
+    actor = principal()
     target = board()
 
     assert not can_access_board(target, actor, "view", [])
     assert not can_access_board(target, actor, "edit", [])
 
 
-def test_board_grants_still_require_the_matching_global_capability() -> None:
-    actor = principal(permissions={"records.read": True})
+def test_board_grants_never_let_a_guest_edit_or_manage() -> None:
+    actor = principal(role="guest")
     target = board()
     grants = [grant(target.id, permission="manage")]
 
@@ -98,28 +82,11 @@ def test_board_grants_still_require_the_matching_global_capability() -> None:
     assert not can_access_board(target, actor, "manage", grants)
 
 
-def test_write_gate_is_independent_of_read_gate_for_board_mutations() -> None:
-    actor = principal(permissions={"records.write": True})
-    target = board()
-    grants = [grant(target.id, permission="manage")]
-
-    assert can_access_board(target, actor, "edit", grants)
-    assert can_access_board(target, actor, "manage", grants)
-    assert not can_access_board(target, actor, "view", grants)
-
-
-def test_identity_allow_outranks_role_and_everyone_denials() -> None:
-    actor = principal(permissions={"records.read": True})
+def test_identity_allow_outranks_everyone_denial() -> None:
+    actor = principal(role="guest")
     target = board()
     grants = [
         grant(target.id, permission="view", effect="deny"),
-        grant(
-            target.id,
-            principal_type="role",
-            role_id=actor.role_id,
-            permission="view",
-            effect="deny",
-        ),
         grant(
             target.id,
             principal_type="user",
@@ -132,17 +99,11 @@ def test_identity_allow_outranks_role_and_everyone_denials() -> None:
     assert can_access_board(target, actor, "view", grants)
 
 
-def test_identity_manage_allow_outranks_role_view_denial() -> None:
-    actor = principal(permissions={"records.read": True, "records.write": True})
+def test_identity_manage_allow_outranks_everyone_view_denial() -> None:
+    actor = principal()
     target = board()
     grants = [
-        grant(
-            target.id,
-            principal_type="role",
-            role_id=actor.role_id,
-            permission="view",
-            effect="deny",
-        ),
+        grant(target.id, permission="view", effect="deny"),
         grant(
             target.id,
             principal_type="user",
@@ -156,7 +117,7 @@ def test_identity_manage_allow_outranks_role_view_denial() -> None:
 
 
 def test_deny_wins_when_allow_and_deny_have_the_same_identity_priority() -> None:
-    actor = principal(permissions={"records.read": True})
+    actor = principal(role="guest")
     target = board()
     grants = [
         grant(
@@ -175,33 +136,6 @@ def test_deny_wins_when_allow_and_deny_have_the_same_identity_priority() -> None
         ),
     ]
 
-    assert not can_access_board(target, actor, "view", grants)
-
-
-def test_role_allow_outranks_everyone_denial_but_same_role_deny_wins() -> None:
-    actor = principal(permissions={"records.read": True})
-    target = board()
-    grants = [
-        grant(target.id, permission="view", effect="deny"),
-        grant(
-            target.id,
-            principal_type="role",
-            role_id=actor.role_id,
-            permission="view",
-            effect="allow",
-        ),
-    ]
-
-    assert can_access_board(target, actor, "view", grants)
-    grants.append(
-        grant(
-            target.id,
-            principal_type="role",
-            role_id=actor.role_id,
-            permission="view",
-            effect="deny",
-        )
-    )
     assert not can_access_board(target, actor, "view", grants)
 
 
@@ -222,7 +156,7 @@ def test_higher_board_grants_inherit_lower_actions(
     action: str,
     expected: bool,
 ) -> None:
-    actor = principal(permissions={"records.read": True, "records.write": True})
+    actor = principal()
     target = board()
 
     assert can_access_board(
@@ -235,7 +169,7 @@ def test_higher_board_grants_inherit_lower_actions(
 
 @pytest.mark.parametrize("action", ["edit", "manage"])
 def test_explicit_view_denial_blocks_higher_actions(action: str) -> None:
-    actor = principal(permissions={"records.read": True, "records.write": True})
+    actor = principal()
     target = board()
     grants = [
         grant(
@@ -258,9 +192,9 @@ def test_explicit_view_denial_blocks_higher_actions(action: str) -> None:
 
 
 def test_creator_and_active_admin_receive_implicit_management() -> None:
-    creator = principal(permissions={"records.read": True, "records.write": True})
+    creator = principal()
     target = board(owner_id=creator.id)
-    admin = principal(role_name="admin")
+    admin = principal(role="admin")
 
     for actor in (creator, admin):
         for action in ("view", "edit", "manage"):
@@ -273,10 +207,7 @@ def test_creator_and_admin_authority_cannot_be_revoked_by_identity_denials(
     action: str,
     principal_kind: str,
 ) -> None:
-    actor = principal(
-        role_name="admin" if principal_kind == "admin" else "member",
-        permissions={"records.read": True, "records.write": True},
-    )
+    actor = principal(role="admin" if principal_kind == "admin" else "member")
     target = board(owner_id=actor.id if principal_kind == "creator" else None)
     denials = [
         grant(
@@ -298,8 +229,8 @@ def test_creator_and_admin_authority_cannot_be_revoked_by_identity_denials(
     assert can_access_board(target, actor, action, denials)
 
 
-def test_creator_authority_still_requires_the_matching_global_capability() -> None:
-    creator = principal(permissions={"records.read": True})
+def test_a_guest_creator_keeps_only_view() -> None:
+    creator = principal(role="guest")
     target = board(owner_id=creator.id)
 
     assert can_access_board(target, creator, "view", [])
@@ -308,7 +239,7 @@ def test_creator_authority_still_requires_the_matching_global_capability() -> No
 
 
 def test_inactive_admin_cannot_use_non_revocable_board_authority() -> None:
-    admin = principal(role_name="admin", status="disabled")
+    admin = principal(role="admin", status="disabled")
     target = board()
 
     assert not can_access_board(target, admin, "manage", [])
@@ -317,16 +248,12 @@ def test_inactive_admin_cannot_use_non_revocable_board_authority() -> None:
 @pytest.mark.parametrize(
     "actor",
     [
-        principal(status="disabled", permissions={"records.read": True}),
-        principal(user_deleted=True, permissions={"records.read": True}),
-        principal(role_deleted=True, permissions={"records.read": True}),
-        principal(role_present=False, permissions={"records.read": True}),
-        principal(
-            expires_at=datetime.now(UTC) - timedelta(minutes=1),
-            permissions={"records.read": True},
-        ),
+        principal(status="disabled"),
+        principal(user_deleted=True),
+        principal(role="owner"),
+        principal(expires_at=datetime.now(UTC) - timedelta(minutes=1)),
     ],
-    ids=["disabled", "deleted-user", "deleted-role", "unresolved-role", "expired-user"],
+    ids=["disabled", "deleted-user", "unknown-role", "expired-user"],
 )
 def test_inactive_or_unresolved_principals_fail_closed(actor: User) -> None:
     target = board()
@@ -335,11 +262,11 @@ def test_inactive_or_unresolved_principals_fail_closed(actor: User) -> None:
 
 
 def test_unresolved_grantees_deleted_boards_and_unknown_actions_fail_closed() -> None:
-    actor = principal(permissions={"records.read": True, "records.write": True})
+    actor = principal()
     target = board()
     malformed_grantees = [
         grant(target.id, principal_type="user"),
-        grant(target.id, principal_type="role", role_id=None),
+        grant(target.id, principal_type="role"),
         grant(target.id, principal_type="mystery"),
         grant(target.id, deleted=True),
     ]
@@ -382,7 +309,6 @@ def test_board_schema_declares_domain_checks_foreign_keys_and_active_decision_un
     assert next(iter(Board.__table__.c.owner_id.foreign_keys)).ondelete == "RESTRICT"
     assert {
         "uq_board_grants_active_user_decision",
-        "uq_board_grants_active_role_decision",
         "uq_board_grants_active_everyone_decision",
     } <= grant_indexes.keys()
     assert all(
@@ -391,14 +317,12 @@ def test_board_schema_declares_domain_checks_foreign_keys_and_active_decision_un
         in str(grant_indexes[name].dialect_options["postgresql"]["where"])
         for name in (
             "uq_board_grants_active_user_decision",
-            "uq_board_grants_active_role_decision",
-            "uq_board_grants_active_everyone_decision",
+                "uq_board_grants_active_everyone_decision",
         )
     )
     expected_foreign_keys = {
         "board_id": "boards.id",
         "principal_user_id": "users.id",
-        "principal_role_id": "roles.id",
     }
     for column_name, target in expected_foreign_keys.items():
         foreign_key = next(iter(BoardGrant.__table__.c[column_name].foreign_keys))

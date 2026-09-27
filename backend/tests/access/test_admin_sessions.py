@@ -16,7 +16,7 @@ from app.common.listing import ListQueryResult, PaginationMetadata
 from app.core.database import get_db
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_session, revoke_user_sessions
-from app.systems.access.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.access.users.sessions_router import router
 
 
@@ -28,8 +28,7 @@ def _admin_identity() -> tuple[User, CurrentIdentity]:
         email="admin@example.test",
         username="admin",
         status=UserStatus.ACTIVE.value,
-        role_id=uuid7(),
-        role=Role(role=UserRole.ADMIN, permissions={}),
+        role=UserRole.ADMIN.value,
     )
     return admin, CurrentIdentity(admin, current_session_id, False, False)
 
@@ -43,14 +42,12 @@ def _application(db: Session, identity: CurrentIdentity):
 
 
 def _target_user(user_id) -> User:
-    role = Role(id=uuid7(), role=UserRole.MEMBER, permissions={})
     return User(
         id=user_id,
         email="target@example.test",
         username="target",
         status=UserStatus.ACTIVE.value,
-        role_id=role.id,
-        role=role,
+        role=UserRole.MEMBER.value,
     )
 
 
@@ -295,9 +292,8 @@ def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(monkey
     admin, identity = _admin_identity()
     target_id = uuid7()
     member = _target_user(admin.id)
-    admin_role = Role(id=uuid7(), role=UserRole.ADMIN, permissions={})
     db = Mock(spec=Session)
-    db.scalar.side_effect = [admin_role, member]
+    db.scalar.side_effect = [member]
     application = _application(db, CurrentIdentity(member, identity.session_id, False, False))
 
     with TestClient(application, raise_server_exceptions=False) as client:

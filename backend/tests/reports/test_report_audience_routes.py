@@ -5,7 +5,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User
 from app.systems.openview.reports.models import Report, ReportRun
 from tests.reports.test_report_routes import _actor, _client, _module, _recipe
 from tests.reports.test_report_run_routes import _RunFixture
@@ -14,7 +13,7 @@ pytest_plugins = ("tests.reports.test_report_run_routes",)
 pytestmark = pytest.mark.integration
 
 
-def test_report_owner_manages_recipe_when_role_or_user_audience_excludes_them(
+def test_report_owner_manages_recipe_when_a_user_audience_excludes_them(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
@@ -29,16 +28,12 @@ def test_report_owner_manages_recipe_when_role_or_user_audience_excludes_them(
                 "module_id": str(module.id),
                 "name": "Audience report",
                 "recipe": _recipe(field),
-                "audience": {"kind": "role", "role_id": str(recipient.role_id)},
+                "audience": {"kind": "everyone"},
             },
         )
         assert created.status_code == 201, created.text
         report_id = created.json()["id"]
-        assert created.json()["audience"] == {
-            "kind": "role",
-            "role_id": str(recipient.role_id),
-            "user_id": None,
-        }
+        assert created.json()["audience"] == {"kind": "everyone", "user_id": None}
         assert client.get(f"/api/reports/{report_id}").status_code == 200
         assert client.get("/api/reports").json()["pagination"]["total"] == 1
 
@@ -75,11 +70,9 @@ def test_report_audience_rejects_unavailable_targets_and_bad_payloads(
     owner = _actor(db, permissions={"records.read": True, "records.write": True})
     disabled = _actor(db)
     disabled.status = "disabled"
-    deleted_role = Role(role=f"deleted-report-role-{uuid7().hex}", permissions={})
-    deleted_role.is_deleted = True
-    db.add(deleted_role)
     db.flush()
     module, field = _module(db)
+    no_access = _actor(db, permissions={"records.read": True, "records.write": True})
     with _client(db, owner) as client:
         created = client.post(
             "/api/reports",
@@ -87,14 +80,9 @@ def test_report_audience_rejects_unavailable_targets_and_bad_payloads(
         )
         assert created.status_code == 201
         report_id = created.json()["id"]
-        assert created.json()["audience"] == {
-            "kind": "private",
-            "role_id": None,
-            "user_id": None,
-        }
+        assert created.json()["audience"] == {"kind": "private", "user_id": None}
         for audience in (
-            {"kind": "role", "role_id": str(deleted_role.id)},
-            {"kind": "role", "role_id": str(uuid7())},
+            {"kind": "user", "user_id": str(no_access.id)},
             {"kind": "user", "user_id": str(disabled.id)},
             {"kind": "user", "user_id": str(uuid7())},
         ):
@@ -103,11 +91,15 @@ def test_report_audience_rejects_unavailable_targets_and_bad_payloads(
             )
             assert denied.status_code == 409
             assert denied.json()["detail"]["code"] == "audience_invalid"
-        malformed = client.patch(
-            f"/api/reports/{report_id}",
-            json={"revision": 1, "audience": {"kind": "private", "user_id": str(owner.id)}},
-        )
-        assert malformed.status_code == 422
+        for malformed_audience in (
+            {"kind": "private", "user_id": str(owner.id)},
+            {"kind": "role", "role_id": str(uuid7())},
+        ):
+            malformed = client.patch(
+                f"/api/reports/{report_id}",
+                json={"revision": 1, "audience": malformed_audience},
+            )
+            assert malformed.status_code == 422
         stored = db.get(Report, report_id)
         assert stored is not None and stored.revision == 1 and stored.audience_kind == "private"
 
@@ -122,15 +114,10 @@ def test_excluded_report_owner_cannot_run_or_read_retained_outputs(
     assert created.status_code == 201, created.text
     run_id = created.json()["id"]
 
-    with Session(fixture.owner_engine) as db:
-        outsider = db.get(User, fixture.outsider_id)
-        assert outsider is not None
-        recipient_role_id = outsider.role_id
-
     changed = fixture.client.patch(
         f"/api/reports/{fixture.report_id}",
         headers=fixture.headers(),
-        json={"revision": 1, "audience": {"kind": "role", "role_id": str(recipient_role_id)}},
+        json={"revision": 1, "audience": {"kind": "user", "user_id": str(fixture.outsider_id)}},
     )
     assert changed.status_code == 200, changed.text
     assert (

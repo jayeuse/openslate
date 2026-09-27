@@ -5,8 +5,6 @@ import re
 from dataclasses import dataclass
 from uuid import UUID
 
-from app.systems.access.users.permissions import Capability
-
 _ENTITY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 RESYNC_ENTITY = "resync"
 PRIVATE_NOTIFICATION_ENTITY = "in_app_notifications"
@@ -29,20 +27,25 @@ _PRIVATE_INVALIDATION_ENTITIES = frozenset(
         "board_announcement_personal_states",
     }
 )
-_ADMINISTRATOR_ENTITIES = frozenset({"audit_logs", "files", "roles", "security_events", "users"})
-_ALL_AUTHENTICATED_ENTITIES = frozenset({"workspace_profiles"})
+_ADMINISTRATOR_ENTITIES = frozenset({"audit_logs", "files", "security_events", "users"})
+_ALL_AUTHENTICATED_ENTITIES = frozenset({"departments", "workspace_profiles"})
 _ENTITY_ONLY_ENTITIES = frozenset(
-    {"files", "saved_view_defaults", "saved_views", "workspace_profiles"}
+    {
+        "departments",
+        "files",
+        "group_access",
+        "group_members",
+        "groups",
+        "saved_view_defaults",
+        "saved_views",
+        "workspace_profiles",
+    }
 )
-_ENTITY_CAPABILITIES = {
-    "departments": Capability.DEPARTMENTS_READ,
-    "fields": Capability.FIELDS_READ,
-    "modules": Capability.MODULES_READ,
-    "records": Capability.RECORDS_READ,
-    "relationships": Capability.RELATIONSHIPS_READ,
-    "saved_view_defaults": Capability.RECORDS_READ,
-    "saved_views": Capability.RECORDS_READ,
-}
+# Events about data inside one module carry that module and reach only an
+# administrator or a subscriber who can read the module.
+MODULE_SCOPED_ENTITIES = frozenset(
+    {"fields", "modules", "records", "relationship_edges", "saved_view_defaults", "saved_views"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +54,7 @@ class InvalidationEvent:
 
     entity: str
     entity_id: UUID | None = None
-    capability: Capability | None = None
+    module_id: UUID | None = None
     administrators_only: bool = False
     all_authenticated: bool = False
     recipient_id: UUID | None = None
@@ -66,20 +69,22 @@ class InvalidationEvent:
             if (
                 not isinstance(self.recipient_id, UUID)
                 or self.entity_id is not None
-                or self.capability is not None
+                or self.module_id is not None
                 or self.administrators_only
                 or self.all_authenticated
             ):
                 raise ValueError("invalid invalidation payload")
         elif self.recipient_id is not None:
             raise ValueError("invalid invalidation payload")
+        if self.module_id is not None and self.entity not in MODULE_SCOPED_ENTITIES:
+            raise ValueError("invalid invalidation payload")
 
     def to_payload(self) -> dict[str, str]:
         payload = {"entity": self.entity}
         if self.entity_id is not None:
             payload["entity_id"] = str(self.entity_id)
-        if self.capability is not None:
-            payload["capability"] = self.capability.value
+        if self.module_id is not None:
+            payload["module_id"] = str(self.module_id)
         return payload
 
     def to_json(self) -> str:
@@ -98,9 +103,16 @@ class InvalidationEvent:
 
 
 def event_for_entity(
-    entity: str, entity_id: UUID | None = None, *, recipient_id: UUID | None = None
+    entity: str,
+    entity_id: UUID | None = None,
+    *,
+    recipient_id: UUID | None = None,
+    module_id: UUID | None = None,
 ) -> InvalidationEvent | None:
-    """Classify an audited table without exposing rows or audit snapshots."""
+    """Classify an audited table without exposing rows or audit snapshots.
+
+    A module-scoped event without its module fails closed to administrators.
+    """
 
     if entity in _PRIVATE_INVALIDATION_ENTITIES:
         return None
@@ -108,11 +120,12 @@ def event_for_entity(
         if recipient_id is None:
             return None
         return InvalidationEvent(entity=entity, recipient_id=recipient_id)
+    scoped = entity in MODULE_SCOPED_ENTITIES
     return InvalidationEvent(
         entity=entity,
         entity_id=None if entity in _ENTITY_ONLY_ENTITIES else entity_id,
-        capability=_ENTITY_CAPABILITIES.get(entity),
-        administrators_only=entity in _ADMINISTRATOR_ENTITIES,
+        module_id=module_id if scoped else None,
+        administrators_only=entity in _ADMINISTRATOR_ENTITIES or (scoped and module_id is None),
         all_authenticated=entity in _ALL_AUTHENTICATED_ENTITIES,
     )
 
@@ -132,38 +145,39 @@ def parse_invalidation_payload(payload: object) -> InvalidationEvent:
     if not isinstance(payload, dict) or set(payload) - {
         "entity",
         "entity_id",
-        "capability",
+        "module_id",
         "recipient_id",
     }:
         raise ValueError("invalid invalidation payload")
     entity = payload.get("entity")
     entity_id = payload.get("entity_id")
-    capability = payload.get("capability")
+    module_id = payload.get("module_id")
     recipient_id = payload.get("recipient_id")
     if not isinstance(entity, str) or not _ENTITY_PATTERN.fullmatch(entity):
         raise ValueError("invalid invalidation payload")
     try:
         parsed_id = UUID(entity_id) if isinstance(entity_id, str) else None
-        parsed_capability = Capability(capability) if isinstance(capability, str) else None
+        parsed_module_id = UUID(module_id) if isinstance(module_id, str) else None
         parsed_recipient_id = UUID(recipient_id) if isinstance(recipient_id, str) else None
     except ValueError as error:
         raise ValueError("invalid invalidation payload") from error
     if entity_id is not None and parsed_id is None:
         raise ValueError("invalid invalidation payload")
-    if capability is not None and parsed_capability is None:
+    if module_id is not None and parsed_module_id is None:
         raise ValueError("invalid invalidation payload")
     if recipient_id is not None and parsed_recipient_id is None:
         raise ValueError("invalid invalidation payload")
     if entity in _ENTITY_ONLY_ENTITIES and parsed_id is not None:
         raise ValueError("invalid invalidation payload")
-    expected_capability = _ENTITY_CAPABILITIES.get(entity)
-    if parsed_capability != expected_capability:
+    scoped = entity in MODULE_SCOPED_ENTITIES
+    if parsed_module_id is not None and not scoped:
         raise ValueError("invalid invalidation payload")
     return InvalidationEvent(
         entity=entity,
         entity_id=parsed_id,
-        capability=parsed_capability,
-        administrators_only=entity in _ADMINISTRATOR_ENTITIES,
+        module_id=parsed_module_id,
+        administrators_only=entity in _ADMINISTRATOR_ENTITIES
+        or (scoped and parsed_module_id is None),
         all_authenticated=entity in _ALL_AUTHENTICATED_ENTITIES,
         recipient_id=parsed_recipient_id,
     )

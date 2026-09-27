@@ -8,34 +8,21 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.openview.charts.models import UserChartPreference
 from app.systems.openview.charts.router import router
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
+from tests.rbac.support import capability_actor, grant_capability_actors
 
 pytestmark = pytest.mark.integration
 
 
 def actor(db: Session, *, can_write: bool = True) -> User:
-    permissions = {"records.read": True}
-    if can_write:
-        permissions["records.write"] = True
-    role = Role(role=f"chart-preference-{uuid7().hex}", permissions=permissions)
-    db.add(role)
-    db.flush()
-    user = User(
-        email=f"chart-{uuid7().hex}@example.test",
-        username=f"chart_{uuid7().hex[:20]}",
-        status=UserStatus.ACTIVE.value,
-        role_id=role.id,
-        role=role,
-    )
-    db.add(user)
-    db.flush()
-    return user
+    permissions = {"records.read": True, "records.write": can_write}
+    return capability_actor(db, "chart", permissions)
 
 
 def client(db: Session, user: User) -> TestClient:
@@ -80,6 +67,7 @@ def test_chart_preferences_are_private_and_saved_by_the_authenticated_owner(
     )
     db.add(module)
     db.flush()
+    grant_capability_actors(db, department, module)
     dimension = Field(
         module_id=module.id,
         name="Status",
@@ -149,6 +137,7 @@ def test_chart_preferences_reject_stale_field_references(
     )
     db.add(module)
     db.flush()
+    grant_capability_actors(db, department, module)
     dimension = Field(
         module_id=module.id,
         name="Status",

@@ -99,7 +99,7 @@ export async function listOpenViewDataSourceFields(
 }
 
 export async function listOpenViewAudienceOptions(
-  kind: "role" | "user",
+  kind: "user",
   options: { limit?: number; offset?: number } = {},
 ): Promise<OpenViewPage<OpenViewAudienceOption>> {
   const validKind = audienceOptionKindSchema.parse(kind);

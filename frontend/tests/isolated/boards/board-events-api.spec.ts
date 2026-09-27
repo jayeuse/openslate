@@ -15,7 +15,7 @@ import {
 const boardId = "00000000-0000-4000-8000-000000000001";
 const eventId = "00000000-0000-4000-8000-000000000002";
 const authorId = "00000000-0000-4000-8000-000000000003";
-const roleId = "00000000-0000-4000-8000-000000000004";
+const departmentId = "00000000-0000-4000-8000-000000000004";
 const timestamp = "2026-09-23T00:00:00Z";
 
 type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
@@ -57,10 +57,9 @@ const allDayEvent = {
   recurrence: "weekly",
   repeat_until: "2026-10-12",
   audience: {
-    kind: "role",
-    role_id: roleId,
+    kind: "department",
     user_id: null,
-    department_id: null,
+    department_id: departmentId,
   },
   archived: false,
   revision: 1,
@@ -86,7 +85,7 @@ test("Board event series list uses bounded query and parses only the audience-vi
       allDay: true,
       startDate: "2026-09-14",
       startAt: null,
-      audience: { kind: "role", roleId },
+      audience: { kind: "department", departmentId },
     });
     expect(result.pagination).toEqual({
       limit: 25,
@@ -157,7 +156,7 @@ test("Board event create and patch send exclusive audiences and UTC timed instan
         startAt: "2026-09-14T08:00:00Z",
         endAt: "2026-09-14T09:00:00Z",
         timezoneName: "Asia/Manila",
-        audience: { kind: "role", roleId },
+        audience: { kind: "department", departmentId },
         links: [{ label: "  Guide  ", url: "  https://example.org/guide  " }],
       }),
     ).resolves.toEqual({ id: eventId, eventRevision: 2, boardRevision: 4 });
@@ -184,7 +183,7 @@ test("Board event create and patch send exclusive audiences and UTC timed instan
       end_at: "2026-09-14T09:00:00Z",
       timezone_name: "Asia/Manila",
       recurrence: "none",
-      audience: { kind: "role", role_id: roleId },
+      audience: { kind: "department", department_id: departmentId },
       links: [{ label: "Guide", url: "https://example.org/guide" }],
     });
     expect(JSON.parse(String(mock.requests[1]?.init?.body))).toEqual({

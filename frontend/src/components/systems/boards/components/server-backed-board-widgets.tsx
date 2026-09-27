@@ -443,7 +443,6 @@ function widgetAudienceLabel(item: LiveWidgetItem): string {
       return "Private to its creator";
     case "everyone":
       return "Everyone with Board access";
-    case "role":
     case "user":
       return "Targeted audience";
   }

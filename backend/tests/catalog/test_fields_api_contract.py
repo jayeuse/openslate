@@ -107,6 +107,7 @@ def test_empty_or_null_record_patch_rejected_before_database_lookup(payload) -> 
 def test_missing_catalog_resource_read_returns_404(resource, singular) -> None:
     db = Mock(spec=Session)
     db.get.return_value = None
+    db.scalar.return_value = None
     response = _catalog_rejection_client(db).get(f"/api/{resource}/{uuid7()}")
     assert response.status_code == 404
     assert response.json() == {"detail": f"{singular} not found"}
@@ -146,7 +147,7 @@ def _catalog_rejection_client(db: Session) -> TestClient:
 
 def test_closed_record_rejects_patch() -> None:
     db = Mock(spec=Session)
-    db.get.return_value = SimpleNamespace(is_deleted=True)
+    db.get.return_value = SimpleNamespace(is_deleted=True, module_id=uuid7())
     response = _catalog_rejection_client(db).patch(
         f"/api/records/{uuid7()}", json={"data": {}}
     )

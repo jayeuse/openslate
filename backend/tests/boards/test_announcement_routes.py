@@ -13,14 +13,13 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.policy.models import AccessPolicyVersion, AccessRule
-from app.systems.access.users.models import Role, User, UserDepartment
+from app.systems.access.users.models import User
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.announcement_router import router
 from app.systems.boards.announcement_schemas import AnnouncementCreate, AnnouncementSchedule
 from app.systems.boards.models import Board, BoardGrant
 from app.systems.sandbox.departments.models import Department
-from tests.rbac.support import make_role, make_user
+from tests.rbac.support import capability_actor, make_group_access, make_user
 
 
 def _client(db: Session, actor: User) -> TestClient:
@@ -32,24 +31,9 @@ def _client(db: Session, actor: User) -> TestClient:
 
 
 def _actor(db: Session, label: str, *, read: bool = True, write: bool = True) -> User:
-    role = Role(
-        role=f"announcement-{label}-{uuid7().hex[:8]}",
-        permissions={"records.read": read, "records.write": write},
-    )
-    db.add(role)
-    db.flush()
-    user_id = uuid7()
-    actor = User(
-        id=user_id,
-        email=f"announcement-{user_id.hex}@example.test",
-        username=f"announcement_{user_id.hex[:12]}",
-        status="active",
-        role_id=role.id,
-        role=role,
-    )
-    db.add(actor)
-    db.flush()
-    return actor
+    """Map the retired read and write capabilities: write makes a member, read alone a guest."""
+
+    return capability_actor(db, "board", {"records.read": read, "records.write": write})
 
 
 def _board(db: Session, owner: User) -> Board:
@@ -81,14 +65,12 @@ def _create_payload(board_revision: int, **changes: object) -> dict[str, object]
     }
 
 
-def test_announcement_routes_require_global_capabilities_before_board_lookup() -> None:
-    reader = make_user("announcement_reader", role=make_role("member", {"records.read": True}))
-    writer = make_user("announcement_writer", role=make_role("member", {"records.write": True}))
+def test_announcement_writes_refuse_a_guest_before_board_lookup() -> None:
+    reader = make_user("announcement_reader", role="guest")
     db = Mock(spec=Session)
     board_id, announcement_id = uuid7(), uuid7()
     root = f"/api/boards/{board_id}/announcements"
 
-    assert _client(db, writer).get(root).status_code == 403
     assert _client(db, reader).post(root, json=_create_payload(1)).status_code == 403
     assert (
         _client(db, reader)
@@ -137,7 +119,7 @@ def test_announcement_published_and_draft_queries_prefilter_audience_for_manager
     department = Department(department_name=f"Announcement Department {uuid7().hex}")
     db.add(department)
     db.flush()
-    db.add(UserDepartment(user_id=draft_manager.id, department_id=department.id))
+    make_group_access(db, [draft_manager], department)
     now = datetime.now(UTC)
     announcement = BoardAnnouncement(
         board_id=board.id,
@@ -266,26 +248,6 @@ def test_announcement_author_can_reload_and_edit_published_content_outside_recip
         == 0
     )
     assert _client(db, recipient).get(f"{root}?view=published").json()["pagination"]["total"] == 1
-
-    # Workspace Record denial does not revoke this Board author's text editor.
-    version = db.scalar(select(AccessPolicyVersion).with_for_update())
-    assert version is not None
-    version.revision += 1
-    db.add(
-        AccessRule(
-            subject_kind="user",
-            subject_id=author.id,
-            scope_kind="workspace",
-            scope_id=None,
-            permission_id="records.write",
-            decision="deny",
-            starts_at=None,
-            ends_at=None,
-            locked=False,
-            policy_version=version.revision,
-        )
-    )
-    db.commit()
 
     reloaded_author = _client(db, author)
     own = reloaded_author.get(f"{root}?view=editable")
@@ -467,21 +429,17 @@ def test_announcement_rejects_stale_inactive_and_unmanaged_writes_without_partia
     board = _board(db, owner)
     for actor, permission in ((editor, "edit"), (other_editor, "edit"), (manager, "manage")):
         _grant(db, board, actor, permission)
-    inactive = Role(role=f"inactive-announcement-{uuid7().hex}", permissions={})
-    db.add(inactive)
     db.flush()
-    inactive.is_deleted = True
     expired_user.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     db.commit()
     root = f"/api/boards/{board.id}/announcements"
     client = _client(db, editor)
 
-    unavailable = client.post(
+    retired_role_audience = client.post(
         root,
-        json=_create_payload(1, audience={"kind": "role", "role_id": str(inactive.id)}),
+        json=_create_payload(1, audience={"kind": "role", "role_id": str(uuid7())}),
     )
-    assert unavailable.status_code == 409
-    assert unavailable.json()["detail"]["code"] == "audience_unavailable"
+    assert retired_role_audience.status_code == 422
     expired_target = client.post(
         root,
         json=_create_payload(1, audience={"kind": "user", "user_id": str(expired_user.id)}),

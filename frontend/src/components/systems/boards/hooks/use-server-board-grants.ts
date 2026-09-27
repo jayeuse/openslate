@@ -4,13 +4,12 @@ import { useEffect, useId, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import {
   createBoardGrant,
-  listBoardGrantRoles,
   listBoardGrants,
   revokeBoardGrant,
   type BoardGrantList,
-  type BoardGrantRoleList,
 } from "../adapters/board-grants-api";
 import {
+  getMyBoardAccess,
   listBoardPreviewUsers,
   type BoardPreviewUser,
   type BoardToolsPage,
@@ -23,7 +22,6 @@ export type BoardGrantsState = {
   sequence: number;
   status: "idle" | "loading" | "ready" | "error";
   page: BoardGrantList | null;
-  roles: BoardGrantRoleList | null;
   error: string | null;
 };
 
@@ -34,7 +32,6 @@ export type BoardGrantsEvent =
       key: string;
       sequence: number;
       page: BoardGrantList;
-      roles: BoardGrantRoleList;
     }
   | { type: "reject"; key: string; sequence: number; error: string };
 
@@ -43,7 +40,6 @@ export const emptyBoardGrantsState: BoardGrantsState = {
   sequence: 0,
   status: "idle",
   page: null,
-  roles: null,
   error: null,
 };
 
@@ -57,7 +53,6 @@ export function transitionBoardGrantsState(
       sequence: event.sequence,
       status: "loading",
       page: null,
-      roles: null,
       error: null,
     };
   if (state.key !== event.key || state.sequence !== event.sequence)
@@ -67,19 +62,17 @@ export function transitionBoardGrantsState(
       ...state,
       status: "ready",
       page: event.page,
-      roles: event.roles,
       error: null,
     };
   return {
     ...state,
     status: "error",
     page: null,
-    roles: null,
     error: event.error,
   };
 }
 
-export type PrincipalType = "user" | "role" | "everyone";
+export type PrincipalType = "user" | "everyone";
 export type Permission = "view" | "edit" | "manage";
 export type Effect = "allow" | "deny";
 type Conflict =
@@ -109,9 +102,6 @@ export function useServerBoardGrants({
 }) {
   const id = useId();
   const [grantOffset, setGrantOffset] = useState(0);
-  const [roleOffset, setRoleOffset] = useState(0);
-  const [roleSearchInput, setRoleSearchInput] = useState("");
-  const [roleSearch, setRoleSearch] = useState("");
   const [userOffset, setUserOffset] = useState(0);
   const [userSearchInput, setUserSearchInput] = useState("");
   const [userSearch, setUserSearch] = useState("");
@@ -147,29 +137,22 @@ export function useServerBoardGrants({
     boardActive,
     refreshKey,
     grantOffset,
-    roleOffset,
-    roleSearch,
     reload,
   ]);
   const visible = state.key === key ? state : emptyBoardGrantsState;
   const userKey = JSON.stringify([key, userSearch, userOffset, userReload]);
   const visibleUsers = users.key === userKey ? users : null;
-  const selectedRole = visible.roles?.items.find(
-    (role) => role.id === principalId,
-  );
   const selectedUser = visibleUsers?.page?.items.find(
     (user) => user.id === principalId,
   );
   const choiceValid =
     principalType === "everyone" ||
-    (principalType === "role" && selectedRole !== undefined) ||
     (principalType === "user" && selectedUser !== undefined);
   const canMutate =
     boardActive &&
     !accessDenied &&
     visible.status === "ready" &&
-    visible.page !== null &&
-    visible.roles !== null;
+    visible.page !== null;
   const revokeTarget =
     revokeChoice?.key === key
       ? (visible.page?.items.find((item) => item.id === revokeChoice.grantId) ??
@@ -214,25 +197,24 @@ export function useServerBoardGrants({
         sequence: currentSequence,
       }),
     );
-    // The role chooser enforces records.write + Board MANAGE. Do not reveal
-    // grant rows unless that request and the grants request both succeed.
+    // Only a Board manager who is not a guest may change grants. Do not reveal
+    // grant rows unless the manage check and the grants request both succeed.
     void Promise.all([
-      listBoardGrantRoles(boardId, {
-        limit: PAGE_SIZE,
-        offset: roleOffset,
-        search: roleSearch || undefined,
-      }),
+      getMyBoardAccess(boardId),
       listBoardGrants(boardId, { limit: PAGE_SIZE, offset: grantOffset }),
     ])
-      .then(([roles, page]) => {
+      .then(([access, page]) => {
         if (!active || deniedRef.current) return;
+        if (!access.manage) {
+          loseAccess();
+          return;
+        }
         setState((current) =>
           transitionBoardGrantsState(current, {
             type: "resolve",
             key,
             sequence: currentSequence,
             page,
-            roles,
           }),
         );
         setConflict((current) =>
@@ -262,7 +244,7 @@ export function useServerBoardGrants({
     return () => {
       active = false;
     };
-  }, [boardId, boardActive, grantOffset, key, roleOffset, roleSearch]);
+  }, [boardId, boardActive, grantOffset, key]);
 
   useEffect(() => {
     if (
@@ -328,15 +310,7 @@ export function useServerBoardGrants({
               permission,
               effect,
             }
-          : principalType === "role"
-            ? {
-                revision,
-                principalType,
-                principalRoleId: principalId,
-                permission,
-                effect,
-              }
-            : { revision, principalType, permission, effect },
+          : { revision, principalType, permission, effect },
       );
       if (!mounted.current || deniedRef.current) return;
       setPrincipalId("");
@@ -415,13 +389,6 @@ export function useServerBoardGrants({
     }
   }
 
-  function searchRoles() {
-    setPrincipalId("");
-    setRoleOffset(0);
-    setRoleSearch(roleSearchInput.trim());
-    setReload((value) => value + 1);
-  }
-
   function searchUsers() {
     setPrincipalId("");
     setUserOffset(0);
@@ -436,10 +403,6 @@ export function useServerBoardGrants({
     visibleUsers,
     grantOffset,
     setGrantOffset,
-    roleOffset,
-    setRoleOffset,
-    roleSearchInput,
-    setRoleSearchInput,
     userOffset,
     setUserOffset,
     userSearchInput,
@@ -463,13 +426,11 @@ export function useServerBoardGrants({
     accessDenied,
     choiceValid,
     canMutate,
-    selectedRole,
     selectedUser,
     revokeTarget,
     setRevokeChoice,
     saveGrant,
     revokeGrant,
-    searchRoles,
     searchUsers,
   };
 }

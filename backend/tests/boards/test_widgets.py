@@ -13,7 +13,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.models import Board, BoardGrant, BoardWidget
 from app.systems.boards.widget_router import router
 from app.systems.boards.widget_schemas import BoardWidgetSpec
@@ -22,6 +22,7 @@ from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
+from tests.rbac.support import capability_actor, grant_capability_actors
 
 
 def _widget(module_id: UUID, field_id: UUID, *, audience: dict | None = None) -> dict:
@@ -56,21 +57,7 @@ def test_widget_schema_rejects_untyped_or_unresolved_source_and_audience() -> No
 
 
 def _actor(db: Session, capabilities: dict[str, bool]) -> User:
-    role = Role(role=f"board-widget-{uuid7().hex}", permissions=capabilities)
-    db.add(role)
-    db.flush()
-    user_id = uuid7()
-    user = User(
-        id=user_id,
-        email=f"widget-{user_id.hex}@example.test",
-        username=f"widget_{user_id.hex[:12]}",
-        status="active",
-        role_id=role.id,
-        role=role,
-    )
-    db.add(user)
-    db.flush()
-    return user
+    return capability_actor(db, "widget", capabilities)
 
 
 def _client(db: Session, actor: User) -> TestClient:
@@ -97,6 +84,7 @@ def test_board_widgets_persist_order_duplicate_delete_with_board_acl_and_audienc
     board = Board(owner_id=owner.id, name="Operations")
     db.add_all([module, board])
     db.flush()
+    grant_capability_actors(db, department, module)
     field = Field(module_id=module.id, name="Label", type=FieldType.TEXT, position=0)
     db.add(field)
     for actor, permission in ((editor, "manage"), (viewer, "view")):
@@ -215,6 +203,8 @@ def test_board_widgets_reject_invalid_sources_audiences_archives_and_limit(
     board = Board(owner_id=owner.id, name="Source validation")
     db.add_all([module, other, board])
     db.flush()
+    grant_capability_actors(db, department, module)
+    grant_capability_actors(db, department, other)
     field = Field(module_id=module.id, name="Label", type=FieldType.TEXT, position=0)
     db.add(field)
     db.commit()

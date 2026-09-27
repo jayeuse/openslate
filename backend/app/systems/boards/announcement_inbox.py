@@ -2,13 +2,14 @@
 
 from datetime import datetime
 
-from sqlalchemy import exists, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.identity.eligibility import identity_eligible_clause
+from app.systems.access.policy.scope import department_reader_ids
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import User, UserDepartment, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.access import can_access_board
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.models import Board, BoardPermission
@@ -71,7 +72,6 @@ def stage_publication_inbox(
     db.flush()
     candidates = (
         select(User)
-        .options(joinedload(User.role))
         .where(
             User.status == UserStatus.ACTIVE.value,
             User.is_deleted.is_(False),
@@ -84,18 +84,11 @@ def stage_publication_inbox(
         candidates = candidates.where(User.id == item.author_id)
     elif item.audience_kind == "user":
         candidates = candidates.where(User.id == item.audience_user_id)
-    elif item.audience_kind == "role":
-        candidates = candidates.where(User.role_id == item.audience_role_id)
     elif item.audience_kind == "department":
+        if item.audience_department_id is None:
+            return
         candidates = candidates.where(
-            exists(
-                select(UserDepartment.id).where(
-                    UserDepartment.user_id == User.id,
-                    UserDepartment.department_id == item.audience_department_id,
-                    UserDepartment.is_deleted.is_(False),
-                    UserDepartment.deleted_at.is_(None),
-                )
-            )
+            User.id.in_(department_reader_ids(db, item.audience_department_id))
         )
     elif item.audience_kind != "everyone":
         return

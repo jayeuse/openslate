@@ -16,7 +16,7 @@ import {
 const boardId = "00000000-0000-4000-8000-000000000001";
 const announcementId = "00000000-0000-4000-8000-000000000002";
 const authorId = "00000000-0000-4000-8000-000000000003";
-const roleId = "00000000-0000-4000-8000-000000000004";
+const departmentId = "00000000-0000-4000-8000-000000000004";
 const publicationKey = "00000000-0000-4000-8000-000000000005";
 const revisionId = "00000000-0000-4000-8000-000000000006";
 const timestamp = "2026-09-23T00:00:00Z";
@@ -41,10 +41,9 @@ function installFetch(responder: () => Response) {
 const jsonResponse = (body: unknown, status = 200) =>
   Response.json(body, { status });
 const audience = {
-  kind: "role",
-  role_id: roleId,
+  kind: "department",
   user_id: null,
-  department_id: null,
+  department_id: departmentId,
 };
 const published = {
   id: announcementId,
@@ -103,7 +102,7 @@ test("announcement published list uses bounded query and immutable published fie
       publicationNumber: 1,
       publishedAt: timestamp,
       links: [{ label: "Release", url: "https://example.org/release" }],
-      audience: { kind: "role", roleId },
+      audience: { kind: "department", departmentId },
     });
     expect(result.pagination).toEqual({
       limit: 25,
@@ -168,7 +167,7 @@ test("announcement draft read and writes preserve exclusive audience and UTC fie
         boardRevision: 3,
         title: "  Opening  ",
         body: "  News  ",
-        audience: { kind: "role", roleId },
+        audience: { kind: "department", departmentId },
         expiresAt: "2026-09-30T00:00:00Z",
         pinned: false,
         links: [{ label: "  Source  ", url: "  https://example.org/source  " }],
@@ -213,7 +212,7 @@ test("announcement draft read and writes preserve exclusive audience and UTC fie
       board_revision: 3,
       title: "Opening",
       body: "News",
-      audience: { kind: "role", role_id: roleId },
+      audience: { kind: "department", department_id: departmentId },
       expires_at: "2026-09-30T00:00:00Z",
       pinned: false,
       links: [{ label: "Source", url: "https://example.org/source" }],
@@ -332,7 +331,11 @@ test("announcement adapter rejects invalid IDs, audience combinations, UTC offse
         boardRevision: 1,
         title: "Notice",
         body: "Body",
-        audience: { kind: "role", roleId, userId: authorId } as never,
+        audience: {
+          kind: "department",
+          departmentId,
+          userId: authorId,
+        } as never,
       }),
     ).rejects.toThrow();
     await expect(

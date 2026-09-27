@@ -7,11 +7,11 @@ from types import SimpleNamespace
 import psycopg
 import pytest
 from fastapi import HTTPException
+from uuid6 import uuid7
 
 from app.core.integrations.supabase_auth import InvalidProviderToken
-from app.systems.access.users.permissions import Capability
 from app.systems.platform.events import router as events_router
-from app.systems.platform.events.hub import EventHub, PostgresInvalidationListener
+from app.systems.platform.events.hub import EventHub, EventViewer, PostgresInvalidationListener
 from app.systems.platform.events.models import (
     InvalidationEvent,
     event_for_entity,
@@ -26,14 +26,16 @@ from app.systems.platform.events.router import (
     reauthorize_event_principal,
 )
 
+READABLE_MODULE = uuid7()
+
 
 def test_untrusted_notification_payloads_fail_closed_without_fanout() -> None:
     async def exercise() -> None:
         hub = EventHub()
-        subscription = await hub.subscribe(_user({"records.read": True}))
+        subscription = await hub.subscribe(_user(reads=True))
 
         await hub.publish_notification("{")
-        await hub.publish_notification('{"entity":"records","capability":"modules.read"}')
+        await hub.publish_notification('{"entity":"records","capability":"records.read"}')
 
         assert subscription.queue.empty()
         await hub.publish_notification('{"entity":"resync"}')
@@ -47,11 +49,11 @@ def test_untrusted_notification_payloads_fail_closed_without_fanout() -> None:
     "payload",
     [
         {"entity": "Records"},
-        {"entity": "records", "entity_id": 7, "capability": "records.read"},
-        {"entity": "records", "entity_id": "not-a-uuid", "capability": "records.read"},
-        {"entity": "records", "capability": "unknown.read"},
-        {"entity": "records", "capability": 7},
-        {"entity": "records"},
+        {"entity": "records", "entity_id": 7, "module_id": str(READABLE_MODULE)},
+        {"entity": "records", "entity_id": "not-a-uuid", "module_id": str(READABLE_MODULE)},
+        {"entity": "records", "capability": "records.read"},
+        {"entity": "records", "module_id": 7},
+        {"entity": "departments", "module_id": str(READABLE_MODULE)},
     ],
 )
 def test_payload_validation_rejects_malformed_or_under_authorized_events(payload: object) -> None:
@@ -119,7 +121,7 @@ def test_events_endpoint_fails_closed_for_missing_hub_revocation_and_capacity(
         full_request = _request_with_hub(full_hub)
 
         async def admitted(_principal: EventPrincipal) -> object:
-            return _user({})
+            return _user()
 
         monkeypatch.setattr(events_router, "reauthorize_event_principal", admitted)
         with pytest.raises(HTTPException) as capacity_error:
@@ -152,7 +154,7 @@ def test_stream_resyncs_without_replaying_untrusted_cursor_then_stops_on_disconn
             request,
             EventHub(),
             EventPrincipal("token"),
-            initial_user=_user({}),
+            initial_user=_user(),
         )
 
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
@@ -186,7 +188,7 @@ def test_stream_releases_capacity_when_reauthorization_or_admission_fails() -> N
             SimpleNamespace(is_disconnected=_never_disconnected),
             denied_hub,
             EventPrincipal("token"),
-            initial_user=_user({}),
+            initial_user=_user(),
         )
         with pytest.raises(StopAsyncIteration):
             await anext(denied_stream)
@@ -202,12 +204,12 @@ def test_stream_stops_before_queued_event_when_session_is_revoked() -> None:
             SimpleNamespace(is_disconnected=_never_disconnected),
             hub,
             EventPrincipal("token"),
-            initial_user=_user({"records.read": True}),
+            initial_user=_user(reads=True),
             reauthorize=_sequence(None),
         )
 
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
-        await hub.publish(InvalidationEvent("records", capability=Capability.RECORDS_READ))
+        await hub.publish(InvalidationEvent("records", module_id=READABLE_MODULE))
         with pytest.raises(StopAsyncIteration):
             await anext(stream)
         assert hub.subscriber_count == 0
@@ -218,13 +220,13 @@ def test_stream_stops_before_queued_event_when_session_is_revoked() -> None:
 def test_stream_emits_resync_when_permission_snapshot_changes() -> None:
     async def exercise() -> None:
         hub = EventHub()
-        initial = _user({"records.read": True})
+        initial = _user(reads=True)
         stream = event_stream(
             SimpleNamespace(is_disconnected=_never_disconnected),
             hub,
             EventPrincipal("token"),
             initial_user=initial,
-            reauthorize=_sequence(_user({}), _user({})),
+            reauthorize=_sequence(_user(), _user()),
         )
 
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
@@ -261,7 +263,8 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
         invalid_principal = EventPrincipal("invalid-token")
         valid_principal = EventPrincipal("valid-token")
 
-        expected = _user({})
+        account = SimpleNamespace(id=_MEMBER_ID, role="member")
+        expected = _user(reads=True)
         entered: list[object] = []
         exited: list[object] = []
         claims = SimpleNamespace(user_id="provider-user", session_id="provider-session")
@@ -295,15 +298,21 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
             assert db is database
             assert verified_claims is claims
             assert client is provider
-            return expected, object()
+            return account, object()
 
+        def readable_modules(db: object, user: object, level: object) -> frozenset[object]:
+            assert db is database
+            assert user is account
+            return frozenset({READABLE_MODULE})
+
+        monkeypatch.setattr(events_router, "allowed_module_ids", readable_modules)
         monkeypatch.setattr(events_router, "get_engine", lambda: "engine")
         monkeypatch.setattr(events_router, "AuditSession", Session)
         monkeypatch.setattr(events_router, "resolve_provider_session", resolve_provider_session)
 
         assert await reauthorize_event_principal(invalid_principal) is None
         assert entered == exited == []
-        assert await reauthorize_event_principal(valid_principal) is expected
+        assert await reauthorize_event_principal(valid_principal) == expected
         assert entered == ["engine"]
         assert exited == [database]
 
@@ -322,18 +331,14 @@ def test_listener_entrypoints_ignore_absent_or_closed_event_loops() -> None:
     hub.publish_resync_from_listener()
 
 
-def test_malformed_roles_fail_closed_for_delivery_and_permission_signatures() -> None:
-    class BrokenRole:
-        role = "member"
-
-        @property
-        def permissions(self) -> object:
-            raise ValueError("stored role document is malformed")
-
+def test_viewer_without_a_role_fails_closed_for_delivery_and_access_signatures() -> None:
     async def exercise() -> None:
         hub = EventHub()
-        subscription = await hub.subscribe(SimpleNamespace(role=BrokenRole()))
-        event = event_for_entity("records")
+        subscription = await hub.subscribe(
+            EventViewer(user_id=uuid7(), role=None, module_ids=frozenset({READABLE_MODULE}))
+        )
+        event = event_for_entity("records", uuid7(), module_id=READABLE_MODULE)
+        assert event is not None
 
         assert subscription.access_signature == ()
         assert not hub.can_receive(subscription, event)
@@ -386,9 +391,11 @@ def test_listener_start_is_idempotent_and_stop_tolerates_connection_close_failur
 def test_hub_denies_missing_and_non_admin_roles_but_releases_one_of_many_streams() -> None:
     async def exercise() -> None:
         hub = EventHub()
-        no_role = await hub.subscribe(SimpleNamespace(role=None))
-        administrator = await hub.subscribe(SimpleNamespace(role=SimpleNamespace(role="admin")))
-        member = _user({})
+        no_role = await hub.subscribe(EventViewer(user_id=uuid7(), role=None, module_ids=None))
+        administrator = await hub.subscribe(
+            EventViewer(user_id=uuid7(), role="admin", module_ids=None)
+        )
+        member = _user()
         first_member = await hub.subscribe(member)
         second_member = await hub.subscribe(member)
         records_event = event_for_entity("records")
@@ -440,8 +447,8 @@ def test_stream_timeout_resyncs_when_authorization_changes() -> None:
             EventHub(),
             EventPrincipal("token"),
             heartbeat_seconds=0,
-            initial_user=_user({"records.read": True}),
-            reauthorize=_sequence(_user({})),
+            initial_user=_user(reads=True),
+            reauthorize=_sequence(_user()),
         )
 
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
@@ -458,7 +465,7 @@ def test_stream_resync_terminates_when_the_session_is_revoked() -> None:
             SimpleNamespace(is_disconnected=_never_disconnected),
             hub,
             EventPrincipal("token"),
-            initial_user=_user({}),
+            initial_user=_user(),
             reauthorize=_sequence(None),
         )
 
@@ -478,9 +485,9 @@ def test_stream_closes_a_subscription_marked_slow_before_sending_data() -> None:
             SimpleNamespace(is_disconnected=_never_disconnected),
             hub,
             EventPrincipal("token"),
-            initial_user=_user({"records.read": True}),
+            initial_user=_user(reads=True),
         )
-        event = InvalidationEvent("records", capability=Capability.RECORDS_READ)
+        event = InvalidationEvent("records", module_id=READABLE_MODULE)
 
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
         await hub.publish(event)
@@ -492,8 +499,16 @@ def test_stream_closes_a_subscription_marked_slow_before_sending_data() -> None:
     asyncio.run(exercise())
 
 
-def _user(permissions: dict[str, bool]) -> object:
-    return SimpleNamespace(role=SimpleNamespace(role="member", permissions=permissions))
+_MEMBER_ID = uuid7()
+
+
+def _user(*, reads: bool = False) -> EventViewer:
+    """A member who can read the one test module, or nothing."""
+    return EventViewer(
+        user_id=_MEMBER_ID,
+        role="member",
+        module_ids=frozenset({READABLE_MODULE}) if reads else frozenset(),
+    )
 
 
 def _request_with_hub(hub: EventHub) -> object:

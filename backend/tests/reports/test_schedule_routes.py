@@ -13,13 +13,14 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
 from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, set_audit_actor
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.openview.reports import schedule_router
@@ -33,23 +34,17 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import guarded_create_engine
+from tests.rbac.support import add_user, make_group_access
 
 pytestmark = pytest.mark.integration
 
 
 def _actor(db: Session, permissions: dict[str, bool]) -> User:
-    role = Role(role=f"schedule-{uuid7().hex}", permissions=permissions)
-    user_id = uuid7()
-    user = User(
-        id=user_id,
-        email=f"schedule-{user_id.hex}@example.test",
-        username=f"schedule_{user_id.hex[:16]}",
-        status=UserStatus.ACTIVE.value,
-        role=role,
+    """A member for the old write capability, else a guest who can only read."""
+
+    return add_user(
+        db, "schedule", role="member" if permissions.get("records.write") else "guest"
     )
-    db.add(user)
-    db.flush()
-    return user
 
 
 def _report(db: Session, owner: User) -> tuple[Report, Module]:
@@ -62,6 +57,7 @@ def _report(db: Session, owner: User) -> tuple[Report, Module]:
     )
     db.add(module)
     db.flush()
+    make_group_access(db, [owner], department, module, level=AccessLevel.WRITE)
     field = Field(
         module_id=module.id,
         name="Status",
@@ -319,7 +315,10 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
             report, module = _report(setup, owner)
             field = setup.scalar(select(Field).where(Field.module_id == module.id))
             assert field is not None
-            department_id, role_id = module.department_id, owner.role_id
+            department_id = module.department_id
+            group_id = setup.scalar(
+                select(GroupMember.group_id).where(GroupMember.user_id == owner.id)
+            )
             schedule = ReportSchedule(
                 report_id=report.id,
                 enabled=True,
@@ -351,7 +350,7 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
             setup.add(run)
             setup.commit()
             ids = {
-                "owner": owner.id, "role": role_id, "report": report.id,
+                "owner": owner.id, "group": group_id, "report": report.id,
                 "module": module.id, "department": department_id,
                 "field": field.id, "work": work.id, "run": run.id,
                 "lease": work.lease_token,
@@ -364,9 +363,7 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
                 yield db
 
         def request_user(db: Annotated[Session, Depends(get_db)]) -> User:
-            user = db.scalar(
-                select(User).options(joinedload(User.role)).where(User.id == ids["owner"])
-            )
+            user = db.scalar(select(User).where(User.id == ids["owner"]))
             assert user is not None
             return user
 
@@ -415,9 +412,19 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
                 assert report is not None
                 delete_report_tree(cleanup, report)
                 cleanup.flush()
+                for access_model in (GroupAccess, GroupMember):
+                    for row in cleanup.scalars(
+                        select(access_model).where(access_model.group_id == ids["group"])
+                    ).all():
+                        cleanup.delete(row)
+                cleanup.flush()
+                group = cleanup.get(Group, ids["group"])
+                if group is not None:
+                    cleanup.delete(group)
+                    cleanup.flush()
                 for model, key in (
                     (Field, "field"), (Module, "module"), (Department, "department"),
-                    (User, "owner"), (Role, "role"),
+                    (User, "owner"),
                 ):
                     row = cleanup.get(model, ids[key])
                     if row is not None:

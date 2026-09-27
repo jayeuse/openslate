@@ -96,13 +96,12 @@ export function BoardContentAudiencePicker({
           setChoices(emptyChoices);
           if (next === "everyone" || next === "author")
             onChange({ kind: next });
-          else if (next === "role" || next === "user" || next === "department")
+          else if (next === "user" || next === "department")
             onChange({ kind: next, targetId: null });
         }}
       >
         <option value="everyone">Everyone with Board access</option>
         <option value="author">Only the author</option>
-        <option value="role">A role</option>
         <option value="user">A person</option>
         <option value="department">A department</option>
       </select>
@@ -123,11 +122,7 @@ export function BoardContentAudiencePicker({
             }}
           />
           <label className="block text-sm font-medium" htmlFor={`${id}-target`}>
-            {kind === "user"
-              ? "Person"
-              : kind === "role"
-                ? "Role"
-                : "Department"}
+            {kind === "user" ? "Person" : "Department"}
           </label>
           <select
             data-slot="select"

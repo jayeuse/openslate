@@ -20,7 +20,7 @@ from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.models import IdentityRateLimitBucket
 from app.systems.access.identity.provider_login import login_with_provider
 from app.systems.access.identity.rate_limits import login_fingerprint
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.platform.files.models import File
 from tests.conftest import guarded_create_engine
 from tests.operations import migration_support
@@ -50,14 +50,24 @@ def test_baseline_has_one_head_and_provider_identity_file_catalog(integration_ow
         "users",
         "identity_sessions",
         "files",
+        "groups",
+        "group_members",
+        "group_access",
     } <= tables
     assert "alembic_version" in tables
     assert (
         not {"identity_credentials", "identity_action_tokens", "identity_delivery_outbox"} & tables
     )
-    assert _catalog(
-        integration_owner_db, "SELECT role FROM public.roles ORDER BY role"
-    ).scalars().all() == ["admin", "member"]
+    assert not {
+        "roles",
+        "access_rules",
+        "access_policy_versions",
+        "access_policy_defaults",
+        "access_default_groups",
+        "access_default_departments",
+        "service_identities",
+        "user_departments",
+    } & tables
     assert _catalog(
         integration_owner_db,
         "SELECT display_name, timezone, locale FROM public.workspace_profiles",
@@ -294,12 +304,12 @@ def test_runtime_role_can_create_guarded_private_file_metadata() -> None:
     owner_engine = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     try:
         with Session(owner_engine) as owner_db:
-            role = owner_db.query(Role).filter_by(role="member").one()
+            role = "member"
             creator = User(
                 email="file-metadata@example.test",
                 username="file-metadata",
                 status=UserStatus.ACTIVE.value,
-                role_id=role.id,
+                role=role,
             )
             owner_db.add(creator)
             owner_db.commit()

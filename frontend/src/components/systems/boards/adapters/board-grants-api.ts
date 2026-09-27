@@ -9,7 +9,7 @@ import {
 const uuidSchema = z.string().uuid();
 const revisionSchema = z.number().int().min(1);
 const timestampSchema = z.iso.datetime({ offset: true });
-const principalTypeSchema = z.enum(["user", "role", "everyone"]);
+const principalTypeSchema = z.enum(["user", "everyone"]);
 const permissionSchema = z.enum(["view", "edit", "manage"]);
 const effectSchema = z.enum(["allow", "deny"]);
 
@@ -18,7 +18,6 @@ const grantSchema = z
     id: uuidSchema,
     principal_type: principalTypeSchema,
     principal_user_id: uuidSchema.nullable(),
-    principal_role_id: uuidSchema.nullable(),
     principal_label: z.string().trim().min(1).max(100),
     principal_available: z.boolean(),
     permission: permissionSchema,
@@ -31,20 +30,11 @@ const grantSchema = z
     if (grant.principal_type === "user")
       return (
         grant.principal_user_id !== null &&
-        grant.principal_role_id === null &&
         (grant.principal_available ||
           grant.principal_label === "Unavailable user")
       );
-    if (grant.principal_type === "role")
-      return (
-        grant.principal_user_id === null &&
-        grant.principal_role_id !== null &&
-        (grant.principal_available ||
-          grant.principal_label === "Unavailable role")
-      );
     return (
       grant.principal_user_id === null &&
-      grant.principal_role_id === null &&
       grant.principal_available &&
       grant.principal_label === "Everyone"
     );
@@ -53,7 +43,6 @@ const grantSchema = z
     ({
       principal_type,
       principal_user_id,
-      principal_role_id,
       principal_label,
       principal_available,
       created_at,
@@ -63,7 +52,6 @@ const grantSchema = z
       ...grant,
       principalType: principal_type,
       principalUserId: principal_user_id,
-      principalRoleId: principal_role_id,
       principalLabel: principal_label,
       principalAvailable: principal_available,
       createdAt: created_at,
@@ -104,22 +92,6 @@ const mutationSchema = z
     ...result,
     boardRevision: board_revision,
   }));
-const roleChoiceSchema = z
-  .object({ id: uuidSchema, role: z.string().trim().min(1).max(100) })
-  .strict();
-const roleListSchema = z
-  .object({ items: z.array(roleChoiceSchema), pagination: paginationSchema })
-  .strict()
-  .refine(({ items, pagination }) => items.length === pagination.count);
-const roleOptionsSchema = z
-  .object({
-    limit: z.number().int().min(1).max(100).default(25),
-    offset: z.number().int().min(0).default(0),
-    sortBy: z.literal("role").default("role"),
-    sortOrder: z.enum(["asc", "desc"]).default("asc"),
-    search: z.string().trim().min(1).max(100).optional(),
-  })
-  .strict();
 
 const listOptionsSchema = z
   .object({
@@ -147,13 +119,6 @@ const createSchema = z.discriminatedUnion("principalType", [
   z
     .object({
       ...commonCreateFields,
-      principalType: z.literal("role"),
-      principalRoleId: uuidSchema,
-    })
-    .strict(),
-  z
-    .object({
-      ...commonCreateFields,
       principalType: z.literal("everyone"),
     })
     .strict(),
@@ -164,9 +129,6 @@ export type BoardGrantList = z.output<typeof listSchema>;
 export type BoardGrantMutation = z.output<typeof mutationSchema>;
 export type BoardGrantListOptions = z.input<typeof listOptionsSchema>;
 export type BoardGrantCreate = z.input<typeof createSchema>;
-export type BoardGrantRoleChoice = z.output<typeof roleChoiceSchema>;
-export type BoardGrantRoleList = z.output<typeof roleListSchema>;
-export type BoardGrantRoleOptions = z.input<typeof roleOptionsSchema>;
 
 const safeConflicts = new Map([
   ["stale_revision", "Board changed; reload before saving"],
@@ -236,26 +198,6 @@ export async function listBoardGrants(
   return safeGrantJson(`/boards/${boardId}/grants?${query}`, listSchema);
 }
 
-export async function listBoardGrantRoles(
-  rawBoardId: string,
-  options: BoardGrantRoleOptions = {},
-): Promise<BoardGrantRoleList> {
-  const boardId = uuidSchema.parse(rawBoardId);
-  const { limit, offset, sortBy, sortOrder, search } =
-    roleOptionsSchema.parse(options);
-  const query = new URLSearchParams({
-    limit: String(limit),
-    offset: String(offset),
-    sort_by: sortBy,
-    sort_order: sortOrder,
-  });
-  if (search !== undefined) query.set("search", search);
-  return safeGrantJson(
-    `/boards/${boardId}/grant-roles?${query}`,
-    roleListSchema,
-  );
-}
-
 export async function createBoardGrant(
   rawBoardId: string,
   input: BoardGrantCreate,
@@ -267,9 +209,6 @@ export async function createBoardGrant(
     principal_type: grant.principalType,
     ...("principalUserId" in grant
       ? { principal_user_id: grant.principalUserId }
-      : {}),
-    ...("principalRoleId" in grant
-      ? { principal_role_id: grant.principalRoleId }
       : {}),
     permission: grant.permission,
     effect: grant.effect,
@@ -287,8 +226,6 @@ export async function createBoardGrant(
     result.grant.principalType !== grant.principalType ||
     result.grant.principalUserId !==
       ("principalUserId" in grant ? grant.principalUserId : null) ||
-    result.grant.principalRoleId !==
-      ("principalRoleId" in grant ? grant.principalRoleId : null) ||
     result.grant.permission !== grant.permission ||
     result.grant.effect !== grant.effect
   )

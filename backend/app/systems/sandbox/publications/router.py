@@ -12,12 +12,11 @@ from sqlalchemy.orm import Session
 
 from app.common.dependencies import (
     CurrentIdentity,
-    authorize_workspace_capabilities,
     get_current_identity,
-    require_fresh_capabilities,
+    require_fresh_exact_admin,
 )
 from app.core.database import get_db
-from app.systems.access.users.permissions import Capability
+from app.systems.access.policy.checks import require_live_session
 from app.systems.sandbox.designs.service import SandboxDesignError, read_document
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleInvalidCredentials,
@@ -43,13 +42,6 @@ from app.systems.sandbox.publications.tokens import decode_preview_token, issue_
 router = APIRouter(prefix="/sandbox", tags=["sandbox-publications"])
 Database = Annotated[Session, Depends(get_db)]
 PublicationActor = Annotated[CurrentIdentity, Depends(get_current_identity)]
-_CAPABILITIES = (
-    Capability.DEPARTMENTS_WRITE,
-    Capability.MODULES_WRITE,
-    Capability.FIELDS_WRITE,
-    Capability.RELATIONSHIPS_WRITE,
-    Capability.RECORDS_WRITE,
-)
 
 
 def _actor(identity: CurrentIdentity) -> CurrentIdentity:
@@ -67,12 +59,8 @@ def post_preview(
     payload: PublicationPreviewRequest, identity: PublicationActor, db: Database
 ) -> PublicationPreviewResponse:
     actor = _actor(identity)
-    authorize_workspace_capabilities(
-        db,
-        actor_id=actor.user.id,
-        expected_role_id=actor.user.role_id,
-        capabilities=_CAPABILITIES,
-    )
+    # Only an administrator changes the schema.
+    require_fresh_exact_admin(db, actor.user.id)
     response = _run(db, lambda: read_document(db))
     if response.revision != payload.expected_revision:
         raise _error("stale_revision", "Sandbox document changed; reload before publishing")
@@ -115,13 +103,8 @@ def post_publication(
         raise _error("publication_unavailable", "A bounded Idempotency-Key is required", 400)
 
     def reauthorize() -> None:
-        require_fresh_capabilities(
-            db,
-            actor_id=actor.user.id,
-            session_id=actor.session_id,
-            expected_role_id=actor.user.role_id,
-            capabilities=_CAPABILITIES,
-        )
+        require_live_session(db, actor_id=actor.user.id, session_id=actor.session_id)
+        require_fresh_exact_admin(db, actor.user.id)
 
     reauthorize()
     try:

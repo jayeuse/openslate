@@ -116,13 +116,12 @@ def test_manager_excluded_from_either_audience_cannot_read_manage_state(
     assert "Earlier published" not in response.text
 
 
-@pytest.mark.parametrize("read,write", [(True, False), (False, True)])
-def test_board_manager_requires_both_flat_global_capabilities(
-    integration_owner_db: Session, read: bool, write: bool,
+def test_a_guest_board_manager_cannot_read_the_manage_state(
+    integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
     owner = _actor(db, "manage-state-write-owner")
-    manager = _actor(db, "manage-state-one-capability", read=read, write=write)
+    manager = _actor(db, "manage-state-guest", write=False)
     board = _board(db, owner)
     _grant(db, board, manager, "manage")
     item = _announcement(db, board, owner)

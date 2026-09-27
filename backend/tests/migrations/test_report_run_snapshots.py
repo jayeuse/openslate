@@ -43,18 +43,15 @@ def test_report_run_catalog_constraints_and_runtime_access_on_active_baseline() 
 
 def _seed_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
     with engine.begin() as connection:
-        role_id = connection.scalar(text("SELECT id FROM public.roles WHERE role = 'member'"))
-        assert role_id is not None
         connection.execute(
             text(
-                "INSERT INTO public.users (id, email, username, status, role_id) "
-                "VALUES (:id, :email, :username, 'active', :role_id)"
+                "INSERT INTO public.users (id, email, username, status, role) "
+                "VALUES (:id, :email, :username, 'active', 'member')"
             ),
             {
                 "id": ids["owner"],
                 "email": f"report-run-baseline-{ids['owner'].hex}@example.test",
                 "username": f"report_run_baseline_{ids['owner'].hex}",
-                "role_id": role_id,
             },
         )
         connection.execute(

@@ -41,16 +41,13 @@ class ReportAudience(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["private", "everyone", "role", "user"] = "private"
-    role_id: UUID | None = None
+    kind: Literal["private", "everyone", "user"] = "private"
     user_id: UUID | None = None
 
     @model_validator(mode="after")
     def target_matches_kind(self) -> Self:
-        valid = (
-            (self.kind in {"private", "everyone"} and self.role_id is None and self.user_id is None)
-            or (self.kind == "role" and self.role_id is not None and self.user_id is None)
-            or (self.kind == "user" and self.role_id is None and self.user_id is not None)
+        valid = (self.kind in {"private", "everyone"} and self.user_id is None) or (
+            self.kind == "user" and self.user_id is not None
         )
         if not valid:
             raise ValueError("Audience target must match its kind")

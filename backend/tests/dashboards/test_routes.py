@@ -12,7 +12,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
@@ -23,6 +23,7 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.planner import plan_lifecycle
 from app.systems.sandbox.lifecycle.schemas import LifecycleBlockerCode, LifecycleTargetType
 from app.systems.sandbox.modules.models import Module
+from tests.rbac.support import capability_actor, grant_capability_actors
 
 pytestmark = pytest.mark.integration
 
@@ -31,25 +32,9 @@ def _actor(
     db: Session,
     *,
     capabilities: dict[str, bool] | None = None,
-    role: Role | None = None,
+    role: str | None = None,
 ) -> User:
-    if role is None:
-        role = Role(role=f"dashboard-{uuid7().hex}", permissions=capabilities or {})
-        db.add(role)
-        db.flush()
-
-    user_id = uuid7()
-    user = User(
-        id=user_id,
-        email=f"dashboard-{user_id.hex}@example.test",
-        username=f"dash_{user_id.hex[:20]}",
-        status=UserStatus.ACTIVE.value,
-        role_id=role.id,
-        role=role,
-    )
-    db.add(user)
-    db.flush()
-    return user
+    return capability_actor(db, "dash", capabilities, role=role)
 
 
 def _client(db: Session, actor: User) -> TestClient:
@@ -70,6 +55,7 @@ def _module(db: Session, *, name: str = "Dashboard records") -> tuple[Module, Fi
     )
     db.add(module)
     db.flush()
+    grant_capability_actors(db, department, module)
     dimension = Field(
         module_id=module.id,
         name="Status",
@@ -415,12 +401,7 @@ def test_dashboard_owner_scope_hides_foreign_artifacts_from_users_and_admins(
     db.flush()
 
     outsider = _actor(db, capabilities=permissions)
-    admin_role = db.scalar(select(Role).where(Role.role == "admin", Role.is_deleted.is_(False)))
-    if admin_role is None:
-        admin_role = Role(role="admin", permissions={})
-        db.add(admin_role)
-        db.flush()
-    admin = _actor(db, role=admin_role)
+    admin = _actor(db, role="admin")
 
     set_audit_actor(db, outsider.id)
     with _client(db, outsider) as client:
@@ -441,7 +422,7 @@ def test_dashboard_owner_scope_hides_foreign_artifacts_from_users_and_admins(
     assert persisted is not None and persisted.name == "Private dashboard"
 
 
-def test_dashboard_routes_require_records_read_and_write_capabilities(
+def test_dashboard_routes_let_a_guest_read_but_not_write(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
@@ -452,7 +433,7 @@ def test_dashboard_routes_require_records_read_and_write_capabilities(
     with _client(db, reader) as read_client, _client(db, writer) as write_client:
         assert read_client.get("/api/dashboards").status_code == 200
         assert read_client.post("/api/dashboards", json={"name": "Denied"}).status_code == 403
-        assert write_client.get("/api/dashboards").status_code == 403
+        assert write_client.get("/api/dashboards").status_code == 200
 
         set_audit_actor(db, writer.id)
         created = write_client.post("/api/dashboards", json={"name": "Writer dashboard"})

@@ -9,12 +9,12 @@ from pydantic import Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_roles
+from app.common.dependencies import require_admin
 from app.common.listing import SortOrder, StandardListRequest
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.observability import log_event
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import User
 from app.systems.manage.audit import listeners as _listeners  # noqa: F401
 from app.systems.manage.audit.models import AuditAction, AuditLog, SecurityEvent
 from app.systems.manage.audit.schemas import (
@@ -37,7 +37,7 @@ security_events_router = APIRouter(prefix="/security-events", tags=["security-ev
 internal_security_events_router = APIRouter(
     prefix="/internal/security-events", tags=["security-events-internal"]
 )
-AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+AdminUser = Annotated[User, Depends(require_admin)]
 
 
 class AuditLogListRequest(StandardListRequest[AuditLogSortField]):

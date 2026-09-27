@@ -123,14 +123,12 @@ def test_report_create_trims_bounded_metadata_and_does_not_accept_owner_input() 
 
 def test_report_audience_requires_exactly_the_matching_target() -> None:
     role_id, user_id = uuid7(), uuid7()
-    assert ReportAudience(kind="role", role_id=role_id).role_id == role_id
     assert ReportAudience(kind="user", user_id=user_id).user_id == user_id
     for definition in (
-        {"kind": "role"},
+        {"kind": "role", "role_id": role_id},
         {"kind": "user"},
         {"kind": "private", "user_id": user_id},
         {"kind": "everyone", "role_id": role_id},
-        {"kind": "role", "role_id": role_id, "user_id": user_id},
         {"kind": "unknown"},
     ):
         with pytest.raises(ValidationError):
@@ -179,10 +177,8 @@ def test_report_mapping_is_private_revisioned_and_module_scoped() -> None:
     assert columns["audience_kind"].nullable is False
     assert columns["audience_kind"].server_default is not None
     assert str(columns["audience_kind"].server_default.arg) == "'private'"
-    assert columns["audience_role_id"].nullable is True
+    assert "audience_role_id" not in columns
     assert columns["audience_user_id"].nullable is True
-    assert {key.target_fullname for key in columns["audience_role_id"].foreign_keys} == {"roles.id"}
-    assert {key.ondelete for key in columns["audience_role_id"].foreign_keys} == {"RESTRICT"}
     assert {key.target_fullname for key in columns["audience_user_id"].foreign_keys} == {"users.id"}
     assert {key.ondelete for key in columns["audience_user_id"].foreign_keys} == {"RESTRICT"}
     assert not {"audience", "cadence", "timezone"}.intersection(columns.keys())

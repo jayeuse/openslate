@@ -19,7 +19,9 @@ from app.systems.manage.audit.snapshots import (
 from app.systems.platform.events.models import event_for_entity
 from app.systems.platform.events.publisher import publish_invalidations
 from app.systems.sandbox.fields.models import Field
+from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.relationships.models import RelationshipEdge
 
 PENDING_CHANGES_KEY = "audit_pending_changes"
 REALTIME_INVALIDATION_KEY = "realtime_invalidation_pending"
@@ -79,6 +81,33 @@ def _record_redacted_fields(
     return {module_id: frozenset(field_ids) for module_id, field_ids in fields_by_module.items()}
 
 
+def _edge_modules(session: Session, pending: list[PendingChange]) -> dict[UUID, UUID]:
+    """Map relationship fields to the module that owns them, for event routing."""
+
+    field_ids = {
+        change.instance.field_id
+        for change in pending
+        if isinstance(change.instance, RelationshipEdge)
+    }
+    if not field_ids:
+        return {}
+    return {
+        field_id: module_id
+        for field_id, module_id in session.execute(
+            select(Field.id, Field.module_id).where(Field.id.in_(field_ids))
+        ).tuples()
+    }
+
+
+def _event_module_id(instance: Any, edge_modules: dict[UUID, UUID]) -> UUID | None:
+    if isinstance(instance, Module):
+        return instance.id
+    if isinstance(instance, RelationshipEdge):
+        return edge_modules.get(instance.field_id)
+    module_id = getattr(instance, "module_id", None)
+    return module_id if isinstance(module_id, UUID) else None
+
+
 @event.listens_for(AuditSession, "before_flush")
 def capture_changes(session: AuditSession, flush_context: Any, instances: Any) -> None:
     pending = session.info.setdefault(PENDING_CHANGES_KEY, [])
@@ -131,6 +160,7 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
 
     context = get_audit_context(session)
     record_redacted_fields = _record_redacted_fields(session, pending)
+    edge_modules = _edge_modules(session, pending)
     invalidations = session.info.setdefault(REALTIME_INVALIDATION_KEY, [])
     for change in pending:
         dynamic_redacted_fields = (
@@ -169,6 +199,7 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
             entity_type,
             getattr(change.instance, "id", None),
             recipient_id=getattr(change.instance, "recipient_id", None),
+            module_id=_event_module_id(change.instance, edge_modules),
         )
         if invalidation is not None:
             invalidations.append(invalidation)

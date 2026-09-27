@@ -9,14 +9,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.common.listing import (
     ListQuerySpec,
     execute_standard_list,
 )
 from app.core.database import get_db
 from app.systems.access.users.models import User, UserRole, UserStatus
-from app.systems.access.users.permissions import Capability
 from app.systems.boards.access import can_access_board
 from app.systems.boards.models import (
     Board,
@@ -45,8 +44,8 @@ def _private_cache(response: Response) -> None:
 
 
 router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_private_cache)])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
+Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 BOARD_LIST_SPEC = ListQuerySpec(
@@ -98,41 +97,22 @@ def _grant_exists(
         BoardGrant.effect == effect.value,
     ]
     if principal_type is BoardPrincipalType.USER:
-        conditions.extend(
-            [
-                BoardGrant.principal_user_id == actor.id,
-                BoardGrant.principal_role_id.is_(None),
-            ]
-        )
-    elif principal_type is BoardPrincipalType.ROLE:
-        conditions.extend(
-            [
-                BoardGrant.principal_role_id == actor.role_id,
-                BoardGrant.principal_user_id.is_(None),
-            ]
-        )
+        conditions.append(BoardGrant.principal_user_id == actor.id)
     else:
-        conditions.extend(
-            [BoardGrant.principal_user_id.is_(None), BoardGrant.principal_role_id.is_(None)]
-        )
+        conditions.append(BoardGrant.principal_user_id.is_(None))
     return exists(select(BoardGrant.id).where(*conditions))
 
 
 def _board_view_clause(actor: User) -> ColumnElement[bool]:
     """SQL equivalent of Board view precedence, applied before list pagination."""
 
-    role = actor.role
     if (
         actor.status != UserStatus.ACTIVE.value
         or actor.is_deleted
         or actor.deleted_at is not None
-        or role is None
-        or role.is_deleted
-        or role.deleted_at is not None
-        or actor.role_id != role.id
     ):
         return false()
-    if actor.role.role == UserRole.ADMIN.value:
+    if actor.role == UserRole.ADMIN.value:
         return true()
 
     user_allow = _grant_exists(
@@ -144,18 +124,6 @@ def _board_view_clause(actor: User) -> ColumnElement[bool]:
     user_deny = _grant_exists(
         actor,
         BoardPrincipalType.USER,
-        permission_values=(BoardPermission.VIEW.value,),
-        effect=BoardGrantEffect.DENY,
-    )
-    role_allow = _grant_exists(
-        actor,
-        BoardPrincipalType.ROLE,
-        permission_values=_VIEW_ALLOW_PERMISSIONS,
-        effect=BoardGrantEffect.ALLOW,
-    )
-    role_deny = _grant_exists(
-        actor,
-        BoardPrincipalType.ROLE,
         permission_values=(BoardPermission.VIEW.value,),
         effect=BoardGrantEffect.DENY,
     )
@@ -172,13 +140,11 @@ def _board_view_clause(actor: User) -> ColumnElement[bool]:
         effect=BoardGrantEffect.DENY,
     )
     user_decision = or_(user_allow, user_deny)
-    role_decision = or_(role_allow, role_deny)
 
     return or_(
         Board.owner_id == actor.id,
         and_(user_allow, not_(user_deny)),
-        and_(not_(user_decision), role_allow, not_(role_deny)),
-        and_(not_(user_decision), not_(role_decision), everyone_allow, not_(everyone_deny)),
+        and_(not_(user_decision), everyone_allow, not_(everyone_deny)),
     )
 
 

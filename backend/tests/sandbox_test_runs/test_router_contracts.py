@@ -9,7 +9,6 @@ from fastapi import FastAPI
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.users.permissions import Capability
 from app.systems.sandbox.test_runs.router import router
 from app.systems.sandbox.test_runs.schemas import (
     SandboxTestResultResponse,
@@ -19,12 +18,12 @@ from app.systems.sandbox.test_runs.schemas import (
 from tests.rbac.support import _client, make_user
 
 
-def test_tests_require_every_structure_capability_for_reads_and_writes(monkeypatch) -> None:
+def test_tests_are_administrator_only_for_reads_and_writes(monkeypatch) -> None:
     import app.systems.sandbox.test_runs.router as test_router
 
     database = Mock(spec=Session)
     application = _application()
-    partial = make_user("partial", permissions={Capability.DEPARTMENTS_READ.value: True})
+    partial = make_user("partial", role="member")
     client = _client(application, partial, database)
 
     assert client.get("/api/sandbox/tests").status_code == 403
@@ -79,7 +78,7 @@ def test_create_detail_delete_and_validation_follow_the_frontend_contract(monkey
     assert created.status_code == 201
     assert created.headers["location"] == f"/api/sandbox/tests/{response_model.id}"
     assert created.json() == _response_json(response_model)
-    assert detail.status_code == 403
+    assert detail.status_code == 200
     assert readable_detail.status_code == 200
     assert readable_detail.json() == _response_json(response_model)
     assert cleared_response.status_code == 204
@@ -122,24 +121,8 @@ def _application() -> FastAPI:
 
 
 def _user(*, read: bool = False, write: bool = False):
-    capabilities = (
-        (
-            Capability.DEPARTMENTS_READ,
-            Capability.MODULES_READ,
-            Capability.FIELDS_READ,
-            Capability.RELATIONSHIPS_READ,
-        )
-        if read
-        else (
-            Capability.DEPARTMENTS_WRITE,
-            Capability.MODULES_WRITE,
-            Capability.FIELDS_WRITE,
-            Capability.RELATIONSHIPS_WRITE,
-        )
-    )
-    return make_user(
-        "test-user", permissions={capability.value: True for capability in capabilities}
-    )
+    """An administrator; the Sandbox has no narrower read or write access."""
+    return make_user("test-user")
 
 
 def _request_body() -> dict[str, object]:

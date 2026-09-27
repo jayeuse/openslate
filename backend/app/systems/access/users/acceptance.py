@@ -11,9 +11,8 @@ from app.core.base_model import utc_now
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import User, UserStatus
 from app.systems.access.users.service import (
-    _lock_admin_role,
+    _lock_administrator_changes,
     _lock_profile,
-    _lock_role_any_state,
     _security_event,
 )
 from app.systems.manage.audit.models import SecurityEventOutcome
@@ -91,7 +90,7 @@ def accept_verified_invitation(
         record_invitation_acceptance_failure(operation_id, user_id, "verified email is invalid")
         raise InvitationError("Verified email does not match invitation") from error
     try:
-        _lock_admin_role(db)
+        _lock_administrator_changes(db)
         profile = _lock_profile(db, user_id)
     except InvitationError as error:
         db.rollback()
@@ -105,19 +104,6 @@ def accept_verified_invitation(
             operation_id, user_id, "verified email does not match invitation"
         )
         raise InvitationError("Verified email does not match invitation")
-    try:
-        assigned_role = _lock_role_any_state(db, profile.role_id)
-    except InvitationError as error:
-        db.rollback()
-        record_invitation_acceptance_failure(
-            operation_id, user_id, "unable to lock invitation role"
-        )
-        raise error
-    if assigned_role is None or assigned_role.is_deleted:
-        db.rollback()
-        record_invitation_acceptance_failure(operation_id, user_id, "invitation role is not active")
-        raise InvitationError("Invitation role is not active")
-    profile.role = assigned_role
     if profile.status == UserStatus.ACTIVE.value and profile.invitation_accepted_at is not None:
         db.rollback()
         _security_event(
@@ -131,8 +117,6 @@ def accept_verified_invitation(
     if (
         profile.status != UserStatus.PENDING.value
         or profile.invitation_sent_at is None
-        or profile.role is None
-        or profile.role.is_deleted
     ):
         db.rollback()
         record_invitation_acceptance_failure(operation_id, user_id, "invitation is not pending")

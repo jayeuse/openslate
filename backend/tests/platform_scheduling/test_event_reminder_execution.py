@@ -12,7 +12,7 @@ from uuid6 import uuid7
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board, BoardGrant
 from app.systems.boards.reminder_models import BoardEventReminder
@@ -32,10 +32,7 @@ NOW = datetime(2026, 9, 24, 12, tzinfo=UTC)
 
 
 def _user(db: Session, label: str) -> User:
-    role = Role(
-        role=f"reminder-work-{label}-{uuid7().hex[:8]}",
-        permissions={"records.read": True, "records.write": True},
-    )
+    role = "member"
     actor = User(
         email=f"reminder-work-{uuid7().hex}@example.test",
         username=f"reminder_work_{uuid7().hex[:12]}",

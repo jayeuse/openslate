@@ -7,11 +7,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from uuid6 import uuid7
 
 from app.core.database import get_db
-from app.systems.access.users.permissions import Capability
 from app.systems.platform.events import router as events_router
-from app.systems.platform.events.hub import EventHub
+from app.systems.platform.events.hub import EventHub, EventViewer
 from app.systems.platform.events.models import InvalidationEvent
 from app.systems.platform.events.router import (
     BoundedSSEStreamingResponse,
@@ -21,12 +21,14 @@ from app.systems.platform.events.router import (
     router,
 )
 
+READABLE_MODULE = uuid7()
+
 
 def test_event_stream_starts_with_resync_then_uses_comment_heartbeats() -> None:
     async def exercise() -> None:
         hub = EventHub()
         request = SimpleNamespace(is_disconnected=_not_disconnected)
-        user = SimpleNamespace(role=SimpleNamespace(role="member", permissions={}))
+        user = EventViewer(user_id=uuid7(), role="member", module_ids=frozenset())
         stream = event_stream(
             request,
             hub,
@@ -46,9 +48,7 @@ def test_event_stream_serializes_only_opaque_invalidation_metadata() -> None:
     async def exercise() -> None:
         hub = EventHub()
         request = SimpleNamespace(is_disconnected=_not_disconnected)
-        user = SimpleNamespace(
-            role=SimpleNamespace(role="member", permissions={"records.read": True})
-        )
+        user = EventViewer(user_id=uuid7(), role="member", module_ids=frozenset({READABLE_MODULE}))
         stream = event_stream(
             request,
             hub,
@@ -58,9 +58,11 @@ def test_event_stream_serializes_only_opaque_invalidation_metadata() -> None:
         )
 
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
-        await hub.publish(InvalidationEvent("records", capability=Capability.RECORDS_READ))
+        await hub.publish(InvalidationEvent("records", module_id=READABLE_MODULE))
         assert await anext(stream) == (
-            b'event: invalidate\ndata: {"capability":"records.read","entity":"records"}\n\n'
+            b'event: invalidate\ndata: {"entity":"records","module_id":"'
+            + str(READABLE_MODULE).encode()
+            + b'"}\n\n'
         )
         await stream.aclose()
 
@@ -76,10 +78,7 @@ def test_event_stream_emits_private_notification_without_a_recipient_identifier(
         hub = EventHub()
         recipient_id = uuid7()
         request = SimpleNamespace(is_disconnected=_not_disconnected)
-        user = SimpleNamespace(
-            id=recipient_id,
-            role=SimpleNamespace(role="member", permissions={}),
-        )
+        user = EventViewer(user_id=recipient_id, role="member", module_ids=frozenset())
         stream = event_stream(
             request,
             hub,
@@ -104,7 +103,7 @@ def test_event_stream_terminates_when_periodic_identity_check_is_revoked() -> No
     async def exercise() -> None:
         hub = EventHub()
         request = SimpleNamespace(is_disconnected=_not_disconnected)
-        user = SimpleNamespace(role=SimpleNamespace(role="member", permissions={}))
+        user = EventViewer(user_id=uuid7(), role="member", module_ids=frozenset())
         stream = event_stream(
             request,
             hub,
@@ -125,10 +124,10 @@ def test_event_stream_rechecks_changed_permissions_before_delivery() -> None:
     async def exercise() -> None:
         hub = EventHub()
         request = SimpleNamespace(is_disconnected=_not_disconnected)
-        allowed = SimpleNamespace(
-            role=SimpleNamespace(role="member", permissions={"records.read": True})
+        allowed = EventViewer(
+            user_id=uuid7(), role="member", module_ids=frozenset({READABLE_MODULE})
         )
-        denied = SimpleNamespace(role=SimpleNamespace(role="member", permissions={}))
+        denied = EventViewer(user_id=uuid7(), role="member", module_ids=frozenset())
         stream = event_stream(
             request,
             hub,
@@ -138,7 +137,7 @@ def test_event_stream_rechecks_changed_permissions_before_delivery() -> None:
         )
 
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
-        await hub.publish(InvalidationEvent("records", capability=Capability.RECORDS_READ))
+        await hub.publish(InvalidationEvent("records", module_id=READABLE_MODULE))
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
         await stream.aclose()
 
@@ -250,7 +249,7 @@ def test_bearer_event_principal_does_not_require_browser_origin(monkeypatch) -> 
 def test_stalled_asgi_send_cancels_the_stream_and_releases_admission_slot() -> None:
     async def exercise() -> None:
         hub = EventHub(max_subscribers=1)
-        user = SimpleNamespace(id="user", role=SimpleNamespace(role="member", permissions={}))
+        user = EventViewer(user_id="user", role="member", module_ids=frozenset())
         blocked = asyncio.Event()
 
         async def body():

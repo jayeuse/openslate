@@ -12,7 +12,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.announcement_router import router
 from app.systems.boards.models import Board
@@ -39,10 +39,7 @@ def _client(db: Session, actor: User) -> TestClient:
 
 
 def _subject(db: Session) -> tuple[TestClient, Board, User]:
-    role = Role(
-        role=f"announcement-scheduler-{uuid7().hex}",
-        permissions={"records.read": True, "records.write": True},
-    )
+    role = "member"
     actor_id = uuid7()
     actor = User(
         id=actor_id,
@@ -177,7 +174,7 @@ def test_stale_schedule_denial_does_not_create_or_cancel_work(
         email=f"announcement-outsider-{outsider_id.hex}@example.test",
         username=f"announcement_outsider_{outsider_id.hex[:12]}",
         status="active",
-        role_id=actor.role_id,
+        role="member",
     )
     db.add(outsider)
     db.commit()

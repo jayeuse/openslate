@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from sqlalchemy import UniqueConstraint
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.manage.audit.snapshots import REDACTED, build_update_snapshot
 from app.systems.openview.views.models import AudienceKind, SavedView, SavedViewDefault
 from app.systems.openview.views.router import router as views_router
@@ -182,13 +182,11 @@ def test_calendar_presentation_requires_a_live_date_or_datetime_query_column() -
     assert error.value.status_code == 409
 
 
-@pytest.mark.parametrize("kind", ["role", "user"])
-def test_audience_target_validation_locks_rows_to_serialize_invalidation(kind: str) -> None:
+def test_audience_target_validation_locks_rows_to_serialize_invalidation() -> None:
     from app.systems.openview.views.router import _validate_audience
 
     target_id = uuid7()
-    audience = ViewAudience(kind=kind, role_id=target_id if kind == "role" else None,
-                            user_id=target_id if kind == "user" else None)
+    audience = ViewAudience(kind="user", user_id=target_id)
     statements: list[object] = []
 
     class TargetSession:
@@ -202,11 +200,11 @@ def test_audience_target_validation_locks_rows_to_serialize_invalidation(kind: s
 
 
 @pytest.mark.parametrize(
-    ("owner", "write_permission", "expected"),
-    [(True, False, False), (True, True, True), (False, True, False)],
+    ("owner", "role", "expected"),
+    [(True, "guest", False), (True, "member", True), (False, "member", False)],
 )
-def test_can_edit_requires_ownership_and_effective_records_write(
-    owner: bool, write_permission: bool, expected: bool
+def test_can_edit_requires_ownership_and_a_non_guest_account(
+    owner: bool, role: str, expected: bool
 ) -> None:
     from datetime import UTC, datetime
     from types import SimpleNamespace
@@ -217,12 +215,7 @@ def test_can_edit_requires_ownership_and_effective_records_write(
     user = User(
         id=user_id,
         status="active",
-        role=Role(
-            role="member",
-            permissions={"records.read": True, "records.write": write_permission},
-            is_deleted=False,
-        ),
-        role_id=uuid7(),
+        role=role,
         is_deleted=False,
     )
     view = SimpleNamespace(
@@ -232,7 +225,6 @@ def test_can_edit_requires_ownership_and_effective_records_write(
         name="View",
         visibility="private",
         audience_kind=AudienceKind.PRIVATE,
-        audience_role_id=None,
         audience_user_id=None,
         definition=QueryDefinition().model_dump(mode="json"),
         presentation={"version": 1},
@@ -338,12 +330,14 @@ def test_saved_view_changes_keep_definitions_and_layouts_out_of_audit_snapshots(
     }
 
 
-def test_saved_view_default_invalidation_omits_row_ids_and_requires_records_read() -> None:
-    event = event_for_entity("saved_view_defaults", uuid7())
+def test_saved_view_default_invalidation_omits_row_ids_and_carries_its_module() -> None:
+    module_id = uuid7()
+    event = event_for_entity("saved_view_defaults", uuid7(), module_id=module_id)
 
+    assert event is not None
     assert event.to_payload() == {
         "entity": "saved_view_defaults",
-        "capability": "records.read",
+        "module_id": str(module_id),
     }
 
 
@@ -371,8 +365,7 @@ def test_admin_who_can_read_a_shared_view_still_cannot_mutate_it() -> None:
     user = User(
         id=uuid7(),
         status="active",
-        role=Role(role="admin", is_deleted=False),
-        role_id=uuid7(),
+        role="admin",
         is_deleted=False,
     )
 
@@ -400,11 +393,11 @@ def test_stale_saved_view_conflict_includes_current_revision() -> None:
         revision=9,
         is_deleted=False,
     )
+    # An administrator needs no database lookup for the module level.
     user = User(
         id=user_id,
         status="active",
-        role=Role(role="member", is_deleted=False),
-        role_id=uuid7(),
+        role="admin",
         is_deleted=False,
     )
 

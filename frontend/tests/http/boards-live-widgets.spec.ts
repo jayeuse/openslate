@@ -43,7 +43,7 @@ const widget: BoardWidget = {
     refresh: "manual",
     pinned: false,
   },
-  audience: { kind: "everyone", roleId: null, userId: null },
+  audience: { kind: "everyone", userId: null },
   createdAt: timestamp,
   updatedAt: timestamp,
 };
@@ -65,7 +65,7 @@ const wireWidget = {
     refresh: "manual",
     pinned: false,
   },
-  audience: { kind: "everyone", role_id: null, user_id: null },
+  audience: { kind: "everyone", user_id: null },
   created_at: timestamp,
   updated_at: timestamp,
 };
@@ -545,17 +545,17 @@ test("record summary cards pair the exact count with returned source and audienc
     widgetType: "summary" as const,
     config: { ...widget.config, pinned: true },
   };
-  const roleSummary = {
+  const targetedSummary = {
     ...summary,
     id: otherBoardId,
-    name: "Role summary",
-    audience: { kind: "role" as const, roleId: otherBoardId, userId: null },
+    name: "Targeted summary",
+    audience: { kind: "user" as const, userId: otherBoardId },
   };
   const privateSummary = {
     ...summary,
     id: "00000000-0000-4000-8000-000000000007",
     name: "Private summary",
-    audience: { kind: "private" as const, roleId: null, userId: null },
+    audience: { kind: "private" as const, userId: null },
   };
   const data = (total: number): LiveWidgetData => ({
     kind: "records",
@@ -574,7 +574,7 @@ test("record summary cards pair the exact count with returned source and audienc
   const html = renderWidgets(
     displayState([
       widgetItem(summary, data(24)),
-      widgetItem(roleSummary, data(18)),
+      widgetItem(targetedSummary, data(18)),
       widgetItem(privateSummary, data(42)),
     ]),
   );

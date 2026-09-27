@@ -7,10 +7,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy import Select, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -20,13 +20,12 @@ from app.common.listing import (
 from app.core.database import get_db
 from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.access.users.permissions import Capability
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.access import can_access_board, can_read_board_grants
 from app.systems.boards.models import Board, BoardGrant, BoardPermission
 
 router = APIRouter(prefix="/boards", tags=["boards"])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
+Reader = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -89,15 +88,12 @@ def _manager_board(db: Session, manager: User, board_id: UUID) -> tuple[Board, l
 def _eligible_users() -> Select[tuple[User]]:
     return (
         select(User)
-        .join(Role, User.role_id == Role.id)
         .where(
             User.status == UserStatus.ACTIVE.value,
             User.is_deleted.is_(False),
             User.deleted_at.is_(None),
             identity_eligible_clause(),
             established_user_clause(),
-            Role.is_deleted.is_(False),
-            Role.deleted_at.is_(None),
         )
     )
 
@@ -150,7 +146,7 @@ def preview_board_access(
     """Preview effective Board ACL and global gates, never content audiences."""
 
     board, grants = _manager_board(db, manager, board_id)
-    target = db.scalar(_eligible_users().options(joinedload(User.role)).where(User.id == user_id))
+    target = db.scalar(_eligible_users().where(User.id == user_id))
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preview user not found")
     response.headers["Cache-Control"] = "no-store"

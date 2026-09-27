@@ -8,8 +8,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
-from app.systems.access.policy.service import get_defaults
-from app.systems.access.users.models import UserDepartment
+from app.systems.access.policy.models import GroupAccess
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board, BoardRecordPlacement, BoardWidget
@@ -47,7 +46,7 @@ from app.systems.sandbox.relationships.models import RelationshipEdge
 
 _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("departments", Department),
-    ("user_departments", UserDepartment),
+    ("group_access", GroupAccess),
     ("boards", Board),
     ("board_announcements", BoardAnnouncement),
     ("board_announcement_revisions", BoardAnnouncementRevision),
@@ -141,6 +140,7 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
         "files": File,
         "saved_views": SavedView,
         "saved_view_defaults": SavedViewDefault,
+        "group_access": GroupAccess,
     }
 
     for edge_id in plan.scope_ids.get("relationship_edges", ()):
@@ -159,6 +159,7 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
             db.flush()
 
     for entity_type in (
+        "group_access",
         "files",
         "saved_view_defaults",
         "saved_views",
@@ -178,11 +179,6 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
 
 
 def _execute(db: Session, plan: LifecyclePlan) -> LifecycleImpactResponse:
-    if (
-        plan.operation is LifecycleOperation.CLOSE
-        and plan.target_type is LifecycleTargetType.DEPARTMENT
-    ):
-        get_defaults(db, lock=True)
     _lock_plan_scope(db, plan)
     current = _current_plan(db, plan)
     if current.impact_digest != plan.impact_digest:

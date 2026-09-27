@@ -7,10 +7,9 @@ from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import require_non_guest
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.boards.announcement_service import (
     announcement,
     displayed_revision,
@@ -28,7 +27,7 @@ def _private_cache(response: Response) -> None:
 router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_private_cache)])
 Manager = Annotated[
     User,
-    Depends(require_legacy_capability(Capability.RECORDS_READ, Capability.RECORDS_WRITE)),
+    Depends(require_non_guest),
 ]
 Database = Annotated[Session, Depends(get_db)]
 

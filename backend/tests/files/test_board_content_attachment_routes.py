@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.announcement_models import (
     BoardAnnouncement,
     BoardAnnouncementRevision,
@@ -101,11 +101,10 @@ def test_event_file_context_hides_bare_id_other_board_and_excluded_manager(
         assert result.headers["cache-control"] == "no-store"
     assert len(events) == 1
 
-    admin_role_id = actor.role_id
     reader_id = uuid4()
     reader = User(
         id=reader_id, email=f"excluded-{reader_id.hex}@example.test",
-        username=f"excluded_{reader_id.hex[:12]}", status="active", role_id=admin_role_id,
+        username=f"excluded_{reader_id.hex[:12]}", status="active", role=actor.role,
     )
     db.add(reader)
     db.commit()
@@ -127,7 +126,7 @@ def test_published_announcement_file_uses_snapshot_audience_not_manager_or_draft
     reader_id = uuid4()
     reader = User(
         id=reader_id, email=f"eligible-{reader_id.hex}@example.test",
-        username=f"eligible_{reader_id.hex[:12]}", status="active", role_id=actor.role_id,
+        username=f"eligible_{reader_id.hex[:12]}", status="active", role=actor.role,
     )
     board = Board(owner_id=actor.id, name="Private notice", status="active")
     db.add_all((reader, board))
@@ -189,18 +188,13 @@ def test_viewer_can_read_linked_event_attachment_after_board_archive_but_cannot_
     guarded_db, actor, monkeypatch
 ):
     db = guarded_db
-    reader_role = Role(
-        role=f"archived-board-viewer-{uuid4().hex}",
-        permissions={"records.read": True, "records.write": True},
-    )
-    db.add(reader_role)
-    db.flush()
+    reader_role = "member"
     viewer = User(
         id=uuid4(),
         email=f"archived-viewer-{uuid4().hex}@example.test",
         username=f"archived_viewer_{uuid4().hex[:12]}",
         status="active",
-        role_id=reader_role.id,
+        role=reader_role,
     )
     board = Board(owner_id=actor.id, name="Archived Board", status=BoardStatus.ACTIVE)
     db.add_all((viewer, board))
@@ -321,7 +315,7 @@ def test_archived_board_attachment_still_obeys_content_audience(
         email=f"archived-excluded-{uuid4().hex}@example.test",
         username=f"archived_excluded_{uuid4().hex[:12]}",
         status="active",
-        role_id=actor.role_id,
+        role=actor.role,
     )
     db.add(excluded)
     db.commit()

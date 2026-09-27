@@ -256,7 +256,6 @@ export default function ServerBackedViewsWorkspace({
     audienceError,
     audienceLoading,
     retryAudiences,
-    roleOptionsHasMore,
     userOptionsHasMore,
     moduleId,
     moduleWorkspace,
@@ -988,7 +987,6 @@ export default function ServerBackedViewsWorkspace({
   const archivedViews = moduleViews.filter(
     (view) => view.isDeleted && view.canEdit,
   );
-  const roleOptions = audiences.filter((item) => item.kind === "role");
   const userOptions = audiences.filter((item) => item.kind === "identity");
   const saveTarget = canEditSaved ? activeSaved : undefined;
   const setRoute = useCallback(
@@ -3107,11 +3105,6 @@ export default function ServerBackedViewsWorkspace({
                   >
                     <option value="private">Only me</option>
                     <option value="everyone">Everyone</option>
-                    {roleOptions.map((item) => (
-                      <option key={item.id} value={`role:${item.id}`}>
-                        Role: {item.label}
-                      </option>
-                    ))}
                     {userOptions.map((item) => (
                       <option key={item.id} value={`identity:${item.id}`}>
                         User: {item.label}
@@ -3140,11 +3133,11 @@ export default function ServerBackedViewsWorkspace({
                       retryAudiences();
                     }}
                   >
-                    {audienceLoading ? "Retrying…" : "Retry roles and people"}
+                    {audienceLoading ? "Retrying…" : "Retry people"}
                   </Button>
                 </Alert>
               ) : null}
-              {roleOptionsHasMore || userOptionsHasMore ? (
+              {userOptionsHasMore ? (
                 <Button
                   type="button"
                   variant="outline"

@@ -11,7 +11,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.announcement_author_router import router
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.models import Board
@@ -130,17 +130,14 @@ def test_inactive_deleted_or_unestablished_authors_are_not_choices(
     disabled = _actor(db, "authors-disabled")
     deleted = _actor(db, "authors-deleted")
     unestablished = _actor(db, "authors-unestablished")
-    role_deleted = _actor(db, "authors-role-deleted")
     board = _board(db, owner)
     _grant(db, board, viewer, "view")
-    for author in (active, disabled, deleted, unestablished, role_deleted):
+    for author in (active, disabled, deleted, unestablished):
         _published(db, board, author)
     disabled.status = UserStatus.DISABLED.value
     deleted.is_deleted = True
     deleted.deleted_at = datetime.now(UTC)
     unestablished.invitation_sent_at = datetime.now(UTC)
-    assert role_deleted.role is not None
-    role_deleted.role.is_deleted = True
     db.commit()
 
     response = _client(db, viewer).get(f"/api/boards/{board.id}/announcement-authors")
@@ -148,21 +145,18 @@ def test_inactive_deleted_or_unestablished_authors_are_not_choices(
     assert response.json() == [{"id": str(active.id), "label": active.username}]
 
 
-def test_missing_board_access_and_global_read_capability_do_not_reveal_authors(
+def test_missing_board_access_does_not_reveal_authors(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
     owner = _actor(db, "authors-denial-owner")
     outsider = _actor(db, "authors-denial-outsider")
-    writer = _actor(db, "authors-denial-writer", read=False)
     board = _board(db, owner)
-    _grant(db, board, writer, "view")
     _published(db, board, owner)
     db.commit()
     endpoint = f"/api/boards/{board.id}/announcement-authors"
 
     assert _client(db, outsider).get(endpoint).status_code == 404
-    assert _client(db, writer).get(endpoint).status_code == 403
 
 
 def test_author_choices_are_bounded_to_active_board_announcement_limit(
@@ -171,8 +165,7 @@ def test_author_choices_are_bounded_to_active_board_announcement_limit(
     db = integration_owner_db
     owner = _actor(db, "authors-bounded-owner")
     board = _board(db, owner)
-    role = Role(role=f"authors-bounded-{uuid7().hex}", permissions={"records.read": True})
-    db.add(role)
+    role = "member"
     db.flush()
     for index in range(501):
         author_id = uuid7()
@@ -181,7 +174,7 @@ def test_author_choices_are_bounded_to_active_board_announcement_limit(
             email=f"authors-bounded-{author_id.hex}@example.test",
             username=f"authors_bounded_{index:03d}",
             status="active",
-            role_id=role.id,
+            role=role,
         )
         db.add(author)
         db.flush()

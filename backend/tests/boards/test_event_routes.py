@@ -13,14 +13,14 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User, UserDepartment
+from app.systems.access.users.models import User
 from app.systems.boards.event_author_router import router as author_router
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.event_router import router
 from app.systems.boards.event_schemas import EventCreate
 from app.systems.boards.models import Board, BoardGrant
 from app.systems.sandbox.departments.models import Department
-from tests.rbac.support import make_role, make_user
+from tests.rbac.support import capability_actor, make_group_access, make_user
 
 
 def _client(db: Session, actor: User) -> TestClient:
@@ -33,27 +33,9 @@ def _client(db: Session, actor: User) -> TestClient:
 
 
 def _actor(db: Session, label: str, *, read: bool = True, write: bool = True) -> User:
-    role = Role(
-        role=f"event-{label}-{uuid7().hex[:8]}",
-        permissions={
-            "records.read": read,
-            "records.write": write,
-        },
-    )
-    db.add(role)
-    db.flush()
-    user_id = uuid7()
-    actor = User(
-        id=user_id,
-        email=f"event-{user_id.hex}@example.test",
-        username=f"event_{user_id.hex[:12]}",
-        status="active",
-        role_id=role.id,
-        role=role,
-    )
-    db.add(actor)
-    db.flush()
-    return actor
+    """Map the retired read and write capabilities: write makes a member, read alone a guest."""
+
+    return capability_actor(db, "board", {"records.read": read, "records.write": write})
 
 
 def _board(db: Session, owner: User) -> Board:
@@ -82,7 +64,6 @@ def _series(
     title: str,
     *,
     audience: str = "everyone",
-    role_id=None,
     user_id=None,
     department_id=None,
     day: date = date(2026, 9, 14),
@@ -96,7 +77,6 @@ def _series(
         end_date=day,
         timezone_name="UTC",
         audience_kind=audience,
-        audience_role_id=role_id,
         audience_user_id=user_id,
         audience_department_id=department_id,
     )
@@ -117,13 +97,11 @@ def _payload(revision: int, *, audience: dict | None = None) -> dict:
     }
 
 
-def test_event_routes_require_global_capabilities_before_board_or_event_lookup() -> None:
-    reader = make_user("event_reader", role=make_role("member", {"records.read": True}))
-    writer = make_user("event_writer", role=make_role("member", {"records.write": True}))
+def test_event_writes_refuse_a_guest_before_board_or_event_lookup() -> None:
+    reader = make_user("event_reader", role="guest")
     db = Mock(spec=Session)
     board_id, event_id = uuid7(), uuid7()
 
-    assert _client(db, writer).get(f"/api/boards/{board_id}/events").status_code == 403
     assert (
         _client(db, reader)
         .post(f"/api/boards/{board_id}/events", json={"board_revision": 1})
@@ -183,16 +161,13 @@ def test_event_audience_prefilters_counts_occurrences_and_id_mutations_for_manag
     viewer = _actor(db, "viewer")
     department_viewer = _actor(db, "department-viewer")
     outsider = _actor(db, "outsider")
-    admin_role = db.scalar(select(Role).where(Role.role == "admin"))
-    assert admin_role is not None
     admin_id = uuid7()
     admin = User(
         id=admin_id,
         email=f"event-admin-{admin_id.hex}@example.test",
         username=f"event_admin_{admin_id.hex[:12]}",
         status="active",
-        role_id=admin_role.id,
-        role=admin_role,
+        role="admin",
     )
     db.add(admin)
     board = _board(db, owner)
@@ -201,12 +176,10 @@ def test_event_audience_prefilters_counts_occurrences_and_id_mutations_for_manag
     department = Department(department_name=f"Event audience {uuid7().hex}")
     db.add(department)
     db.flush()
-    membership = UserDepartment(user_id=department_viewer.id, department_id=department.id)
-    db.add(membership)
+    membership = make_group_access(db, [department_viewer], department)
     everyone = _series(db, board, owner, "Everyone")
     author = _series(db, board, owner, "Only author", audience="author")
-    role = _series(db, board, owner, "Only role", audience="role", role_id=viewer.role_id)
-    _series(db, board, owner, "Only user", audience="user", user_id=viewer.id)
+    role = _series(db, board, owner, "Only user", audience="user", user_id=viewer.id)
     _series(db, board, owner, "Only department", audience="department", department_id=department.id)
     db.commit()
     root = f"/api/boards/{board.id}/events"
@@ -218,8 +191,9 @@ def test_event_audience_prefilters_counts_occurrences_and_id_mutations_for_manag
     assert manager_page.json()["pagination"]["total"] == 1
     assert [item["id"] for item in manager_page.json()["items"]] == [str(everyone.id)]
     assert _client(db, owner).get(root).json()["pagination"]["total"] == 2
-    assert _client(db, admin).get(root).json()["pagination"]["total"] == 1
-    assert _client(db, viewer).get(root).json()["pagination"]["total"] == 3
+    # An administrator reads every department, so the department series is visible.
+    assert _client(db, admin).get(root).json()["pagination"]["total"] == 2
+    assert _client(db, viewer).get(root).json()["pagination"]["total"] == 2
     assert _client(db, department_viewer).get(root).json()["pagination"]["total"] == 2
 
     hidden = f"{root}/{role.id}"
@@ -291,8 +265,8 @@ def test_event_revisioned_author_and_manager_lifecycle_with_self_excluding_write
         json=_payload(
             1,
             audience={
-                "kind": "role",
-                "role_id": str(uuid7()),
+                "kind": "user",
+                "user_id": str(uuid7()),
             },
         ),
     )
@@ -484,21 +458,18 @@ def test_event_creation_rejects_inactive_audience_targets_without_a_partial_writ
     owner = _actor(db, "inactive-target-owner")
     target_user = _actor(db, "inactive-target-user")
     expired_user = _actor(db, "expired-target-user")
-    target_role = Role(role=f"inactive-event-role-{uuid7().hex}", permissions={})
     department = Department(department_name=f"Inactive event department {uuid7().hex}")
     board = _board(db, owner)
-    db.add_all([target_role, department])
+    db.add(department)
     db.flush()
     target_user.is_deleted = True
     expired_user.expires_at = datetime.now(UTC) - timedelta(seconds=1)
-    target_role.is_deleted = True
     department.is_deleted = True
     db.commit()
     client = _client(db, owner)
     root = f"/api/boards/{board.id}/events"
 
     for audience in (
-        {"kind": "role", "role_id": str(target_role.id)},
         {"kind": "user", "user_id": str(target_user.id)},
         {"kind": "user", "user_id": str(expired_user.id)},
         {"kind": "department", "department_id": str(department.id)},
