@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
-from app.systems.access.identity.models import IdentityActionToken, IdentitySession
+from app.systems.access.identity.models import IdentitySession
 
 
 def _now(now: datetime | None = None) -> datetime:
@@ -23,7 +23,9 @@ def revoke_session(
     session = db.get(IdentitySession, session_id, with_for_update=True)
     if session is None or session.user_id != user_id or session.revoked_at is not None:
         return False
-    session.revoked_at = _now(now)
+    timestamp = _now(now)
+    session.revoked_at = timestamp
+    _schedule_provider_signout(session, timestamp)
     return True
 
 
@@ -41,20 +43,15 @@ def revoke_user_sessions(
     ):
         if session.id != except_session_id and session.revoked_at is None:
             session.revoked_at = timestamp
+            _schedule_provider_signout(session, timestamp)
             changed += 1
     return changed
 
 
-def invalidate_action_tokens(db: Session, user_id: UUID, *, now: datetime | None = None) -> None:
-    """Consume outstanding setup and recovery secrets after identity changes."""
-
-    timestamp = _now(now)
-    for action in db.scalars(
-        select(IdentityActionToken)
-        .where(
-            IdentityActionToken.user_id == user_id,
-            IdentityActionToken.consumed_at.is_(None),
-        )
-        .with_for_update()
-    ):
-        action.consumed_at = timestamp
+def _schedule_provider_signout(session: IdentitySession, timestamp: datetime) -> None:
+    if session.provider_session_id is None or not session.provider_refresh_token_encrypted:
+        return
+    session.provider_signout_pending_at = timestamp
+    session.provider_signout_next_attempt_at = timestamp
+    session.provider_signout_attempts = 0
+    session.provider_signout_completed_at = None

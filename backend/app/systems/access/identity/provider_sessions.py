@@ -1,0 +1,327 @@
+"""Application session admission and liveness for Supabase Auth subjects."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from hashlib import sha256
+from hmac import compare_digest
+from secrets import token_urlsafe
+from uuid import UUID
+
+from cryptography.fernet import Fernet, InvalidToken
+from sqlalchemy import Uuid, column, select, table
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, joinedload, selectinload
+from uuid6 import uuid7
+
+from app.core.base_model import utc_now
+from app.core.config import get_settings
+from app.core.integrations.supabase_auth import (
+    InvalidProviderCredentials,
+    InvalidProviderToken,
+    ProviderAccessIdentity,
+    ProviderTokens,
+    SupabaseAuthClient,
+    SupabaseAuthUnavailable,
+)
+from app.systems.access.identity.contracts import InvalidCredentials, IssuedSession
+from app.systems.access.identity.eligibility import is_identity_eligible
+from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.session_revocation import revoke_session
+from app.systems.access.users.eligibility import is_established_user
+from app.systems.access.users.models import User, UserStatus
+
+_AUTH_SESSIONS = table(
+    "sessions", column("id", Uuid()), column("user_id", Uuid()), schema="auth"
+)
+
+
+def _digest(value: str) -> str:
+    return sha256(value.encode("utf-8")).hexdigest()
+
+
+def validate_csrf(session: IdentitySession, csrf_token: str) -> bool:
+    return bool(csrf_token) and compare_digest(session.csrf_token_digest, _digest(csrf_token))
+
+
+def _fernet() -> Fernet:
+    secret = get_settings().supabase_session_encryption_key.get_secret_value()
+    return Fernet(secret.encode("ascii"))
+
+
+def _provider_session_exists(db: Session, user_id: UUID, session_id: UUID) -> bool:
+    # This is a read-only exception to the application's public-schema ownership.
+    # The runtime role receives only SELECT(id, user_id) on auth.sessions.
+    result = db.execute(
+        select(
+            select(1)
+            .select_from(_AUTH_SESSIONS)
+            .where(
+                _AUTH_SESSIONS.c.id == session_id,
+                _AUTH_SESSIONS.c.user_id == user_id,
+            )
+            .exists()
+        )
+    )
+    return result.scalar_one() is True
+
+
+def _eligible_user(user: User | None, provider_user_id: UUID, now: datetime) -> bool:
+    return bool(
+        user is not None
+        and user.supabase_user_id == provider_user_id
+        and user.status == UserStatus.ACTIVE.value
+        and is_identity_eligible(user, now=now)
+        and is_established_user(user)
+        and user.role is not None
+        and not user.role.is_deleted
+    )
+
+
+def _provider_user_is_live(client: SupabaseAuthClient, user_id: UUID, now: datetime) -> bool:
+    try:
+        provider_user = client.get_admin_user(user_id)
+    except InvalidProviderCredentials:
+        return False
+    return provider_user.id == user_id and provider_user.is_eligible(now=now)
+
+
+def admit_provider_session(
+    db: Session,
+    tokens: ProviderTokens,
+    client: SupabaseAuthClient,
+    *,
+    user_agent: str | None = None,
+    now: datetime | None = None,
+) -> IssuedSession:
+    """Admit a verified provider session only for an explicitly bound active profile.
+
+    The caller commits before returning these credentials to a browser or CLI.
+    """
+
+    timestamp = now or utc_now()
+    claims = client.verify_access_token(tokens.access_token)
+    if claims.user_id != tokens.user_id or not _provider_user_is_live(
+        client, claims.user_id, timestamp
+    ):
+        raise InvalidCredentials("Invalid credentials")
+    user = db.scalar(
+        select(User)
+        .options(joinedload(User.role), selectinload(User.department_memberships))
+        .where(User.supabase_user_id == claims.user_id)
+        .with_for_update(of=User)
+    )
+    if not _eligible_user(user, claims.user_id, timestamp) or not _provider_session_exists(
+        db, claims.user_id, claims.session_id
+    ):
+        raise InvalidCredentials("Invalid credentials")
+    assert user is not None
+    csrf = token_urlsafe(32)
+    handle = token_urlsafe(48)
+    cipher = _fernet()
+    lifetime = timedelta(days=get_settings().auth_refresh_token_days)
+    session = IdentitySession(
+        id=uuid7(),
+        user_id=user.id,
+        provider_user_id=claims.user_id,
+        provider_session_id=claims.session_id,
+        provider_access_token_encrypted=cipher.encrypt(tokens.access_token.encode()).decode(),
+        provider_refresh_token_encrypted=cipher.encrypt(tokens.refresh_token.encode()).decode(),
+        refresh_token_digest=_digest(handle),
+        csrf_token_digest=_digest(csrf),
+        refreshed_at=timestamp,
+        expires_at=timestamp + lifetime,
+        user_agent=(user_agent or "")[:500] or None,
+    )
+    db.add(session)
+    db.flush()
+    return IssuedSession(tokens.access_token, handle, csrf, session.id, False)
+
+
+def resolve_provider_session(
+    db: Session,
+    claims: ProviderAccessIdentity,
+    client: SupabaseAuthClient,
+    *,
+    now: datetime | None = None,
+) -> tuple[User, IdentitySession] | None:
+    """Recheck local access, provider account and provider session for every request."""
+
+    timestamp = now or utc_now()
+    session = db.scalar(
+        select(IdentitySession).where(
+            IdentitySession.provider_user_id == claims.user_id,
+            IdentitySession.provider_session_id == claims.session_id,
+        )
+    )
+    if (
+        session is None
+        or session.provider_user_id != claims.user_id
+        or session.provider_session_id != claims.session_id
+        or session.revoked_at is not None
+        or session.expires_at <= timestamp
+    ):
+        return None
+    user = db.scalar(
+        select(User)
+        .options(joinedload(User.role), selectinload(User.department_memberships))
+        .where(User.id == session.user_id)
+    )
+    if not _eligible_user(user, claims.user_id, timestamp):
+        return None
+    assert user is not None
+    cutoff = user.tokens_valid_after
+    if cutoff is not None:
+        cutoff = cutoff if cutoff.tzinfo is not None else cutoff.replace(tzinfo=UTC)
+        if claims.issued_at < cutoff:
+            return None
+    if not _provider_session_exists(db, claims.user_id, claims.session_id):
+        return None
+    if not _provider_user_is_live(client, claims.user_id, timestamp):
+        return None
+    return user, session
+
+
+def refresh_provider_session(
+    db: Session,
+    refresh_handle: str,
+    client: SupabaseAuthClient,
+    *,
+    csrf_token: str | None = None,
+    now: datetime | None = None,
+) -> IssuedSession:
+    """Serialize provider rotation and persist it before returning a new access token.
+
+    The application handle and CSRF token remain stable for the local session.
+    The transaction ends here so a waiting process observes the newly stored pair.
+    """
+
+    timestamp = now or utc_now()
+    if len(refresh_handle) < 32 or len(refresh_handle) > 256:
+        raise InvalidCredentials("Invalid credentials")
+    session = db.scalar(
+        select(IdentitySession)
+        .where(IdentitySession.refresh_token_digest == _digest(refresh_handle))
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if (
+        session is None
+        or session.provider_user_id is None
+        or session.provider_session_id is None
+        or session.revoked_at is not None
+        or session.expires_at <= timestamp
+        or (csrf_token is not None and session.csrf_token_digest != _digest(csrf_token))
+    ):
+        raise InvalidCredentials("Invalid credentials")
+    if not session.provider_access_token_encrypted or not session.provider_refresh_token_encrypted:
+        _revoke_locked_session(db, session, timestamp)
+        raise InvalidCredentials("Invalid credentials")
+    cipher = _fernet()
+    try:
+        current_access = cipher.decrypt(session.provider_access_token_encrypted.encode()).decode()
+        current_refresh = cipher.decrypt(session.provider_refresh_token_encrypted.encode()).decode()
+    except (InvalidToken, UnicodeDecodeError):
+        _revoke_locked_session(db, session, timestamp)
+        raise InvalidCredentials("Invalid credentials") from None
+    try:
+        current_claims = client.verify_access_token(current_access)
+    except InvalidProviderToken:
+        current_claims = None
+    if (
+        current_claims is not None
+        and current_claims.user_id == session.provider_user_id
+        and current_claims.session_id == session.provider_session_id
+        and current_claims.expires_at > timestamp + timedelta(seconds=30)
+    ):
+        if resolve_provider_session(db, current_claims, client, now=timestamp) is None:
+            _revoke_locked_session(db, session, timestamp)
+            raise InvalidCredentials("Invalid credentials")
+        session_id = session.id
+        try:
+            db.commit()
+        except SQLAlchemyError as error:
+            db.rollback()
+            raise SupabaseAuthUnavailable("Unable to verify provider session") from error
+        return IssuedSession(current_access, refresh_handle, csrf_token or "", session_id, False)
+    try:
+        tokens = client.refresh(current_refresh)
+        claims = client.verify_access_token(tokens.access_token)
+    except (InvalidProviderCredentials, InvalidProviderToken) as error:
+        _revoke_locked_session(db, session, timestamp)
+        raise InvalidCredentials("Invalid credentials") from error
+    except SupabaseAuthUnavailable:
+        _revoke_locked_session(db, session, timestamp)
+        raise
+    if (
+        tokens.user_id != session.provider_user_id
+        or claims.user_id != session.provider_user_id
+        or claims.session_id != session.provider_session_id
+        or resolve_provider_session(db, claims, client, now=timestamp) is None
+    ):
+        _revoke_locked_session(db, session, timestamp)
+        raise InvalidCredentials("Invalid credentials")
+    session.provider_access_token_encrypted = cipher.encrypt(tokens.access_token.encode()).decode()
+    session.provider_refresh_token_encrypted = cipher.encrypt(
+        tokens.refresh_token.encode()
+    ).decode()
+    session.refreshed_at = timestamp
+    session_id = session.id
+    try:
+        db.commit()
+    except SQLAlchemyError as error:
+        db.rollback()
+        # Provider may already have rotated the refresh credential. A second
+        # transaction invalidates the local handle if the write failure clears.
+        try:
+            persisted = db.get(
+                IdentitySession, session_id, with_for_update=True, populate_existing=True
+            )
+            if persisted is not None:
+                persisted.revoked_at = timestamp
+                db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+        # The provider session is invalidated independently of local recovery.
+        try:
+            client.sign_out(tokens.access_token)
+        except (InvalidProviderCredentials, SupabaseAuthUnavailable):
+            pass
+        raise SupabaseAuthUnavailable("Unable to persist provider refresh") from error
+    return IssuedSession(tokens.access_token, refresh_handle, csrf_token or "", session_id, False)
+
+
+def revoke_provider_refresh_session(
+    db: Session,
+    refresh_handle: str,
+    *,
+    csrf_token: str,
+) -> UUID | None:
+    """Revoke a browser session even when its short-lived access JWT has expired."""
+
+    if not 32 <= len(refresh_handle) <= 256 or not csrf_token:
+        return None
+    session = db.scalar(
+        select(IdentitySession)
+        .where(IdentitySession.refresh_token_digest == _digest(refresh_handle))
+        .with_for_update()
+    )
+    if (
+        session is None
+        or session.provider_session_id is None
+        or session.revoked_at is not None
+        or session.csrf_token_digest != _digest(csrf_token)
+    ):
+        return None
+    if not revoke_session(db, session.id, session.user_id):
+        return None
+    return session.id
+
+
+def _revoke_locked_session(db: Session, session: IdentitySession, timestamp: datetime) -> None:
+    session.revoked_at = timestamp
+    try:
+        db.commit()
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise SupabaseAuthUnavailable("Unable to revoke provider session") from error

@@ -32,11 +32,13 @@ import type {
   ScopeCatalogEntry,
 } from "../domain/controller-utils";
 
-// The API names built-in roles by their keys; people read these names.
-const SYSTEM_ROLE_NAMES: Readonly<Record<string, string>> = {
-  admin: "Administrator",
-  member: "Member",
-};
+// The API names built-in roles by their keys; people read these names. A Map
+// has no inherited keys, so a custom role named "constructor" or "toString"
+// is never read as built-in.
+const SYSTEM_ROLE_NAMES: ReadonlyMap<string, string> = new Map([
+  ["admin", "Administrator"],
+  ["member", "Member"],
+]);
 export const ACCESS_PAGE_LIMIT = 100;
 export const ACCESS_PAGE_MAXIMUM = 20;
 const VERSION_READ_CONCURRENCY = 8;
@@ -408,12 +410,12 @@ export function mapAuthoritativeAccessSnapshot(
     .filter((role) => !role.is_deleted)
     .map((role) => ({
       id: role.id,
-      name: SYSTEM_ROLE_NAMES[role.role] ?? role.role,
-      ...(role.role in SYSTEM_ROLE_NAMES
+      name: SYSTEM_ROLE_NAMES.get(role.role) ?? role.role,
+      ...(SYSTEM_ROLE_NAMES.has(role.role)
         ? { system: role.role as "admin" | "member" }
         : {}),
       ...(role.description ? { description: role.description } : {}),
-      builtin: role.role in SYSTEM_ROLE_NAMES,
+      builtin: SYSTEM_ROLE_NAMES.has(role.role),
       grants:
         role.role === "admin"
           ? resources.capabilities.map((capability) => capability.id)

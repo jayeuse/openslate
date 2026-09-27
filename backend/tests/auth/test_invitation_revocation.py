@@ -1,10 +1,10 @@
 """Invitation revocation contracts and PostgreSQL persistence behavior."""
 
-from datetime import UTC, datetime, timedelta
-from hashlib import sha256
+from secrets import token_urlsafe
 from unittest.mock import Mock
 from uuid import uuid4
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -13,31 +13,19 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies.auth import CurrentIdentity, get_current_identity
-from app.core.base_model import utc_now
+from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.security.tokens import TokenType, decode_token
+from app.core.integrations.supabase_auth import SupabaseAuthClient
+from app.main import create_app
 from app.systems.access.auth.aggregate_router import router as access_router
-from app.systems.access.identity.contracts import ActionTokenInvalid, InvalidCredentials
-from app.systems.access.identity.models import (
-    ActionTokenPurpose,
-    IdentityActionToken,
-    IdentityCredential,
-    IdentitySession,
-)
-from app.systems.access.identity.service import (
-    authenticate_password,
-    consume_action_token,
-    create_credential,
-    issue_action_token,
-    issue_session,
-    validate_access_session,
-)
+from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users import invitations_router
 from app.systems.access.users.coordination import InvitationConflict, InvitationNotFound
 from app.systems.access.users.models import IdentityKind, Role, User, UserStatus
-from app.systems.access.users.service import resend_invitation_delivery, revoke_invitation
-from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import SecurityEvent
+from tests.auth.test_provider_email_integration import _email_action
+
+pytest_plugins = ("tests.auth.test_provider_email_integration",)
 
 
 def test_invitation_revocation_route_exists_and_requires_authentication() -> None:
@@ -137,9 +125,7 @@ def test_invitation_revocation_maps_missing_and_closed_states(
         admin, uuid7(), True, False
     )
     app.dependency_overrides[get_db] = lambda: Mock(spec=Session)
-    monkeypatch.setattr(
-        invitations_router, "revoke_invitation", Mock(side_effect=error)
-    )
+    monkeypatch.setattr(invitations_router, "revoke_invitation", Mock(side_effect=error))
 
     response = TestClient(app).delete(f"/api/auth/invitations/{uuid7()}")
 
@@ -148,144 +134,126 @@ def test_invitation_revocation_maps_missing_and_closed_states(
 
 
 @pytest.mark.integration
-def test_invitation_token_with_revoked_profile_marker_cannot_be_consumed(
-    integration_db: Session,
-) -> None:
-    suffix = uuid4().hex
-    role = Role(role=f"revoked-invitation-{suffix}", description="", permissions={})
-    user = User(
-        email=f"revoked-{suffix}@example.test",
-        username=f"revoked_{suffix}",
-        role=role,
-        identity_kind=IdentityKind.INTERNAL.value,
-        status=UserStatus.PENDING.value,
-        invitation_sent_at=None,
-    )
-    raw_token = f"opaque-invitation-{suffix}"
-    integration_db.add(user)
-    integration_db.flush()
-    integration_db.add(
-        IdentityActionToken(
-            user_id=user.id,
-            purpose=ActionTokenPurpose.INVITATION,
-            token_digest=sha256(raw_token.encode("utf-8")).hexdigest(),
-            expires_at=datetime.now(UTC) + timedelta(hours=1),
-        )
-    )
-    integration_db.flush()
-
-    with pytest.raises(ActionTokenInvalid):
-        consume_action_token(integration_db, raw_token, ActionTokenPurpose.INVITATION)
-
-
-@pytest.mark.integration
-def test_admin_revocation_blocks_old_link_password_and_setup_session_then_resend_works(
-    integration_db: Session,
+def test_revoked_provider_invitation_is_denied_and_resend_can_be_accepted(
+    provider_account,
+    provider_mail,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    now = utc_now().replace(microsecond=0)
-    suffix = uuid4().hex
-    admin_role = integration_db.scalar(
-        select(Role).where(Role.role == "admin", Role.is_deleted.is_(False))
-    )
-    assert admin_role is not None
-    member_role = Role(role=f"revocation-member-{suffix}", description="", permissions={})
-    admin = User(
-        email=f"admin-{suffix}@example.test",
-        username=f"admin_{suffix}",
-        status=UserStatus.ACTIVE.value,
-        identity_kind=IdentityKind.INTERNAL.value,
-        invitation_accepted_at=now,
-        role=admin_role,
-    )
-    pending = User(
-        email=f"pending-{suffix}@example.test",
-        username=f"pending_{suffix}",
-        status=UserStatus.PENDING.value,
-        identity_kind=IdentityKind.INTERNAL.value,
-        invitation_sent_at=now,
-        role=member_role,
-    )
-    integration_db.add_all((admin, pending))
-    integration_db.flush()
-    old_password = "initial temporary password"
-    create_credential(integration_db, pending.id, old_password, temporary=True, now=now)
-    old_link = issue_action_token(
-        integration_db,
-        pending.id,
-        ActionTokenPurpose.INVITATION,
-        created_by=admin.id,
-        now=now,
-    )
-    setup_session = issue_session(integration_db, pending, now=now)
-    integration_db.commit()
-    set_audit_actor(integration_db, admin.id)
-    monkeypatch.setattr("app.systems.access.users.service._security_event", Mock())
+    email, password, provider_id, local_id, owner = provider_account
+    provider_invite_failures = []
+    original_request = SupabaseAuthClient._request
 
-    revoke_invitation(integration_db, pending.id, actor_id=admin.id)
+    def observe_request(self, method, path, **kwargs):
+        response = original_request(self, method, path, **kwargs)
+        if path == "invite" and response.status_code >= 400:
+            provider_invite_failures.append(
+                (response.status_code, response.json().get("error_code"))
+            )
+        return response
 
-    revoked_profile = integration_db.get(User, pending.id)
-    credential = integration_db.get(IdentityCredential, pending.id)
-    session = integration_db.get(IdentitySession, setup_session.session_id)
-    assert revoked_profile is not None and revoked_profile.invitation_sent_at is None
-    assert credential is not None and credential.must_change_password
-    assert credential.temporary_password_expires_at is not None
-    assert credential.temporary_password_expires_at <= utc_now()
-    assert session is not None and session.revoked_at is not None
-    claims = decode_token(setup_session.access_token, TokenType.ACCESS)
-    assert claims is not None
-    assert validate_access_session(
-        integration_db, claims, allow_setup=True, now=utc_now() + timedelta(seconds=1)
-    ) is None
-    with pytest.raises(ActionTokenInvalid):
-        consume_action_token(integration_db, old_link, ActionTokenPurpose.INVITATION)
-    with pytest.raises(InvalidCredentials):
-        authenticate_password(
-            integration_db,
-            pending.email,
-            old_password,
-            enforce_rate_limit=False,
+    monkeypatch.setattr(SupabaseAuthClient, "_request", observe_request)
+    settings = get_settings()
+    invite_email = f"revoked-{uuid4().hex}@example.test"
+    with Session(owner) as db:
+        user = db.get(User, local_id)
+        user.supabase_user_id = provider_id
+        user.role_id = db.scalar(select(Role.id).where(Role.role == "admin"))
+        db.commit()
+    source = uuid4().bytes
+    client_address = (f"198.18.{source[0]}.{source[1]}", 50000)
+    admin = TestClient(create_app(), base_url=settings.public_origin, client=client_address)
+    recipient = TestClient(create_app(), base_url=settings.public_origin, client=client_address)
+    admin.headers["Origin"] = recipient.headers["Origin"] = settings.public_origin
+    try:
+        assert (
+            admin.post("/api/auth/login", json={"email": email, "password": password}).status_code
+            == 200
         )
-    with pytest.raises(InvitationConflict):
-        revoke_invitation(integration_db, pending.id, actor_id=admin.id)
-    with pytest.raises(InvitationNotFound):
-        revoke_invitation(integration_db, uuid7(), actor_id=admin.id)
-
-    accepted = User(
-        email=f"accepted-{suffix}@example.test",
-        username=f"accepted_{suffix}",
-        status=UserStatus.ACTIVE.value,
-        identity_kind=IdentityKind.INTERNAL.value,
-        invitation_sent_at=now,
-        invitation_accepted_at=now,
-        role=member_role,
-    )
-    integration_db.add(accepted)
-    integration_db.commit()
-    with pytest.raises(InvitationConflict):
-        revoke_invitation(integration_db, accepted.id, actor_id=admin.id)
-
-    events = integration_db.scalars(
-        select(SecurityEvent).where(
-            SecurityEvent.event_type == "user.invitation_revocation",
-            SecurityEvent.subject_id == pending.id,
+        admin.headers["X-CSRF-Token"] = admin.cookies.get("openslate_csrf")
+        created = admin.post(
+            "/api/auth/invitations",
+            json={"email": invite_email, "username": f"revoked_{uuid4().hex[:16]}"},
         )
-    ).all()
-    assert len(events) == 1
-    assert events[0].outcome == "success"
-    new_password = "replacement temporary password"
-    issued = resend_invitation_delivery(
-        integration_db,
-        pending.id,
-        actor_id=admin.id,
-        delivery="temporary_password",
-        temporary_password=new_password,
-    )
+        assert created.status_code == 201
+        invited_id = created.json()["user"]["id"]
+        path = f"/api/auth/invitations/{invited_id}"
+        old_action = _email_action(provider_mail, invite_email, "invite")
+        chosen = token_urlsafe(32)
+        assert admin.delete(path).status_code == 204
+        assert admin.delete(path).status_code == 409
+        assert admin.delete(f"/api/auth/invitations/{uuid7()}").status_code == 404
+        denied = recipient.post(
+            "/api/auth/invitations/complete",
+            json={"token_hash": old_action, "password": chosen},
+        )
+        assert denied.status_code == 400
+        assert recipient.get("/api/auth/me").status_code == 401
+        assert (
+            recipient.post(
+                "/api/auth/login", json={"email": invite_email, "password": chosen}
+            ).status_code
+            == 401
+        )
+        with Session(owner) as db:
+            pending = db.scalar(select(User).where(User.email == invite_email))
+            assert pending is not None and pending.status == "pending"
+            assert pending.invitation_sent_at is None
+            events = db.scalars(
+                select(SecurityEvent).where(
+                    SecurityEvent.event_type == "user.invitation_revocation",
+                    SecurityEvent.subject_id == pending.id,
+                )
+            ).all()
+            assert len(events) == 1 and events[0].outcome == "success"
 
-    assert issued.user.invitation_sent_at is not None
-    assert authenticate_password(
-        integration_db,
-        pending.email,
-        new_password,
-        enforce_rate_limit=False,
-    ).id == pending.id
+        resent = admin.post(f"{path}/resend", json={})
+        assert resent.status_code == 200, provider_invite_failures
+        new_action = _email_action(provider_mail, invite_email, "invite", exclude={old_action})
+        assert (
+            recipient.post(
+                "/api/auth/invitations/complete",
+                json={"token_hash": old_action, "password": chosen},
+            ).status_code
+            == 400
+        )
+        assert (
+            recipient.post(
+                "/api/auth/invitations/complete",
+                json={"token_hash": new_action, "password": chosen},
+            ).status_code
+            == 204
+        )
+        assert (
+            recipient.post(
+                "/api/auth/invitations/complete",
+                json={"token_hash": new_action, "password": chosen},
+            ).status_code
+            == 400
+        )
+        assert admin.delete(path).status_code == 409
+        assert recipient.get("/api/auth/me").status_code == 401
+        assert (
+            recipient.post(
+                "/api/auth/login", json={"email": invite_email, "password": chosen}
+            ).status_code
+            == 200
+        )
+    finally:
+        admin.close()
+        recipient.close()
+        with Session(owner) as db:
+            user = db.scalar(select(User).where(User.email == invite_email))
+            if user is not None:
+                if user.supabase_user_id is not None:
+                    removed = httpx.delete(
+                        settings.supabase_url + f"/auth/v1/admin/users/{user.supabase_user_id}",
+                        headers={"apikey": settings.supabase_secret_key.get_secret_value()},
+                        timeout=10,
+                    )
+                    assert removed.status_code in {200, 204, 404}
+                for session in db.scalars(
+                    select(IdentitySession).where(IdentitySession.user_id == user.id)
+                ):
+                    db.delete(session)
+                db.delete(user)
+                db.commit()

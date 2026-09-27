@@ -14,12 +14,79 @@ from urllib.parse import urlsplit
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
-POSTGRES_IMAGE = (
-    "postgres:17@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232"
+SUPABASE_DB_IMAGE = (
+    "supabase/postgres:17.6.1.136@sha256:"
+    "f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00"
 )
+POSTGRES_IMAGE = SUPABASE_DB_IMAGE
+PROVIDER_IMAGES = {
+    "db": SUPABASE_DB_IMAGE,
+    "auth": (
+        "supabase/gotrue:v2.196.0@sha256:"
+        "c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232"
+    ),
+    "rest": (
+        "postgrest/postgrest:v14.17@sha256:"
+        "c9dc201e555f5d8e37e7f39cdd4df0229774996e213bfd7de8d10ac609030f2c"
+    ),
+    "imgproxy": (
+        "darthsim/imgproxy:v3.31.4@sha256:"
+        "73c5dda13199745b0d2d00e4149d4a589c5b2e205dbf335ca05eca8276b54712"
+    ),
+    "provider-volume-init": (
+        "supabase/storage-api:v1.74.0@sha256:"
+        "f1546fac6d1c7e345428ac904bfaa7be7cecd50a1f549fe1cf38c628a7b15c85"
+    ),
+    "storage": (
+        "supabase/storage-api:v1.74.0@sha256:"
+        "f1546fac6d1c7e345428ac904bfaa7be7cecd50a1f549fe1cf38c628a7b15c85"
+    ),
+    "meta": (
+        "supabase/postgres-meta:v0.99.0@sha256:"
+        "9a079ac1c94d89629262822a4bd1902d5b1be4adb464e5a0a8fd078aaed72158"
+    ),
+    "studio": (
+        "supabase/studio:2026.09.07-sha-7996410@sha256:"
+        "94a2a9d2906e8b4109e55159a62e241c3044709a492913ea8edd34b14973d288"
+    ),
+    "api-gw": (
+        "envoyproxy/envoy:v1.39.1@sha256:"
+        "57e14a549d7bd43c8d3f6d03e8cfa653e037d4b38e133acd9b54f38c524401b4"
+    ),
+    "mailpit": (
+        "axllent/mailpit:v1.27.9@sha256:"
+        "b004cc0672d0692f097ba8ab9e5956ae08eeafee3d0a6bf2ab239750101ac538"
+    ),
+}
+PROVIDER_VOLUMES = (
+    "supabase-db-data",
+    "supabase-db-config",
+    "supabase-storage-data",
+    "supabase-studio-snippets",
+)
+PROVIDER_NETWORKS = (
+    "provider", "operator", "studio-ingress", "mail-egress", "gateway-host", "db-host"
+)
+PROVIDER_BIND_MOUNTS = {
+    "db": (
+        ("upstream/db/realtime.sql", "/docker-entrypoint-initdb.d/migrations/99-realtime.sql"),
+        ("upstream/db/webhooks.sql", "/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql"),
+        ("upstream/db/roles.sql", "/docker-entrypoint-initdb.d/init-scripts/99-roles.sql"),
+        ("upstream/db/jwt.sql", "/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql"),
+        ("upstream/db/_supabase.sql", "/docker-entrypoint-initdb.d/migrations/97-_supabase.sql"),
+        ("upstream/db/logs.sql", "/docker-entrypoint-initdb.d/migrations/99-logs.sql"),
+        ("upstream/db/pooler.sql", "/docker-entrypoint-initdb.d/migrations/99-pooler.sql"),
+    ),
+    "api-gw": (
+        ("upstream/envoy/envoy.yaml", "/etc/envoy/envoy.yaml"),
+        ("upstream/envoy/cds.yaml", "/etc/envoy/cds.yaml"),
+        ("upstream/envoy/lds.template.yaml", "/etc/envoy/lds.template.yaml"),
+        ("upstream/envoy/docker-entrypoint.sh", "/docker-entrypoint.sh"),
+    ),
+}
 _RUN_ID = re.compile(r"[a-f0-9]{32}\Z")
-_DOCKER_ID = re.compile(r"[a-f0-9]{64}\Z")
-_ROLES = frozenset({"postgres", "openslate_owner", "openslate_runtime", "openslate_inspector"})
+_DOCKER_ID = re.compile(r"[a-f0-9]{12,64}\Z")
+_ROLES = frozenset({"supabase_admin", "openslate_owner", "openslate_runtime"})
 
 
 class DisposableTargetError(ValueError):
@@ -36,6 +103,24 @@ class DisposableTarget:
     manifest_path: Path
 
 
+def _valid_id_map(value: object, names: set[str]) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == names
+        and all(isinstance(item, str) and _DOCKER_ID.fullmatch(item) for item in value.values())
+    )
+
+
+def _provider_endpoints(ownership: dict[str, Any]) -> dict[str, str]:
+    api_url = f"http://127.0.0.1:{ownership['api_port']}"
+    return {
+        "api_url": api_url,
+        "auth_issuer": f"{api_url}/auth/v1",
+        "storage_url": f"{api_url}/storage/v1",
+        "mail_url": f"http://127.0.0.1:{ownership['mail_port']}",
+    }
+
+
 def load_disposable_target(
     database_url: str,
     expected_user: str,
@@ -44,7 +129,7 @@ def load_disposable_target(
     repository_root: Path,
     inspect: Callable[[list[str]], Any],
 ) -> DisposableTarget:
-    """Require an exact private manifest, then independently inspect the host target."""
+    """Require a private per-run manifest and a live installation for host connections."""
     run_id = process.get("OPENSLATE_FULLSTACK_RUN_ID", "")
     if (
         process.get("ENVIRONMENT") != "test"
@@ -59,73 +144,101 @@ def load_disposable_target(
         if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) & 0o077:
             raise ValueError
         manifest = json.loads(path.read_text(encoding="utf-8"))
+        ownership = manifest["ownership"]
+        project = f"openslate-e2e-{run_id}"
+        worktree = str(repository_root.resolve())
+        if (
+            manifest.get("version") != 2
+            or manifest.get("run_id") != run_id
+            or not isinstance(manifest.get("urls"), list)
+            or not isinstance(ownership, dict)
+            or set(ownership)
+            != {
+                "project",
+                "worktree",
+                "compose_directory",
+                "service_ids",
+                "network_ids",
+                "db_port",
+                "api_port",
+                "mail_port",
+                "cluster_name",
+            }
+            or ownership["project"] != project
+            or not isinstance(ownership["worktree"], str)
+            or not ownership["worktree"]
+            or not isinstance(ownership["compose_directory"], str)
+            or not ownership["compose_directory"]
+            or ownership["cluster_name"] != project
+            or not _valid_id_map(ownership["service_ids"], set(PROVIDER_IMAGES))
+            or not _valid_id_map(ownership["network_ids"], set(PROVIDER_NETWORKS))
+            or not all(
+                isinstance(ownership[key], int) and 1 <= ownership[key] <= 65535
+                for key in ("db_port", "api_port", "mail_port")
+            )
+            or len({ownership["db_port"], ownership["api_port"], ownership["mail_port"]}) != 3
+            or manifest.get("provider") != _provider_endpoints(ownership)
+        ):
+            raise ValueError
+        endpoints = _provider_endpoints(ownership)
         url = make_url(database_url)
         parts = urlsplit(database_url)
-        ownership = manifest["ownership"]
-        port = ownership["host_port"]
-        container = f"openslate-postgres-e2e-{run_id}"
-        network = f"openslate-app-e2e-{run_id}"
-        volume = f"openslate-postgres-data-e2e-{run_id}"
-        worktree = ownership["worktree"]
         if (
-            manifest["run_id"] != run_id
-            or not isinstance(manifest["urls"], list)
-            or url.drivername != "postgresql+psycopg"
+            url.drivername != "postgresql+psycopg"
             or url.username != expected_user
             or not url.password
-            or url.database != "openslate"
+            or url.database != "postgres"
             or parts.query
             or parts.fragment
-            or not isinstance(port, int)
-            or not 1 <= port <= 65535
-            or not isinstance(worktree, str)
-            or not Path(worktree).is_absolute()
-            or ownership
-            != {
-                "container_id": ownership["container_id"],
-                "container": container,
-                "network": network,
-                "network_id": ownership["network_id"],
-                "volume": volume,
-                "host_port": port,
-                "image": POSTGRES_IMAGE,
-                "cluster_name": container,
-                "worktree": worktree,
-            }
-            or _DOCKER_ID.fullmatch(ownership["container_id"]) is None
-            or _DOCKER_ID.fullmatch(ownership["network_id"]) is None
         ):
             raise ValueError
         host_target = (
             parts.hostname == "127.0.0.1"
-            and parts.port == port
+            and parts.port == ownership["db_port"]
             and database_url in manifest["urls"]
-            and worktree == str(repository_root.resolve())
         )
-        runtime_hosts = [make_url(value) for value in manifest["urls"]]
+        container_url = manifest.get("container_runtime")
         container_target = (
             expected_user == "openslate_runtime"
-            and parts.hostname == "openslate-postgres"
+            and parts.hostname == "db"
             and parts.port == 5432
-            and manifest.get("container_runtime")
+            and container_url
             == {
                 "url": database_url,
-                "network": network,
-                "alias": "openslate-postgres",
+                "network": f"{project}_provider",
+                "alias": "db",
                 "port": 5432,
             }
             and Path("/.dockerenv").is_file()
             and any(
-                host.username == "openslate_runtime"
+                (host := make_url(value)).username == "openslate_runtime"
                 and host.password == url.password
                 and host.host == "127.0.0.1"
-                and host.port == port
-                and host.database == "openslate"
+                and host.port == ownership["db_port"]
+                and host.database == "postgres"
                 and not host.query
-                for host in runtime_hosts
+                for value in manifest["urls"]
             )
         )
         if not host_target and not container_target:
+            raise ValueError
+        # Host admission verifies the live Compose checkout. A container image has
+        # its own filesystem layout; its private runtime manifest is created only
+        # after that host check, and the connected cluster identity is still checked.
+        if host_target and (
+            ownership["worktree"] != worktree
+            or ownership["compose_directory"] != str(repository_root.resolve() / "infra/supabase")
+        ):
+            raise ValueError
+        accepted_api = endpoints["api_url"] if host_target else "http://api-gw:8000"
+        accepted_storage = (
+            endpoints["storage_url"] if host_target else "http://api-gw:8000/storage/v1"
+        )
+        if (
+            process.get("SUPABASE_URL") != accepted_api
+            or process.get("SUPABASE_AUTH_ISSUER") != endpoints["auth_issuer"]
+            or process.get("SUPABASE_STORAGE_URL") != accepted_storage
+        ):
             raise ValueError
     except (KeyError, OSError, TypeError, ValueError, AttributeError, SQLAlchemyError):
         raise DisposableTargetError("Disposable test manifest does not match the target") from None
@@ -133,52 +246,186 @@ def load_disposable_target(
         assert_live_disposable_ownership(ownership, run_id, inspect)
     return DisposableTarget(
         run_id=run_id,
-        host="127.0.0.1" if host_target else "openslate-postgres",
-        port=port if host_target else 5432,
-        database="openslate",
-        cluster_name=container,
+        host="127.0.0.1" if host_target else "db",
+        port=ownership["db_port"] if host_target else 5432,
+        database="postgres",
+        cluster_name=project,
         manifest_path=path,
     )
+
+
+def _accepted_bind_sources(compose_directory: str, relative: str) -> set[str]:
+    source = str((Path(compose_directory) / relative).resolve())
+    accepted = {source}
+    if source.startswith("/"):
+        accepted.add(f"/host_mnt{source}")
+    normalized = source.replace("\\", "/")
+    if re.match(r"^[a-zA-Z]:/", normalized):
+        drive = normalized[0].lower()
+        suffix = normalized[2:]
+        accepted.add(f"/run/desktop/mnt/host/{drive}{suffix}")
+        accepted.add(f"/host_mnt/{drive}{suffix}")
+    return accepted
 
 
 def assert_live_disposable_ownership(
     ownership: dict[str, Any], run_id: str, inspect: Callable[[list[str]], Any]
 ) -> None:
-    """Check the container, private network, port, and labeled data volume now."""
+    """Recheck provider containers, ports, networks, and durable volumes before writes."""
     try:
-        container = inspect(["inspect", ownership["container_id"]])[0]
-        network = inspect(["network", "inspect", ownership["network"]])[0]
-        volume = inspect(["volume", "inspect", ownership["volume"]])[0]
-        labels = {
-            "openslate.test.run": run_id,
-            "openslate.test.worktree": ownership["worktree"],
-        }
-        mounts = [
-            mount for mount in container["Mounts"]
-            if mount.get("Destination") == "/var/lib/postgresql/data"
-        ]
-        owned = (
-            container["Id"] == ownership["container_id"]
-            and container["Name"] == f"/{ownership['container']}"
-            and container["State"]["Running"] is True
-            and container["Config"]["Image"] == POSTGRES_IMAGE
-            and all(
-                container["Config"]["Labels"].get(key) == value for key, value in labels.items()
-            )
-            and len(mounts) == 1
-            and mounts[0].get("Type") == "volume"
-            and mounts[0].get("Name") == ownership["volume"]
-            and container["NetworkSettings"]["Ports"]["5432/tcp"]
-            == [{"HostIp": "127.0.0.1", "HostPort": str(ownership["host_port"])}]
-            and container["NetworkSettings"]["Networks"][ownership["network"]]["NetworkID"]
-            == ownership["network_id"]
-            and network["Id"] == ownership["network_id"]
-            and network["Internal"] is True
-            and all(network["Labels"].get(key) == value for key, value in labels.items())
-            and volume["Name"] == ownership["volume"]
-            and all(volume["Labels"].get(key) == value for key, value in labels.items())
+        project = ownership["project"]
+        worktree = ownership["worktree"]
+        service_ids = ownership["service_ids"]
+        project_ids = inspect(
+            [
+                "ps", "-a", "-q", "--no-trunc", "--filter",
+                f"label=com.docker.compose.project={project}",
+            ]
         )
+        if (
+            not isinstance(project_ids, list)
+            or len(project_ids) != len(service_ids)
+            or set(project_ids) != set(service_ids.values())
+        ):
+            raise ValueError
+        inspected = inspect(["inspect", *service_ids.values()])
+        containers = {container["Id"]: container for container in inspected}
+        if set(containers) != set(service_ids.values()):
+            raise ValueError
+        labels = {"openslate.test.run": run_id, "openslate.test.worktree": worktree}
+        for service, identifier in service_ids.items():
+            container = containers[identifier]
+            actual_labels = container["Config"]["Labels"]
+            state = container["State"]
+            expected_state = (
+                state["Running"] is False and state["ExitCode"] == 0
+                if service == "provider-volume-init"
+                else state["Running"] is True
+            )
+            if not (
+                expected_state
+                and container["Config"]["Image"] == PROVIDER_IMAGES[service]
+                and actual_labels.get("com.docker.compose.project") == project
+                and actual_labels.get("com.docker.compose.service") == service
+                and actual_labels.get("com.docker.compose.project.working_dir")
+                == ownership["compose_directory"]
+                and all(actual_labels.get(key) == value for key, value in labels.items())
+            ):
+                raise ValueError
+        networks = {
+            name: inspect(["network", "inspect", f"{project}_{name}"])[0]
+            for name in PROVIDER_NETWORKS
+        }
+        for name, network in networks.items():
+            actual_labels = network["Labels"]
+            if not (
+                network["Id"] == ownership["network_ids"][name]
+                and network["Name"] == f"{project}_{name}"
+                and actual_labels.get("com.docker.compose.project") == project
+                and actual_labels.get("com.docker.compose.network") == name
+                and all(actual_labels.get(key) == value for key, value in labels.items())
+                and network["Internal"] is (name in {"provider", "operator", "studio-ingress"})
+            ):
+                raise ValueError
+        volumes = {
+            name: inspect(["volume", "inspect", f"{project}_{name}"])[0]
+            for name in PROVIDER_VOLUMES
+        }
+        for name, volume in volumes.items():
+            actual_labels = volume["Labels"]
+            if not (
+                volume["Name"] == f"{project}_{name}"
+                and actual_labels.get("com.docker.compose.project") == project
+                and actual_labels.get("com.docker.compose.volume") == name
+                and all(actual_labels.get(key) == value for key, value in labels.items())
+            ):
+                raise ValueError
+        expected_networks = {
+            service: {"provider"} for service in PROVIDER_IMAGES if service != "mailpit"
+        }
+        expected_networks["db"].update({"operator", "db-host"})
+        expected_networks["auth"].add("mail-egress")
+        expected_networks["meta"] = {"operator"}
+        expected_networks["studio"] = {"operator", "studio-ingress"}
+        expected_networks["api-gw"].update({"studio-ingress", "gateway-host"})
+        expected_networks["mailpit"] = {"mail-egress"}
+        for service, names in expected_networks.items():
+            attached = containers[service_ids[service]]["NetworkSettings"]["Networks"]
+            if set(attached) != {f"{project}_{name}" for name in names}:
+                raise ValueError
+            for name in names:
+                if attached[f"{project}_{name}"]["NetworkID"] != ownership["network_ids"][name]:
+                    raise ValueError
+        expected_mounts = {
+            ("db", "supabase-db-data", "/var/lib/postgresql/data"),
+            ("db", "supabase-db-config", "/etc/postgresql-custom"),
+            ("imgproxy", "supabase-storage-data", "/var/lib/storage"),
+            ("provider-volume-init", "supabase-storage-data", "/var/lib/storage"),
+            ("provider-volume-init", "supabase-studio-snippets", "/app/snippets"),
+            ("storage", "supabase-storage-data", "/var/lib/storage"),
+            ("studio", "supabase-studio-snippets", "/app/snippets"),
+        }
+        actual_mounts = [
+            (service, mount.get("Name"), mount.get("Destination"), mount.get("RW"))
+            for service, identifier in service_ids.items()
+            for mount in containers[identifier]["Mounts"]
+            if mount.get("Type") == "volume"
+        ]
+        expected_volumes = {
+            (service, f"{project}_{volume}", destination, service != "imgproxy")
+            for service, volume, destination in expected_mounts
+        }
+        if len(actual_mounts) != len(expected_volumes) or set(actual_mounts) != expected_volumes:
+            raise ValueError
+        expected_binds = {
+            (service, destination): _accepted_bind_sources(
+                ownership["compose_directory"], relative
+            )
+            for service, mounts in PROVIDER_BIND_MOUNTS.items()
+            for relative, destination in mounts
+        }
+        actual_binds = [
+            (service, mount)
+            for service, identifier in service_ids.items()
+            for mount in containers[identifier]["Mounts"]
+            if mount.get("Type") == "bind"
+        ]
+        if len(actual_binds) != len(expected_binds):
+            raise ValueError
+        for service, mount in actual_binds:
+            key = (service, mount.get("Destination"))
+            if (
+                key not in expected_binds
+                or mount.get("Source") not in expected_binds[key]
+                or mount.get("RW") is not False
+            ):
+                raise ValueError
+        if len({(service, mount.get("Destination")) for service, mount in actual_binds}) != len(
+            expected_binds
+        ):
+            raise ValueError
+        if any(
+            mount.get("Type") not in {"volume", "bind"}
+            for identifier in service_ids.values()
+            for mount in containers[identifier]["Mounts"]
+        ):
+            raise ValueError
+        expected_ports = {
+            "db": {"5432/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(ownership["db_port"])}]},
+            "api-gw": {
+                "8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(ownership["api_port"])}]
+            },
+            "mailpit": {
+                "8025/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(ownership["mail_port"])}]
+            },
+        }
+        for service, identifier in service_ids.items():
+            published = {
+                port: bindings
+                for port, bindings in containers[identifier]["NetworkSettings"]["Ports"].items()
+                if bindings
+            }
+            if published != expected_ports.get(service, {}):
+                raise ValueError
     except (IndexError, KeyError, TypeError, ValueError, AttributeError):
-        owned = False
-    if not owned:
-        raise DisposableTargetError("Live disposable PostgreSQL ownership does not match")
+        raise DisposableTargetError("Live disposable Supabase ownership does not match") from None

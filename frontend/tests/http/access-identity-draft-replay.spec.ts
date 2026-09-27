@@ -195,7 +195,6 @@ async function mockAccess(
           performed_by: null,
         },
         delivery: "email",
-        temporary_password: null,
       });
     }
     return json({ detail: "Unexpected request" }, 404);

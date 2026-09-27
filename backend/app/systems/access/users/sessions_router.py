@@ -18,7 +18,7 @@ from app.systems.access.auth.request_security import (
     require_completed_identity as _require_completed_identity,
 )
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.identity.service import revoke_session, revoke_user_sessions
+from app.systems.access.identity.session_revocation import revoke_session, revoke_user_sessions
 from app.systems.access.users.coordination import get_user as load_user
 from app.systems.access.users.sessions_schemas import (
     AdminSessionListRequest,

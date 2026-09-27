@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from app.systems.platform.files import providers, scan_processing
 from app.systems.platform.files.providers import ScanVerdict
-from app.systems.platform.files.storage import LocalFilesystemStorage
+from tests.files.test_supabase_storage import StorageAPI, make_storage
 
 
 def test_clean_exact_quarantine_bytes_are_promoted_before_ready_state(monkeypatch):
@@ -33,12 +33,12 @@ def test_clean_exact_quarantine_bytes_are_promoted_before_ready_state(monkeypatc
 
 
 def test_commit_failure_after_promotion_leaves_bytes_recoverable_for_a_retry(
-    monkeypatch, tmp_path
+    monkeypatch
 ):
     content = b"exact clean bytes"
     digest = __import__("hashlib").sha256(content).hexdigest()
     claim = scan_processing.ScanClaim(uuid4(), uuid4(), uuid4(), "a" * 32, digest, len(content))
-    storage = LocalFilesystemStorage(tmp_path / "private-files")
+    storage = make_storage(StorageAPI())
     storage.upload(claim.key, content, "application/octet-stream")
     scanner, db = Mock(), Mock()
     scanner.scan.return_value = ScanVerdict("clean", digest, "test", "test")
@@ -54,7 +54,7 @@ def test_commit_failure_after_promotion_leaves_bytes_recoverable_for_a_retry(
         scan_processing.process_next(db, storage, scanner)
     unresolved.assert_called_once_with(db, claim)
     assert storage.download(claim.key) == content
-    assert storage.read_quarantine(claim.key) == content
+    assert storage.read_quarantine(claim.key) is None
 
     finish = Mock()
     monkeypatch.setattr(scan_processing, "finish_attempt", finish)
@@ -88,11 +88,11 @@ def test_policy_unavailability_after_promotion_requires_reconciliation(monkeypat
     unresolved.assert_called_once_with(db, claim)
 
 
-def test_leadership_loss_after_clean_promotion_marks_recovery_required(monkeypatch, tmp_path):
+def test_leadership_loss_after_clean_promotion_marks_recovery_required(monkeypatch):
     content = b"exact clean bytes"
     digest = __import__("hashlib").sha256(content).hexdigest()
     claim = scan_processing.ScanClaim(uuid4(), uuid4(), uuid4(), "a" * 32, digest, len(content))
-    storage = LocalFilesystemStorage(tmp_path / "private-files")
+    storage = make_storage(StorageAPI())
     storage.upload(claim.key, content, "application/octet-stream")
     scanner, db = Mock(), Mock()
     scanner.scan.return_value = ScanVerdict("clean", digest, "test", "test")
@@ -113,7 +113,7 @@ def test_leadership_loss_after_clean_promotion_marks_recovery_required(monkeypat
 
     unresolved.assert_called_once_with(db, claim)
     assert storage.download(claim.key) == content
-    assert storage.read_quarantine(claim.key) == content
+    assert storage.read_quarantine(claim.key) is None
 
 
 def test_infected_finalization_failure_is_not_marked_as_promotion_unresolved(monkeypatch):
@@ -150,6 +150,45 @@ def test_mismatched_quarantine_bytes_are_rejected_without_promotion(monkeypatch)
     assert scan_processing.process_next(db, storage, scanner) is True
     storage.promote.assert_not_called()
     scanner.scan.assert_not_called()
+    assert finish.call_args.kwargs == {"failure": "scan_integrity_error"}
+
+
+def test_missing_quarantine_uses_exact_ready_bytes_but_scans_them_again(monkeypatch):
+    content = b"exact ready bytes"
+    digest = __import__("hashlib").sha256(content).hexdigest()
+    claim = scan_processing.ScanClaim(uuid4(), uuid4(), uuid4(), "a" * 32, digest, len(content))
+    storage, scanner, db = Mock(), Mock(), Mock()
+    storage.read_quarantine.return_value = None
+    storage.download.return_value = content
+    scanner.scan.return_value = ScanVerdict("clean", digest, "test", "test")
+    monkeypatch.setattr(scan_processing, "require_resolved_engine", Mock())
+    monkeypatch.setattr(scan_processing, "claim_next", Mock(return_value=claim))
+    finish = Mock()
+    monkeypatch.setattr(scan_processing, "finish_attempt", finish)
+
+    assert scan_processing.process_next(db, storage, scanner) is True
+    scanner.scan.assert_called_once_with(
+        content, digest=digest, operation_id=claim.operation_id
+    )
+    storage.promote.assert_called_once_with(
+        claim.key, expected_digest=digest, expected_size=len(content)
+    )
+    assert finish.call_args.kwargs["verdict"].outcome == "clean"
+
+
+def test_mismatched_ready_fallback_is_rejected_without_scanning(monkeypatch):
+    claim = scan_processing.ScanClaim(uuid4(), uuid4(), uuid4(), "a" * 32, "0" * 64, 5)
+    storage, scanner, db = Mock(), Mock(), Mock()
+    storage.read_quarantine.return_value = None
+    storage.download.return_value = b"bytes"
+    monkeypatch.setattr(scan_processing, "require_resolved_engine", Mock())
+    monkeypatch.setattr(scan_processing, "claim_next", Mock(return_value=claim))
+    finish = Mock()
+    monkeypatch.setattr(scan_processing, "finish_attempt", finish)
+
+    assert scan_processing.process_next(db, storage, scanner) is True
+    scanner.scan.assert_not_called()
+    storage.promote.assert_not_called()
     assert finish.call_args.kwargs == {"failure": "scan_integrity_error"}
 
 

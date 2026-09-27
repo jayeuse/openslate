@@ -13,7 +13,6 @@ from uuid6 import uuid7
 
 from app.core.database import get_db
 from app.core.database.session import AuditSession
-from app.core.security.tokens import TokenType, decode_token
 from app.systems.access.policy.models import AccessRule
 from app.systems.access.users.models import User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
@@ -32,9 +31,7 @@ def test_expired_identity_is_not_captured_for_new_report_run(
     report_run_fixture: _RunFixture,
 ) -> None:
     fixture = report_run_fixture
-    claims = decode_token(fixture.outsider_token, TokenType.ACCESS)
-    assert claims is not None
-    outsider_id = UUID(str(claims["sub"]))
+    outsider_id = fixture.outsider_id
     expanded = fixture.client.patch(
         f"/api/reports/{fixture.report_id}",
         headers=fixture.headers(),
@@ -110,9 +107,7 @@ def test_audience_expansion_grants_only_future_runs_and_current_access(
     first = fixture.client.post(path, headers=fixture.headers(key=first_key))
     assert first.status_code == 201, first.text
     first_id = UUID(first.json()["id"])
-    outsider_claims = decode_token(fixture.outsider_token, TokenType.ACCESS)
-    assert outsider_claims is not None
-    outsider_id = UUID(str(outsider_claims["sub"]))
+    outsider_id = fixture.outsider_id
     with Session(fixture.owner_engine) as db:
         assert db.get(ReportRunEligibleUser, (first_id, fixture.owner_id)) is not None
         assert db.get(ReportRunEligibleUser, (first_id, outsider_id)) is None
@@ -192,9 +187,7 @@ def test_roster_excludes_write_only_profiles(report_run_fixture: _RunFixture) ->
     run = fixture.client.post(path, headers=fixture.headers(key=uuid7()))
     assert run.status_code == 201, run.text
     run_id = UUID(run.json()["id"])
-    claims = decode_token(fixture.write_only_token, TokenType.ACCESS)
-    assert claims is not None
-    write_only_id = UUID(str(claims["sub"]))
+    write_only_id = fixture.write_only_id
     with Session(fixture.owner_engine) as db:
         assert db.get(ReportRunEligibleUser, (run_id, write_only_id)) is None
 
@@ -203,9 +196,7 @@ def test_owner_excluded_schedule_delivers_one_reference_only_notice_to_eligible_
     scheduled_report: _RunFixture,
 ) -> None:
     fixture = scheduled_report
-    outsider_claims = decode_token(fixture.outsider_token, TokenType.ACCESS)
-    assert outsider_claims is not None
-    outsider_id = UUID(str(outsider_claims["sub"]))
+    outsider_id = fixture.outsider_id
     changed = fixture.client.patch(
         f"/api/reports/{fixture.report_id}",
         headers=fixture.headers(),

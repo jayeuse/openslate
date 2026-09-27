@@ -18,7 +18,11 @@ from urllib.parse import urlsplit
 
 from sqlalchemy.engine import Connection, make_url
 
-from app.core.config.disposable_instance import DisposableTargetError, load_disposable_target
+from app.core.config.disposable_instance import (
+    SUPABASE_DB_IMAGE,
+    DisposableTargetError,
+    load_disposable_target,
+)
 from app.core.config.environment import ConfigurationError, environment_inputs
 from app.core.config.settings import DOTENV_PATH, get_instance_settings
 
@@ -64,7 +68,7 @@ def load_instance_target(process: Mapping[str, str] | None = None) -> InstanceTa
     try:
         metadata = path.lstat()
         mode = stat.S_IMODE(metadata.st_mode)
-        if not stat.S_ISREG(metadata.st_mode) or mode & 0o077:
+        if not stat.S_ISREG(metadata.st_mode) or (os.name != "nt" and mode & 0o077):
             raise ValueError
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
@@ -84,15 +88,16 @@ def load_instance_target(process: Mapping[str, str] | None = None) -> InstanceTa
         database = _required(values, "POSTGRES_DATABASE")
     except ValueError:
         raise InstanceTargetError("OpenSlate instance target is invalid") from None
-    if not 1 <= port <= 65535:
+    if not 1 <= port <= 65535 or database != "postgres":
         raise InstanceTargetError("OpenSlate instance target is invalid")
-    expected_volume = f"{instance_id}_postgres-data"
-    expected_network = f"{instance_id}_default"
+    expected_volume = f"{instance_id}_supabase-db-data"
+    expected_network = f"{instance_id}_provider"
     container_id = ownership.get("container_id")
     image = ownership.get("image")
     network_id = ownership.get("network_id")
     if (
-        host != "127.0.0.1"
+        payload.get("version") != 2
+        or host != "127.0.0.1"
         or payload.get("instance_id") != instance_id
         or payload.get("compose_project") != instance_id
         or postgres
@@ -103,7 +108,7 @@ def load_instance_target(process: Mapping[str, str] | None = None) -> InstanceTa
             "cluster_name": instance_id,
         }
         or compose != {"volume": expected_volume, "network": expected_network}
-        or ownership.get("working_dir") != str(REPOSITORY_ROOT)
+        or ownership.get("working_dir") != str(REPOSITORY_ROOT / "infra" / "supabase")
         or ownership.get("compose_project") != instance_id
         or ownership.get("network") != expected_network
         or ownership.get("volume") != expected_volume
@@ -114,7 +119,7 @@ def load_instance_target(process: Mapping[str, str] | None = None) -> InstanceTa
         or not isinstance(network_id, str)
         or _DOCKER_ID.fullmatch(network_id) is None
         or not isinstance(image, str)
-        or not image.startswith("postgres:")
+        or image != SUPABASE_DB_IMAGE
     ):
         raise InstanceTargetError("OpenSlate instance ownership attestation does not match")
     return InstanceTarget(instance_id, host, port, database, path, instance_id)
@@ -127,8 +132,11 @@ def test_manifest_authorizes_process(
     values = os.environ if process is None else process
     try:
         load_disposable_target(
-            database_url, expected_user, values,
-            repository_root=REPOSITORY_ROOT, inspect=_docker_json,
+            database_url,
+            expected_user,
+            values,
+            repository_root=REPOSITORY_ROOT,
+            inspect=_docker_json,
         )
         return True
     except (DisposableTargetError, InstanceTargetError):
@@ -148,14 +156,21 @@ def instance_target_for_process(
     if environment == "test":
         try:
             disposable = load_disposable_target(
-                database_url, expected_user, values,
-                repository_root=REPOSITORY_ROOT, inspect=_docker_json,
+                database_url,
+                expected_user,
+                values,
+                repository_root=REPOSITORY_ROOT,
+                inspect=_docker_json,
             )
         except DisposableTargetError:
             raise InstanceTargetError("Test database target lacks live runner ownership") from None
         target = InstanceTarget(
-            disposable.run_id, disposable.host, disposable.port, disposable.database,
-            disposable.manifest_path, disposable.cluster_name,
+            disposable.run_id,
+            disposable.host,
+            disposable.port,
+            disposable.database,
+            disposable.manifest_path,
+            disposable.cluster_name,
         )
         assert_database_url(database_url, target, expected_user=expected_user)
         return target
@@ -183,9 +198,9 @@ def _configured_production_target(values: Mapping[str, str]) -> InstanceTarget:
         port = int(_required(values, "POSTGRES_PORT"))
     except ValueError:
         raise InstanceTargetError("OpenSlate instance target is invalid") from None
-    if not 1 <= port <= 65535:
+    if not 1 <= port <= 65535 or database != "postgres":
         raise InstanceTargetError("OpenSlate instance target is invalid")
-    return InstanceTarget(instance_id, host, port, database, None)
+    return InstanceTarget(instance_id, host, port, database, None, instance_id)
 
 
 def _docker_json(arguments: list[str]) -> Any:
@@ -214,6 +229,8 @@ def _docker_json(arguments: list[str]) -> Any:
         )
         if result.returncode:
             raise ValueError
+        if arguments[:5] == ["ps", "-a", "-q", "--no-trunc", "--filter"]:
+            return result.stdout.splitlines()
         return json.loads(result.stdout)
     except (OSError, ValueError, json.JSONDecodeError):
         raise InstanceTargetError("Live Docker ownership could not be verified") from None
@@ -246,17 +263,18 @@ def assert_live_docker_ownership(target: InstanceTarget) -> None:
             container["Id"] == ownership["container_id"]
             and container["State"]["Running"] is True
             and labels.get("com.docker.compose.project") == target.instance_id
-            and labels.get("com.docker.compose.project.working_dir") == str(REPOSITORY_ROOT)
-            and labels.get("com.docker.compose.service") == "postgres"
-            and container["Config"]["Image"] == ownership["image"]
+            and labels.get("com.docker.compose.project.working_dir")
+            == str(REPOSITORY_ROOT / "infra" / "supabase")
+            and labels.get("com.docker.compose.service") == "db"
+            and container["Config"]["Image"] == ownership["image"] == SUPABASE_DB_IMAGE
             and networks[ownership["network"]]["NetworkID"] == ownership["network_id"]
             and network["Id"] == ownership["network_id"]
             and network_labels.get("com.docker.compose.project") == target.instance_id
-            and network_labels.get("com.docker.compose.network") == "default"
+            and network_labels.get("com.docker.compose.network") == "provider"
             and len(data_mounts) == 1
             and data_mounts[0].get("Name") == ownership["volume"]
             and volume_labels.get("com.docker.compose.project") == target.instance_id
-            and volume_labels.get("com.docker.compose.volume") == "postgres-data"
+            and volume_labels.get("com.docker.compose.volume") == "supabase-db-data"
             and bindings
             == [
                 {

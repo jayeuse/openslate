@@ -14,44 +14,51 @@ operator commands belong in `backend/operations/`; frontend launch helpers
 belong in `frontend/tooling/`; repository-command tests belong in
 `tests/tooling/`. Do not create another product directory named `scripts`.
 
-## Daily development containers
+## Local Supabase development
 
-The public development entry point is `dev.py`; it keeps environment
-validation, generated configuration, secret files, profiles, and build flags
-out of the commands developers need to remember:
+The public development entry point is `dev.py`. It reads the owner-only root
+`.env` by default, validates the installation settings, selects the pinned
+Supabase base and development Compose files, and checks instance ownership
+before changing containers. Use `--env-file <private-path>` before the action
+when working with a separate owner-only environment file.
 
 ```bash
 ./scripts/dev.py db
-./scripts/dev.py pgweb
+./scripts/dev.py studio
 ./scripts/dev.py containers
 ./scripts/dev.py status
 ./scripts/dev.py stop
-./scripts/dev.py stop pgweb
+./scripts/dev.py stop studio
 ```
 
-On Windows, invoke the same file as `py scripts/dev.py <action>`.
+`db` and `containers` both start the complete Supabase development Compose
+stack. `studio` starts the `api-gw` service and its dependencies, including the
+operator Studio surface. `status` lists the owned development services. `stop`
+stops the stack while retaining its named volumes; `stop studio` stops the
+Studio service. There is no pgweb service or action. Do not remove installation
+volumes as a cleanup shortcut.
 
-Start FastAPI and Next.js directly from their owning directories. The Next development
-server is the browser entry point at `http://127.0.0.1:${FRONTEND_DEV_PORT}`; Caddy is
-reserved for production-level testing and deployment.
+On Windows, invoke the wrapper with `py scripts/dev.py <action>`. Start
+FastAPI and Next.js directly from their owning directories. Next.js is the
+daily browser entry point; production provider and application startup is
+documented in the [Supabase operator guide](../infra/supabase/README.md).
 
-## Optional production preview gateway
+## Caddy entry points
 
-The repository keeps Caddy installed and configured as the disabled `gateway`
-Compose profile. Daily `dev.py db`, `dev.py containers`, and `npm run dev`
-never start it. After manually preparing the production-like FastAPI static
-asset configuration, an operator may control the preview gateway explicitly:
+The `caddy` action controls the optional root `compose.yaml` gateway profile.
+It is a separate preview artifact, not the Supabase production stack. Use it
+only when its private Caddy configuration and preview target have been
+prepared:
 
 ```bash
 ./scripts/dev.py caddy
 ./scripts/dev.py stop caddy
 ```
 
-The isolated production-level gateway acceptance command is run from `backend/`:
-
-```bash
-uv run python -m tests.fullstack_runner --acceptance-only
-```
+For a client installation, follow the Supabase operator guide for production
+Compose. It specifies when to start the provider services, provision roles and
+schema, create Storage buckets, and then start the API, scanner, and production
+Caddy service. Do not use the preview action as a substitute for that sequence.
 
 When adding a command:
 

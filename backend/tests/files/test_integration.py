@@ -184,6 +184,58 @@ def test_reconcile_requeues_exact_dual_location_bytes_after_metadata_commit_fail
     assert recovered.operation_id is None and recovered.scan_next_attempt_at is not None
 
 
+def test_reconcile_requeues_exact_ready_bytes_when_quarantine_was_removed(guarded_db, actor):
+    db = guarded_db
+    actor_id = actor.id
+    file_id, content = reserve(db, actor)
+    storage = Store(db)
+    service.upload(db, actor_id, file_id, content, storage)
+    file = db.get(File, file_id)
+    assert file is not None and file.digest is not None and file.actual_size is not None
+    key, digest, size = file.object_key, file.digest, file.actual_size
+    db.commit()
+    storage.promote(key, expected_digest=digest, expected_size=size)
+    del storage.quarantine[key]
+    file = db.get(File, file_id)
+    assert file is not None
+    file.operation_id = uuid4()
+    file.operation_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    file.failure_code = "promotion_metadata_unresolved"
+    db.commit()
+
+    result = service.reconcile(db, actor_id, file_id, storage)
+
+    assert result.state == "pending_scan"
+    recovered = db.get(File, file_id)
+    assert recovered is not None
+    assert recovered.operation_id is None and recovered.scan_next_attempt_at is not None
+
+
+def test_reconcile_rejects_conflicting_quarantine_even_if_ready_is_exact(guarded_db, actor):
+    db = guarded_db
+    actor_id = actor.id
+    file_id, content = reserve(db, actor)
+    storage = Store(db)
+    service.upload(db, actor_id, file_id, content, storage)
+    file = db.get(File, file_id)
+    assert file is not None and file.digest is not None and file.actual_size is not None
+    key, digest, size = file.object_key, file.digest, file.actual_size
+    db.commit()
+    storage.promote(key, expected_digest=digest, expected_size=size)
+    storage.quarantine[key] = b"mismatch"
+    file = db.get(File, file_id)
+    assert file is not None
+    file.operation_id = uuid4()
+    file.operation_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    file.failure_code = "promotion_metadata_unresolved"
+    db.commit()
+
+    with pytest.raises(HTTPException) as caught:
+        service.reconcile(db, actor_id, file_id, storage)
+    assert caught.value.detail["code"] == "scan_execution_unresolved"
+    assert db.get(File, file_id).operation_id is not None
+
+
 def test_leadership_loss_after_clean_promotion_is_reconciled_from_exact_dual_bytes(
     guarded_db, actor
 ):

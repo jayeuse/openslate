@@ -1,4 +1,5 @@
 """Capability boundaries for domain and lifecycle routes."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -22,7 +23,6 @@ import app.systems.sandbox.records.router as records_router
 import app.systems.sandbox.relationships.router as relationships_router
 from app.systems.access.users.models import UserRole
 from app.systems.access.users.permissions import ALL_CAPABILITIES, Capability
-from app.systems.access.users.service import IssuedInvitation
 from app.systems.sandbox.lifecycle.schemas import (
     LifecycleImpactResponse,
     LifecycleMutationResponse,
@@ -361,10 +361,8 @@ def test_users_roles_invitations_and_audit_are_literal_admin_only(
     elif route_group == "invitations":
         monkeypatch.setattr(
             auth_router,
-            "create_invitation",
-            lambda *_args, **_kwargs: IssuedInvitation(
-                make_user("invited"), "temporary_password", "temporary-secret-123"
-            ),
+            "invite_user",
+            lambda *_args, **_kwargs: make_user("invited"),
         )
     else:
         monkeypatch.setattr(

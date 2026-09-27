@@ -26,8 +26,8 @@ def _environment() -> dict[str, str]:
     return {
         "OPENSLATE_INSTANCE_ID": "openslate-boards-a1b2c3d4",
         "POSTGRES_HOST": "127.0.0.1",
-        "POSTGRES_PORT": "55322",
-        "POSTGRES_DATABASE": "openslate_boards",
+        "POSTGRES_PORT": "55432",
+        "POSTGRES_DATABASE": "postgres",
     }
 
 
@@ -36,28 +36,29 @@ def _write_attestation(path: Path, *, cluster_name: str = "openslate-boards-a1b2
     path.write_text(
         json.dumps(
             {
+                "version": 2,
                 "instance_id": "openslate-boards-a1b2c3d4",
                 "compose_project": "openslate-boards-a1b2c3d4",
                 "postgres": {
                     "host": "127.0.0.1",
-                    "port": 55322,
-                    "database": "openslate_boards",
+                    "port": 55432,
+                    "database": "postgres",
                     "cluster_name": cluster_name,
                 },
                 "compose": {
-                    "volume": "openslate-boards-a1b2c3d4_postgres-data",
-                    "network": "openslate-boards-a1b2c3d4_default",
+                    "volume": "openslate-boards-a1b2c3d4_supabase-db-data",
+                    "network": "openslate-boards-a1b2c3d4_provider",
                 },
                 "ownership": {
                     "compose_project": "openslate-boards-a1b2c3d4",
                     "container_port": 5432,
                     "container_id": "a" * 64,
-                    "host_port": 55322,
-                    "image": "postgres:17@sha256:test",
+                    "host_port": 55432,
+                    "image": instance.SUPABASE_DB_IMAGE,
                     "network_id": "b" * 64,
-                    "working_dir": str(instance.REPOSITORY_ROOT),
-                    "network": "openslate-boards-a1b2c3d4_default",
-                    "volume": "openslate-boards-a1b2c3d4_postgres-data",
+                    "working_dir": str(instance.REPOSITORY_ROOT / "infra" / "supabase"),
+                    "network": "openslate-boards-a1b2c3d4_provider",
+                    "volume": "openslate-boards-a1b2c3d4_supabase-db-data",
                 },
             }
         ),
@@ -78,8 +79,8 @@ def test_load_instance_target_requires_owned_attestation_and_matching_target(
     assert target == InstanceTarget(
         instance_id="openslate-boards-a1b2c3d4",
         host="127.0.0.1",
-        port=55322,
-        database="openslate_boards",
+        port=55432,
+        database="postgres",
         attestation_path=attestation,
         cluster_name="openslate-boards-a1b2c3d4",
     )
@@ -88,7 +89,7 @@ def test_load_instance_target_requires_owned_attestation_and_matching_target(
 @pytest.mark.parametrize(
     ("name", "value"),
     [
-        ("POSTGRES_PORT", "54322"),
+        ("POSTGRES_PORT", "55322"),
         ("POSTGRES_DATABASE", "openslate"),
         ("OPENSLATE_INSTANCE_ID", "openslate-other-a1b2c3d4"),
     ],
@@ -113,7 +114,7 @@ def test_load_instance_target_rejects_unknown_or_shared_ownership(
     attestation = tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json"
     _write_attestation(attestation)
     payload = json.loads(attestation.read_text(encoding="utf-8"))
-    payload["compose"]["volume"] = "postgres-data"
+    payload["compose"]["volume"] = "supabase-db-data"
     attestation.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(InstanceTargetError, match="ownership"):
@@ -124,8 +125,8 @@ def test_load_instance_target_rejects_unknown_or_shared_ownership(
     ("database", "user", "cluster_name"),
     [
         ("other", "openslate_runtime", "openslate-boards-a1b2c3d4"),
-        ("openslate_boards", "openslate_owner", "openslate-boards-a1b2c3d4"),
-        ("openslate_boards", "openslate_runtime", "other-cluster"),
+        ("postgres", "openslate_owner", "openslate-boards-a1b2c3d4"),
+        ("postgres", "openslate_runtime", "other-cluster"),
     ],
 )
 def test_assert_instance_target_rejects_live_database_user_or_cluster(
@@ -151,7 +152,7 @@ def test_assert_instance_target_accepts_the_attested_live_target(
     target = load_instance_target(_environment())
     connection = MagicMock()
     connection.exec_driver_sql.return_value.one.return_value = (
-        "openslate_boards",
+        "postgres",
         "openslate_runtime",
         "openslate-boards-a1b2c3d4",
     )
@@ -163,9 +164,9 @@ def test_assert_instance_target_accepts_the_attested_live_target(
 @pytest.mark.parametrize(
     "url",
     [
-        "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:54322/openslate_boards",
-        "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55322/other",
-        "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55322/openslate_boards",
+        "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55322/postgres",
+        "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55432/other",
+        "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55432/postgres",
     ],
 )
 def test_assert_database_url_rejects_wrong_port_database_or_user(
@@ -229,7 +230,6 @@ def test_migration_lock_remains_held_until_transaction_commit() -> None:
         engine.dispose()
 
 
-
 @pytest.mark.parametrize("url", ["https://api.example.test:8000", "http://127.0.0.1:8001"])
 def test_seed_api_url_must_be_this_worktrees_loopback_listener(url: str) -> None:
     with pytest.raises(InstanceTargetError):
@@ -242,17 +242,19 @@ def test_seed_api_url_accepts_configured_loopback_listener() -> None:
 
 def _docker_ownership_facts() -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
     identity = "openslate-boards-a1b2c3d4"
-    volume = f"{identity}_postgres-data"
-    network = f"{identity}_default"
+    volume = f"{identity}_supabase-db-data"
+    network = f"{identity}_provider"
     labels = {
         "com.docker.compose.project": identity,
-        "com.docker.compose.project.working_dir": str(instance.REPOSITORY_ROOT),
-        "com.docker.compose.service": "postgres",
+        "com.docker.compose.project.working_dir": str(
+            instance.REPOSITORY_ROOT / "infra" / "supabase"
+        ),
+        "com.docker.compose.service": "db",
     }
     container: dict[str, object] = {
         "Id": "a" * 64,
         "State": {"Running": True},
-        "Config": {"Labels": labels, "Image": "postgres:17@sha256:test"},
+        "Config": {"Labels": labels, "Image": instance.SUPABASE_DB_IMAGE},
         "Mounts": [
             {
                 "Type": "volume",
@@ -262,22 +264,20 @@ def _docker_ownership_facts() -> tuple[dict[str, object], dict[str, object], dic
         ],
         "NetworkSettings": {"Networks": {network: {"NetworkID": "b" * 64}}},
         "HostConfig": {
-            "PortBindings": {
-                "5432/tcp": [{"HostIp": "127.0.0.1", "HostPort": "55322"}]
-            }
+            "PortBindings": {"5432/tcp": [{"HostIp": "127.0.0.1", "HostPort": "55432"}]}
         },
     }
     network_resource: dict[str, object] = {
         "Id": "b" * 64,
         "Labels": {
             "com.docker.compose.project": identity,
-            "com.docker.compose.network": "default",
+            "com.docker.compose.network": "provider",
         },
     }
     volume_resource: dict[str, object] = {
         "Labels": {
             "com.docker.compose.project": identity,
-            "com.docker.compose.volume": "postgres-data",
+            "com.docker.compose.volume": "supabase-db-data",
         }
     }
     return container, network_resource, volume_resource
@@ -287,9 +287,7 @@ def test_process_target_rechecks_live_container_network_and_volume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
-    _write_attestation(
-        tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json"
-    )
+    _write_attestation(tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json")
     container, network, volume = _docker_ownership_facts()
     inspected = iter(([container], [network], [volume]))
     calls: list[list[str]] = []
@@ -305,7 +303,7 @@ def test_process_target_rechecks_live_container_network_and_volume(
     }
 
     target = instance_target_for_process(
-        "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55322/openslate_boards",
+        "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55432/postgres",
         "openslate_runtime",
         process,
     )
@@ -313,8 +311,8 @@ def test_process_target_rechecks_live_container_network_and_volume(
     assert target is not None
     assert calls == [
         ["inspect", "a" * 64],
-        ["network", "inspect", "openslate-boards-a1b2c3d4_default"],
-        ["volume", "inspect", "openslate-boards-a1b2c3d4_postgres-data"],
+        ["network", "inspect", "openslate-boards-a1b2c3d4_provider"],
+        ["volume", "inspect", "openslate-boards-a1b2c3d4_supabase-db-data"],
     ]
 
 
@@ -322,9 +320,7 @@ def test_process_target_rejects_live_volume_not_mounted_by_attested_container(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
-    _write_attestation(
-        tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json"
-    )
+    _write_attestation(tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json")
     container, network, volume = _docker_ownership_facts()
     inspected = iter(([container], [network], [volume]))
     container["Mounts"] = [
@@ -334,7 +330,7 @@ def test_process_target_rejects_live_volume_not_mounted_by_attested_container(
 
     with pytest.raises(InstanceTargetError, match="Live Docker ownership"):
         instance_target_for_process(
-            "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55322/openslate_boards",
+            "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55432/postgres",
             "openslate_runtime",
             {**_environment(), "ENVIRONMENT": "development"},
         )
@@ -354,7 +350,7 @@ def test_production_target_is_explicit_and_does_not_require_local_docker(
     )
 
     target = instance_target_for_process(
-        "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55322/openslate_boards",
+        "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55432/postgres",
         "openslate_runtime",
         process,
     )
@@ -362,15 +358,16 @@ def test_production_target_is_explicit_and_does_not_require_local_docker(
     assert target == InstanceTarget(
         instance_id="openslate-boards-a1b2c3d4",
         host="127.0.0.1",
-        port=55322,
-        database="openslate_boards",
+        port=55432,
+        database="postgres",
         attestation_path=None,
+        cluster_name="openslate-boards-a1b2c3d4",
     )
     connection = MagicMock()
     connection.exec_driver_sql.return_value.one.return_value = (
-        "openslate_boards",
+        "postgres",
         "openslate_runtime",
-        "managed-production-cluster",
+        "openslate-boards-a1b2c3d4",
     )
     assert_instance_target(connection, target, expected_user="openslate_runtime")
 

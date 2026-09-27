@@ -24,6 +24,7 @@ GATE_NAMES: Final[tuple[str, ...]] = (
 
 _FRONTEND_PREFIX = "frontend/"
 _BACKEND_PREFIX = "backend/"
+_BACKEND_RUNTIME_PREFIX = "infra/supabase/"
 _SERVER_IMAGE_PREFIXES: Final[tuple[str, ...]] = ("infra/", "contracts/")
 _SERVER_IMAGE_PATHS: Final[frozenset[str]] = frozenset(
     {
@@ -236,7 +237,11 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
         )
 
     frontend_paths = tuple(path for path in functional if path.startswith(_FRONTEND_PREFIX))
-    backend_paths = tuple(path for path in functional if path.startswith(_BACKEND_PREFIX))
+    backend_paths = tuple(
+        path
+        for path in functional
+        if path.startswith((_BACKEND_PREFIX, _BACKEND_RUNTIME_PREFIX))
+    )
     server_image_paths = tuple(
         path
         for path in functional

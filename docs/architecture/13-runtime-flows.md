@@ -1,58 +1,49 @@
 # Runtime Flows
 
-> **Scope:** Current request paths and their durable boundaries.
+> **Scope:** Current Supabase-backed startup, identity, file, and invalidation paths.
 
-## Developer startup
+## Development startup
 
-1. Start the documented disposable PostgreSQL service and validate root configuration.
-2. Provision owner, runtime and inspector roles through the guarded bootstrap
-   path, then apply Alembic migrations with the owner connection.
-3. Start FastAPI on loopback. For daily hot reload, start `next dev` and open
-   its direct browser origin; its development-only `/api` proxy reaches FastAPI.
-4. For production-like operation, build the static frontend and start FastAPI
-   with `WEB_ASSETS_ROOT`, then explicitly start the disabled gateway profile
-   with `./scripts/dev.py caddy`; Caddy has one FastAPI upstream.
-5. Create the first local administrator through the documented bootstrap or host-recovery path.
+1. The developer keeps a private root `.env` with a unique `OPENSLATE_INSTANCE_ID`, instance root, loopback ports, provider values, application connection URLs, and scanner paths. `scripts/environment.py` validates it before a Compose mutation.
+2. `./scripts/dev.py db` starts the pinned Supabase development stack. Project labels, expected image, database volume, provider network, role, and live database target are checked by the instance guard before mutations are admitted.
+3. From `backend/`, `uv run python operations/provision_database_role.py` provisions `openslate_owner` and `openslate_runtime` using `DATABASE_BOOTSTRAP_URL`. Alembic then applies application schema with `uv run alembic upgrade head`; `uv run alembic check` verifies model/schema alignment.
+4. `uv run python operations/provision_storage.py` creates and verifies the private quarantine and ready buckets. It requires the admitted runtime database and server-only Supabase credentials.
+5. `uv run python operations/bootstrap_admin.py` reserves the first administrator profile and sends a Supabase Auth invitation. The recipient sets a password through the OpenSlate invite page.
+6. FastAPI starts with `uv run python -m app --reload`; the frontend starts with `npm run dev`. Next forwards only its same-origin `/api` requests to FastAPI. The scanner worker is started only after verified ClamAV definitions and its manifest are available.
 
-The FastAPI lifespan owns event listening, automation and report scheduling,
-plus optional SMTP delivery. The file scanner is a separate operator-started
-process. Test-mode worker guards prevent automatic scheduled work; scheduled
-execution requires dedicated tests. See [Backend Architecture](04-backend-architecture.md).
+The checked-in development commands and production sequence are in [`infra/supabase/README.md`](../../infra/supabase/README.md). API readiness reports Database, Auth, Storage, SMTP configuration, and scanner components. The development/test API can start before its optional scanner worker; production readiness requires both worker leadership and engine health. The worker depends on API liveness, so readiness does not create a startup cycle. Schema checks, actual email delivery, and restore verification remain separate operations.
 
-## Browser sign-in and request
+## Sign-in and application authorization
 
-1. In daily development, Next forwards `/api` to FastAPI. In production or
-   production-level acceptance, Caddy forwards the browser request to FastAPI,
-   which serves the static page or asset, `/api`, or `/api/events` according to
-   the path.
-2. The browser posts email/username and password to FastAPI through `/api/auth/login`.
-3. FastAPI verifies Argon2 credentials, applies local throttling, creates an Identity session, and sets access, refresh, and CSRF cookies.
-4. `apiFetch()` sends same-origin API requests. Mutation requests carry the CSRF value.
-5. FastAPI verifies JWT claims, local session state, active user state, and capability before executing the domain route.
-6. A single coordinated refresh rotates the server-side session when the access token expires. Failed refresh clears the browser cookies and returns to sign-in.
+1. The browser submits an email and password to FastAPI's `/api/auth/login` endpoint. FastAPI applies its durable login budget and asks the configured Supabase Auth instance to verify the password.
+2. FastAPI verifies the returned provider token against the configured issuer, audience, expiry, subject, and session ID. It checks provider session liveness and requires an exact Supabase-user-ID binding to an active, eligible OpenSlate profile.
+3. FastAPI creates its own revocable application session. The provider access token is returned in an HttpOnly cookie; a separate opaque refresh handle and CSRF value support the local session contract. Encrypted provider refresh credentials remain server-side in PostgreSQL.
+4. Each protected request rechecks the local application session, provider identity/session, current profile eligibility, and current OpenSlate policy. Capabilities, roles, groups, and resource-specific grants are evaluated by FastAPI. Supabase Auth metadata never supplies an OpenSlate permission.
+5. Mutations require the existing CSRF and origin checks. Logout, account changes, recovery, and administrator revocation invalidate local application sessions; provider sign-out is a separate provider action.
 
-## File upload and download
+The provider adapter and session boundary live in [`supabase_auth.py`](../../backend/app/core/integrations/supabase_auth.py), [`provider_login.py`](../../backend/app/systems/access/identity/provider_login.py), [`provider_sessions.py`](../../backend/app/systems/access/identity/provider_sessions.py), and [`auth.py`](../../backend/app/common/dependencies/auth.py).
 
-1. FastAPI authorizes upload and writes the opaque bytes into private quarantine.
-2. Metadata and scan work are committed to PostgreSQL.
-3. The separate scanner worker validates size/digest and scans the quarantined
-   bytes. Only a verified clean result promotes an immutable ready object.
-4. Download checks file and parent authorization, reads and verifies the ready
-   object's complete bytes, rechecks authorization after storage I/O, then
-   returns a full-body response through FastAPI. It is not a streaming read.
+## Invitation and password recovery
+
+1. An authorized administrator sets an email, profile identity, role, groups, and invitation operation in OpenSlate. FastAPI reserves the pending application profile before calling the Supabase Auth admin API, then commits the exact provider-user binding.
+2. Supabase Auth sends invitation and recovery email through the configured provider SMTP server. It fetches the versioned HTML templates from the internal FastAPI template route; the development overlay routes mail to Mailpit.
+3. The email link opens an OpenSlate confirmation page with the one-time `token_hash` in the URL fragment. A browser preview GET does not exchange it. Only an explicit user submission sends the token hash to FastAPI.
+4. FastAPI verifies the provider action, checks the exact bound profile and operation state, and sets the password through Auth. Invitation completion activates the pending profile. Recovery revokes OpenSlate application sessions and changes the provider password without issuing an application session.
+
+FastAPI does not keep local password hashes, a local invitation/recovery token store, or a local SMTP outbox. Auth delivery and profile authorization remain separate operations.
+
+## File upload, scan, and download
+
+1. FastAPI checks the caller's file and parent-resource permissions and reserves metadata in PostgreSQL.
+2. The server writes bytes through the Storage API to the private quarantine bucket. The provider stores the bytes in the installation's Storage volume.
+3. The serial scanner worker claims the queued file, verifies its size and digest against stored bytes, and scans it with the configured ClamAV service. A clean result is promoted to the private ready bucket and committed with the file state. A timeout, mismatch, infection, or uncertain Storage operation leaves access denied and the operation visible for retry or reconciliation.
+4. Download again checks the caller and parent-resource permissions, fetches the complete ready object through the server-side adapter, verifies it, and rechecks authorization after I/O. The browser receives bytes only in the authorized FastAPI response; it never receives Storage credentials or a direct bucket URL.
 
 ## Mutation and invalidation
 
-1. A route commits individual ORM changes through `AuditSession`.
-2. Audit rows commit with the business state.
-3. The audit commit hook invokes the best-effort publisher through a separate
-   PostgreSQL connection; the listener forwards committed notifications to SSE.
-4. Authenticated SSE subscribers receive invalidation or resync and refetch authorized resources.
+1. A route commits individual application ORM mutations and audit rows together through `AuditSession`.
+2. After commit, the invalidation publisher sends a small opaque PostgreSQL `NOTIFY` on a separate direct connection.
+3. The authenticated SSE listener receives the notification and sends a private invalidation or resync signal to eligible subscribers. It does not include row contents or replace a resource API.
+4. The client refetches through FastAPI, where current identity and authorization are checked again.
 
-## Optional action delivery
-
-1. An invitation or recovery action creates a one-time local token.
-2. With SMTP enabled, FastAPI encrypts the token for the PostgreSQL outbox; disabled SMTP leaves the local setup flow available without a mail server.
-3. The bounded SMTP worker claims one delivery, sends its fragment-based link, and records delivery, retry, cancellation, or terminal failure while clearing encrypted token material when it is no longer usable.
-
-Native installers and backup recovery are not part of these implemented runtime flows.
+This path remains PostgreSQL `LISTEN`/`NOTIFY` plus SSE. Direct browser Realtime subscriptions are not enabled.

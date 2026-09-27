@@ -1,9 +1,11 @@
-"""Administrator-managed local identity session route contracts."""
+"""Administrator-managed application session route contracts."""
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -12,11 +14,10 @@ from uuid6 import uuid7
 from app.common.dependencies.auth import CurrentIdentity, get_current_identity
 from app.common.listing import ListQueryResult, PaginationMetadata
 from app.core.database import get_db
-from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.identity.service import revoke_session, revoke_user_sessions
+from app.systems.access.identity.session_revocation import revoke_session, revoke_user_sessions
 from app.systems.access.users.models import Role, User, UserRole, UserStatus
-from tests.auth.local_identity_support import settings as _settings
+from app.systems.access.users.sessions_router import router
 
 
 def _admin_identity() -> tuple[User, CurrentIdentity]:
@@ -34,7 +35,8 @@ def _admin_identity() -> tuple[User, CurrentIdentity]:
 
 
 def _application(db: Session, identity: CurrentIdentity):
-    application = create_app()
+    application = FastAPI()
+    application.include_router(router, prefix="/api")
     application.dependency_overrides[get_db] = lambda: db
     application.dependency_overrides[get_current_identity] = lambda: identity
     return application
@@ -308,20 +310,20 @@ def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(monkey
     db = Mock(spec=Session)
     db.get.return_value = session
     db.info = {}
-    monkeypatch.setattr(auth_dependencies, "get_settings", lambda: _settings())
     monkeypatch.setattr(
         auth_dependencies,
-        "decode_token",
-        lambda *_args, **_kwargs: {"sub": str(admin.id), "sid": str(identity.session_id)},
+        "get_settings",
+        lambda: SimpleNamespace(public_origin="http://frontend.test"),
     )
+    provider = Mock()
+    monkeypatch.setattr(auth_dependencies, "get_supabase_auth_client", lambda: provider)
     monkeypatch.setattr(
-        auth_dependencies,
-        "validate_access_session",
-        lambda *_args, **_kwargs: admin,
+        auth_dependencies, "resolve_provider_session", lambda *_args: (admin, session)
     )
     monkeypatch.setattr(sessions_router, "require_fresh_exact_admin", lambda *_args: admin)
     monkeypatch.setattr(sessions_router, "load_user", lambda *_args: _target_user(target_id))
-    application = create_app()
+    application = FastAPI()
+    application.include_router(router, prefix="/api")
     application.dependency_overrides[get_db] = lambda: db
 
     with TestClient(application, raise_server_exceptions=False) as client:

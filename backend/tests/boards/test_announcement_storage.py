@@ -1,7 +1,6 @@
 """Attachment-free Board announcement persistence contracts."""
 
 from datetime import UTC, datetime, timedelta
-from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 from sqlalchemy import select, text
@@ -19,13 +18,9 @@ from app.systems.boards.announcement_models import (
 from app.systems.boards.models import Board
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.sandbox.departments.models import Department
-from tests.conftest import guarded_create_engine
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
-SOURCE_REVISION = "d3c2ce550d4a"
-TARGET_REVISION = "2398f489358b"
-PUBLICATION_REVISION = "e84debb45901"
-ACCESS_HEAD_REVISION = "2bf95b237416"
+SUPABASE_DATABASE_ROLES = ("anon", "authenticated", "service_role")
+TABLE_ACTIONS = ("SELECT", "INSERT", "UPDATE", "DELETE")
 
 
 def test_announcement_and_published_revision_tables_are_registered() -> None:
@@ -295,32 +290,37 @@ def test_announcement_constraints_reject_invalid_audience_timing_and_duplicate_p
 
 
 @pytest.mark.integration
-def test_announcement_migration_adds_restrictive_schema_and_least_privilege_roles() -> None:
-    environment = guarded_migration_environment()
-    owner_engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
-    try:
-        run_alembic(environment, "downgrade", SOURCE_REVISION)
-        with owner_engine.connect() as connection:
-            assert (
-                connection.scalar(text("SELECT to_regclass('public.board_announcements')")) is None
-            )
-            assert connection.scalar(text("SELECT to_regclass('public.reports')")) is not None
-        run_alembic(environment, "upgrade", TARGET_REVISION)
-        with owner_engine.connect() as connection:
-            applied_revisions = set(
-                connection.scalars(text("SELECT version_num FROM alembic_version"))
-            )
-            assert applied_revisions == {ACCESS_HEAD_REVISION, TARGET_REVISION}
-            _assert_announcement_schema_and_privileges(connection)
-    finally:
-        try:
-            run_alembic(environment, "upgrade", "head")
-        finally:
-            owner_engine.dispose()
+def test_announcement_baseline_has_restrictive_schema_and_supabase_role_boundaries(
+    integration_owner_db,
+) -> None:
+    connection = integration_owner_db.connection()
+    assert connection.scalar(text("SELECT to_regclass('public.board_announcements')")) is not None
+    assert (
+        connection.scalar(text("SELECT to_regclass('public.board_announcement_revisions')"))
+        is not None
+    )
+    _assert_announcement_schema_and_privileges(connection)
 
 
 def _assert_announcement_schema_and_privileges(connection: Connection) -> None:
-    for table in ("board_announcements", "board_announcement_revisions"):
+    indexes = {
+        "board_announcements": {
+            "ix_board_announcements_board_id",
+            "ix_board_announcements_author_id",
+            "ix_board_announcements_audience_role_id",
+            "ix_board_announcements_audience_user_id",
+            "ix_board_announcements_audience_department_id",
+        },
+        "board_announcement_revisions": {
+            "uq_board_announcement_revisions_publication",
+            "uq_board_announcement_revisions_publication_key",
+            "ix_board_announcement_revisions_author_id",
+            "ix_board_announcement_revisions_audience_role_id",
+            "ix_board_announcement_revisions_audience_user_id",
+            "ix_board_announcement_revisions_audience_department_id",
+        },
+    }
+    for table in indexes:
         constraints = {
             row.conname: (row.contype, row.confdeltype)
             for row in connection.execute(
@@ -339,7 +339,23 @@ def _assert_announcement_schema_and_privileges(connection: Connection) -> None:
             for name, value in constraints.items()
             if name.startswith(f"fk_{table}_audience_department_id_")
         ] == [("f", "r")]
-        for action in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+        if table == "board_announcements":
+            assert constraints["ck_board_announcements_displayed_publication_positive"][0] == "c"
+        else:
+            assert constraints["ck_board_announcement_revisions_fingerprint_hex"][0] == "c"
+            assert constraints["uq_board_announcement_revisions_publication"][0] == "u"
+            assert constraints["uq_board_announcement_revisions_publication_key"][0] == "u"
+        actual_indexes = set(
+            connection.scalars(
+                text(
+                    "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' "
+                    "AND tablename = :table"
+                ),
+                {"table": table},
+            )
+        )
+        assert indexes[table] <= actual_indexes
+        for action in TABLE_ACTIONS:
             assert (
                 connection.scalar(
                     text("SELECT has_table_privilege('openslate_runtime', :table, :action)"),
@@ -347,20 +363,15 @@ def _assert_announcement_schema_and_privileges(connection: Connection) -> None:
                 )
                 is True
             )
-        assert (
-            connection.scalar(
-                text("SELECT has_table_privilege('openslate_inspector', :table, 'SELECT')"),
-                {"table": f"public.{table}"},
-            )
-            is True
-        )
-        assert (
-            connection.scalar(
-                text("SELECT has_table_privilege('openslate_inspector', :table, 'UPDATE')"),
-                {"table": f"public.{table}"},
-            )
-            is False
-        )
+        for role in SUPABASE_DATABASE_ROLES:
+            for action in TABLE_ACTIONS:
+                assert (
+                    connection.scalar(
+                        text("SELECT has_table_privilege(:role, :table, :action)"),
+                        {"role": role, "table": f"public.{table}", "action": action},
+                    )
+                    is False
+                ), f"Supabase database role {role} must not access {table}"
     trigger = connection.scalar(
         text(
             "SELECT count(*) FROM pg_trigger WHERE tgrelid = "
@@ -372,117 +383,40 @@ def _assert_announcement_schema_and_privileges(connection: Connection) -> None:
 
 
 @pytest.mark.integration
-def test_publication_migration_backfills_legacy_revision_and_display_pointer() -> None:
-    environment = guarded_migration_environment()
-    owner_engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
-    author_id, board_id, announcement_id, revision_id = (uuid7() for _ in range(4))
-    published_at = datetime(2026, 9, 23, 10, 0, tzinfo=UTC)
-    try:
-        run_alembic(environment, "downgrade", TARGET_REVISION)
-        with owner_engine.begin() as connection:
-            role_id = connection.scalar(text("SELECT id FROM roles WHERE role = 'member'"))
-            assert role_id is not None
-            connection.execute(
-                text(
-                    "INSERT INTO users (id, email, username, status, role_id) "
-                    "VALUES (:id, :email, :username, 'active', :role_id)"
-                ),
-                {
-                    "id": author_id,
-                    "email": f"legacy-announcement-{author_id.hex}@example.test",
-                    "username": f"legacy_announcement_{author_id.hex[:10]}",
-                    "role_id": role_id,
-                },
+def test_publication_baseline_keeps_current_pointer_and_snapshot_constraints(
+    integration_owner_db,
+) -> None:
+    # Legacy UUID5/key/fingerprint backfill is archived with the old migration chain. Fresh
+    # installs use the active baseline, so assert its resulting snapshot invariants instead.
+    connection = integration_owner_db.connection()
+    columns = {
+        (row.table_name, row.column_name): (row.is_nullable, row.data_type)
+        for row in connection.execute(
+            text(
+                "SELECT table_name, column_name, is_nullable, data_type "
+                "FROM information_schema.columns WHERE table_schema = 'public' "
+                "AND table_name IN ('board_announcements', 'board_announcement_revisions')"
             )
-            connection.execute(
-                text("INSERT INTO boards (id, owner_id, name) VALUES (:id, :owner_id, :name)"),
-                {"id": board_id, "owner_id": author_id, "name": "Legacy publication"},
+        )
+    }
+    assert columns[("board_announcements", "displayed_publication_number")] == (
+        "YES",
+        "integer",
+    )
+    assert columns[("board_announcement_revisions", "publication_key")][0] == "NO"
+    assert columns[("board_announcement_revisions", "content_fingerprint")][0] == "NO"
+    constraints = set(
+        connection.scalars(
+            text(
+                "SELECT conname FROM pg_constraint WHERE conrelid IN "
+                "('public.board_announcements'::regclass, "
+                "'public.board_announcement_revisions'::regclass)"
             )
-            connection.execute(
-                text(
-                    "INSERT INTO board_announcements "
-                    "(id, board_id, author_id, title, body, status, publish_at, audience_kind) "
-                    "VALUES (:id, :board_id, :author_id, :title, :body, 'scheduled', "
-                    ":publish_at, 'everyone')"
-                ),
-                {
-                    "id": announcement_id,
-                    "board_id": board_id,
-                    "author_id": author_id,
-                    "title": "Replacement draft",
-                    "body": "Replacement body",
-                    "publish_at": published_at + timedelta(days=1),
-                },
-            )
-            connection.execute(
-                text(
-                    "INSERT INTO board_announcement_revisions "
-                    "(id, announcement_id, publication_number, author_id, title, body, "
-                    "audience_kind, published_at) "
-                    "VALUES (:id, :announcement_id, 1, :author_id, :title, :body, "
-                    "'everyone', :published_at)"
-                ),
-                {
-                    "id": revision_id,
-                    "announcement_id": announcement_id,
-                    "author_id": author_id,
-                    "title": "Visible original",
-                    "body": "Original private body",
-                    "published_at": published_at,
-                },
-            )
-        run_alembic(environment, "upgrade", PUBLICATION_REVISION)
-        with owner_engine.connect() as connection:
-            pointer = connection.scalar(
-                text(
-                    "SELECT displayed_publication_number FROM board_announcements "
-                    "WHERE id = :id"
-                ),
-                {"id": announcement_id},
-            )
-            key, fingerprint = connection.execute(
-                text(
-                    "SELECT publication_key, content_fingerprint "
-                    "FROM board_announcement_revisions WHERE id = :id"
-                ),
-                {"id": revision_id},
-            ).one()
-            assert pointer == 1
-            assert key == uuid5(NAMESPACE_URL, f"openslate:announcement:{revision_id}")
-            assert fingerprint == publication_content_fingerprint(
-                author_id=author_id,
-                title="Visible original",
-                body="Original private body",
-                audience_kind="everyone",
-            )
-            constraints = {
-                row.conname
-                for row in connection.execute(
-                    text(
-                        "SELECT conname FROM pg_constraint WHERE conrelid IN "
-                        "('board_announcements'::regclass, "
-                        "'board_announcement_revisions'::regclass)"
-                    )
-                )
-            }
-            assert {
-                "ck_board_announcements_displayed_publication_positive",
-                "ck_board_announcement_revisions_fingerprint_hex",
-                "uq_board_announcement_revisions_publication_key",
-            } <= constraints
-    finally:
-        try:
-            run_alembic(environment, "upgrade", "head")
-            with owner_engine.begin() as connection:
-                connection.execute(
-                    text("DELETE FROM board_announcement_revisions WHERE id = :id"),
-                    {"id": revision_id},
-                )
-                connection.execute(
-                    text("DELETE FROM board_announcements WHERE id = :id"),
-                    {"id": announcement_id},
-                )
-                connection.execute(text("DELETE FROM boards WHERE id = :id"), {"id": board_id})
-                connection.execute(text("DELETE FROM users WHERE id = :id"), {"id": author_id})
-        finally:
-            owner_engine.dispose()
+        )
+    )
+    assert {
+        "ck_board_announcements_displayed_publication_positive",
+        "ck_board_announcement_revisions_fingerprint_hex",
+        "uq_board_announcement_revisions_publication",
+        "uq_board_announcement_revisions_publication_key",
+    } <= constraints

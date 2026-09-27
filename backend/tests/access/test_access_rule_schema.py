@@ -1,12 +1,11 @@
 """Persistence contracts for Access rules and policy revision state."""
 
 import os
-from pathlib import Path
 from typing import cast
 from uuid import UUID
 
 import pytest
-from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, Table, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, Table, UniqueConstraint, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -156,23 +155,52 @@ def test_policy_version_is_audited_workspace_singleton() -> None:
     assert _foreign_keys(table) == {("performed_by", "users.id", "SET NULL")}
 
 
-def test_migration_declares_deferred_audit_keys_seed_and_null_safe_uniqueness() -> None:
-    source = (
-        Path(__file__).parents[2]
-        / "migrations"
-        / "versions"
-        / "2bf95b237416_add_access_rules.py"
-    ).read_text()
-
+@pytest.mark.integration
+def test_applied_baseline_installs_policy_seed_and_null_safe_uniqueness(
+    integration_owner_db: Session,
+) -> None:
+    connection = integration_owner_db.connection()
     for table in ("access_policy_versions", "access_rules"):
-        assert (
-            f'op.create_foreign_key(\n        op.f("fk_{table}_performed_by_users"),\n'
-            f'        "{table}",\n        "users",\n        ["performed_by"],\n        ["id"],'
-        ) in source
-    assert source.count("postgresql_nulls_not_distinct=True") == 2
-    assert 'UUID("00000000-0000-0000-0000-000000000001")' in source
-    assert '"singleton_key": "workspace"' in source
-    assert '"revision": 1' in source
+        constraint = connection.execute(
+            text(
+                "SELECT referenced.relname, catalog_constraint.confdeltype "
+                "FROM pg_constraint AS catalog_constraint "
+                "JOIN pg_class AS referenced ON referenced.oid = catalog_constraint.confrelid "
+                "WHERE catalog_constraint.conrelid = to_regclass(:table) "
+                "AND catalog_constraint.conname = :constraint"
+            ),
+            {"table": f"public.{table}", "constraint": f"fk_{table}_performed_by_users"},
+        ).one_or_none()
+        assert constraint == ("users", "n")
+
+    null_safe_indexes = dict(
+        connection.execute(
+            text(
+                "SELECT index_class.relname, pg_index.indnullsnotdistinct "
+                "FROM pg_index "
+                "JOIN pg_class AS index_class ON index_class.oid = pg_index.indexrelid "
+                "WHERE pg_index.indrelid = 'public.access_rules'::regclass "
+                "AND pg_index.indexrelid IN "
+                "(to_regclass('public.uq_access_rules_everyone_active'), "
+                "to_regclass('public.uq_access_rules_subject_active'))"
+            )
+        ).all()
+    )
+    assert null_safe_indexes == {
+        "uq_access_rules_everyone_active": True,
+        "uq_access_rules_subject_active": True,
+    }
+
+    policy_seed = connection.execute(
+        text(
+            "SELECT singleton_key, revision, is_deleted "
+            "FROM public.access_policy_versions WHERE singleton_key = 'workspace'"
+        )
+    ).one_or_none()
+    assert policy_seed is not None
+    assert policy_seed.singleton_key == "workspace"
+    assert policy_seed.revision >= 1
+    assert policy_seed.is_deleted is False
 
 
 @pytest.mark.integration

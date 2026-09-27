@@ -1,15 +1,10 @@
-type InvitationLocation = Pick<Location, "hash" | "pathname" | "search">;
-type InvitationHistory = Pick<History, "replaceState">;
+import { consumeActionToken } from "@/lib/action-token";
 
 export function consumeInvitationToken(
-  location: InvitationLocation,
-  history: InvitationHistory,
+  location: Pick<Location, "hash" | "pathname" | "search">,
+  history: Pick<History, "replaceState">,
 ): string | null {
-  if (!location.hash.startsWith("#")) return null;
-  const token = new URLSearchParams(location.hash.slice(1)).get("token");
-  if (!token) return null;
-  history.replaceState(null, "", `${location.pathname}${location.search}`);
-  return token;
+  return consumeActionToken(location, history, "invite");
 }
 
 export function retainInvitationToken(

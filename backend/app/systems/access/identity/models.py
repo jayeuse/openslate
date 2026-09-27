@@ -1,12 +1,10 @@
 """Local identity persistence owned by FastAPI and PostgreSQL."""
 
 from datetime import datetime
-from enum import StrEnum
 from typing import ClassVar
 from uuid import UUID
 
 from sqlalchemy import (
-    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -24,26 +22,6 @@ from app.core.base_model import utc_now
 from app.core.database.base import Base
 
 
-class ActionTokenPurpose(StrEnum):
-    INVITATION = "invitation"
-    RECOVERY = "recovery"
-
-
-class IdentityCredential(Base):
-    __tablename__ = "identity_credentials"
-    __audit_enabled__: ClassVar[bool] = False
-
-    user_id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    password_digest: Mapped[str] = mapped_column(Text, nullable=False)
-    must_change_password: Mapped[bool] = mapped_column(nullable=False, default=False)
-    temporary_password_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    password_changed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, nullable=False
-    )
-
-
 class IdentitySession(Base):
     __tablename__ = "identity_sessions"
     __audit_enabled__: ClassVar[bool] = False
@@ -56,6 +34,20 @@ class IdentitySession(Base):
     user_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
+    provider_user_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    provider_session_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), unique=True
+    )
+    provider_access_token_encrypted: Mapped[str | None] = mapped_column(Text)
+    provider_refresh_token_encrypted: Mapped[str | None] = mapped_column(Text)
+    provider_signout_pending_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    provider_signout_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    provider_signout_next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    provider_signout_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     refresh_token_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     csrf_token_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -67,38 +59,6 @@ class IdentitySession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     user_agent: Mapped[str | None] = mapped_column(String(500))
-
-
-class IdentityActionToken(Base):
-    __tablename__ = "identity_action_tokens"
-    __audit_enabled__: ClassVar[bool] = False
-    __table_args__ = (
-        CheckConstraint(
-            "purpose IN ('invitation', 'recovery')", name="ck_identity_action_tokens_purpose"
-        ),
-        UniqueConstraint("token_digest", name="uq_identity_action_tokens_token_digest"),
-        Index(
-            "uq_identity_action_tokens_active_user_purpose",
-            "user_id",
-            "purpose",
-            unique=True,
-            postgresql_where=text("consumed_at IS NULL"),
-        ),
-        Index("ix_identity_action_tokens_user_purpose", "user_id", "purpose", "consumed_at"),
-    )
-
-    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid7)
-    user_id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
-    purpose: Mapped[ActionTokenPurpose] = mapped_column(String(20), nullable=False)
-    token_digest: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, nullable=False
-    )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_by: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
 
 
 class IdentityRateLimitBucket(Base):

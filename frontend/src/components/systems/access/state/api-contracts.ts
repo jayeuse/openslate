@@ -72,8 +72,7 @@ export type AccessDepartment = {
 
 export type AccessInvitationResponse = {
   user: AccessUser;
-  delivery: "temporary_password" | "email";
-  temporary_password: string | null;
+  delivery: "email";
 };
 
 export type AccessUserCreate = {
@@ -284,8 +283,7 @@ export const roleSchema = z.strictObject({
 });
 export const invitationSchema = z.strictObject({
   user: userSchema,
-  delivery: z.enum(["temporary_password", "email"]),
-  temporary_password: z.string().nullable(),
+  delivery: z.literal("email"),
 });
 export const sessionSchema = z.strictObject({
   id: z.string().uuid(),

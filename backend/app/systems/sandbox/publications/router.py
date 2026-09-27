@@ -17,10 +17,14 @@ from app.common.dependencies import (
     require_fresh_capabilities,
 )
 from app.core.database import get_db
-from app.systems.access.identity.contracts import IdentityRateLimited, InvalidCredentials
-from app.systems.access.identity.service import authenticate_password
 from app.systems.access.users.permissions import Capability
 from app.systems.sandbox.designs.service import SandboxDesignError, read_document
+from app.systems.sandbox.lifecycle.exceptions import (
+    LifecycleInvalidCredentials,
+    LifecyclePasswordRateLimited,
+    LifecyclePasswordServiceUnavailable,
+)
+from app.systems.sandbox.lifecycle.password import ProviderPasswordGrantClient
 from app.systems.sandbox.publications.executor import (
     PublicationError,
     apply_publication,
@@ -109,26 +113,36 @@ def post_publication(
     actor = _actor(identity)
     if idempotency_key is None or not 1 <= len(idempotency_key) <= 128:
         raise _error("publication_unavailable", "A bounded Idempotency-Key is required", 400)
-    require_fresh_capabilities(
-        db,
-        actor_id=actor.user.id,
-        session_id=actor.session_id,
-        expected_role_id=actor.user.role_id,
-        capabilities=_CAPABILITIES,
-    )
+
+    def reauthorize() -> None:
+        require_fresh_capabilities(
+            db,
+            actor_id=actor.user.id,
+            session_id=actor.session_id,
+            expected_role_id=actor.user.role_id,
+            capabilities=_CAPABILITIES,
+        )
+
+    reauthorize()
     try:
-        verified = authenticate_password(db, actor.user.email, payload.password)
-    except IdentityRateLimited as error:
+        verified_id = ProviderPasswordGrantClient(db).verify_password(
+            actor.user.email, payload.password
+        )
+    except LifecyclePasswordRateLimited as error:
         db.rollback()
         raise _error(
             "password_rate_limited", "Password verification is rate limited", 429
         ) from error
-    except InvalidCredentials as error:
-        db.commit()
+    except LifecycleInvalidCredentials as error:
         raise _error("invalid_password", "Password verification failed", 403) from error
-    if verified.id != actor.user.id:
+    except LifecyclePasswordServiceUnavailable as error:
+        db.rollback()
+        raise _error("publication_unavailable", "Password verification unavailable", 503) from error
+    if verified_id != actor.user.id:
         db.rollback()
         raise _error("invalid_password", "Password verification failed", 403)
+    # Password verification commits rate-limit state and releases the first locks.
+    reauthorize()
     claims = decode_preview_token(payload.preview_token)
     if claims is None:
         raise _error("preview_expired", "Publication review expired; review again")
@@ -171,6 +185,7 @@ def post_publication(
             idempotency_key=idempotency_key,
             fingerprint=fingerprint,
             note=payload.note,
+            reauthorize_after_rollback=reauthorize,
         ),
     )
     return _created_response(result)

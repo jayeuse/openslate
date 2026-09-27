@@ -4,14 +4,12 @@ from datetime import UTC, datetime
 from unittest.mock import Mock
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-import app.systems.access.auth.router as auth_router
 import app.systems.access.users.service as user_service
-from app.systems.access.identity.models import ActionTokenPurpose
+from app.core.integrations.supabase_auth import ProviderUser, SupabaseAuthUnavailable
 from app.systems.access.policy.service import CreationDefaults
 from app.systems.access.users.coordination import InvitationConflict, InvitationError
 from app.systems.access.users.models import (
@@ -101,207 +99,90 @@ def test_invitation_keeps_duplicate_conflict_when_failure_audit_cannot_persist(
     db.rollback.assert_called_once()
 
 
-def test_initial_invitation_commit_failure_rolls_back_without_reporting_success(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    member = _role()
+def _initial_invitation(monkeypatch: pytest.MonkeyPatch):
     db = Mock(spec=Session)
-    db.scalar.side_effect = [member, None]
-    monkeypatch.setattr(db, "flush", lambda: None)
-    monkeypatch.setattr(user_service, "create_credential", Mock())
+    db.scalar.side_effect = [_role(), None]
+    provider = Mock()
+    outcomes = []
+    monkeypatch.setattr(
+        user_service,
+        "_security_event",
+        lambda *, outcome, **_kwargs: outcomes.append(outcome.value),
+    )
     monkeypatch.setattr(user_service, "append_security_event", Mock())
-    outcomes: list[str] = []
-    monkeypatch.setattr(
-        user_service,
-        "_security_event",
-        lambda *, outcome, **_kwargs: outcomes.append(outcome.value),
-    )
+
+    def profile():
+        return next(
+            call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], User)
+        )
+
+    def assign_identity():
+        profile().id = uuid7()
+
+    def create(email, local_id, operation_id):
+        assert db.commit.call_count == 1
+        user = ProviderUser(
+            uuid7(),
+            None,
+            email,
+            {
+                "openslate_user_id": str(local_id),
+                "openslate_invitation_operation_id": str(operation_id),
+            },
+        )
+        provider_id.append(user.id)
+        return user
+
+    def send(email):
+        return ProviderUser(provider_id[0], None, email)
+
+    provider_id = []
+
+    provider.admin_create_invitation_user.side_effect = create
+    provider.admin_send_invitation.side_effect = send
+    db.flush.side_effect = assign_identity
+    monkeypatch.setattr(user_service, "get_user", lambda *_args: profile())
+    return db, provider, outcomes
+
+
+def test_initial_reservation_commit_failure_never_calls_provider(monkeypatch):
+    db, provider, outcomes = _initial_invitation(monkeypatch)
     db.commit.side_effect = SQLAlchemyError("commit unavailable")
-
     with pytest.raises(InvitationConflict):
-        user_service.invite_user(
-            db,
-            _invitation(),
-            bootstrap=True,
-            temporary_password="initial temporary password",
-        )
-
+        user_service.invite_user(db, _invitation(), bootstrap=True, client=provider)
     db.rollback.assert_called_once()
+    provider.admin_create_invitation_user.assert_not_called()
     assert outcomes == ["failure"]
 
 
-def test_temporary_password_invitation_creates_no_unused_action_token(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    member = _role()
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [member, None]
-    created = Mock()
-    issued = Mock(return_value="raw-invite-token")
-    monkeypatch.setattr(user_service, "create_credential", created)
-    monkeypatch.setattr(user_service, "issue_action_token", issued)
-    monkeypatch.setattr(db, "flush", lambda: None)
-
-    user_service.invite_user(db, _invitation(), bootstrap=True)
-
-    assert db.add.call_count >= 1
-    created.assert_called_once()
-    assert created.call_args.kwargs["temporary"] is True
-    issued.assert_not_called()
-    db.commit.assert_called_once()
+def test_email_invitation_commits_pending_reservation_then_correlated_success(monkeypatch):
+    db, provider, outcomes = _initial_invitation(monkeypatch)
+    result = user_service.invite_user(db, _invitation(), bootstrap=True, client=provider)
+    assert result.status == UserStatus.PENDING.value
+    assert result.supabase_user_id is not None
+    assert result.invitation_sent_at is not None
+    event = user_service.append_security_event.call_args.args[1]
+    assert event.event_type == "user.invitation"
+    assert event.outcome.value == "success"
+    assert event.operation_id == result.provider_invitation_operation_id
+    assert event.subject_id == result.id
+    assert db.commit.call_count == 2
+    assert outcomes == []
 
 
-def test_email_invitation_issues_one_local_action_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    member = _role()
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [member, None]
-    monkeypatch.setattr(user_service, "create_credential", Mock())
-    issued = Mock(return_value="raw-invite-token")
-    queued = Mock()
-    monkeypatch.setattr(user_service, "issue_action_token", issued)
-    monkeypatch.setattr(user_service, "queue_action_delivery", queued)
-    monkeypatch.setattr(user_service, "smtp_delivery_enabled", lambda: True)
-    monkeypatch.setattr(db, "flush", lambda: None)
-    payload = _invitation().model_copy(update={"delivery": "email"})
-
-    user_service.invite_user(db, payload, bootstrap=True, delivery="email")
-
-    issued.assert_called_once()
-    assert issued.call_args.args[2] is ActionTokenPurpose.INVITATION
-    queued.assert_called_once()
-    assert queued.call_args.args[0] is db
-    assert queued.call_args.args[3] == "raw-invite-token"
-
-
-def test_initial_invitation_appends_success_before_committing_user_and_credential(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    member = _role()
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [member, None]
-    monkeypatch.setattr(db, "flush", lambda: None)
-    credential = Mock()
-
-    def create_credential(database, *_args, **_kwargs) -> None:
-        database.add(credential)
-
-    monkeypatch.setattr(user_service, "create_credential", create_credential)
-    calls: list[str] = []
-    monkeypatch.setattr(
-        user_service,
-        "append_security_event",
-        lambda *_args: calls.append("success"),
-    )
-    db.commit.side_effect = lambda: calls.append("commit")
-
-    user_service.invite_user(
-        db,
-        _invitation(),
-        bootstrap=True,
-        temporary_password="initial temporary password",
-    )
-
-    assert calls == ["success", "commit"]
-    assert credential in [call.args[0] for call in db.add.call_args_list]
-
-
-def test_initial_invitation_rolls_back_user_and_credential_when_success_audit_cannot_append(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    member = _role()
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [member, None]
-    monkeypatch.setattr(db, "flush", lambda: None)
-    credential = Mock()
-
-    def create_credential(database, *_args, **_kwargs) -> None:
-        database.add(credential)
-
-    monkeypatch.setattr(user_service, "create_credential", create_credential)
-    monkeypatch.setattr(
-        user_service,
-        "append_security_event",
-        Mock(side_effect=SQLAlchemyError("audit unavailable")),
-    )
-    outcomes: list[str] = []
-    monkeypatch.setattr(
-        user_service,
-        "_security_event",
-        lambda *, outcome, **_kwargs: outcomes.append(outcome.value),
-    )
-
-    with pytest.raises(InvitationConflict):
-        user_service.invite_user(
-            db,
-            _invitation(),
-            bootstrap=True,
-            temporary_password="initial temporary password",
-        )
-
-    assert credential in [call.args[0] for call in db.add.call_args_list]
+@pytest.mark.parametrize("failure", ["audit", "binding_commit", "provider_delivery"])
+def test_initial_delivery_failure_preserves_reservation_without_reporting_success(
+    monkeypatch, failure
+):
+    db, provider, outcomes = _initial_invitation(monkeypatch)
+    if failure == "audit":
+        user_service.append_security_event.side_effect = SQLAlchemyError("audit unavailable")
+    elif failure == "binding_commit":
+        db.commit.side_effect = [None, SQLAlchemyError("commit unavailable")]
+    else:
+        provider.admin_send_invitation.side_effect = SupabaseAuthUnavailable("unavailable")
+    with pytest.raises(InvitationError, match="Unable to send invitation"):
+        user_service.invite_user(db, _invitation(), bootstrap=True, client=provider)
     db.rollback.assert_called_once()
-    db.commit.assert_not_called()
     assert outcomes == ["failure"]
-
-
-def test_email_invitation_is_rejected_without_smtp_before_creating_a_user(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    member = _role()
-    db = Mock(spec=Session)
-    db.scalar.return_value = member
-    monkeypatch.setattr(user_service, "smtp_delivery_enabled", lambda: False)
-    payload = _invitation().model_copy(update={"delivery": "email"})
-
-    with pytest.raises(InvitationError, match="Email delivery is unavailable"):
-        user_service.invite_user(db, payload, bootstrap=True, delivery="email")
-
-    db.add.assert_not_called()
-    db.commit.assert_not_called()
-
-
-def test_generated_temporary_password_is_returned_once_to_the_inviter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    invited = _user(_role(), status=UserStatus.PENDING)
-    create = Mock(return_value=invited)
-    monkeypatch.setattr(user_service, "invite_user", create)
-    monkeypatch.setattr(
-        user_service, "generated_temporary_password", lambda: "generated-secret-123"
-    )
-
-    result = user_service.create_invitation(Mock(spec=Session), _invitation(), actor_id=uuid7())
-
-    assert result.user is invited
-    assert result.delivery == "temporary_password"
-    assert result.temporary_password == "generated-secret-123"
-    assert create.call_args.kwargs["temporary_password"] == "generated-secret-123"
-
-
-def test_invitation_maps_common_temporary_password_to_a_safe_domain_error() -> None:
-    member = _role()
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [member, None]
-    db.flush.side_effect = None
-    payload = _invitation().model_copy(update={"temporary_password": "passwordpassword"})
-
-    with pytest.raises(InvitationError, match="Temporary password"):
-        user_service.invite_user(db, payload, bootstrap=True, temporary_password="passwordpassword")
-
-    db.rollback.assert_called_once()
-
-
-def test_invitation_route_maps_common_temporary_password_to_a_safe_4xx() -> None:
-    admin_role = _role(UserRole.ADMIN)
-    admin = _user(admin_role)
-    member = _role()
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [admin_role, admin, member, None]
-    db.flush.side_effect = None
-    payload = _invitation().model_copy(update={"temporary_password": "passwordpassword"})
-
-    with pytest.raises(HTTPException) as error:
-        auth_router.invite(payload, admin, db)
-
-    assert error.value.status_code == 409
-    db.rollback.assert_called_once()
+    assert db.commit.call_count == (2 if failure == "binding_commit" else 1)

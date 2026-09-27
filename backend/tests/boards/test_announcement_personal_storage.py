@@ -11,12 +11,9 @@ from app.systems.boards.announcement_models import BoardAnnouncement
 from app.systems.boards.announcement_personal_models import BoardAnnouncementPersonalState
 from app.systems.boards.models import Board
 from app.systems.manage.audit.models import AuditAction, AuditLog
-from tests.conftest import guarded_create_engine
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
-SOURCE_REVISION = "fbef83381635"
-TARGET_REVISION = "e53d62ab1617"
-ACCESS_HEAD_REVISION = "2bf95b237416"
+SUPABASE_DATABASE_ROLES = ("anon", "authenticated", "service_role")
+TABLE_ACTIONS = ("SELECT", "INSERT", "UPDATE", "DELETE")
 
 
 def test_announcement_personal_state_is_registered_with_private_unique_scope() -> None:
@@ -113,126 +110,71 @@ def test_announcement_personal_flags_are_audited_and_database_scoped(
 
 
 @pytest.mark.integration
-def test_announcement_personal_migration_is_additive_and_preserves_role_privileges() -> None:
-    environment = guarded_migration_environment()
-    owner_engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
-    try:
-        run_alembic(environment, "downgrade", SOURCE_REVISION)
-        with owner_engine.connect() as connection:
-            before_tables = set(
-                connection.scalars(
-                    text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
-                )
-            )
-            assert "board_announcements" in before_tables
-            assert "board_announcement_personal_states" not in before_tables
-            original_privilege = connection.scalar(
-                text(
-                    "SELECT has_table_privilege('openslate_runtime', "
-                    "'public.board_announcements', 'SELECT')"
-                )
-            )
-            assert original_privilege is True
+def test_announcement_personal_baseline_keeps_private_unique_scope_and_role_boundaries(
+    integration_owner_db,
+) -> None:
+    # The old additive migration transition is archived; the fresh baseline contains both tables.
+    connection = integration_owner_db.connection()
+    for table in ("board_announcements", "board_announcement_personal_states"):
+        assert connection.scalar(text("SELECT to_regclass(:name)"), {"name": f"public.{table}"})
+        _assert_runtime_crud_and_supabase_denial(connection, table)
 
-        run_alembic(environment, "upgrade", TARGET_REVISION)
-        with owner_engine.connect() as connection:
-            after_tables = set(
-                connection.scalars(
-                    text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
-                )
+    columns = {
+        name: (nullable, default)
+        for name, nullable, default in connection.execute(
+            text(
+                "SELECT column_name, is_nullable, column_default "
+                "FROM information_schema.columns WHERE table_schema = 'public' "
+                "AND table_name = 'board_announcement_personal_states'"
             )
-            assert after_tables == before_tables | {"board_announcement_personal_states"}
-            applied_revisions = set(
-                connection.scalars(text("SELECT version_num FROM alembic_version"))
+        )
+    }
+    for name in ("user_id", "announcement_id", "read", "bookmarked"):
+        assert columns[name][0] == "NO"
+    assert columns["read"][1] == "false"
+    assert columns["bookmarked"][1] == "false"
+    assert "board_id" not in columns
+    definitions = list(
+        connection.scalars(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conrelid = 'public.board_announcement_personal_states'::regclass"
             )
-            assert applied_revisions == {ACCESS_HEAD_REVISION, TARGET_REVISION}
-            columns = {
-                name: (nullable, default)
-                for name, nullable, default in connection.execute(
-                    text(
-                        "SELECT column_name, is_nullable, column_default "
-                        "FROM information_schema.columns "
-                        "WHERE table_schema = 'public' "
-                        "AND table_name = 'board_announcement_personal_states'"
-                    )
-                )
-            }
-            for name in ("user_id", "announcement_id", "read", "bookmarked"):
-                assert columns[name][0] == "NO"
-            assert columns["read"][1] == "false"
-            assert columns["bookmarked"][1] == "false"
-            assert "board_id" not in columns
-            definitions = [
-                definition
-                for definition in connection.scalars(
-                    text(
-                        "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-                        "WHERE conrelid = 'public.board_announcement_personal_states'::regclass"
-                    )
-                )
-            ]
-            assert any("UNIQUE (user_id, announcement_id)" in item for item in definitions)
-            assert any(
-                "FOREIGN KEY (announcement_id)" in item and "ON DELETE RESTRICT" in item
-                for item in definitions
+        )
+    )
+    assert any("UNIQUE (user_id, announcement_id)" in item for item in definitions)
+    assert any(
+        "FOREIGN KEY (announcement_id)" in item and "ON DELETE RESTRICT" in item
+        for item in definitions
+    )
+    assert any(
+        "FOREIGN KEY (user_id)" in item and "ON DELETE RESTRICT" in item for item in definitions
+    )
+    assert any(
+        "FOREIGN KEY (performed_by)" in item and "ON DELETE SET NULL" in item
+        for item in definitions
+    )
+    assert connection.scalar(
+        text("SELECT to_regclass(:name)"),
+        {"name": "public.ix_board_announcement_personal_states_announcement_id"},
+    )
+
+
+def _assert_runtime_crud_and_supabase_denial(connection, table: str) -> None:
+    for action in TABLE_ACTIONS:
+        assert (
+            connection.scalar(
+                text("SELECT has_table_privilege('openslate_runtime', :table, :action)"),
+                {"table": f"public.{table}", "action": action},
             )
-            assert any(
-                "FOREIGN KEY (user_id)" in item and "ON DELETE RESTRICT" in item
-                for item in definitions
-            )
-            assert any(
-                "FOREIGN KEY (performed_by)" in item and "ON DELETE SET NULL" in item
-                for item in definitions
-            )
+            is True
+        )
+    for role in SUPABASE_DATABASE_ROLES:
+        for action in TABLE_ACTIONS:
             assert (
                 connection.scalar(
-                    text("SELECT to_regclass(:name)"),
-                    {"name": "public.ix_board_announcement_personal_states_announcement_id"},
+                    text("SELECT has_table_privilege(:role, :table, :action)"),
+                    {"role": role, "table": f"public.{table}", "action": action},
                 )
-                is not None
-            )
-            assert (
-                connection.scalar(
-                    text(
-                        "SELECT has_table_privilege('openslate_runtime', "
-                        "'public.board_announcements', 'SELECT')"
-                    )
-                )
-                is original_privilege
-            )
-            for action in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-                assert (
-                    connection.scalar(
-                        text(
-                            "SELECT has_table_privilege('openslate_runtime', "
-                            "'public.board_announcement_personal_states', :action)"
-                        ),
-                        {"action": action},
-                    )
-                    is True
-                )
-            assert (
-                connection.scalar(
-                    text(
-                        "SELECT has_table_privilege('openslate_inspector', "
-                        "'public.board_announcement_personal_states', 'SELECT')"
-                    )
-                )
-                is True
-            )
-            for action in ("INSERT", "UPDATE", "DELETE"):
-                assert (
-                    connection.scalar(
-                        text(
-                            "SELECT has_table_privilege('openslate_inspector', "
-                            "'public.board_announcement_personal_states', :action)"
-                        ),
-                        {"action": action},
-                    )
-                    is False
-                )
-    finally:
-        try:
-            run_alembic(environment, "upgrade", "head")
-        finally:
-            owner_engine.dispose()
+                is False
+            ), f"Supabase database role {role} must not access {table}"

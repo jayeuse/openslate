@@ -2,14 +2,19 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from secrets import token_urlsafe
 from unittest.mock import MagicMock
 from urllib.parse import urlsplit
 
 import pytest
+import yaml
 
 from app.core.config import instance
-from app.core.config.disposable_instance import POSTGRES_IMAGE
+from app.core.config.disposable_instance import (
+    PROVIDER_BIND_MOUNTS,
+    PROVIDER_IMAGES,
+    PROVIDER_NETWORKS,
+    PROVIDER_VOLUMES,
+)
 from app.core.config.instance import (
     InstanceTargetError,
     instance_target_for_process,
@@ -17,45 +22,143 @@ from app.core.config.instance import (
 from tests import postgres_runtime
 from tests.conftest import _guard_integration_database
 from tests.postgres_runtime import (
-    POSTGRES_NETWORK_ALIAS,
     DisposablePostgres,
     assert_scanner_worker_database,
-    postgres_network_name,
 )
+
+
+def test_runner_resource_inventory_matches_provider_compose() -> None:
+    compose_directory = instance.REPOSITORY_ROOT / "infra/supabase"
+    base = yaml.safe_load((compose_directory / "compose.yaml").read_text(encoding="utf-8"))
+    dev = yaml.safe_load((compose_directory / "compose.dev.yaml").read_text(encoding="utf-8"))
+    images = {
+        name: service["image"]
+        for document in (base, dev)
+        for name, service in document["services"].items()
+        if "image" in service
+    }
+    assert set(base["services"]) | set(dev["services"]) == set(PROVIDER_IMAGES)
+    assert images == PROVIDER_IMAGES
+    assert set(base["volumes"]) | set(dev.get("volumes", {})) == set(PROVIDER_VOLUMES)
+    assert set(base["networks"]) | set(dev["networks"]) == set(PROVIDER_NETWORKS)
+    declared_binds = {
+        (service, source.removeprefix("./"), destination, mode)
+        for service, settings in base["services"].items()
+        for entry in settings.get("volumes", [])
+        if entry.startswith("./")
+        for source, destination, mode in [entry.split(":")]
+    }
+    guarded_binds = {
+        (service, source, destination, "ro")
+        for service, mounts in PROVIDER_BIND_MOUNTS.items()
+        for source, destination in mounts
+    }
+    assert declared_binds == guarded_binds
 
 
 @pytest.fixture
 def disposable_target(tmp_path, monkeypatch):
-    url = f"postgresql+psycopg://openslate_runtime:{token_urlsafe(32)}@127.0.0.1:49152/openslate"
+    url = "postgresql+psycopg://openslate_runtime:test-only-placeholder@127.0.0.1:49152/postgres"
     run_id = "a" * 32
-    container_name = f"openslate-postgres-e2e-{run_id}"
-    network_name = f"openslate-app-e2e-{run_id}"
-    volume_name = f"openslate-postgres-data-e2e-{run_id}"
+    project = f"openslate-e2e-{run_id}"
     worktree = str(instance.REPOSITORY_ROOT.resolve())
     labels = {"openslate.test.run": run_id, "openslate.test.worktree": worktree}
-    container = {
-        "Id": "b" * 64, "Name": f"/{container_name}", "State": {"Running": True},
-        "Config": {"Image": POSTGRES_IMAGE, "Labels": labels},
-        "Mounts": [{"Type": "volume", "Name": volume_name,
-                    "Destination": "/var/lib/postgresql/data"}],
-        "NetworkSettings": {
-            "Networks": {network_name: {"NetworkID": "c" * 64}},
-            "Ports": {"5432/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49152"}]},
-        },
+    network_ids = {name: f"{index + 12:064x}" for index, name in enumerate(PROVIDER_NETWORKS)}
+    service_ids = {name: f"{index + 1:064x}" for index, name in enumerate(PROVIDER_IMAGES)}
+    project_ids = list(service_ids.values())
+    compose = yaml.safe_load(
+        (instance.REPOSITORY_ROOT / "infra/supabase/compose.yaml").read_text(encoding="utf-8")
+    )
+    containers = {}
+    for service, image in PROVIDER_IMAGES.items():
+        networks = {
+            "db": ["provider", "operator", "db-host"],
+            "auth": ["provider", "mail-egress"],
+            "meta": ["operator"],
+            "studio": ["operator", "studio-ingress"],
+            "api-gw": ["provider", "studio-ingress", "gateway-host"],
+            "mailpit": ["mail-egress"],
+        }.get(service, ["provider"])
+        mounts = []
+        for owner, name, destination in (
+            ("db", "supabase-db-data", "/var/lib/postgresql/data"),
+            ("db", "supabase-db-config", "/etc/postgresql-custom"),
+            ("imgproxy", "supabase-storage-data", "/var/lib/storage"),
+            ("provider-volume-init", "supabase-storage-data", "/var/lib/storage"),
+            ("provider-volume-init", "supabase-studio-snippets", "/app/snippets"),
+            ("storage", "supabase-storage-data", "/var/lib/storage"),
+            ("studio", "supabase-studio-snippets", "/app/snippets"),
+        ):
+            if service == owner:
+                mounts.append({"Type": "volume", "Name": f"{project}_{name}",
+                               "Destination": destination, "RW": service != "imgproxy"})
+        for entry in compose["services"].get(service, {}).get("volumes", []):
+            if entry.startswith("./"):
+                source, destination, mode = entry.split(":")
+                mounts.append({
+                    "Type": "bind",
+                    "Source": str((Path(worktree) / "infra/supabase" / source).resolve()),
+                    "Destination": destination,
+                    "RW": mode != "ro",
+                })
+        ports = {}
+        if service in {"db", "api-gw", "mailpit"}:
+            internal, host_port = {
+                "db": ("5432/tcp", "49152"), "api-gw": ("8000/tcp", "49153"),
+                "mailpit": ("8025/tcp", "49154"),
+            }[service]
+            ports[internal] = [{"HostIp": "127.0.0.1", "HostPort": host_port}]
+        containers[service] = {
+            "Id": service_ids[service], "Name": f"/{project}-{service}-1",
+            "State": {
+                "Running": service != "provider-volume-init",
+                "ExitCode": 0,
+            },
+            "Config": {"Image": image, "Labels": {
+                **labels, "com.docker.compose.project": project,
+                "com.docker.compose.service": service,
+                "com.docker.compose.project.working_dir": f"{worktree}/infra/supabase",
+            }},
+            "Mounts": mounts,
+            "NetworkSettings": {
+                "Networks": {f"{project}_{name}": {"NetworkID": network_ids[name]}
+                             for name in networks},
+                "Ports": ports,
+            },
+        }
+    networks = {
+        name: {"Id": network_ids[name], "Name": f"{project}_{name}",
+               "Internal": name in {"provider", "operator", "studio-ingress"}, "Labels": {
+                   **labels, "com.docker.compose.project": project,
+                   "com.docker.compose.network": name,
+               }}
+        for name in PROVIDER_NETWORKS
     }
-    network = {"Id": "c" * 64, "Internal": True, "Labels": labels}
-    volume = {"Name": volume_name, "Labels": labels}
-    facts = {"container": container, "network": network, "volume": volume}
+    volumes = {
+        name: {"Name": f"{project}_{name}", "Labels": {
+            **labels, "com.docker.compose.project": project,
+            "com.docker.compose.volume": name,
+        }}
+        for name in PROVIDER_VOLUMES
+    }
+    facts = {
+        "container": containers["db"], "network": networks["provider"],
+        "volume": volumes["supabase-db-data"], "containers": containers,
+        "networks": networks, "volumes": volumes, "project_ids": project_ids,
+    }
     def inspect(arguments):
+        if arguments[0] == "ps":
+            return project_ids
         if arguments[0] == "inspect":
-            return [facts["container"]]
+            return [container for container in containers.values()
+                    if container["Id"] in arguments[1:]]
         if arguments[0] == "network":
-            return [facts["network"]]
-        return [facts["volume"]]
+            return [networks[arguments[2].removeprefix(f"{project}_")]]
+        return [volumes[arguments[2].removeprefix(f"{project}_")]]
     monkeypatch.setattr(instance, "_docker_json", inspect)
     connection = MagicMock()
     connection.exec_driver_sql.return_value.one.return_value = (
-        "openslate", "openslate_runtime", container_name
+        "postgres", "openslate_runtime", project
     )
     engine = MagicMock()
     engine.connect.return_value.__enter__.return_value = connection
@@ -63,13 +166,19 @@ def disposable_target(tmp_path, monkeypatch):
     facts["connection"] = connection
     manifest = tmp_path / "database.json"
     manifest.write_text(json.dumps({
-        "run_id": run_id, "urls": [url],
+        "version": 2, "run_id": run_id, "urls": [url],
+        "provider": {
+            "api_url": "http://127.0.0.1:49153",
+            "auth_issuer": "http://127.0.0.1:49153/auth/v1",
+            "storage_url": "http://127.0.0.1:49153/storage/v1",
+            "mail_url": "http://127.0.0.1:49154",
+        },
         "ownership": {
-            "container_id": "b" * 64, "container": container_name,
-            "network": network_name, "network_id": "c" * 64,
-            "volume": volume_name, "host_port": 49152,
-            "image": container["Config"]["Image"],
-            "cluster_name": container_name, "worktree": worktree,
+            "project": project, "worktree": worktree,
+            "compose_directory": f"{worktree}/infra/supabase",
+            "service_ids": service_ids, "network_ids": network_ids,
+            "db_port": 49152, "api_port": 49153, "mail_port": 49154,
+            "cluster_name": project,
         },
     }))
     manifest.chmod(0o600)
@@ -77,6 +186,9 @@ def disposable_target(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENSLATE_TEST_DATABASE_MANIFEST", str(manifest))
     monkeypatch.setenv("E2E_ALLOW_MUTATIONS", "true")
     monkeypatch.setenv("OPENSLATE_FULLSTACK_RUN_ID", run_id)
+    monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:49153")
+    monkeypatch.setenv("SUPABASE_AUTH_ISSUER", "http://127.0.0.1:49153/auth/v1")
+    monkeypatch.setenv("SUPABASE_STORAGE_URL", "http://127.0.0.1:49153/storage/v1")
     return url, facts
 
 
@@ -88,12 +200,61 @@ def test_only_run_owned_exact_disposable_target_is_accepted(disposable_target):
         url.replace("127.0.0.1", "localhost"),
         url.replace("127.0.0.1", "production.example"),
         url.replace("49152", "54322"),
-        url.replace("/openslate", "/production"),
+        url.replace("/postgres", "/production"),
         url.replace("openslate_runtime", "other_role"),
-        url.replace(":49152/openslate", ":49152/openslate?host=production.example"),
+        url.replace(":49152/postgres", ":49152/postgres?host=production.example"),
     ):
         with pytest.raises(RuntimeError):
             _guard_integration_database(unsafe)
+
+
+def test_provider_endpoint_from_another_run_is_denied_before_database_connection(
+    disposable_target, monkeypatch
+) -> None:
+    url, _facts = disposable_target
+    for name, value in (
+        ("SUPABASE_URL", "http://127.0.0.1:59000"),
+        ("SUPABASE_AUTH_ISSUER", "http://127.0.0.1:59000/auth/v1"),
+        ("SUPABASE_STORAGE_URL", "http://127.0.0.1:59000/storage/v1"),
+    ):
+        with monkeypatch.context() as change:
+            change.setenv(name, value)
+            with pytest.raises(RuntimeError, match="runner-owned"):
+                _guard_integration_database(url)
+
+
+@pytest.mark.parametrize(
+    "name", ["SUPABASE_URL", "SUPABASE_AUTH_ISSUER", "SUPABASE_STORAGE_URL"]
+)
+def test_missing_provider_endpoint_is_denied_before_database_connection(
+    disposable_target, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    url, _facts = disposable_target
+    monkeypatch.delenv(name, raising=False)
+    with pytest.raises(RuntimeError, match="runner-owned"):
+        _guard_integration_database(url)
+
+
+def test_disposable_database_urls_target_provider_postgres_not_legacy_database(
+    tmp_path: Path,
+) -> None:
+    with (tmp_path / "process.log").open("w") as log:
+        runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
+        runtime.port = 49152
+        urls = runtime.urls()
+    assert all(urlsplit(url).path == "/postgres" for url in urls.values())
+
+
+def test_runner_exposes_owned_provider_and_mail_endpoints(tmp_path: Path) -> None:
+    with (tmp_path / "process.log").open("w") as log:
+        runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
+        runtime.port = 49152
+        runtime.api_port = 49153
+        runtime.mail_port = 49154
+        endpoint = runtime.provider_environment()
+    assert endpoint["SUPABASE_URL"] == "http://127.0.0.1:49153"
+    assert endpoint["SUPABASE_AUTH_ISSUER"] == "http://127.0.0.1:49153/auth/v1"
+    assert runtime.mail_url == "http://127.0.0.1:49154"
 
 
 @pytest.mark.parametrize(
@@ -144,7 +305,13 @@ def test_swapped_authorized_roles_are_refused_before_connect(
     engine.assert_not_called()
 
 
-@pytest.mark.parametrize("change", ["volume", "port", "network", "container"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "volume", "port", "network", "container",
+        "extra-project-container", "extra-published-port", "extra-bind-mount",
+    ],
+)
 def test_live_ownership_mismatch_is_rejected_before_connection(disposable_target, change):
     url, facts = disposable_target
     if change == "volume":
@@ -153,6 +320,17 @@ def test_live_ownership_mismatch_is_rejected_before_connection(disposable_target
         facts["container"]["NetworkSettings"]["Ports"]["5432/tcp"][0]["HostPort"] = "54322"
     elif change == "network":
         facts["network"]["Id"] = "d" * 64
+    elif change == "extra-project-container":
+        facts["project_ids"].append("f" * 64)
+    elif change == "extra-published-port":
+        facts["containers"]["auth"]["NetworkSettings"]["Ports"]["9999/tcp"] = [
+            {"HostIp": "127.0.0.1", "HostPort": "59199"}
+        ]
+    elif change == "extra-bind-mount":
+        facts["containers"]["auth"]["Mounts"].append({
+            "Type": "bind", "Source": "/tmp/unowned-auth-config",
+            "Destination": "/etc/auth/override", "RW": False,
+        })
     else:
         facts["container"]["State"]["Running"] = False
     with pytest.raises(RuntimeError, match="live runner-owned"):
@@ -186,218 +364,177 @@ def test_test_mode_connected_identity_must_match_before_write(
         _guard_integration_database(url)
 
 
-def test_disposable_postgres_discovers_a_pinned_image_loopback_port_and_private_manifest(
+def test_disposable_supabase_starts_pinned_compose_and_writes_private_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    log = (tmp_path / "process.log").open("w")
-    runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
-    commands: list[list[str]] = []
+    from tests import supabase_runtime
 
-    def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        commands.append(arguments)
-        if arguments[:2] == ["volume", "inspect"]:
-            return subprocess.CompletedProcess(arguments, 0, json.dumps([{
-                "Name": runtime.volume,
-                "Labels": {"openslate.test.run": runtime.run_id,
-                           "openslate.test.worktree": runtime.worktree},
-            }]))
-        if arguments[0] == "inspect":
-            return subprocess.CompletedProcess(arguments, 0, json.dumps([{
-                "Name": f"/{runtime.container}",
-                "Config": {"Image": POSTGRES_IMAGE, "Labels": {
-                    "openslate.test.run": runtime.run_id,
-                    "openslate.test.worktree": runtime.worktree,
-                }},
-                "Mounts": [{"Destination": "/var/lib/postgresql/data", "Type": "volume",
-                            "Name": runtime.volume}],
-            }]))
-        if arguments[:2] == ["network", "inspect"]:
-            return subprocess.CompletedProcess(
-                arguments, 0, f"{runtime.run_id} {runtime.worktree}"
-            )
-        if arguments[0] == "port":
-            return subprocess.CompletedProcess(arguments, 0, "127.0.0.1:49152\n")
-        if arguments[:3] == ["exec", runtime.container, "psql"]:
-            return subprocess.CompletedProcess(
-                arguments, 0, f"openslate|postgres|{runtime.container}\n"
-            )
-        return subprocess.CompletedProcess(arguments, 0, "")
+    with (tmp_path / "process.log").open("w") as log:
+        runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
+        ports = iter((49152, 49153, 49154))
+        monkeypatch.setattr(supabase_runtime, "_available_port", lambda: next(ports))
+        commands: list[list[str]] = []
 
-    monkeypatch.setattr(runtime, "_run", command)
-    monkeypatch.setattr(runtime, "_ownership", lambda: {"host_port": runtime.port})
-    try:
+        def compose(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            commands.append(arguments)
+            mapping = {"db": 49152, "api-gw": 49153, "mailpit": 49154}
+            output = f"127.0.0.1:{mapping[arguments[1]]}\n" if arguments[0] == "port" else ""
+            return subprocess.CompletedProcess(arguments, 0, output)
+
+        monkeypatch.setattr(runtime, "_compose", compose)
+        monkeypatch.setattr(
+            runtime, "_ownership",
+            lambda: {
+                "project": runtime.project,
+                "service_ids": {"db": "b" * 64},
+                "db_port": runtime.port,
+                "api_port": runtime.api_port,
+                "mail_port": runtime.mail_port,
+            },
+        )
+        monkeypatch.setattr(runtime, "_inspect_json", lambda _: [{"Name": f"/{runtime.container}"}])
+        checked = []
+        monkeypatch.setattr(runtime, "assert_cluster_identity", lambda: checked.append(True))
         runtime.start()
         manifest = runtime.write_manifest()
-        runtime.stop()
-    finally:
-        log.close()
 
-    launch = next(arguments for arguments in commands if arguments[0] == "run")
-    assert [
-        "network",
-        "create",
-        "--internal",
-        "--label",
-        f"openslate.test.run={'a' * 32}",
-        "--label",
-        f"openslate.test.worktree={runtime.worktree}",
-        postgres_network_name("a" * 32),
-    ] in commands
-    assert POSTGRES_IMAGE in launch
-    assert launch[-3:] == ["postgres", "-c", f"cluster_name={runtime.container}"]
-    assert "127.0.0.1::5432" in launch
-    assert "--network" not in launch
-    assert [
-        "network",
-        "connect",
-        "--alias",
-        POSTGRES_NETWORK_ALIAS,
-        postgres_network_name("a" * 32),
-        runtime.container,
-    ] in commands
-    assert f"openslate.test.run={'a' * 32}" in launch
-    assert f"openslate.test.worktree={runtime.worktree}" in launch
-    assert f"type=volume,src={runtime.volume},dst=/var/lib/postgresql/data" in launch
-    assert ["volume", "create", "--label", f"openslate.test.run={runtime.run_id}",
-            "--label", f"openslate.test.worktree={runtime.worktree}", runtime.volume] in commands
-    assert manifest.stat().st_mode & 0o077 == 0
-    contents = json.loads(manifest.read_text())
-    assert contents["run_id"] == "a" * 32
-    assert all(":49152/openslate" in url for url in contents["urls"])
-    assert {urlsplit(url).username for url in contents["urls"]} == {
-        "postgres",
-        "openslate_owner",
-        "openslate_runtime",
-        "openslate_inspector",
+    assert commands[0] == ["config", "--quiet"]
+    assert commands[1] == ["up", "-d", "--wait", "--wait-timeout", "180"]
+    assert {tuple(command) for command in commands if command[0] == "port"} == {
+        ("port", "db", "5432"), ("port", "api-gw", "8000"), ("port", "mailpit", "8025"),
     }
-    assert ["rm", "--force", runtime.container] in commands
+    assert checked == [True]
+    assert runtime.env_file.stat().st_mode & 0o077 == 0
+    assert runtime.overlay_file.stat().st_mode & 0o077 == 0
+    assert manifest.stat().st_mode & 0o077 == 0
+    contents = json.loads(manifest.read_text(encoding="utf-8"))
+    assert contents["version"] == 2
+    assert contents["provider"]["auth_issuer"] == "http://127.0.0.1:49153/auth/v1"
+    assert contents["provider"]["storage_url"] == "http://127.0.0.1:49153/storage/v1"
+    assert contents["container_runtime"]["url"].endswith("@db:5432/postgres")
+    assert all(urlsplit(url).path == "/postgres" for url in contents["urls"])
+    assert not any(runtime.keys["SUPABASE_SECRET_KEY"] in str(command) for command in commands)
+
+
+def test_disposable_supabase_rejects_wrong_live_cluster_before_migrations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with (tmp_path / "process.log").open("w") as log:
+        runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
+        monkeypatch.setattr(
+            runtime,
+            "_run",
+            lambda arguments, **_: subprocess.CompletedProcess(
+                arguments, 0, "postgres|postgres|other-cluster\n"
+            ),
+        )
+        with pytest.raises(RuntimeError, match="cluster identity"):
+            runtime.assert_cluster_identity()
+
+
+def test_disposable_supabase_rejects_non_loopback_provider_mapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests import supabase_runtime
+
+    with (tmp_path / "process.log").open("w") as log:
+        runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
+        ports = iter((49152, 49153, 49154))
+        monkeypatch.setattr(supabase_runtime, "_available_port", lambda: next(ports))
+        monkeypatch.setattr(
+            runtime,
+            "_compose",
+            lambda arguments, **_: subprocess.CompletedProcess(
+                arguments, 0, "0.0.0.0:49152\n" if arguments[0] == "port" else ""
+            ),
+        )
+        with pytest.raises(RuntimeError, match="unexpected host port"):
+            runtime.start()
+
+
+@pytest.mark.parametrize("unowned", ["container", "container-id", "network", "volume"])
+def test_disposable_supabase_never_removes_unowned_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unowned: str
+) -> None:
+    with (tmp_path / "process.log").open("w") as log:
+        runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
+        commands: list[list[str]] = []
+        labels = {"openslate.test.run": runtime.run_id,
+                  "openslate.test.worktree": runtime.worktree}
+
+        def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            commands.append(arguments)
+            output = (
+                "b" * 64 + "\n"
+                if unowned in {"container", "container-id"} and arguments[0] == "ps"
+                else ""
+            )
+            return subprocess.CompletedProcess(arguments, 0, output)
+
+        def inspect(arguments: list[str]) -> list[dict[str, object]]:
+            if arguments[0] == "inspect":
+                if unowned == "container-id":
+                    return [{"Id": "c" * 64, "Config": {
+                        "Image": PROVIDER_IMAGES["db"], "Labels": {
+                            **labels,
+                            "com.docker.compose.project": runtime.project,
+                            "com.docker.compose.service": "db",
+                            "com.docker.compose.project.working_dir": str(
+                                runtime.worktree + "/infra/supabase"
+                            ),
+                        },
+                    }}]
+                return [{"Config": {"Image": "postgres:17", "Labels": labels}}]
+            if arguments[0] == "volume":
+                if unowned != "volume":
+                    raise subprocess.CalledProcessError(1, arguments)
+                return [{"Name": runtime.volume, "Labels": {**labels,
+                    "com.docker.compose.project": runtime.project,
+                    "com.docker.compose.volume": "wrong-volume"}}]
+            if unowned != "network":
+                raise subprocess.CalledProcessError(1, arguments)
+            return [{"Name": f"{runtime.project}_provider", "Labels": {**labels,
+                "com.docker.compose.project": runtime.project,
+                "com.docker.compose.network": "wrong-network"}}]
+
+        monkeypatch.setattr(runtime, "_run", command)
+        monkeypatch.setattr(runtime, "_inspect_json", inspect)
+        with pytest.raises(RuntimeError, match="unowned"):
+            runtime.stop()
+    assert not any(arguments[0] == "rm" or arguments[:2] == ["volume", "rm"]
+                   or arguments[:2] == ["network", "rm"] for arguments in commands)
+
+
+def test_disposable_supabase_cleans_only_owned_partial_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with (tmp_path / "process.log").open("w") as log:
+        runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
+        commands: list[list[str]] = []
+        labels = {"openslate.test.run": runtime.run_id,
+                  "openslate.test.worktree": runtime.worktree,
+                  "com.docker.compose.project": runtime.project}
+
+        def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            commands.append(arguments)
+            return subprocess.CompletedProcess(arguments, 0, "")
+
+        def inspect(arguments: list[str]) -> list[dict[str, object]]:
+            if arguments[:2] == ["volume", "inspect"] and arguments[2] == runtime.volume:
+                return [{"Name": runtime.volume,
+                         "Labels": {**labels, "com.docker.compose.volume": "supabase-db-data"}}]
+            if arguments[:2] == ["network", "inspect"] and arguments[2] == runtime.network:
+                return [{"Name": runtime.network,
+                         "Labels": {**labels, "com.docker.compose.network": "provider"}}]
+            raise subprocess.CalledProcessError(1, arguments)
+
+        monkeypatch.setattr(runtime, "_run", command)
+        monkeypatch.setattr(runtime, "_inspect_json", inspect)
+        runtime.stop()
     assert ["volume", "rm", runtime.volume] in commands
     assert ["network", "rm", runtime.network] in commands
-
-
-def test_disposable_postgres_rejects_wrong_live_cluster_before_migrations(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    log = (tmp_path / "process.log").open("w")
-    runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
-
-    def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        if arguments[0] == "inspect":
-            return subprocess.CompletedProcess(
-                arguments, 0, f"{runtime.run_id} {runtime.worktree} {POSTGRES_IMAGE}\n"
-            )
-        if arguments[0] == "port":
-            return subprocess.CompletedProcess(arguments, 0, "127.0.0.1:49152\n")
-        if arguments[:3] == ["exec", runtime.container, "psql"]:
-            return subprocess.CompletedProcess(arguments, 0, "openslate|postgres|other-cluster\n")
-        return subprocess.CompletedProcess(arguments, 0, "")
-
-    monkeypatch.setattr(runtime, "_run", command)
-    monkeypatch.setattr(runtime, "assert_owned", lambda: None)
-    try:
-        with pytest.raises(RuntimeError, match="cluster identity"):
-            runtime.start()
-    finally:
-        log.close()
-
-
-def test_disposable_postgres_rejects_a_missing_or_non_loopback_discovered_mapping(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    log = (tmp_path / "process.log").open("w")
-    runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
-
-    def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        if arguments[0] == "inspect":
-            return subprocess.CompletedProcess(
-                arguments, 0, f"{runtime.run_id} {runtime.worktree} {POSTGRES_IMAGE}\n"
-            )
-        if arguments[0] == "port":
-            return subprocess.CompletedProcess(arguments, 0, "0.0.0.0:49152\n")
-        return subprocess.CompletedProcess(arguments, 0, "")
-
-    monkeypatch.setattr(runtime, "_run", command)
-    monkeypatch.setattr(runtime, "assert_owned", lambda: None)
-    try:
-        with pytest.raises(RuntimeError, match="loopback port mapping"):
-            runtime.start()
-    finally:
-        log.close()
-
-
-def test_disposable_postgres_never_removes_an_unowned_container(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    log = (tmp_path / "process.log").open("w")
-    runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
-    commands: list[list[str]] = []
-
-    def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        commands.append(arguments)
-        if arguments[0] == "inspect":
-            return subprocess.CompletedProcess(arguments, 0, "different-run " + POSTGRES_IMAGE)
-        return subprocess.CompletedProcess(arguments, 0, "")
-
-    monkeypatch.setattr(runtime, "_run", command)
-    try:
-        with pytest.raises(RuntimeError, match="ownership"):
-            runtime.stop()
-    finally:
-        log.close()
     assert not any(arguments[0] == "rm" for arguments in commands)
 
-
-def test_disposable_postgres_never_removes_an_unowned_network(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    log = (tmp_path / "process.log").open("w")
-    runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
-    commands: list[list[str]] = []
-
-    def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        commands.append(arguments)
-        if arguments[0] == "inspect":
-            raise subprocess.CalledProcessError(1, arguments)
-        if arguments[:2] == ["volume", "inspect"]:
-            raise subprocess.CalledProcessError(1, arguments)
-        if arguments[:2] == ["network", "inspect"]:
-            return subprocess.CompletedProcess(arguments, 0, "different-run")
-        return subprocess.CompletedProcess(arguments, 0, "")
-
-    monkeypatch.setattr(runtime, "_run", command)
-    try:
-        with pytest.raises(RuntimeError, match="network without ownership"):
-            runtime.stop()
-    finally:
-        log.close()
-
-    assert ["network", "rm", runtime.network] not in commands
-
-
-def test_disposable_postgres_never_removes_an_unowned_volume(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    log = (tmp_path / "process.log").open("w")
-    runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
-    commands: list[list[str]] = []
-
-    def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        commands.append(arguments)
-        if arguments[0] == "inspect":
-            raise subprocess.CalledProcessError(1, arguments)
-        if arguments[:2] == ["volume", "inspect"]:
-            return subprocess.CompletedProcess(arguments, 0, json.dumps([{
-                "Name": runtime.volume, "Labels": {"openslate.test.run": "other-run"},
-            }]))
-        return subprocess.CompletedProcess(arguments, 0, "")
-
-    monkeypatch.setattr(runtime, "_run", command)
-    try:
-        with pytest.raises(RuntimeError, match="volume without ownership"):
-            runtime.stop()
-    finally:
-        log.close()
-    assert ["volume", "rm", runtime.volume] not in commands
 
 def test_test_process_rejects_a_self_written_manifest_without_live_instance(tmp_path: Path) -> None:
     database_url = "postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55322/openslate"

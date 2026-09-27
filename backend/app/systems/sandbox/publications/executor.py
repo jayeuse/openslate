@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
@@ -118,6 +119,7 @@ def apply_publication(
     idempotency_key: str,
     fingerprint: str,
     note: str | None,
+    reauthorize_after_rollback: Callable[[], None] | None = None,
 ) -> PublicationResponse:
     """Apply publication after password/auth/token verification at the route boundary."""
 
@@ -209,6 +211,8 @@ def apply_publication(
         db.commit()
     except IntegrityError as error:
         db.rollback()
+        if reauthorize_after_rollback is not None:
+            reauthorize_after_rollback()
         replay = replay_or_conflict(
             db,
             actor_id=actor_id,

@@ -18,7 +18,7 @@ import { signIn } from "@/lib/auth-api";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [identifier, setIdentifier] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -27,16 +27,16 @@ export default function LoginPage() {
     setError("");
     setPending(true);
     try {
-      const session = await signIn(identifier, password);
-      router.push(
-        session.setup_required
-          ? "/auth/setup?temporary=1"
-          : await workspaceStartRoute(),
-      );
+      const session = await signIn(email, password);
+      if (session.setup_required) {
+        setError("Finish setup using the link in your invitation email.");
+        return;
+      }
+      router.push(await workspaceStartRoute());
     } catch (error) {
       setError(
         error instanceof ApiError && error.status === 401
-          ? "That email, username, or password is not right."
+          ? "That email or password is not right."
           : "Unable to sign in. Check your connection and try again.",
       );
     } finally {
@@ -94,15 +94,16 @@ export default function LoginPage() {
           )}
           <form className="space-y-5" onSubmit={submit}>
             <FormField className="space-y-2">
-              <FieldLabel htmlFor="identifier">Email or username</FieldLabel>
+              <FieldLabel htmlFor="email">Email</FieldLabel>
               <FieldControl
                 render={
                   <Input
-                    id="identifier"
-                    autoComplete="username"
+                    id="email"
+                    type="email"
+                    autoComplete="email"
                     required
-                    value={identifier}
-                    onChange={(event) => setIdentifier(event.target.value)}
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
                   />
                 }
               />
@@ -123,8 +124,7 @@ export default function LoginPage() {
                 }
               />
               <p className="text-muted-foreground text-xs">
-                Use the email or username and password your administrator gave
-                you.
+                Use the email and password for your OpenSlate account.
               </p>
               <a
                 className="text-primary inline-block text-sm font-medium hover:underline"

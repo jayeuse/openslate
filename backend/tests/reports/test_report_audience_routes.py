@@ -1,13 +1,10 @@
 """Report audience management and owner run denial on runner-owned PostgreSQL."""
 
-from uuid import UUID
-
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.core.security.tokens import TokenType, decode_token
 from app.systems.access.users.models import Role, User
 from app.systems.openview.reports.models import Report, ReportRun
 from tests.reports.test_report_routes import _actor, _client, _module, _recipe
@@ -45,9 +42,7 @@ def test_report_owner_manages_recipe_when_role_or_user_audience_excludes_them(
         assert client.get(f"/api/reports/{report_id}").status_code == 200
         assert client.get("/api/reports").json()["pagination"]["total"] == 1
 
-        renamed = client.patch(
-            f"/api/reports/{report_id}", json={"revision": 1, "name": "Renamed"}
-        )
+        renamed = client.patch(f"/api/reports/{report_id}", json={"revision": 1, "name": "Renamed"})
         assert renamed.status_code == 200
         assert renamed.json()["revision"] == 2
         changed = client.patch(
@@ -65,9 +60,12 @@ def test_report_owner_manages_recipe_when_role_or_user_audience_excludes_them(
     with _client(db, recipient) as client:
         assert client.get("/api/reports").json()["pagination"]["total"] == 0
         assert client.get(f"/api/reports/{report_id}").status_code == 404
-        assert client.patch(
-            f"/api/reports/{report_id}", json={"revision": 3, "name": "Takeover"}
-        ).status_code == 404
+        assert (
+            client.patch(
+                f"/api/reports/{report_id}", json={"revision": 3, "name": "Takeover"}
+            ).status_code
+            == 404
+        )
 
 
 def test_report_audience_rejects_unavailable_targets_and_bad_payloads(
@@ -124,10 +122,8 @@ def test_excluded_report_owner_cannot_run_or_read_retained_outputs(
     assert created.status_code == 201, created.text
     run_id = created.json()["id"]
 
-    outsider_claims = decode_token(fixture.outsider_token, TokenType.ACCESS)
-    assert outsider_claims is not None
     with Session(fixture.owner_engine) as db:
-        outsider = db.get(User, UUID(str(outsider_claims["sub"])))
+        outsider = db.get(User, fixture.outsider_id)
         assert outsider is not None
         recipient_role_id = outsider.role_id
 
@@ -137,16 +133,17 @@ def test_excluded_report_owner_cannot_run_or_read_retained_outputs(
         json={"revision": 1, "audience": {"kind": "role", "role_id": str(recipient_role_id)}},
     )
     assert changed.status_code == 200, changed.text
-    assert fixture.client.get(
-        f"/api/reports/{fixture.report_id}", headers=fixture.headers()
-    ).status_code == 200
+    assert (
+        fixture.client.get(
+            f"/api/reports/{fixture.report_id}", headers=fixture.headers()
+        ).status_code
+        == 200
+    )
     for suffix in ("", f"/{run_id}", f"/{run_id}/csv"):
         denied = fixture.client.get(f"{path}{suffix}", headers=fixture.headers())
         assert denied.status_code == 404
     assert fixture.client.post(path, headers=fixture.headers(key=uuid7())).status_code == 404
-    assert fixture.client.post(
-        path, headers=fixture.headers(key=original_key)
-    ).status_code == 404
+    assert fixture.client.post(path, headers=fixture.headers(key=original_key)).status_code == 404
     outsider_runs = fixture.client.get(path, headers=fixture.headers(fixture.outsider_token))
     assert outsider_runs.status_code == 200
     assert outsider_runs.json()["items"] == []

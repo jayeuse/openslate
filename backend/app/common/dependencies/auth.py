@@ -13,10 +13,14 @@ from app.core.base_model import utc_now
 from app.core.config import get_settings
 from app.core.config.development import browser_origin_is_permitted
 from app.core.database import get_db
-from app.core.security.tokens import TokenType, decode_token
+from app.core.integrations.supabase_auth import (
+    InvalidProviderToken,
+    SupabaseAuthUnavailable,
+    get_supabase_auth_client,
+)
 from app.systems.access.identity.eligibility import is_identity_eligible, is_internal_identity
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.identity.service import validate_access_session, validate_csrf
+from app.systems.access.identity.provider_sessions import resolve_provider_session, validate_csrf
 from app.systems.access.policy.authorization import ActorLockMode, authorize_workspace_capabilities
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import Role, User, UserRole
@@ -58,19 +62,24 @@ def get_current_identity(
     raw_token = cookie_token or bearer_token
     if raw_token is None:
         raise _unauthorized()
-    claims = decode_token(raw_token, TokenType.ACCESS)
-    if claims is None:
+    client = get_supabase_auth_client()
+    try:
+        claims = client.verify_access_token(raw_token)
+        resolved = resolve_provider_session(db, claims, client)
+    except InvalidProviderToken as error:
+        raise _unauthorized() from error
+    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+        raise HTTPException(status_code=503, detail="Authentication service unavailable") from error
+    if resolved is None:
         raise _unauthorized()
-    user = validate_access_session(db, claims, allow_setup=claims.get("setup") is True)
-    if user is None:
-        raise _unauthorized()
-    session_id = UUID(str(claims["sid"]))
+    user, session = resolved
+    session_id = session.id
     cookie_authenticated = cookie_token is not None
     if cookie_authenticated and request.method in _UNSAFE_METHODS:
         _validate_cookie_mutation(request, db, session_id)
     if isinstance(db.info, dict):
         set_audit_actor(db, user.id)
-    return CurrentIdentity(user, session_id, cookie_authenticated, claims.get("setup") is True)
+    return CurrentIdentity(user, session_id, cookie_authenticated, False)
 
 
 def _validate_cookie_mutation(request: Request, db: Session, session_id: UUID) -> None:

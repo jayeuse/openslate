@@ -1,14 +1,12 @@
 """Committed scheduled Report execution against runner-owned PostgreSQL."""
 
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
 
 import pytest
 from sqlalchemy import bindparam, func, select, text
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.core.security.tokens import TokenType, decode_token
 from app.systems.access.policy.models import AccessRule
 from app.systems.access.users.models import Role, User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
@@ -163,9 +161,7 @@ def test_unavailable_report_after_capture_cancels_without_output(
     subject = scheduled_report
     original = execution.capture_report_snapshot
     access_rule_id = uuid7()
-    outsider_claims = decode_token(subject.outsider_token, TokenType.ACCESS)
-    assert outsider_claims is not None
-    outsider_id = UUID(str(outsider_claims["sub"]))
+    outsider_id = subject.outsider_id
 
     def remove_access_after_capture(engine, report_id, owner_id):
         snapshot = original(engine, report_id, owner_id)

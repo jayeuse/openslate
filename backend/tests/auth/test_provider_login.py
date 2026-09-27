@@ -1,0 +1,68 @@
+"""Provider password exchange admission and denial behavior."""
+
+from datetime import UTC, datetime
+from unittest.mock import Mock
+from uuid import uuid4
+
+import pytest
+from sqlalchemy.orm import Session
+
+from app.core.integrations.supabase_auth import (
+    InvalidProviderCredentials,
+    ProviderTokens,
+)
+from app.systems.access.identity.contracts import InvalidCredentials, IssuedSession
+
+
+def test_password_grant_admits_only_the_bound_application_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.systems.access.identity import provider_login
+
+    db = Mock(spec=Session)
+    client = Mock()
+    tokens = ProviderTokens("provider-access", "provider-refresh", uuid4(), 600)
+    issued = IssuedSession("provider-access", "local-handle", "csrf", uuid4(), False)
+    client.password_grant.return_value = tokens
+    admit = Mock(return_value=issued)
+    monkeypatch.setattr(provider_login, "admit_provider_session", admit)
+
+    assert (
+        provider_login.login_with_provider(
+            db, "person@example.test", "password", client, enforce_rate_limit=False
+        )
+        is issued
+    )
+    admit.assert_called_once_with(db, tokens, client, user_agent=None)
+
+    admit.side_effect = InvalidCredentials("unmapped")
+    with pytest.raises(InvalidCredentials):
+        provider_login.login_with_provider(
+            db, "person@example.test", "password", client, enforce_rate_limit=False
+        )
+    client.sign_out.assert_called_once_with("provider-access")
+
+
+def test_wrong_password_records_rate_limit_without_creating_local_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.systems.access.identity import provider_login, rate_limits
+
+    db = Mock(spec=Session)
+    client = Mock()
+    client.password_grant.side_effect = InvalidProviderCredentials("wrong")
+    bucket = Mock(blocked_until=None)
+    monkeypatch.setattr(rate_limits, "cleanup_expired_buckets", Mock(return_value=0))
+    monkeypatch.setattr(rate_limits, "login_fingerprint", Mock(return_value="fingerprint"))
+    monkeypatch.setattr(rate_limits, "lock_bucket", Mock(return_value=bucket))
+    record = Mock()
+    monkeypatch.setattr(rate_limits, "record_attempt", record)
+    now = datetime.now(UTC)
+
+    with pytest.raises(InvalidCredentials):
+        provider_login.login_with_provider(
+            db, "person@example.test", "wrong", client, source="127.0.0.1", now=now
+        )
+
+    record.assert_called_once_with(db, "fingerprint", bucket, now)
+    db.add.assert_not_called()

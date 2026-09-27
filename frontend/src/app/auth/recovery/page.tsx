@@ -29,7 +29,7 @@ export default function RecoveryPage() {
   const router = useRouter();
   const [recoveryToken, setRecoveryToken] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
-  const [identifier, setIdentifier] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [passwordLengthInvalid, setPasswordLengthInvalid] = useState(false);
@@ -40,9 +40,19 @@ export default function RecoveryPage() {
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
-    const captured = consumeRecoveryToken(window.location, window.history);
-    setRecoveryToken((current) => retainRecoveryToken(current, captured));
+    function captureInitialLink() {
+      const captured = consumeRecoveryToken(window.location, window.history);
+      setRecoveryToken((current) => retainRecoveryToken(current, captured));
+    }
+    function captureNewLink() {
+      setRecoveryToken(consumeRecoveryToken(window.location, window.history));
+    }
+    captureInitialLink();
     setHydrated(true);
+    window.addEventListener("hashchange", captureNewLink);
+    return () => {
+      window.removeEventListener("hashchange", captureNewLink);
+    };
   }, []);
 
   async function submitRequest(event: React.FormEvent<HTMLFormElement>) {
@@ -51,7 +61,7 @@ export default function RecoveryPage() {
     setRequestState("idle");
     setPending(true);
     try {
-      await requestRecovery(identifier);
+      await requestRecovery(email);
       setRequestState("sent");
     } catch {
       setRequestState("error");
@@ -111,7 +121,7 @@ export default function RecoveryPage() {
           <p className="text-muted-foreground mt-2 text-sm">
             {completingRecovery
               ? "Choose a strong password for your OpenSlate account."
-              : "Enter your email or username to get reset instructions."}
+              : "Enter your email to get reset instructions."}
           </p>
         </div>
         {!hydrated ? (
@@ -206,8 +216,8 @@ export default function RecoveryPage() {
           <>
             {requestState === "sent" ? (
               <Alert role="status" variant="success" className="mb-5">
-                If an account that can be reset matches, we will email reset
-                instructions once email sending is set up.
+                If an account matches that email, we will send reset
+                instructions.
               </Alert>
             ) : null}
             {requestState === "error" ? (
@@ -217,17 +227,18 @@ export default function RecoveryPage() {
             ) : null}
             <form className="space-y-5" onSubmit={submitRequest}>
               <Field className="space-y-2">
-                <FieldLabel htmlFor="identifier">Email or username</FieldLabel>
+                <FieldLabel htmlFor="email">Email</FieldLabel>
                 <FieldControl
                   render={
                     <Input
-                      id="identifier"
+                      id="email"
+                      type="email"
                       autoFocus
-                      autoComplete="username"
+                      autoComplete="email"
                       required
                       disabled={pending}
-                      value={identifier}
-                      onChange={(event) => setIdentifier(event.target.value)}
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
                     />
                   }
                 />

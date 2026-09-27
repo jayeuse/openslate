@@ -32,10 +32,10 @@ export async function getAuthMe(signal?: AbortSignal): Promise<AuthMe> {
   return { id: current.id, roleId: current.role_id };
 }
 
-export async function signIn(identifier: string, password: string) {
+export async function signIn(email: string, password: string) {
   return apiFetch("/auth/login", authenticatedResponse, {
     method: "POST",
-    body: JSON.stringify({ identifier, password }),
+    body: JSON.stringify({ email, password }),
     refreshOnUnauthorized: false,
   });
 }
@@ -67,36 +67,26 @@ export async function getSessionStatus(
   });
 }
 
-export async function changePassword(
-  currentPassword: string,
-  password: string,
-) {
-  return apiFetch("/auth/password/change", authenticatedResponse, {
-    method: "POST",
-    body: JSON.stringify({ current_password: currentPassword, password }),
-  });
-}
-
-export async function completeInvitation(token: string, password: string) {
+export async function completeInvitation(tokenHash: string, password: string) {
   return apiFetch("/auth/invitations/complete", noContentResponse, {
     method: "POST",
-    body: JSON.stringify({ token, password }),
+    body: JSON.stringify({ token_hash: tokenHash, password }),
     refreshOnUnauthorized: false,
   });
 }
 
-export async function requestRecovery(identifier: string) {
+export async function requestRecovery(email: string) {
   return apiFetch("/auth/recovery/request", noContentResponse, {
     method: "POST",
-    body: JSON.stringify({ identifier }),
+    body: JSON.stringify({ email }),
     refreshOnUnauthorized: false,
   });
 }
 
-export async function completeRecovery(token: string, password: string) {
+export async function completeRecovery(tokenHash: string, password: string) {
   return apiFetch("/auth/recovery/complete", noContentResponse, {
     method: "POST",
-    body: JSON.stringify({ token, password }),
+    body: JSON.stringify({ token_hash: tokenHash, password }),
     refreshOnUnauthorized: false,
   });
 }

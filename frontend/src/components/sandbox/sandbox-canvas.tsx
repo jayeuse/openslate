@@ -465,15 +465,16 @@ export function SandboxCanvas({
         return;
       }
       callbacksRef.current.onSelect(id);
-      // Pan only when the edited text is out of view (the anchor clamps to
+      // Pan only when the editor would not fit in view (the anchor clamps to
       // the 4px edge), so editing inside a large visible table never jumps.
+      // The editor's width scales with zoom, so the whole width must fit.
       let anchor = editorAnchor(node, property, rowIndex);
       const view = container.getBoundingClientRect();
       if (
         anchor.left <= 4 ||
         anchor.top <= 4 ||
         anchor.top + CANVAS_EDITOR_HEIGHT > view.height ||
-        anchor.left + CANVAS_EDITOR_MIN_WIDTH / 2 > view.width
+        anchor.left + anchor.width > view.width
       ) {
         graph.centerCell(node);
         anchor = editorAnchor(node, property, rowIndex);

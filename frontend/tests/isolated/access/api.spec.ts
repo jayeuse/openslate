@@ -295,7 +295,6 @@ test("resends invitations by email without accepting a caller-supplied password"
     Response.json({
       user,
       delivery: "email",
-      temporary_password: null,
     }),
   );
 
@@ -303,16 +302,13 @@ test("resends invitations by email without accepting a caller-supplied password"
     await expect(resendAccessInvitation(userId)).resolves.toMatchObject({
       user,
       delivery: "email",
-      temporary_password: null,
     });
     expect(mock.requests).toHaveLength(1);
     expect(String(mock.requests[0]?.input)).toBe(
       `/api/auth/invitations/${userId}/resend`,
     );
     expect(mock.requests[0]?.init?.method).toBe("POST");
-    expect(JSON.parse(String(mock.requests[0]?.init?.body))).toEqual({
-      delivery: "email",
-    });
+    expect(JSON.parse(String(mock.requests[0]?.init?.body))).toEqual({});
     expect(
       new Headers(mock.requests[0]?.init?.headers).get("X-CSRF-Token"),
     ).toBe("invitation-token");
@@ -987,7 +983,6 @@ test("creates, patches, deletes, and restores users while preserving null PATCH 
       return Response.json({
         user,
         delivery: "email",
-        temporary_password: null,
       });
     return Response.json(user);
   });
@@ -1005,7 +1000,6 @@ test("creates, patches, deletes, and restores users while preserving null PATCH 
       }),
     ).resolves.toMatchObject({
       delivery: "email",
-      temporary_password: null,
     });
     await expect(
       updateAccessUser(userId, {
@@ -1037,7 +1031,6 @@ test("creates, patches, deletes, and restores users while preserving null PATCH 
       sponsor_user_id: null,
       expires_at: null,
       department_ids: [departmentId],
-      delivery: "email",
     });
     expect(JSON.parse(String(mock.requests[1]?.init?.body))).toEqual({
       display_name: null,

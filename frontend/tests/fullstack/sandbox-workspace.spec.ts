@@ -37,7 +37,8 @@ async function publishDraft(page: Page, password: string) {
     (response) =>
       new URL(response.url()).pathname ===
         "/api/sandbox/publication-previews" &&
-      response.request().method() === "POST",
+      response.request().method() === "POST" &&
+      response.status() !== 401,
     { timeout: 45_000 },
   );
   // Opening the dialog starts the review; no second click is needed.
@@ -48,7 +49,8 @@ async function publishDraft(page: Page, password: string) {
   const published = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/sandbox/publications" &&
-      response.request().method() === "POST",
+      response.request().method() === "POST" &&
+      response.status() !== 401,
     { timeout: 45_000 },
   );
   await page.getByRole("button", { name: "Publish changes" }).click();
@@ -201,7 +203,9 @@ async function exerciseOpenView(
   const dataSource = page.getByLabel("Data source");
   await expect(dataSource).toBeVisible();
   await dataSource.selectOption({ label: "Suppliers" });
-  await expect(page.getByLabel("Search Suppliers")).toBeVisible();
+  await expect(
+    page.getByRole("searchbox", { name: "Search Suppliers", exact: true }),
+  ).toBeVisible();
   const moduleId = await dataSource.inputValue();
   expect(moduleId).toBe(supplier.moduleId);
   expect(moduleId).toMatch(
@@ -233,14 +237,17 @@ async function exerciseOpenView(
   await expect(
     recordResults.getByText(supplier.legalName, { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Set as my default" }).click();
+  await page.getByRole("button", { name: "View actions" }).click();
+  await page.getByRole("menuitem", { name: "Set as my default" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "personal default view" }),
   ).toBeVisible();
   await page.reload();
+  await page.getByRole("button", { name: "View actions" }).click();
   await expect(
-    page.getByRole("button", { name: "Clear my default" }),
+    page.getByRole("menuitem", { name: "Clear my default" }),
   ).toBeVisible();
+  await page.keyboard.press("Escape");
 
   const concurrentPage = await page.context().newPage();
   let overloadedScripts = 0;
@@ -260,14 +267,16 @@ async function exerciseOpenView(
   expect(overloadedScripts).toBe(0);
 
   const currentSearch = `first revision ${runId.slice(0, 6)}`;
-  await page.getByLabel("Search Suppliers").fill(currentSearch);
+  await page
+    .getByRole("searchbox", { name: "Search Suppliers", exact: true })
+    .fill(currentSearch);
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: `“${viewName}” was saved.` }),
   ).toBeVisible();
 
   await concurrentPage
-    .getByLabel("Search Suppliers")
+    .getByRole("searchbox", { name: "Search Suppliers", exact: true })
     .fill(`stale revision ${runId.slice(0, 6)}`);
   await concurrentPage.getByRole("button", { name: "Save changes" }).click();
   const conflictDialog = concurrentPage.getByRole("dialog", {
@@ -277,12 +286,16 @@ async function exerciseOpenView(
     conflictDialog.getByText(/Query, filters, or sort/),
   ).toBeVisible();
   await conflictDialog.getByRole("button", { name: "Reload latest" }).click();
-  await expect(concurrentPage.getByLabel("Search Suppliers")).toHaveValue(
-    currentSearch,
-  );
+  await expect(
+    concurrentPage.getByRole("searchbox", {
+      name: "Search Suppliers",
+      exact: true,
+    }),
+  ).toHaveValue(currentSearch);
   await concurrentPage.close();
 
-  await page.getByRole("button", { name: "Archive view" }).click();
+  await page.getByRole("button", { name: "View actions" }).click();
+  await page.getByRole("menuitem", { name: "Archive view" }).click();
   const archiveDialog = page.getByRole("alertdialog", {
     name: "Archive saved view?",
   });
@@ -311,17 +324,19 @@ async function exerciseOpenView(
 async function exerciseLiveCharts(page: Page, supplier: SeededSupplier) {
   await page.goto("/openview?section=charts");
   await expect(
-    page.getByRole("heading", { name: "Live charts" }),
+    page.getByRole("heading", { name: "Charts", level: 1, exact: true }),
   ).toBeVisible();
 
   const dataSource = page.getByLabel("Data source");
   await expect(dataSource).toBeVisible();
   await dataSource.selectOption({ label: "Suppliers" });
   await expect(dataSource).toHaveValue(supplier.moduleId);
-  await page.getByLabel("Dimension").selectOption({ label: "Payment terms" });
-  await expect(page.getByLabel("Dimension")).toHaveValue(
-    supplier.paymentTermsFieldId,
-  );
+  await page
+    .getByRole("combobox", { name: "Group by", exact: true })
+    .selectOption({ label: "Payment terms" });
+  await expect(
+    page.getByRole("combobox", { name: "Group by", exact: true }),
+  ).toHaveValue(supplier.paymentTermsFieldId);
   await page.getByRole("button", { name: "Apply chart" }).click();
 
   const table = page.getByRole("table", { name: "Complete aggregate data" });
@@ -338,9 +353,9 @@ async function exerciseLiveCharts(page: Page, supplier: SeededSupplier) {
 
   const net30Row = table.getByRole("row").filter({ hasText: "Net 30" });
   await expect(net30Row.getByRole("cell")).toHaveText(["Net 30", "1", "1"]);
-  await expect(table.getByRole("caption")).toContainText(
-    "The complete authorized snapshot contains 1 aggregate groups.",
-  );
+  await expect(
+    page.getByText(/1 aggregate groups · one complete snapshot/),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Download complete CSV" }),
   ).toBeEnabled();
@@ -406,6 +421,10 @@ async function exerciseConnectedReports(
     await page.getByRole("button", { name: "New Report" }).click();
     await page.getByLabel("Data source").selectOption({ label: "Suppliers" });
     await page.getByLabel("Report name").fill(reportName);
+    await page
+      .getByRole("dialog", { name: "New report", exact: true })
+      .getByRole("tab", { name: "Columns", exact: true })
+      .click();
     await page.getByRole("checkbox", { name: "Legal name" }).check();
     await page.getByRole("checkbox", { name: "Payment terms" }).check();
     const [created] = await Promise.all([
@@ -435,12 +454,20 @@ async function exerciseConnectedReports(
       supplier.legalNameFieldId,
       supplier.paymentTermsFieldId,
     ]);
-    await expect(page.getByText("Report created.")).toBeVisible();
+    await expect(
+      page.getByRole("dialog", { name: "Edit report" }).getByRole("status"),
+    ).toHaveText("Report created.");
 
     await page.reload();
     await page.getByRole("button", { name: reportName, exact: true }).click();
+    await page
+      .getByRole("button", { name: "Edit report", exact: true })
+      .click();
+    const editor = page.getByRole("dialog", { name: "Edit report" });
+    await expect(editor).toBeVisible();
     await expect(page.getByLabel("Data source")).toHaveValue(supplier.moduleId);
     await expect(page.getByLabel("Report name")).toHaveValue(reportName);
+    await editor.getByRole("tab", { name: "Columns", exact: true }).click();
     await expect(
       page.getByRole("checkbox", { name: "Legal name" }),
     ).toBeChecked();
@@ -448,6 +475,8 @@ async function exerciseConnectedReports(
       page.getByRole("checkbox", { name: "Payment terms" }),
     ).toBeChecked();
 
+    await editor.getByRole("button", { name: "Close editor" }).click();
+    await expect(editor).toBeHidden();
     const [runResponse] = await Promise.all([
       page.waitForResponse(
         (response) =>
@@ -466,17 +495,24 @@ async function exerciseConnectedReports(
     expect(run.row_count).toBe(1);
     expect(run.headings).toEqual(["Legal name", "Payment terms"]);
     await expect(page.getByText("Report run saved with 1 row.")).toBeVisible();
-    const availableRuns = page
-      .getByRole("heading", { name: "Available runs" })
-      .locator("xpath=../..");
-    const savedRuns = page
-      .getByRole("heading", { name: "Saved runs" })
-      .locator("xpath=../..");
+    await page.getByRole("button", { name: "Available outputs" }).click();
+    const availableRuns = page.getByRole("dialog", {
+      name: "Available outputs",
+    });
     await expect(
-      availableRuns.getByText(reportName, { exact: true }),
+      availableRuns.getByRole("cell", { name: reportName, exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(availableRuns).toBeHidden();
+    const savedRuns = page.getByRole("table", {
+      name: "Saved outputs",
+      exact: true,
+    });
+    await expect(
+      savedRuns.getByRole("cell", { name: "Recipe version 1", exact: true }),
     ).toBeVisible();
     await expect(
-      savedRuns.getByText("1 row · Recipe revision 1"),
+      savedRuns.getByRole("cell", { name: "1", exact: true }),
     ).toBeVisible();
 
     const [csvResponse, download] = await Promise.all([
@@ -487,7 +523,7 @@ async function exerciseConnectedReports(
           response.request().method() === "GET",
       ),
       page.waitForEvent("download"),
-      savedRuns.getByRole("button", { name: "CSV", exact: true }).click(),
+      savedRuns.getByRole("button", { name: /^Download CSV for / }).click(),
     ]);
     expect(csvResponse.status()).toBe(200);
     expect(csvResponse.headers()["cache-control"]).toBe("private, no-store");
@@ -496,6 +532,7 @@ async function exerciseConnectedReports(
       `Legal name,Payment terms\r\n${supplier.legalName},Net 30\r\n`,
     );
 
+    await page.getByRole("tab", { name: "Schedule", exact: true }).click();
     await page.getByRole("checkbox", { name: "Enable scheduled runs" }).check();
     await page.getByRole("textbox", { name: "Timezone" }).fill("UTC");
     const [scheduleResponse] = await Promise.all([
@@ -511,6 +548,7 @@ async function exerciseConnectedReports(
     await expect(page.getByText("Schedule saved and enabled.")).toBeVisible();
     await expect(page.getByText(/^Next run:/)).toBeVisible();
 
+    await page.getByRole("button", { name: "Report options" }).click();
     page.once("dialog", (dialog) => void dialog.accept());
     const [archived] = await Promise.all([
       page.waitForResponse(
@@ -518,7 +556,7 @@ async function exerciseConnectedReports(
           new URL(response.url()).pathname === `/api/reports/${reportId}` &&
           response.request().method() === "DELETE",
       ),
-      page.getByRole("button", { name: "Archive Report" }).click(),
+      page.getByRole("menuitem", { name: "Archive Report" }).click(),
     ]);
     expect(archived.status()).toBe(204);
     await expect(page.getByText("Report archived.")).toBeVisible();
@@ -539,7 +577,8 @@ async function exerciseConnectedBoard(
   const imageBytes = readFileSync(imagePath);
 
   await page.goto("/boards");
-  await page.getByRole("button", { name: "New Board" }).click();
+  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "New Board", exact: true }).click();
   await page.getByLabel("Board name").fill(boardName);
   const [createdBoard] = await Promise.all([
     page.waitForResponse(
@@ -554,7 +593,7 @@ async function exerciseConnectedBoard(
   await expect(page.getByRole("heading", { name: boardName })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`board=${boardId}`));
 
-  await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  await page.getByRole("link", { name: "Calendar", exact: true }).click();
   await page.getByRole("button", { name: "New event" }).click();
   await page.getByLabel("Event title").fill(eventTitle);
   const [createdEvent] = await Promise.all([
@@ -568,7 +607,12 @@ async function exerciseConnectedBoard(
   expect(createdEvent.status()).toBe(201);
   const eventId = ((await createdEvent.json()) as { id: string }).id;
   await expect(page.getByText("Event created.")).toBeVisible();
-  await page.getByRole("button", { name: `Edit ${eventTitle}` }).click();
+  await page.getByRole("button", { name: "Event lists" }).click();
+  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
+  const createdEventList = page.getByRole("region", { name: "My events" });
+  await createdEventList
+    .getByRole("button", { name: `Edit ${eventTitle}` })
+    .click();
   const eventEditor = page.getByRole("form", { name: "Edit Board event" });
   await eventEditor.getByLabel("Add an attachment").setInputFiles(imagePath);
   await expect(eventEditor.getByText("image.png attached.")).toBeVisible({
@@ -603,6 +647,18 @@ async function exerciseConnectedBoard(
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
 
+  const monthView = page.getByRole("button", { name: "Month", exact: true });
+  await monthView.click();
+  await expect(monthView).toHaveAttribute("aria-pressed", "true");
+  await page.getByText("Add reminder", { exact: true }).click();
+  const reminderOccurrence = page.getByLabel("Event occurrence for reminder");
+  const createdOccurrence = reminderOccurrence
+    .locator("option")
+    .filter({ hasText: eventTitle });
+  await expect(createdOccurrence).toHaveCount(1);
+  const occurrenceId = await createdOccurrence.getAttribute("value");
+  if (!occurrenceId) throw new Error("Created event occurrence is unavailable");
+  await reminderOccurrence.selectOption(occurrenceId);
   await page.getByLabel("Reminder timing").selectOption("now");
   const [createdReminder] = await Promise.all([
     page.waitForResponse(
@@ -637,7 +693,8 @@ async function exerciseConnectedBoard(
     targetedEditor.getByRole("button", { name: "Create event" }).click(),
   ]);
   expect(targetedCreated.status()).toBe(201);
-  await page.getByRole("button", { name: "My events" }).click();
+  await page.getByRole("button", { name: "Event lists" }).click();
+  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
   const myEvents = page.getByRole("region", { name: "My events" });
   await myEvents.getByRole("button", { name: `Edit ${targetedTitle}` }).click();
   const updatedTargetedTitle = `${targetedTitle} updated`;
@@ -660,22 +717,22 @@ async function exerciseConnectedBoard(
   await expect(
     myEvents.getByRole("button", { name: `Edit ${updatedTargetedTitle}` }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "My events" }).click();
+  await page.getByRole("button", { name: "Event lists" }).click();
+  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
   await expect(
     myEvents.getByRole("button", { name: `Edit ${updatedTargetedTitle}` }),
   ).toBeVisible();
   await page.reload();
-  await page.getByRole("button", { name: "Calendar", exact: true }).click();
-  await page.getByRole("button", { name: "My events" }).click();
+  await page.getByRole("link", { name: "Calendar", exact: true }).click();
+  await page.getByRole("button", { name: "Event lists" }).click();
+  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
   await expect(
     page
       .getByRole("region", { name: "My events" })
       .getByRole("button", { name: `Edit ${updatedTargetedTitle}` }),
   ).toBeVisible();
 
-  await page
-    .getByRole("button", { name: "Announcements", exact: true })
-    .click();
+  await page.getByRole("link", { name: "Announcements", exact: true }).click();
   await page.getByRole("button", { name: "New announcement" }).click();
   await page.getByLabel("Title", { exact: true }).fill(announcementTitle);
   await page.getByLabel("Message").fill("Supplier review is complete.");
@@ -726,18 +783,39 @@ async function exerciseConnectedBoard(
   ]);
   expect(published.status()).toBe(200);
   await expect(page.getByText("Published successfully.")).toBeVisible();
+  await page.getByRole("button", { name: "Close announcement editor" }).click();
   await expect(
-    page
-      .getByRole("region", { name: "Published announcements" })
-      .getByRole("link", { name: "Supplier source" }),
+    page.getByRole("dialog", { name: "Announcement editor" }),
+  ).toBeHidden();
+  const publishedAnnouncement = page
+    .getByRole("region", { name: "Published announcements" })
+    .getByRole("article")
+    .filter({
+      has: page.getByRole("heading", {
+        name: announcementTitle,
+        exact: true,
+      }),
+    });
+  await publishedAnnouncement
+    .getByRole("button", { name: "Open announcement" })
+    .click();
+  const announcementReader = page.getByRole("dialog", {
+    name: announcementTitle,
+  });
+  await expect(announcementReader).toBeVisible();
+  await expect(
+    announcementReader.getByRole("link", { name: "Supplier source" }),
   ).toBeVisible();
+  await announcementReader
+    .getByRole("button", { name: "Close announcement" })
+    .click();
 
   const targetedAnnouncementTitle = `Member notice ${runId.slice(0, 8)}`;
   const announcementManager = page.getByRole("region", {
     name: "Manage announcements",
   });
-  await announcementManager
-    .getByRole("button", { name: "New announcement" })
+  await page
+    .getByRole("button", { name: "New announcement", exact: true })
     .click();
   await announcementManager
     .getByLabel("Title", { exact: true })
@@ -771,8 +849,10 @@ async function exerciseConnectedBoard(
   ]);
   expect(targetedAnnouncementPublished.status()).toBe(200);
   await page.reload();
+  await page.getByRole("link", { name: "Announcements", exact: true }).click();
+  await page.getByRole("button", { name: "More announcement actions" }).click();
   await page
-    .getByRole("button", { name: "Announcements", exact: true })
+    .getByRole("menuitem", { name: "Edit drafts", exact: true })
     .click();
   const reloadedManager = page.getByRole("region", {
     name: "Manage announcements",
@@ -912,21 +992,31 @@ async function exercisePrivateDashboard(
     page.getByRole("heading", { name: "Private dashboards" }),
   ).toBeVisible();
   await expect(
-    page.getByText("Only you can view these Dashboards.", { exact: true }),
+    page.getByText(/Each Dashboard is private to you\./),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "New Dashboard" }).click();
-  await page.getByLabel("Dashboard name").fill(dashboardName);
-  const moduleSelect = page.getByLabel("Module");
+  const newDashboard = page.getByRole("dialog", { name: "New Dashboard" });
+  await newDashboard.getByLabel("Dashboard name").fill(dashboardName);
+  await newDashboard.getByRole("button", { name: "Done" }).click();
+  await expect(newDashboard).toBeHidden();
+  await page.getByRole("button", { name: "Add widget", exact: true }).click();
+  const addWidget = page.getByRole("dialog", { name: "Add widget" });
+  const moduleSelect = addWidget.getByLabel("Data source");
   await moduleSelect.selectOption({ label: "Suppliers" });
   const moduleId = await moduleSelect.inputValue();
   expect(moduleId).toBe(supplier.moduleId);
-  const dimension = page.getByLabel("Group records by");
+  const dimension = addWidget.getByLabel("Group records by");
   await dimension.selectOption({ label: "Payment terms" });
   const dimensionId = await dimension.inputValue();
   expect(dimensionId).toBe(supplier.paymentTermsFieldId);
-  await page.getByRole("button", { name: "Add chart widget" }).click();
-  await expect(page.getByRole("button", { name: /^chart 1:/i })).toBeVisible();
+  await addWidget
+    .getByRole("button", { name: "Add widget", exact: true })
+    .click();
+  await expect(addWidget).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: /^View chart 1:/i }),
+  ).toBeVisible();
 
   const snapshotPromise = waitForDashboardSnapshot(page);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
@@ -958,9 +1048,11 @@ async function exercisePrivateDashboard(
   if (!dashboardId)
     throw new Error("saved Dashboard URL did not include its ID");
   await expect(
-    page.getByRole("button", { name: dashboardName, exact: true }),
-  ).toHaveAttribute("aria-current", "page");
-  await expect(page.getByLabel("Dashboard name")).toHaveValue(dashboardName);
+    page.getByRole("combobox", { name: "Dashboard", exact: true }),
+  ).toHaveValue(dashboardId);
+  await expect(
+    page.getByRole("heading", { name: dashboardName, exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: /^View chart 1:/i }),
   ).toBeVisible();
@@ -972,7 +1064,7 @@ async function exercisePrivateDashboard(
   const net30Row = table.getByRole("row").filter({ hasText: "Net 30" });
   await expect(net30Row.getByRole("cell")).toHaveText(["Net 30", "1", "1"]);
   await expect(table.getByRole("caption")).toContainText(
-    "The table pages the complete authorized snapshot.",
+    "Complete results for the current Dashboard widget.",
   );
 
   const reloadSnapshotPromise = waitForDashboardSnapshot(page);
@@ -980,10 +1072,12 @@ async function exercisePrivateDashboard(
   await expect(page).toHaveURL(
     new RegExp(`[?&]dashboard=${dashboardId}(?:&|$)`),
   );
-  await expect(page.getByLabel("Dashboard name")).toHaveValue(dashboardName);
   await expect(
-    page.getByRole("button", { name: dashboardName, exact: true }),
-  ).toHaveAttribute("aria-current", "page");
+    page.getByRole("combobox", { name: "Dashboard", exact: true }),
+  ).toHaveValue(dashboardId);
+  await expect(
+    page.getByRole("heading", { name: dashboardName, exact: true }),
+  ).toBeVisible();
   await expectPopulatedDashboardSnapshot(
     await reloadSnapshotPromise,
     moduleId,
@@ -991,7 +1085,8 @@ async function exercisePrivateDashboard(
   );
   await expect(net30Row.getByRole("cell")).toHaveText(["Net 30", "1", "1"]);
 
-  await page.getByRole("button", { name: "Archive Dashboard" }).click();
+  await page.getByRole("button", { name: "Dashboard options" }).click();
+  await page.getByRole("menuitem", { name: "Archive Dashboard" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Dashboard archived." }),
   ).toBeVisible();
@@ -1004,8 +1099,11 @@ async function exercisePrivateDashboard(
     new RegExp(`[?&]dashboard=${dashboardId}(?:&|$)`),
   );
   await expect(
-    page.getByRole("button", { name: dashboardName, exact: true }),
-  ).toHaveAttribute("aria-current", "page");
+    page.getByRole("combobox", { name: "Dashboard", exact: true }),
+  ).toHaveValue(dashboardId);
+  await expect(
+    page.getByRole("heading", { name: dashboardName, exact: true }),
+  ).toBeVisible();
 }
 
 type WindowQueryBody = Readonly<{
@@ -1126,18 +1224,31 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
     label: "Purchase orders",
   });
   if (!moduleId) throw new Error("Purchase orders has no module ID");
-  await expect(page.getByLabel("Search Purchase orders")).toBeVisible();
+  await expect(
+    page.getByRole("searchbox", {
+      name: "Search Purchase orders",
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`[?&]module=${moduleId}(?:&|$)`));
   await expect(dataSource).toHaveValue(moduleId);
 
-  await page.getByLabel("Presentation layout").selectOption("calendar");
-  const calendarField = page.getByLabel("Calendar date field");
+  await page.getByRole("button", { name: "Layout settings" }).click();
+  const layoutSettings = page.getByRole("dialog", { name: "Layout settings" });
+  await layoutSettings
+    .getByLabel("Presentation layout")
+    .selectOption("calendar");
+  const calendarField = layoutSettings.getByLabel("Calendar date field");
   await expect(calendarField).toBeVisible();
   const calendarFieldId = await calendarField
     .locator("option", { hasText: "Order date · date" })
     .getAttribute("value");
   if (!calendarFieldId) throw new Error("Calendar date option has no field ID");
   await calendarField.selectOption(calendarFieldId);
+  await layoutSettings
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
+  await expect(layoutSettings).toBeHidden();
   const calendar = page.getByRole("region", {
     name: "Calendar",
     exact: true,
@@ -1146,7 +1257,9 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
     calendar.getByRole("heading", { name: "Calendar · Order date" }),
   ).toBeVisible();
   await expect(
-    calendar.getByText(/No scheduled records in this (?:date )?window/),
+    calendar
+      .getByRole("status")
+      .filter({ hasText: "No scheduled records in this date window." }),
   ).toBeVisible();
   const calendarWindow = nextWindowDates(
     await calendar.getByLabel("Window starts").inputValue(),
@@ -1186,12 +1299,17 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
     calendarBody.to_date,
   );
   await expect(
-    calendar.getByText(/No scheduled records in this (?:date )?window/),
+    calendar
+      .getByRole("status")
+      .filter({ hasText: "No scheduled records in this date window." }),
   ).toBeVisible();
 
-  await page.getByLabel("Presentation layout").selectOption("timeline");
-  const timelineStart = page.getByLabel("Timeline start field");
-  const timelineEnd = page.getByLabel("Timeline end field");
+  await page.getByRole("button", { name: "Layout settings" }).click();
+  await layoutSettings
+    .getByLabel("Presentation layout")
+    .selectOption("timeline");
+  const timelineStart = layoutSettings.getByLabel("Timeline start field");
+  const timelineEnd = layoutSettings.getByLabel("Timeline end field");
   await expect(timelineStart).toBeVisible();
   const timelineStartFieldId = await timelineStart
     .locator("option", { hasText: "Order date · date" })
@@ -1206,6 +1324,10 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
   if (!timelineEndFieldId)
     throw new Error("Timeline end option has no field ID");
   await timelineEnd.selectOption(timelineEndFieldId);
+  await layoutSettings
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
+  await expect(layoutSettings).toBeHidden();
   const timeline = page.getByRole("region", { name: "Timeline records" });
   await expect(
     timeline.getByRole("heading", {
@@ -1265,10 +1387,11 @@ test("Sandbox exposes the simplified Build, Automations, Test, and History journ
   page,
 }) => {
   test.setTimeout(360_000);
+  page.setDefaultTimeout(30_000);
   const runFixture = fixture();
   const credentials = runFixture.admin;
   await page.goto("/login");
-  await page.getByLabel("Email or username").fill(credentials.email);
+  await page.getByLabel("Email", { exact: true }).fill(credentials.email);
   await page.getByLabel("Password").fill(credentials.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/(openview|sandbox)$/);
@@ -1312,31 +1435,72 @@ test("Sandbox exposes the simplified Build, Automations, Test, and History journ
   await expect(
     page.getByRole("heading", { name: "Recent activity" }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Recent activity", exact: true })
+    .click();
   await expect(
-    page.getByText("No published automation activity yet."),
+    page
+      .getByRole("region", { name: "Recent activity details" })
+      .getByText("No published automation activity yet."),
   ).toBeVisible();
 
   await page.getByRole("link", { name: "Test", exact: true }).click();
+  const testSetup = page.getByRole("region", {
+    name: "Test setup",
+    exact: true,
+  });
   await expect(
-    page.getByRole("heading", { name: "Test your setup" }),
+    testSetup.getByRole("heading", { name: "Test setup" }),
   ).toBeVisible();
-  await expect(
-    page.getByText("Nothing is added to your live workspace."),
-  ).toBeVisible();
-  await page.getByLabel("Supplier ID").fill("SUP-001");
-  await page.getByLabel("Status").selectOption({ label: "Active" });
-  await page.getByLabel("Legal name").fill("Acceptance Supplier");
-  await page.getByLabel("When").selectOption("field-changed");
-  await page.getByLabel("Changed field").selectOption({ label: "Status" });
-  await page.getByRole("button", { name: "Run test" }).click();
+  await testSetup
+    .getByLabel("Module", { exact: true })
+    .selectOption({ label: "Suppliers" });
+  await testSetup
+    .getByRole("button", { name: "All input fields", exact: true })
+    .click();
+  await testSetup.getByLabel("Supplier ID", { exact: true }).fill("SUP-001");
+  await testSetup
+    .getByLabel("Status", { exact: true })
+    .selectOption({ label: "Active" });
+  await testSetup
+    .getByLabel("Legal name", { exact: true })
+    .fill("Acceptance Supplier");
+  await testSetup
+    .getByLabel("When", { exact: true })
+    .selectOption("field-changed");
+  await testSetup
+    .getByLabel("Changed field", { exact: true })
+    .selectOption({ label: "Status" });
+  const recordsUrl = "/api/records?limit=100&offset=0";
+  const beforeRecords = await page.request.get(recordsUrl);
+  expect(beforeRecords.status()).toBe(200);
+  const beforeRecordState: unknown = await beforeRecords.json();
+  expect(beforeRecordState).toMatchObject({ pagination: { has_more: false } });
+  const [testResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/sandbox/tests" &&
+        response.request().method() === "POST",
+    ),
+    testSetup.getByRole("button", { name: "Run test" }).click(),
+  ]);
+  expect(testResponse.status()).toBe(201);
   await expect(
     page.getByRole("heading", { name: "Test result" }),
   ).toBeVisible();
+  const afterRecords = await page.request.get(recordsUrl);
+  expect(afterRecords.status()).toBe(200);
+  expect(await afterRecords.json()).toEqual(beforeRecordState);
 
   await page.getByRole("link", { name: "History", exact: true }).click();
   await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+  await page
+    .getByRole("button", { name: "View Published structure", exact: true })
+    .click();
   await expect(
-    page.getByRole("article", { name: "Published structure" }),
+    page
+      .getByRole("region", { name: "Selected version", exact: true })
+      .getByRole("heading", { name: "Published structure", exact: true }),
   ).toBeVisible();
 
   for (const name of [

@@ -70,7 +70,13 @@ export function OrganizationLook() {
   // The browser choice is read after mount so the server render (Slate)
   // and the first client render match.
   const [theme, setTheme] = useState<OrganizationTheme>("slate");
-  useEffect(() => setTheme(readBrowserOrganizationTheme()), []);
+  useEffect(() => {
+    // Also follow a look chosen in another tab.
+    const read = () => setTheme(readBrowserOrganizationTheme());
+    read();
+    window.addEventListener("storage", read);
+    return () => window.removeEventListener("storage", read);
+  }, []);
 
   function choose(next: OrganizationTheme) {
     setTheme(next);

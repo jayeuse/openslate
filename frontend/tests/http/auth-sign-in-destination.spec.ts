@@ -15,6 +15,7 @@ async function signInWith(
   sandboxAccess = true,
 ) {
   const dataSourceRequests: string[] = [];
+  const sandboxProbes: string[] = [];
   await page.route("**/api/auth/login", (route) =>
     route.fulfill({
       contentType: "application/json",
@@ -61,7 +62,24 @@ async function signInWith(
     });
   });
 
-  // The start check reads the Sandbox; later page loads may too.
+  // The start check asks for one Test run, which needs the same access as
+  // the Sandbox document without downloading it.
+  await page.route("**/api/sandbox/tests?**", (route) => {
+    sandboxProbes.push(new URL(route.request().url()).search);
+    return route.fulfill(
+      sandboxAccess
+        ? {
+            contentType: "application/json",
+            body: JSON.stringify({ items: [] }),
+          }
+        : {
+            status: 403,
+            contentType: "application/json",
+            body: JSON.stringify({ detail: "Forbidden" }),
+          },
+    );
+  });
+  // The Sandbox page itself loads the document after navigation.
   const document = migrateSandboxFileV1({
     kind: "openslate-sandbox",
     schemaVersion: 1,
@@ -91,18 +109,19 @@ async function signInWith(
     ),
   );
   await page.goto("/login");
-  await page.getByLabel("Email or username").fill("owner@example.test");
+  await page.getByLabel("Email").fill("owner@example.test");
   await page.getByLabel("Password").fill("correct horse battery");
   await page.getByRole("button", { name: "Sign in" }).click();
-  return dataSourceRequests;
+  return { dataSourceRequests, sandboxProbes };
 }
 
 test("a first sign-in with nothing published opens the Sandbox", async ({
   page,
 }) => {
-  const requests = await signInWith(page, "none");
+  const { dataSourceRequests, sandboxProbes } = await signInWith(page, "none");
   await expect(page).toHaveURL(/\/sandbox$/);
-  expect(requests[0]).toContain("limit=1");
+  expect(dataSourceRequests[0]).toContain("limit=1");
+  expect(sandboxProbes[0]).toContain("limit=1");
 });
 
 test("a first sign-in without Sandbox access opens OpenView", async ({
@@ -124,42 +143,13 @@ test("a sign-in opens OpenView when the catalog check fails", async ({
   await expect(page).toHaveURL(/\/openview$/);
 });
 
-test("a sign-in that needs account setup skips the catalog check", async ({
+test("a sign-in that needs account setup explains it and skips the catalog check", async ({
   page,
 }) => {
-  const requests = await signInWith(page, "none", true);
-  await expect(page).toHaveURL(/\/auth\/setup\?temporary=1$/);
-  expect(requests).toEqual([]);
-});
-
-test("finishing temporary-password setup with nothing published opens the Sandbox", async ({
-  page,
-}) => {
-  await signInWith(page, "none", true);
-  await expect(page).toHaveURL(/\/auth\/setup\?temporary=1$/);
-  await page.route("**/api/auth/password/change", async (route) => {
-    // The completed setup is what later session checks report.
-    await page.route("**/api/auth/session", (session) =>
-      session.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          authenticated: true,
-          user_id: userId,
-          setup_required: false,
-        }),
-      }),
-    );
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ authenticated: true, setup_required: false }),
-    });
-  });
-
-  await page.getByLabel("Temporary password").fill("temporary horse battery");
-  await page
-    .getByLabel("Password", { exact: true })
-    .fill("a new horse battery staple");
-  await page.getByLabel("Confirm password").fill("a new horse battery staple");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page).toHaveURL(/\/sandbox$/);
+  const { dataSourceRequests } = await signInWith(page, "none", true);
+  await expect(
+    page.getByText("Finish setup using the link in your invitation email."),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/login$/);
+  expect(dataSourceRequests).toEqual([]);
 });

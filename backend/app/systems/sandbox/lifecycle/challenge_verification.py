@@ -28,7 +28,7 @@ from app.systems.sandbox.lifecycle.models import (
     LifecycleRateLimitFailure,
 )
 from app.systems.sandbox.lifecycle.models import LifecycleOperation as ConfirmationOperation
-from app.systems.sandbox.lifecycle.password import LocalPasswordGrantClient, PasswordGrantClient
+from app.systems.sandbox.lifecycle.password import PasswordGrantClient, ProviderPasswordGrantClient
 
 
 def record_failure(
@@ -178,7 +178,7 @@ def verify_challenge(
         now=now,
     )
     try:
-        client = password_client or LocalPasswordGrantClient(db)
+        client = password_client or ProviderPasswordGrantClient(db)
         returned_actor_id = client.verify_password(actor_email, password)
     except LifecycleInvalidCredentials:
         record_failure(db, lease, now=_now(now))

@@ -1,8 +1,7 @@
-"""Metadata contracts for flat Access groups and policy defaults."""
+"""Metadata and applied-baseline contracts for Access groups and defaults."""
 
-from pathlib import Path
-
-from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, UniqueConstraint, inspect
+import pytest
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, UniqueConstraint, inspect, text
 
 from app.systems.access.policy import models
 
@@ -118,22 +117,28 @@ def test_default_group_and_department_links_have_restricted_audited_pairs() -> N
         )
 
 
-def test_migration_creates_every_deferred_performed_by_foreign_key() -> None:
-    source = (
-        Path(__file__).parents[2]
-        / "migrations"
-        / "versions"
-        / "0f5520bd106d_add_access_groups_defaults.py"
-    ).read_text()
-
-    for table in (
+@pytest.mark.integration
+def test_applied_baseline_installs_every_access_performed_by_foreign_key(
+    integration_owner_db,
+) -> None:
+    tables = (
         "access_groups",
         "access_group_members",
         "access_policy_defaults",
         "access_default_groups",
         "access_default_departments",
-    ):
-        assert (
-            f'op.create_foreign_key(\n        op.f("fk_{table}_performed_by_users"),\n'
-            f'        "{table}",\n        "users",\n        ["performed_by"],\n        ["id"],'
-        ) in source
+    )
+    connection = integration_owner_db.connection()
+
+    for table in tables:
+        constraint = connection.execute(
+            text(
+                "SELECT referenced.relname, fk.confdeltype "
+                "FROM pg_constraint AS fk "
+                "JOIN pg_class AS referenced ON referenced.oid = fk.confrelid "
+                "WHERE fk.conrelid = to_regclass(:table) "
+                "AND fk.conname = :constraint"
+            ),
+            {"table": f"public.{table}", "constraint": f"fk_{table}_performed_by_users"},
+        ).one_or_none()
+        assert constraint == ("users", "n")

@@ -3,6 +3,9 @@ import { resolve } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
+import { initialAccessIdentities } from "@/components/systems/access/domain/policy";
+import { reviewedActionImpact } from "@/components/systems/access/helpers/identity-editor";
+
 function componentSource(path: string): string {
   return readFileSync(resolve(process.cwd(), "src", path), "utf8");
 }
@@ -40,18 +43,17 @@ test("revoked invitations can be resent while revoke stays pending-only", () => 
   const source = componentSource(
     "components/systems/access/components/identity-editor.tsx",
   );
-  const identityHelpers = componentSource(
-    "components/systems/access/helpers/identity-editor.ts",
-  );
 
   expect(source).toContain('existing.status === "revoked"');
   expect(source).toContain('existing.status === "pending" && (');
   expect(source).not.toContain(
     'title="Invitation revocation is not available yet."',
   );
-  expect(identityHelpers).toContain(
-    "The existing invitation link and temporary password will stop working. The profile remains in Access and can be resent.",
-  );
+  const identity = initialAccessIdentities[0];
+  if (!identity) throw new Error("Identity fixture is missing");
+  const impact = reviewedActionImpact({ type: "revoke-invite", identity });
+  expect(impact).toContain("no longer grant access");
+  expect(impact).not.toContain("password");
   expect(source).toContain('existing.status === "disabled" ? (');
   expect(source).toContain("Enable identity");
   expect(source).toContain(

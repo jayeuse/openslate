@@ -317,7 +317,7 @@ export function reviewedActionImpact(action: ReviewedAction): string {
   if (action.type === "disable")
     return "Removed: this identity will lose active access until restored.";
   if (action.type === "revoke-invite")
-    return "The existing invitation link and temporary password will stop working. The profile remains in Access and can be resent.";
+    return "The existing invitation link will no longer grant access. The profile remains in Access and can be resent.";
   if (action.type === "delete")
     return "Removed: the identity, memberships, and sessions leave the active directory.";
   if (action.type === "revoke-session")

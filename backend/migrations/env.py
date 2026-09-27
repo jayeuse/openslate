@@ -11,6 +11,7 @@ from app.core.config.instance import (
     migration_advisory_lock,
 )
 from app.core.database import Base, model_registry  # noqa: F401
+from app.core.database.migration_scope import application_migration_scope
 
 config = context.config
 settings = get_migration_settings()
@@ -51,10 +52,13 @@ def run_migrations_online() -> None:
         if target is not None:
             assert_instance_target(connection, target, expected_user="openslate_owner")
             connection.rollback()
+        include_name = application_migration_scope(connection, target_metadata)
+        connection.rollback()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            include_name=include_name,
         )
         with context.begin_transaction():
             with migration_advisory_lock(connection):

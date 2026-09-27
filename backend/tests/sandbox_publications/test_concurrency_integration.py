@@ -4,17 +4,24 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Barrier
 from typing import Any
 from uuid import UUID
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import Engine, create_engine, delete, or_, select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+import app.systems.sandbox.publications.router as publication_router
+from app.common.dependencies.auth import CurrentIdentity
+from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
+from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import Role, User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
@@ -32,6 +39,8 @@ from app.systems.sandbox.publications.executor import (
 )
 from app.systems.sandbox.publications.models import SandboxBinding, SandboxPublication
 from app.systems.sandbox.publications.planner import publication_plan
+from app.systems.sandbox.publications.schemas import PublicationRequest
+from app.systems.sandbox.publications.tokens import issue_preview_token
 from tests.postgres_runtime import assert_runner_database_url
 from tests.sandbox_designs.fixtures import sample_document
 
@@ -107,6 +116,186 @@ def test_concurrent_key_and_token_races_resolve_deterministically() -> None:
             value for _, value in (*token_results, *key_results)
         }
     finally:
+        if actor_id is not None and baseline is not None:
+            _cleanup_committed_fixture(engine, actor_id, baseline)
+        engine.dispose()
+
+
+def test_publication_denies_session_revoked_after_password_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = os.environ["MIGRATION_DATABASE_URL"]
+    assert_runner_database_url(database_url, allowed_roles=frozenset({"openslate_owner"}))
+    engine = create_engine(database_url, pool_size=2, max_overflow=0)
+    actor_id: UUID | None = None
+    session_id: UUID | None = None
+    baseline: Baseline | None = None
+    try:
+        actor_id, baseline = _configure_publishable_draft(engine)
+        with Session(engine) as setup:
+            session = IdentitySession(
+                user_id=actor_id,
+                refresh_token_digest=sha256(f"refresh-{uuid7()}".encode()).hexdigest(),
+                csrf_token_digest=sha256(f"csrf-{uuid7()}".encode()).hexdigest(),
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+            setup.add(session)
+            setup.commit()
+            session_id = session.id
+        with AuditSession(bind=engine) as db:
+            _set_audit_context(db, actor_id)
+            actor = db.get(User, actor_id)
+            assert actor is not None
+            prepared = _prepare(engine, actor_id, "revoked-after-password")
+            preview_token, _claims = issue_preview_token(
+                actor_id=actor_id,
+                session_id=session_id,
+                document_revision=prepared.revision,
+                document_hash=prepared.document_hash,
+                impact_digest=prepared.impact_digest,
+                live_state_digest=prepared.live_state_digest,
+            )
+
+            class PasswordGrant:
+                def __init__(self, request_db: Session) -> None:
+                    self._db = request_db
+
+                def verify_password(self, _email: str, _password: str) -> UUID:
+                    # Supabase password verification commits the request transaction.
+                    self._db.commit()
+                    with Session(engine) as concurrent:
+                        current = concurrent.get(IdentitySession, session_id)
+                        assert current is not None
+                        current.revoked_at = utc_now()
+                        concurrent.commit()
+                    return actor_id
+
+            monkeypatch.setattr(publication_router, "ProviderPasswordGrantClient", PasswordGrant)
+            payload = PublicationRequest(
+                expected_revision=prepared.revision,
+                preview_token=preview_token,
+                impact_digest=prepared.impact_digest,
+                password="verified by provider boundary",
+            )
+            with pytest.raises(HTTPException) as denied:
+                publication_router.post_publication(
+                    payload,
+                    CurrentIdentity(actor, session_id, False, False),
+                    db,
+                    f"revoked-after-password-{uuid7()}",
+                )
+            assert denied.value.status_code == 403
+            db.rollback()
+        with Session(engine) as check:
+            assert (
+                check.scalar(
+                    select(SandboxPublication).where(SandboxPublication.actor_id == actor_id)
+                )
+                is None
+            )
+    finally:
+        if session_id is not None:
+            with Session(engine) as cleanup:
+                session = cleanup.get(IdentitySession, session_id)
+                if session is not None:
+                    cleanup.delete(session)
+                    cleanup.commit()
+        if actor_id is not None and baseline is not None:
+            _cleanup_committed_fixture(engine, actor_id, baseline)
+        engine.dispose()
+
+
+def test_publication_retry_rechecks_session_after_integrity_rollback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = os.environ["MIGRATION_DATABASE_URL"]
+    assert_runner_database_url(database_url, allowed_roles=frozenset({"openslate_owner"}))
+    engine = create_engine(database_url, pool_size=2, max_overflow=0)
+    actor_id: UUID | None = None
+    session_id: UUID | None = None
+    baseline: Baseline | None = None
+    try:
+        actor_id, baseline = _configure_publishable_draft(engine)
+        with Session(engine) as setup:
+            session = IdentitySession(
+                user_id=actor_id,
+                refresh_token_digest=sha256(f"refresh-{uuid7()}".encode()).hexdigest(),
+                csrf_token_digest=sha256(f"csrf-{uuid7()}".encode()).hexdigest(),
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+            setup.add(session)
+            setup.commit()
+            session_id = session.id
+        prepared = _prepare(engine, actor_id, "rollback-before-replay")
+        preview_token, _claims = issue_preview_token(
+            actor_id=actor_id,
+            session_id=session_id,
+            document_revision=prepared.revision,
+            document_hash=prepared.document_hash,
+            impact_digest=prepared.impact_digest,
+            live_state_digest=prepared.live_state_digest,
+        )
+        with AuditSession(bind=engine) as db:
+            _set_audit_context(db, actor_id)
+            actor = db.get(User, actor_id)
+            assert actor is not None
+
+            class PasswordGrant:
+                def __init__(self, request_db: Session) -> None:
+                    self._db = request_db
+
+                def verify_password(self, _email: str, _password: str) -> UUID:
+                    self._db.commit()
+                    actual_commit = self._db.commit
+                    actual_rollback = self._db.rollback
+
+                    def failed_commit() -> None:
+                        raise IntegrityError("test commit conflict", {}, RuntimeError("conflict"))
+
+                    def revoke_after_rollback() -> None:
+                        self._db.commit = actual_commit
+                        self._db.rollback = actual_rollback
+                        actual_rollback()
+                        with Session(engine) as concurrent:
+                            current = concurrent.get(IdentitySession, session_id)
+                            assert current is not None
+                            current.revoked_at = utc_now()
+                            concurrent.commit()
+
+                    self._db.commit = failed_commit
+                    self._db.rollback = revoke_after_rollback
+                    return actor_id
+
+            monkeypatch.setattr(publication_router, "ProviderPasswordGrantClient", PasswordGrant)
+            payload = PublicationRequest(
+                expected_revision=prepared.revision,
+                preview_token=preview_token,
+                impact_digest=prepared.impact_digest,
+                password="verified by provider boundary",
+            )
+            with pytest.raises(HTTPException) as denied:
+                publication_router.post_publication(
+                    payload,
+                    CurrentIdentity(actor, session_id, False, False),
+                    db,
+                    f"rollback-before-replay-{uuid7()}",
+                )
+            assert denied.value.status_code == 403
+            db.rollback()
+        with Session(engine) as check:
+            assert (
+                check.scalar(
+                    select(SandboxPublication).where(SandboxPublication.actor_id == actor_id)
+                )
+                is None
+            )
+    finally:
+        if session_id is not None:
+            with Session(engine) as cleanup:
+                session = cleanup.get(IdentitySession, session_id)
+                if session is not None:
+                    cleanup.delete(session)
+                    cleanup.commit()
         if actor_id is not None and baseline is not None:
             _cleanup_committed_fixture(engine, actor_id, baseline)
         engine.dispose()

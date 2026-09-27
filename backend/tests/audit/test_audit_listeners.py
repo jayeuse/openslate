@@ -69,6 +69,8 @@ def test_create_listener_stages_and_writes_create_log() -> None:
     assert audit_log.before is None
     assert audit_log.after == {
         "email": "alice@example.com",
+        "supabase_user_id": None,
+        "provider_invitation_operation_id": None,
         "username": "alice",
         "display_name": None,
         "identity_kind": None,

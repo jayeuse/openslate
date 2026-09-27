@@ -263,7 +263,7 @@ export function AppPage({ children }: AppPageProps) {
           verifiedUserIdRef.current = null;
           setVerifiedUserId(null);
           setChecking(true);
-          router.replace("/auth/setup?temporary=1");
+          router.replace("/auth/setup");
           return;
         }
         if (result === "valid") {

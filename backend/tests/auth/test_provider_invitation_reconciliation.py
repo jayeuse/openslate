@@ -1,0 +1,444 @@
+"""A provider identity may bind only to an explicit pending local invitation."""
+
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+from sqlalchemy.orm import Session
+from uuid6 import uuid7
+
+import app.systems.access.users.service as service
+from app.core.integrations.supabase_auth import (
+    ProviderUser,
+    ProviderUserNotFound,
+    SupabaseAuthUnavailable,
+)
+from app.systems.access.users.coordination import InvitationError
+from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.schemas import InvitationCreate
+
+
+def test_reconciliation_requires_exact_provider_admin_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id, provider_id = uuid7(), uuid7(), uuid7(), uuid7()
+    profile = SimpleNamespace(
+        id=local_id,
+        email="person@example.test",
+        status=UserStatus.PENDING.value,
+        is_deleted=False,
+        provider_invitation_operation_id=operation_id,
+        supabase_user_id=None,
+        invitation_sent_at=None,
+    )
+    client = Mock()
+    client.find_invitation_user.return_value = ProviderUser(
+        provider_id, None, "person@example.test", {"openslate_user_id": "wrong"}
+    )
+    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
+    monkeypatch.setattr(service, "_lock_profile", lambda *_args: profile)
+    db.scalar.return_value = profile
+
+    with pytest.raises(InvitationError):
+        service.reconcile_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    assert profile.supabase_user_id is None
+    db.commit.assert_not_called()
+
+
+def test_reconciliation_binds_only_owned_provider_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id, provider_id = uuid7(), uuid7(), uuid7(), uuid7()
+    profile = SimpleNamespace(
+        id=local_id,
+        email="person@example.test",
+        status=UserStatus.PENDING.value,
+        is_deleted=False,
+        provider_invitation_operation_id=operation_id,
+        supabase_user_id=None,
+        invitation_sent_at=None,
+    )
+    client = Mock()
+    marker = {
+        "openslate_user_id": str(local_id),
+        "openslate_invitation_operation_id": str(operation_id),
+    }
+    client.find_invitation_user.return_value = ProviderUser(
+        provider_id, None, "person@example.test", marker
+    )
+    client.admin_send_invitation.return_value = ProviderUser(provider_id, None)
+    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
+    monkeypatch.setattr(service, "_lock_profile", lambda *_args: profile)
+    db.scalar.return_value = profile
+
+    result = service.reconcile_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    assert result is profile
+    assert profile.supabase_user_id == provider_id
+    assert profile.invitation_sent_at is not None
+    db.commit.assert_called_once()
+
+
+def test_invitation_persists_pending_profile_before_provider_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    actor_id, operation_id, provider_id = uuid7(), uuid7(), uuid7()
+    role = Role(role="admin", permissions={})
+    role.id = uuid7()
+    defaults = SimpleNamespace(
+        role=role,
+        guest_duration_days=14,
+        invitation_expiry_days=7,
+        department_ids=(),
+        group_ids=(),
+    )
+    payload = InvitationCreate(email="person@example.test", username="person")
+    events: list[str] = []
+    db.scalar.return_value = None
+    db.commit.side_effect = lambda: events.append("commit")
+
+    def assign_user_id() -> None:
+        for call in db.add.call_args_list:
+            if isinstance(call.args[0], User):
+                call.args[0].id = uuid7()
+                db.scalar.return_value = call.args[0]
+
+    db.flush.side_effect = assign_user_id
+    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
+    monkeypatch.setattr(service, "load_creation_defaults", lambda *_args: defaults)
+    monkeypatch.setattr(service, "validate_identity_profile", lambda *_args, **_kw: None)
+    monkeypatch.setattr(service, "resolve_department_memberships", lambda *_args: ())
+    monkeypatch.setattr(service, "append_security_event", lambda *_args: None)
+    monkeypatch.setattr(service, "_record_invitation_failure", lambda *_args: None)
+    monkeypatch.setattr(service, "uuid7", lambda: operation_id)
+
+    client = Mock()
+
+    def create(email: str, local_id: object, marker: object) -> ProviderUser:
+        events.append("create")
+        assert events[0] == "commit"
+        assert marker == operation_id
+        return ProviderUser(
+            provider_id,
+            None,
+            email,
+            {
+                "openslate_user_id": str(local_id),
+                "openslate_invitation_operation_id": str(marker),
+            },
+        )
+
+    def send(email: str) -> ProviderUser:
+        events.append("send")
+        return ProviderUser(provider_id, None, email)
+
+    client.admin_create_invitation_user.side_effect = create
+    client.admin_send_invitation.side_effect = send
+    user = service.invite_user(db, payload, actor_id=actor_id, client=client)
+
+    assert events == ["commit", "create", "send", "commit"]
+    assert user.supabase_user_id == provider_id
+    assert user.invitation_sent_at is not None
+
+
+def test_resend_rechecks_bound_provider_identity_before_mail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id, provider_id = uuid7(), uuid7(), uuid7(), uuid7()
+    profile = SimpleNamespace(
+        id=local_id,
+        email="person@example.test",
+        status=UserStatus.PENDING.value,
+        is_deleted=False,
+        provider_invitation_operation_id=operation_id,
+        supabase_user_id=provider_id,
+        invitation_sent_at=None,
+    )
+    client = Mock()
+    client.get_admin_user.return_value = ProviderUser(
+        provider_id, None, profile.email, {"openslate_user_id": "wrong"}
+    )
+    monkeypatch.setattr(service, "_security_event", lambda **_kw: None)
+    monkeypatch.setattr(service, "_record_invitation_failure", lambda *_args, **_kw: None)
+    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
+    monkeypatch.setattr(service, "_lock_profile", lambda *_args: profile)
+    db.scalar.return_value = profile
+
+    with pytest.raises(InvitationError):
+        service.resend_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    client.admin_send_invitation.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_resend_rejects_admin_response_with_a_different_bound_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id, bound_id, other_id = (
+        uuid7(), uuid7(), uuid7(), uuid7(), uuid7()
+    )
+    profile = SimpleNamespace(
+        id=local_id, email="person@example.test", status=UserStatus.PENDING.value,
+        is_deleted=False, provider_invitation_operation_id=operation_id,
+        supabase_user_id=bound_id, invitation_sent_at=None,
+    )
+    client = Mock()
+    client.get_admin_user.return_value = ProviderUser(
+        other_id, None, profile.email,
+        {
+            "openslate_user_id": str(local_id),
+            "openslate_invitation_operation_id": str(operation_id),
+        },
+    )
+    monkeypatch.setattr(service, "_security_event", lambda **_kw: None)
+    monkeypatch.setattr(service, "_record_invitation_failure", lambda *_args, **_kw: None)
+    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
+    monkeypatch.setattr(service, "_lock_profile", lambda *_args: profile)
+
+    with pytest.raises(InvitationError):
+        service.resend_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    assert profile.supabase_user_id == bound_id
+    client.admin_send_invitation.assert_not_called()
+    client.admin_delete_user.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_reconcile_creates_missing_provider_user_from_committed_pending_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id, provider_id = uuid7(), uuid7(), uuid7(), uuid7()
+    profile = SimpleNamespace(
+        id=local_id,
+        email="person@example.test",
+        status=UserStatus.PENDING.value,
+        is_deleted=False,
+        provider_invitation_operation_id=operation_id,
+        supabase_user_id=None,
+        invitation_sent_at=None,
+    )
+    marker = {
+        "openslate_user_id": str(local_id),
+        "openslate_invitation_operation_id": str(operation_id),
+    }
+    client = Mock()
+    client.find_invitation_user.return_value = None
+    client.admin_create_invitation_user.return_value = ProviderUser(
+        provider_id, None, profile.email, marker
+    )
+    client.admin_send_invitation.return_value = ProviderUser(provider_id, None)
+    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
+    monkeypatch.setattr(service, "_lock_profile", lambda *_args: profile)
+    db.scalar.return_value = profile
+
+    result = service.reconcile_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    assert result.supabase_user_id == provider_id
+    assert result.invitation_sent_at is not None
+    client.admin_create_invitation_user.assert_called_once_with(
+        profile.email, local_id, operation_id
+    )
+
+
+def test_bootstrap_reconcile_rejects_nonsole_pending_admin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    local_id, operation_id = uuid7(), uuid7()
+    profile = SimpleNamespace(
+        id=local_id,
+        email="admin@example.test",
+        status=UserStatus.PENDING.value,
+        is_deleted=False,
+        provider_invitation_operation_id=operation_id,
+        supabase_user_id=None,
+        invitation_sent_at=None,
+        role_id=uuid7(),
+    )
+    client = Mock()
+    monkeypatch.setattr(service, "_lock_profile", lambda *_args: profile)
+    db.scalar.return_value = profile
+    monkeypatch.setattr(
+        service, "_lock_admin_role", lambda *_args: SimpleNamespace(id=profile.role_id)
+    )
+    monkeypatch.setattr(service, "_other_non_deleted_assignment_exists", lambda *_args: True)
+
+    with pytest.raises(InvitationError):
+        service.reconcile_invitation(db, local_id, actor_id=None, bootstrap=True, client=client)
+
+    client.find_invitation_user.assert_not_called()
+
+
+def test_resend_replaces_owned_confirmed_identity_after_revoked_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id, old_id, new_id = (
+        uuid7(), uuid7(), uuid7(), uuid7(), uuid7()
+    )
+    profile = SimpleNamespace(
+        id=local_id, email="person@example.test", status=UserStatus.PENDING.value,
+        is_deleted=False, provider_invitation_operation_id=operation_id,
+        supabase_user_id=old_id, invitation_sent_at=None,
+    )
+    marker = {
+        "openslate_user_id": str(local_id),
+        "openslate_invitation_operation_id": str(operation_id),
+    }
+    confirmed = SimpleNamespace(
+        id=old_id, email=profile.email, app_metadata=marker,
+        email_confirmed_at=datetime.now(UTC),
+    )
+    replacement = ProviderUser(new_id, None, profile.email, marker)
+    client = Mock()
+    client.get_admin_user.return_value = confirmed
+    client.find_invitation_user.return_value = None
+    client.admin_create_invitation_user.return_value = replacement
+    client.admin_send_invitation.return_value = ProviderUser(new_id, None)
+    monkeypatch.setattr(service, "_security_event", lambda **_kw: None)
+    monkeypatch.setattr(service, "append_security_event", lambda *_args: None)
+    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
+    monkeypatch.setattr(service, "_lock_profile", lambda *_args: profile)
+    db.scalar.return_value = profile
+
+    result = service.resend_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    assert result.supabase_user_id == new_id
+    assert result.invitation_sent_at is not None
+    client.admin_delete_user.assert_called_once_with(old_id)
+    client.admin_create_invitation_user.assert_called_once_with(
+        profile.email, local_id, operation_id
+    )
+    db.commit.assert_called_once()
+
+
+def test_reconcile_resumes_replacement_after_old_identity_was_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id, old_id, replacement_id = (
+        uuid7(), uuid7(), uuid7(), uuid7(), uuid7()
+    )
+    profile = SimpleNamespace(
+        id=local_id, email="person@example.test", status=UserStatus.PENDING.value,
+        is_deleted=False, provider_invitation_operation_id=operation_id,
+        supabase_user_id=old_id, invitation_sent_at=None,
+    )
+    marker = {
+        "openslate_user_id": str(local_id),
+        "openslate_invitation_operation_id": str(operation_id),
+    }
+    client = Mock()
+    client.get_admin_user.side_effect = ProviderUserNotFound()
+    client.find_invitation_user.return_value = ProviderUser(
+        replacement_id, None, profile.email, marker
+    )
+    client.admin_send_invitation.return_value = ProviderUser(replacement_id, None)
+    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
+    monkeypatch.setattr(service, "_lock_profile", lambda *_args: profile)
+    db.scalar.return_value = profile
+
+    result = service.reconcile_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    assert result.supabase_user_id == replacement_id
+    assert result.invitation_sent_at is not None
+    client.admin_delete_user.assert_not_called()
+    client.admin_create_invitation_user.assert_not_called()
+    db.commit.assert_called_once()
+
+
+def test_resend_preserves_binding_when_provider_lookup_is_not_authoritative(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id, old_id = uuid7(), uuid7(), uuid7(), uuid7()
+    profile = SimpleNamespace(
+        id=local_id, email="person@example.test", status=UserStatus.PENDING.value,
+        is_deleted=False, provider_invitation_operation_id=operation_id,
+        supabase_user_id=old_id, invitation_sent_at=None,
+    )
+    client = Mock()
+    client.get_admin_user.side_effect = SupabaseAuthUnavailable("provider denied")
+    monkeypatch.setattr(service, "_security_event", lambda **_kw: None)
+    monkeypatch.setattr(service, "_record_invitation_failure", lambda *_args, **_kw: None)
+    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
+    monkeypatch.setattr(service, "_lock_profile", lambda *_args: profile)
+
+    with pytest.raises(InvitationError):
+        service.resend_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    assert profile.supabase_user_id == old_id
+    client.admin_delete_user.assert_not_called()
+    client.admin_create_invitation_user.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_reconcile_does_not_delete_identity_with_recorded_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id, bound_id = uuid7(), uuid7(), uuid7(), uuid7()
+    profile = SimpleNamespace(
+        id=local_id, email="person@example.test", status=UserStatus.PENDING.value,
+        is_deleted=False, provider_invitation_operation_id=operation_id,
+        supabase_user_id=bound_id, invitation_sent_at=None,
+        invitation_accepted_at=datetime.now(UTC),
+    )
+    client = Mock()
+    client.get_admin_user.return_value = ProviderUser(
+        bound_id, None, profile.email,
+        {
+            "openslate_user_id": str(local_id),
+            "openslate_invitation_operation_id": str(operation_id),
+        },
+        datetime.now(UTC),
+    )
+    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
+    monkeypatch.setattr(service, "_lock_profile", lambda *_args: profile)
+
+    with pytest.raises(InvitationError):
+        service.reconcile_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    client.get_admin_user.assert_not_called()
+    client.admin_delete_user.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_reconcile_never_rebinds_deleted_old_identity_from_stale_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id, old_id, replacement_id = (
+        uuid7(), uuid7(), uuid7(), uuid7(), uuid7()
+    )
+    profile = SimpleNamespace(
+        id=local_id, email="person@example.test", status=UserStatus.PENDING.value,
+        is_deleted=False, provider_invitation_operation_id=operation_id,
+        supabase_user_id=old_id, invitation_sent_at=None,
+    )
+    marker = {
+        "openslate_user_id": str(local_id),
+        "openslate_invitation_operation_id": str(operation_id),
+    }
+    client = Mock()
+    client.get_admin_user.side_effect = ProviderUserNotFound()
+    client.find_invitation_user.side_effect = [
+        ProviderUser(replacement_id, None, profile.email, marker, datetime.now(UTC)),
+        ProviderUser(old_id, None, profile.email, marker),
+    ]
+    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
+    monkeypatch.setattr(service, "_lock_profile", lambda *_args: profile)
+
+    with pytest.raises(InvitationError):
+        service.reconcile_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    assert profile.supabase_user_id == old_id
+    client.admin_delete_user.assert_called_once_with(replacement_id)
+    client.admin_send_invitation.assert_not_called()
+    db.commit.assert_not_called()

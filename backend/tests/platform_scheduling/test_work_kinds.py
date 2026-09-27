@@ -1,8 +1,6 @@
 """Report and announcement work share storage without sharing claim authority."""
 
-import subprocess
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
 
 import pytest
 from sqlalchemy import select, text
@@ -26,8 +24,6 @@ from app.systems.platform.scheduling.service import (
 )
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
-from tests.conftest import guarded_create_engine
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
 pytestmark = pytest.mark.integration
 NOW = datetime(2026, 9, 24, 10, tzinfo=UTC)
@@ -232,133 +228,12 @@ def test_typed_work_constraints_fks_and_runtime_privileges_are_installed(integra
         assert connection.scalar(
             text("SELECT has_table_privilege('openslate_runtime', 'scheduled_work', :privilege)"),
             {"privilege": privilege},
-        )
-        assert connection.scalar(
-            text("SELECT has_table_privilege('openslate_inspector', 'scheduled_work', :privilege)"),
-            {"privilege": privilege},
-        ) is (privilege == "SELECT")
-
-
-def test_typed_work_migration_preserves_a_legacy_report_occurrence():
-    environment = guarded_migration_environment()
-    engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
-    actor_id, department_id, module_id, report_id, work_id = (uuid7() for _ in range(5))
-    board_id, announcement_id, publication_work_id = (uuid7() for _ in range(3))
-    try:
-        run_alembic(environment, "downgrade", "e84debb45901")
-        with engine.begin() as connection:
-            role_id = connection.scalar(text("SELECT id FROM roles WHERE role = 'member'"))
-            assert isinstance(role_id, UUID)
-            connection.execute(
-                text(
-                    "INSERT INTO users (id, email, username, status, role_id) "
-                    "VALUES (:id, :email, :username, 'active', :role_id)"
-                ),
-                {
-                    "id": actor_id,
-                    "email": f"legacy-work-{actor_id.hex}@example.test",
-                    "username": f"legacy_work_{actor_id.hex[:10]}",
-                    "role_id": role_id,
-                },
-            )
-            connection.execute(
-                text("INSERT INTO departments (id, department_name) VALUES (:id, :name)"),
-                {"id": department_id, "name": "Legacy work department"},
-            )
-            connection.execute(
-                text(
-                    "INSERT INTO modules (id, department_id, module_name, is_schema_accepted) "
-                    "VALUES (:id, :department_id, :name, true)"
-                ),
-                {"id": module_id, "department_id": department_id, "name": "Legacy work module"},
-            )
-            connection.execute(
-                text(
-                    "INSERT INTO reports (id, owner_id, module_id, name, recipe) "
-                    "VALUES (:id, :owner_id, :module_id, 'Legacy', CAST(:recipe AS jsonb))"
-                ),
-                {"id": report_id, "owner_id": actor_id, "module_id": module_id, "recipe": "{}"},
-            )
-            connection.execute(
-                text(
-                    "INSERT INTO scheduled_work "
-                    "(id, kind, report_id, scheduled_for, next_attempt_at, state, "
-                    "attempt_count, created_at, updated_at) "
-                    "VALUES (:id, 'report-run', :report_id, :instant, :instant, "
-                    "'pending', 0, :instant, :instant)"
-                ),
-                {"id": work_id, "report_id": report_id, "instant": NOW},
-            )
-        run_alembic(environment, "upgrade", "head")
-        with engine.connect() as connection:
-            head_before_failed_downgrade = connection.scalar(
-                text("SELECT version_num FROM alembic_version")
-            )
-            assert isinstance(head_before_failed_downgrade, str)
-            row = connection.execute(
-                text(
-                    "SELECT kind, report_id, announcement_id, source_revision, "
-                    "scheduling_actor_id, publication_result_id "
-                    "FROM scheduled_work WHERE id = :id"
-                ),
-                {"id": work_id},
-            ).one()
-            assert row == ("report-run", report_id, None, None, None, None)
-        with engine.begin() as connection:
-            connection.execute(
-                text("INSERT INTO boards (id, owner_id, name) VALUES (:id, :owner_id, 'Board')"),
-                {"id": board_id, "owner_id": actor_id},
-            )
-            connection.execute(
-                text(
-                    "INSERT INTO board_announcements "
-                    "(id, board_id, author_id, title, body, status, publish_at, audience_kind) "
-                    "VALUES (:id, :board_id, :author_id, 'Draft', 'Body', 'scheduled', "
-                    ":publish_at, 'author')"
-                ),
-                {
-                    "id": announcement_id,
-                    "board_id": board_id,
-                    "author_id": actor_id,
-                    "publish_at": NOW,
-                },
-            )
-            connection.execute(
-                text(
-                    "INSERT INTO scheduled_work "
-                    "(id, kind, announcement_id, source_revision, scheduling_actor_id, "
-                    "scheduled_for, next_attempt_at, state, attempt_count, created_at, updated_at) "
-                    "VALUES (:id, 'announcement-publish', :announcement_id, 1, :actor_id, "
-                    ":instant, :instant, 'pending', 0, :instant, :instant)"
-                ),
-                {
-                    "id": publication_work_id,
-                    "announcement_id": announcement_id,
-                    "actor_id": actor_id,
-                    "instant": NOW,
-                },
-            )
-        with pytest.raises(subprocess.CalledProcessError):
-            run_alembic(environment, "downgrade", "e84debb45901")
-        with engine.connect() as connection:
+        ) is True
+        for role in ("anon", "authenticated", "service_role"):
             assert (
-                connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == head_before_failed_downgrade
+                connection.scalar(
+                    text("SELECT has_table_privilege(:role, 'scheduled_work', :privilege)"),
+                    {"role": role, "privilege": privilege},
+                )
+                is False
             )
-    finally:
-        try:
-            run_alembic(environment, "upgrade", "head")
-            with engine.begin() as connection:
-                for table, row_id in (
-                    ("scheduled_work", publication_work_id),
-                    ("scheduled_work", work_id),
-                    ("board_announcements", announcement_id),
-                    ("boards", board_id),
-                    ("reports", report_id),
-                    ("modules", module_id),
-                    ("departments", department_id),
-                    ("users", actor_id),
-                ):
-                    connection.execute(text(f"DELETE FROM {table} WHERE id = :id"), {"id": row_id})
-        finally:
-            engine.dispose()

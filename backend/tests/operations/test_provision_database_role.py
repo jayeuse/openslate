@@ -7,10 +7,6 @@ from operations import provision_database_role as provisioner
 BOOTSTRAP_URL = "postgresql://postgres:bootstrap@127.0.0.1:55322/openslate"
 OWNER_URL = "postgresql+psycopg://openslate_owner:owner@127.0.0.1:55322/openslate"
 RUNTIME_URL = "postgresql+psycopg://openslate_runtime:runtime@127.0.0.1:55322/openslate"
-INSPECTOR_URL = (
-    "postgresql+psycopg://openslate_inspector:inspector@127.0.0.1:55322/openslate"
-)
-
 
 def _database() -> tuple[MagicMock, MagicMock]:
     connection = MagicMock()
@@ -21,13 +17,12 @@ def _database() -> tuple[MagicMock, MagicMock]:
         (False,),
         (False,),
         (False,),
-        (False,),
         (True, False, False, False, False, False, False),
         (False, False, False, False, False, False, False),
         (True, True, False, False, False, False, False),
-        (True, False, False, False, False, False, False),
         (False, True, False),
-        (provisioner.OWNER_ROLE, False),
+        None,  # No application-owned Auth liveness policy on first provisioning.
+        (True, True, True),
     ]
     cursor.fetchall.side_effect = [
         [("inherit_option",), ("set_option",)],
@@ -47,7 +42,7 @@ def test_provision_creates_safe_owner_app_and_runtime_roles(
     connect = MagicMock(return_value=connection)
     monkeypatch.setattr(provisioner, "connect", connect)
 
-    provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL, INSPECTOR_URL)
+    provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL)
 
     connect.assert_called_once_with(BOOTSTRAP_URL)
     statements = _statements(cursor)
@@ -55,15 +50,17 @@ def test_provision_creates_safe_owner_app_and_runtime_roles(
         provisioner.OWNER_ROLE,
         provisioner.PRIVILEGE_ROLE,
         provisioner.RUNTIME_ROLE,
-        provisioner.INSPECTOR_ROLE,
     ):
         assert role in statements
-    assert "alter database" in statements
-    assert "revoke all on database" in statements
+    assert "alter database" not in statements
+    assert "revoke all on database" not in statements
     assert "grant connect on database" in statements
+    assert "grant usage, create on schema public" in statements
+    assert "grant select (id, user_id) on auth.sessions" in statements
     assert "with inherit true, set false" in statements
-    assert "grant select on all tables in schema" in statements
-    assert "alter default privileges" in statements
+    assert "grant select on all tables in schema" not in statements
+    assert "alter default privileges" not in statements
+    assert "openslate_inspector" not in statements
 
 
 def test_provision_rotates_existing_managed_login_role_passwords_after_validation(
@@ -74,21 +71,20 @@ def test_provision_rotates_existing_managed_login_role_passwords_after_validatio
         (True,),
         (True,),
         (True,),
-        (True,),
         (True, False, False, False, False, False, False),
         (False, False, False, False, False, False, False),
         (True, True, False, False, False, False, False),
-        (True, False, False, False, False, False, False),
         (False, True, False),
-        (provisioner.OWNER_ROLE, False),
+        None,  # No application-owned Auth liveness policy on first provisioning.
+        (True, True, True),
     ]
     monkeypatch.setattr(provisioner, "connect", MagicMock(return_value=connection))
 
-    provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL, INSPECTOR_URL)
+    provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL)
 
     statements = _statements(cursor)
     assert "alter role" in statements
-    assert statements.count("password") == 3
+    assert statements.count("password") == 2
 
 
 @pytest.mark.parametrize(
@@ -106,7 +102,7 @@ def test_provision_rejects_mismatched_or_non_admin_bootstrap_urls(
     monkeypatch.setattr(provisioner, "connect", connect)
 
     with pytest.raises(SystemExit):
-        provisioner.provision(bootstrap, owner, runtime, INSPECTOR_URL)
+        provisioner.provision(bootstrap, owner, runtime)
 
     connect.assert_not_called()
 
@@ -119,7 +115,6 @@ def test_provision_fails_closed_for_existing_unsafe_runtime_role(
         (True,),
         (False,),
         (False,),
-        (False,),
         (True, False, False, False, False, False, False),
         (False, False, False, False, False, False, False),
         (True, True, False, False, False, False, True),
@@ -127,7 +122,7 @@ def test_provision_fails_closed_for_existing_unsafe_runtime_role(
     monkeypatch.setattr(provisioner, "connect", MagicMock(return_value=connection))
 
     with pytest.raises(RuntimeError, match="openslate_runtime role has unsafe attributes"):
-        provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL, INSPECTOR_URL)
+        provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL)
 
     assert "alter database" not in _statements(cursor)
 
@@ -146,6 +141,31 @@ def test_provision_rejects_runtime_membership_in_owner_role(
     monkeypatch.setattr(provisioner, "connect", MagicMock(return_value=connection))
 
     with pytest.raises(RuntimeError, match="unsafe membership"):
-        provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL, INSPECTOR_URL)
+        provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL)
 
     assert "alter database" not in _statements(cursor)
+
+
+@pytest.mark.parametrize(
+    ("creator", "inherit", "set_role", "accepted"),
+    [("postgres", False, False, True), ("other", False, False, False),
+     ("postgres", True, False, False), ("postgres", False, True, False)],
+)
+def test_provision_admits_only_bootstrap_non_inheriting_creator_grants(
+    monkeypatch: pytest.MonkeyPatch, creator: str, inherit: bool,
+    set_role: bool, accepted: bool,
+) -> None:
+    connection, cursor = _database()
+    cursor.fetchall.side_effect = [
+        [("inherit_option",), ("set_option",)],
+        [(provisioner.RUNTIME_ROLE, provisioner.PRIVILEGE_ROLE, False, True, False)]
+        + [(creator, role, True, inherit, set_role) for role in (
+            provisioner.OWNER_ROLE, provisioner.PRIVILEGE_ROLE, provisioner.RUNTIME_ROLE,
+        )],
+    ]
+    monkeypatch.setattr(provisioner, "connect", MagicMock(return_value=connection))
+    if accepted:
+        provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL)
+    else:
+        with pytest.raises(RuntimeError, match="unsafe membership"):
+            provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL)

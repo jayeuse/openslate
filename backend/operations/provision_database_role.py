@@ -25,7 +25,6 @@ from app.core.config.instance import (
 OWNER_ROLE = "openslate_owner"
 PRIVILEGE_ROLE = "openslate_app"
 RUNTIME_ROLE = "openslate_runtime"
-INSPECTOR_ROLE = "openslate_inspector"
 LOCAL_ENVIRONMENTS = frozenset({"development", "dev", "local", "test"})
 MEMBERSHIP_OPTION_COLUMNS = frozenset({"inherit_option", "set_option"})
 
@@ -68,7 +67,7 @@ def _assert_same_database(bootstrap: URL, owner: URL, *connections: URL) -> str:
     endpoint = (bootstrap.host, bootstrap.port)
     if any((url.host, url.port) != endpoint for url in values[1:]):
         raise SystemExit("OpenSlate database URLs must use one endpoint")
-    if bootstrap.username in {OWNER_ROLE, RUNTIME_ROLE, INSPECTOR_ROLE}:
+    if bootstrap.username in {OWNER_ROLE, RUNTIME_ROLE}:
         raise SystemExit("DATABASE_BOOTSTRAP_URL must use a distinct cluster-admin login")
     return database
 
@@ -148,7 +147,9 @@ def _validate_runtime_membership(cursor: object, *, options_supported: bool) -> 
         raise RuntimeError("Runtime role has unsafe application-role membership")
 
 
-def _validate_managed_role_memberships(cursor: object, *, options_supported: bool) -> None:
+def _validate_managed_role_memberships(
+    cursor: object, *, options_supported: bool, bootstrap_role: str | None,
+) -> None:
     columns = (
         "member_role.rolname, granted_role.rolname, membership.admin_option, "
         "membership.inherit_option, membership.set_option"
@@ -161,19 +162,17 @@ def _validate_managed_role_memberships(cursor: object, *, options_supported: boo
           FROM pg_catalog.pg_auth_members AS membership
           JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
           JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
-         WHERE member_role.rolname IN (%s, %s, %s, %s)
-            OR granted_role.rolname IN (%s, %s, %s, %s)
+         WHERE member_role.rolname IN (%s, %s, %s)
+            OR granted_role.rolname IN (%s, %s, %s)
          ORDER BY member_role.rolname, granted_role.rolname
         """,
         (
             OWNER_ROLE,
             PRIVILEGE_ROLE,
             RUNTIME_ROLE,
-            INSPECTOR_ROLE,
             OWNER_ROLE,
             PRIVILEGE_ROLE,
             RUNTIME_ROLE,
-            INSPECTOR_ROLE,
         ),
     )
     expected = (
@@ -181,41 +180,58 @@ def _validate_managed_role_memberships(cursor: object, *, options_supported: boo
         if options_supported
         else [(RUNTIME_ROLE, PRIVILEGE_ROLE, False)]
     )
-    if cursor.fetchall() != expected:  # type: ignore[attr-defined]
+    memberships = cursor.fetchall()  # type: ignore[attr-defined]
+    # PostgreSQL grants a non-superuser CREATEROLE creator administrative
+    # membership with neither inheritance nor SET ROLE. Admit only that exact
+    # administrative relationship for the explicitly selected bootstrap login.
+    creator_grants = {
+        (bootstrap_role, role, True, False, False)
+        for role in (OWNER_ROLE, PRIVILEGE_ROLE, RUNTIME_ROLE)
+    } if options_supported else set()
+    remaining = [row for row in memberships if tuple(row) not in creator_grants]
+    if remaining != expected:
         raise RuntimeError("Managed PostgreSQL roles have unsafe membership")
+
+
+def _provision_session_liveness_policy(cursor: object) -> None:
+    """Expose only column-granted Auth session metadata to the backend role."""
+    cursor.execute(  # type: ignore[attr-defined]
+        """
+        SELECT polcmd, polpermissive,
+               polroles = ARRAY['openslate_app'::regrole::oid],
+               pg_get_expr(polqual, polrelid), polwithcheck IS NULL
+          FROM pg_catalog.pg_policy
+         WHERE polrelid = 'auth.sessions'::regclass
+           AND polname = 'openslate_session_liveness'
+        """
+    )
+    existing = cursor.fetchone()  # type: ignore[attr-defined]
+    if existing is None:
+        cursor.execute(  # type: ignore[attr-defined]
+            "CREATE POLICY openslate_session_liveness ON auth.sessions "
+            "FOR SELECT TO openslate_app USING (true)"
+        )
+    elif existing != ("r", True, True, "true", True):
+        raise RuntimeError("Existing OpenSlate provider session policy is unsafe")
 
 
 def provision(
     bootstrap_url: str,
     migration_url: str,
     runtime_url: str,
-    inspector_url: str | None = None,
     *,
     instance_target: InstanceTarget | None = None,
 ) -> None:
     bootstrap = _postgres_url(bootstrap_url, name="DATABASE_BOOTSTRAP_URL")
     owner = _postgres_url(migration_url, name="MIGRATION_DATABASE_URL")
     runtime = _postgres_url(runtime_url, name="DATABASE_URL")
-    inspector = (
-        _postgres_url(inspector_url, name="DATABASE_INSPECTOR_URL") if inspector_url else None
-    )
     owner_password = _password(owner, name="MIGRATION_DATABASE_URL", role=OWNER_ROLE)
     runtime_password = _password(runtime, name="DATABASE_URL", role=RUNTIME_ROLE)
-    inspector_password = (
-        _password(inspector, name="DATABASE_INSPECTOR_URL", role=INSPECTOR_ROLE)
-        if inspector is not None
-        else None
-    )
-    database = _assert_same_database(
-        bootstrap, owner, runtime, *([inspector] if inspector is not None else [])
-    )
+    database = _assert_same_database(bootstrap, owner, runtime)
     if instance_target is not None:
         assert_database_url(bootstrap_url, instance_target, expected_user=None)
         assert_database_url(migration_url, instance_target, expected_user=OWNER_ROLE)
         assert_database_url(runtime_url, instance_target, expected_user=RUNTIME_ROLE)
-        if inspector_url is not None:
-            assert_database_url(inspector_url, instance_target, expected_user=INSPECTOR_ROLE)
-
     with connect(_psycopg_url(bootstrap)) as connection:
         if instance_target is not None:
             assert_psycopg_target(connection, instance_target, expected_user=bootstrap.username)
@@ -237,13 +253,6 @@ def provision(
                 "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
                 runtime_password,
             )
-            if inspector_password is not None:
-                _create_role(
-                    cursor,
-                    INSPECTOR_ROLE,
-                    "LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
-                    inspector_password,
-                )
             _safe_role_attributes(
                 cursor, OWNER_ROLE, (True, False, False, False, False, False, False)
             )
@@ -253,15 +262,8 @@ def provision(
             _safe_role_attributes(
                 cursor, RUNTIME_ROLE, (True, True, False, False, False, False, False)
             )
-            if inspector_password is not None:
-                _safe_role_attributes(
-                    cursor, INSPECTOR_ROLE, (True, False, False, False, False, False, False)
-                )
             _rotate_password(cursor, OWNER_ROLE, owner_password)
             _rotate_password(cursor, RUNTIME_ROLE, runtime_password)
-            if inspector_password is not None:
-                _rotate_password(cursor, INSPECTOR_ROLE, inspector_password)
-
             options_supported = bool(_membership_columns(cursor))
             grant = sql.SQL("GRANT {} TO {}").format(
                 sql.Identifier(PRIVILEGE_ROLE), sql.Identifier(RUNTIME_ROLE)
@@ -270,74 +272,56 @@ def provision(
                 grant += sql.SQL(" WITH INHERIT TRUE, SET FALSE")
             cursor.execute(grant)
             _validate_runtime_membership(cursor, options_supported=options_supported)
-            _validate_managed_role_memberships(cursor, options_supported=options_supported)
+            _validate_managed_role_memberships(
+                cursor, options_supported=options_supported, bootstrap_role=bootstrap.username,
+            )
 
+            # Supabase owns the database and provider schemas. Grant only the
+            # application owner's schema creation and runtime connection rights.
             cursor.execute(
-                sql.SQL("ALTER DATABASE {} OWNER TO {}").format(
-                    sql.Identifier(database), sql.Identifier(OWNER_ROLE)
+                sql.SQL("GRANT CONNECT ON DATABASE {} TO {}, {}").format(
+                    sql.Identifier(database), sql.Identifier(OWNER_ROLE),
+                    sql.Identifier(RUNTIME_ROLE),
                 )
             )
             cursor.execute(
-                sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(sql.Identifier(database))
+                sql.SQL("GRANT USAGE, CREATE ON SCHEMA public TO {}").format(
+                    sql.Identifier(OWNER_ROLE)
+                )
             )
             cursor.execute(
-                sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
-                    sql.Identifier(database), sql.Identifier(RUNTIME_ROLE)
+                sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(
+                    sql.Identifier(PRIVILEGE_ROLE)
                 )
             )
-            if inspector_password is not None:
-                cursor.execute(
-                    sql.SQL("REVOKE ALL ON DATABASE {} FROM {}").format(
-                        sql.Identifier(database), sql.Identifier(INSPECTOR_ROLE)
-                    )
+            cursor.execute(
+                sql.SQL("GRANT USAGE ON SCHEMA auth TO {}").format(
+                    sql.Identifier(PRIVILEGE_ROLE)
                 )
-                cursor.execute(
-                    sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
-                        sql.Identifier(database), sql.Identifier(INSPECTOR_ROLE)
-                    )
+            )
+            cursor.execute(
+                sql.SQL("GRANT SELECT (id, user_id) ON auth.sessions TO {}").format(
+                    sql.Identifier(PRIVILEGE_ROLE)
                 )
-                cursor.execute(
-                    sql.SQL("REVOKE ALL ON SCHEMA public FROM {}").format(
-                        sql.Identifier(INSPECTOR_ROLE)
-                    )
-                )
-                cursor.execute(
-                    sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(
-                        sql.Identifier(INSPECTOR_ROLE)
-                    )
-                )
-                cursor.execute(
-                    sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {}").format(
-                        sql.Identifier(INSPECTOR_ROLE)
-                    )
-                )
-                cursor.execute(
-                    sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA public TO {}").format(
-                        sql.Identifier(INSPECTOR_ROLE)
-                    )
-                )
-                cursor.execute(
-                    sql.SQL(
-                        "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
-                        "REVOKE ALL ON TABLES FROM {}"
-                    ).format(sql.Identifier(OWNER_ROLE), sql.Identifier(INSPECTOR_ROLE))
-                )
-                cursor.execute(
-                    sql.SQL(
-                        "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
-                        "GRANT SELECT ON TABLES TO {}"
-                    ).format(sql.Identifier(OWNER_ROLE), sql.Identifier(INSPECTOR_ROLE))
-                )
+            )
+            _provision_session_liveness_policy(cursor)
             cursor.execute(
                 """
-                SELECT datdba::regrole::text,
-                       has_database_privilege('public', current_database(), 'CONNECT')
-                  FROM pg_catalog.pg_database
-                 WHERE datname = current_database()
+                SELECT has_schema_privilege('openslate_owner', 'public', 'CREATE'),
+                       has_database_privilege('openslate_runtime', current_database(), 'CONNECT'),
+                       has_schema_privilege('openslate_runtime', 'auth', 'USAGE')
+                       AND has_column_privilege('openslate_runtime','auth.sessions','id','SELECT')
+                       AND has_column_privilege(
+                           'openslate_runtime','auth.sessions','user_id','SELECT')
+                       AND NOT has_table_privilege('openslate_runtime','auth.sessions','SELECT')
+                       AND NOT has_table_privilege(
+                           'openslate_runtime','auth.sessions','INSERT,UPDATE,DELETE')
+                       AND NOT has_table_privilege(
+                           'openslate_runtime','auth.users','SELECT,INSERT,UPDATE,DELETE')
                 """
             )
-            if cursor.fetchone() != (OWNER_ROLE, False):
-                raise RuntimeError("Database ownership or PUBLIC privileges are unsafe")
+            if cursor.fetchone() != (True, True, True):
+                raise RuntimeError("Application database privileges are incomplete")
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -353,8 +337,6 @@ def main(argv: Sequence[str] | None = None) -> None:
             (settings.migration_database_url, OWNER_ROLE),
             (settings.database_url, RUNTIME_ROLE),
         ]
-        if settings.database_inspector_url is not None:
-            urls.append((settings.database_inspector_url, INSPECTOR_ROLE))
         if any(
             expected_user is None
             or not test_manifest_authorizes_process(url, expected_user)
@@ -369,7 +351,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         settings.database_bootstrap_url,
         settings.migration_database_url,
         settings.database_url,
-        settings.database_inspector_url,
         instance_target=target,
     )
     print("Provisioned OpenSlate PostgreSQL roles")

@@ -299,15 +299,21 @@ def test_unavailable_report_or_owner_disables_policy_without_enqueuing(
 
 
 @pytest.mark.integration
-def test_report_schedule_table_keeps_runtime_write_and_inspector_read_only(integration_owner_db):
+def test_report_schedule_table_grants_runtime_access_and_blocks_provider_roles(
+    integration_owner_db,
+):
     connection = integration_owner_db.connection()
     statement = text("SELECT has_table_privilege(:role, 'public.report_schedules', :privilege)")
     for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert connection.scalar(
             statement,
             {"role": "openslate_runtime", "privilege": privilege},
-        )
-        assert connection.scalar(
-            statement,
-            {"role": "openslate_inspector", "privilege": privilege},
-        ) is (privilege == "SELECT")
+        ) is True
+        for role in ("anon", "authenticated", "service_role"):
+            assert (
+                connection.scalar(
+                    statement,
+                    {"role": role, "privilege": privilege},
+                )
+                is False
+            )

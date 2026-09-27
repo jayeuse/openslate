@@ -1,4 +1,4 @@
-"""Catalog and privilege contract for the disposable vanilla PostgreSQL baseline."""
+"""Catalog and privilege contract for the disposable self-hosted Supabase baseline."""
 
 import os
 import select
@@ -13,13 +13,16 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
+from app.core.integrations.supabase_auth import get_supabase_auth_client
+from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.models import IdentityRateLimitBucket
+from app.systems.access.identity.provider_login import login_with_provider
 from app.systems.access.identity.rate_limits import login_fingerprint
-from app.systems.access.identity.service import InvalidCredentials, authenticate_password
 from app.systems.access.users.models import Role, User, UserStatus
 from app.systems.platform.files.models import File
-from tests.conftest import _guard_integration_database, guarded_create_engine
+from tests.conftest import guarded_create_engine
 from tests.operations import migration_support
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
@@ -29,7 +32,7 @@ def _catalog(db, statement: str):
 
 
 @pytest.mark.integration
-def test_baseline_has_one_head_and_local_identity_file_catalog(integration_owner_db) -> None:
+def test_baseline_has_one_head_and_provider_identity_file_catalog(integration_owner_db) -> None:
     config = Config("alembic.ini")
     heads = ScriptDirectory.from_config(config).get_heads()
     assert len(heads) == 1
@@ -45,12 +48,13 @@ def test_baseline_has_one_head_and_local_identity_file_catalog(integration_owner
     )
     assert {
         "users",
-        "identity_credentials",
         "identity_sessions",
-        "identity_delivery_outbox",
         "files",
     } <= tables
     assert "alembic_version" in tables
+    assert (
+        not {"identity_credentials", "identity_action_tokens", "identity_delivery_outbox"} & tables
+    )
     assert _catalog(
         integration_owner_db, "SELECT role FROM public.roles ORDER BY role"
     ).scalars().all() == ["admin", "member"]
@@ -61,7 +65,7 @@ def test_baseline_has_one_head_and_local_identity_file_catalog(integration_owner
 
 
 @pytest.mark.integration
-def test_baseline_uses_owner_app_runtime_roles_without_public_or_rls(integration_owner_db) -> None:
+def test_baseline_isolates_application_roles_from_provider_ownership(integration_owner_db) -> None:
     roles = dict(
         _catalog(
             integration_owner_db,
@@ -77,15 +81,14 @@ def test_baseline_uses_owner_app_runtime_roles_without_public_or_rls(integration
         "openslate_app": "(f,f,f,f)",
         "openslate_runtime": "(t,t,f,f)",
     }
-    owner, public_connect = _catalog(
+    owner = _catalog(
         integration_owner_db,
         """
-        SELECT datdba::regrole::text,
-               has_database_privilege('public', current_database(), 'CONNECT')
+        SELECT datdba::regrole::text
           FROM pg_catalog.pg_database WHERE datname = current_database()
         """,
-    ).one()
-    assert (owner, public_connect) == ("openslate_owner", False)
+    ).scalar()
+    assert owner in {"postgres", "supabase_admin"}
     audit_privileges = _catalog(
         integration_owner_db,
         """
@@ -112,12 +115,11 @@ def test_baseline_uses_owner_app_runtime_roles_without_public_or_rls(integration
         """,
     ).scalar()
     assert default_function_acl == 1
-    assert _catalog(integration_owner_db, "SELECT count(*) FROM pg_catalog.pg_policy").scalar() == 0
     assert (
         _catalog(
             integration_owner_db,
             "SELECT count(*) FROM pg_catalog.pg_class WHERE relnamespace = 'public'::regnamespace "
-            "AND relkind = 'r' AND relrowsecurity",
+            "AND relkind = 'r' AND relrowsecurity AND relowner = 'openslate_owner'::regrole",
         ).scalar()
         == 0
     )
@@ -127,7 +129,7 @@ def test_baseline_uses_owner_app_runtime_roles_without_public_or_rls(integration
             "SELECT count(*) FROM pg_catalog.pg_namespace "
             "WHERE nspname IN ('auth', 'storage', 'realtime')",
         ).scalar()
-        == 0
+        == 3
     )
     assert (
         _catalog(
@@ -147,25 +149,34 @@ def test_runtime_can_use_application_tables_but_cannot_change_schema(integration
 
 
 @pytest.mark.integration
-def test_inspector_can_read_application_tables_but_cannot_mutate_them() -> None:
-    database_url = os.getenv("TEST_INSPECTOR_DATABASE_URL", "")
-    if not database_url:
-        pytest.skip("Set TEST_INSPECTOR_DATABASE_URL to run PostgreSQL integration tests")
-    _guard_integration_database(database_url)
-    psycopg_url = database_url.replace("postgresql+psycopg", "postgresql")
-    with psycopg.connect(psycopg_url, autocommit=True) as inspector:
-        assert inspector.execute("SELECT current_user").fetchone() == ("openslate_inspector",)
-        assert inspector.execute("SELECT count(*) FROM public.roles").fetchone() == (2,)
-        privileges = inspector.execute(
-            """
-            SELECT has_schema_privilege(current_user, 'public', 'CREATE'),
-                   has_table_privilege(current_user, 'public.roles', 'SELECT'),
-                   has_table_privilege(current_user, 'public.roles', 'INSERT,UPDATE,DELETE')
-            """
-        ).fetchone()
-        assert privileges == (False, True, False)
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            inspector.execute("DELETE FROM public.roles WHERE false")
+def test_provider_api_roles_cannot_read_or_mutate_application_tables(
+    integration_owner_db,
+    integration_db,
+) -> None:
+    exposed = _catalog(
+        integration_owner_db,
+        """
+        SELECT role_name, relation.relname
+          FROM pg_catalog.pg_class AS relation
+          CROSS JOIN unnest(ARRAY['anon','authenticated','service_role']) AS role_name
+         WHERE relation.relnamespace = 'public'::regnamespace
+           AND relation.relowner = 'openslate_owner'::regrole
+           AND relation.relkind IN ('r', 'p')
+           AND has_table_privilege(role_name, relation.oid, 'SELECT,INSERT,UPDATE,DELETE')
+        """,
+    ).all()
+    assert exposed == []
+    privileges = _catalog(
+        integration_db,
+        """
+        SELECT has_column_privilege('openslate_runtime','auth.sessions','id','SELECT'),
+               has_column_privilege('openslate_runtime','auth.sessions','user_id','SELECT'),
+               has_table_privilege('openslate_runtime','auth.sessions','SELECT'),
+               has_table_privilege('openslate_runtime','auth.sessions','INSERT,UPDATE,DELETE'),
+               has_table_privilege('openslate_runtime','auth.users','SELECT,INSERT,UPDATE,DELETE')
+        """,
+    ).one()
+    assert privileges == (True, True, False, False, False)
 
 
 @pytest.mark.integration
@@ -173,6 +184,8 @@ def test_concurrent_failed_logins_create_one_rate_limit_bucket_without_a_databas
     integration_owner_db,
 ) -> None:
     database_url = os.environ["TEST_DATABASE_URL"]
+    email = f"missing-{uuid7().hex}@example.test"
+    fingerprint = login_fingerprint(email, None)
     barrier = Barrier(2)
 
     def fail_login() -> None:
@@ -181,7 +194,9 @@ def test_concurrent_failed_logins_create_one_rate_limit_bucket_without_a_databas
             with Session(engine) as db:
                 barrier.wait(timeout=5)
                 with pytest.raises(InvalidCredentials):
-                    authenticate_password(db, "missing@example.test", "wrong-password")
+                    login_with_provider(
+                        db, email, "wrong-password", get_supabase_auth_client()
+                    )
                 db.commit()
         finally:
             engine.dispose()
@@ -190,13 +205,20 @@ def test_concurrent_failed_logins_create_one_rate_limit_bucket_without_a_databas
         with ThreadPoolExecutor(max_workers=2) as workers:
             list(workers.map(lambda _: fail_login(), range(2)))
 
-        bucket = integration_owner_db.query(IdentityRateLimitBucket).one()
+        bucket = integration_owner_db.get(IdentityRateLimitBucket, fingerprint)
+        assert bucket is not None
         assert bucket.attempt_count == 2
     finally:
         cleanup_engine = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
         try:
             with cleanup_engine.begin() as connection:
-                connection.execute(text("DELETE FROM public.identity_rate_limit_buckets"))
+                connection.execute(
+                    text(
+                        "DELETE FROM public.identity_rate_limit_buckets "
+                        "WHERE fingerprint = :fingerprint"
+                    ),
+                    {"fingerprint": fingerprint},
+                )
         finally:
             cleanup_engine.dispose()
 
@@ -229,7 +251,9 @@ def test_concurrent_failed_logins_replace_a_stale_current_bucket_before_locking_
                 with Session(engine) as db:
                     barrier.wait(timeout=5)
                     with pytest.raises(InvalidCredentials):
-                        authenticate_password(db, "stale@example.test", "wrong-password")
+                        login_with_provider(
+                            db, "stale@example.test", "wrong-password", get_supabase_auth_client()
+                        )
                     db.commit()
             finally:
                 engine.dispose()

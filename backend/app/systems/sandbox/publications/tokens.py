@@ -64,13 +64,13 @@ def issue_preview_token(
                 "live": live_state_digest,
                 "nonce": nonce,
                 "operation": "publish",
-                "iss": f"{settings.auth_jwt_issuer}{_ISSUER_SUFFIX}",
+                "iss": f"{settings.public_origin}{_ISSUER_SUFFIX}",
                 "aud": _AUDIENCE,
                 "iat": timestamp,
                 "nbf": timestamp,
                 "exp": expires_at,
             },
-            settings.auth_jwt_secret.get_secret_value(),
+            settings.publication_signing_key.get_secret_value(),
             algorithm=_ALGORITHM,
         ),
         claims,
@@ -82,10 +82,10 @@ def decode_preview_token(token: str, *, now: datetime | None = None) -> PreviewT
     try:
         payload = decode(
             token,
-            settings.auth_jwt_secret.get_secret_value(),
+            settings.publication_signing_key.get_secret_value(),
             algorithms=[_ALGORITHM],
             audience=_AUDIENCE,
-            issuer=f"{settings.auth_jwt_issuer}{_ISSUER_SUFFIX}",
+            issuer=f"{settings.public_origin}{_ISSUER_SUFFIX}",
             options={
                 "require": ["sub", "sid", "rev", "hash", "impact", "live", "nonce", "exp"],
                 "verify_exp": False,
